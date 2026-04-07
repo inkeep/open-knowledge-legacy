@@ -2,9 +2,13 @@ import { Hocuspocus } from '@hocuspocus/server';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
+import { createPersistenceExtension } from './persistence';
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
+  debounce: 2000,
+  maxDebounce: 10000,
+  extensions: [createPersistenceExtension()],
 });
 
 export function hocuspocusPlugin(): Plugin {
