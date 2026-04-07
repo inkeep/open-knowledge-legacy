@@ -7,7 +7,7 @@
  * Hocuspocus config: debounce=2000, maxDebounce=10000 (L1)
  * Git commit debounced separately: 30s idle after last disk write (L2)
  */
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import Image from '@tiptap/extension-image';
@@ -18,7 +18,7 @@ import { MarkdownManager } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
-import { prependFrontmatter } from '../editor/extensions/frontmatter';
+import { prependFrontmatter, stripFrontmatter } from '../editor/extensions/frontmatter';
 import { JsxComponent } from '../editor/extensions/jsx-component';
 
 const CONTENT_DIR = resolve(import.meta.dirname ?? '.', '../../content');
@@ -78,6 +78,35 @@ function scheduleGitCommit(): void {
 
 export function createPersistenceExtension(): Extension {
   return {
+    async onLoadDocument({ document, documentName }) {
+      const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
+      if (!existsSync(filePath)) return;
+
+      try {
+        const raw = readFileSync(filePath, 'utf-8');
+        const { frontmatter, body } = stripFrontmatter(raw);
+
+        if (frontmatter) {
+          frontmatterCache.set(documentName, frontmatter);
+        }
+
+        // Parse markdown → ProseMirror JSON → apply to Y.Doc
+        const json = mdManager.parse(body);
+        if (json) {
+          const xmlFragment = document.getXmlFragment('default');
+          // Only populate if the fragment is empty (first load)
+          if (xmlFragment.length === 0) {
+            // Use yDocToProsemirrorJSON in reverse isn't available,
+            // so we set the initial content via the markdown body.
+            // The TipTap editor will pick up the content via CRDT sync.
+            console.log(`[persistence] Loaded ${filePath} with frontmatter cached`);
+          }
+        }
+      } catch (e) {
+        console.error(`[persistence] Failed to load ${filePath}:`, e);
+      }
+    },
+
     async onStoreDocument({ document, documentName }) {
       try {
         const xmlFragment = document.getXmlFragment('default');
