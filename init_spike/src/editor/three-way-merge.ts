@@ -14,7 +14,7 @@
 import type { MarkdownManager } from '@tiptap/markdown';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
-import { diffLines } from 'diff';
+import { diffArrays, diffLines } from 'diff';
 import type * as Y from 'yjs';
 
 export interface ThreeWayMergeResult {
@@ -46,9 +46,16 @@ export function splitMarkdownBlocks(md: string): string[] {
   const lines = normalized.split('\n');
   const blocks: string[] = [];
   let current: string[] = [];
-  let inFence = false;
+  let fenceChar: string | null = null;
   for (const line of lines) {
-    if (/^(`{3,}|~{3,})/.test(line)) inFence = !inFence;
+    const fenceMatch = line.match(/^(`{3,}|~{3,})/);
+    if (fenceMatch) {
+      const char = fenceMatch[1][0]; // '`' or '~'
+      if (!fenceChar)
+        fenceChar = char; // opening
+      else if (char === fenceChar) fenceChar = null; // matching close
+    }
+    const inFence = fenceChar !== null;
     if (!inFence && line.trim() === '' && current.length > 0) {
       blocks.push(current.join('\n').trim());
       current = [];
@@ -115,62 +122,107 @@ export function threeWayMerge(
     return applyWholeDoc(doc, fragment, userEditedMarkdown, mdManager, schema, undefined);
   }
 
-  // Classify current Y.Doc blocks relative to the snapshot:
-  // - Blocks within snapshot range: either unchanged, agent-modified, or user-modified
-  // - Blocks beyond snapshot range: agent-added (new paragraphs)
+  // Build per-snapshot-block resolution using diff-based alignment.
+  // For each snapshot block, determine what the agent did (modified/unchanged/removed).
   const conflicts: ConflictInfo[] = [];
   const userBlocks = splitMarkdownBlocks(userEditedMarkdown);
 
-  // Guard: if user inserted or deleted paragraphs, positional comparison is unreliable.
-  // Fall back to whole-doc update (spec A2 item 5: "fallback when markdown structure
-  // changed too drastically for paragraph-level mapping").
-  if (userBlocks.length !== snapshotBlocks.length) {
-    return applyWholeDoc(
-      doc,
-      fragment,
-      userEditedMarkdown,
-      mdManager,
-      schema,
-      `User paragraph count changed (${snapshotBlocks.length} → ${userBlocks.length}), positional merge unreliable`,
-    );
-  }
+  // Agent diff: snapshot → current Y.Doc. Tells us which snapshot blocks the agent changed.
+  const agentDiff = diffArrays(snapshotBlocks, currentBlocks);
 
-  // Agent-added blocks: those beyond the snapshot's paragraph count
-  const agentAddedBlocks: string[] = [];
-  for (let i = snapshotBlocks.length; i < currentBlocks.length; i++) {
-    agentAddedBlocks.push(currentBlocks[i]);
-  }
-
-  // Detect conflicts: both user and agent modified the same paragraph
-  for (let i = 0; i < snapshotBlocks.length; i++) {
-    const snapshotBlock = snapshotBlocks[i].trim();
-    const userBlock = userBlocks[i]?.trim();
-    const currentBlock = currentBlocks[i]?.trim();
-
-    if (userBlock !== snapshotBlock && currentBlock !== snapshotBlock) {
-      // Both user and agent modified this paragraph — user wins
-      conflicts.push({ paragraphIndex: i, resolution: 'user-wins' });
-      console.warn(
-        `[three-way-merge] Conflict at paragraph ${i}: both user and agent modified. User version wins.`,
-      );
+  // Build a map: snapshot block (by index) → agent's replacement blocks (if modified).
+  // For unchanged blocks, no entry. For modified blocks, map to the replacement(s).
+  const agentReplacements = new Map<number, string[]>();
+  const agentAppended: string[] = []; // truly new blocks added after all snapshot content
+  let sIdx = 0;
+  for (const part of agentDiff) {
+    if (!part.added && !part.removed) {
+      // Common — agent didn't change these snapshot blocks
+      sIdx += part.count ?? 0;
+    } else if (part.removed) {
+      // These snapshot blocks were removed/replaced by agent
+      for (let i = 0; i < (part.count ?? 0); i++) {
+        agentReplacements.set(sIdx + i, []); // initially empty, filled by subsequent 'added' part
+      }
+      sIdx += part.count ?? 0;
+    } else if (part.added) {
+      // These are agent's new/replacement blocks.
+      // Attach them to the most recently removed snapshot block, or as appended.
+      const lastRemovedIdx = sIdx - 1;
+      if (agentReplacements.has(lastRemovedIdx)) {
+        // This 'added' part replaces the preceding 'removed' snapshot blocks
+        const existing = agentReplacements.get(lastRemovedIdx) ?? [];
+        agentReplacements.set(lastRemovedIdx, [...existing, ...part.value]);
+      } else {
+        // Truly new content (appended beyond snapshot range)
+        agentAppended.push(...part.value);
+      }
     }
   }
 
-  // Build merged markdown:
-  // Start with user's edits, then append agent-added blocks not already present
-  const userText = userEditedMarkdown.replace(/\n+$/, '');
-  const parts: string[] = [userText];
+  // User diff: snapshot → user's edited version. Tells us what the user changed.
+  const userDiff = diffArrays(snapshotBlocks, userBlocks);
 
+  // Build merged output by walking the user diff.
+  // For each snapshot block encountered in the user diff:
+  //   - If user changed it: use user's version (from 'added' parts)
+  //   - If user didn't change it but agent did: use agent's version
+  //   - If both changed: user wins (conflict)
+  //   - If neither changed: keep as-is
+  // User-added blocks (not matching any snapshot block) pass through as-is.
+  const mergedBlocks: string[] = [];
   let agentPreservedCount = 0;
-  for (const agentBlock of agentAddedBlocks) {
-    // Only append if the user's edited text doesn't already contain this block
-    if (!userEditedMarkdown.includes(agentBlock.trim())) {
-      parts.push(agentBlock);
+  let conflictParagraph = 0;
+
+  for (const part of userDiff) {
+    if (!part.added && !part.removed) {
+      // Common: user kept these snapshot blocks unchanged.
+      // Check if agent modified any of them.
+      for (const block of part.value) {
+        const blockIdx = snapshotBlocks.indexOf(block, conflictParagraph);
+        if (blockIdx >= 0 && agentReplacements.has(blockIdx)) {
+          // Agent modified this block, user didn't — use agent's version
+          const replacements = agentReplacements.get(blockIdx) ?? [];
+          mergedBlocks.push(...replacements);
+          agentPreservedCount++;
+        } else {
+          // Neither changed — keep as-is
+          mergedBlocks.push(block);
+        }
+        conflictParagraph = (blockIdx >= 0 ? blockIdx : conflictParagraph) + 1;
+      }
+    } else if (part.removed) {
+      // User removed/modified these snapshot blocks. Check for conflicts.
+      for (const block of part.value) {
+        const blockIdx = snapshotBlocks.indexOf(
+          block,
+          conflictParagraph > 0 ? conflictParagraph - (part.count ?? 0) : 0,
+        );
+        if (blockIdx >= 0 && agentReplacements.has(blockIdx)) {
+          // Both user and agent modified — conflict, user wins
+          conflicts.push({ paragraphIndex: blockIdx, resolution: 'user-wins' });
+          console.warn(
+            `[three-way-merge] Conflict at paragraph ${blockIdx}: both user and agent modified. User version wins.`,
+          );
+        }
+        // User's replacement comes from the subsequent 'added' part — handled below
+      }
+    } else if (part.added) {
+      // User-added blocks (replacements for removed blocks, or new blocks)
+      mergedBlocks.push(...part.value);
+    }
+  }
+
+  // Append agent-appended blocks (beyond snapshot range)
+  const mergedSet = new Set(mergedBlocks.map((b) => b.trim()));
+  for (const block of agentAppended) {
+    if (!mergedSet.has(block.trim())) {
+      mergedBlocks.push(block);
       agentPreservedCount++;
     }
   }
 
-  const mergedMarkdown = `${parts.join('\n\n')}\n`;
+  const mergedMarkdown = `${mergedBlocks.join('\n\n')}\n`;
 
   // Apply the merged markdown via updateYFragment
   const parsedJson = mdManager.parse(mergedMarkdown);

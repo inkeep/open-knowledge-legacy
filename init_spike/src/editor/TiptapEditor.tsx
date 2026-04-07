@@ -129,13 +129,19 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
         // Feedback loops are prevented by App.tsx unsubscribing this observer
         // before calling applyThreeWayMerge on toggle-back.
         const observer = () => {
+          let md: string;
           try {
             const json = yXmlFragmentToProsemirrorJSON(yFragment);
             const body = mdManager.serialize(json);
-            const md = prependFrontmatter(frontmatterRef.current, body);
-            callback(md);
+            md = prependFrontmatter(frontmatterRef.current, body);
           } catch (err) {
             console.warn('[TiptapEditor] Failed to serialize on Y.Doc change:', err);
+            return;
+          }
+          try {
+            callback(md);
+          } catch (err) {
+            console.warn('[TiptapEditor] Content change callback threw:', err);
           }
         };
 
