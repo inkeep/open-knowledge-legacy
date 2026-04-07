@@ -51,8 +51,13 @@ async function commitToWipRef(): Promise<void> {
     try {
       const headTree = (await git.raw('rev-parse', 'HEAD^{tree}')).trim();
       await git.env(env).raw('read-tree', headTree);
-    } catch {
-      // Empty repo — start with empty index
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('unknown revision') || msg.includes('bad revision')) {
+        console.log('[persistence] Empty repo — starting with empty index');
+      } else {
+        console.error('[persistence] Failed to read HEAD tree, falling back to empty index:', e);
+      }
     }
 
     await git.env(env).raw('add', 'content/');
@@ -172,8 +177,18 @@ export function createPersistenceExtension(): Extension {
       // Atomic write: write to temp file then rename (Layer 1)
       const filePath = safeContentPath(documentName);
       const tmpPath = `${filePath}.tmp`;
-      await writeFile(tmpPath, markdown, 'utf-8');
-      await rename(tmpPath, filePath);
+      try {
+        await writeFile(tmpPath, markdown, 'utf-8');
+        await rename(tmpPath, filePath);
+      } catch (e) {
+        try {
+          unlinkSync(tmpPath);
+        } catch {
+          /* cleanup best-effort */
+        }
+        console.error(`[persistence] Failed to save ${documentName}:`, e);
+        throw e;
+      }
       console.log(`[persistence] Wrote ${filePath} (${markdown.length} bytes)`);
 
       // Schedule git commit (Layer 2)
@@ -181,9 +196,4 @@ export function createPersistenceExtension(): Extension {
       // Errors propagate to Hocuspocus — clients are notified of save failure.
     },
   };
-}
-
-/** Store frontmatter for a document (called when loading file from disk) */
-export function cacheFrontmatter(documentName: string, frontmatter: string): void {
-  frontmatterCache.set(documentName, frontmatter);
 }
