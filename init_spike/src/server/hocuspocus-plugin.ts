@@ -17,7 +17,8 @@ export function hocuspocusPlugin(): Plugin {
     configureServer(server) {
       const wss = new WebSocketServer({ noServer: true });
 
-      server.httpServer?.on('upgrade', (req, socket, head) => {
+      // Use prependListener to intercept /collab BEFORE Vite's HMR handler.
+      server.httpServer?.prependListener('upgrade', (req, socket, head) => {
         if (req.url?.startsWith('/collab')) {
           wss.handleUpgrade(req, socket, head, (ws) => {
             hocuspocus.handleConnection(ws, req);
