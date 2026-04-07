@@ -199,6 +199,54 @@ Y.XmlFragment('default')
 
 ---
 
+## A2: Three-Way Merge on Toggle-Back
+
+**Result:** PASS
+
+**Evidence:**
+- `src/editor/three-way-merge.ts` implements three-way merge for source mode toggle-back
+- On toggle-to-source: snapshot of current markdown stored alongside source content
+- On toggle-back: diff snapshot vs user-edited to identify changes, serialize current Y.Doc to find agent-added paragraphs, merge user edits + agent additions
+- Non-conflicting test: user edits paragraph A in source, agent writes paragraph C via DirectConnection → both survive toggle-back
+- Conflicting test: user and agent both edit paragraph A → user wins, agent's paragraph C (non-conflicting addition) preserved, document structurally valid
+
+**Key design decision:** Agent-added detection uses position-based comparison (blocks beyond snapshot length = agent-added). Blocks within snapshot range that differ = agent-modified (conflict if user also changed).
+
+**P0 pass criterion:** The V4b divergence test that previously failed (paragraph C clobbered) now passes.
+
+---
+
+## A1: Agent Markdown Write Path
+
+**Result:** PASS
+
+**Evidence:**
+- `POST /api/agent-write-md` endpoint accepts `{ markdown, position? }` and applies via serialize→splice→parse→updateYFragment
+- Unifies agent writes with toggle-back path: both go through markdown parse→updateYFragment
+- `agent-sim.ts --markdown` flag uses the new endpoint
+- Append and prepend positions tested
+- Source mode live injection: Y.XmlFragment observer fires on agent write, serialized markdown pushed to CodeMirror via React state
+- App.tsx subscribes to Y.Doc changes when in source mode, unsubscribes before toggle-back
+
+**Source mode injection behavior:** Agent writes appear in CodeMirror source view in real-time. The current implementation replaces the full CodeMirror content on change (cursor may jump). This is acceptable for P0; cursor preservation is a future UX refinement.
+
+---
+
+## A3: Combined (A1 + A2)
+
+**Result:** PASS
+
+**Evidence:**
+- Combined test: source mode active → agent writes paragraph C via markdown path → it appears in Y.Doc → user edits paragraph A in source → toggle back → three-way merge preserves both
+- User edit to paragraph A: present
+- Paragraph B (untouched): present
+- Agent's paragraph C: present
+- Selective merge, zero conflicts, one agent paragraph preserved
+
+**Implication:** A1 and A2 are complementary, not competing. A1 changes how writes enter the system (markdown instead of raw Y.XmlElements). A2 changes how writes are reconciled on toggle-back (three-way merge instead of whole-doc replace). Both active together: agent writes are visible in source mode AND preserved on toggle-back.
+
+---
+
 ## Summary
 
 | Validation | Result | Key Finding |
@@ -211,7 +259,10 @@ Y.XmlFragment('default')
 | V4 | PASS (V4b) | Serialize-on-toggle via updateYFragment (not prosemirrorJSONToYDoc) |
 | V5 | PASS | Three-tier pipeline: CRDT → markdown → git plumbing |
 | V6 | PASS | Void node renders React component, survives markdown round-trip |
+| A2 | PASS | Three-way merge on toggle-back: agent writes survive non-conflicting divergence |
+| A1 | PASS | Agent markdown write path + source mode live injection |
+| A3 | PASS | Combined A1+A2: agent writes visible in source, preserved on toggle-back |
 
-**Architecture decision confirmed:** V7 FAIL → V4b (serialize-on-toggle). The remaining 6 validations prove the foundation works.
+**Architecture decision confirmed:** V7 FAIL → V4b (serialize-on-toggle). A2 solves R3 (agent write clobber on toggle-back). A1 unifies the agent write path through markdown. Both approaches work independently and together.
 
-**Quality gates:** `bun run check` passes (typecheck + lint + build).
+**Quality gates:** `bun run check` passes (typecheck + lint + build + test).

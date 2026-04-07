@@ -429,6 +429,103 @@ describe('Agent write → Editor reflection', () => {
     await conn.disconnect();
   });
 
+  test('A3 combined: source mode + agent markdown write + three-way merge preserves all changes', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-combined-a3');
+
+    // Step 1: Seed with two paragraphs (user content in WYSIWYG)
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'Paragraph A — user will edit this' }]);
+      p1.insert(0, [t1]);
+
+      const p2 = new Y.XmlElement('paragraph');
+      const t2 = new Y.XmlText();
+      t2.applyDelta([{ insert: 'Paragraph B — untouched' }]);
+      p2.insert(0, [t2]);
+
+      fragment.push([p1, p2]);
+    });
+
+    // Step 2: User enters source mode — snapshot taken
+    const fragment = getFragment(conn);
+    const snapshotJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const snapshotMarkdown = mdManager.serialize(snapshotJson);
+
+    // Step 3: Set up Y.Doc observer (simulates A1 source mode injection)
+    let latestMarkdown = snapshotMarkdown;
+    const observer = () => {
+      const json = yXmlFragmentToProsemirrorJSON(fragment);
+      latestMarkdown = mdManager.serialize(json);
+    };
+    fragment.observeDeep(observer);
+
+    // Step 4: Agent writes paragraph C via markdown path (A1)
+    const agentMd = 'Paragraph C — agent wrote this via markdown path';
+    const currentMd = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    const combined = `${currentMd.trim()}\n\n${agentMd}\n`;
+    const parsedJson = mdManager.parse(combined);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+
+    getDoc(conn).transact(() => {
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(getDoc(conn), fragment, pmNode, meta);
+    });
+
+    // Step 5: Verify agent text appears in source view (A1 injection)
+    expect(latestMarkdown).toContain('Paragraph C — agent wrote this via markdown path');
+
+    // Step 6: User edits paragraph A in source mode
+    // The user's sourceContent is the snapshotMarkdown (what they started with) + their edits
+    // Agent write is visible in source via injection but user has been editing from their view
+    const userEdited = snapshotMarkdown.replace(
+      'Paragraph A — user will edit this',
+      'Paragraph A — USER EDITED',
+    );
+
+    // Step 7: Unsubscribe observer (simulates App.tsx behavior before toggle-back)
+    fragment.unobserveDeep(observer);
+
+    // Step 8: Toggle back with three-way merge (A2)
+    const result = threeWayMerge(
+      getDoc(conn),
+      fragment,
+      snapshotMarkdown,
+      userEdited,
+      mdManager,
+      schema,
+    );
+
+    // Step 9: Verify everything survived
+    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalMarkdown = mdManager.serialize(finalJson);
+
+    console.log('\n=== COMBINED TEST (A1 + A2 + A3) ===');
+    console.log(`Selective: ${result.selective}`);
+    console.log(`Agent preserved: ${result.agentPreservedCount}`);
+    console.log(`Conflicts: ${result.conflicts.length}`);
+    console.log(`Final markdown:\n${finalMarkdown}`);
+
+    // User's edit to paragraph A survives
+    expect(finalMarkdown).toContain('Paragraph A — USER EDITED');
+
+    // Paragraph B (unchanged) survives
+    expect(finalMarkdown).toContain('Paragraph B — untouched');
+
+    // Agent's paragraph C survives the three-way merge!
+    expect(finalMarkdown).toContain('Paragraph C — agent wrote this via markdown path');
+
+    // Selective merge, no conflicts, agent paragraph preserved
+    expect(result.selective).toBe(true);
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.agentPreservedCount).toBeGreaterThan(0);
+
+    await conn.disconnect();
+  });
+
   test('agent markdown write (prepend position) inserts before existing content', async () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const conn = await hocuspocus.openDirectConnection('test-md-prepend');
