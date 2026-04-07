@@ -473,3 +473,53 @@ Auto-sync from external sources. Enterprise ingest at scale.
 - That ICs want a standalone knowledge tool rather than knowledge features inside their existing tools (Cursor, VS Code, Obsidian)
 - That the Obsidian-grade editing bar is achievable with current OSS editor frameworks (TipTap/BlockNote/ProseMirror)
 - That markdown is the right canonical format (vs a richer document model like AFFiNE's BlockSuite)
+
+## Research Reports
+
+43 research reports inform the architectural decisions in this document. Reports live in the `reports/` submodule ([inkeep/nick-reports](https://github.com/inkeep/nick-reports)). Each contains a REPORT.md (synthesis) and evidence/ files (primary sources with file:line citations from cloned OSS repos, verbatim document extractions, and web research).
+
+| Report | Scope | Informs | Updated | Evidence |
+|--------|-------|---------|---------|----------|
+| [agent-knowledge-retrieval-paradigms-2025-2026](reports/agent-knowledge-retrieval-paradigms-2025-2026/REPORT.md) | Agent Knowledge Retrieval Paradigms 2025-2026: From RAG to Agentic Retrieval | Cross-cutting | 2026-04-03 | 8 files |
+| [ai-coding-agent-tool-surfaces](reports/ai-coding-agent-tool-surfaces/REPORT.md) | AI Coding Agent Tool Surfaces: How Agents Interface with Codebases | TQ13, TQ16, TQ17 | 2026-03-20 | 8 files |
+| [ai-coding-tools-embedded-browsers](reports/ai-coding-tools-embedded-browsers/REPORT.md) | AI Coding Tools Embedded Browser Capabilities: Can a Web Editor Render Inside the Age... | S4 | 2026-04-03 | 7 files |
+| [anthropic-knowledge-infrastructure-positioning](reports/anthropic-knowledge-infrastructure-positioning/REPORT.md) | Anthropic's Knowledge Infrastructure Positioning and the Operationalized Knowledge La... | S2, TQ9, XQ3 | 2026-04-02 | 7 files |
+| [bun-vs-node-runtime](reports/bun-vs-node-runtime/REPORT.md) | Bun vs Node.js as Server Runtime for an Agent-Native Knowledge Platform | CC1, TQ23 | 2026-04-03 | 8 files |
+| [claude-code-worktree-git-isolation](reports/claude-code-worktree-git-isolation/REPORT.md) | Git Worktrees as Draft Isolation for Knowledge Platforms: Lessons from Claude Code an... | CC6, TQ14, TQ15 | 2026-04-02 | 6 files |
+| [cms-custom-components-landscape](reports/cms-custom-components-landscape/REPORT.md) | CMS Custom Components in Rich Text Editors: Architecture Landscape | Cross-cutting | 2026-04-03 | 2 files |
+| [compiled-truth-timeline-content-conventions](reports/compiled-truth-timeline-content-conventions/REPORT.md) | Compiled Truth + Timeline: Content Conventions for Agent-Authored Knowledge Entries | Cross-cutting | 2026-04-07 | 6 files |
+| [crdt-branching-namespacing-prior-art](reports/crdt-branching-namespacing-prior-art/REPORT.md) | CRDT Branching, Namespacing, and Context-Switching in Collaborative Editors: Prior Ar... | TQ13, TQ14 | 2026-04-02 | 9 files |
+| [crdt-mcp-filesystem-bridge](reports/crdt-mcp-filesystem-bridge/REPORT.md) | Bridging AI Coding Agents and CRDT-Authoritative Editing: The MCP Filesystem Translat... | Cross-cutting | 2026-04-07 | 10 files |
+| [frontmatter-schema-conventions-for-agent-readable-docs](reports/frontmatter-schema-conventions-for-agent-readable-docs/REPORT.md) | Frontmatter Schema Conventions for Agent-Readable Documentation | Cross-cutting | 2026-04-05 | 8 files |
+| [fumadocs-full-pipeline](reports/fumadocs-full-pipeline/REPORT.md) | Fumadocs Complete Pipeline: Source-Code-Level Architecture for Building a Visual Edit... | S10, S2, TQ4 | 2026-04-03 | 11 files |
+| [fumadocs-karpathy-workflow-deep-dive](reports/fumadocs-karpathy-workflow-deep-dive/REPORT.md) | Fumadocs as Infrastructure for the Karpathy LLM Knowledge Base Workflow | Cross-cutting | 2026-04-02 | 11 files |
+| [fumadocs-stack-reusability-deep-analysis](reports/fumadocs-stack-reusability-deep-analysis/REPORT.md) | Fumadocs Monorepo: Source-Level Reusability Analysis for a TipTap/Yjs/Hocuspocus Know... | PQ15, S-L2, TQ11, TQ12 | 2026-04-05 | 10 files |
+| [fumadocs-vs-mintlify-architecture](reports/fumadocs-vs-mintlify-architecture/REPORT.md) | Fumadocs vs Mintlify: Architecture Deep Dive for Agent-Native Knowledge Platforms | Cross-cutting | 2026-04-02 | 10 files |
+| [git-library-for-knowledge-platform](reports/git-library-for-knowledge-platform/REPORT.md) | Git Library Selection for a Local-First Knowledge Platform with Auto-Persistence | S6, TQ20, TQ21 | 2026-04-02 | 8 files |
+| [just-bash-virtual-filesystem-analysis](reports/just-bash-virtual-filesystem-analysis/REPORT.md) | just-bash Virtual Filesystem Analysis: Source-Code-Level Architecture and Agent-Nativ... | TQ21, TQ22, XQ1 | 2026-04-02 | 14 files |
+| [kb-index-navigation-patterns-for-agents](reports/kb-index-navigation-patterns-for-agents/REPORT.md) | KB Index and Navigation Patterns for AI Agents: How Agents Orient in Document Collect... | CC6, S10, S8, TQ7, TQ8, TQ18, TQ19 | 2026-04-07 | 9 files |
+| [knowledge-graph-incremental-updates](reports/knowledge-graph-incremental-updates/REPORT.md) | Knowledge Graph Incremental Updates: Temporal Versioning, Entity Resolution, and Clai... | Cross-cutting | 2026-03-21 | 5 files |
+| [llm-knowledge-consolidation-fidelity](reports/llm-knowledge-consolidation-fidelity/REPORT.md) | AI/LLM Knowledge Consolidation with Factual Fidelity: Patterns, Techniques, and Imple... | Cross-cutting | 2026-03-21 | 13 files |
+| [llms-txt-content-negotiation-agent-readable-web](reports/llms-txt-content-negotiation-agent-readable-web/REPORT.md) | llms.txt, Content Negotiation, and the Agent-Readable Web (2025-2026) | Cross-cutting | 2026-04-05 | 6 files |
+| [local-search-retrieval-stacks-2025-2026](reports/local-search-retrieval-stacks-2025-2026/REPORT.md) | Local-First Search & Retrieval Stacks 2025-2026: Hybrid Search for Developer Knowledg... | TQ11 | 2026-04-03 | 21 files |
+| [markdown-roundtrip-fidelity-tiptap](reports/markdown-roundtrip-fidelity-tiptap/REPORT.md) | Markdown Round-Trip Fidelity Through @tiptap/markdown | Cross-cutting | 2026-04-07 | 7 files |
+| [mcp-tool-interface-design-agent-performance](reports/mcp-tool-interface-design-agent-performance/REPORT.md) | MCP Tool Interface Design for Agent Performance: Filesystem vs Semantic Tools | PQ4, XQ1 | 2026-04-02 | 7 files |
+| [mdx-crdt-roundtrip-fidelity](reports/mdx-crdt-roundtrip-fidelity/REPORT.md) | MDX Round-Trip Fidelity Through CRDT-Backed Visual Editors | TQ3, TQ4 | 2026-04-03 | 4 files |
+| [mdx-text-editor-preview-approach](reports/mdx-text-editor-preview-approach/REPORT.md) | MDX Text Editor + Live Preview: Architecture, Prior Art, and Comparison to WYSIWYG | S1, S4 | 2026-04-07 | 11 files |
+| [mintlify-karpathy-workflow-deep-dive](reports/mintlify-karpathy-workflow-deep-dive/REPORT.md) | Mintlify vs the Karpathy LLM Knowledge Base Workflow: A Capability-by-Capability Deep... | Cross-cutting | 2026-04-02 | 10 files |
+| [obsidian-karpathy-workflow-deep-dive](reports/obsidian-karpathy-workflow-deep-dive/REPORT.md) | Obsidian for the Karpathy 'LLM Knowledge Base' Workflow: Capability-by-Capability Dee... | Cross-cutting | 2026-04-03 | 10 files |
+| [obsidian-vs-fumadocs-component-inventory](reports/obsidian-vs-fumadocs-component-inventory/REPORT.md) | Obsidian vs Fumadocs: Complete UI Element, Block Type, and Component Inventory | PQ8, PQ9, S10, S2, TQ4, TQ5 | 2026-04-03 | 5 files |
+| [open-knowledge-prior-art-eight-sources](reports/open-knowledge-prior-art-eight-sources/REPORT.md) | Prior Art for Open-Knowledge: Eight Sources Deep Investigation | Cross-cutting | 2026-04-07 | 9 files |
+| [openknowledge-competitive-landscape](reports/openknowledge-competitive-landscape/REPORT.md) | Competitive Landscape for an Agent-Native Knowledge Platform | S5, XQ2, XQ3 | 2026-04-07 | 8 files |
+| [orama-deep-dive](reports/orama-deep-dive/REPORT.md) | Orama Deep Dive: A Source-Code-Level Assessment for Agent-Native Knowledge Platforms | TQ11 | 2026-04-02 | 11 files |
+| [orama-vs-ripgrep-indexed-grep](reports/orama-vs-ripgrep-indexed-grep/REPORT.md) | Orama vs ripgrep and the Indexed Grep Architecture: Can BM25 Search Replace Linear Fi... | S3, S8, TQ17, TQ18 | 2026-04-05 | 7 files |
+| [peritext-on-yjs-feasibility](reports/peritext-on-yjs-feasibility/REPORT.md) | Peritext-on-Yjs Feasibility: Can the Peritext Rich Text Model Be Implemented on Y.Tex... | Cross-cutting | 2026-04-07 | 7 files |
+| [react-types-as-editor-schema](reports/react-types-as-editor-schema/REPORT.md) | React TypeScript Interfaces as Editor Schema: Prior Art, Implementation Patterns, and... | PQ8, PQ9 | 2026-04-03 | 6 files |
+| [search-engine-advanced-capabilities](reports/search-engine-advanced-capabilities/REPORT.md) | Advanced Search Capabilities: Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector | S3, S8 | 2026-04-05 | 6 files |
+| [search-engine-decision](reports/search-engine-decision/REPORT.md) | Search Engine Decision: Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector for a CRDT... | S3, S8, TQ17 | 2026-04-04 | 6 files |
+| [source-toggle-architecture](reports/source-toggle-architecture/REPORT.md) | Source Toggle Architecture: WYSIWYG ↔ Raw Markdown in a TipTap + Yjs CRDT Editor | Cross-cutting | 2026-04-07 | 5 files |
+| [tiptap-2026-direction-overlap](reports/tiptap-2026-direction-overlap/REPORT.md) | TipTap in 2026: Product Direction, Platform Ambitions, and Overlap with Agent-Native ... | S10, S2, TQ4 | 2026-04-04 | 7 files |
+| [vec1-vs-sqlite-vec-ecosystem](reports/vec1-vs-sqlite-vec-ecosystem/REPORT.md) | Vec1 vs sqlite-vec: The SQLite Vector Search Ecosystem in 2026 | Cross-cutting | 2026-04-05 | 6 files |
+| [virtualized-mcp-filesystem-servers](reports/virtualized-mcp-filesystem-servers/REPORT.md) | Virtualized MCP Filesystem Servers: Who Has Built Them, What Patterns Exist, and How ... | XQ1 | 2026-04-02 | 8 files |
+| [wiki-links-backlinks-architecture](reports/wiki-links-backlinks-architecture/REPORT.md) | Wiki-Links and Backlinks Architecture for Agent-Native Knowledge Platforms | CC6, S10, S8, TQ7 | 2026-04-04 | 0 files |
+| [worktree-orchestration-landscape](reports/worktree-orchestration-landscape/REPORT.md) | Worktree Orchestration Landscape: How AI Coding Tools Manage Parallel Work and the Un... | Cross-cutting | 2026-04-03 | 8 files |
