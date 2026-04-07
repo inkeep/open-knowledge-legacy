@@ -1,16 +1,11 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import Collaboration from '@tiptap/extension-collaboration';
-import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
-import { TaskItem, TaskList } from '@tiptap/extension-list';
-import { Table } from '@tiptap/extension-table';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter';
-import { JsxComponent } from './extensions/jsx-component';
+import { sharedExtensions } from './extensions/shared';
 
 const DOC_NAME = 'test-doc';
 
@@ -18,17 +13,6 @@ export interface TiptapEditorHandle {
   getMarkdown: () => string;
   applyMarkdown: (md: string) => void;
 }
-
-// Extensions shared between the editor and MarkdownManager
-const sharedExtensions = [
-  StarterKit.configure({ undoRedo: false }),
-  Link,
-  Table,
-  Image,
-  TaskList,
-  TaskItem,
-  JsxComponent,
-];
 
 export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
   const providerRef = useRef<HocuspocusProvider | null>(null);

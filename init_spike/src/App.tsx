@@ -10,12 +10,20 @@ export function App() {
     applyMarkdown: (md: string) => void;
   } | null>(null);
 
+  const [toggleError, setToggleError] = useState<string | null>(null);
+
   const handleToggle = useCallback(() => {
     if (isSourceMode) {
       // Toggle back to WYSIWYG — apply source edits via updateYFragment
       const editor = editorRef.current;
-      if (editor && sourceContent) {
-        editor.applyMarkdown(sourceContent);
+      if (editor) {
+        try {
+          editor.applyMarkdown(sourceContent);
+          setToggleError(null);
+        } catch (err) {
+          setToggleError(err instanceof Error ? err.message : 'Failed to parse markdown');
+          return; // Stay in source mode on error
+        }
       }
       setIsSourceMode(false);
     } else {
@@ -25,6 +33,7 @@ export function App() {
         const md = editor.getMarkdown();
         setSourceContent(md);
       }
+      setToggleError(null);
       setIsSourceMode(true);
     }
   }, [isSourceMode, sourceContent]);
@@ -47,6 +56,21 @@ export function App() {
           {isSourceMode ? 'WYSIWYG' : 'Source'}
         </button>
       </div>
+
+      {toggleError && (
+        <div
+          style={{
+            padding: '8px 12px',
+            marginBottom: '12px',
+            background: '#fee',
+            border: '1px solid #fcc',
+            borderRadius: '4px',
+            color: '#c00',
+          }}
+        >
+          Parse error: {toggleError}
+        </div>
+      )}
 
       {isSourceMode ? (
         <SourceEditor content={sourceContent} onChange={setSourceContent} />
