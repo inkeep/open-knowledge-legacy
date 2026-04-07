@@ -27,6 +27,6 @@
     }
   },
   "files": {
-    "includes": ["**", "!**/node_modules", "!**/dist", "!**/.turbo", "!**/v7-test"]
+    "includes": ["**", "!**/node_modules", "!**/dist", "!**/.turbo", "!**/v7-test", "!**/tmp"]
   }
 }
