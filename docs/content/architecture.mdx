@@ -1,0 +1,87 @@
+---
+title: Architecture
+description: Foundation architecture validated through the init spike -- TipTap, Hocuspocus, Yjs, CodeMirror, and git auto-persistence.
+---
+
+The architecture was validated through a structured spike with seven targeted validations (V1--V7). Six passed, one failed (V7 -- Yjs v14 delta protocol), which confirmed the expected fallback path.
+
+## System overview
+
+```
+Browser (Vite)                        Server (embedded in Vite)
++-----------------------+             +-------------------------+
+| TipTap v3 Editor      |  WebSocket  | Hocuspocus              |
+| + y-prosemirror       | <========> | + DirectConnection API  |
+| + Collaboration ext   |   /collab   | + Persistence extension |
++-----------------------+             +-------------------------+
+| CodeMirror 6          |                      |
+| (source toggle)       |              onStoreDocument hook
++-----------------------+                      |
+                                    +----------v----------+
+                                    | Layer 1: CRDT->disk |
+                                    | (2-10s debounce)    |
+                                    +----------+----------+
+                                               |
+                                    +----------v----------+
+                                    | Layer 2: disk->git  |
+                                    | (30s debounce)      |
+                                    | WIP refs, plumbing  |
+                                    +---------------------+
+```
+
+## Editor layer
+
+TipTap v3 with ProseMirror provides the WYSIWYG editing surface. Key extensions:
+
+- **Collaboration** (`@tiptap/extension-collaboration`) -- binds Y.Doc from Hocuspocus provider to the editor via y-prosemirror
+- **Frontmatter** -- regex strip before parse, re-prepend after serialize (~25 LOC)
+- **Image** (`@tiptap/extension-image`) -- built-in markdown support in TipTap v3
+- **Task lists** (`TaskList` + `TaskItem`) -- native markdown round-trip in v3
+- **JsxComponent** -- custom void node extension for embedding React components as fenced code blocks with `jsx-component` info string
+
+Markdown round-trip fidelity: zero semantic loss after ~80 LOC of fixes. Convergence confirmed (cycle 2 byte-identical to cycle 1).
+
+## CRDT layer
+
+Yjs v13 with y-prosemirror provides conflict-free concurrent editing. The Yjs v14 unified delta protocol was tested (V7) but is not yet viable -- the ecosystem pins to v13.
+
+Key constraint: source toggle uses `updateYFragment()` (diff-based), never `prosemirrorJSONToYDoc()` which would destroy collaboration state.
+
+## Collab server
+
+Hocuspocus embeds in Vite via `configureServer()` plugin hook with a standalone `ws.WebSocketServer({ noServer: true })`. No `listen()` call -- the embedding pattern intercepts WebSocket upgrades on `/collab`.
+
+Agent writes use `hocuspocus.openDirectConnection()` via an HTTP API (`POST /api/agent-write`), allowing external processes to write into the CRDT without a WebSocket connection.
+
+## Source toggle
+
+Two-mode toggle between WYSIWYG (TipTap) and source (CodeMirror 6):
+
+- **To source:** `editor.getJSON()` -> `MarkdownManager.serialize()` -> CodeMirror
+- **From source:** `MarkdownManager.parse()` -> `schema.nodeFromJSON()` -> `updateYFragment()`
+
+No CRDT binding in source mode -- CodeMirror creates/destroys on toggle.
+
+## Persistence pipeline
+
+Three-tier auto-persistence with no "save" button:
+
+1. **Crash recovery** (CRDT to disk) -- Hocuspocus `onStoreDocument` hook, 2s quiet / 10s max debounce
+2. **Auto-commits** -- `simple-git` plumbing: `git add` -> `write-tree` -> `commit-tree` -> `update-ref refs/wip/main`, 30s debounce
+3. **Named checkpoints** -- user-initiated (future)
+
+Server-side serialization uses `yXmlFragmentToProsemirrorJSON()` (pure Yjs/JSON, no DOM) then `MarkdownManager.serialize()` to markdown string.
+
+## Void nodes (React component preview)
+
+JSX components embedded in markdown as fenced code blocks:
+
+````
+```jsx-component
+<Callout type="warning">
+  Always run the integration tests before deploying to production.
+</Callout>
+```
+````
+
+The `JsxComponent` extension intercepts `code` tokens with `lang === 'jsx-component'` at priority 60 (above codeBlock's 50). Known components get visual preview via `ReactNodeViewRenderer`. The raw JSX string survives the markdown round-trip unchanged.
