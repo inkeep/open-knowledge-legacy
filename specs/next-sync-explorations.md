@@ -340,6 +340,23 @@ These scenarios apply to every exploration regardless of stack or approach. Any 
 | T66 | Empty document — all operations work | Create, edit, toggle, agent write, persist — all work on an empty doc without null/undefined errors. |
 | T67 | Large document (~50KB, ~100 paragraphs) — all operations work | No performance degradation, no timeout, no truncation. |
 
+### MDX content fidelity
+
+The product handles `.mdx` files (PROJECT.md TQ3, PQ8). The void node approach (fenced code blocks with `jsx-component` info string) is proven for simple cases (V6). These scenarios test the harder MDX patterns that the mdx-crdt-roundtrip-fidelity report identified as failure vectors. Every spike must use an MDX test fixture alongside the standard `.md` fixture.
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T90 | Simple void node (`<Callout type="warning">text</Callout>`) survives all sync paths | Fenced code block with `jsx-component` info string preserved verbatim. Same as T61 but explicitly in the MDX context. |
+| T91 | Void node with expression props (`<Chart data={metrics.filter(m => m.value > 0)}/>`) survives all sync paths | Expression prop `data={...}` preserved exactly — no escaping, no evaluation, no rewriting of the JSX. The `{` and `}` delimiters must not be mangled by markdown parsing. |
+| T92 | Void node with multiline JSX and nested components survives all sync paths | `<Tabs><Tab label="A">content A</Tab><Tab label="B">content B</Tab></Tabs>` — the entire multiline JSX block is a single string attribute, preserved verbatim. |
+| T93 | Void node with closing ``` inside JSX content | Edge case: the JSX content itself contains a triple-backtick (e.g., a code example). The fenced code block delimiter must use 4+ backticks to avoid premature closing. Verify the serializer handles this. |
+| T94 | MDX import statement (`import { Chart } from './components'`) survives all sync paths | Imports are not standard markdown. They must be preserved verbatim — either as frontmatter-like preamble or as a special node type. Document how each approach handles imports. |
+| T95 | MDX export statement (`export const metadata = { title: 'My Page' }`) survives all sync paths | Same as T94 but for exports. These are load-bearing in frameworks like Next.js/Fumadocs. |
+| T96 | Mixed .md and .mdx content in the same document | Standard markdown paragraphs interleaved with JSX void nodes, import statements, and expression props. The full document survives round-trip. |
+| T97 | Agent writes a void node via DirectConnection or markdown endpoint | Agent inserts a `jsx-component` fenced code block. It renders as a React component in WYSIWYG. It survives toggle to source and back. |
+| T98 | Two users editing near a void node boundary — one in WYSIWYG, one in source | User A types a paragraph before the void node in WYSIWYG. User B edits the paragraph after the void node in source. Both edits present, void node intact. |
+| T99 | Void node content edited in source mode | User toggles to source, modifies the JSX inside the fenced code block (e.g., changes `type="warning"` to `type="info"`), toggles back. The void node re-renders with the updated props. |
+
 ### Persistence and recovery
 
 | ID | Scenario | What to verify |
