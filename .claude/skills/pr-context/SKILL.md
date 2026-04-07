@@ -22,14 +22,14 @@ Use this context to:
 | **Author** | Nick Gomez |
 | **Base** | `main` |
 | **Repo** | open-knowledge |
-| **Head SHA** | `6751db6829827a48096a5e511b546294ae16f187` |
-| **Size** | 15 commits · +2148/-0 · 43 files |
+| **Head SHA** | `cf05381d0cf889050fd540daa7ae63712882d976` |
+| **Size** | 16 commits · +2180/-0 · 45 files |
 | **Labels** | _None — local review._ |
 | **Review state** | LOCAL |
 | **Diff mode** | `inline` — full tracked diff included below |
 | **Event** | `local:manual` |
 | **Trigger command** | `local-review` |
-| **Review scope** | `full` — local review uses the full branch diff against the target branch |
+| **Review scope** | `delta` — scoped to changes since last review (delta from cf05381d0c) |
 
 ## Description
 
@@ -59,6 +59,7 @@ ad32782 docs: add README and update CLAUDE.md for init_spike
 3f1a241 docs: add fumadocs documentation site
 ab08dd1 chore: update gitignore for docs site (.next, .source)
 6751db6 fixup! local-review: baseline (pre-review state)
+cf05381 fixup! local-review: address findings (pass 1)
 ```
 
 ## Changed Files
@@ -66,6 +67,7 @@ ab08dd1 chore: update gitignore for docs site (.next, .source)
 Per-file diff stats (for prioritizing review effort). Untracked files are listed below but are not converted into synthetic patch text by this generator:
 
 ```
+ .claude/pr-diff/local-review-target-branch.txt     |   1 +
  .gitignore                                         |   7 +
  docs/.gitignore                                    |   2 +
  docs/content/architecture.mdx                      |  87 +++++++++
@@ -91,30 +93,32 @@ Per-file diff stats (for prioritizing review effort). Untracked files are listed
  init_spike/content/test-fixture.md                 |  60 ++++++
  init_spike/index.html                              |  12 ++
  init_spike/package.json                            |  52 +++++
- init_spike/src/App.tsx                             |  58 ++++++
+ init_spike/src/App.tsx                             |  82 ++++++++
  init_spike/src/editor/Callout.tsx                  |  19 ++
- init_spike/src/editor/SourceEditor.tsx             |  47 +++++
- init_spike/src/editor/TiptapEditor.tsx             |  98 ++++++++++
+ init_spike/src/editor/SourceEditor.tsx             |  61 ++++++
+ init_spike/src/editor/TiptapEditor.tsx             |  82 ++++++++
  .../src/editor/extensions/JsxComponentView.tsx     |  45 +++++
  init_spike/src/editor/extensions/frontmatter.ts    |  24 +++
  init_spike/src/editor/extensions/jsx-component.ts  |  75 +++++++
+ init_spike/src/editor/extensions/shared.ts         |  20 ++
  init_spike/src/main.tsx                            |  12 ++
  init_spike/src/server/agent-sim.ts                 |  43 ++++
  init_spike/src/server/hocuspocus-plugin.ts         |  64 ++++++
- init_spike/src/server/persistence.ts               | 137 +++++++++++++
+ init_spike/src/server/persistence.ts               | 141 +++++++++++++
  init_spike/src/v1a-roundtrip-test.ts               | 126 ++++++++++++
- init_spike/src/v1b-roundtrip-test.ts               | 151 ++++++++++++++
+ init_spike/src/v1b-roundtrip-test.ts               | 136 +++++++++++++
  init_spike/src/v7-test/delta-protocol-test.ts      | 107 ++++++++++
  init_spike/src/v7-test/package-lock.json           | 147 ++++++++++++++
  init_spike/src/v7-test/package.json                |  15 ++
  init_spike/tsconfig.json                           |  19 ++
  init_spike/vite.config.ts                          |   7 +
- 43 files changed, 2148 insertions(+)
+ 45 files changed, 2180 insertions(+)
 ```
 
 Full file list (including untracked files when present):
 
 ```
+.claude/pr-diff/local-review-target-branch.txt
 .gitignore
 docs/.gitignore
 docs/content/architecture.mdx
@@ -147,6 +151,7 @@ init_spike/src/editor/TiptapEditor.tsx
 init_spike/src/editor/extensions/JsxComponentView.tsx
 init_spike/src/editor/extensions/frontmatter.ts
 init_spike/src/editor/extensions/jsx-component.ts
+init_spike/src/editor/extensions/shared.ts
 init_spike/src/main.tsx
 init_spike/src/server/agent-sim.ts
 init_spike/src/server/hocuspocus-plugin.ts
@@ -163,6 +168,13 @@ init_spike/vite.config.ts
 ## Diff
 
 ```diff
+diff --git a/.claude/pr-diff/local-review-target-branch.txt b/.claude/pr-diff/local-review-target-branch.txt
+new file mode 100644
+index 0000000..ba2906d
+--- /dev/null
++++ b/.claude/pr-diff/local-review-target-branch.txt
+@@ -0,0 +1 @@
++main
 diff --git a/.gitignore b/.gitignore
 new file mode 100644
 index 0000000..8ff4208
@@ -1269,10 +1281,10 @@ index 0000000..c6aa52b
 +}
 diff --git a/init_spike/src/App.tsx b/init_spike/src/App.tsx
 new file mode 100644
-index 0000000..bad8f2e
+index 0000000..4589848
 --- /dev/null
 +++ b/init_spike/src/App.tsx
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,82 @@
 +import { useCallback, useRef, useState } from 'react';
 +import { SourceEditor } from './editor/SourceEditor';
 +import { TiptapEditor } from './editor/TiptapEditor';
@@ -1285,12 +1297,20 @@ index 0000000..bad8f2e
 +    applyMarkdown: (md: string) => void;
 +  } | null>(null);
 +
++  const [toggleError, setToggleError] = useState<string | null>(null);
++
 +  const handleToggle = useCallback(() => {
 +    if (isSourceMode) {
 +      // Toggle back to WYSIWYG — apply source edits via updateYFragment
 +      const editor = editorRef.current;
-+      if (editor && sourceContent) {
-+        editor.applyMarkdown(sourceContent);
++      if (editor) {
++        try {
++          editor.applyMarkdown(sourceContent);
++          setToggleError(null);
++        } catch (err) {
++          setToggleError(err instanceof Error ? err.message : 'Failed to parse markdown');
++          return; // Stay in source mode on error
++        }
 +      }
 +      setIsSourceMode(false);
 +    } else {
@@ -1300,6 +1320,7 @@ index 0000000..bad8f2e
 +        const md = editor.getMarkdown();
 +        setSourceContent(md);
 +      }
++      setToggleError(null);
 +      setIsSourceMode(true);
 +    }
 +  }, [isSourceMode, sourceContent]);
@@ -1322,6 +1343,21 @@ index 0000000..bad8f2e
 +          {isSourceMode ? 'WYSIWYG' : 'Source'}
 +        </button>
 +      </div>
++
++      {toggleError && (
++        <div
++          style={{
++            padding: '8px 12px',
++            marginBottom: '12px',
++            background: '#fee',
++            border: '1px solid #fcc',
++            borderRadius: '4px',
++            color: '#c00',
++          }}
++        >
++          Parse error: {toggleError}
++        </div>
++      )}
 +
 +      {isSourceMode ? (
 +        <SourceEditor content={sourceContent} onChange={setSourceContent} />
@@ -1358,10 +1394,10 @@ index 0000000..d83be75
 +}
 diff --git a/init_spike/src/editor/SourceEditor.tsx b/init_spike/src/editor/SourceEditor.tsx
 new file mode 100644
-index 0000000..c83cb77
+index 0000000..8ae8da2
 --- /dev/null
 +++ b/init_spike/src/editor/SourceEditor.tsx
-@@ -0,0 +1,47 @@
+@@ -0,0 +1,61 @@
 +import { markdown } from '@codemirror/lang-markdown';
 +import { EditorState } from '@codemirror/state';
 +import { EditorView } from '@codemirror/view';
@@ -1378,12 +1414,14 @@ index 0000000..c83cb77
 +  const viewRef = useRef<EditorView | null>(null);
 +  const onChangeRef = useRef(onChange);
 +  onChangeRef.current = onChange;
++  const initialContentRef = useRef(content);
 +
++  // Mount CodeMirror once
 +  useEffect(() => {
 +    if (!containerRef.current) return;
 +
 +    const state = EditorState.create({
-+      doc: content,
++      doc: initialContentRef.current,
 +      extensions: [
 +        basicSetup,
 +        markdown(),
@@ -1405,29 +1443,36 @@ index 0000000..c83cb77
 +      view.destroy();
 +      viewRef.current = null;
 +    };
++  }, []);
++
++  // Reconcile external content changes without destroying the view
++  useEffect(() => {
++    const view = viewRef.current;
++    if (!view) return;
++    const current = view.state.doc.toString();
++    if (content !== current) {
++      view.dispatch({
++        changes: { from: 0, to: current.length, insert: content },
++      });
++    }
 +  }, [content]);
 +
 +  return <div ref={containerRef} className="source-editor" />;
 +}
 diff --git a/init_spike/src/editor/TiptapEditor.tsx b/init_spike/src/editor/TiptapEditor.tsx
 new file mode 100644
-index 0000000..2e06f4b
+index 0000000..9ed8db0
 --- /dev/null
 +++ b/init_spike/src/editor/TiptapEditor.tsx
-@@ -0,0 +1,98 @@
+@@ -0,0 +1,82 @@
 +import { HocuspocusProvider } from '@hocuspocus/provider';
 +import Collaboration from '@tiptap/extension-collaboration';
-+import Image from '@tiptap/extension-image';
-+import Link from '@tiptap/extension-link';
-+import { TaskItem, TaskList } from '@tiptap/extension-list';
-+import { Table } from '@tiptap/extension-table';
 +import { MarkdownManager } from '@tiptap/markdown';
 +import { EditorContent, useEditor } from '@tiptap/react';
-+import StarterKit from '@tiptap/starter-kit';
 +import { updateYFragment } from '@tiptap/y-tiptap';
 +import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 +import { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter';
-+import { JsxComponent } from './extensions/jsx-component';
++import { sharedExtensions } from './extensions/shared';
 +
 +const DOC_NAME = 'test-doc';
 +
@@ -1435,17 +1480,6 @@ index 0000000..2e06f4b
 +  getMarkdown: () => string;
 +  applyMarkdown: (md: string) => void;
 +}
-+
-+// Extensions shared between the editor and MarkdownManager
-+const sharedExtensions = [
-+  StarterKit.configure({ undoRedo: false }),
-+  Link,
-+  Table,
-+  Image,
-+  TaskList,
-+  TaskItem,
-+  JsxComponent,
-+];
 +
 +export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
 +  const providerRef = useRef<HocuspocusProvider | null>(null);
@@ -1675,6 +1709,32 @@ index 0000000..34c155b
 +    };
 +  },
 +});
+diff --git a/init_spike/src/editor/extensions/shared.ts b/init_spike/src/editor/extensions/shared.ts
+new file mode 100644
+index 0000000..5b86c14
+--- /dev/null
++++ b/init_spike/src/editor/extensions/shared.ts
+@@ -0,0 +1,20 @@
++/**
++ * Shared extension list used by the editor, persistence layer, and round-trip tests.
++ * Single source of truth — drift between these causes silent data corruption.
++ */
++import Image from '@tiptap/extension-image';
++import Link from '@tiptap/extension-link';
++import { TaskItem, TaskList } from '@tiptap/extension-list';
++import { Table } from '@tiptap/extension-table';
++import StarterKit from '@tiptap/starter-kit';
++import { JsxComponent } from './jsx-component';
++
++export const sharedExtensions = [
++  StarterKit.configure({ undoRedo: false }),
++  Link,
++  Table,
++  Image,
++  TaskList,
++  TaskItem,
++  JsxComponent,
++];
 diff --git a/init_spike/src/main.tsx b/init_spike/src/main.tsx
 new file mode 100644
 index 0000000..88c5c0f
@@ -1814,10 +1874,10 @@ index 0000000..fbd297e
 +}
 diff --git a/init_spike/src/server/persistence.ts b/init_spike/src/server/persistence.ts
 new file mode 100644
-index 0000000..d392072
+index 0000000..9f06171
 --- /dev/null
 +++ b/init_spike/src/server/persistence.ts
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,141 @@
 +/**
 + * V5: Git auto-persistence pipeline.
 + *
@@ -1830,36 +1890,31 @@ index 0000000..d392072
 +import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 +import { resolve } from 'node:path';
 +import type { Extension } from '@hocuspocus/server';
-+import Image from '@tiptap/extension-image';
-+import Link from '@tiptap/extension-link';
-+import { TaskItem, TaskList } from '@tiptap/extension-list';
-+import { Table } from '@tiptap/extension-table';
++import { getSchema } from '@tiptap/core';
 +import { MarkdownManager } from '@tiptap/markdown';
-+import StarterKit from '@tiptap/starter-kit';
-+import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
++import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 +import simpleGit from 'simple-git';
 +import { prependFrontmatter, stripFrontmatter } from '../editor/extensions/frontmatter';
-+import { JsxComponent } from '../editor/extensions/jsx-component';
++import { sharedExtensions } from '../editor/extensions/shared';
 +
 +const CONTENT_DIR = resolve(import.meta.dirname ?? '.', '../../content');
 +const PROJECT_DIR = resolve(import.meta.dirname ?? '.', '../..');
 +
-+const mdManager = new MarkdownManager({
-+  extensions: [
-+    StarterKit.configure({ undoRedo: false }),
-+    Link,
-+    Table,
-+    Image,
-+    TaskList,
-+    TaskItem,
-+    JsxComponent,
-+  ],
-+});
++const mdManager = new MarkdownManager({ extensions: sharedExtensions });
++const schema = getSchema(sharedExtensions);
 +
 +const git = simpleGit(PROJECT_DIR);
 +
 +// Track frontmatter per document (set when loading, re-prepended on save)
 +const frontmatterCache = new Map<string, string>();
++
++function safeContentPath(documentName: string): string {
++  const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
++  if (!filePath.startsWith(`${CONTENT_DIR}/`)) {
++    throw new Error(`Invalid document name: ${documentName}`);
++  }
++  return filePath;
++}
 +
 +// Debounce git commits: 30s after last disk write
 +let gitCommitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1888,18 +1943,23 @@ index 0000000..d392072
 +  }
 +}
 +
++let commitInFlight: Promise<void> | null = null;
++
 +function scheduleGitCommit(): void {
 +  if (gitCommitTimer) clearTimeout(gitCommitTimer);
 +  gitCommitTimer = setTimeout(() => {
-+    commitToWipRef();
 +    gitCommitTimer = null;
++    if (commitInFlight) return; // skip if previous commit still running
++    commitInFlight = commitToWipRef().finally(() => {
++      commitInFlight = null;
++    });
 +  }, GIT_DEBOUNCE_MS);
 +}
 +
 +export function createPersistenceExtension(): Extension {
 +  return {
 +    async onLoadDocument({ document, documentName }) {
-+      const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
++      const filePath = safeContentPath(documentName);
 +      if (!existsSync(filePath)) return;
 +
 +      try {
@@ -1916,10 +1976,14 @@ index 0000000..d392072
 +          const xmlFragment = document.getXmlFragment('default');
 +          // Only populate if the fragment is empty (first load)
 +          if (xmlFragment.length === 0) {
-+            // Use yDocToProsemirrorJSON in reverse isn't available,
-+            // so we set the initial content via the markdown body.
-+            // The TipTap editor will pick up the content via CRDT sync.
-+            console.log(`[persistence] Loaded ${filePath} with frontmatter cached`);
++            const pmNode = schema.nodeFromJSON(json);
++            updateYFragment(document, xmlFragment, pmNode, {
++              mapping: new Map(),
++              isOMark: new Map(),
++            });
++            console.log(
++              `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
++            );
 +          }
 +        }
 +      } catch (e) {
@@ -1938,7 +2002,7 @@ index 0000000..d392072
 +        const markdown = prependFrontmatter(frontmatter, body);
 +
 +        // Write to disk (Layer 1)
-+        const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
++        const filePath = safeContentPath(documentName);
 +        writeFileSync(filePath, markdown, 'utf-8');
 +        console.log(`[persistence] Wrote ${filePath} (${markdown.length} bytes)`);
 +
@@ -2089,10 +2153,10 @@ index 0000000..47f9511
 +console.log(output1);
 diff --git a/init_spike/src/v1b-roundtrip-test.ts b/init_spike/src/v1b-roundtrip-test.ts
 new file mode 100644
-index 0000000..15e942c
+index 0000000..d6657dc
 --- /dev/null
 +++ b/init_spike/src/v1b-roundtrip-test.ts
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,136 @@
 +/**
 + * V1b: Markdown round-trip fidelity WITH fixes applied.
 + *
@@ -2105,14 +2169,9 @@ index 0000000..15e942c
 + */
 +import { readFileSync } from 'node:fs';
 +import { resolve } from 'node:path';
-+import Image from '@tiptap/extension-image';
-+import Link from '@tiptap/extension-link';
-+import { TaskItem, TaskList } from '@tiptap/extension-list';
-+import { Table } from '@tiptap/extension-table';
 +import { MarkdownManager } from '@tiptap/markdown';
-+import StarterKit from '@tiptap/starter-kit';
 +import { prependFrontmatter, stripFrontmatter } from './editor/extensions/frontmatter';
-+import { JsxComponent } from './editor/extensions/jsx-component';
++import { sharedExtensions } from './editor/extensions/shared';
 +
 +const dirname = import.meta.dirname ?? '.';
 +const fixturePath = resolve(dirname, '../content/test-fixture.md');
@@ -2123,17 +2182,7 @@ index 0000000..15e942c
 +console.log(`Input length: ${input.length} bytes\n`);
 +
 +// Create MarkdownManager with all extensions including fixes
-+const md = new MarkdownManager({
-+  extensions: [
-+    StarterKit.configure({ undoRedo: false }),
-+    Link,
-+    Table,
-+    Image,
-+    TaskList,
-+    TaskItem,
-+    JsxComponent,
-+  ],
-+});
++const md = new MarkdownManager({ extensions: sharedExtensions });
 +
 +// Helper: round-trip with frontmatter handling
 +function roundTrip(markdown: string): string {
@@ -2573,7 +2622,253 @@ index 0000000..6a7443a
 
 ## Changes Since Last Review
 
-_N/A — local review (no prior GitHub review baseline)._
+### Delta Files
+
+```
+_No files changed in delta._
+```
+
+### Delta Stats
+
+```
+_No stats available._
+```
+
+### Delta Diff
+
+_No delta diff available._
+
+> **Review Focus:** This is a re-review scoped to changes since the last review pass (`cf05381d0c`). Focus your review on the delta — the changes made to address prior findings. The full branch diff is still available above for context, but your review should prioritize the delta changes.
+
+## Review Iteration History
+
+# Review Iteration Log
+
+---
+
+## Review Pass 0
+**Recommendation: **🚫 REQUEST CHANGES**** | **Risk: **Medium**** | **Blocking:** 0 Critical, 4 Major
+
+<details>
+<summary>Full review</summary>
+
+## PR Review Summary
+
+**(10) Total Issues** | Risk: **Medium** | Recommendation: **🚫 REQUEST CHANGES**
+
+### 🟠 Major (4)
+
+🟠 1) `init_spike/src/editor/SourceEditor.tsx:44 || sourceeditor-content-dep` **CodeMirror destroyed on every keystroke**
+
+**Issue:** The `useEffect` dependency array includes `content`, which changes on every keystroke (since `onChange` propagates back up to the parent and returns as the `content` prop). This causes the entire CodeMirror `EditorView` to be destroyed and recreated on every character typed — losing cursor position, selection state, scroll position, and undo history.
+
+**Why:** This makes the source editor unusable for anything beyond trivial edits. Users will see constant cursor jumps and loss of editing context. The source toggle (V4b) is a core validated feature; a broken source editor undermines that validation.
+
+**Fix:** Initialize CodemirrorView once on mount (empty dependency array `[]`), and use a separate effect or `EditorView.dispatch` to reconcile external `content` changes only when the prop differs from the current doc state. The `onChangeRef` pattern already in the file shows the right instinct — apply the same pattern to incoming content:
+
+```typescript
+// Mount once
+useEffect(() => {
+  if (!containerRef.current) return;
+  const view = new EditorView({ /* ... */ parent: containerRef.current });
+  viewRef.current = view;
+  return () => { view.destroy(); };
+}, []); // mount-only
+
+// Reconcile external content changes
+useEffect(() => {
+  const view = viewRef.current;
+  if (!view) return;
+  const current = view.state.doc.toString();
+  if (content !== current) {
+    view.dispatch({
+      changes: { from: 0, to: current.length, insert: content },
+    });
+  }
+}, [content]);
+```
+
+---
+
+🟠 2) `init_spike/src/server/persistence.ts:81-108 || onloaddoc-dead-code` **`onLoadDocument` never populates Y.Doc — dead code**
+
+**Issue:** The `onLoadDocument` handler reads the markdown file, strips frontmatter, parses it to JSON via `MarkdownManager`, and caches the frontmatter — but never actually populates the `Y.XmlFragment` with the parsed content. The `if (xmlFragment.length === 0)` branch logs a message and returns, but the parsed JSON (`json`) is unused. New documents always start empty regardless of file content on disk.
+
+**Why:** This means the persistence pipeline can write to disk but never loads from disk on startup. The entire "load from git" half of the persistence story is non-functional. If the server restarts, all content is lost despite being saved to the filesystem.
+
+**Fix:** After parsing the JSON, use `updateYFragment` (the same function used in the source toggle path) to populate the Y.Doc fragment:
+
+```typescript
+if (xmlFragment.length === 0) {
+  const schema = /* shared schema */;
+  const pmNode = schema.nodeFromJSON(json);
+  updateYFragment(document, xmlFragment, pmNode, {
+    mapping: new Map(),
+    isOMark: new Map(),
+  });
+}
+```
+
+This requires access to a ProseMirror `Schema` on the server side, which means extracting the shared extension list into a module that both client and server can import without pulling in React dependencies (see Consider #3 below).
+
+---
+
+🟠 3) `init_spike/src/server/persistence.ts:82,121 || path-traversal` **Unsanitized `documentName` enables path traversal**
+
+**Issue:** Both `onLoadDocument` (line 82) and `onStoreDocument` (line 121) construct file paths via `resolve(CONTENT_DIR, \`${documentName}.md\`)`. The `documentName` comes from the Hocuspocus connection, which is ultimately controlled by the client (`name: DOC_NAME` in the provider). A `documentName` like `../../etc/passwd` would resolve outside `CONTENT_DIR`. While the current spike hardcodes `'test-doc'`, this pattern will persist into production code.
+
+**Why:** Path traversal in a write path (`writeFileSync`) is a file-overwrite vulnerability. In the read path, it enables reading arbitrary files as markdown. This is the kind of foundational pattern that's easy to fix now and dangerous to inherit later.
+
+**Fix:** Validate that the resolved path stays within `CONTENT_DIR`:
+
+```typescript
+const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
+if (!filePath.startsWith(CONTENT_DIR)) {
+  throw new Error(`Invalid document name: ${documentName}`);
+}
+```
+
+---
+
+🟠 4) `init_spike/src/server/persistence.ts:71-77 || git-commit-unhandled` **Git commit has no concurrency guard and unhandled Promise**
+
+**Issue:** `scheduleGitCommit()` fires `commitToWipRef()` inside a `setTimeout` callback without awaiting the returned Promise or catching errors. If the async git operations throw, the rejection is unhandled. Additionally, there's no in-flight guard — if two commits overlap (the 30s debounce fires while a previous commit is still running `write-tree` / `commit-tree`), git plumbing commands may see inconsistent index state or race on `update-ref`.
+
+**Why:** Unhandled Promise rejections crash Node 18+ by default. Overlapping git plumbing commands can corrupt `refs/wip/main` or produce commits with incorrect tree states. Both are silent data-integrity risks.
+
+**Fix:** Track an in-flight Promise and handle errors:
+
+```typescript
+let commitInFlight: Promise<void> | null = null;
+
+function scheduleGitCommit(): void {
+  if (gitCommitTimer) clearTimeout(gitCommitTimer);
+  gitCommitTimer = setTimeout(async () => {
+    gitCommitTimer = null;
+    if (commitInFlight) return; // skip if previous commit still running
+    commitInFlight = commitToWipRef()
+      .catch((err) => console.error('[persistence] git commit failed:', err))
+      .finally(() => { commitInFlight = null; });
+  }, GIT_DEBOUNCE_MS);
+}
+```
+
+### 🟡 Minor (2)
+
+🟡 5) `init_spike/src/editor/TiptapEditor.tsx:66-82 || applymarkdown-no-catch` **`applyMarkdown` has no error handling**
+
+**Issue:** The `applyMarkdown` method chains three operations that can throw — `mdManager.parse(body)`, `schema.nodeFromJSON(json)` (throws `RangeError` on invalid node types), and `updateYFragment()` — with no try/catch. Since this is called from the toggle handler in `App.tsx` (also uncaught), a parse failure from malformed markdown in the source editor will crash the React component tree with no recovery path.
+
+**Why:** Users editing in source mode can easily produce temporarily-invalid markdown. The toggle should handle parse failures gracefully (e.g., show an error toast and stay in source mode) rather than crashing the entire editor.
+
+**Fix:** Wrap in try/catch and surface the error to the user:
+
+```typescript
+applyMarkdown(md: string): void {
+  if (!editor) return;
+  try {
+    const { frontmatter, body } = stripFrontmatter(md);
+    frontmatterRef.current = frontmatter;
+    const json = mdManager.parse(body);
+    const pmNode = schema.nodeFromJSON(json);
+    provider.document.transact(() => {
+      updateYFragment(provider.document, yFragment, pmNode, meta);
+    });
+  } catch (err) {
+    console.error('[applyMarkdown] Parse failed:', err);
+    throw err; // Let caller decide UX (toast, stay in source mode, etc.)
+  }
+}
+```
+
+---
+
+🟡 6) `init_spike/src/editor/TiptapEditor.tsx:23-31, init_spike/src/server/persistence.ts:16-22 || extension-list-drift` **Shared extension list duplicated across 3 files**
+
+**Issue:** The `sharedExtensions` array (StarterKit, Link, Table, Image, TaskList, TaskItem, JsxComponent) is defined independently in `TiptapEditor.tsx`, `persistence.ts`, and `v1b-roundtrip-test.ts`. Any change to the extension list (e.g., adding a new node type) must be replicated in all three places. If they drift, the editor and persistence layer will parse/serialize markdown differently, causing silent data corruption on round-trip.
+
+**Why:** Extension list drift is a particularly insidious bug because it doesn't throw errors — it silently drops or misinterprets content. The `JsxComponent` extension is already a case in point: if persistence didn't include it, void nodes would serialize as code blocks.
+
+**Fix:** Extract the shared extensions into a single module (e.g., `src/editor/extensions/shared.ts`) and import it in all three locations. Note: the server-side import path needs to avoid pulling in `ReactNodeViewRenderer` — see Consider #3.
+
+### 💭 Consider (4)
+
+💭 7) `init_spike/src/v1a-roundtrip-test.ts, init_spike/src/v1b-roundtrip-test.ts || tests-no-assertions` **Round-trip tests are console scripts, not asserting tests**
+
+The V1a/V1b round-trip tests `console.log` results and diffs but have no assertions, no non-zero exit codes on failure, and no test framework. They can't gate CI — a regression in markdown fidelity would go undetected. Consider converting to a test runner (e.g., `bun:test`) with assertions on convergence (cycle 2 === cycle 1) and semantic preservation. This would also let you add the round-trip tests to `check:fast`.
+
+---
+
+💭 8) `init_spike/src/App.tsx:17 || falsy-empty-string` **Empty source content silently discarded on toggle-back**
+
+Line 17: `if (editor && sourceContent)` — empty string is falsy in JavaScript. If a user clears all content in source mode and toggles back to WYSIWYG, the `applyMarkdown` call is skipped entirely, silently discarding the user's intent to clear the document. Consider `if (editor && sourceContent != null)` or `if (editor && typeof sourceContent === 'string')`.
+
+---
+
+💭 9) `init_spike/src/server/persistence.ts:1-5 || inverted-dependency` **Server imports client-side editor modules**
+
+The persistence layer imports `JsxComponent` from `../editor/extensions/jsx-component`, which imports `ReactNodeViewRenderer` from `@tiptap/react`. This creates an inverted dependency: the server process transitively depends on React DOM rendering code. While it works today because the server runs in the same Vite process, this will break when the server is extracted to a standalone process (which the architecture docs describe as a goal). Consider splitting `JsxComponent` into a schema-only module (parseMarkdown/renderMarkdown) and a view module (ReactNodeViewRenderer).
+
+---
+
+💭 10) `init_spike/src/server/hocuspocus-plugin.ts:54-56 || error-leak` **Agent-write endpoint leaks internal error messages**
+
+The catch block serializes `e.message` directly into the HTTP response. Internal error details (stack traces, file paths, library internals) could be exposed to API consumers. Consider returning a generic error message and logging the full error server-side.
+
+---
+
+## 🚫 REQUEST CHANGES
+
+**Summary:** The SourceEditor keystroke-destruction bug (Major #1) makes the source toggle feature non-functional. The dead `onLoadDocument` code (Major #2) means persistence is write-only — documents don't survive server restarts. The path traversal (Major #3) and git concurrency issues (Major #4) are foundational patterns that will carry forward. These four issues are straightforward to fix and would meaningfully improve the spike's integrity before it becomes the foundation for production code.
+
+<details>
+<summary>Discarded (8)</summary>
+
+| Location | Issue | Reason Discarded |
+|----------|-------|------------------|
+| `hocuspocus-plugin.ts` | No authentication on `/api/agent-write` | Expected and documented — local dev only |
+| `TiptapEditor.tsx:37-42` | HocuspocusProvider stale ref on remount | Reviewer incorrect — `useRef` creates fresh ref per component instance; lazy init pattern is valid |
+| `vite.config.ts` | Hocuspocus server in Vite is dev-only | Documented spike constraint, not a production architecture |
+| `TiptapEditor.tsx` | `forwardRef` deprecated in React 19 | TipTap v3 targets React 18; premature migration concern |
+| `docs/` | MDX components not imported | fumadocs provides default components via `mdx-components.tsx` |
+| `frontmatter.ts` | Regex requires trailing newline after `---` | Matches standard YAML frontmatter spec; edge case is a non-issue |
+| `persistence.ts` | Frontmatter cached in closure and in ref separately | Two independent caches for two different lifecycle contexts (server vs client); not a bug |
+| `App.tsx` | Missing `aria-pressed` on toggle button | Valid accessibility note but below threshold for spike review |
+
+</details>
+
+<details>
+<summary>Reviewer Stats</summary>
+
+| Reviewer | Returned | Kept |
+|----------|----------|------|
+| `pr-review-standards` | 6 | 4 |
+| `pr-review-errors` | 5 | 2 |
+| `pr-review-appsec` | 4 | 1 |
+| `pr-review-frontend` | 5 | 1 |
+| `pr-review-sre` | 4 | 1 |
+| `pr-review-consistency` | 6 | 1 |
+
+</details>
+
+</details>
+
+## Fix Response 1
+
+### Addressed
+- 🟠 1) CodeMirror destroyed on every keystroke (`SourceEditor.tsx:44`): Split into mount-once effect (`[]` deps, initial content via ref) + separate reconciliation effect that uses `EditorView.dispatch()` to update content without destroying the view. Used `initialContentRef` to satisfy Biome's `useExhaustiveDependencies`.
+- 🟠 2) `onLoadDocument` dead code (`persistence.ts:81-108`): Added `getSchema()` from `@tiptap/core` and `updateYFragment` from `@tiptap/y-tiptap` to actually populate the Y.Doc from parsed markdown on first load. Schema derived from the shared extension list.
+- 🟠 3) Path traversal (`persistence.ts:82,121`): Added `safeContentPath()` helper that validates `resolve()` output stays within `CONTENT_DIR + '/'` (trailing separator prevents prefix collision like `/content-evil/`). Applied to both `onLoadDocument` and `onStoreDocument`.
+- 🟠 4) Git commit concurrency (`persistence.ts:71-77`): Added `commitInFlight` guard — skips scheduling if a previous commit is still running, clears via `.finally()`. Note: the reviewer's claim about unhandled Promise rejection is incorrect — `commitToWipRef()` wraps its entire body in try/catch, so it never rejects. The real bug was `gitCommitTimer = null` running synchronously before the async commit completed, enabling overlapping commits.
+- 🟡 5) `applyMarkdown` no error handling (`TiptapEditor.tsx:66-82` / `App.tsx:17`): Added try/catch in `App.tsx` `handleToggle` — on parse failure, stays in source mode and displays inline error banner. Error clears on next successful toggle.
+- 🟡 6) Extension list drift (`TiptapEditor.tsx:23-31`, `persistence.ts:16-22`): Created `src/editor/extensions/shared.ts` as single source of truth. Updated `TiptapEditor.tsx`, `persistence.ts`, and `v1b-roundtrip-test.ts` to import from it. Left `v1a-roundtrip-test.ts` unchanged — it intentionally uses a smaller extension set (baseline measurement WITHOUT fixes, per US-003).
+- 💭 8) Empty string falsy (`App.tsx:17`): Fixed by removing the `sourceContent` truthiness check — the `if (editor)` guard is sufficient since `sourceContent` is always a string. Empty string now correctly applies (clears the document).
+
+### Declined
+- 💭 7) Tests are console scripts (`v1a-roundtrip-test.ts`, `v1b-roundtrip-test.ts`): Valid observation but out of scope for this spike. These scripts served their purpose — demonstrating round-trip fidelity with results documented in RESULTS.md. Converting to a test framework is a production concern, not a spike validation requirement.
+- 💭 9) Server imports client-side editor modules (`persistence.ts:1-5`): Valid architectural observation. The inverted dependency (server → React via JsxComponent → ReactNodeViewRenderer) already exists and works in the Vite-embedded context. Splitting JsxComponent into schema-only and view modules is non-trivial refactoring beyond spike scope. Noted for production extraction.
+- 💭 10) Agent-write endpoint leaks error messages (`hocuspocus-plugin.ts:54-56`): Not applicable in context. This is a local dev-only endpoint with no authentication (by design — documented in discarded findings). Error message details are a debugging convenience, not a security risk. The same reasoning that exempted the endpoint from auth exempts it from error sanitization.
+
 
 ## Prior Feedback
 
