@@ -75321,10 +75321,10 @@ index 0000000..8ae8da2
 +}
 diff --git a/init_spike/src/editor/TiptapEditor.tsx b/init_spike/src/editor/TiptapEditor.tsx
 new file mode 100644
-index 0000000..b44ca46
+index 0000000..1eabf78
 --- /dev/null
 +++ b/init_spike/src/editor/TiptapEditor.tsx
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,157 @@
 +import { HocuspocusProvider } from '@hocuspocus/provider';
 +import Collaboration from '@tiptap/extension-collaboration';
 +import { MarkdownManager } from '@tiptap/markdown';
@@ -75415,11 +75415,12 @@ index 0000000..b44ca46
 +            fallbackReason: 'No editor',
 +          };
 +        }
-+        const { frontmatter: snapFm, body: snapBody } = stripFrontmatter(snapshotMarkdown);
++        const { body: snapBody } = stripFrontmatter(snapshotMarkdown);
 +        const { frontmatter: userFm, body: userBody } = stripFrontmatter(userEditedMarkdown);
 +
-+        // Update frontmatter from user's version
-+        frontmatterRef.current = userFm || snapFm;
++        // Update frontmatter from user's version — user has full control in source mode,
++        // so empty string (deleted frontmatter) is intentional, not a fallback trigger.
++        frontmatterRef.current = userFm;
 +
 +        const yFragment = provider.document.getXmlFragment('default');
 +
@@ -75738,10 +75739,10 @@ index 0000000..24e0ccd
 +];
 diff --git a/init_spike/src/editor/three-way-merge.ts b/init_spike/src/editor/three-way-merge.ts
 new file mode 100644
-index 0000000..e749cf5
+index 0000000..e4ff544
 --- /dev/null
 +++ b/init_spike/src/editor/three-way-merge.ts
-@@ -0,0 +1,209 @@
+@@ -0,0 +1,226 @@
 +/**
 + * Three-way merge for source mode toggle-back.
 + *
@@ -75781,13 +75782,30 @@ index 0000000..e749cf5
 +
 +/**
 + * Split markdown into top-level blocks (paragraphs, headings, etc.).
-+ * Blocks are separated by blank lines.
++ * Blocks are separated by blank lines. Respects fenced code blocks
++ * (``` and ~~~) — blank lines inside fences do not cause splits.
 + */
 +export function splitMarkdownBlocks(md: string): string[] {
 +  const normalized = md.replace(/\n+$/, '');
 +  if (!normalized) return [];
-+  const blocks = normalized.split(/\n\n+/);
-+  return blocks.map((b) => b.trim()).filter((b) => b.length > 0);
++  const lines = normalized.split('\n');
++  const blocks: string[] = [];
++  let current: string[] = [];
++  let inFence = false;
++  for (const line of lines) {
++    if (/^(`{3,}|~{3,})/.test(line)) inFence = !inFence;
++    if (!inFence && line.trim() === '' && current.length > 0) {
++      blocks.push(current.join('\n').trim());
++      current = [];
++    } else {
++      current.push(line);
++    }
++  }
++  if (current.length > 0) {
++    const block = current.join('\n').trim();
++    if (block) blocks.push(block);
++  }
++  return blocks;
 +}
 +
 +/**
@@ -75971,10 +75989,10 @@ index 0000000..88c5c0f
 +);
 diff --git a/init_spike/src/server/agent-flow.test.ts b/init_spike/src/server/agent-flow.test.ts
 new file mode 100644
-index 0000000..ba9af8b
+index 0000000..191e617
 --- /dev/null
 +++ b/init_spike/src/server/agent-flow.test.ts
-@@ -0,0 +1,573 @@
+@@ -0,0 +1,642 @@
 +/**
 + * End-to-end test: Agent writes via DirectConnection → changes reflected in editor serialization.
 + *
@@ -76318,6 +76336,75 @@ index 0000000..ba9af8b
 +    await conn.disconnect();
 +  });
 +
++  test('three-way merge falls back to whole-doc when user changes paragraph count', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++    const conn = await hocuspocus.openDirectConnection('test-fallback');
++
++    // Seed with two paragraphs
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++
++      const p1 = new Y.XmlElement('paragraph');
++      const t1 = new Y.XmlText();
++      t1.applyDelta([{ insert: 'Paragraph A' }]);
++      p1.insert(0, [t1]);
++
++      const p2 = new Y.XmlElement('paragraph');
++      const t2 = new Y.XmlText();
++      t2.applyDelta([{ insert: 'Paragraph B' }]);
++      p2.insert(0, [t2]);
++
++      fragment.push([p1, p2]);
++    });
++
++    // Snapshot has 2 paragraphs
++    const fragment = getFragment(conn);
++    const snapshotMarkdown = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
++
++    // Agent adds paragraph C while user is in source mode
++    await conn.transact((doc) => {
++      const frag = doc.getXmlFragment('default');
++      const p3 = new Y.XmlElement('paragraph');
++      const t3 = new Y.XmlText();
++      t3.applyDelta([{ insert: 'Paragraph C — agent added' }]);
++      p3.insert(0, [t3]);
++      frag.push([p3]);
++    });
++
++    // User ALSO adds a paragraph in source mode (paragraph count changes: 2 → 3)
++    const userEdited = `${snapshotMarkdown.trim()}\n\nParagraph D — user added in source\n`;
++
++    // Toggle back — paragraph count mismatch triggers fallback
++    const result = threeWayMerge(
++      getDoc(conn),
++      fragment,
++      snapshotMarkdown,
++      userEdited,
++      mdManager,
++      schema,
++    );
++
++    const finalMarkdown = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
++
++    // Fallback was used (not selective)
++    expect(result.selective).toBe(false);
++    expect(result.fallbackReason).toContain('paragraph count changed');
++
++    // User's content is preserved (whole-doc applies user's version)
++    expect(finalMarkdown).toContain('Paragraph A');
++    expect(finalMarkdown).toContain('Paragraph B');
++    expect(finalMarkdown).toContain('Paragraph D — user added in source');
++
++    // Agent's paragraph C is lost in fallback (documented trade-off)
++    // Document is structurally valid
++    const reparsed = mdManager.parse(finalMarkdown);
++    const reNode = schema.nodeFromJSON(reparsed);
++    expect(reNode).toBeTruthy();
++    expect(reNode.content.childCount).toBeGreaterThan(0);
++
++    await conn.disconnect();
++  });
++
 +  test('agent markdown write via unified path (parse→updateYFragment) appends paragraph', async () => {
 +    const hocuspocus = new Hocuspocus({ quiet: true });
 +    const conn = await hocuspocus.openDirectConnection('test-md-write');
@@ -76620,10 +76707,10 @@ index 0000000..200a069
 +console.log('\nDone. Check the browser editor for new paragraph(s).');
 diff --git a/init_spike/src/server/hocuspocus-plugin.ts b/init_spike/src/server/hocuspocus-plugin.ts
 new file mode 100644
-index 0000000..00189e4
+index 0000000..28f9701
 --- /dev/null
 +++ b/init_spike/src/server/hocuspocus-plugin.ts
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,163 @@
 +import { Hocuspocus } from '@hocuspocus/server';
 +import { getSchema } from '@tiptap/core';
 +import { MarkdownManager } from '@tiptap/markdown';
@@ -76672,16 +76759,18 @@ index 0000000..00189e4
 +          const conn = await hocuspocus.openDirectConnection('test-doc');
 +          const timestamp = new Date().toISOString();
 +
-+          await conn.transact((doc) => {
-+            const fragment = doc.getXmlFragment('default');
-+            const paragraph = new Y.XmlElement('paragraph');
-+            const text = new Y.XmlText();
-+            text.applyDelta([{ insert: `Hello from the agent! ${timestamp}` }]);
-+            paragraph.insert(0, [text]);
-+            fragment.push([paragraph]);
-+          });
-+
-+          await conn.disconnect();
++          try {
++            await conn.transact((doc) => {
++              const fragment = doc.getXmlFragment('default');
++              const paragraph = new Y.XmlElement('paragraph');
++              const text = new Y.XmlText();
++              text.applyDelta([{ insert: `Hello from the agent! ${timestamp}` }]);
++              paragraph.insert(0, [text]);
++              fragment.push([paragraph]);
++            });
++          } finally {
++            await conn.disconnect();
++          }
 +
 +          res.writeHead(200, { 'Content-Type': 'application/json' });
 +          res.end(JSON.stringify({ ok: true, timestamp }));
@@ -76741,31 +76830,33 @@ index 0000000..00189e4
 +          const conn = await hocuspocus.openDirectConnection('test-doc');
 +          const timestamp = new Date().toISOString();
 +
-+          await conn.transact((doc) => {
-+            const fragment = doc.getXmlFragment('default');
++          try {
++            await conn.transact((doc) => {
++              const fragment = doc.getXmlFragment('default');
 +
-+            // Serialize current content to markdown
-+            const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
-+            const currentMarkdown = mdManager.serialize(currentJson);
++              // Serialize current content to markdown
++              const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
++              const currentMarkdown = mdManager.serialize(currentJson);
 +
-+            // Splice agent's markdown at the specified position
-+            let combined: string;
-+            if (position === 'prepend') {
-+              combined = `${markdown.trim()}\n\n${currentMarkdown.trim()}\n`;
-+            } else {
-+              combined = currentMarkdown.trim()
-+                ? `${currentMarkdown.trim()}\n\n${markdown.trim()}\n`
-+                : `${markdown.trim()}\n`;
-+            }
++              // Splice agent's markdown at the specified position
++              let combined: string;
++              if (position === 'prepend') {
++                combined = `${markdown.trim()}\n\n${currentMarkdown.trim()}\n`;
++              } else {
++                combined = currentMarkdown.trim()
++                  ? `${currentMarkdown.trim()}\n\n${markdown.trim()}\n`
++                  : `${markdown.trim()}\n`;
++              }
 +
-+            // Parse combined markdown → ProseMirror node → updateYFragment
-+            const parsedJson = mdManager.parse(combined);
-+            const pmNode = editorSchema.nodeFromJSON(parsedJson);
-+            const meta = { mapping: new Map(), isOMark: new Map() };
-+            updateYFragment(doc, fragment, pmNode, meta);
-+          });
-+
-+          await conn.disconnect();
++              // Parse combined markdown → ProseMirror node → updateYFragment
++              const parsedJson = mdManager.parse(combined);
++              const pmNode = editorSchema.nodeFromJSON(parsedJson);
++              const meta = { mapping: new Map(), isOMark: new Map() };
++              updateYFragment(doc, fragment, pmNode, meta);
++            });
++          } finally {
++            await conn.disconnect();
++          }
 +
 +          res.writeHead(200, { 'Content-Type': 'application/json' });
 +          res.end(JSON.stringify({ ok: true, timestamp }));
@@ -76785,24 +76876,17 @@ index 0000000..00189e4
 +}
 diff --git a/init_spike/src/server/persistence.test.ts b/init_spike/src/server/persistence.test.ts
 new file mode 100644
-index 0000000..38fb16c
+index 0000000..e74d824
 --- /dev/null
 +++ b/init_spike/src/server/persistence.test.ts
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,31 @@
 +import { describe, expect, test } from 'bun:test';
 +import { resolve } from 'node:path';
++import { safeContentPath } from './persistence';
 +
-+// safeContentPath is not exported, so we replicate the logic for testing.
-+// This validates the security-critical path traversal prevention.
-+const CONTENT_DIR = resolve(import.meta.dirname ?? '.', '../../content');
-+
-+function safeContentPath(documentName: string): string {
-+  const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
-+  if (!filePath.startsWith(`${CONTENT_DIR}/`)) {
-+    throw new Error(`Invalid document name: ${documentName}`);
-+  }
-+  return filePath;
-+}
++// Expected content directory — used only in assertion comparisons, not in function-under-test
++if (!import.meta.dirname) throw new Error('import.meta.dirname is undefined');
++const CONTENT_DIR = resolve(import.meta.dirname, '../../content');
 +
 +describe('safeContentPath', () => {
 +  test('allows simple document names', () => {
@@ -76829,10 +76913,10 @@ index 0000000..38fb16c
 +});
 diff --git a/init_spike/src/server/persistence.ts b/init_spike/src/server/persistence.ts
 new file mode 100644
-index 0000000..d7513c8
+index 0000000..8e4bc49
 --- /dev/null
 +++ b/init_spike/src/server/persistence.ts
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,210 @@
 +/**
 + * V5: Git auto-persistence pipeline.
 + *
@@ -76853,8 +76937,11 @@ index 0000000..d7513c8
 +import { prependFrontmatter, stripFrontmatter } from '../editor/extensions/frontmatter';
 +import { sharedExtensions } from '../editor/extensions/shared';
 +
-+const CONTENT_DIR = resolve(import.meta.dirname ?? '.', '../../content');
-+const PROJECT_DIR = resolve(import.meta.dirname ?? '.', '../..');
++if (!import.meta.dirname) {
++  throw new Error('[persistence] import.meta.dirname is undefined — cannot resolve paths');
++}
++const CONTENT_DIR = resolve(import.meta.dirname, '../../content');
++const PROJECT_DIR = resolve(import.meta.dirname, '../..');
 +
 +const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 +const schema = getSchema(sharedExtensions);
@@ -76864,7 +76951,7 @@ index 0000000..d7513c8
 +// Track frontmatter per document (set when loading, re-prepended on save)
 +const frontmatterCache = new Map<string, string>();
 +
-+function safeContentPath(documentName: string): string {
++export function safeContentPath(documentName: string): string {
 +  const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
 +  if (!filePath.startsWith(`${CONTENT_DIR}/`)) {
 +    throw new Error(`Invalid document name: ${documentName}`);
@@ -76947,18 +77034,26 @@ index 0000000..d7513c8
 +  }, GIT_DEBOUNCE_MS);
 +}
 +
-+// Flush pending git commit on shutdown
++// Flush pending git commit on shutdown — keep process alive until commit completes
++let shutdownRegistered = false;
 +function handleShutdown(): void {
 +  if (gitCommitTimer) {
 +    clearTimeout(gitCommitTimer);
 +    gitCommitTimer = null;
 +  }
-+  if (!commitInFlight) {
-+    commitToWipRef().catch((e) => console.error('[persistence] Shutdown commit failed:', e));
-+  }
++  const flush = async () => {
++    if (commitInFlight) await commitInFlight;
++    await commitToWipRef();
++  };
++  flush()
++    .catch((e) => console.error('[persistence] Shutdown commit failed:', e))
++    .finally(() => process.exit(0));
 +}
-+process.on('SIGINT', handleShutdown);
-+process.on('SIGTERM', handleShutdown);
++if (!shutdownRegistered) {
++  shutdownRegistered = true;
++  process.on('SIGINT', handleShutdown);
++  process.on('SIGTERM', handleShutdown);
++}
 +
 +export function createPersistenceExtension(): Extension {
 +  return {
