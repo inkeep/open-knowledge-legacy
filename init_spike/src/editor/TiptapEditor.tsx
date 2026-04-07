@@ -2,7 +2,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import Collaboration from '@tiptap/extension-collaboration';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter';
 import { sharedExtensions } from './extensions/shared';
@@ -13,7 +13,6 @@ const DOC_NAME = 'test-doc';
 
 export interface TiptapEditorHandle {
   getMarkdown: () => string;
-  applyMarkdown: (md: string) => void;
   /** Three-way merge: apply only user's changes, preserving concurrent agent writes */
   applyThreeWayMerge: (snapshotMarkdown: string, userEditedMarkdown: string) => ThreeWayMergeResult;
   /** Subscribe to Y.Doc content changes. Returns unsubscribe function. */
@@ -76,26 +75,6 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
         const body = mdManager.serialize(json);
         return prependFrontmatter(frontmatterRef.current, body);
       },
-      applyMarkdown(md: string): void {
-        if (!editor) return;
-        const { frontmatter, body } = stripFrontmatter(md);
-        frontmatterRef.current = frontmatter;
-        const json = mdManager.parse(body);
-
-        // Use updateYFragment (diff-based) — NEVER prosemirrorJSONToYDoc
-        const yFragment = provider.document.getXmlFragment('default');
-        const editorSchema = editor.schema;
-        const pmNode = editorSchema.nodeFromJSON(json);
-
-        provider.document.transact(() => {
-          // Sync frontmatter inside transact for atomicity with content update
-          const metaMap = provider.document.getMap('metadata');
-          metaMap.set('frontmatter', frontmatter);
-          // BindingMetadata: mapping tracks Y.Type↔PM node pairs, isOMark tracks overlapping marks
-          const meta = { mapping: new Map(), isOMark: new Map() };
-          updateYFragment(provider.document, yFragment, pmNode, meta);
-        });
-      },
       applyThreeWayMerge(
         snapshotMarkdown: string,
         userEditedMarkdown: string,
@@ -117,24 +96,37 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
 
         const yFragment = provider.document.getXmlFragment('default');
 
-        // Sync frontmatter
-        const metaMap = provider.document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatterRef.current);
+        // Wrap frontmatter + content merge in a single transaction for atomicity
+        // (matches the pattern in applyMarkdown). Yjs nested transactions are supported —
+        // threeWayMerge's inner doc.transact() merges into this outer transaction.
+        let mergeResult: ThreeWayMergeResult = {
+          selective: false,
+          userChangedCount: 0,
+          agentPreservedCount: 0,
+          conflicts: [],
+          fallbackReason: 'Transaction did not complete',
+        };
+        provider.document.transact(() => {
+          const metaMap = provider.document.getMap('metadata');
+          metaMap.set('frontmatter', frontmatterRef.current);
 
-        return threeWayMerge(
-          provider.document,
-          yFragment,
-          snapBody,
-          userBody,
-          mdManager,
-          editor.schema,
-        );
+          mergeResult = threeWayMerge(
+            provider.document,
+            yFragment,
+            snapBody,
+            userBody,
+            mdManager,
+            editor.schema,
+          );
+        });
+
+        return mergeResult;
       },
       onContentChange(callback: (markdown: string) => void): () => void {
         const yFragment = provider.document.getXmlFragment('default');
 
-        // Track whether the change came from our own transact (toggle-back)
-        // to avoid feedback loops. We use a flag that's set during applyMarkdown/threeWayMerge.
+        // Feedback loops are prevented by App.tsx unsubscribing this observer
+        // before calling applyThreeWayMerge on toggle-back.
         const observer = () => {
           try {
             const json = yXmlFragmentToProsemirrorJSON(yFragment);

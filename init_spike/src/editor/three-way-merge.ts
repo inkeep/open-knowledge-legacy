@@ -104,6 +104,20 @@ export function threeWayMerge(
   const conflicts: ConflictInfo[] = [];
   const userBlocks = splitMarkdownBlocks(userEditedMarkdown);
 
+  // Guard: if user inserted or deleted paragraphs, positional comparison is unreliable.
+  // Fall back to whole-doc update (spec A2 item 5: "fallback when markdown structure
+  // changed too drastically for paragraph-level mapping").
+  if (userBlocks.length !== snapshotBlocks.length) {
+    return applyWholeDoc(
+      doc,
+      fragment,
+      userEditedMarkdown,
+      mdManager,
+      schema,
+      `User paragraph count changed (${snapshotBlocks.length} → ${userBlocks.length}), positional merge unreliable`,
+    );
+  }
+
   // Agent-added blocks: those beyond the snapshot's paragraph count
   const agentAddedBlocks: string[] = [];
   for (let i = snapshotBlocks.length; i < currentBlocks.length; i++) {

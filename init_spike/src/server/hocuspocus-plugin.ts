@@ -8,6 +8,10 @@ import * as Y from 'yjs';
 import { sharedExtensions } from '../editor/extensions/shared';
 import { createPersistenceExtension } from './persistence';
 
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+const editorSchema = getSchema(sharedExtensions);
+const MAX_BODY_BYTES = 1_048_576; // 1 MB
+
 export const hocuspocus = new Hocuspocus({
   quiet: true,
   debounce: 2000,
@@ -72,28 +76,44 @@ export function hocuspocusPlugin(): Plugin {
         }
 
         try {
-          // Read request body
+          // Read request body with size limit
           const chunks: Buffer[] = [];
+          let totalBytes = 0;
           for await (const chunk of req) {
+            totalBytes += (chunk as Buffer).length;
+            if (totalBytes > MAX_BODY_BYTES) {
+              res.writeHead(413, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ ok: false, error: 'Payload too large' }));
+              return;
+            }
             chunks.push(chunk as Buffer);
           }
-          const body = JSON.parse(Buffer.concat(chunks).toString()) as {
-            markdown: string;
-            position?: 'append' | 'prepend';
-          };
 
-          if (!body.markdown || typeof body.markdown !== 'string') {
+          let body: unknown;
+          try {
+            body = JSON.parse(Buffer.concat(chunks).toString());
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Invalid JSON' }));
+            return;
+          }
+
+          if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: 'Body must be a JSON object' }));
+            return;
+          }
+
+          const { markdown, position: pos } = body as Record<string, unknown>;
+          if (!markdown || typeof markdown !== 'string') {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: false, error: 'markdown field required' }));
             return;
           }
 
-          const position = body.position ?? 'append';
+          const position = pos === 'prepend' ? 'prepend' : 'append';
           const conn = await hocuspocus.openDirectConnection('test-doc');
           const timestamp = new Date().toISOString();
-
-          const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-          const editorSchema = getSchema(sharedExtensions);
 
           await conn.transact((doc) => {
             const fragment = doc.getXmlFragment('default');
@@ -105,11 +125,11 @@ export function hocuspocusPlugin(): Plugin {
             // Splice agent's markdown at the specified position
             let combined: string;
             if (position === 'prepend') {
-              combined = `${body.markdown.trim()}\n\n${currentMarkdown.trim()}\n`;
+              combined = `${markdown.trim()}\n\n${currentMarkdown.trim()}\n`;
             } else {
               combined = currentMarkdown.trim()
-                ? `${currentMarkdown.trim()}\n\n${body.markdown.trim()}\n`
-                : `${body.markdown.trim()}\n`;
+                ? `${currentMarkdown.trim()}\n\n${markdown.trim()}\n`
+                : `${markdown.trim()}\n`;
             }
 
             // Parse combined markdown → ProseMirror node → updateYFragment

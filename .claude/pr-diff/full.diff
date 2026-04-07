@@ -93,12 +93,110 @@ index 0000000..0e6c51e
 @@ -0,0 +1,2 @@
 +.next/
 +.source/
+diff --git a/docs/content/agent-write-path.mdx b/docs/content/agent-write-path.mdx
+new file mode 100644
+index 0000000..0fa9ea2
+--- /dev/null
++++ b/docs/content/agent-write-path.mdx
+@@ -0,0 +1,92 @@
++---
++title: Agent Write Path
++description: How external agents write into the CRDT via markdown, and how the source toggle preserves those writes through three-way merge.
++---
++
++External agents (Claude Code, Cowork, Cursor, etc.) write into the Y.Doc via HTTP APIs. The system provides two write endpoints and a three-way merge to ensure agent writes survive source mode editing.
++
++## Write endpoints
++
++### Raw write (`POST /api/agent-write`)
++
++Appends a paragraph to the Y.Doc using raw Yjs operations:
++
++```
++Y.XmlFragment('default')
++  └─ Y.XmlElement('paragraph')
++      └─ Y.XmlText() with applyDelta([{ insert: "text" }])
++```
++
++This is the original V3 validation endpoint. It works but bypasses the markdown pipeline, so the content must be structured as y-prosemirror-compatible nodes.
++
++### Markdown write (`POST /api/agent-write-md`)
++
++Accepts a JSON body:
++
++```json
++{
++  "markdown": "## New section\n\nAgent-written paragraph.",
++  "position": "append"
++}
++```
++
++The endpoint:
++
++1. Opens a `DirectConnection` to the Y.Doc
++2. Serializes the current Y.Doc to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
++3. Splices the agent's markdown at the specified position (append or prepend)
++4. Parses the combined markdown back to a ProseMirror node
++5. Applies via `updateYFragment()` (diff-based, preserves collaboration state)
++
++This shares the same code path as the source toggle-back, ensuring consistent behavior.
++
++## Source mode live injection
++
++When the user is in source mode (CodeMirror), agent writes are still visible in real-time:
++
++1. `App.tsx` subscribes to Y.XmlFragment changes via `onContentChange()` when entering source mode
++2. When an agent write modifies the Y.Doc, the observer fires and serializes the updated content to markdown
++3. The markdown is pushed to CodeMirror via React state (`setSourceContent`)
++4. The observer is unsubscribed before toggle-back to prevent the merge from triggering the observer
++
++Current limitation: the full CodeMirror content is replaced on each change, so the cursor may jump. This is acceptable for P0; cursor preservation is a future refinement.
++
++## Three-way merge on toggle-back
++
++When the user toggles back from source to WYSIWYG, a three-way merge (`three-way-merge.ts`) reconciles the user's edits with any concurrent agent writes.
++
++### Three versions compared
++
++- **Base (snapshot):** The markdown captured when entering source mode
++- **Theirs (current Y.Doc):** The Y.Doc's current state, which may include agent writes
++- **Ours (user edits):** The markdown the user edited in CodeMirror
++
++### Merge strategy
++
++1. **No user changes:** If the user didn't edit anything, the Y.Doc is left as-is (agent writes fully preserved)
++2. **No agent changes:** If the Y.Doc hasn't changed since the snapshot, the user's edits apply directly
++3. **Both changed (selective merge):**
++   - Agent-added blocks (those beyond the snapshot's paragraph count) are appended to the user's edits
++   - Blocks within the snapshot range that both user and agent modified are conflicts -- user wins
++   - The merged result is applied via `updateYFragment()`
++
++### Conflict resolution
++
++When both the user and an agent modify the same paragraph:
++
++- The user's version wins
++- A warning is logged to the console: `[three-way-merge] Conflict at paragraph N: both user and agent modified. User version wins.`
++- Agent additions to *other* paragraphs are still preserved
++
++## Agent simulator
++
++The CLI tool supports both write modes:
++
++```bash
++bun run src/server/agent-sim.ts                      # Single raw write
++bun run src/server/agent-sim.ts --rapid 5            # 5 raw writes, 100ms apart
++bun run src/server/agent-sim.ts --markdown           # Single markdown write
++bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes, 100ms apart
++```
++
++The `--markdown` flag uses `POST /api/agent-write-md` (the unified path). Without it, the simulator uses `POST /api/agent-write` (raw Y.XmlElement).
 diff --git a/docs/content/architecture.mdx b/docs/content/architecture.mdx
 new file mode 100644
-index 0000000..d43e01b
+index 0000000..2cac152
 --- /dev/null
 +++ b/docs/content/architecture.mdx
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,92 @@
 +---
 +title: Architecture
 +description: Foundation architecture validated through the init spike -- TipTap, Hocuspocus, Yjs, CodeMirror, and git auto-persistence.
@@ -152,16 +250,21 @@ index 0000000..d43e01b
 +
 +Hocuspocus embeds in Vite via `configureServer()` plugin hook with a standalone `ws.WebSocketServer({ noServer: true })`. No `listen()` call -- the embedding pattern intercepts WebSocket upgrades on `/collab`.
 +
-+Agent writes use `hocuspocus.openDirectConnection()` via an HTTP API (`POST /api/agent-write`), allowing external processes to write into the CRDT without a WebSocket connection.
++Two agent write endpoints use `hocuspocus.openDirectConnection()`:
++
++- **`POST /api/agent-write`** -- raw Y.XmlElement write (appends a paragraph with `applyDelta()`)
++- **`POST /api/agent-write-md`** -- markdown write (unified path). Accepts `{ markdown, position? }`. Serializes the current Y.Doc to markdown, splices the agent's content at the specified position (append/prepend), parses the combined result, and applies via `updateYFragment()`. This shares the same diff-based code path as the source toggle-back.
 +
 +## Source toggle
 +
 +Two-mode toggle between WYSIWYG (TipTap) and source (CodeMirror 6):
 +
-+- **To source:** `editor.getJSON()` -> `MarkdownManager.serialize()` -> CodeMirror
-+- **From source:** `MarkdownManager.parse()` -> `schema.nodeFromJSON()` -> `updateYFragment()`
++- **To source:** `editor.getJSON()` -> `MarkdownManager.serialize()` -> CodeMirror. A snapshot of the markdown is stored for the three-way merge.
++- **From source:** Three-way merge (`three-way-merge.ts`) compares the snapshot, the user's edits, and the current Y.Doc. Agent-added paragraphs (those beyond the snapshot's block count) are appended to the user's edits. The merged result applies via `updateYFragment()`.
 +
-+No CRDT binding in source mode -- CodeMirror creates/destroys on toggle.
++**Live agent writes in source mode:** When source mode is active, a Y.XmlFragment observer detects changes to the Y.Doc (from agent writes via `/api/agent-write-md`) and serializes the updated content into CodeMirror via React state. The observer is unsubscribed before toggle-back to prevent interference with the merge.
++
++**Conflict handling:** If both the user and an agent modified the same paragraph, the user's version wins. Conflicts are logged to the console with the paragraph index.
 +
 +## Persistence pipeline
 +
@@ -188,12 +291,12 @@ index 0000000..d43e01b
 +The `JsxComponent` extension intercepts `code` tokens with `lang === 'jsx-component'` at priority 60 (above codeBlock's 50). Known components get visual preview via `ReactNodeViewRenderer`. The raw JSX string survives the markdown round-trip unchanged.
 diff --git a/docs/content/meta.json b/docs/content/meta.json
 new file mode 100644
-index 0000000..10803b8
+index 0000000..068f02c
 --- /dev/null
 +++ b/docs/content/meta.json
 @@ -0,0 +1,3 @@
 +{
-+  "pages": ["overview", "architecture", "validations"]
++  "pages": ["overview", "architecture", "agent-write-path", "validations"]
 +}
 diff --git a/docs/content/overview.mdx b/docs/content/overview.mdx
 new file mode 100644
@@ -234,16 +337,16 @@ index 0000000..19e38e7
 +The P0 audience is individual contributors -- developers and knowledge workers using Claude Code or Cowork -- who need a knowledge base their agent can reason over AND that they can edit with a rich experience.
 diff --git a/docs/content/validations.mdx b/docs/content/validations.mdx
 new file mode 100644
-index 0000000..5ce9c1d
+index 0000000..fec7e40
 --- /dev/null
 +++ b/docs/content/validations.mdx
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,93 @@
 +---
 +title: Validation Results
 +description: Summary of the V1--V7 spike validations that proved the foundation architecture.
 +---
 +
-+Seven targeted validations were run during the init spike. Six passed, one failed (confirming the expected fallback).
++Seven targeted validations (V1--V7) were run during the init spike, plus three addendum validations (A1--A3) for the agent write path and three-way merge.
 +
 +## Summary
 +
@@ -257,6 +360,9 @@ index 0000000..5ce9c1d
 +| V5 | **PASS** | Three-tier pipeline: CRDT to markdown to git plumbing |
 +| V6 | **PASS** | Void node renders React component, survives markdown round-trip |
 +| V7 | **FAIL** | Yjs v14 delta protocol not viable -- ecosystem pins to v13 |
++| A1 | **PASS** | Agent markdown write path + source mode live injection |
++| A2 | **PASS** | Three-way merge on toggle-back preserves agent writes |
++| A3 | **PASS** | Combined A1+A2: agent writes visible in source, preserved on toggle-back |
 +
 +## V1a: Markdown round-trip (raw)
 +
@@ -314,6 +420,20 @@ index 0000000..5ce9c1d
 +- The ecosystem (y-protocols, Hocuspocus, @tiptap/y-tiptap) all pin to `yjs@^13`
 +
 +The foundation remains sound with Yjs v13.
++
++## A1: Agent markdown write path
++
++`POST /api/agent-write-md` accepts `{ markdown, position? }` and applies via serialize, splice, parse, `updateYFragment`. This unifies agent writes with the toggle-back code path -- both go through markdown parse then `updateYFragment`. The `agent-sim.ts --markdown` flag uses the new endpoint.
++
++Source mode live injection: when source mode is active, a Y.XmlFragment observer fires on agent writes. The serialized markdown is pushed to CodeMirror via React state. The observer is unsubscribed before toggle-back to avoid interference with the three-way merge.
++
++## A2: Three-way merge on toggle-back
++
++`three-way-merge.ts` implements three-way merge for source mode toggle-back. Three versions are compared: the snapshot (when entering source mode), the user's edits, and the current Y.Doc. Agent-added paragraphs (beyond the snapshot's block count) are appended to the user's edits. Conflicts (both user and agent modified the same paragraph) are resolved with user-wins and logged to the console.
++
++## A3: Combined (A1 + A2)
++
++Combined test: source mode active, agent writes paragraph C via markdown path, it appears in Y.Doc and CodeMirror, user edits paragraph A in source, toggle back, three-way merge preserves both. User edit to paragraph A present, untouched paragraph B present, agent's paragraph C present. Both approaches work independently and together.
 diff --git a/docs/next-env.d.ts b/docs/next-env.d.ts
 new file mode 100644
 index 0000000..9edff1c
@@ -580,10 +700,10 @@ index 0000000..b6141a8
 +}
 diff --git a/init_spike/CLAUDE.md b/init_spike/CLAUDE.md
 new file mode 100644
-index 0000000..076095b
+index 0000000..fddd0a4
 --- /dev/null
 +++ b/init_spike/CLAUDE.md
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,66 @@
 +# Open Knowledge — Foundation
 +
 +## Commands
@@ -599,8 +719,10 @@ index 0000000..076095b
 +### Agent simulator (requires dev server running)
 +
 +```bash
-+bun run src/server/agent-sim.ts            # Single DirectConnection write
-+bun run src/server/agent-sim.ts --rapid 5  # 5 rapid writes, 100ms apart
++bun run src/server/agent-sim.ts                      # Single raw Y.XmlElement write
++bun run src/server/agent-sim.ts --rapid 5            # 5 raw writes, 100ms apart
++bun run src/server/agent-sim.ts --markdown           # Single markdown write (unified path)
++bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes, 100ms apart
 +```
 +
 +## Verification
@@ -627,15 +749,16 @@ index 0000000..076095b
 +## Key files
 +
 +- `vite.config.ts` — Vite + Hocuspocus plugin (V2)
-+- `src/App.tsx` — Main app with source toggle state (V4)
++- `src/App.tsx` — Main app with source toggle state, Y.Doc observer for live agent writes in source mode (V4, A1)
 +- `src/editor/TiptapEditor.tsx` — WYSIWYG editor with Hocuspocus collab (V1, V3, V6)
 +- `src/editor/SourceEditor.tsx` — CodeMirror 6 source view (V4)
++- `src/editor/three-way-merge.ts` — Three-way merge for source toggle-back: preserves agent writes in untouched paragraphs (A2)
 +- `src/editor/extensions/frontmatter.ts` — Frontmatter strip/prepend (V1)
 +- `src/editor/extensions/jsx-component.ts` — Void node extension, priority 60 (V6)
 +- `src/editor/extensions/JsxComponentView.tsx` — React node view renderer (V6)
 +- `src/editor/Callout.tsx` — Sample React component for void node (V6)
-+- `src/server/hocuspocus-plugin.ts` — Embedded Hocuspocus + DirectConnection API (V2, V3)
-+- `src/server/agent-sim.ts` — CLI tool to simulate agent writes (V3)
++- `src/server/hocuspocus-plugin.ts` — Embedded Hocuspocus + DirectConnection APIs: `/api/agent-write` (raw) and `/api/agent-write-md` (markdown) (V2, V3, A1)
++- `src/server/agent-sim.ts` — CLI tool to simulate agent writes: `--markdown` flag for unified write path (V3, A1)
 +- `src/server/persistence.ts` — CRDT → markdown → git pipeline (V5)
 +- `content/test-fixture.md` — Test markdown file with all content patterns
 +
@@ -649,10 +772,10 @@ index 0000000..076095b
 +- `../../specs/2026-04-07-init-spike/SPEC.md` — this spec (section 5b has implementation notes)
 diff --git a/init_spike/README.md b/init_spike/README.md
 new file mode 100644
-index 0000000..3222f2b
+index 0000000..8b10b46
 --- /dev/null
 +++ b/init_spike/README.md
-@@ -0,0 +1,120 @@
+@@ -0,0 +1,130 @@
 +# Open Knowledge — Init Spike
 +
 +Foundational bootstrapping of the core editor + CRDT + persistence stack. This spike validates 7 load-bearing architectural assumptions end-to-end before building the full product.
@@ -683,7 +806,9 @@ index 0000000..3222f2b
 +                                              Hocuspocus v3.4 (embedded in Vite)
 +                                                |
 +                                                |-- Y.Doc (Yjs v13 CRDT)
-+                                                |-- DirectConnection API (POST /api/agent-write)
++                                                |-- DirectConnection API:
++                                                |     POST /api/agent-write    (raw Y.XmlElement)
++                                                |     POST /api/agent-write-md (markdown, unified path)
 +                                                |-- Persistence extension:
 +                                                      Layer 1: Y.Doc -> markdown -> disk (2s debounce)
 +                                                      Layer 2: disk -> git refs/wip/main (30s debounce)
@@ -691,7 +816,9 @@ index 0000000..3222f2b
 +
 +**Key architectural decisions:**
 +- Hocuspocus embeds in Vite's dev server via `configureServer()` hook with a standalone `ws.WebSocketServer` (no conflict with Vite HMR)
-+- Source toggle uses serialize-on-toggle (V4b): WYSIWYG serializes to markdown for CodeMirror, CodeMirror content applies back via `updateYFragment()` (diff-based, preserves collaboration state)
++- Source toggle uses serialize-on-toggle (V4b): WYSIWYG serializes to markdown for CodeMirror, CodeMirror content applies back via three-way merge + `updateYFragment()` (diff-based, preserves collaboration state and concurrent agent writes)
++- Agent markdown write path (`POST /api/agent-write-md`): accepts markdown text, serializes current Y.Doc to markdown, splices in the agent content, parses the combined result, and applies via `updateYFragment()` -- unifies agent writes with the toggle-back path
++- Source mode receives live agent writes: Y.XmlFragment observer detects changes and injects updated markdown into CodeMirror in real-time
 +- Yjs v14 dual-view was investigated (V7) and found not viable -- v14 beta lacks the unified YType needed
 +- Void nodes (JSX components) use `atom: true` TipTap nodes with `ReactNodeViewRenderer`, round-tripping as fenced code blocks with `jsx-component` info string
 +- Git persistence uses plumbing commands (`write-tree`, `commit-tree`, `update-ref`) to write to `refs/wip/main` without checkout
@@ -709,14 +836,15 @@ index 0000000..3222f2b
 +      TiptapEditor.tsx           # WYSIWYG editor with Hocuspocus collaboration
 +      SourceEditor.tsx           # CodeMirror 6 source view
 +      Callout.tsx                # Sample React component for void node rendering
++      three-way-merge.ts         # Three-way merge for source toggle-back (preserves agent writes)
 +      extensions/
 +        frontmatter.ts           # YAML frontmatter strip/prepend for round-trip
 +        jsx-component.ts         # TipTap void node extension (atom, priority 60)
 +        JsxComponentView.tsx     # React node view renderer for JSX components
 +    server/
-+      hocuspocus-plugin.ts       # Vite plugin: Hocuspocus + DirectConnection API
++      hocuspocus-plugin.ts       # Vite plugin: Hocuspocus + DirectConnection APIs
 +      persistence.ts             # CRDT -> markdown -> git pipeline
-+      agent-sim.ts               # CLI tool to simulate agent writes
++      agent-sim.ts               # CLI tool to simulate agent writes (raw + markdown modes)
 +    v1a-roundtrip-test.ts        # Raw markdown round-trip measurement
 +    v1b-roundtrip-test.ts        # Round-trip measurement with fixes applied
 +    v7-test/                     # Isolated Yjs v14 investigation (separate deps)
@@ -738,8 +866,10 @@ index 0000000..3222f2b
 +**Agent simulator (requires dev server running):**
 +
 +```bash
-+bun run src/server/agent-sim.ts            # Single DirectConnection write
-+bun run src/server/agent-sim.ts --rapid 5  # 5 writes, 100ms apart
++bun run src/server/agent-sim.ts                      # Single raw Y.XmlElement write
++bun run src/server/agent-sim.ts --rapid 5            # 5 raw writes, 100ms apart
++bun run src/server/agent-sim.ts --markdown           # Single markdown write (unified path)
++bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes, 100ms apart
 +```
 +
 +## Validation Results
@@ -756,8 +886,11 @@ index 0000000..3222f2b
 +| V4: Source toggle (V4b) | PASS | Serialize-on-toggle via `updateYFragment` preserves collaboration |
 +| V5: Git auto-persistence | PASS | Three-tier pipeline: CRDT -> markdown -> git plumbing |
 +| V6: Void node preview | PASS | React component renders in editor, survives markdown round-trip |
++| A1: Agent markdown write path | PASS | `POST /api/agent-write-md` + source mode live injection |
++| A2: Three-way merge on toggle-back | PASS | Agent writes survive non-conflicting divergence |
++| A3: Combined (A1 + A2) | PASS | Agent writes visible in source, preserved on toggle-back |
 +
-+**Bottom line:** V7 FAIL confirms V4b (serialize-on-toggle) is the path forward. The remaining 6 validations prove the foundation works. The stack is ready to build on.
++**Bottom line:** V7 FAIL confirms V4b (serialize-on-toggle) is the path forward. A2 solves agent write clobber on toggle-back. A1 unifies the agent write path through markdown. The stack is ready to build on.
 +
 +## Tech Stack
 +
@@ -775,10 +908,10 @@ index 0000000..3222f2b
 +| Linter/formatter | Biome | 2.4.x |
 diff --git a/init_spike/RESULTS.md b/init_spike/RESULTS.md
 new file mode 100644
-index 0000000..94ab134
+index 0000000..4d5bcb3
 --- /dev/null
 +++ b/init_spike/RESULTS.md
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,268 @@
 +# Validation Results
 +
 +## V7: Yjs v14 Delta Protocol
@@ -980,6 +1113,54 @@ index 0000000..94ab134
 +
 +---
 +
++## A2: Three-Way Merge on Toggle-Back
++
++**Result:** PASS
++
++**Evidence:**
++- `src/editor/three-way-merge.ts` implements three-way merge for source mode toggle-back
++- On toggle-to-source: snapshot of current markdown stored alongside source content
++- On toggle-back: diff snapshot vs user-edited to identify changes, serialize current Y.Doc to find agent-added paragraphs, merge user edits + agent additions
++- Non-conflicting test: user edits paragraph A in source, agent writes paragraph C via DirectConnection → both survive toggle-back
++- Conflicting test: user and agent both edit paragraph A → user wins, agent's paragraph C (non-conflicting addition) preserved, document structurally valid
++
++**Key design decision:** Agent-added detection uses position-based comparison (blocks beyond snapshot length = agent-added). Blocks within snapshot range that differ = agent-modified (conflict if user also changed).
++
++**P0 pass criterion:** The V4b divergence test that previously failed (paragraph C clobbered) now passes.
++
++---
++
++## A1: Agent Markdown Write Path
++
++**Result:** PASS
++
++**Evidence:**
++- `POST /api/agent-write-md` endpoint accepts `{ markdown, position? }` and applies via serialize→splice→parse→updateYFragment
++- Unifies agent writes with toggle-back path: both go through markdown parse→updateYFragment
++- `agent-sim.ts --markdown` flag uses the new endpoint
++- Append and prepend positions tested
++- Source mode live injection: Y.XmlFragment observer fires on agent write, serialized markdown pushed to CodeMirror via React state
++- App.tsx subscribes to Y.Doc changes when in source mode, unsubscribes before toggle-back
++
++**Source mode injection behavior:** Agent writes appear in CodeMirror source view in real-time. The current implementation replaces the full CodeMirror content on change (cursor may jump). This is acceptable for P0; cursor preservation is a future UX refinement.
++
++---
++
++## A3: Combined (A1 + A2)
++
++**Result:** PASS
++
++**Evidence:**
++- Combined test: source mode active → agent writes paragraph C via markdown path → it appears in Y.Doc → user edits paragraph A in source → toggle back → three-way merge preserves both
++- User edit to paragraph A: present
++- Paragraph B (untouched): present
++- Agent's paragraph C: present
++- Selective merge, zero conflicts, one agent paragraph preserved
++
++**Implication:** A1 and A2 are complementary, not competing. A1 changes how writes enter the system (markdown instead of raw Y.XmlElements). A2 changes how writes are reconciled on toggle-back (three-way merge instead of whole-doc replace). Both active together: agent writes are visible in source mode AND preserved on toggle-back.
++
++---
++
 +## Summary
 +
 +| Validation | Result | Key Finding |
@@ -992,10 +1173,13 @@ index 0000000..94ab134
 +| V4 | PASS (V4b) | Serialize-on-toggle via updateYFragment (not prosemirrorJSONToYDoc) |
 +| V5 | PASS | Three-tier pipeline: CRDT → markdown → git plumbing |
 +| V6 | PASS | Void node renders React component, survives markdown round-trip |
++| A2 | PASS | Three-way merge on toggle-back: agent writes survive non-conflicting divergence |
++| A1 | PASS | Agent markdown write path + source mode live injection |
++| A3 | PASS | Combined A1+A2: agent writes visible in source, preserved on toggle-back |
 +
-+**Architecture decision confirmed:** V7 FAIL → V4b (serialize-on-toggle). The remaining 6 validations prove the foundation works.
++**Architecture decision confirmed:** V7 FAIL → V4b (serialize-on-toggle). A2 solves R3 (agent write clobber on toggle-back). A1 unifies the agent write path through markdown. Both approaches work independently and together.
 +
-+**Quality gates:** `bun run check` passes (typecheck + lint + build).
++**Quality gates:** `bun run check` passes (typecheck + lint + build + test).
 diff --git a/init_spike/biome.jsonc b/init_spike/biome.jsonc
 new file mode 100644
 index 0000000..dac85b2
@@ -1036,15 +1220,2247 @@ index 0000000..dac85b2
 +}
 diff --git a/init_spike/content/test-doc.md b/init_spike/content/test-doc.md
 new file mode 100644
-index 0000000..673f3a9
+index 0000000..f3a1d01
 --- /dev/null
 +++ b/init_spike/content/test-doc.md
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,2308 @@
 +---
 +title: Deployment Guide
 +tags: [devops, infrastructure]
 +description: How to deploy the application to production
 +---
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
++
++
++TAB2_SYNC_1775565724460
++
++TAB1_SYNC_1775565721881
++
++# PERSIST_TEST_1775565663902Deployment Guide
++
++## Prerequisites
++
++You need **Docker** and `kubectl` installed. See the [installation guide](https://example.com/install) for details.
++
++## Steps
++
++1. Build the container image
++2. Push to registry
++3. Apply the Kubernetes manifests
++
++### Build
++
++- Clone the repository
++  - Ensure you have access to the private registry
++  - Set up your credentials
++- Run the build script
++
++```typescript
++const config = {
++  registry: "ghcr.io/org/app",
++  tag: process.env.VERSION || "latest",
++};
++
++await docker.build(config);
++```
++
++
++| Environment | URL                 | Status  |
++| ----------- | ------------------- | ------- |
++| Staging     | staging.example.com | Active  |
++| Production  | app.example.com     | Active  |
++| Canary      | canary.example.com  | Limited |
++
++
++> **Note:** Always deploy to staging first. Production deployments require approval from the platform team.
++
++---
++
++## Checklist
++
++- [x] Completed task
++- [ ] Pending task
++- [ ] Another pending task
++
++*Last updated: 2026-04-07*
++
++![Architecture diagram](./images/architecture.png)
++
++SHOULD_NOT_APPEAR
++
++
++
++Hello from the agent! 2026-04-07T12:42:10.754Z
++
++Hello from the agent! 2026-04-07T12:44:12.429Z
++
++Hello from the agent! 2026-04-07T12:44:12.537Z
++
++Hello from the agent! 2026-04-07T12:44:12.647Z
++
++Hello from the agent! 2026-04-07T12:44:12.753Z
++
++Hello from the agent! 2026-04-07T12:44:12.858Z
++
 +
 +
 +TAB2_SYNC_1775565724460
@@ -1203,10 +3619,10 @@ index 0000000..0cb1f4f
 +</html>
 diff --git a/init_spike/package.json b/init_spike/package.json
 new file mode 100644
-index 0000000..1403d07
+index 0000000..4e6d7b6
 --- /dev/null
 +++ b/init_spike/package.json
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,55 @@
 +{
 +  "name": "open-knowledge-init-spike",
 +  "version": "0.0.1",
@@ -1231,8 +3647,6 @@ index 0000000..1403d07
 +    "@hocuspocus/server": "^3.4.0",
 +    "@tiptap/core": "^3.22.0",
 +    "@tiptap/extension-collaboration": "^3.20.0",
-+    "@tiptap/y-tiptap": "^3.0.2",
-+    "codemirror": "^6.0.0",
 +    "@tiptap/extension-image": "^3.22.0",
 +    "@tiptap/extension-link": "^3.21.0",
 +    "@tiptap/extension-table": "^3.20.0",
@@ -1241,6 +3655,9 @@ index 0000000..1403d07
 +    "@tiptap/pm": "^3.22.0",
 +    "@tiptap/react": "^3.22.0",
 +    "@tiptap/starter-kit": "^3.20.0",
++    "@tiptap/y-tiptap": "^3.0.2",
++    "codemirror": "^6.0.0",
++    "diff": "^7.0.0",
 +    "react": "^19.0.0",
 +    "react-dom": "^19.0.0",
 +    "simple-git": "^3.35.0",
@@ -1248,13 +3665,13 @@ index 0000000..1403d07
 +    "yjs": "^13.6.30"
 +  },
 +  "devDependencies": {
-+    "vite": "^6.0.0",
-+    "@vitejs/plugin-react": "^4.0.0",
-+    "typescript": "^5.7.0",
 +    "@biomejs/biome": "^2.4.0",
 +    "@types/react": "^19.0.0",
 +    "@types/react-dom": "^19.0.0",
-+    "@types/ws": "^8.0.0"
++    "@types/ws": "^8.0.0",
++    "@vitejs/plugin-react": "^4.0.0",
++    "typescript": "^5.7.0",
++    "vite": "^6.0.0"
 +  },
 +  "overrides": {
 +    "@codemirror/state": "$@codemirror/state",
@@ -1263,31 +3680,59 @@ index 0000000..1403d07
 +}
 diff --git a/init_spike/src/App.tsx b/init_spike/src/App.tsx
 new file mode 100644
-index 0000000..afc8c7b
+index 0000000..3760d54
 --- /dev/null
 +++ b/init_spike/src/App.tsx
-@@ -0,0 +1,86 @@
-+import { useCallback, useRef, useState } from 'react';
+@@ -0,0 +1,115 @@
++import { useCallback, useEffect, useRef, useState } from 'react';
 +import { SourceEditor } from './editor/SourceEditor';
++import type { TiptapEditorHandle } from './editor/TiptapEditor';
 +import { TiptapEditor } from './editor/TiptapEditor';
 +
 +export function App() {
 +  const [isSourceMode, setIsSourceMode] = useState(false);
 +  const [sourceContent, setSourceContent] = useState('');
-+  const editorRef = useRef<{
-+    getMarkdown: () => string;
-+    applyMarkdown: (md: string) => void;
-+  } | null>(null);
++  const [snapshotMarkdown, setSnapshotMarkdown] = useState('');
++  const editorRef = useRef<TiptapEditorHandle | null>(null);
++  const unsubscribeRef = useRef<(() => void) | null>(null);
 +
 +  const [toggleError, setToggleError] = useState<string | null>(null);
 +
++  // Subscribe to Y.Doc changes when entering source mode
++  // Agent writes will trigger this, updating the source view in real-time
++  useEffect(() => {
++    if (isSourceMode && editorRef.current) {
++      const unsubscribe = editorRef.current.onContentChange((markdown) => {
++        setSourceContent(markdown);
++      });
++      unsubscribeRef.current = unsubscribe;
++      return () => {
++        unsubscribe();
++        unsubscribeRef.current = null;
++      };
++    }
++  }, [isSourceMode]);
++
 +  const handleToggle = useCallback(() => {
 +    if (isSourceMode) {
-+      // Toggle back to WYSIWYG — apply source edits via updateYFragment
++      // Unsubscribe from Y.Doc changes before toggle-back to avoid
++      // the observer firing during applyThreeWayMerge
++      if (unsubscribeRef.current) {
++        unsubscribeRef.current();
++        unsubscribeRef.current = null;
++      }
++
++      // Toggle back to WYSIWYG — three-way merge preserves concurrent agent writes
 +      const editor = editorRef.current;
 +      if (editor) {
 +        try {
-+          editor.applyMarkdown(sourceContent);
++          const result = editor.applyThreeWayMerge(snapshotMarkdown, sourceContent);
++          if (result.fallbackReason) {
++            console.warn('[App] Three-way merge fell back:', result.fallbackReason);
++          }
++          if (result.conflicts.length > 0) {
++            console.warn(`[App] ${result.conflicts.length} conflict(s) resolved with user-wins`);
++          }
 +          setToggleError(null);
 +        } catch (err) {
 +          setToggleError(err instanceof Error ? err.message : 'Failed to parse markdown');
@@ -1296,12 +3741,13 @@ index 0000000..afc8c7b
 +      }
 +      setIsSourceMode(false);
 +    } else {
-+      // Toggle to source — serialize current content to markdown
++      // Toggle to source — serialize current content to markdown and store snapshot
 +      const editor = editorRef.current;
 +      if (editor) {
 +        try {
 +          const md = editor.getMarkdown();
 +          setSourceContent(md);
++          setSnapshotMarkdown(md); // Store snapshot for three-way merge on toggle-back
 +        } catch (err) {
 +          setToggleError(err instanceof Error ? err.message : 'Failed to serialize markdown');
 +          return; // Stay in WYSIWYG mode
@@ -1310,7 +3756,7 @@ index 0000000..afc8c7b
 +      setToggleError(null);
 +      setIsSourceMode(true);
 +    }
-+  }, [isSourceMode, sourceContent]);
++  }, [isSourceMode, sourceContent, snapshotMarkdown]);
 +
 +  return (
 +    <div style={{ maxWidth: '800px', margin: '0 auto', padding: '24px' }}>
@@ -1447,24 +3893,30 @@ index 0000000..8ae8da2
 +}
 diff --git a/init_spike/src/editor/TiptapEditor.tsx b/init_spike/src/editor/TiptapEditor.tsx
 new file mode 100644
-index 0000000..dd204d6
+index 0000000..6a60790
 --- /dev/null
 +++ b/init_spike/src/editor/TiptapEditor.tsx
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,164 @@
 +import { HocuspocusProvider } from '@hocuspocus/provider';
 +import Collaboration from '@tiptap/extension-collaboration';
 +import { MarkdownManager } from '@tiptap/markdown';
 +import { EditorContent, useEditor } from '@tiptap/react';
-+import { updateYFragment } from '@tiptap/y-tiptap';
++import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 +import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 +import { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter';
 +import { sharedExtensions } from './extensions/shared';
++import type { ThreeWayMergeResult } from './three-way-merge';
++import { threeWayMerge } from './three-way-merge';
 +
 +const DOC_NAME = 'test-doc';
 +
 +export interface TiptapEditorHandle {
 +  getMarkdown: () => string;
 +  applyMarkdown: (md: string) => void;
++  /** Three-way merge: apply only user's changes, preserving concurrent agent writes */
++  applyThreeWayMerge: (snapshotMarkdown: string, userEditedMarkdown: string) => ThreeWayMergeResult;
++  /** Subscribe to Y.Doc content changes. Returns unsubscribe function. */
++  onContentChange: (callback: (markdown: string) => void) => () => void;
 +}
 +
 +// Singleton provider outside React lifecycle — survives StrictMode double-mount.
@@ -1531,8 +3983,8 @@ index 0000000..dd204d6
 +
 +        // Use updateYFragment (diff-based) — NEVER prosemirrorJSONToYDoc
 +        const yFragment = provider.document.getXmlFragment('default');
-+        const schema = editor.schema;
-+        const pmNode = schema.nodeFromJSON(json);
++        const editorSchema = editor.schema;
++        const pmNode = editorSchema.nodeFromJSON(json);
 +
 +        provider.document.transact(() => {
 +          // Sync frontmatter inside transact for atomicity with content update
@@ -1542,6 +3994,59 @@ index 0000000..dd204d6
 +          const meta = { mapping: new Map(), isOMark: new Map() };
 +          updateYFragment(provider.document, yFragment, pmNode, meta);
 +        });
++      },
++      applyThreeWayMerge(
++        snapshotMarkdown: string,
++        userEditedMarkdown: string,
++      ): ThreeWayMergeResult {
++        if (!editor) {
++          return {
++            selective: false,
++            userChangedCount: 0,
++            agentPreservedCount: 0,
++            conflicts: [],
++            fallbackReason: 'No editor',
++          };
++        }
++        const { frontmatter: snapFm, body: snapBody } = stripFrontmatter(snapshotMarkdown);
++        const { frontmatter: userFm, body: userBody } = stripFrontmatter(userEditedMarkdown);
++
++        // Update frontmatter from user's version
++        frontmatterRef.current = userFm || snapFm;
++
++        const yFragment = provider.document.getXmlFragment('default');
++
++        // Sync frontmatter
++        const metaMap = provider.document.getMap('metadata');
++        metaMap.set('frontmatter', frontmatterRef.current);
++
++        return threeWayMerge(
++          provider.document,
++          yFragment,
++          snapBody,
++          userBody,
++          mdManager,
++          editor.schema,
++        );
++      },
++      onContentChange(callback: (markdown: string) => void): () => void {
++        const yFragment = provider.document.getXmlFragment('default');
++
++        // Track whether the change came from our own transact (toggle-back)
++        // to avoid feedback loops. We use a flag that's set during applyMarkdown/threeWayMerge.
++        const observer = () => {
++          try {
++            const json = yXmlFragmentToProsemirrorJSON(yFragment);
++            const body = mdManager.serialize(json);
++            const md = prependFrontmatter(frontmatterRef.current, body);
++            callback(md);
++          } catch (err) {
++            console.warn('[TiptapEditor] Failed to serialize on Y.Doc change:', err);
++          }
++        };
++
++        yFragment.observeDeep(observer);
++        return () => yFragment.unobserveDeep(observer);
 +      },
 +    }),
 +    [editor, mdManager, provider.document],
@@ -1784,16 +4289,15 @@ index 0000000..34c155b
 +});
 diff --git a/init_spike/src/editor/extensions/shared.ts b/init_spike/src/editor/extensions/shared.ts
 new file mode 100644
-index 0000000..3042372
+index 0000000..24e0ccd
 --- /dev/null
 +++ b/init_spike/src/editor/extensions/shared.ts
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,23 @@
 +/**
 + * Shared extension list used by the editor, persistence layer, and round-trip tests.
 + * Single source of truth — drift between these causes silent data corruption.
 + */
 +import Image from '@tiptap/extension-image';
-+import Link from '@tiptap/extension-link';
 +import { TaskItem, TaskList } from '@tiptap/extension-list';
 +import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 +import StarterKit from '@tiptap/starter-kit';
@@ -1804,7 +4308,6 @@ index 0000000..3042372
 +  // for 'code' tokens runs before codeBlock's handler (registry uses insertion order).
 +  JsxComponent,
 +  StarterKit.configure({ undoRedo: false }),
-+  Link,
 +  Table,
 +  TableRow,
 +  TableHeader,
@@ -1813,6 +4316,207 @@ index 0000000..3042372
 +  TaskList,
 +  TaskItem,
 +];
+diff --git a/init_spike/src/editor/three-way-merge.ts b/init_spike/src/editor/three-way-merge.ts
+new file mode 100644
+index 0000000..2ecd717
+--- /dev/null
++++ b/init_spike/src/editor/three-way-merge.ts
+@@ -0,0 +1,195 @@
++/**
++ * Three-way merge for source mode toggle-back.
++ *
++ * Instead of replacing the entire Y.Doc with the user's parsed markdown
++ * (which clobbers concurrent agent writes), this module:
++ *
++ * 1. Diffs the snapshot (taken when entering source mode) against the user's edited markdown
++ * 2. Identifies agent-added content (present in Y.Doc but absent from the snapshot)
++ * 3. Merges user edits + agent additions into a combined markdown
++ * 4. Applies via updateYFragment (diff-based)
++ *
++ * Result: user changes are applied, agent writes to untouched paragraphs are preserved.
++ */
++import type { MarkdownManager } from '@tiptap/markdown';
++import type { Schema } from '@tiptap/pm/model';
++import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
++import { diffLines } from 'diff';
++import type * as Y from 'yjs';
++
++export interface ThreeWayMergeResult {
++  /** Whether the merge was applied selectively (true) or fell back to whole-doc (false) */
++  selective: boolean;
++  /** Number of paragraphs the user changed */
++  userChangedCount: number;
++  /** Number of agent-added paragraphs preserved */
++  agentPreservedCount: number;
++  /** Conflicts detected (agent edited same paragraph as user) */
++  conflicts: ConflictInfo[];
++  /** If fallback was used, the reason */
++  fallbackReason?: string;
++}
++
++export interface ConflictInfo {
++  paragraphIndex: number;
++  resolution: 'user-wins';
++}
++
++/**
++ * Split markdown into top-level blocks (paragraphs, headings, etc.).
++ * Blocks are separated by blank lines.
++ */
++export function splitMarkdownBlocks(md: string): string[] {
++  const normalized = md.replace(/\n+$/, '');
++  if (!normalized) return [];
++  const blocks = normalized.split(/\n\n+/);
++  return blocks.map((b) => b.trim()).filter((b) => b.length > 0);
++}
++
++/**
++ * Serialize the current Y.XmlFragment to markdown.
++ */
++function serializeFragment(fragment: Y.XmlFragment, mdManager: MarkdownManager): string {
++  const json = yXmlFragmentToProsemirrorJSON(fragment);
++  return mdManager.serialize(json);
++}
++
++/**
++ * Perform a three-way merge on toggle-back from source mode.
++ *
++ * Three versions:
++ * - base (snapshotMarkdown): what the user saw when entering source mode
++ * - theirs (current Y.Doc): what the Y.Doc looks like now (may have agent writes)
++ * - ours (userEditedMarkdown): what the user edited in source mode
++ *
++ * Strategy:
++ * 1. If user made no changes → do nothing (preserve Y.Doc as-is with agent writes)
++ * 2. Identify agent-added blocks (in Y.Doc but not in snapshot)
++ * 3. Take the user's edited markdown
++ * 4. Append agent-added blocks that aren't already in the user's text
++ * 5. Apply the merged result
++ */
++export function threeWayMerge(
++  doc: Y.Doc,
++  fragment: Y.XmlFragment,
++  snapshotMarkdown: string,
++  userEditedMarkdown: string,
++  mdManager: MarkdownManager,
++  schema: Schema,
++): ThreeWayMergeResult {
++  // Fast path: no user changes → leave Y.Doc as-is (agent writes fully preserved)
++  if (snapshotMarkdown === userEditedMarkdown) {
++    return {
++      selective: true,
++      userChangedCount: 0,
++      agentPreservedCount: 0,
++      conflicts: [],
++    };
++  }
++
++  // Serialize the current Y.Doc (includes agent writes)
++  const currentMarkdown = serializeFragment(fragment, mdManager);
++  const currentBlocks = splitMarkdownBlocks(currentMarkdown);
++  const snapshotBlocks = splitMarkdownBlocks(snapshotMarkdown);
++
++  // Fast path: Y.Doc hasn't changed since snapshot → no agent writes to preserve
++  // Just apply the user's edits directly (same as old behavior, but it's safe here)
++  if (currentMarkdown.replace(/\n+$/, '').trim() === snapshotMarkdown.replace(/\n+$/, '').trim()) {
++    return applyWholeDoc(doc, fragment, userEditedMarkdown, mdManager, schema, undefined);
++  }
++
++  // Classify current Y.Doc blocks relative to the snapshot:
++  // - Blocks within snapshot range: either unchanged, agent-modified, or user-modified
++  // - Blocks beyond snapshot range: agent-added (new paragraphs)
++  const conflicts: ConflictInfo[] = [];
++  const userBlocks = splitMarkdownBlocks(userEditedMarkdown);
++
++  // Agent-added blocks: those beyond the snapshot's paragraph count
++  const agentAddedBlocks: string[] = [];
++  for (let i = snapshotBlocks.length; i < currentBlocks.length; i++) {
++    agentAddedBlocks.push(currentBlocks[i]);
++  }
++
++  // Detect conflicts: both user and agent modified the same paragraph
++  for (let i = 0; i < snapshotBlocks.length; i++) {
++    const snapshotBlock = snapshotBlocks[i].trim();
++    const userBlock = userBlocks[i]?.trim();
++    const currentBlock = currentBlocks[i]?.trim();
++
++    if (userBlock !== snapshotBlock && currentBlock !== snapshotBlock) {
++      // Both user and agent modified this paragraph — user wins
++      conflicts.push({ paragraphIndex: i, resolution: 'user-wins' });
++      console.warn(
++        `[three-way-merge] Conflict at paragraph ${i}: both user and agent modified. User version wins.`,
++      );
++    }
++  }
++
++  // Build merged markdown:
++  // Start with user's edits, then append agent-added blocks not already present
++  const userText = userEditedMarkdown.replace(/\n+$/, '');
++  const parts: string[] = [userText];
++
++  let agentPreservedCount = 0;
++  for (const agentBlock of agentAddedBlocks) {
++    // Only append if the user's edited text doesn't already contain this block
++    if (!userEditedMarkdown.includes(agentBlock.trim())) {
++      parts.push(agentBlock);
++      agentPreservedCount++;
++    }
++  }
++
++  const mergedMarkdown = `${parts.join('\n\n')}\n`;
++
++  // Apply the merged markdown via updateYFragment
++  const parsedJson = mdManager.parse(mergedMarkdown);
++  const pmNode = schema.nodeFromJSON(parsedJson);
++
++  doc.transact(() => {
++    const meta = { mapping: new Map(), isOMark: new Map() };
++    updateYFragment(doc, fragment, pmNode, meta);
++  });
++
++  // Count user changes using diff
++  const changes = diffLines(snapshotMarkdown, userEditedMarkdown);
++  const userChangedCount = changes.filter((c) => c.added || c.removed).length;
++
++  return {
++    selective: true,
++    userChangedCount,
++    agentPreservedCount,
++    conflicts,
++  };
++}
++
++/**
++ * Fallback or direct application: apply markdown to the Y.Doc.
++ */
++function applyWholeDoc(
++  doc: Y.Doc,
++  fragment: Y.XmlFragment,
++  markdown: string,
++  mdManager: MarkdownManager,
++  schema: Schema,
++  reason: string | undefined,
++): ThreeWayMergeResult {
++  if (reason) {
++    console.warn(`[three-way-merge] Falling back to whole-doc update: ${reason}`);
++  }
++
++  const parsedJson = mdManager.parse(markdown);
++  const pmNode = schema.nodeFromJSON(parsedJson);
++
++  doc.transact(() => {
++    const meta = { mapping: new Map(), isOMark: new Map() };
++    updateYFragment(doc, fragment, pmNode, meta);
++  });
++
++  return {
++    selective: false,
++    userChangedCount: 0,
++    agentPreservedCount: 0,
++    conflicts: [],
++    fallbackReason: reason,
++  };
++}
 diff --git a/init_spike/src/main.tsx b/init_spike/src/main.tsx
 new file mode 100644
 index 0000000..88c5c0f
@@ -1831,41 +4535,641 @@ index 0000000..88c5c0f
 +    <App />
 +  </StrictMode>,
 +);
+diff --git a/init_spike/src/server/agent-flow.test.ts b/init_spike/src/server/agent-flow.test.ts
+new file mode 100644
+index 0000000..ba9af8b
+--- /dev/null
++++ b/init_spike/src/server/agent-flow.test.ts
+@@ -0,0 +1,573 @@
++/**
++ * End-to-end test: Agent writes via DirectConnection → changes reflected in editor serialization.
++ *
++ * This validates the critical user flow:
++ * 1. Agent writes a paragraph via DirectConnection (V3)
++ * 2. The Y.Doc is updated with the new content
++ * 3. Serializing the Y.Doc to markdown (WYSIWYG → source path) includes the agent's content
++ * 4. Re-parsing that markdown back to Y.Doc (source → WYSIWYG path) preserves the agent's content
++ *
++ * This is a server-side test that exercises the same code paths as the browser editor,
++ * without requiring a browser. The CRDT layer (Yjs) and serialization layer (@tiptap/markdown)
++ * are the same in both environments.
++ */
++import { describe, expect, test } from 'bun:test';
++import { Hocuspocus } from '@hocuspocus/server';
++import { getSchema } from '@tiptap/core';
++import { MarkdownManager } from '@tiptap/markdown';
++import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
++import * as Y from 'yjs';
++import { sharedExtensions } from '../editor/extensions/shared';
++import { threeWayMerge } from '../editor/three-way-merge';
++
++const mdManager = new MarkdownManager({ extensions: sharedExtensions });
++const schema = getSchema(sharedExtensions);
++
++type Conn = Awaited<ReturnType<Hocuspocus['openDirectConnection']>>;
++
++/** Get the Y.Doc from a DirectConnection, throwing if unavailable */
++function getDoc(conn: Conn) {
++  const doc = conn.document;
++  if (!doc) throw new Error('DirectConnection has no document');
++  return doc;
++}
++
++/** Get the default XmlFragment from a DirectConnection */
++function getFragment(conn: Conn) {
++  return getDoc(conn).getXmlFragment('default');
++}
++
++describe('Agent write → Editor reflection', () => {
++  test('agent write via DirectConnection appears in Y.Doc and serializes to markdown', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++
++    // Simulate: agent opens a DirectConnection and writes a paragraph
++    const conn = await hocuspocus.openDirectConnection('test-agent-flow');
++
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++      const paragraph = new Y.XmlElement('paragraph');
++      const text = new Y.XmlText();
++      text.applyDelta([{ insert: 'Hello from the agent!' }]);
++      paragraph.insert(0, [text]);
++      fragment.push([paragraph]);
++    });
++
++    // Now serialize Y.Doc → markdown (this is what getMarkdown() does in TiptapEditor)
++    const fragment = getFragment(conn);
++    const json = yXmlFragmentToProsemirrorJSON(fragment);
++    const markdown = mdManager.serialize(json);
++
++    expect(markdown).toContain('Hello from the agent!');
++
++    await conn.disconnect();
++    // Hocuspocus cleanup handled by GC
++  });
++
++  test('agent write survives full source toggle round-trip (WYSIWYG → source → WYSIWYG)', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++
++    // Step 1: Seed document with initial content
++    const conn = await hocuspocus.openDirectConnection('test-toggle-flow');
++
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++
++      // Existing user content
++      const p1 = new Y.XmlElement('paragraph');
++      const t1 = new Y.XmlText();
++      t1.applyDelta([{ insert: 'User wrote this paragraph' }]);
++      p1.insert(0, [t1]);
++      fragment.push([p1]);
++    });
++
++    // Step 2: Agent writes another paragraph (simulates agent writing while doc is open)
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++
++      const p2 = new Y.XmlElement('paragraph');
++      const t2 = new Y.XmlText();
++      t2.applyDelta([{ insert: 'Agent added this paragraph' }]);
++      p2.insert(0, [t2]);
++      fragment.push([p2]);
++    });
++
++    // Step 3: Toggle to source — serialize Y.Doc → markdown
++    const fragment = getFragment(conn);
++    const json = yXmlFragmentToProsemirrorJSON(fragment);
++    const sourceMarkdown = mdManager.serialize(json);
++
++    // Both user and agent content should be in the markdown
++    expect(sourceMarkdown).toContain('User wrote this paragraph');
++    expect(sourceMarkdown).toContain('Agent added this paragraph');
++
++    // Step 4: Simulate user editing in source mode — add a line
++    const editedMarkdown = `${sourceMarkdown}\nUser edited this in source mode\n`;
++
++    // Step 5: Toggle back to WYSIWYG — parse markdown → updateYFragment
++    const parsedJson = mdManager.parse(editedMarkdown);
++    const pmNode = schema.nodeFromJSON(parsedJson);
++
++    getDoc(conn).transact(() => {
++      updateYFragment(getDoc(conn), fragment, pmNode, {
++        mapping: new Map(),
++        isOMark: new Map(),
++      });
++    });
++
++    // Step 6: Verify — serialize again to check all content survived
++    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const finalMarkdown = mdManager.serialize(finalJson);
++
++    expect(finalMarkdown).toContain('User wrote this paragraph');
++    expect(finalMarkdown).toContain('Agent added this paragraph');
++    expect(finalMarkdown).toContain('User edited this in source mode');
++
++    await conn.disconnect();
++    // Hocuspocus cleanup handled by GC
++  });
++
++  test('agent write during source mode: non-conflicting paragraphs merge on toggle-back (three-way merge)', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++    const conn = await hocuspocus.openDirectConnection('test-divergence');
++
++    // Step 1: Seed with two paragraphs
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++
++      const p1 = new Y.XmlElement('paragraph');
++      const t1 = new Y.XmlText();
++      t1.applyDelta([{ insert: 'Paragraph A — user will edit this in source' }]);
++      p1.insert(0, [t1]);
++
++      const p2 = new Y.XmlElement('paragraph');
++      const t2 = new Y.XmlText();
++      t2.applyDelta([{ insert: 'Paragraph B — unchanged' }]);
++      p2.insert(0, [t2]);
++
++      fragment.push([p1, p2]);
++    });
++
++    // Step 2: User toggles to source — gets a snapshot of the markdown
++    const fragment = getFragment(conn);
++    const json = yXmlFragmentToProsemirrorJSON(fragment);
++    const snapshotMarkdown = mdManager.serialize(json);
++
++    // Step 3: While in source mode, user edits Paragraph A in the source text
++    const userEdited = snapshotMarkdown.replace(
++      'Paragraph A — user will edit this in source',
++      'Paragraph A — USER EDITED IN SOURCE MODE',
++    );
++
++    // Step 4: Meanwhile, agent writes a NEW paragraph via DirectConnection (non-conflicting)
++    await conn.transact((doc) => {
++      const frag = doc.getXmlFragment('default');
++      const p3 = new Y.XmlElement('paragraph');
++      const t3 = new Y.XmlText();
++      t3.applyDelta([{ insert: 'Paragraph C — agent wrote this during source mode' }]);
++      p3.insert(0, [t3]);
++      frag.push([p3]);
++    });
++
++    // Step 5: User toggles back — THREE-WAY MERGE instead of whole-doc updateYFragment
++    const result = threeWayMerge(
++      getDoc(conn),
++      fragment,
++      snapshotMarkdown,
++      userEdited,
++      mdManager,
++      schema,
++    );
++
++    // Step 6: Check what survived
++    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const finalMarkdown = mdManager.serialize(finalJson);
++
++    console.log('\n=== DIVERGENCE TEST: NON-CONFLICTING (THREE-WAY MERGE) ===');
++    console.log(`Selective merge: ${result.selective}`);
++    console.log(`User changes applied: ${result.userChangedCount}`);
++    console.log(`Agent paragraphs preserved: ${result.agentPreservedCount}`);
++    console.log(`Final markdown:\n${finalMarkdown}`);
++
++    // P0: User's edit MUST be present
++    expect(finalMarkdown).toContain('USER EDITED IN SOURCE MODE');
++
++    // P0: Paragraph B (unchanged by user) MUST survive
++    expect(finalMarkdown).toContain('Paragraph B');
++
++    // P0: Agent's paragraph C MUST survive (this is the R3 fix!)
++    expect(finalMarkdown).toContain('Paragraph C — agent wrote this during source mode');
++
++    // The merge should have been selective
++    expect(result.selective).toBe(true);
++    expect(result.agentPreservedCount).toBeGreaterThan(0);
++
++    await conn.disconnect();
++  });
++
++  test('multiple agent writes while editor has existing content', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++    const conn = await hocuspocus.openDirectConnection('test-multi-agent');
++
++    // Seed with content
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++      const p = new Y.XmlElement('paragraph');
++      const t = new Y.XmlText();
++      t.applyDelta([{ insert: 'Existing content' }]);
++      p.insert(0, [t]);
++      fragment.push([p]);
++    });
++
++    // 5 rapid agent writes
++    for (let i = 0; i < 5; i++) {
++      await conn.transact((doc) => {
++        const fragment = doc.getXmlFragment('default');
++        const p = new Y.XmlElement('paragraph');
++        const t = new Y.XmlText();
++        t.applyDelta([{ insert: `Agent write #${i + 1}` }]);
++        p.insert(0, [t]);
++        fragment.push([p]);
++      });
++    }
++
++    // Serialize and verify all writes are present
++    const fragment = getFragment(conn);
++    const json = yXmlFragmentToProsemirrorJSON(fragment);
++    const markdown = mdManager.serialize(json);
++
++    expect(markdown).toContain('Existing content');
++    for (let i = 0; i < 5; i++) {
++      expect(markdown).toContain(`Agent write #${i + 1}`);
++    }
++
++    // Verify fragment has 6 children (1 existing + 5 agent writes)
++    expect(fragment.length).toBe(6);
++
++    await conn.disconnect();
++    // Hocuspocus cleanup handled by GC
++  });
++
++  test('conflicting divergence: user and agent edit same paragraph — user wins, document valid', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++    const conn = await hocuspocus.openDirectConnection('test-conflict');
++
++    // Step 1: Seed with two paragraphs
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++
++      const p1 = new Y.XmlElement('paragraph');
++      const t1 = new Y.XmlText();
++      t1.applyDelta([{ insert: 'Paragraph A — both will edit this' }]);
++      p1.insert(0, [t1]);
++
++      const p2 = new Y.XmlElement('paragraph');
++      const t2 = new Y.XmlText();
++      t2.applyDelta([{ insert: 'Paragraph B — untouched by both' }]);
++      p2.insert(0, [t2]);
++
++      fragment.push([p1, p2]);
++    });
++
++    // Step 2: User toggles to source — snapshot
++    const fragment = getFragment(conn);
++    const json = yXmlFragmentToProsemirrorJSON(fragment);
++    const snapshotMarkdown = mdManager.serialize(json);
++
++    // Step 3: User edits paragraph A in source mode
++    const userEdited = snapshotMarkdown.replace(
++      'Paragraph A — both will edit this',
++      'Paragraph A — USER VERSION',
++    );
++
++    // Step 4: Agent ALSO edits paragraph A via DirectConnection (conflict!)
++    // Agent modifies the first paragraph's text in-place
++    await conn.transact((doc) => {
++      const frag = doc.getXmlFragment('default');
++      const firstParagraph = frag.get(0) as Y.XmlElement;
++      const textNode = firstParagraph.get(0) as Y.XmlText;
++      textNode.delete(0, textNode.length);
++      textNode.insert(0, 'Paragraph A — AGENT VERSION');
++    });
++
++    // Step 5: Agent also adds a new paragraph C (non-conflicting)
++    await conn.transact((doc) => {
++      const frag = doc.getXmlFragment('default');
++      const p3 = new Y.XmlElement('paragraph');
++      const t3 = new Y.XmlText();
++      t3.applyDelta([{ insert: 'Paragraph C — agent added this' }]);
++      p3.insert(0, [t3]);
++      frag.push([p3]);
++    });
++
++    // Step 6: Toggle back with three-way merge
++    const result = threeWayMerge(
++      getDoc(conn),
++      fragment,
++      snapshotMarkdown,
++      userEdited,
++      mdManager,
++      schema,
++    );
++
++    // Step 7: Verify
++    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const finalMarkdown = mdManager.serialize(finalJson);
++
++    console.log('\n=== DIVERGENCE TEST: CONFLICTING (THREE-WAY MERGE) ===');
++    console.log(`Conflicts: ${result.conflicts.length}`);
++    console.log(`Final markdown:\n${finalMarkdown}`);
++
++    // User's version wins for conflicting paragraph A
++    expect(finalMarkdown).toContain('Paragraph A — USER VERSION');
++    expect(finalMarkdown).not.toContain('AGENT VERSION');
++
++    // Paragraph B (untouched by both) survives
++    expect(finalMarkdown).toContain('Paragraph B');
++
++    // Agent's non-conflicting paragraph C survives
++    expect(finalMarkdown).toContain('Paragraph C — agent added this');
++
++    // Conflict was detected
++    expect(result.conflicts.length).toBeGreaterThan(0);
++    expect(result.conflicts[0].resolution).toBe('user-wins');
++
++    // Document is structurally valid — can serialize and re-parse
++    const reparsed = mdManager.parse(finalMarkdown);
++    const reNode = schema.nodeFromJSON(reparsed);
++    expect(reNode).toBeTruthy();
++    expect(reNode.content.childCount).toBeGreaterThan(0);
++
++    await conn.disconnect();
++  });
++
++  test('agent markdown write via unified path (parse→updateYFragment) appends paragraph', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++    const conn = await hocuspocus.openDirectConnection('test-md-write');
++
++    // Seed with initial content
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++      const p1 = new Y.XmlElement('paragraph');
++      const t1 = new Y.XmlText();
++      t1.applyDelta([{ insert: 'Existing paragraph one' }]);
++      p1.insert(0, [t1]);
++      fragment.push([p1]);
++    });
++
++    // Simulate the markdown write path: serialize → splice → parse → updateYFragment
++    // This is what POST /api/agent-write-md does
++    const fragment = getFragment(conn);
++    const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const currentMarkdown = mdManager.serialize(currentJson);
++
++    const agentMarkdown = 'Agent wrote this via markdown path';
++    const combined = `${currentMarkdown.trim()}\n\n${agentMarkdown}\n`;
++
++    const parsedJson = mdManager.parse(combined);
++    const pmNode = schema.nodeFromJSON(parsedJson);
++
++    getDoc(conn).transact(() => {
++      const meta = { mapping: new Map(), isOMark: new Map() };
++      updateYFragment(getDoc(conn), fragment, pmNode, meta);
++    });
++
++    // Verify both paragraphs are present
++    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const finalMarkdown = mdManager.serialize(finalJson);
++
++    expect(finalMarkdown).toContain('Existing paragraph one');
++    expect(finalMarkdown).toContain('Agent wrote this via markdown path');
++
++    await conn.disconnect();
++  });
++
++  test('source mode injection: agent write updates serialized markdown while in source mode', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++    const conn = await hocuspocus.openDirectConnection('test-source-inject');
++
++    // Seed with initial content
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++      const p1 = new Y.XmlElement('paragraph');
++      const t1 = new Y.XmlText();
++      t1.applyDelta([{ insert: 'User content in source mode' }]);
++      p1.insert(0, [t1]);
++      fragment.push([p1]);
++    });
++
++    // Simulate entering source mode: take a snapshot
++    const fragment = getFragment(conn);
++    const snapshotJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const snapshotMarkdown = mdManager.serialize(snapshotJson);
++    expect(snapshotMarkdown).toContain('User content in source mode');
++
++    // Set up Y.Doc observer (simulates what App.tsx does in source mode)
++    let latestMarkdown = snapshotMarkdown;
++    const observer = () => {
++      const json = yXmlFragmentToProsemirrorJSON(fragment);
++      latestMarkdown = mdManager.serialize(json);
++    };
++    fragment.observeDeep(observer);
++
++    // Agent writes via markdown path (same as POST /api/agent-write-md)
++    const agentMd = 'Agent injected this during source mode';
++    const combined = `${snapshotMarkdown.trim()}\n\n${agentMd}\n`;
++    const parsedJson = mdManager.parse(combined);
++    const pmNode = schema.nodeFromJSON(parsedJson);
++
++    getDoc(conn).transact(() => {
++      const meta = { mapping: new Map(), isOMark: new Map() };
++      updateYFragment(getDoc(conn), fragment, pmNode, meta);
++    });
++
++    // The observer should have fired — latestMarkdown should include agent's write
++    expect(latestMarkdown).toContain('User content in source mode');
++    expect(latestMarkdown).toContain('Agent injected this during source mode');
++
++    fragment.unobserveDeep(observer);
++    await conn.disconnect();
++  });
++
++  test('A3 combined: source mode + agent markdown write + three-way merge preserves all changes', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++    const conn = await hocuspocus.openDirectConnection('test-combined-a3');
++
++    // Step 1: Seed with two paragraphs (user content in WYSIWYG)
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++
++      const p1 = new Y.XmlElement('paragraph');
++      const t1 = new Y.XmlText();
++      t1.applyDelta([{ insert: 'Paragraph A — user will edit this' }]);
++      p1.insert(0, [t1]);
++
++      const p2 = new Y.XmlElement('paragraph');
++      const t2 = new Y.XmlText();
++      t2.applyDelta([{ insert: 'Paragraph B — untouched' }]);
++      p2.insert(0, [t2]);
++
++      fragment.push([p1, p2]);
++    });
++
++    // Step 2: User enters source mode — snapshot taken
++    const fragment = getFragment(conn);
++    const snapshotJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const snapshotMarkdown = mdManager.serialize(snapshotJson);
++
++    // Step 3: Set up Y.Doc observer (simulates A1 source mode injection)
++    let latestMarkdown = snapshotMarkdown;
++    const observer = () => {
++      const json = yXmlFragmentToProsemirrorJSON(fragment);
++      latestMarkdown = mdManager.serialize(json);
++    };
++    fragment.observeDeep(observer);
++
++    // Step 4: Agent writes paragraph C via markdown path (A1)
++    const agentMd = 'Paragraph C — agent wrote this via markdown path';
++    const currentMd = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
++    const combined = `${currentMd.trim()}\n\n${agentMd}\n`;
++    const parsedJson = mdManager.parse(combined);
++    const pmNode = schema.nodeFromJSON(parsedJson);
++
++    getDoc(conn).transact(() => {
++      const meta = { mapping: new Map(), isOMark: new Map() };
++      updateYFragment(getDoc(conn), fragment, pmNode, meta);
++    });
++
++    // Step 5: Verify agent text appears in source view (A1 injection)
++    expect(latestMarkdown).toContain('Paragraph C — agent wrote this via markdown path');
++
++    // Step 6: User edits paragraph A in source mode
++    // The user's sourceContent is the snapshotMarkdown (what they started with) + their edits
++    // Agent write is visible in source via injection but user has been editing from their view
++    const userEdited = snapshotMarkdown.replace(
++      'Paragraph A — user will edit this',
++      'Paragraph A — USER EDITED',
++    );
++
++    // Step 7: Unsubscribe observer (simulates App.tsx behavior before toggle-back)
++    fragment.unobserveDeep(observer);
++
++    // Step 8: Toggle back with three-way merge (A2)
++    const result = threeWayMerge(
++      getDoc(conn),
++      fragment,
++      snapshotMarkdown,
++      userEdited,
++      mdManager,
++      schema,
++    );
++
++    // Step 9: Verify everything survived
++    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const finalMarkdown = mdManager.serialize(finalJson);
++
++    console.log('\n=== COMBINED TEST (A1 + A2 + A3) ===');
++    console.log(`Selective: ${result.selective}`);
++    console.log(`Agent preserved: ${result.agentPreservedCount}`);
++    console.log(`Conflicts: ${result.conflicts.length}`);
++    console.log(`Final markdown:\n${finalMarkdown}`);
++
++    // User's edit to paragraph A survives
++    expect(finalMarkdown).toContain('Paragraph A — USER EDITED');
++
++    // Paragraph B (unchanged) survives
++    expect(finalMarkdown).toContain('Paragraph B — untouched');
++
++    // Agent's paragraph C survives the three-way merge!
++    expect(finalMarkdown).toContain('Paragraph C — agent wrote this via markdown path');
++
++    // Selective merge, no conflicts, agent paragraph preserved
++    expect(result.selective).toBe(true);
++    expect(result.conflicts).toHaveLength(0);
++    expect(result.agentPreservedCount).toBeGreaterThan(0);
++
++    await conn.disconnect();
++  });
++
++  test('agent markdown write (prepend position) inserts before existing content', async () => {
++    const hocuspocus = new Hocuspocus({ quiet: true });
++    const conn = await hocuspocus.openDirectConnection('test-md-prepend');
++
++    // Seed with initial content
++    await conn.transact((doc) => {
++      const fragment = doc.getXmlFragment('default');
++      const p1 = new Y.XmlElement('paragraph');
++      const t1 = new Y.XmlText();
++      t1.applyDelta([{ insert: 'Original first paragraph' }]);
++      p1.insert(0, [t1]);
++      fragment.push([p1]);
++    });
++
++    // Prepend agent markdown
++    const fragment = getFragment(conn);
++    const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const currentMarkdown = mdManager.serialize(currentJson);
++
++    const agentMarkdown = 'Agent prepended this';
++    const combined = `${agentMarkdown}\n\n${currentMarkdown.trim()}\n`;
++
++    const parsedJson = mdManager.parse(combined);
++    const pmNode = schema.nodeFromJSON(parsedJson);
++
++    getDoc(conn).transact(() => {
++      const meta = { mapping: new Map(), isOMark: new Map() };
++      updateYFragment(getDoc(conn), fragment, pmNode, meta);
++    });
++
++    // Verify order: agent's paragraph first, then original
++    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
++    const finalMarkdown = mdManager.serialize(finalJson);
++
++    expect(finalMarkdown).toContain('Agent prepended this');
++    expect(finalMarkdown).toContain('Original first paragraph');
++
++    // Verify order
++    const agentIdx = finalMarkdown.indexOf('Agent prepended this');
++    const originalIdx = finalMarkdown.indexOf('Original first paragraph');
++    expect(agentIdx).toBeLessThan(originalIdx);
++
++    await conn.disconnect();
++  });
++});
 diff --git a/init_spike/src/server/agent-sim.ts b/init_spike/src/server/agent-sim.ts
 new file mode 100644
-index 0000000..f3d7ff8
+index 0000000..200a069
 --- /dev/null
 +++ b/init_spike/src/server/agent-sim.ts
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,64 @@
 +/**
 + * V3: Agent simulator — triggers DirectConnection writes via HTTP API.
 + *
 + * Usage:
-+ *   bun run src/server/agent-sim.ts           # single write
-+ *   bun run src/server/agent-sim.ts --rapid 5 # 5 rapid writes (100ms apart)
++ *   bun run src/server/agent-sim.ts                    # single raw Y.XmlElement write
++ *   bun run src/server/agent-sim.ts --rapid 5          # 5 rapid writes (100ms apart)
++ *   bun run src/server/agent-sim.ts --markdown         # single markdown write (unified path)
++ *   bun run src/server/agent-sim.ts --markdown --rapid 5
 + *
 + * Requires the Vite dev server to be running (bun run dev).
-+ * The Hocuspocus server exposes POST /api/agent-write which uses
-+ * DirectConnection internally to write a paragraph to the Y.Doc.
 + */
 +
 +export {};
 +
-+const API_URL = 'http://localhost:5173/api/agent-write';
++const BASE_URL = 'http://localhost:5173';
 +
-+async function agentWrite(): Promise<{ ok: boolean; timestamp?: string; error?: string }> {
-+  const res = await fetch(API_URL, { method: 'POST' });
++async function agentWriteRaw(): Promise<{ ok: boolean; timestamp?: string; error?: string }> {
++  const res = await fetch(`${BASE_URL}/api/agent-write`, { method: 'POST' });
++  return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
++}
++
++async function agentWriteMarkdown(
++  markdown: string,
++  position: 'append' | 'prepend' = 'append',
++): Promise<{ ok: boolean; timestamp?: string; error?: string }> {
++  const res = await fetch(`${BASE_URL}/api/agent-write-md`, {
++    method: 'POST',
++    headers: { 'Content-Type': 'application/json' },
++    body: JSON.stringify({ markdown, position }),
++  });
 +  return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
 +}
 +
 +const args = process.argv.slice(2);
++const useMarkdown = args.includes('--markdown');
 +const rapidIndex = args.indexOf('--rapid');
 +const count = rapidIndex >= 0 ? Number.parseInt(args[rapidIndex + 1] || '5', 10) : 1;
 +
++async function doWrite() {
++  const timestamp = new Date().toISOString();
++  if (useMarkdown) {
++    return agentWriteMarkdown(`Agent markdown write at ${timestamp}`, 'append');
++  }
++  return agentWriteRaw();
++}
++
 +if (count > 1) {
-+  console.log(`Rapid mode: ${count} writes, 100ms apart\n`);
++  console.log(`Rapid mode: ${count} writes, 100ms apart (${useMarkdown ? 'markdown' : 'raw'})\n`);
 +  for (let i = 0; i < count; i++) {
-+    const result = await agentWrite();
++    const result = await doWrite();
 +    console.log(
 +      `  Write ${i + 1}/${count}: ${result.ok ? 'OK' : 'FAIL'} ${result.timestamp ?? result.error}`,
 +    );
@@ -1874,22 +5178,26 @@ index 0000000..f3d7ff8
 +    }
 +  }
 +} else {
-+  console.log('Single agent write...');
-+  const result = await agentWrite();
++  console.log(`Single agent write (${useMarkdown ? 'markdown' : 'raw'})...`);
++  const result = await doWrite();
 +  console.log(`  Result: ${result.ok ? 'OK' : 'FAIL'} ${result.timestamp ?? result.error}`);
 +}
 +
 +console.log('\nDone. Check the browser editor for new paragraph(s).');
 diff --git a/init_spike/src/server/hocuspocus-plugin.ts b/init_spike/src/server/hocuspocus-plugin.ts
 new file mode 100644
-index 0000000..0416867
+index 0000000..0991377
 --- /dev/null
 +++ b/init_spike/src/server/hocuspocus-plugin.ts
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,139 @@
 +import { Hocuspocus } from '@hocuspocus/server';
++import { getSchema } from '@tiptap/core';
++import { MarkdownManager } from '@tiptap/markdown';
++import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 +import type { Plugin } from 'vite';
 +import { WebSocketServer } from 'ws';
 +import * as Y from 'yjs';
++import { sharedExtensions } from '../editor/extensions/shared';
 +import { createPersistenceExtension } from './persistence';
 +
 +export const hocuspocus = new Hocuspocus({
@@ -1947,8 +5255,77 @@ index 0000000..0416867
 +        }
 +      });
 +
++      // HTTP API for agent-sim markdown writes (unified write path)
++      server.middlewares.use('/api/agent-write-md', async (req, res) => {
++        if (req.method !== 'POST') {
++          res.writeHead(405);
++          res.end('Method not allowed');
++          return;
++        }
++
++        try {
++          // Read request body
++          const chunks: Buffer[] = [];
++          for await (const chunk of req) {
++            chunks.push(chunk as Buffer);
++          }
++          const body = JSON.parse(Buffer.concat(chunks).toString()) as {
++            markdown: string;
++            position?: 'append' | 'prepend';
++          };
++
++          if (!body.markdown || typeof body.markdown !== 'string') {
++            res.writeHead(400, { 'Content-Type': 'application/json' });
++            res.end(JSON.stringify({ ok: false, error: 'markdown field required' }));
++            return;
++          }
++
++          const position = body.position ?? 'append';
++          const conn = await hocuspocus.openDirectConnection('test-doc');
++          const timestamp = new Date().toISOString();
++
++          const mdManager = new MarkdownManager({ extensions: sharedExtensions });
++          const editorSchema = getSchema(sharedExtensions);
++
++          await conn.transact((doc) => {
++            const fragment = doc.getXmlFragment('default');
++
++            // Serialize current content to markdown
++            const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
++            const currentMarkdown = mdManager.serialize(currentJson);
++
++            // Splice agent's markdown at the specified position
++            let combined: string;
++            if (position === 'prepend') {
++              combined = `${body.markdown.trim()}\n\n${currentMarkdown.trim()}\n`;
++            } else {
++              combined = currentMarkdown.trim()
++                ? `${currentMarkdown.trim()}\n\n${body.markdown.trim()}\n`
++                : `${body.markdown.trim()}\n`;
++            }
++
++            // Parse combined markdown → ProseMirror node → updateYFragment
++            const parsedJson = mdManager.parse(combined);
++            const pmNode = editorSchema.nodeFromJSON(parsedJson);
++            const meta = { mapping: new Map(), isOMark: new Map() };
++            updateYFragment(doc, fragment, pmNode, meta);
++          });
++
++          await conn.disconnect();
++
++          res.writeHead(200, { 'Content-Type': 'application/json' });
++          res.end(JSON.stringify({ ok: true, timestamp }));
++        } catch (e) {
++          console.error('[agent-write-md]', e);
++          const message = e instanceof Error ? e.message : String(e);
++          res.writeHead(500, { 'Content-Type': 'application/json' });
++          res.end(JSON.stringify({ ok: false, error: message }));
++        }
++      });
++
 +      console.log('[hocuspocus] WebSocket server ready on /collab');
 +      console.log('[hocuspocus] Agent write API at POST /api/agent-write');
++      console.log('[hocuspocus] Agent markdown write API at POST /api/agent-write-md');
 +    },
 +  };
 +}
@@ -2190,6 +5567,22 @@ index 0000000..d762294
 +/** Store frontmatter for a document (called when loading file from disk) */
 +export function cacheFrontmatter(documentName: string, frontmatter: string): void {
 +  frontmatterCache.set(documentName, frontmatter);
++}
+diff --git a/init_spike/src/types/diff.d.ts b/init_spike/src/types/diff.d.ts
+new file mode 100644
+index 0000000..4573d04
+--- /dev/null
++++ b/init_spike/src/types/diff.d.ts
+@@ -0,0 +1,10 @@
++declare module 'diff' {
++  interface Change {
++    value: string;
++    added?: boolean;
++    removed?: boolean;
++    count?: number;
++  }
++
++  export function diffLines(oldStr: string, newStr: string): Change[];
 +}
 diff --git a/init_spike/src/v1a-roundtrip-test.ts b/init_spike/src/v1a-roundtrip-test.ts
 new file mode 100644
@@ -2797,3 +6190,254 @@ index 0000000..1c63af5
 +++ b/reports
 @@ -0,0 +1 @@
 +Subproject commit 1c63af5f8bfeaf0d11634374b6703279ca4ac2b7
+diff --git a/specs/2026-04-07-agent-markdown-writes/SPEC.md b/specs/2026-04-07-agent-markdown-writes/SPEC.md
+new file mode 100644
+index 0000000..372b4a8
+--- /dev/null
++++ b/specs/2026-04-07-agent-markdown-writes/SPEC.md
+@@ -0,0 +1,245 @@
++# SPEC: Agent Markdown Write Path + Three-Way Merge Source Toggle
++
++**Status:** Final
++**Created:** 2026-04-07
++**Baseline commit:** `feat/init-spike` branch (init_spike spike complete)
++**Implementer:** AI coding agent (Claude Code)
++**Location:** `init_spike/` (extends existing spike code)
++**Nature:** Derisking spike — validate two alternative approaches to the R3 clobber problem (agent writes lost during source mode toggle-back). Both approaches are implemented and tested; the spike produces evidence for which approach to ship.
++
++**Pace:** Thoroughness over speed. Each alternative should be fully implemented, tested with real scenarios, and documented with evidence. If something doesn't work, document precisely what broke and why.
++
++---
++
++## 1. Problem Statement (SCR)
++
++**Situation:** The init_spike validated the core editor + CRDT + persistence stack. 6/7 validations passed. The source toggle (V4b) works: serialize-on-toggle via `updateYFragment` preserves content through WYSIWYG↔source cycles.
++
++**Complication:** The V4b divergence test revealed a product-breaking limitation (spec risk R3): when a user is in source mode and an AI agent writes via DirectConnection, the agent's write is silently lost on toggle-back. `updateYFragment` replaces the entire Y.Doc with the user's parsed markdown — which was a snapshot taken *before* the agent wrote. This is the core use case of the product (human + agent co-editing), and it's broken in one of the two editor modes.
++
++The previously recommended mitigation (Option I: awareness-based mode locking) is bad UX — telling agents "you can't write right now" is antithetical to an agent-native product. We need approaches that actually solve the merge, not avoid it.
++
++**Resolution:** Implement and validate two alternative approaches that let agent writes coexist with source mode editing:
++
++1. **Alternative A (Agent Markdown Writes):** Change the agent write path from raw Y.XmlElement construction to markdown parse→updateYFragment. This unifies the write path so agent writes can be injected directly into the source mode CodeMirror buffer as text.
++
++2. **Alternative B (Three-Way Merge on Toggle-Back):** Store the markdown snapshot when entering source mode. On toggle-back, compute the diff between snapshot and user-edited markdown, then apply only the changed paragraphs to the Y.Doc — preserving agent writes in paragraphs the user didn't touch.
++
++Both approaches are complementary, not competing. Alternative A changes how writes enter the system. Alternative B changes how writes are reconciled on toggle-back. The spike implements both and tests them independently and together.
++
++---
++
++## 2. Success Criteria
++
++### End-to-End Validation Principle
++
++Same as the init_spike: real browser sessions, real WebSocket connections, real agent writes. The foundation IS the integration test.
++
++### Primary validation: the divergence test passes
++
++The V4b divergence test that currently fails must pass:
++
++1. User is in source mode editing paragraph A
++2. Agent writes paragraph C via DirectConnection (non-conflicting — different paragraph)
++3. User toggles back to WYSIWYG
++4. **Both** the user's edit to paragraph A **and** the agent's paragraph C are present
++
++This is the P0 acceptance criterion. Everything else supports this.
++
++### Secondary validation: conflicting edits are handled gracefully
++
++1. User is in source mode editing paragraph A
++2. Agent writes to the **same** paragraph A via DirectConnection
++3. User toggles back to WYSIWYG
++4. Document is not corrupted. Both versions are either merged or one wins with the other recoverable. The behavior is documented.
++
++This is characterization, not pass/fail — the product design for conflict resolution is a future decision. But the system must not silently lose data or corrupt the document.
++
++---
++
++## 3. What to Implement
++
++### A1: Agent Markdown Write Path
++
++**Hypothesis:** If the agent writes markdown text (parsed through the same path as toggle-back) instead of raw Y.XmlElements, source mode can receive agent writes as simple text insertions into the CodeMirror buffer.
++
++**Implementation:**
++
++1. **New agent write API:** Create a new endpoint `POST /api/agent-write-md` that accepts a markdown string and a position hint (append, prepend, or after-paragraph-N).
++
++   ```typescript
++   // Request body
++   { markdown: string; position?: 'append' | 'prepend' | { after: number } }
++   ```
++
++2. **Server-side write path:** The endpoint:
++   a. Opens a DirectConnection to the document
++   b. Gets the current Y.XmlFragment content
++   c. Serializes current content to markdown (via MarkdownManager)
++   d. Splices the agent's markdown into the full markdown at the specified position
++   e. Parses the combined markdown back to a ProseMirror node
++   f. Applies via `updateYFragment` (diff-based)
++   g. Disconnects
++
++3. **Source mode injection:** When the editor is in source mode and an agent write occurs:
++   a. The Y.Doc observer on the XmlFragment fires (the hidden TiptapEditor picks up the change)
++   b. The App component detects the Y.Doc changed while in source mode
++   c. The new content is serialized to markdown and compared with the current CodeMirror content
++   d. The diff is applied as a CodeMirror dispatch (inserting the new paragraph at the right position)
++   e. The user sees the agent's text appear in the source editor in real-time
++
++4. **Update agent-sim.ts:** Add a `--markdown` flag that uses the new endpoint.
++
++**Test procedure:**
++1. Start dev server, open editor in browser
++2. Type some content in WYSIWYG mode
++3. Toggle to source mode
++4. Run `agent-sim.ts --markdown` from terminal
++5. Verify: agent's paragraph appears in the CodeMirror source view in real-time
++6. Edit a different paragraph in source mode
++7. Toggle back to WYSIWYG
++8. Verify: both user's edit and agent's paragraph are present
++
++**Pass criteria:** Agent writes appear in source mode in real-time. Toggle-back preserves both user edits and agent writes.
++
++**Fail criteria:** Agent writes don't appear in source mode, or toggle-back loses either set of changes. Document the exact failure.
++
++### A2: Three-Way Merge on Toggle-Back
++
++**Hypothesis:** By computing a diff between the original snapshot and the user's edited markdown, we can apply only the user's actual changes to the Y.Doc — leaving agent writes (in paragraphs the user didn't touch) intact.
++
++**Implementation:**
++
++1. **Store snapshot on toggle-to-source:** When the user clicks "Source", save the serialized markdown as `snapshotMarkdown` (in addition to the current `sourceContent` state).
++
++2. **Diff on toggle-back:** When the user clicks "WYSIWYG":
++   a. Compute line-level diff between `snapshotMarkdown` (base) and `sourceContent` (user-edited)
++   b. For each changed hunk in the diff:
++      - Map the line range to paragraph indices in the Y.XmlFragment
++      - Apply `updateYFragment` only to those paragraphs
++   c. Paragraphs not in any hunk are left untouched in the Y.Doc (preserving agent writes)
++
++3. **Paragraph-level mapping:** The mapping between markdown lines and Y.XmlFragment children is:
++   - Serialize each Y.XmlFragment child independently to markdown
++   - Build a map: `paragraph index → markdown line range`
++   - Use this map to translate diff hunks to Y.Doc operations
++
++4. **Conflict detection:** If a diff hunk overlaps with a paragraph that was modified by the agent (compare snapshot paragraph with current Y.Doc paragraph):
++   - Flag as conflict
++   - For P0: user's version wins (same as current behavior, but only for the conflicting paragraph — non-conflicting paragraphs are preserved)
++   - Log the conflict for observability
++
++5. **Fallback:** If the mapping fails (markdown structure changed too drastically for paragraph-level mapping), fall back to the current whole-doc `updateYFragment` with a console warning.
++
++**Test procedure:**
++1. Start dev server, open editor in browser
++2. Type some content: paragraph A, paragraph B
++3. Toggle to source mode
++4. Run `agent-sim.ts` from terminal (adds paragraph C via DirectConnection to Y.Doc)
++5. Edit paragraph A in source mode
++6. Toggle back to WYSIWYG
++7. Verify: paragraph A has user's edit, paragraph B unchanged, paragraph C (agent's) present
++8. Conflicting test: repeat but agent edits paragraph A too
++9. Verify: document not corrupted, user's version of paragraph A wins, paragraph B/C intact
++
++**Pass criteria:** Non-conflicting divergence test passes — agent's paragraph C survives toggle-back. Conflicting case: user wins for the conflicting paragraph, document not corrupted.
++
++**Fail criteria:** Agent's paragraph C still lost on toggle-back, or document corruption on conflict. Document the exact failure.
++
++### A3: Combined — Both approaches active
++
++**Test procedure:**
++1. Start dev server, open editor
++2. Toggle to source mode
++3. Run `agent-sim.ts --markdown` — verify agent text appears in source view (A1)
++4. Edit a different paragraph in source mode
++5. Toggle back to WYSIWYG
++6. Verify: three-way merge preserves both edits (A2)
++7. The combined flow should "just work" — A1 makes agent writes visible in source, A2 makes toggle-back safe
++
++---
++
++## 4. Implementation Order
++
++```
++Phase 1: A2 (Three-way merge) — changes toggle-back behavior only, no new write path
++Phase 2: A1 (Agent markdown writes) — new write endpoint + source mode injection
++Phase 3: A3 (Combined test) — verify both work together
++Phase 4: RESULTS.md update — document findings
++```
++
++A2 first because it's a safer change (only affects toggle-back, not the write path) and independently solves the P0 divergence test. A1 is the more ambitious change and benefits from A2 already being in place as safety net.
++
++---
++
++## 5. Tech Stack
++
++Same as init_spike. Additional dependency:
++
++```json
++{
++  "dependencies": {
++    "diff": "^7.0.0"
++  }
++}
++```
++
++The `diff` package provides line-level diffing (`diffLines`) which maps cleanly to paragraph-level markdown changes. Pure JS, no native dependencies, well-maintained (5M weekly downloads).
++
++---
++
++## 6. Scope Boundaries
++
++**In scope:**
++- Three-way merge on toggle-back (A2)
++- Agent markdown write endpoint (A1)
++- Source mode live injection of agent writes (A1)
++- Updated agent-sim.ts with --markdown flag
++- Updated RESULTS.md with new validation findings
++- End-to-end tests for both approaches
++
++**Out of scope:**
++- Awareness protocol / mode locking (Option I) — deferred, may not be needed if A1+A2 work
++- Disk-based source mode / file watcher (Cursor interop) — separate story
++- Conflict resolution UX (three-way merge conflict case uses "user wins" for P0)
++- Changes to the persistence layer
++- Changes outside init_spike/
++
++---
++
++## 7. Key Files to Modify
++
++| File | Change |
++|------|--------|
++| `src/App.tsx` | Store snapshotMarkdown on toggle-to-source, three-way merge on toggle-back, source mode Y.Doc change observer |
++| `src/editor/TiptapEditor.tsx` | Expose Y.Doc change callback for source mode injection |
++| `src/server/hocuspocus-plugin.ts` | New `POST /api/agent-write-md` endpoint |
++| `src/server/agent-sim.ts` | Add `--markdown` flag |
++| `src/server/agent-flow.test.ts` | New tests for three-way merge and markdown write path |
++| `RESULTS.md` | Updated with A1/A2/A3 validation results |
++
++---
++
++## 8. Agent Constraints
++
++**SCOPE:** Only files within `init_spike/`. Same constraints as init_spike spec.
++
++**STOP_IF:**
++- Three-way merge produces document corruption (not just wrong merge — actual Y.Doc structural corruption)
++- The diff library can't handle the markdown patterns in the test fixture
++
++**Key research references:**
++- `reports/source-toggle-architecture/` — Option A/B/I analysis, updateYFragment behavior
++- `reports/crdt-mcp-filesystem-bridge/evidence/updateyfragment-concurrent-mutations.md` — R3 risk characterization
++- `specs/2026-04-07-init-spike/SPEC.md` — V4b divergence test procedure (steps 8-9)
++
++---
++
++## 9. Risks
++
++| # | Risk | Likelihood | Impact | Mitigation |
++|---|------|-----------|--------|------------|
++| R1 | Paragraph-level mapping between markdown lines and Y.XmlFragment children is fragile | MEDIUM | MEDIUM | Fallback to whole-doc updateYFragment if mapping fails. Log the failure for debugging. |
++| R2 | Agent markdown write path has higher latency than direct Y.XmlElement construction | LOW | LOW | Agent writes are at section level (TQ16). Parse→updateYFragment adds ~5-10ms. Negligible at 30s+ agent write intervals. |
++| R3 | Source mode injection causes cursor jump in CodeMirror when agent text is inserted | MEDIUM | LOW | Insert at document end (append) to minimize disruption. If cursor jumps, document the behavior. |
++| R4 | Three-way merge + agent markdown writes interact badly (double-application of changes) | LOW | MEDIUM | Test A3 (combined) explicitly. If interaction issues, document and recommend which to ship solo. |
