@@ -6,6 +6,15 @@
 bun run dev          # Start Vite dev server + Hocuspocus (http://localhost:5173)
 bun run check:fast   # Typecheck + lint (~5s) — run after every change
 bun run check        # Full gate: typecheck + lint + build
+bun run format       # Auto-fix formatting via Biome
+bun run build        # TypeScript check + Vite production build
+```
+
+### Agent simulator (requires dev server running)
+
+```bash
+bun run src/server/agent-sim.ts            # Single DirectConnection write
+bun run src/server/agent-sim.ts --rapid 5  # 5 rapid writes, 100ms apart
 ```
 
 ## Verification
@@ -32,12 +41,17 @@ When you hit uncertainty or want to understand how others solve something:
 ## Key files
 
 - `vite.config.ts` — Vite + Hocuspocus plugin (V2)
-- `src/editor/TiptapEditor.tsx` — WYSIWYG editor (V1, V3, V6)
-- `src/editor/SourceEditor.tsx` — CodeMirror source view (V4)
-- `src/server/hocuspocus-plugin.ts` — Embedded Hocuspocus (V2)
-- `src/server/agent-sim.ts` — DirectConnection write simulator (V3)
-- `src/server/persistence.ts` — onStoreDocument + git pipeline (V5)
-- `content/test-fixture.md` — Test markdown file
+- `src/App.tsx` — Main app with source toggle state (V4)
+- `src/editor/TiptapEditor.tsx` — WYSIWYG editor with Hocuspocus collab (V1, V3, V6)
+- `src/editor/SourceEditor.tsx` — CodeMirror 6 source view (V4)
+- `src/editor/extensions/frontmatter.ts` — Frontmatter strip/prepend (V1)
+- `src/editor/extensions/jsx-component.ts` — Void node extension, priority 60 (V6)
+- `src/editor/extensions/JsxComponentView.tsx` — React node view renderer (V6)
+- `src/editor/Callout.tsx` — Sample React component for void node (V6)
+- `src/server/hocuspocus-plugin.ts` — Embedded Hocuspocus + DirectConnection API (V2, V3)
+- `src/server/agent-sim.ts` — CLI tool to simulate agent writes (V3)
+- `src/server/persistence.ts` — CRDT → markdown → git pipeline (V5)
+- `content/test-fixture.md` — Test markdown file with all content patterns
 
 ## Research references
 
