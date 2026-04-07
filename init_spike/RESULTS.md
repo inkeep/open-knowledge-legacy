@@ -266,3 +266,70 @@ Y.XmlFragment('default')
 **Architecture decision confirmed:** V7 FAIL → V4b (serialize-on-toggle). A2 solves R3 (agent write clobber on toggle-back). A1 unifies the agent write path through markdown. Both approaches work independently and together.
 
 **Quality gates:** `bun run check` passes (typecheck + lint + build + test).
+
+---
+
+## Cross-Mode Sync Matrix
+
+The V7 FAIL means CodeMirror (source mode) has no CRDT binding — it's an independent text buffer showing a markdown snapshot. This creates a clear boundary between what syncs and what doesn't.
+
+### Sync status by scenario
+
+| Source → Target | Live sync? | Notes |
+|---|---|---|
+| **WYSIWYG → WYSIWYG (2 tabs)** | **Yes** | Full CRDT collaboration via Yjs + Hocuspocus WebSocket. Both tabs bind to the same Y.XmlFragment. Keystrokes propagate in real-time. This is the only fully collaborative path. |
+| **Agent → WYSIWYG** | **Yes** | Agent writes via DirectConnection → Y.Doc → y-prosemirror sync plugin → TipTap re-renders. Sub-100ms latency. |
+| **Agent → Source mode** | **Yes (re-serialization)** | Y.XmlFragment observer detects agent write → re-serializes Y.Doc to markdown → pushes to CodeMirror via React state. Works but replaces entire buffer (cursor may jump). |
+| **WYSIWYG → Source mode (2 tabs)** | **Partially** | Same Y.Doc observer mechanism as agent writes. Tab 1 WYSIWYG edits propagate to Y.Doc → Tab 2's observer fires → re-serializes into CodeMirror. Technically works but replaces whole buffer on every keystroke — cursor resets constantly. Practically unusable for concurrent editing. |
+| **Source mode → WYSIWYG (2 tabs)** | **On toggle-back only** | Source mode edits are in-memory React state — not written to Y.Doc until user toggles back. Three-way merge then writes to Y.Doc, which syncs to other WYSIWYG tabs. No live sync while in source mode. |
+| **Source mode ↔ Source mode (2 tabs)** | **No** | Two isolated text buffers with no connection. Each took an independent snapshot when the user clicked "Source". They diverge immediately with no reconciliation until one toggles back. |
+| **Source mode → Disk** | **No** | Source mode edits live in React state (in-memory). No disk writes during source mode. Edits only reach disk after toggle-back → Y.Doc → persistence layer. |
+| **WYSIWYG → Disk** | **Yes (debounced)** | Persistence layer: Y.Doc → markdown → .md file (2-10s) → git commit on refs/wip/main (30s). |
+| **Disk → WYSIWYG** | **No** | No file watcher. External edits to .md files (VS Code, Cursor, vim) are invisible to the CRDT. Next persistence write overwrites them. |
+| **Disk → Source mode** | **No** | No file watcher. |
+
+### System diagram
+
+```
+  SYNCS IN REAL-TIME:                    DOES NOT SYNC:
+  ══════════════════                     ═══════════════
+
+  ┌────────────┐  CRDT   ┌────────────┐
+  │ WYSIWYG    │◄═══════►│ WYSIWYG    │
+  │ (Tab 1)    │  sync   │ (Tab 2)    │
+  └─────┬──────┘         └────────────┘
+        │
+        │ CRDT sync
+        ▼
+  ┌────────────┐  re-serialize  ┌────────────┐
+  │ Y.Doc      │───────────────►│ Source mode │ (one-way, lossy UX)
+  │ (server)   │                │ (any tab)  │
+  └─────┬──────┘                └────────────┘
+        │                             │
+        │ debounced                   │ NOT connected
+        │ persistence                 │ (in-memory only)
+        ▼                             ▼
+  ┌────────────┐                ┌────────────┐
+  │ .md file   │                │ nowhere    │
+  │ on disk    │                │            │
+  └────────────┘                └────────────┘
+        │
+        │ NOT watched
+        ▼
+  ┌────────────┐
+  │ VS Code /  │  (edits here are invisible to the system)
+  │ Cursor     │
+  └────────────┘
+```
+
+### What this means for the product
+
+**P0 (single IC + one AI agent):** All critical flows work. The human edits in WYSIWYG or toggles to source for raw markdown access. The AI agent writes via DirectConnection and changes appear instantly in whichever mode is active. Git auto-persistence creates a version history. The three-way merge ensures agent writes survive source mode toggle-back.
+
+**Gaps that matter at multi-user / multi-tool:**
+
+1. **Collaborative source editing** — requires V7 (unified YType binding CodeMirror to CRDT) or a completely different approach (e.g., `y-codemirror.next` bound to a separate `Y.Text` with observer-based sync from `Y.XmlFragment`). No production system has solved this.
+
+2. **Cursor interop (VS Code / Cursor)** — requires a bidirectional file watcher (`@parcel/watcher`) with content-hash feedback loop prevention. The persistence layer writes disk → git, but disk → CRDT doesn't exist. This is the path to "edit in Cursor, see it in the web editor."
+
+3. **Multi-user source mode** — requires either awareness-based mode locking (Option I, ~50 lines) or accepting that two users in source mode simultaneously will produce conflicting snapshots that only reconcile on toggle-back (whoever toggles back last wins via three-way merge, but the other user's source changes are lost).
