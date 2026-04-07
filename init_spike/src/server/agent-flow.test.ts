@@ -341,7 +341,7 @@ describe('Agent write → Editor reflection', () => {
     await conn.disconnect();
   });
 
-  test('three-way merge falls back to whole-doc when user changes paragraph count', async () => {
+  test('three-way merge preserves agent paragraph when user also adds paragraphs', async () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const conn = await hocuspocus.openDirectConnection('test-fallback');
 
@@ -379,7 +379,7 @@ describe('Agent write → Editor reflection', () => {
     // User ALSO adds a paragraph in source mode (paragraph count changes: 2 → 3)
     const userEdited = `${snapshotMarkdown.trim()}\n\nParagraph D — user added in source\n`;
 
-    // Toggle back — paragraph count mismatch triggers fallback
+    // Toggle back — diff-based alignment handles both additions
     const result = threeWayMerge(
       getDoc(conn),
       fragment,
@@ -391,21 +391,91 @@ describe('Agent write → Editor reflection', () => {
 
     const finalMarkdown = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
 
-    // Fallback was used (not selective)
-    expect(result.selective).toBe(false);
-    expect(result.fallbackReason).toContain('paragraph count changed');
+    // Selective merge succeeds (diff-based alignment handles paragraph count changes)
+    expect(result.selective).toBe(true);
 
-    // User's content is preserved (whole-doc applies user's version)
+    // User's content is preserved
     expect(finalMarkdown).toContain('Paragraph A');
     expect(finalMarkdown).toContain('Paragraph B');
     expect(finalMarkdown).toContain('Paragraph D — user added in source');
 
-    // Agent's paragraph C is lost in fallback (documented trade-off)
+    // Agent's paragraph C is ALSO preserved (no longer lost!)
+    expect(finalMarkdown).toContain('Paragraph C — agent added');
+    expect(result.agentPreservedCount).toBeGreaterThan(0);
+
     // Document is structurally valid
     const reparsed = mdManager.parse(finalMarkdown);
     const reNode = schema.nodeFromJSON(reparsed);
     expect(reNode).toBeTruthy();
     expect(reNode.content.childCount).toBeGreaterThan(0);
+
+    await conn.disconnect();
+  });
+
+  test('agent in-place modification to existing paragraph preserved when user does not edit it', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-agent-inplace');
+
+    // Step 1: Seed with two paragraphs
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'Paragraph A — user will edit this' }]);
+      p1.insert(0, [t1]);
+
+      const p2 = new Y.XmlElement('paragraph');
+      const t2 = new Y.XmlText();
+      t2.applyDelta([{ insert: 'Paragraph B — agent will modify this' }]);
+      p2.insert(0, [t2]);
+
+      fragment.push([p1, p2]);
+    });
+
+    // Step 2: User toggles to source — snapshot
+    const fragment = getFragment(conn);
+    const snapshotMarkdown = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+
+    // Step 3: User edits paragraph A only
+    const userEdited = snapshotMarkdown.replace(
+      'Paragraph A — user will edit this',
+      'Paragraph A — USER EDITED',
+    );
+
+    // Step 4: Agent modifies paragraph B IN-PLACE (not an append — a modification)
+    await conn.transact((doc) => {
+      const frag = doc.getXmlFragment('default');
+      const secondParagraph = frag.get(1) as Y.XmlElement;
+      const textNode = secondParagraph.get(0) as Y.XmlText;
+      textNode.delete(0, textNode.length);
+      textNode.insert(0, 'Paragraph B — AGENT MODIFIED IN-PLACE');
+    });
+
+    // Step 5: Toggle back with three-way merge
+    const result = threeWayMerge(
+      getDoc(conn),
+      fragment,
+      snapshotMarkdown,
+      userEdited,
+      mdManager,
+      schema,
+    );
+
+    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalMarkdown = mdManager.serialize(finalJson);
+
+    // User's edit to paragraph A survives
+    expect(finalMarkdown).toContain('Paragraph A — USER EDITED');
+
+    // Agent's in-place modification to paragraph B ALSO survives
+    expect(finalMarkdown).toContain('Paragraph B — AGENT MODIFIED IN-PLACE');
+    expect(finalMarkdown).not.toContain('agent will modify this');
+
+    // Selective merge, no conflicts
+    expect(result.selective).toBe(true);
+    expect(result.conflicts).toHaveLength(0);
+    expect(result.agentPreservedCount).toBeGreaterThan(0);
 
     await conn.disconnect();
   });
