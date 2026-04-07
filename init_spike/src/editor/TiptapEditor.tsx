@@ -2,7 +2,7 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import Collaboration from '@tiptap/extension-collaboration';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { updateYFragment } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter';
 import { sharedExtensions } from './extensions/shared';
@@ -16,6 +16,8 @@ export interface TiptapEditorHandle {
   applyMarkdown: (md: string) => void;
   /** Three-way merge: apply only user's changes, preserving concurrent agent writes */
   applyThreeWayMerge: (snapshotMarkdown: string, userEditedMarkdown: string) => ThreeWayMergeResult;
+  /** Subscribe to Y.Doc content changes. Returns unsubscribe function. */
+  onContentChange: (callback: (markdown: string) => void) => () => void;
 }
 
 // Singleton provider outside React lifecycle — survives StrictMode double-mount.
@@ -127,6 +129,25 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
           mdManager,
           editor.schema,
         );
+      },
+      onContentChange(callback: (markdown: string) => void): () => void {
+        const yFragment = provider.document.getXmlFragment('default');
+
+        // Track whether the change came from our own transact (toggle-back)
+        // to avoid feedback loops. We use a flag that's set during applyMarkdown/threeWayMerge.
+        const observer = () => {
+          try {
+            const json = yXmlFragmentToProsemirrorJSON(yFragment);
+            const body = mdManager.serialize(json);
+            const md = prependFrontmatter(frontmatterRef.current, body);
+            callback(md);
+          } catch (err) {
+            console.warn('[TiptapEditor] Failed to serialize on Y.Doc change:', err);
+          }
+        };
+
+        yFragment.observeDeep(observer);
+        return () => yFragment.unobserveDeep(observer);
       },
     }),
     [editor, mdManager, provider.document],

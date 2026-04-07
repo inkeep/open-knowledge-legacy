@@ -382,6 +382,53 @@ describe('Agent write → Editor reflection', () => {
     await conn.disconnect();
   });
 
+  test('source mode injection: agent write updates serialized markdown while in source mode', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-source-inject');
+
+    // Seed with initial content
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'User content in source mode' }]);
+      p1.insert(0, [t1]);
+      fragment.push([p1]);
+    });
+
+    // Simulate entering source mode: take a snapshot
+    const fragment = getFragment(conn);
+    const snapshotJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const snapshotMarkdown = mdManager.serialize(snapshotJson);
+    expect(snapshotMarkdown).toContain('User content in source mode');
+
+    // Set up Y.Doc observer (simulates what App.tsx does in source mode)
+    let latestMarkdown = snapshotMarkdown;
+    const observer = () => {
+      const json = yXmlFragmentToProsemirrorJSON(fragment);
+      latestMarkdown = mdManager.serialize(json);
+    };
+    fragment.observeDeep(observer);
+
+    // Agent writes via markdown path (same as POST /api/agent-write-md)
+    const agentMd = 'Agent injected this during source mode';
+    const combined = `${snapshotMarkdown.trim()}\n\n${agentMd}\n`;
+    const parsedJson = mdManager.parse(combined);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+
+    getDoc(conn).transact(() => {
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(getDoc(conn), fragment, pmNode, meta);
+    });
+
+    // The observer should have fired — latestMarkdown should include agent's write
+    expect(latestMarkdown).toContain('User content in source mode');
+    expect(latestMarkdown).toContain('Agent injected this during source mode');
+
+    fragment.unobserveDeep(observer);
+    await conn.disconnect();
+  });
+
   test('agent markdown write (prepend position) inserts before existing content', async () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const conn = await hocuspocus.openDirectConnection('test-md-prepend');
