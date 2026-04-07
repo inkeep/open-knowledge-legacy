@@ -3,7 +3,7 @@ title: Validation Results
 description: Summary of the V1--V7 spike validations that proved the foundation architecture.
 ---
 
-Seven targeted validations were run during the init spike. Six passed, one failed (confirming the expected fallback).
+Seven targeted validations (V1--V7) were run during the init spike, plus three addendum validations (A1--A3) for the agent write path and three-way merge.
 
 ## Summary
 
@@ -17,6 +17,9 @@ Seven targeted validations were run during the init spike. Six passed, one faile
 | V5 | **PASS** | Three-tier pipeline: CRDT to markdown to git plumbing |
 | V6 | **PASS** | Void node renders React component, survives markdown round-trip |
 | V7 | **FAIL** | Yjs v14 delta protocol not viable -- ecosystem pins to v13 |
+| A1 | **PASS** | Agent markdown write path + source mode live injection |
+| A2 | **PASS** | Three-way merge on toggle-back preserves agent writes |
+| A3 | **PASS** | Combined A1+A2: agent writes visible in source, preserved on toggle-back |
 
 ## V1a: Markdown round-trip (raw)
 
@@ -74,3 +77,17 @@ TipTap node extension with `atom: true`, `group: 'block'`. Intercepts `code` tok
 - The ecosystem (y-protocols, Hocuspocus, @tiptap/y-tiptap) all pin to `yjs@^13`
 
 The foundation remains sound with Yjs v13.
+
+## A1: Agent markdown write path
+
+`POST /api/agent-write-md` accepts `{ markdown, position? }` and applies via serialize, splice, parse, `updateYFragment`. This unifies agent writes with the toggle-back code path -- both go through markdown parse then `updateYFragment`. The `agent-sim.ts --markdown` flag uses the new endpoint.
+
+Source mode live injection: when source mode is active, a Y.XmlFragment observer fires on agent writes. The serialized markdown is pushed to CodeMirror via React state. The observer is unsubscribed before toggle-back to avoid interference with the three-way merge.
+
+## A2: Three-way merge on toggle-back
+
+`three-way-merge.ts` implements three-way merge for source mode toggle-back. Three versions are compared: the snapshot (when entering source mode), the user's edits, and the current Y.Doc. Agent-added paragraphs (beyond the snapshot's block count) are appended to the user's edits. Conflicts (both user and agent modified the same paragraph) are resolved with user-wins and logged to the console.
+
+## A3: Combined (A1 + A2)
+
+Combined test: source mode active, agent writes paragraph C via markdown path, it appears in Y.Doc and CodeMirror, user edits paragraph A in source, toggle back, three-way merge preserves both. User edit to paragraph A present, untouched paragraph B present, agent's paragraph C present. Both approaches work independently and together.

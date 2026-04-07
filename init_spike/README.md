@@ -28,7 +28,9 @@ Browser (React 19 + Vite 6)
                                               Hocuspocus v3.4 (embedded in Vite)
                                                 |
                                                 |-- Y.Doc (Yjs v13 CRDT)
-                                                |-- DirectConnection API (POST /api/agent-write)
+                                                |-- DirectConnection API:
+                                                |     POST /api/agent-write    (raw Y.XmlElement)
+                                                |     POST /api/agent-write-md (markdown, unified path)
                                                 |-- Persistence extension:
                                                       Layer 1: Y.Doc -> markdown -> disk (2s debounce)
                                                       Layer 2: disk -> git refs/wip/main (30s debounce)
@@ -36,7 +38,9 @@ Browser (React 19 + Vite 6)
 
 **Key architectural decisions:**
 - Hocuspocus embeds in Vite's dev server via `configureServer()` hook with a standalone `ws.WebSocketServer` (no conflict with Vite HMR)
-- Source toggle uses serialize-on-toggle (V4b): WYSIWYG serializes to markdown for CodeMirror, CodeMirror content applies back via `updateYFragment()` (diff-based, preserves collaboration state)
+- Source toggle uses serialize-on-toggle (V4b): WYSIWYG serializes to markdown for CodeMirror, CodeMirror content applies back via three-way merge + `updateYFragment()` (diff-based, preserves collaboration state and concurrent agent writes)
+- Agent markdown write path (`POST /api/agent-write-md`): accepts markdown text, serializes current Y.Doc to markdown, splices in the agent content, parses the combined result, and applies via `updateYFragment()` -- unifies agent writes with the toggle-back path
+- Source mode receives live agent writes: Y.XmlFragment observer detects changes and injects updated markdown into CodeMirror in real-time
 - Yjs v14 dual-view was investigated (V7) and found not viable -- v14 beta lacks the unified YType needed
 - Void nodes (JSX components) use `atom: true` TipTap nodes with `ReactNodeViewRenderer`, round-tripping as fenced code blocks with `jsx-component` info string
 - Git persistence uses plumbing commands (`write-tree`, `commit-tree`, `update-ref`) to write to `refs/wip/main` without checkout
@@ -54,14 +58,15 @@ init_spike/
       TiptapEditor.tsx           # WYSIWYG editor with Hocuspocus collaboration
       SourceEditor.tsx           # CodeMirror 6 source view
       Callout.tsx                # Sample React component for void node rendering
+      three-way-merge.ts         # Three-way merge for source toggle-back (preserves agent writes)
       extensions/
         frontmatter.ts           # YAML frontmatter strip/prepend for round-trip
         jsx-component.ts         # TipTap void node extension (atom, priority 60)
         JsxComponentView.tsx     # React node view renderer for JSX components
     server/
-      hocuspocus-plugin.ts       # Vite plugin: Hocuspocus + DirectConnection API
+      hocuspocus-plugin.ts       # Vite plugin: Hocuspocus + DirectConnection APIs
       persistence.ts             # CRDT -> markdown -> git pipeline
-      agent-sim.ts               # CLI tool to simulate agent writes
+      agent-sim.ts               # CLI tool to simulate agent writes (raw + markdown modes)
     v1a-roundtrip-test.ts        # Raw markdown round-trip measurement
     v1b-roundtrip-test.ts        # Round-trip measurement with fixes applied
     v7-test/                     # Isolated Yjs v14 investigation (separate deps)
@@ -83,8 +88,10 @@ bun run format       # Auto-fix formatting via Biome
 **Agent simulator (requires dev server running):**
 
 ```bash
-bun run src/server/agent-sim.ts            # Single DirectConnection write
-bun run src/server/agent-sim.ts --rapid 5  # 5 writes, 100ms apart
+bun run src/server/agent-sim.ts                      # Single raw Y.XmlElement write
+bun run src/server/agent-sim.ts --rapid 5            # 5 raw writes, 100ms apart
+bun run src/server/agent-sim.ts --markdown           # Single markdown write (unified path)
+bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes, 100ms apart
 ```
 
 ## Validation Results
@@ -101,8 +108,11 @@ bun run src/server/agent-sim.ts --rapid 5  # 5 writes, 100ms apart
 | V4: Source toggle (V4b) | PASS | Serialize-on-toggle via `updateYFragment` preserves collaboration |
 | V5: Git auto-persistence | PASS | Three-tier pipeline: CRDT -> markdown -> git plumbing |
 | V6: Void node preview | PASS | React component renders in editor, survives markdown round-trip |
+| A1: Agent markdown write path | PASS | `POST /api/agent-write-md` + source mode live injection |
+| A2: Three-way merge on toggle-back | PASS | Agent writes survive non-conflicting divergence |
+| A3: Combined (A1 + A2) | PASS | Agent writes visible in source, preserved on toggle-back |
 
-**Bottom line:** V7 FAIL confirms V4b (serialize-on-toggle) is the path forward. The remaining 6 validations prove the foundation works. The stack is ready to build on.
+**Bottom line:** V7 FAIL confirms V4b (serialize-on-toggle) is the path forward. A2 solves agent write clobber on toggle-back. A1 unifies the agent write path through markdown. The stack is ready to build on.
 
 ## Tech Stack
 

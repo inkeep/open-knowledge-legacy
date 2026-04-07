@@ -13,8 +13,10 @@ bun run build        # TypeScript check + Vite production build
 ### Agent simulator (requires dev server running)
 
 ```bash
-bun run src/server/agent-sim.ts            # Single DirectConnection write
-bun run src/server/agent-sim.ts --rapid 5  # 5 rapid writes, 100ms apart
+bun run src/server/agent-sim.ts                      # Single raw Y.XmlElement write
+bun run src/server/agent-sim.ts --rapid 5            # 5 raw writes, 100ms apart
+bun run src/server/agent-sim.ts --markdown           # Single markdown write (unified path)
+bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes, 100ms apart
 ```
 
 ## Verification
@@ -41,15 +43,16 @@ When you hit uncertainty or want to understand how others solve something:
 ## Key files
 
 - `vite.config.ts` — Vite + Hocuspocus plugin (V2)
-- `src/App.tsx` — Main app with source toggle state (V4)
+- `src/App.tsx` — Main app with source toggle state, Y.Doc observer for live agent writes in source mode (V4, A1)
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor with Hocuspocus collab (V1, V3, V6)
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 source view (V4)
+- `src/editor/three-way-merge.ts` — Three-way merge for source toggle-back: preserves agent writes in untouched paragraphs (A2)
 - `src/editor/extensions/frontmatter.ts` — Frontmatter strip/prepend (V1)
 - `src/editor/extensions/jsx-component.ts` — Void node extension, priority 60 (V6)
 - `src/editor/extensions/JsxComponentView.tsx` — React node view renderer (V6)
 - `src/editor/Callout.tsx` — Sample React component for void node (V6)
-- `src/server/hocuspocus-plugin.ts` — Embedded Hocuspocus + DirectConnection API (V2, V3)
-- `src/server/agent-sim.ts` — CLI tool to simulate agent writes (V3)
+- `src/server/hocuspocus-plugin.ts` — Embedded Hocuspocus + DirectConnection APIs: `/api/agent-write` (raw) and `/api/agent-write-md` (markdown) (V2, V3, A1)
+- `src/server/agent-sim.ts` — CLI tool to simulate agent writes: `--markdown` flag for unified write path (V3, A1)
 - `src/server/persistence.ts` — CRDT → markdown → git pipeline (V5)
 - `content/test-fixture.md` — Test markdown file with all content patterns
 

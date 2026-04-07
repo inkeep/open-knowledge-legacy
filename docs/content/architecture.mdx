@@ -51,16 +51,21 @@ Key constraint: source toggle uses `updateYFragment()` (diff-based), never `pros
 
 Hocuspocus embeds in Vite via `configureServer()` plugin hook with a standalone `ws.WebSocketServer({ noServer: true })`. No `listen()` call -- the embedding pattern intercepts WebSocket upgrades on `/collab`.
 
-Agent writes use `hocuspocus.openDirectConnection()` via an HTTP API (`POST /api/agent-write`), allowing external processes to write into the CRDT without a WebSocket connection.
+Two agent write endpoints use `hocuspocus.openDirectConnection()`:
+
+- **`POST /api/agent-write`** -- raw Y.XmlElement write (appends a paragraph with `applyDelta()`)
+- **`POST /api/agent-write-md`** -- markdown write (unified path). Accepts `{ markdown, position? }`. Serializes the current Y.Doc to markdown, splices the agent's content at the specified position (append/prepend), parses the combined result, and applies via `updateYFragment()`. This shares the same diff-based code path as the source toggle-back.
 
 ## Source toggle
 
 Two-mode toggle between WYSIWYG (TipTap) and source (CodeMirror 6):
 
-- **To source:** `editor.getJSON()` -> `MarkdownManager.serialize()` -> CodeMirror
-- **From source:** `MarkdownManager.parse()` -> `schema.nodeFromJSON()` -> `updateYFragment()`
+- **To source:** `editor.getJSON()` -> `MarkdownManager.serialize()` -> CodeMirror. A snapshot of the markdown is stored for the three-way merge.
+- **From source:** Three-way merge (`three-way-merge.ts`) compares the snapshot, the user's edits, and the current Y.Doc. Agent-added paragraphs (those beyond the snapshot's block count) are appended to the user's edits. The merged result applies via `updateYFragment()`.
 
-No CRDT binding in source mode -- CodeMirror creates/destroys on toggle.
+**Live agent writes in source mode:** When source mode is active, a Y.XmlFragment observer detects changes to the Y.Doc (from agent writes via `/api/agent-write-md`) and serializes the updated content into CodeMirror via React state. The observer is unsubscribed before toggle-back to prevent interference with the merge.
+
+**Conflict handling:** If both the user and an agent modified the same paragraph, the user's version wins. Conflicts are logged to the console with the paragraph index.
 
 ## Persistence pipeline
 
