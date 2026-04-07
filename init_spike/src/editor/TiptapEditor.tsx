@@ -5,6 +5,7 @@ import { Table } from '@tiptap/extension-table';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useRef } from 'react';
+import { JsxComponent } from './extensions/jsx-component';
 
 const DOC_NAME = 'test-doc';
 
@@ -27,6 +28,7 @@ export function TiptapEditor() {
       }),
       Link,
       Table,
+      JsxComponent,
       Collaboration.configure({
         document: provider.document,
       }),
