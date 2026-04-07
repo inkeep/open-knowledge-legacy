@@ -1,0 +1,31 @@
+---
+title: Open Knowledge
+description: An agent-native knowledge platform. OSS core, markdown in git, rich editing, AI co-creation.
+---
+
+Open Knowledge is an agent-native knowledge platform where humans and AI co-create, co-edit, and co-maintain knowledge.
+
+## Core principles
+
+- **Markdown files in git** as the canonical substrate -- not a database, not a proprietary format.
+- **Agent-agnostic** -- no LLM inference in the OSS core. All intelligence comes from external agents (Claude Code, Cowork, Cursor, Codex) via MCP tools.
+- **Everything branchable** -- all meaningful state is files in git. Drafts, experiments, and proposals are branches. No separate state management.
+- **Rich editing** -- Obsidian-grade WYSIWYG with source toggle, not a terminal-grade text editor.
+- **Local-first** -- single-player IC to start, with CRDT architecture that gives a clear path to real-time collaboration.
+
+## Tech stack
+
+| Layer | Technology | Role |
+|-------|-----------|------|
+| Editor | TipTap v3 + ProseMirror | Rich WYSIWYG markdown editing |
+| CRDT | Yjs v13 + y-prosemirror | Real-time sync, conflict-free concurrent editing |
+| Collab server | Hocuspocus | WebSocket server, document management, persistence hooks |
+| Source view | CodeMirror 6 | Raw markdown editing with syntax highlighting |
+| Persistence | Git (plumbing commands) | Auto-commit to WIP refs, no "save" button |
+| Agent interface | MCP server | Read/write/search knowledge via any AI agent |
+
+## Positioning
+
+**"Obsidian, but agent-native and collaborative."**
+
+The P0 audience is individual contributors -- developers and knowledge workers using Claude Code or Cowork -- who need a knowledge base their agent can reason over AND that they can edit with a rich experience.
