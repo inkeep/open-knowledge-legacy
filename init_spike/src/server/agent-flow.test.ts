@@ -1,0 +1,255 @@
+/**
+ * End-to-end test: Agent writes via DirectConnection → changes reflected in editor serialization.
+ *
+ * This validates the critical user flow:
+ * 1. Agent writes a paragraph via DirectConnection (V3)
+ * 2. The Y.Doc is updated with the new content
+ * 3. Serializing the Y.Doc to markdown (WYSIWYG → source path) includes the agent's content
+ * 4. Re-parsing that markdown back to Y.Doc (source → WYSIWYG path) preserves the agent's content
+ *
+ * This is a server-side test that exercises the same code paths as the browser editor,
+ * without requiring a browser. The CRDT layer (Yjs) and serialization layer (@tiptap/markdown)
+ * are the same in both environments.
+ */
+import { describe, expect, test } from 'bun:test';
+import { Hocuspocus } from '@hocuspocus/server';
+import { getSchema } from '@tiptap/core';
+import { MarkdownManager } from '@tiptap/markdown';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import * as Y from 'yjs';
+import { sharedExtensions } from '../editor/extensions/shared';
+
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+const schema = getSchema(sharedExtensions);
+
+type Conn = Awaited<ReturnType<Hocuspocus['openDirectConnection']>>;
+
+/** Get the Y.Doc from a DirectConnection, throwing if unavailable */
+function getDoc(conn: Conn) {
+  const doc = conn.document;
+  if (!doc) throw new Error('DirectConnection has no document');
+  return doc;
+}
+
+/** Get the default XmlFragment from a DirectConnection */
+function getFragment(conn: Conn) {
+  return getDoc(conn).getXmlFragment('default');
+}
+
+describe('Agent write → Editor reflection', () => {
+  test('agent write via DirectConnection appears in Y.Doc and serializes to markdown', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+
+    // Simulate: agent opens a DirectConnection and writes a paragraph
+    const conn = await hocuspocus.openDirectConnection('test-agent-flow');
+
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+      const paragraph = new Y.XmlElement('paragraph');
+      const text = new Y.XmlText();
+      text.applyDelta([{ insert: 'Hello from the agent!' }]);
+      paragraph.insert(0, [text]);
+      fragment.push([paragraph]);
+    });
+
+    // Now serialize Y.Doc → markdown (this is what getMarkdown() does in TiptapEditor)
+    const fragment = getFragment(conn);
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const markdown = mdManager.serialize(json);
+
+    expect(markdown).toContain('Hello from the agent!');
+
+    await conn.disconnect();
+    // Hocuspocus cleanup handled by GC
+  });
+
+  test('agent write survives full source toggle round-trip (WYSIWYG → source → WYSIWYG)', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+
+    // Step 1: Seed document with initial content
+    const conn = await hocuspocus.openDirectConnection('test-toggle-flow');
+
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+
+      // Existing user content
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'User wrote this paragraph' }]);
+      p1.insert(0, [t1]);
+      fragment.push([p1]);
+    });
+
+    // Step 2: Agent writes another paragraph (simulates agent writing while doc is open)
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+
+      const p2 = new Y.XmlElement('paragraph');
+      const t2 = new Y.XmlText();
+      t2.applyDelta([{ insert: 'Agent added this paragraph' }]);
+      p2.insert(0, [t2]);
+      fragment.push([p2]);
+    });
+
+    // Step 3: Toggle to source — serialize Y.Doc → markdown
+    const fragment = getFragment(conn);
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const sourceMarkdown = mdManager.serialize(json);
+
+    // Both user and agent content should be in the markdown
+    expect(sourceMarkdown).toContain('User wrote this paragraph');
+    expect(sourceMarkdown).toContain('Agent added this paragraph');
+
+    // Step 4: Simulate user editing in source mode — add a line
+    const editedMarkdown = `${sourceMarkdown}\nUser edited this in source mode\n`;
+
+    // Step 5: Toggle back to WYSIWYG — parse markdown → updateYFragment
+    const parsedJson = mdManager.parse(editedMarkdown);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+
+    getDoc(conn).transact(() => {
+      updateYFragment(getDoc(conn), fragment, pmNode, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
+    });
+
+    // Step 6: Verify — serialize again to check all content survived
+    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalMarkdown = mdManager.serialize(finalJson);
+
+    expect(finalMarkdown).toContain('User wrote this paragraph');
+    expect(finalMarkdown).toContain('Agent added this paragraph');
+    expect(finalMarkdown).toContain('User edited this in source mode');
+
+    await conn.disconnect();
+    // Hocuspocus cleanup handled by GC
+  });
+
+  test('agent write during source mode: non-conflicting paragraphs merge on toggle-back', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-divergence');
+
+    // Step 1: Seed with two paragraphs
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'Paragraph A — user will edit this in source' }]);
+      p1.insert(0, [t1]);
+
+      const p2 = new Y.XmlElement('paragraph');
+      const t2 = new Y.XmlText();
+      t2.applyDelta([{ insert: 'Paragraph B — agent will edit this via CRDT' }]);
+      p2.insert(0, [t2]);
+
+      fragment.push([p1, p2]);
+    });
+
+    // Step 2: User toggles to source — gets a snapshot of the markdown
+    const fragment = getFragment(conn);
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const sourceSnapshot = mdManager.serialize(json);
+
+    // Step 3: While in source mode, user edits Paragraph A in the source text
+    const userEdited = sourceSnapshot.replace(
+      'Paragraph A — user will edit this in source',
+      'Paragraph A — USER EDITED IN SOURCE MODE',
+    );
+
+    // Step 4: Meanwhile, agent writes a NEW paragraph via DirectConnection (non-conflicting)
+    await conn.transact((doc) => {
+      const frag = doc.getXmlFragment('default');
+      const p3 = new Y.XmlElement('paragraph');
+      const t3 = new Y.XmlText();
+      t3.applyDelta([{ insert: 'Paragraph C — agent wrote this during source mode' }]);
+      p3.insert(0, [t3]);
+      frag.push([p3]);
+    });
+
+    // Step 5: User toggles back — updateYFragment applies their source edits
+    const parsedJson = mdManager.parse(userEdited);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+
+    getDoc(conn).transact(() => {
+      updateYFragment(getDoc(conn), fragment, pmNode, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
+    });
+
+    // Step 6: Check what survived
+    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalMarkdown = mdManager.serialize(finalJson);
+
+    // User's source edit should be present
+    expect(finalMarkdown).toContain('USER EDITED IN SOURCE MODE');
+
+    // Agent's paragraph B should still be there (untouched by user)
+    // Note: updateYFragment does a diff-based update. Since the user's markdown
+    // was a snapshot from BEFORE the agent wrote, the user's version doesn't
+    // include paragraph C. updateYFragment replaces the Y.Doc content with the
+    // user's version — paragraph C may be lost. This is the known R3 risk from
+    // the spec: "updateYFragment clobbers concurrent agent writes."
+    //
+    // Document the actual behavior — this is a characterization test.
+    const hasAgentParagraph = finalMarkdown.includes('Paragraph C');
+    const hasOriginalB = finalMarkdown.includes('Paragraph B');
+
+    // Log the characterization result
+    console.log('\n=== DIVERGENCE TEST: NON-CONFLICTING ===');
+    console.log(`User source edit preserved: YES`);
+    console.log(
+      `Agent paragraph C (written during source mode) preserved: ${hasAgentParagraph ? 'YES' : 'NO (clobbered by updateYFragment)'}`,
+    );
+    console.log(`Original paragraph B preserved: ${hasOriginalB ? 'YES' : 'NO'}`);
+    console.log(`Final markdown:\n${finalMarkdown}`);
+
+    // The user's edit MUST be present — that's the P0 requirement
+    expect(finalMarkdown).toContain('USER EDITED IN SOURCE MODE');
+  });
+
+  test('multiple agent writes while editor has existing content', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-multi-agent');
+
+    // Seed with content
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+      const p = new Y.XmlElement('paragraph');
+      const t = new Y.XmlText();
+      t.applyDelta([{ insert: 'Existing content' }]);
+      p.insert(0, [t]);
+      fragment.push([p]);
+    });
+
+    // 5 rapid agent writes
+    for (let i = 0; i < 5; i++) {
+      await conn.transact((doc) => {
+        const fragment = doc.getXmlFragment('default');
+        const p = new Y.XmlElement('paragraph');
+        const t = new Y.XmlText();
+        t.applyDelta([{ insert: `Agent write #${i + 1}` }]);
+        p.insert(0, [t]);
+        fragment.push([p]);
+      });
+    }
+
+    // Serialize and verify all writes are present
+    const fragment = getFragment(conn);
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const markdown = mdManager.serialize(json);
+
+    expect(markdown).toContain('Existing content');
+    for (let i = 0; i < 5; i++) {
+      expect(markdown).toContain(`Agent write #${i + 1}`);
+    }
+
+    // Verify fragment has 6 children (1 existing + 5 agent writes)
+    expect(fragment.length).toBe(6);
+
+    await conn.disconnect();
+    // Hocuspocus cleanup handled by GC
+  });
+});

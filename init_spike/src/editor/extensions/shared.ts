@@ -3,7 +3,6 @@
  * Single source of truth — drift between these causes silent data corruption.
  */
 import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
@@ -14,7 +13,6 @@ export const sharedExtensions = [
   // for 'code' tokens runs before codeBlock's handler (registry uses insertion order).
   JsxComponent,
   StarterKit.configure({ undoRedo: false }),
-  Link,
   Table,
   TableRow,
   TableHeader,
