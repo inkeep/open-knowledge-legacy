@@ -340,4 +340,90 @@ describe('Agent write → Editor reflection', () => {
 
     await conn.disconnect();
   });
+
+  test('agent markdown write via unified path (parse→updateYFragment) appends paragraph', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-md-write');
+
+    // Seed with initial content
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'Existing paragraph one' }]);
+      p1.insert(0, [t1]);
+      fragment.push([p1]);
+    });
+
+    // Simulate the markdown write path: serialize → splice → parse → updateYFragment
+    // This is what POST /api/agent-write-md does
+    const fragment = getFragment(conn);
+    const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const currentMarkdown = mdManager.serialize(currentJson);
+
+    const agentMarkdown = 'Agent wrote this via markdown path';
+    const combined = `${currentMarkdown.trim()}\n\n${agentMarkdown}\n`;
+
+    const parsedJson = mdManager.parse(combined);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+
+    getDoc(conn).transact(() => {
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(getDoc(conn), fragment, pmNode, meta);
+    });
+
+    // Verify both paragraphs are present
+    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalMarkdown = mdManager.serialize(finalJson);
+
+    expect(finalMarkdown).toContain('Existing paragraph one');
+    expect(finalMarkdown).toContain('Agent wrote this via markdown path');
+
+    await conn.disconnect();
+  });
+
+  test('agent markdown write (prepend position) inserts before existing content', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-md-prepend');
+
+    // Seed with initial content
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'Original first paragraph' }]);
+      p1.insert(0, [t1]);
+      fragment.push([p1]);
+    });
+
+    // Prepend agent markdown
+    const fragment = getFragment(conn);
+    const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const currentMarkdown = mdManager.serialize(currentJson);
+
+    const agentMarkdown = 'Agent prepended this';
+    const combined = `${agentMarkdown}\n\n${currentMarkdown.trim()}\n`;
+
+    const parsedJson = mdManager.parse(combined);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+
+    getDoc(conn).transact(() => {
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(getDoc(conn), fragment, pmNode, meta);
+    });
+
+    // Verify order: agent's paragraph first, then original
+    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalMarkdown = mdManager.serialize(finalJson);
+
+    expect(finalMarkdown).toContain('Agent prepended this');
+    expect(finalMarkdown).toContain('Original first paragraph');
+
+    // Verify order
+    const agentIdx = finalMarkdown.indexOf('Agent prepended this');
+    const originalIdx = finalMarkdown.indexOf('Original first paragraph');
+    expect(agentIdx).toBeLessThan(originalIdx);
+
+    await conn.disconnect();
+  });
 });
