@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SourceEditor } from './editor/SourceEditor';
 import type { TiptapEditorHandle } from './editor/TiptapEditor';
 import { TiptapEditor } from './editor/TiptapEditor';
@@ -8,11 +8,34 @@ export function App() {
   const [sourceContent, setSourceContent] = useState('');
   const [snapshotMarkdown, setSnapshotMarkdown] = useState('');
   const editorRef = useRef<TiptapEditorHandle | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
 
   const [toggleError, setToggleError] = useState<string | null>(null);
 
+  // Subscribe to Y.Doc changes when entering source mode
+  // Agent writes will trigger this, updating the source view in real-time
+  useEffect(() => {
+    if (isSourceMode && editorRef.current) {
+      const unsubscribe = editorRef.current.onContentChange((markdown) => {
+        setSourceContent(markdown);
+      });
+      unsubscribeRef.current = unsubscribe;
+      return () => {
+        unsubscribe();
+        unsubscribeRef.current = null;
+      };
+    }
+  }, [isSourceMode]);
+
   const handleToggle = useCallback(() => {
     if (isSourceMode) {
+      // Unsubscribe from Y.Doc changes before toggle-back to avoid
+      // the observer firing during applyThreeWayMerge
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+        unsubscribeRef.current = null;
+      }
+
       // Toggle back to WYSIWYG — three-way merge preserves concurrent agent writes
       const editor = editorRef.current;
       if (editor) {
