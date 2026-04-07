@@ -255,3 +255,113 @@ Source      →         ✅        ✅      ✅      ✅
 Disk        →         ✅        ✅      —       —
 Agent       →         ✅        ✅      ✅      —
 ```
+
+---
+
+## Universal Test Scenarios
+
+These scenarios apply to every exploration regardless of stack or approach. Any spike that claims to solve a sync gap must pass the relevant scenarios. Organized by the interaction being tested, not by implementation approach.
+
+### Single-user editing
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T01 | Type a paragraph in WYSIWYG | Content persists, renders correctly, no console errors |
+| T02 | Type a paragraph in source mode | Content persists in the text buffer, syntax highlighting works |
+| T03 | Toggle WYSIWYG → source → WYSIWYG with no edits | Content identical before and after. Zero diff. |
+| T04 | Toggle WYSIWYG → source, edit, toggle back | Edit appears in WYSIWYG. No content loss. |
+| T05 | Toggle WYSIWYG → source, edit, toggle back — 10 times in a row | Content stable after 10 cycles. No progressive drift or accumulation of formatting artifacts. |
+| T06 | Measure toggle time on test fixture (~1KB) | Wall-clock ms. Target: <100ms. |
+| T07 | Measure toggle time on large document (~50KB) | Wall-clock ms. Target: <500ms. Stress test for serialization-based approaches. |
+
+### Multi-tab WYSIWYG collaboration
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T10 | Tab 1 types in WYSIWYG, Tab 2 in WYSIWYG | Both see each other's keystrokes in real-time. Sub-second latency. |
+| T11 | Tab 1 types at top of doc, Tab 2 types at bottom — simultaneously | No content interleaving or corruption. Both edits in correct positions. |
+| T12 | Tab 1 bolds a word while Tab 2 italicizes an overlapping range | Formatting resolves correctly (both marks applied to overlap). This is the Peritext boundary test — document how each stack handles it. |
+| T13 | Tab 1 deletes a paragraph while Tab 2 is editing inside it | No crash. Graceful resolution — either the delete wins or the edit wins, but the document is structurally valid. |
+
+### Multi-tab source mode collaboration
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T20 | Tab 1 in source, Tab 2 in source — Tab 1 types | Tab 2 sees Tab 1's keystrokes in real-time (or doesn't — document the behavior). |
+| T21 | Tab 1 and Tab 2 both in source, both typing in different paragraphs | Both edits present. No clobber. |
+| T22 | Tab 1 and Tab 2 both in source, both editing the SAME line | Conflict resolution: characters interleave (CRDT behavior) or last-write-wins? Document the behavior. |
+| T23 | Tab 1 in source, Tab 2 in source — Tab 1 toggles back to WYSIWYG | Tab 1 sees merged content. Tab 2 still in source, unaffected. Tab 2's subsequent edits don't conflict with Tab 1's WYSIWYG state. |
+
+### Cross-mode sync (WYSIWYG ↔ source)
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T30 | Tab 1 in WYSIWYG, Tab 2 in source — Tab 1 types a new paragraph | Paragraph appears in Tab 2's source view. Measure latency. Does Tab 2's cursor jump? |
+| T31 | Tab 1 in source, Tab 2 in WYSIWYG — Tab 1 types a new paragraph | If live sync: paragraph appears in Tab 2. If toggle-back only: paragraph appears after Tab 1 toggles. Document which. |
+| T32 | Tab 1 in WYSIWYG types rapidly, Tab 2 in source watching | Source view keeps up with WYSIWYG typing at normal speed (~60 WPM). No visible lag or "catching up" artifacts. |
+| T33 | Tab 1 in WYSIWYG, Tab 2 in source editing — simultaneous | Non-conflicting edits (different paragraphs): both survive. Conflicting edits (same paragraph): document the resolution. |
+
+### Agent writes
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T40 | Agent writes a paragraph while editor in WYSIWYG mode | Paragraph appears in editor immediately. No page reload. |
+| T41 | Agent writes a paragraph while editor in source mode | Paragraph appears in source view (or doesn't — document behavior). |
+| T42 | Agent writes 5 paragraphs rapidly (100ms apart) while in WYSIWYG | All 5 appear. No crashes, no state corruption. |
+| T43 | Agent writes 5 paragraphs rapidly while in source mode | All 5 appear in source view (or document what happens). |
+| T44 | User typing in WYSIWYG while agent writes simultaneously | Both edits present. Cursor position preserved for the user. No jank. |
+| T45 | User typing in source while agent writes simultaneously — non-conflicting | User's edits preserved. Agent's paragraph present. No clobber on toggle-back (or if no toggle-back needed, verify live). |
+| T46 | User typing in source while agent writes simultaneously — conflicting (same paragraph) | Document the resolution. User's version preserved? Agent's? Merged? Corrupted? |
+| T47 | Agent writes while two tabs are open (one WYSIWYG, one source) | Agent's write appears in both views. |
+
+### Disk sync
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T50 | Edit in WYSIWYG, wait — .md file on disk reflects changes | Measure latency from keystroke to file update. |
+| T51 | Edit .md file in VS Code/vim, save — WYSIWYG editor reflects changes | Measure latency. Does it work at all? |
+| T52 | Edit .md file externally while editor is in source mode | Source view updates (or doesn't). Document behavior. |
+| T53 | Edit .md file externally while user is typing in WYSIWYG | No clobber. External edit and user edit both present. |
+| T54 | Delete .md file externally while document is open in editor | No crash. Graceful behavior — editor retains content? Shows error? |
+| T55 | Create a new .md file in the content directory externally | System detects new file (or doesn't). Can it be opened in the editor? |
+| T56 | Rapid external saves (simulate Cursor auto-save, ~1 save/sec for 10 sec) | System keeps up. No feedback loops (file watcher → CRDT → persistence → file write → file watcher → ...). |
+| T57 | Edit in WYSIWYG, persistence writes to disk, then edit same file in VS Code | Both edits present after sync. No silent overwrite of either. |
+
+### Content fidelity
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T60 | Frontmatter survives all sync paths | `---\ntitle: X\ntags: [a,b]\n---` preserved through WYSIWYG, source, disk, toggle, agent write. |
+| T61 | Void node (jsx-component) survives all sync paths | `<Callout>` block preserved as fenced code block through every path. Renders as React component in WYSIWYG. |
+| T62 | GFM table survives all sync paths | Column alignment, cell content preserved. Cosmetic normalization (padding) is acceptable. |
+| T63 | Nested lists survive all sync paths | 2-level nesting, mixed ordered/unordered. Structure preserved. |
+| T64 | Fenced code block with language tag survives all sync paths | ````typescript` preserved, content unmodified. |
+| T65 | Links, images, bold, italic, inline code survive all sync paths | Standard inline formatting round-trips cleanly. |
+| T66 | Empty document — all operations work | Create, edit, toggle, agent write, persist — all work on an empty doc without null/undefined errors. |
+| T67 | Large document (~50KB, ~100 paragraphs) — all operations work | No performance degradation, no timeout, no truncation. |
+
+### Persistence and recovery
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T70 | Edit → persist → kill server → restart → content still there | Full lifecycle. Document survives server restart. |
+| T71 | Edit → persist → git log shows commit on refs/wip/main | Git pipeline produces real commits. |
+| T72 | Two users editing → persist → both edits in the .md file | Concurrent edits merge correctly in persistence output. |
+| T73 | Agent writes → persist → .md file includes agent content | Agent content flows through full persistence pipeline. |
+| T74 | Source mode edit → toggle back → persist → .md file correct | Source edits reach disk via CRDT → persistence. |
+| T75 | Server crash during persist (simulate with kill -9) | No partial writes. Atomic file writes (temp + rename) prevent corruption. Next restart recovers from last good state. |
+
+### Edge cases and stress
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T80 | Toggle source while agent is mid-write | No crash. Partial agent content handled gracefully. |
+| T81 | Close browser tab while in source mode with unsaved edits | Edits lost (expected) or prompted to save? Document behavior. |
+| T82 | Open same document in 5 tabs simultaneously, all editing | System remains stable. CRDT handles 5-way concurrent edits. |
+| T83 | Network disconnect while editing → reconnect | Offline edits sync on reconnect. No duplicate content. |
+| T84 | Agent writes to a document that no browser tab has open | DirectConnection creates/loads the document. Content persists to disk. When a browser tab opens the document later, content is there. |
+| T85 | Two agents writing to the same document simultaneously | Both agents' content present. CRDT resolves. No corruption. |
+| T86 | Edit document A, switch to document B, switch back to A | Document A content preserved. No cross-document state leakage. |
+| T87 | Unicode content — emoji, CJK, RTL text | Survives all sync paths without encoding issues. |
+| T88 | Very long paragraph (10,000 characters, no line breaks) | No truncation, no performance cliff, renders and syncs correctly. |
+| T89 | Document with 50+ void nodes | No performance degradation in rendering or sync. |
