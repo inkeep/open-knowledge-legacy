@@ -10,8 +10,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
+    "test": "bun test",
     "check:fast": "tsc --noEmit && biome check .",
-    "check": "tsc --noEmit && biome check . && vite build"
+    "check": "tsc --noEmit && biome check . && bun test && vite build"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.0.0",
@@ -21,6 +22,7 @@
     "@hocuspocus/server": "^3.4.0",
     "@tiptap/core": "^3.22.0",
     "@tiptap/extension-collaboration": "^3.20.0",
+    "@tiptap/y-tiptap": "^3.0.2",
     "codemirror": "^6.0.0",
     "@tiptap/extension-image": "^3.22.0",
     "@tiptap/extension-link": "^3.21.0",

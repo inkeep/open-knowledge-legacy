@@ -74,9 +74,6 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
         if (!editor) return;
         const { frontmatter, body } = stripFrontmatter(md);
         frontmatterRef.current = frontmatter;
-        // Sync frontmatter to Y.Doc metadata so server persistence can use it
-        const metaMap = provider.document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
         const json = mdManager.parse(body);
 
         // Use updateYFragment (diff-based) — NEVER prosemirrorJSONToYDoc
@@ -85,6 +82,9 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
         const pmNode = schema.nodeFromJSON(json);
 
         provider.document.transact(() => {
+          // Sync frontmatter inside transact for atomicity with content update
+          const metaMap = provider.document.getMap('metadata');
+          metaMap.set('frontmatter', frontmatter);
           // BindingMetadata: mapping tracks Y.Type↔PM node pairs, isOMark tracks overlapping marks
           const meta = { mapping: new Map(), isOMark: new Map() };
           updateYFragment(provider.document, yFragment, pmNode, meta);

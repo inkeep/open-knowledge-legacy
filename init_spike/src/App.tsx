@@ -30,8 +30,13 @@ export function App() {
       // Toggle to source — serialize current content to markdown
       const editor = editorRef.current;
       if (editor) {
-        const md = editor.getMarkdown();
-        setSourceContent(md);
+        try {
+          const md = editor.getMarkdown();
+          setSourceContent(md);
+        } catch (err) {
+          setToggleError(err instanceof Error ? err.message : 'Failed to serialize markdown');
+          return; // Stay in WYSIWYG mode
+        }
       }
       setToggleError(null);
       setIsSourceMode(true);

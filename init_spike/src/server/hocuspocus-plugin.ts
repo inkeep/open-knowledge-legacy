@@ -52,6 +52,7 @@ export function hocuspocusPlugin(): Plugin {
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, timestamp }));
         } catch (e) {
+          console.error('[agent-write]', e);
           const message = e instanceof Error ? e.message : String(e);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: message }));
