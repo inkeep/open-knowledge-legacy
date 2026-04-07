@@ -1,17 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
+import { safeContentPath } from './persistence';
 
-// safeContentPath is not exported, so we replicate the logic for testing.
-// This validates the security-critical path traversal prevention.
-const CONTENT_DIR = resolve(import.meta.dirname ?? '.', '../../content');
-
-function safeContentPath(documentName: string): string {
-  const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
-  if (!filePath.startsWith(`${CONTENT_DIR}/`)) {
-    throw new Error(`Invalid document name: ${documentName}`);
-  }
-  return filePath;
-}
+// Expected content directory — used only in assertion comparisons, not in function-under-test
+if (!import.meta.dirname) throw new Error('import.meta.dirname is undefined');
+const CONTENT_DIR = resolve(import.meta.dirname, '../../content');
 
 describe('safeContentPath', () => {
   test('allows simple document names', () => {

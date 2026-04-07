@@ -37,13 +37,30 @@ export interface ConflictInfo {
 
 /**
  * Split markdown into top-level blocks (paragraphs, headings, etc.).
- * Blocks are separated by blank lines.
+ * Blocks are separated by blank lines. Respects fenced code blocks
+ * (``` and ~~~) — blank lines inside fences do not cause splits.
  */
 export function splitMarkdownBlocks(md: string): string[] {
   const normalized = md.replace(/\n+$/, '');
   if (!normalized) return [];
-  const blocks = normalized.split(/\n\n+/);
-  return blocks.map((b) => b.trim()).filter((b) => b.length > 0);
+  const lines = normalized.split('\n');
+  const blocks: string[] = [];
+  let current: string[] = [];
+  let inFence = false;
+  for (const line of lines) {
+    if (/^(`{3,}|~{3,})/.test(line)) inFence = !inFence;
+    if (!inFence && line.trim() === '' && current.length > 0) {
+      blocks.push(current.join('\n').trim());
+      current = [];
+    } else {
+      current.push(line);
+    }
+  }
+  if (current.length > 0) {
+    const block = current.join('\n').trim();
+    if (block) blocks.push(block);
+  }
+  return blocks;
 }
 
 /**
