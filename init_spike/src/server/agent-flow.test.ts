@@ -247,4 +247,97 @@ describe('Agent write → Editor reflection', () => {
     await conn.disconnect();
     // Hocuspocus cleanup handled by GC
   });
+
+  test('conflicting divergence: user and agent edit same paragraph — user wins, document valid', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-conflict');
+
+    // Step 1: Seed with two paragraphs
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'Paragraph A — both will edit this' }]);
+      p1.insert(0, [t1]);
+
+      const p2 = new Y.XmlElement('paragraph');
+      const t2 = new Y.XmlText();
+      t2.applyDelta([{ insert: 'Paragraph B — untouched by both' }]);
+      p2.insert(0, [t2]);
+
+      fragment.push([p1, p2]);
+    });
+
+    // Step 2: User toggles to source — snapshot
+    const fragment = getFragment(conn);
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const snapshotMarkdown = mdManager.serialize(json);
+
+    // Step 3: User edits paragraph A in source mode
+    const userEdited = snapshotMarkdown.replace(
+      'Paragraph A — both will edit this',
+      'Paragraph A — USER VERSION',
+    );
+
+    // Step 4: Agent ALSO edits paragraph A via DirectConnection (conflict!)
+    // Agent modifies the first paragraph's text in-place
+    await conn.transact((doc) => {
+      const frag = doc.getXmlFragment('default');
+      const firstParagraph = frag.get(0) as Y.XmlElement;
+      const textNode = firstParagraph.get(0) as Y.XmlText;
+      textNode.delete(0, textNode.length);
+      textNode.insert(0, 'Paragraph A — AGENT VERSION');
+    });
+
+    // Step 5: Agent also adds a new paragraph C (non-conflicting)
+    await conn.transact((doc) => {
+      const frag = doc.getXmlFragment('default');
+      const p3 = new Y.XmlElement('paragraph');
+      const t3 = new Y.XmlText();
+      t3.applyDelta([{ insert: 'Paragraph C — agent added this' }]);
+      p3.insert(0, [t3]);
+      frag.push([p3]);
+    });
+
+    // Step 6: Toggle back with three-way merge
+    const result = threeWayMerge(
+      getDoc(conn),
+      fragment,
+      snapshotMarkdown,
+      userEdited,
+      mdManager,
+      schema,
+    );
+
+    // Step 7: Verify
+    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalMarkdown = mdManager.serialize(finalJson);
+
+    console.log('\n=== DIVERGENCE TEST: CONFLICTING (THREE-WAY MERGE) ===');
+    console.log(`Conflicts: ${result.conflicts.length}`);
+    console.log(`Final markdown:\n${finalMarkdown}`);
+
+    // User's version wins for conflicting paragraph A
+    expect(finalMarkdown).toContain('Paragraph A — USER VERSION');
+    expect(finalMarkdown).not.toContain('AGENT VERSION');
+
+    // Paragraph B (untouched by both) survives
+    expect(finalMarkdown).toContain('Paragraph B');
+
+    // Agent's non-conflicting paragraph C survives
+    expect(finalMarkdown).toContain('Paragraph C — agent added this');
+
+    // Conflict was detected
+    expect(result.conflicts.length).toBeGreaterThan(0);
+    expect(result.conflicts[0].resolution).toBe('user-wins');
+
+    // Document is structurally valid — can serialize and re-parse
+    const reparsed = mdManager.parse(finalMarkdown);
+    const reNode = schema.nodeFromJSON(reparsed);
+    expect(reNode).toBeTruthy();
+    expect(reNode.content.childCount).toBeGreaterThan(0);
+
+    await conn.disconnect();
+  });
 });

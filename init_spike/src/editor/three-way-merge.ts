@@ -98,28 +98,26 @@ export function threeWayMerge(
     return applyWholeDoc(doc, fragment, userEditedMarkdown, mdManager, schema, undefined);
   }
 
-  // Identify agent-added blocks: present in current Y.Doc but not in snapshot
-  const snapshotBlockSet = new Set(snapshotBlocks.map((b) => b.trim()));
-  const agentAddedBlocks: string[] = [];
-  for (const block of currentBlocks) {
-    if (!snapshotBlockSet.has(block.trim())) {
-      agentAddedBlocks.push(block);
-    }
-  }
-
-  // Detect conflicts: check if user modified a paragraph that the agent also modified
-  // We do this by checking if any snapshot paragraph was changed in BOTH the user's
-  // markdown and the current Y.Doc
+  // Classify current Y.Doc blocks relative to the snapshot:
+  // - Blocks within snapshot range: either unchanged, agent-modified, or user-modified
+  // - Blocks beyond snapshot range: agent-added (new paragraphs)
   const conflicts: ConflictInfo[] = [];
   const userBlocks = splitMarkdownBlocks(userEditedMarkdown);
 
+  // Agent-added blocks: those beyond the snapshot's paragraph count
+  const agentAddedBlocks: string[] = [];
+  for (let i = snapshotBlocks.length; i < currentBlocks.length; i++) {
+    agentAddedBlocks.push(currentBlocks[i]);
+  }
+
+  // Detect conflicts: both user and agent modified the same paragraph
   for (let i = 0; i < snapshotBlocks.length; i++) {
     const snapshotBlock = snapshotBlocks[i].trim();
     const userBlock = userBlocks[i]?.trim();
     const currentBlock = currentBlocks[i]?.trim();
 
     if (userBlock !== snapshotBlock && currentBlock !== snapshotBlock) {
-      // Both user and agent modified this paragraph
+      // Both user and agent modified this paragraph — user wins
       conflicts.push({ paragraphIndex: i, resolution: 'user-wins' });
       console.warn(
         `[three-way-merge] Conflict at paragraph ${i}: both user and agent modified. User version wins.`,
