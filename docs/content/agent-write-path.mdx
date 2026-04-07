@@ -1,0 +1,92 @@
+---
+title: Agent Write Path
+description: How external agents write into the CRDT via markdown, and how the source toggle preserves those writes through three-way merge.
+---
+
+External agents (Claude Code, Cowork, Cursor, etc.) write into the Y.Doc via HTTP APIs. The system provides two write endpoints and a three-way merge to ensure agent writes survive source mode editing.
+
+## Write endpoints
+
+### Raw write (`POST /api/agent-write`)
+
+Appends a paragraph to the Y.Doc using raw Yjs operations:
+
+```
+Y.XmlFragment('default')
+  └─ Y.XmlElement('paragraph')
+      └─ Y.XmlText() with applyDelta([{ insert: "text" }])
+```
+
+This is the original V3 validation endpoint. It works but bypasses the markdown pipeline, so the content must be structured as y-prosemirror-compatible nodes.
+
+### Markdown write (`POST /api/agent-write-md`)
+
+Accepts a JSON body:
+
+```json
+{
+  "markdown": "## New section\n\nAgent-written paragraph.",
+  "position": "append"
+}
+```
+
+The endpoint:
+
+1. Opens a `DirectConnection` to the Y.Doc
+2. Serializes the current Y.Doc to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
+3. Splices the agent's markdown at the specified position (append or prepend)
+4. Parses the combined markdown back to a ProseMirror node
+5. Applies via `updateYFragment()` (diff-based, preserves collaboration state)
+
+This shares the same code path as the source toggle-back, ensuring consistent behavior.
+
+## Source mode live injection
+
+When the user is in source mode (CodeMirror), agent writes are still visible in real-time:
+
+1. `App.tsx` subscribes to Y.XmlFragment changes via `onContentChange()` when entering source mode
+2. When an agent write modifies the Y.Doc, the observer fires and serializes the updated content to markdown
+3. The markdown is pushed to CodeMirror via React state (`setSourceContent`)
+4. The observer is unsubscribed before toggle-back to prevent the merge from triggering the observer
+
+Current limitation: the full CodeMirror content is replaced on each change, so the cursor may jump. This is acceptable for P0; cursor preservation is a future refinement.
+
+## Three-way merge on toggle-back
+
+When the user toggles back from source to WYSIWYG, a three-way merge (`three-way-merge.ts`) reconciles the user's edits with any concurrent agent writes.
+
+### Three versions compared
+
+- **Base (snapshot):** The markdown captured when entering source mode
+- **Theirs (current Y.Doc):** The Y.Doc's current state, which may include agent writes
+- **Ours (user edits):** The markdown the user edited in CodeMirror
+
+### Merge strategy
+
+1. **No user changes:** If the user didn't edit anything, the Y.Doc is left as-is (agent writes fully preserved)
+2. **No agent changes:** If the Y.Doc hasn't changed since the snapshot, the user's edits apply directly
+3. **Both changed (selective merge):**
+   - Agent-added blocks (those beyond the snapshot's paragraph count) are appended to the user's edits
+   - Blocks within the snapshot range that both user and agent modified are conflicts -- user wins
+   - The merged result is applied via `updateYFragment()`
+
+### Conflict resolution
+
+When both the user and an agent modify the same paragraph:
+
+- The user's version wins
+- A warning is logged to the console: `[three-way-merge] Conflict at paragraph N: both user and agent modified. User version wins.`
+- Agent additions to *other* paragraphs are still preserved
+
+## Agent simulator
+
+The CLI tool supports both write modes:
+
+```bash
+bun run src/server/agent-sim.ts                      # Single raw write
+bun run src/server/agent-sim.ts --rapid 5            # 5 raw writes, 100ms apart
+bun run src/server/agent-sim.ts --markdown           # Single markdown write
+bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes, 100ms apart
+```
+
+The `--markdown` flag uses `POST /api/agent-write-md` (the unified path). Without it, the simulator uses `POST /api/agent-write` (raw Y.XmlElement).
