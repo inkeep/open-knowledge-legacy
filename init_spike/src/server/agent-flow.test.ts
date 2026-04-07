@@ -18,6 +18,7 @@ import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../editor/extensions/shared';
+import { threeWayMerge } from '../editor/three-way-merge';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
@@ -126,7 +127,7 @@ describe('Agent write → Editor reflection', () => {
     // Hocuspocus cleanup handled by GC
   });
 
-  test('agent write during source mode: non-conflicting paragraphs merge on toggle-back', async () => {
+  test('agent write during source mode: non-conflicting paragraphs merge on toggle-back (three-way merge)', async () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const conn = await hocuspocus.openDirectConnection('test-divergence');
 
@@ -141,7 +142,7 @@ describe('Agent write → Editor reflection', () => {
 
       const p2 = new Y.XmlElement('paragraph');
       const t2 = new Y.XmlText();
-      t2.applyDelta([{ insert: 'Paragraph B — agent will edit this via CRDT' }]);
+      t2.applyDelta([{ insert: 'Paragraph B — unchanged' }]);
       p2.insert(0, [t2]);
 
       fragment.push([p1, p2]);
@@ -150,10 +151,10 @@ describe('Agent write → Editor reflection', () => {
     // Step 2: User toggles to source — gets a snapshot of the markdown
     const fragment = getFragment(conn);
     const json = yXmlFragmentToProsemirrorJSON(fragment);
-    const sourceSnapshot = mdManager.serialize(json);
+    const snapshotMarkdown = mdManager.serialize(json);
 
     // Step 3: While in source mode, user edits Paragraph A in the source text
-    const userEdited = sourceSnapshot.replace(
+    const userEdited = snapshotMarkdown.replace(
       'Paragraph A — user will edit this in source',
       'Paragraph A — USER EDITED IN SOURCE MODE',
     );
@@ -168,46 +169,40 @@ describe('Agent write → Editor reflection', () => {
       frag.push([p3]);
     });
 
-    // Step 5: User toggles back — updateYFragment applies their source edits
-    const parsedJson = mdManager.parse(userEdited);
-    const pmNode = schema.nodeFromJSON(parsedJson);
-
-    getDoc(conn).transact(() => {
-      updateYFragment(getDoc(conn), fragment, pmNode, {
-        mapping: new Map(),
-        isOMark: new Map(),
-      });
-    });
+    // Step 5: User toggles back — THREE-WAY MERGE instead of whole-doc updateYFragment
+    const result = threeWayMerge(
+      getDoc(conn),
+      fragment,
+      snapshotMarkdown,
+      userEdited,
+      mdManager,
+      schema,
+    );
 
     // Step 6: Check what survived
     const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
     const finalMarkdown = mdManager.serialize(finalJson);
 
-    // User's source edit should be present
-    expect(finalMarkdown).toContain('USER EDITED IN SOURCE MODE');
-
-    // Agent's paragraph B should still be there (untouched by user)
-    // Note: updateYFragment does a diff-based update. Since the user's markdown
-    // was a snapshot from BEFORE the agent wrote, the user's version doesn't
-    // include paragraph C. updateYFragment replaces the Y.Doc content with the
-    // user's version — paragraph C may be lost. This is the known R3 risk from
-    // the spec: "updateYFragment clobbers concurrent agent writes."
-    //
-    // Document the actual behavior — this is a characterization test.
-    const hasAgentParagraph = finalMarkdown.includes('Paragraph C');
-    const hasOriginalB = finalMarkdown.includes('Paragraph B');
-
-    // Log the characterization result
-    console.log('\n=== DIVERGENCE TEST: NON-CONFLICTING ===');
-    console.log(`User source edit preserved: YES`);
-    console.log(
-      `Agent paragraph C (written during source mode) preserved: ${hasAgentParagraph ? 'YES' : 'NO (clobbered by updateYFragment)'}`,
-    );
-    console.log(`Original paragraph B preserved: ${hasOriginalB ? 'YES' : 'NO'}`);
+    console.log('\n=== DIVERGENCE TEST: NON-CONFLICTING (THREE-WAY MERGE) ===');
+    console.log(`Selective merge: ${result.selective}`);
+    console.log(`User changes applied: ${result.userChangedCount}`);
+    console.log(`Agent paragraphs preserved: ${result.agentPreservedCount}`);
     console.log(`Final markdown:\n${finalMarkdown}`);
 
-    // The user's edit MUST be present — that's the P0 requirement
+    // P0: User's edit MUST be present
     expect(finalMarkdown).toContain('USER EDITED IN SOURCE MODE');
+
+    // P0: Paragraph B (unchanged by user) MUST survive
+    expect(finalMarkdown).toContain('Paragraph B');
+
+    // P0: Agent's paragraph C MUST survive (this is the R3 fix!)
+    expect(finalMarkdown).toContain('Paragraph C — agent wrote this during source mode');
+
+    // The merge should have been selective
+    expect(result.selective).toBe(true);
+    expect(result.agentPreservedCount).toBeGreaterThan(0);
+
+    await conn.disconnect();
   });
 
   test('multiple agent writes while editor has existing content', async () => {

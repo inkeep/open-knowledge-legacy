@@ -6,12 +6,16 @@ import { updateYFragment } from '@tiptap/y-tiptap';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter';
 import { sharedExtensions } from './extensions/shared';
+import type { ThreeWayMergeResult } from './three-way-merge';
+import { threeWayMerge } from './three-way-merge';
 
 const DOC_NAME = 'test-doc';
 
 export interface TiptapEditorHandle {
   getMarkdown: () => string;
   applyMarkdown: (md: string) => void;
+  /** Three-way merge: apply only user's changes, preserving concurrent agent writes */
+  applyThreeWayMerge: (snapshotMarkdown: string, userEditedMarkdown: string) => ThreeWayMergeResult;
 }
 
 // Singleton provider outside React lifecycle — survives StrictMode double-mount.
@@ -78,8 +82,8 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
 
         // Use updateYFragment (diff-based) — NEVER prosemirrorJSONToYDoc
         const yFragment = provider.document.getXmlFragment('default');
-        const schema = editor.schema;
-        const pmNode = schema.nodeFromJSON(json);
+        const editorSchema = editor.schema;
+        const pmNode = editorSchema.nodeFromJSON(json);
 
         provider.document.transact(() => {
           // Sync frontmatter inside transact for atomicity with content update
@@ -89,6 +93,40 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
           const meta = { mapping: new Map(), isOMark: new Map() };
           updateYFragment(provider.document, yFragment, pmNode, meta);
         });
+      },
+      applyThreeWayMerge(
+        snapshotMarkdown: string,
+        userEditedMarkdown: string,
+      ): ThreeWayMergeResult {
+        if (!editor) {
+          return {
+            selective: false,
+            userChangedCount: 0,
+            agentPreservedCount: 0,
+            conflicts: [],
+            fallbackReason: 'No editor',
+          };
+        }
+        const { frontmatter: snapFm, body: snapBody } = stripFrontmatter(snapshotMarkdown);
+        const { frontmatter: userFm, body: userBody } = stripFrontmatter(userEditedMarkdown);
+
+        // Update frontmatter from user's version
+        frontmatterRef.current = userFm || snapFm;
+
+        const yFragment = provider.document.getXmlFragment('default');
+
+        // Sync frontmatter
+        const metaMap = provider.document.getMap('metadata');
+        metaMap.set('frontmatter', frontmatterRef.current);
+
+        return threeWayMerge(
+          provider.document,
+          yFragment,
+          snapBody,
+          userBody,
+          mdManager,
+          editor.schema,
+        );
       },
     }),
     [editor, mdManager, provider.document],
