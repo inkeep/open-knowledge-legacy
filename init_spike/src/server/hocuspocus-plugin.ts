@@ -46,16 +46,18 @@ export function hocuspocusPlugin(): Plugin {
           const conn = await hocuspocus.openDirectConnection('test-doc');
           const timestamp = new Date().toISOString();
 
-          await conn.transact((doc) => {
-            const fragment = doc.getXmlFragment('default');
-            const paragraph = new Y.XmlElement('paragraph');
-            const text = new Y.XmlText();
-            text.applyDelta([{ insert: `Hello from the agent! ${timestamp}` }]);
-            paragraph.insert(0, [text]);
-            fragment.push([paragraph]);
-          });
-
-          await conn.disconnect();
+          try {
+            await conn.transact((doc) => {
+              const fragment = doc.getXmlFragment('default');
+              const paragraph = new Y.XmlElement('paragraph');
+              const text = new Y.XmlText();
+              text.applyDelta([{ insert: `Hello from the agent! ${timestamp}` }]);
+              paragraph.insert(0, [text]);
+              fragment.push([paragraph]);
+            });
+          } finally {
+            await conn.disconnect();
+          }
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, timestamp }));
@@ -115,31 +117,33 @@ export function hocuspocusPlugin(): Plugin {
           const conn = await hocuspocus.openDirectConnection('test-doc');
           const timestamp = new Date().toISOString();
 
-          await conn.transact((doc) => {
-            const fragment = doc.getXmlFragment('default');
+          try {
+            await conn.transact((doc) => {
+              const fragment = doc.getXmlFragment('default');
 
-            // Serialize current content to markdown
-            const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
-            const currentMarkdown = mdManager.serialize(currentJson);
+              // Serialize current content to markdown
+              const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
+              const currentMarkdown = mdManager.serialize(currentJson);
 
-            // Splice agent's markdown at the specified position
-            let combined: string;
-            if (position === 'prepend') {
-              combined = `${markdown.trim()}\n\n${currentMarkdown.trim()}\n`;
-            } else {
-              combined = currentMarkdown.trim()
-                ? `${currentMarkdown.trim()}\n\n${markdown.trim()}\n`
-                : `${markdown.trim()}\n`;
-            }
+              // Splice agent's markdown at the specified position
+              let combined: string;
+              if (position === 'prepend') {
+                combined = `${markdown.trim()}\n\n${currentMarkdown.trim()}\n`;
+              } else {
+                combined = currentMarkdown.trim()
+                  ? `${currentMarkdown.trim()}\n\n${markdown.trim()}\n`
+                  : `${markdown.trim()}\n`;
+              }
 
-            // Parse combined markdown → ProseMirror node → updateYFragment
-            const parsedJson = mdManager.parse(combined);
-            const pmNode = editorSchema.nodeFromJSON(parsedJson);
-            const meta = { mapping: new Map(), isOMark: new Map() };
-            updateYFragment(doc, fragment, pmNode, meta);
-          });
-
-          await conn.disconnect();
+              // Parse combined markdown → ProseMirror node → updateYFragment
+              const parsedJson = mdManager.parse(combined);
+              const pmNode = editorSchema.nodeFromJSON(parsedJson);
+              const meta = { mapping: new Map(), isOMark: new Map() };
+              updateYFragment(doc, fragment, pmNode, meta);
+            });
+          } finally {
+            await conn.disconnect();
+          }
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, timestamp }));

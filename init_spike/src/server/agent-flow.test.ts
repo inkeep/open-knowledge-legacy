@@ -341,6 +341,75 @@ describe('Agent write → Editor reflection', () => {
     await conn.disconnect();
   });
 
+  test('three-way merge falls back to whole-doc when user changes paragraph count', async () => {
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('test-fallback');
+
+    // Seed with two paragraphs
+    await conn.transact((doc) => {
+      const fragment = doc.getXmlFragment('default');
+
+      const p1 = new Y.XmlElement('paragraph');
+      const t1 = new Y.XmlText();
+      t1.applyDelta([{ insert: 'Paragraph A' }]);
+      p1.insert(0, [t1]);
+
+      const p2 = new Y.XmlElement('paragraph');
+      const t2 = new Y.XmlText();
+      t2.applyDelta([{ insert: 'Paragraph B' }]);
+      p2.insert(0, [t2]);
+
+      fragment.push([p1, p2]);
+    });
+
+    // Snapshot has 2 paragraphs
+    const fragment = getFragment(conn);
+    const snapshotMarkdown = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+
+    // Agent adds paragraph C while user is in source mode
+    await conn.transact((doc) => {
+      const frag = doc.getXmlFragment('default');
+      const p3 = new Y.XmlElement('paragraph');
+      const t3 = new Y.XmlText();
+      t3.applyDelta([{ insert: 'Paragraph C — agent added' }]);
+      p3.insert(0, [t3]);
+      frag.push([p3]);
+    });
+
+    // User ALSO adds a paragraph in source mode (paragraph count changes: 2 → 3)
+    const userEdited = `${snapshotMarkdown.trim()}\n\nParagraph D — user added in source\n`;
+
+    // Toggle back — paragraph count mismatch triggers fallback
+    const result = threeWayMerge(
+      getDoc(conn),
+      fragment,
+      snapshotMarkdown,
+      userEdited,
+      mdManager,
+      schema,
+    );
+
+    const finalMarkdown = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+
+    // Fallback was used (not selective)
+    expect(result.selective).toBe(false);
+    expect(result.fallbackReason).toContain('paragraph count changed');
+
+    // User's content is preserved (whole-doc applies user's version)
+    expect(finalMarkdown).toContain('Paragraph A');
+    expect(finalMarkdown).toContain('Paragraph B');
+    expect(finalMarkdown).toContain('Paragraph D — user added in source');
+
+    // Agent's paragraph C is lost in fallback (documented trade-off)
+    // Document is structurally valid
+    const reparsed = mdManager.parse(finalMarkdown);
+    const reNode = schema.nodeFromJSON(reparsed);
+    expect(reNode).toBeTruthy();
+    expect(reNode.content.childCount).toBeGreaterThan(0);
+
+    await conn.disconnect();
+  });
+
   test('agent markdown write via unified path (parse→updateYFragment) appends paragraph', async () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const conn = await hocuspocus.openDirectConnection('test-md-write');

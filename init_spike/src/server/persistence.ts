@@ -18,8 +18,11 @@ import simpleGit from 'simple-git';
 import { prependFrontmatter, stripFrontmatter } from '../editor/extensions/frontmatter';
 import { sharedExtensions } from '../editor/extensions/shared';
 
-const CONTENT_DIR = resolve(import.meta.dirname ?? '.', '../../content');
-const PROJECT_DIR = resolve(import.meta.dirname ?? '.', '../..');
+if (!import.meta.dirname) {
+  throw new Error('[persistence] import.meta.dirname is undefined — cannot resolve paths');
+}
+const CONTENT_DIR = resolve(import.meta.dirname, '../../content');
+const PROJECT_DIR = resolve(import.meta.dirname, '../..');
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
@@ -29,7 +32,7 @@ const git = simpleGit(PROJECT_DIR);
 // Track frontmatter per document (set when loading, re-prepended on save)
 const frontmatterCache = new Map<string, string>();
 
-function safeContentPath(documentName: string): string {
+export function safeContentPath(documentName: string): string {
   const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
   if (!filePath.startsWith(`${CONTENT_DIR}/`)) {
     throw new Error(`Invalid document name: ${documentName}`);
@@ -112,18 +115,26 @@ function scheduleGitCommit(): void {
   }, GIT_DEBOUNCE_MS);
 }
 
-// Flush pending git commit on shutdown
+// Flush pending git commit on shutdown — keep process alive until commit completes
+let shutdownRegistered = false;
 function handleShutdown(): void {
   if (gitCommitTimer) {
     clearTimeout(gitCommitTimer);
     gitCommitTimer = null;
   }
-  if (!commitInFlight) {
-    commitToWipRef().catch((e) => console.error('[persistence] Shutdown commit failed:', e));
-  }
+  const flush = async () => {
+    if (commitInFlight) await commitInFlight;
+    await commitToWipRef();
+  };
+  flush()
+    .catch((e) => console.error('[persistence] Shutdown commit failed:', e))
+    .finally(() => process.exit(0));
 }
-process.on('SIGINT', handleShutdown);
-process.on('SIGTERM', handleShutdown);
+if (!shutdownRegistered) {
+  shutdownRegistered = true;
+  process.on('SIGINT', handleShutdown);
+  process.on('SIGTERM', handleShutdown);
+}
 
 export function createPersistenceExtension(): Extension {
   return {

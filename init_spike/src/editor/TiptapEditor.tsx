@@ -88,11 +88,12 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
             fallbackReason: 'No editor',
           };
         }
-        const { frontmatter: snapFm, body: snapBody } = stripFrontmatter(snapshotMarkdown);
+        const { body: snapBody } = stripFrontmatter(snapshotMarkdown);
         const { frontmatter: userFm, body: userBody } = stripFrontmatter(userEditedMarkdown);
 
-        // Update frontmatter from user's version
-        frontmatterRef.current = userFm || snapFm;
+        // Update frontmatter from user's version — user has full control in source mode,
+        // so empty string (deleted frontmatter) is intentional, not a fallback trigger.
+        frontmatterRef.current = userFm;
 
         const yFragment = provider.document.getXmlFragment('default');
 
