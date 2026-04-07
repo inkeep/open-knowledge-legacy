@@ -139,12 +139,74 @@ These are the scenarios that don't work today:
 
 ---
 
+## Exploration 5: Automerge — Alternative CRDT Stack with Native Dual-View
+
+**The idea:** Replace Yjs with Automerge. Automerge 2.2 implements the Peritext model — flat text + formatting annotations. The dual-view problem is solved at the data layer. Both ProseMirror and CodeMirror are views over the same flat text CRDT. No serialization between editors. No shimmer. No toggle-back merge.
+
+**Why this is interesting:** It's the only approach where dual-view is architecturally native rather than bolted on. A ProseMirror binding already exists (`automerge-prosemirror`, 3,272 lines). The broader CRDT ecosystem is converging on this model. If we're going to be on Automerge eventually, better to know now before we build more on Yjs.
+
+**What to evaluate:**
+- Stand up TipTap (via the ProseMirror binding) + CodeMirror on Automerge in an isolated spike directory
+- Can the ProseMirror binding handle our extensions — void nodes (jsxComponent atom), tables, task lists, frontmatter?
+- Does Automerge have a sync server equivalent to Hocuspocus? (`automerge-repo` with network adapters, but does it have persistence hooks, document lifecycle, DirectConnection-equivalent for agent writes?)
+- What's agent write ergonomics? Hocuspocus DirectConnection is clean (`conn.transact(doc => ...)`). What's the Automerge equivalent?
+- Performance: Automerge has historically been slower than Yjs for large documents. Has this improved?
+
+**Gotchas to watch for:**
+- `automerge-prosemirror` may not be actively maintained or compatible with TipTap v3's expectations. Check last commit date, open issues, ProseMirror version compatibility
+- Automerge's sync protocol is different from Yjs/Hocuspocus. The entire server layer (Vite plugin, WebSocket handling, persistence hooks) would need to be rebuilt
+- Our git persistence pipeline uses `yXmlFragmentToProsemirrorJSON` → `MarkdownManager.serialize()`. On Automerge, the serialization path is different — flat text is closer to markdown already, but block structure (headings, code blocks, lists) needs a mapping
+- TipTap's `@tiptap/extension-collaboration` is deeply coupled to Yjs — it imports `@tiptap/y-tiptap` which IS y-prosemirror. Switching to Automerge means bypassing TipTap's collaboration extension entirely and using raw ProseMirror plugins
+- Cursor/presence: Hocuspocus uses Yjs awareness protocol. Automerge has its own ephemeral messaging. The presence UX would need to be re-implemented
+- The migration cost isn't just code — it's ecosystem. Hocuspocus, y-prosemirror, y-codemirror.next, all the Yjs tooling goes away. Evaluate whether Automerge's ecosystem has equivalents
+
+**If it works:** Every sync gap closes natively. No serialization step between editors. No three-way merge. No observer shimmer. Agent writes flow to both views through the CRDT. The architecture is fundamentally simpler.
+
+**If it doesn't work (or the migration cost is too high):** The data about what broke informs whether to wait for Automerge's ecosystem to mature or commit to the Yjs approach long-term. Even a failed spike clarifies the build-vs-wait decision.
+
+---
+
+## Exploration 6: Loro — Alternative CRDT Stack with Native Branching
+
+**The idea:** Replace Yjs with Loro. Like Automerge, Loro implements the Peritext model (flat text + annotations = native dual-view). Unlike Automerge, Loro has native fork/merge — branching is a first-class CRDT operation, not bolted on via git.
+
+**Why this is interesting:** Our draft architecture (PROJECT.md TQ14) uses git branches + Hocuspocus document naming (`{branch}/{filepath}`) as a workaround for CRDT-level branching. Loro would make `fork()` and `merge()` native CRDT operations. A user creating a draft is literally forking the CRDT. Merging a draft back is a CRDT merge with proper conflict resolution — not `git merge --squash` on serialized text files. This is architecturally cleaner for the long-term product (drafts, proposals, experiments as branches).
+
+**What to evaluate:**
+- Same dual-view evaluation as Automerge: TipTap + CodeMirror on the same Loro document
+- Fork/merge: create a draft (fork), edit it, merge back. Does the CRDT merge produce sensible results? How does it compare to git merge on the serialized markdown?
+- Does a ProseMirror binding exist? (Less likely than Automerge — Loro's ecosystem is younger)
+- Sync server: does Loro have a Hocuspocus equivalent? Or would we build one?
+- Performance: Loro claims to be faster than both Yjs and Automerge. Verify with our document sizes.
+
+**Gotchas to watch for:**
+- Loro's ecosystem is significantly younger than both Yjs and Automerge. There may not be a ProseMirror binding — building one is a multi-week effort (see Exploration 3 estimates)
+- The Peritext implementation in Loro may have different edge cases than Automerge's. The Peritext paper describes boundary semantics (should bold expand when you type at the end of a bold word?) that each implementation handles differently
+- Fork/merge on CRDTs is conceptually different from git branching. Git merge operates on serialized text (line-level diff). CRDT merge operates on operations (character-level interleaving). The research report (TQ13) specifically warns: "Yjs interleaves characters on diverged docs — garbled." Loro claims to handle this better, but verify with real editing scenarios, not just the docs
+- If we're the first to build a serious product on Loro, we're also the first to find the bugs. Evaluate community size, maintainer responsiveness, issue resolution velocity
+- The Yjs → Loro discussion on discuss.yjs.dev (Nov 2025, cited in the research) has community perspective on the trade-offs
+
+**If it works:** Dual-view + native branching. Architecturally the most complete solution. Drafts, proposals, experiments are CRDT forks — no git workaround needed.
+
+**If the ecosystem is too immature:** Revisit in 6-12 months. Loro is moving fast. The spike data tells us exactly what's missing and when to re-evaluate.
+
+---
+
 ## Suggested Order
 
-1. **Exploration 4 (constrained observer)** — lowest risk, reuses everything we built, highest chance of working. If this works, it might be good enough and we skip the riskier options.
-2. **Exploration 1 (full Option B)** — test whether shimmer is real. The V1b convergence data suggests it might not be. High signal regardless of outcome.
-3. **Exploration 2 (disk bridge)** — independent of the source toggle work, can run in parallel. Unlocks Cursor interop.
-4. **Exploration 3 (Y.Text canonical)** — only if 1-2 fail and we need to fundamentally rethink the architecture. Or if we want to evaluate an Automerge migration path.
+**Phase A — Improve the Yjs architecture (low risk, incremental):**
+1. **Exploration 4 (constrained observer)** — lowest risk, reuses everything we built, highest chance of working
+2. **Exploration 1 (shimmer test)** — cheap experiment on top of #1, turn on reverse observer and measure
+3. **Exploration 2 (disk bridge)** — independent, can run in parallel with 1-2, unlocks Cursor interop
+
+**Phase B — Evaluate alternative stacks (higher risk, higher ceiling):**
+4. **Exploration 5 (Automerge)** — mature Peritext implementation, existing ProseMirror binding, evaluate migration cost
+5. **Exploration 6 (Loro)** — Peritext + native branching, younger ecosystem, evaluate readiness
+
+**Phase C — Only if needed:**
+6. **Exploration 3 (Y.Text canonical)** — rebuild the binding layer within Yjs. Only worth it if Phase A fails AND Phase B shows the migration cost is too high
+
+The results of Phase A directly inform whether Phase B is worth pursuing. If the constrained observer + shimmer test give us full collaborative sync on Yjs, the migration cost of switching stacks needs to be justified by something beyond dual-view (e.g., Loro's native branching for the draft architecture).
 
 ---
 
@@ -183,3 +245,13 @@ Agent       →         ✅        ✅      ✅      —
 ```
 
 Adding Exploration 2 (disk bridge) would close the disk column entirely.
+
+Explorations 5 or 6 (Automerge/Loro) would get us to the full matrix — every cell green — but at the cost of a stack migration:
+
+```
+                    WYSIWYG   Source   Disk   Agent
+WYSIWYG     →         ✅        ✅      ✅      ✅
+Source      →         ✅        ✅      ✅      ✅
+Disk        →         ✅        ✅      —       —
+Agent       →         ✅        ✅      ✅      —
+```
