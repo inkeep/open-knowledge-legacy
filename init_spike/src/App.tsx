@@ -1,24 +1,29 @@
 import { useCallback, useRef, useState } from 'react';
 import { SourceEditor } from './editor/SourceEditor';
+import type { TiptapEditorHandle } from './editor/TiptapEditor';
 import { TiptapEditor } from './editor/TiptapEditor';
 
 export function App() {
   const [isSourceMode, setIsSourceMode] = useState(false);
   const [sourceContent, setSourceContent] = useState('');
-  const editorRef = useRef<{
-    getMarkdown: () => string;
-    applyMarkdown: (md: string) => void;
-  } | null>(null);
+  const [snapshotMarkdown, setSnapshotMarkdown] = useState('');
+  const editorRef = useRef<TiptapEditorHandle | null>(null);
 
   const [toggleError, setToggleError] = useState<string | null>(null);
 
   const handleToggle = useCallback(() => {
     if (isSourceMode) {
-      // Toggle back to WYSIWYG — apply source edits via updateYFragment
+      // Toggle back to WYSIWYG — three-way merge preserves concurrent agent writes
       const editor = editorRef.current;
       if (editor) {
         try {
-          editor.applyMarkdown(sourceContent);
+          const result = editor.applyThreeWayMerge(snapshotMarkdown, sourceContent);
+          if (result.fallbackReason) {
+            console.warn('[App] Three-way merge fell back:', result.fallbackReason);
+          }
+          if (result.conflicts.length > 0) {
+            console.warn(`[App] ${result.conflicts.length} conflict(s) resolved with user-wins`);
+          }
           setToggleError(null);
         } catch (err) {
           setToggleError(err instanceof Error ? err.message : 'Failed to parse markdown');
@@ -27,12 +32,13 @@ export function App() {
       }
       setIsSourceMode(false);
     } else {
-      // Toggle to source — serialize current content to markdown
+      // Toggle to source — serialize current content to markdown and store snapshot
       const editor = editorRef.current;
       if (editor) {
         try {
           const md = editor.getMarkdown();
           setSourceContent(md);
+          setSnapshotMarkdown(md); // Store snapshot for three-way merge on toggle-back
         } catch (err) {
           setToggleError(err instanceof Error ? err.message : 'Failed to serialize markdown');
           return; // Stay in WYSIWYG mode
@@ -41,7 +47,7 @@ export function App() {
       setToggleError(null);
       setIsSourceMode(true);
     }
-  }, [isSourceMode, sourceContent]);
+  }, [isSourceMode, sourceContent, snapshotMarkdown]);
 
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto', padding: '24px' }}>
