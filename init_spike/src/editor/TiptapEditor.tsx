@@ -14,18 +14,23 @@ export interface TiptapEditorHandle {
   applyMarkdown: (md: string) => void;
 }
 
-export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
-  const providerRef = useRef<HocuspocusProvider | null>(null);
-  const frontmatterRef = useRef<string>('');
+// Singleton provider outside React lifecycle — survives StrictMode double-mount.
+// Provider is created once and persists for the app lifetime.
+let singletonProvider: HocuspocusProvider | null = null;
 
-  if (!providerRef.current) {
-    providerRef.current = new HocuspocusProvider({
+function getProvider(): HocuspocusProvider {
+  if (!singletonProvider) {
+    singletonProvider = new HocuspocusProvider({
       url: 'ws://localhost:5173/collab',
       name: DOC_NAME,
     });
   }
+  return singletonProvider;
+}
 
-  const provider = providerRef.current;
+export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
+  const frontmatterRef = useRef<string>('');
+  const provider = getProvider();
 
   const mdManager = useMemo(() => new MarkdownManager({ extensions: sharedExtensions }), []);
 
@@ -37,6 +42,24 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       }),
     ],
   });
+
+  // Read frontmatter from Y.Doc metadata map (set by server persistence on load)
+  useEffect(() => {
+    const metaMap = provider.document.getMap('metadata');
+    const fm = metaMap.get('frontmatter');
+    if (typeof fm === 'string' && fm) {
+      frontmatterRef.current = fm;
+    }
+    // Also observe future changes (e.g., if server loads the file after client connects)
+    const observer = () => {
+      const updated = metaMap.get('frontmatter');
+      if (typeof updated === 'string') {
+        frontmatterRef.current = updated;
+      }
+    };
+    metaMap.observe(observer);
+    return () => metaMap.unobserve(observer);
+  }, [provider.document]);
 
   useImperativeHandle(
     ref,
@@ -51,6 +74,9 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
         if (!editor) return;
         const { frontmatter, body } = stripFrontmatter(md);
         frontmatterRef.current = frontmatter;
+        // Sync frontmatter to Y.Doc metadata so server persistence can use it
+        const metaMap = provider.document.getMap('metadata');
+        metaMap.set('frontmatter', frontmatter);
         const json = mdManager.parse(body);
 
         // Use updateYFragment (diff-based) — NEVER prosemirrorJSONToYDoc
@@ -68,11 +94,8 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
     [editor, mdManager, provider.document],
   );
 
-  useEffect(() => {
-    return () => {
-      provider.destroy();
-    };
-  }, [provider]);
+  // No cleanup — provider is a singleton that survives component lifecycle.
+  // In production, proper cleanup would happen on app unmount.
 
   return (
     <div className="tiptap-editor">
