@@ -88,6 +88,9 @@ export function createPersistenceExtension(): Extension {
 
         if (frontmatter) {
           frontmatterCache.set(documentName, frontmatter);
+          // Store frontmatter in Y.Doc metadata map so clients can read it
+          const metaMap = document.getMap('metadata');
+          metaMap.set('frontmatter', frontmatter);
         }
 
         // Parse markdown → ProseMirror JSON → apply to Y.Doc
@@ -118,7 +121,11 @@ export function createPersistenceExtension(): Extension {
 
         // Serialize ProseMirror JSON → markdown
         const body = mdManager.serialize(json);
-        const frontmatter = frontmatterCache.get(documentName) || '';
+        // Prefer frontmatter from Y.Doc metadata map (synced by client), fall back to local cache
+        const metaMap = document.getMap('metadata');
+        const fmFromDoc = metaMap.get('frontmatter');
+        const frontmatter =
+          typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
         const markdown = prependFrontmatter(frontmatter, body);
 
         // Write to disk (Layer 1)
