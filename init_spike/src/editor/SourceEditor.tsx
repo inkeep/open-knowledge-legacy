@@ -14,12 +14,14 @@ export function SourceEditor({ content, onChange }: SourceEditorProps) {
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const initialContentRef = useRef(content);
 
+  // Mount CodeMirror once
   useEffect(() => {
     if (!containerRef.current) return;
 
     const state = EditorState.create({
-      doc: content,
+      doc: initialContentRef.current,
       extensions: [
         basicSetup,
         markdown(),
@@ -41,6 +43,18 @@ export function SourceEditor({ content, onChange }: SourceEditorProps) {
       view.destroy();
       viewRef.current = null;
     };
+  }, []);
+
+  // Reconcile external content changes without destroying the view
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const current = view.state.doc.toString();
+    if (content !== current) {
+      view.dispatch({
+        changes: { from: 0, to: current.length, insert: content },
+      });
+    }
   }, [content]);
 
   return <div ref={containerRef} className="source-editor" />;

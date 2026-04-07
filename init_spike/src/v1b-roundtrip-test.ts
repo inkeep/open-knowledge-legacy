@@ -10,14 +10,9 @@
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
-import { TaskItem, TaskList } from '@tiptap/extension-list';
-import { Table } from '@tiptap/extension-table';
 import { MarkdownManager } from '@tiptap/markdown';
-import StarterKit from '@tiptap/starter-kit';
 import { prependFrontmatter, stripFrontmatter } from './editor/extensions/frontmatter';
-import { JsxComponent } from './editor/extensions/jsx-component';
+import { sharedExtensions } from './editor/extensions/shared';
 
 const dirname = import.meta.dirname ?? '.';
 const fixturePath = resolve(dirname, '../content/test-fixture.md');
@@ -28,17 +23,7 @@ console.log(`Input file: ${fixturePath}`);
 console.log(`Input length: ${input.length} bytes\n`);
 
 // Create MarkdownManager with all extensions including fixes
-const md = new MarkdownManager({
-  extensions: [
-    StarterKit.configure({ undoRedo: false }),
-    Link,
-    Table,
-    Image,
-    TaskList,
-    TaskItem,
-    JsxComponent,
-  ],
-});
+const md = new MarkdownManager({ extensions: sharedExtensions });
 
 // Helper: round-trip with frontmatter handling
 function roundTrip(markdown: string): string {

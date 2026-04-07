@@ -10,36 +10,31 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
-import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
-import { TaskItem, TaskList } from '@tiptap/extension-list';
-import { Table } from '@tiptap/extension-table';
+import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
-import StarterKit from '@tiptap/starter-kit';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
 import { prependFrontmatter, stripFrontmatter } from '../editor/extensions/frontmatter';
-import { JsxComponent } from '../editor/extensions/jsx-component';
+import { sharedExtensions } from '../editor/extensions/shared';
 
 const CONTENT_DIR = resolve(import.meta.dirname ?? '.', '../../content');
 const PROJECT_DIR = resolve(import.meta.dirname ?? '.', '../..');
 
-const mdManager = new MarkdownManager({
-  extensions: [
-    StarterKit.configure({ undoRedo: false }),
-    Link,
-    Table,
-    Image,
-    TaskList,
-    TaskItem,
-    JsxComponent,
-  ],
-});
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+const schema = getSchema(sharedExtensions);
 
 const git = simpleGit(PROJECT_DIR);
 
 // Track frontmatter per document (set when loading, re-prepended on save)
 const frontmatterCache = new Map<string, string>();
+
+function safeContentPath(documentName: string): string {
+  const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
+  if (!filePath.startsWith(`${CONTENT_DIR}/`)) {
+    throw new Error(`Invalid document name: ${documentName}`);
+  }
+  return filePath;
+}
 
 // Debounce git commits: 30s after last disk write
 let gitCommitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -68,18 +63,23 @@ async function commitToWipRef(): Promise<void> {
   }
 }
 
+let commitInFlight: Promise<void> | null = null;
+
 function scheduleGitCommit(): void {
   if (gitCommitTimer) clearTimeout(gitCommitTimer);
   gitCommitTimer = setTimeout(() => {
-    commitToWipRef();
     gitCommitTimer = null;
+    if (commitInFlight) return; // skip if previous commit still running
+    commitInFlight = commitToWipRef().finally(() => {
+      commitInFlight = null;
+    });
   }, GIT_DEBOUNCE_MS);
 }
 
 export function createPersistenceExtension(): Extension {
   return {
     async onLoadDocument({ document, documentName }) {
-      const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
+      const filePath = safeContentPath(documentName);
       if (!existsSync(filePath)) return;
 
       try {
@@ -96,10 +96,14 @@ export function createPersistenceExtension(): Extension {
           const xmlFragment = document.getXmlFragment('default');
           // Only populate if the fragment is empty (first load)
           if (xmlFragment.length === 0) {
-            // Use yDocToProsemirrorJSON in reverse isn't available,
-            // so we set the initial content via the markdown body.
-            // The TipTap editor will pick up the content via CRDT sync.
-            console.log(`[persistence] Loaded ${filePath} with frontmatter cached`);
+            const pmNode = schema.nodeFromJSON(json);
+            updateYFragment(document, xmlFragment, pmNode, {
+              mapping: new Map(),
+              isOMark: new Map(),
+            });
+            console.log(
+              `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
+            );
           }
         }
       } catch (e) {
@@ -118,7 +122,7 @@ export function createPersistenceExtension(): Extension {
         const markdown = prependFrontmatter(frontmatter, body);
 
         // Write to disk (Layer 1)
-        const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
+        const filePath = safeContentPath(documentName);
         writeFileSync(filePath, markdown, 'utf-8');
         console.log(`[persistence] Wrote ${filePath} (${markdown.length} bytes)`);
 
