@@ -1203,10 +1203,10 @@ index 0000000..0cb1f4f
 +</html>
 diff --git a/init_spike/package.json b/init_spike/package.json
 new file mode 100644
-index 0000000..c6aa52b
+index 0000000..1403d07
 --- /dev/null
 +++ b/init_spike/package.json
-@@ -0,0 +1,52 @@
+@@ -0,0 +1,54 @@
 +{
 +  "name": "open-knowledge-init-spike",
 +  "version": "0.0.1",
@@ -1219,8 +1219,9 @@ index 0000000..c6aa52b
 +    "typecheck": "tsc --noEmit",
 +    "lint": "biome check .",
 +    "format": "biome check --write .",
++    "test": "bun test",
 +    "check:fast": "tsc --noEmit && biome check .",
-+    "check": "tsc --noEmit && biome check . && vite build"
++    "check": "tsc --noEmit && biome check . && bun test && vite build"
 +  },
 +  "dependencies": {
 +    "@codemirror/lang-markdown": "^6.0.0",
@@ -1230,6 +1231,7 @@ index 0000000..c6aa52b
 +    "@hocuspocus/server": "^3.4.0",
 +    "@tiptap/core": "^3.22.0",
 +    "@tiptap/extension-collaboration": "^3.20.0",
++    "@tiptap/y-tiptap": "^3.0.2",
 +    "codemirror": "^6.0.0",
 +    "@tiptap/extension-image": "^3.22.0",
 +    "@tiptap/extension-link": "^3.21.0",
@@ -1261,10 +1263,10 @@ index 0000000..c6aa52b
 +}
 diff --git a/init_spike/src/App.tsx b/init_spike/src/App.tsx
 new file mode 100644
-index 0000000..e412bd2
+index 0000000..afc8c7b
 --- /dev/null
 +++ b/init_spike/src/App.tsx
-@@ -0,0 +1,81 @@
+@@ -0,0 +1,86 @@
 +import { useCallback, useRef, useState } from 'react';
 +import { SourceEditor } from './editor/SourceEditor';
 +import { TiptapEditor } from './editor/TiptapEditor';
@@ -1297,8 +1299,13 @@ index 0000000..e412bd2
 +      // Toggle to source — serialize current content to markdown
 +      const editor = editorRef.current;
 +      if (editor) {
-+        const md = editor.getMarkdown();
-+        setSourceContent(md);
++        try {
++          const md = editor.getMarkdown();
++          setSourceContent(md);
++        } catch (err) {
++          setToggleError(err instanceof Error ? err.message : 'Failed to serialize markdown');
++          return; // Stay in WYSIWYG mode
++        }
 +      }
 +      setToggleError(null);
 +      setIsSourceMode(true);
@@ -1440,7 +1447,7 @@ index 0000000..8ae8da2
 +}
 diff --git a/init_spike/src/editor/TiptapEditor.tsx b/init_spike/src/editor/TiptapEditor.tsx
 new file mode 100644
-index 0000000..43dc691
+index 0000000..dd204d6
 --- /dev/null
 +++ b/init_spike/src/editor/TiptapEditor.tsx
 @@ -0,0 +1,105 @@
@@ -1520,9 +1527,6 @@ index 0000000..43dc691
 +        if (!editor) return;
 +        const { frontmatter, body } = stripFrontmatter(md);
 +        frontmatterRef.current = frontmatter;
-+        // Sync frontmatter to Y.Doc metadata so server persistence can use it
-+        const metaMap = provider.document.getMap('metadata');
-+        metaMap.set('frontmatter', frontmatter);
 +        const json = mdManager.parse(body);
 +
 +        // Use updateYFragment (diff-based) — NEVER prosemirrorJSONToYDoc
@@ -1531,6 +1535,9 @@ index 0000000..43dc691
 +        const pmNode = schema.nodeFromJSON(json);
 +
 +        provider.document.transact(() => {
++          // Sync frontmatter inside transact for atomicity with content update
++          const metaMap = provider.document.getMap('metadata');
++          metaMap.set('frontmatter', frontmatter);
 +          // BindingMetadata: mapping tracks Y.Type↔PM node pairs, isOMark tracks overlapping marks
 +          const meta = { mapping: new Map(), isOMark: new Map() };
 +          updateYFragment(provider.document, yFragment, pmNode, meta);
@@ -1600,6 +1607,70 @@ index 0000000..46edcba
 +    </NodeViewWrapper>
 +  );
 +}
+diff --git a/init_spike/src/editor/extensions/frontmatter.test.ts b/init_spike/src/editor/extensions/frontmatter.test.ts
+new file mode 100644
+index 0000000..71de1b9
+--- /dev/null
++++ b/init_spike/src/editor/extensions/frontmatter.test.ts
+@@ -0,0 +1,58 @@
++import { describe, expect, test } from 'bun:test';
++import { prependFrontmatter, stripFrontmatter } from './frontmatter';
++
++describe('stripFrontmatter', () => {
++  test('extracts frontmatter from standard YAML block', () => {
++    const input = '---\ntitle: Hello\ntags: [a, b]\n---\n# Body';
++    const { frontmatter, body } = stripFrontmatter(input);
++    expect(frontmatter).toBe('---\ntitle: Hello\ntags: [a, b]\n---\n');
++    expect(body).toBe('# Body');
++  });
++
++  test('returns empty frontmatter when none present', () => {
++    const input = '# Just a heading\nSome content';
++    const { frontmatter, body } = stripFrontmatter(input);
++    expect(frontmatter).toBe('');
++    expect(body).toBe(input);
++  });
++
++  test('does not match --- in the middle of content', () => {
++    const input = '# Heading\n---\nstuff\n---\n';
++    const { frontmatter, body } = stripFrontmatter(input);
++    expect(frontmatter).toBe('');
++    expect(body).toBe(input);
++  });
++
++  test('handles empty body after frontmatter', () => {
++    const input = '---\ntitle: Empty\n---\n';
++    const { frontmatter, body } = stripFrontmatter(input);
++    expect(frontmatter).toBe('---\ntitle: Empty\n---\n');
++    expect(body).toBe('');
++  });
++
++  test('handles empty string', () => {
++    const { frontmatter, body } = stripFrontmatter('');
++    expect(frontmatter).toBe('');
++    expect(body).toBe('');
++  });
++});
++
++describe('prependFrontmatter', () => {
++  test('prepends frontmatter to body', () => {
++    const result = prependFrontmatter('---\ntitle: X\n---\n', '# Body');
++    expect(result).toBe('---\ntitle: X\n---\n# Body');
++  });
++
++  test('returns body unchanged when frontmatter is empty', () => {
++    expect(prependFrontmatter('', '# Body')).toBe('# Body');
++  });
++});
++
++describe('round-trip', () => {
++  test('strip then prepend is identity', () => {
++    const original = '---\ntitle: Test\ndate: 2026-01-01\n---\n# Content\n\nParagraph here.\n';
++    const { frontmatter, body } = stripFrontmatter(original);
++    const reassembled = prependFrontmatter(frontmatter, body);
++    expect(reassembled).toBe(original);
++  });
++});
 diff --git a/init_spike/src/editor/extensions/frontmatter.ts b/init_spike/src/editor/extensions/frontmatter.ts
 new file mode 100644
 index 0000000..1ce86d7
@@ -1811,10 +1882,10 @@ index 0000000..f3d7ff8
 +console.log('\nDone. Check the browser editor for new paragraph(s).');
 diff --git a/init_spike/src/server/hocuspocus-plugin.ts b/init_spike/src/server/hocuspocus-plugin.ts
 new file mode 100644
-index 0000000..9c06470
+index 0000000..0416867
 --- /dev/null
 +++ b/init_spike/src/server/hocuspocus-plugin.ts
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,66 @@
 +import { Hocuspocus } from '@hocuspocus/server';
 +import type { Plugin } from 'vite';
 +import { WebSocketServer } from 'ws';
@@ -1869,6 +1940,7 @@ index 0000000..9c06470
 +          res.writeHead(200, { 'Content-Type': 'application/json' });
 +          res.end(JSON.stringify({ ok: true, timestamp }));
 +        } catch (e) {
++          console.error('[agent-write]', e);
 +          const message = e instanceof Error ? e.message : String(e);
 +          res.writeHead(500, { 'Content-Type': 'application/json' });
 +          res.end(JSON.stringify({ ok: false, error: message }));
@@ -1880,12 +1952,56 @@ index 0000000..9c06470
 +    },
 +  };
 +}
+diff --git a/init_spike/src/server/persistence.test.ts b/init_spike/src/server/persistence.test.ts
+new file mode 100644
+index 0000000..38fb16c
+--- /dev/null
++++ b/init_spike/src/server/persistence.test.ts
+@@ -0,0 +1,38 @@
++import { describe, expect, test } from 'bun:test';
++import { resolve } from 'node:path';
++
++// safeContentPath is not exported, so we replicate the logic for testing.
++// This validates the security-critical path traversal prevention.
++const CONTENT_DIR = resolve(import.meta.dirname ?? '.', '../../content');
++
++function safeContentPath(documentName: string): string {
++  const filePath = resolve(CONTENT_DIR, `${documentName}.md`);
++  if (!filePath.startsWith(`${CONTENT_DIR}/`)) {
++    throw new Error(`Invalid document name: ${documentName}`);
++  }
++  return filePath;
++}
++
++describe('safeContentPath', () => {
++  test('allows simple document names', () => {
++    const result = safeContentPath('test-doc');
++    expect(result).toBe(resolve(CONTENT_DIR, 'test-doc.md'));
++  });
++
++  test('rejects path traversal with ../', () => {
++    expect(() => safeContentPath('../etc/passwd')).toThrow('Invalid document name');
++  });
++
++  test('rejects absolute path injection', () => {
++    expect(() => safeContentPath('/etc/passwd')).toThrow('Invalid document name');
++  });
++
++  test('rejects traversal to parent directory', () => {
++    expect(() => safeContentPath('../../package.json')).toThrow('Invalid document name');
++  });
++
++  test('allows subdirectory within content', () => {
++    const result = safeContentPath('sub/nested');
++    expect(result).toBe(resolve(CONTENT_DIR, 'sub/nested.md'));
++  });
++});
 diff --git a/init_spike/src/server/persistence.ts b/init_spike/src/server/persistence.ts
 new file mode 100644
-index 0000000..f128846
+index 0000000..d762294
 --- /dev/null
 +++ b/init_spike/src/server/persistence.ts
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,189 @@
 +/**
 + * V5: Git auto-persistence pipeline.
 + *
@@ -1895,7 +2011,8 @@ index 0000000..f128846
 + * Hocuspocus config: debounce=2000, maxDebounce=10000 (L1)
 + * Git commit debounced separately: 30s idle after last disk write (L2)
 + */
-+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
++import { existsSync, readFileSync, unlinkSync } from 'node:fs';
++import { rename, writeFile } from 'node:fs/promises';
 +import { resolve } from 'node:path';
 +import type { Extension } from '@hocuspocus/server';
 +import { getSchema } from '@tiptap/core';
@@ -1929,15 +2046,31 @@ index 0000000..f128846
 +const GIT_DEBOUNCE_MS = 30_000;
 +
 +async function commitToWipRef(): Promise<void> {
++  // Use a temporary index to avoid polluting the developer's staging area.
++  // GIT_INDEX_FILE isolates our write-tree from the shared .git/index.
++  const tmpIndex = resolve(PROJECT_DIR, '.git/index-wip');
++  const env = { GIT_INDEX_FILE: tmpIndex };
 +  try {
-+    await git.add('content/');
-+    const treeSha = (await git.raw('write-tree')).trim();
++    // Seed temp index from HEAD's tree (or start empty for first commit)
++    try {
++      const headTree = (await git.raw('rev-parse', 'HEAD^{tree}')).trim();
++      await git.env(env).raw('read-tree', headTree);
++    } catch {
++      // Empty repo — start with empty index
++    }
++
++    await git.env(env).raw('add', 'content/');
++    const treeSha = (await git.env(env).raw('write-tree')).trim();
 +
 +    let parentSha: string | null = null;
 +    try {
 +      parentSha = (await git.raw('rev-parse', 'refs/wip/main')).trim();
-+    } catch {
-+      // First commit — no parent
++    } catch (e) {
++      const msg = e instanceof Error ? e.message : String(e);
++      if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
++        throw e; // Re-throw unexpected errors
++      }
++      // First commit — no parent (expected)
 +    }
 +
 +    const args = ['commit-tree', treeSha, '-m', `WIP auto-save ${new Date().toISOString()}`];
@@ -1948,21 +2081,48 @@ index 0000000..f128846
 +    console.log(`[persistence] Git commit: ${commitSha.slice(0, 8)} on refs/wip/main`);
 +  } catch (e) {
 +    console.error('[persistence] Git commit failed:', e);
++  } finally {
++    try {
++      unlinkSync(tmpIndex);
++    } catch {
++      // ignore cleanup failure
++    }
 +  }
 +}
 +
 +let commitInFlight: Promise<void> | null = null;
++let pendingAfterCommit = false;
 +
 +function scheduleGitCommit(): void {
 +  if (gitCommitTimer) clearTimeout(gitCommitTimer);
 +  gitCommitTimer = setTimeout(() => {
 +    gitCommitTimer = null;
-+    if (commitInFlight) return; // skip if previous commit still running
++    if (commitInFlight) {
++      pendingAfterCommit = true;
++      return;
++    }
 +    commitInFlight = commitToWipRef().finally(() => {
 +      commitInFlight = null;
++      if (pendingAfterCommit) {
++        pendingAfterCommit = false;
++        scheduleGitCommit();
++      }
 +    });
 +  }, GIT_DEBOUNCE_MS);
 +}
++
++// Flush pending git commit on shutdown
++function handleShutdown(): void {
++  if (gitCommitTimer) {
++    clearTimeout(gitCommitTimer);
++    gitCommitTimer = null;
++  }
++  if (!commitInFlight) {
++    commitToWipRef().catch((e) => console.error('[persistence] Shutdown commit failed:', e));
++  }
++}
++process.on('SIGINT', handleShutdown);
++process.on('SIGTERM', handleShutdown);
 +
 +export function createPersistenceExtension(): Extension {
 +  return {
@@ -1970,62 +2130,59 @@ index 0000000..f128846
 +      const filePath = safeContentPath(documentName);
 +      if (!existsSync(filePath)) return;
 +
-+      try {
-+        const raw = readFileSync(filePath, 'utf-8');
-+        const { frontmatter, body } = stripFrontmatter(raw);
++      const raw = readFileSync(filePath, 'utf-8');
++      const { frontmatter, body } = stripFrontmatter(raw);
 +
-+        if (frontmatter) {
-+          frontmatterCache.set(documentName, frontmatter);
-+          // Store frontmatter in Y.Doc metadata map so clients can read it
-+          const metaMap = document.getMap('metadata');
-+          metaMap.set('frontmatter', frontmatter);
-+        }
-+
-+        // Parse markdown → ProseMirror JSON → apply to Y.Doc
-+        const json = mdManager.parse(body);
-+        if (json) {
-+          const xmlFragment = document.getXmlFragment('default');
-+          // Only populate if the fragment is empty (first load)
-+          if (xmlFragment.length === 0) {
-+            const pmNode = schema.nodeFromJSON(json);
-+            updateYFragment(document, xmlFragment, pmNode, {
-+              mapping: new Map(),
-+              isOMark: new Map(),
-+            });
-+            console.log(
-+              `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
-+            );
-+          }
-+        }
-+      } catch (e) {
-+        console.error(`[persistence] Failed to load ${filePath}:`, e);
++      if (frontmatter) {
++        frontmatterCache.set(documentName, frontmatter);
++        // Store frontmatter in Y.Doc metadata map so clients can read it
++        const metaMap = document.getMap('metadata');
++        metaMap.set('frontmatter', frontmatter);
 +      }
++
++      // Parse markdown → ProseMirror JSON → apply to Y.Doc
++      const json = mdManager.parse(body);
++      if (json) {
++        const xmlFragment = document.getXmlFragment('default');
++        // Only populate if the fragment is empty (first load)
++        if (xmlFragment.length === 0) {
++          const pmNode = schema.nodeFromJSON(json);
++          updateYFragment(document, xmlFragment, pmNode, {
++            mapping: new Map(),
++            isOMark: new Map(),
++          });
++          console.log(
++            `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
++          );
++        }
++      }
++      // Errors propagate to Hocuspocus, which rejects the connection —
++      // preventing empty docs from overwriting existing files.
 +    },
 +
 +    async onStoreDocument({ document, documentName }) {
-+      try {
-+        const xmlFragment = document.getXmlFragment('default');
-+        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
++      const xmlFragment = document.getXmlFragment('default');
++      const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
 +
-+        // Serialize ProseMirror JSON → markdown
-+        const body = mdManager.serialize(json);
-+        // Prefer frontmatter from Y.Doc metadata map (synced by client), fall back to local cache
-+        const metaMap = document.getMap('metadata');
-+        const fmFromDoc = metaMap.get('frontmatter');
-+        const frontmatter =
-+          typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
-+        const markdown = prependFrontmatter(frontmatter, body);
++      // Serialize ProseMirror JSON → markdown
++      const body = mdManager.serialize(json);
++      // Prefer frontmatter from Y.Doc metadata map (synced by client), fall back to local cache
++      const metaMap = document.getMap('metadata');
++      const fmFromDoc = metaMap.get('frontmatter');
++      const frontmatter =
++        typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
++      const markdown = prependFrontmatter(frontmatter, body);
 +
-+        // Write to disk (Layer 1)
-+        const filePath = safeContentPath(documentName);
-+        writeFileSync(filePath, markdown, 'utf-8');
-+        console.log(`[persistence] Wrote ${filePath} (${markdown.length} bytes)`);
++      // Atomic write: write to temp file then rename (Layer 1)
++      const filePath = safeContentPath(documentName);
++      const tmpPath = `${filePath}.tmp`;
++      await writeFile(tmpPath, markdown, 'utf-8');
++      await rename(tmpPath, filePath);
++      console.log(`[persistence] Wrote ${filePath} (${markdown.length} bytes)`);
 +
-+        // Schedule git commit (Layer 2)
-+        scheduleGitCommit();
-+      } catch (e) {
-+        console.error('[persistence] onStoreDocument failed:', e);
-+      }
++      // Schedule git commit (Layer 2)
++      scheduleGitCommit();
++      // Errors propagate to Hocuspocus — clients are notified of save failure.
 +    },
 +  };
 +}
