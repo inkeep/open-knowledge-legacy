@@ -357,6 +357,34 @@ The product handles `.mdx` files (PROJECT.md TQ3, PQ8). The void node approach (
 | T98 | Two users editing near a void node boundary — one in WYSIWYG, one in source | User A types a paragraph before the void node in WYSIWYG. User B edits the paragraph after the void node in source. Both edits present, void node intact. |
 | T99 | Void node content edited in source mode | User toggles to source, modifies the JSX inside the fenced code block (e.g., changes `type="warning"` to `type="info"`), toggles back. The void node re-renders with the updated props. |
 
+### Component editing UX through sync
+
+These scenarios test the human authoring experience with void node components (Callout, Tabs, Card, etc.) as it interacts with the sync layer. The product UX is: slash command to insert, visual preview rendering, prop panel for editing, per-block code toggle, mini CodeMirror for unregistered components (PROJECT.md S1). These scenarios verify that UX works correctly when the sync architecture is active.
+
+**Applicable to Exploration 1+2 (observer sync):**
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T100 | Slash command inserts a Callout → observer propagates to Y.Text | User types `/callout` in WYSIWYG tab. Void node created in Y.XmlFragment. Observer fires, serializes to fenced code block in Y.Text. A second tab in source mode sees the fenced code block appear at the correct position. |
+| T101 | Prop panel edit → observer preserves the change | User clicks a Callout void node, opens prop panel, changes `type` from `warn` to `info`. The atom node's string attribute updates. Observer re-serializes to Y.Text. Source mode tab shows updated `type="info"` in the fenced code block. Toggle back from source: still `info`. |
+| T102 | Mini CodeMirror edit of raw JSX → observer round-trip | User opens the per-block code view for an unregistered component. Edits the JSX (adds a prop, changes children text). The atom node's string attribute updates. Observer propagates to Y.Text. Source mode tab shows the updated JSX inside the fenced code block. |
+| T103 | Per-block code toggle while another tab is in source mode | Tab 1: user toggles a single Callout block to code view (per-block toggle, edits the atom string). Tab 2: in full source mode showing Y.Text. Does the per-block edit in Tab 1 appear in Tab 2's source view? The observer should fire on the XmlFragment change and update Y.Text. |
+| T104 | Five consecutive void nodes — observer serialization fidelity | Document has: Callout, then Tabs (with 3 Tab children), then Steps (with 2 Step children), then Card, then CodeGroup. Observer serializes all 5 to Y.Text as consecutive fenced code blocks. Verify: correct ordering, proper blank line separation, no merged or missing blocks. |
+| T105 | Agent writes a component via markdown endpoint → renders as preview | Agent sends `POST /api/agent-write-md` with a jsx-component fenced code block. The void node appears in WYSIWYG with visual component preview (colored Callout box). Another tab in source mode sees the fenced code block via observer. |
+| T106 | Component with multiline children through observer cycle | `<Callout type="warn">\nLine 1\nLine 2\n**bold line**\n</Callout>` — the multiline content (including markdown formatting in children) survives observer XmlFragment→Text→XmlFragment cycle without mangling internal newlines or markdown syntax. |
+| T107 | Delete a void node in WYSIWYG → observer removes from Y.Text | User selects and deletes a Callout void node. Observer fires, Y.Text no longer contains the fenced code block. Source mode tab reflects the deletion. |
+| T108 | Drag-and-drop reorder of void nodes → observer preserves order | User drags a Callout below a Tabs component. Observer re-serializes Y.Text with the new order. Source mode tab shows fenced code blocks in the new order. |
+
+**Applicable to Exploration 6 (Y.Text canonical) if revisited:**
+
+| ID | Scenario | What to verify |
+|---|---|---|
+| T110 | Prop panel edits JSX character region in Y.Text | User clicks a Callout region. ProseMirror binding identifies JSX boundaries, renders prop panel. User changes `type="warn"` to `type="info"`. Binding rewrites the specific characters in Y.Text (not the whole document). Adjacent content undisturbed. Concurrent user typing nearby doesn't corrupt the prop edit. |
+| T111 | Mini CodeMirror on Y.Text character range — isolation | Unregistered component `<CustomWidget data={...}>`. Mini CodeMirror bound to the character range in Y.Text. User edits inside the mini CM. Another user types a paragraph immediately after the component. Character ranges don't overlap or corrupt each other. |
+| T112 | Slash command inserts JSX text at cursor position in Y.Text | User types `/callout`. Binding inserts the full JSX string (`<Callout type="info">\n\n</Callout>`) at the cursor position in Y.Text as a character insertion. The ProseMirror binding detects the new JSX region and renders the visual preview. CodeMirror (if in source mode) shows the new text. |
+| T113 | Rich text children editing (future capability test) | `<Callout>some **bold** text</Callout>` — can the user click inside the Callout in WYSIWYG and edit "bold" text with formatting? Does the binding correctly parse/render markdown within JSX tags? Does concurrent editing of children work at character level? |
+| T114 | Component boundary protection — concurrent edit doesn't break JSX tags | User A is typing paragraph text that ends right before `<Callout`. User B is editing inside the Callout. User A's typing doesn't accidentally insert characters into the `<Callout` tag name, breaking the JSX. Document: how the binding protects tag boundaries, or whether it doesn't. |
+
 ### Persistence and recovery
 
 | ID | Scenario | What to verify |
