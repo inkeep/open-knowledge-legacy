@@ -1,16 +1,24 @@
-import { Hocuspocus } from '@hocuspocus/server';
+import { resolve } from 'node:path';
+import { Hocuspocus, type LocalTransactionOrigin } from '@hocuspocus/server';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment } from '@tiptap/y-tiptap';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
+import { stripFrontmatter } from '../editor/extensions/frontmatter';
 import { sharedExtensions } from '../editor/extensions/shared';
+import { startWatcher } from './file-watcher';
 import { createPersistenceExtension } from './persistence';
 
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const editorSchema = getSchema(sharedExtensions);
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
+const CONTENT_DIR = resolve(
+  import.meta.dirname ?? new URL('.', import.meta.url).pathname,
+  '../../content',
+);
+
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+const schema = getSchema(sharedExtensions);
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -118,28 +126,20 @@ export function hocuspocusPlugin(): Plugin {
           const timestamp = new Date().toISOString();
 
           try {
+            // Direct Y.Text insertion — Observer B handles the tree update.
+            // Simpler than serialize→splice→parse→updateYFragment, and preserves
+            // per-character CRDT IDs in the inserted text.
             await conn.transact((doc) => {
-              const fragment = doc.getXmlFragment('default');
+              const ytext = doc.getText('source');
+              const currentText = ytext.toString();
 
-              // Serialize current content to markdown
-              const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
-              const currentMarkdown = mdManager.serialize(currentJson);
-
-              // Splice agent's markdown at the specified position
-              let combined: string;
               if (position === 'prepend') {
-                combined = `${markdown.trim()}\n\n${currentMarkdown.trim()}\n`;
+                ytext.insert(0, `${markdown.trim()}\n\n`);
               } else {
-                combined = currentMarkdown.trim()
-                  ? `${currentMarkdown.trim()}\n\n${markdown.trim()}\n`
-                  : `${markdown.trim()}\n`;
+                const insertAt = currentText.length;
+                const separator = currentText.trim() ? '\n\n' : '';
+                ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
               }
-
-              // Parse combined markdown → ProseMirror node → updateYFragment
-              const parsedJson = mdManager.parse(combined);
-              const pmNode = editorSchema.nodeFromJSON(parsedJson);
-              const meta = { mapping: new Map(), isOMark: new Map() };
-              updateYFragment(doc, fragment, pmNode, meta);
             });
           } finally {
             await conn.disconnect();
@@ -153,6 +153,39 @@ export function hocuspocusPlugin(): Plugin {
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: message }));
         }
+      });
+
+      // --- Disk bridge: watch content directory for external .md changes ---
+      async function handleExternalChange(docName: string, content: string): Promise<void> {
+        // Strategy C: only sync documents already open in the browser
+        const document = hocuspocus.documents.get(docName);
+        if (!document) return;
+        const { frontmatter, body } = stripFrontmatter(content);
+        const parsedJson = mdManager.parse(body);
+        const pmNode = schema.nodeFromJSON(parsedJson);
+        const xmlFragment = document.getXmlFragment('default');
+
+        // Layer 2: skipStoreHooks prevents persistence from re-writing the file
+        // we just loaded from disk.
+        document.transact(
+          () => {
+            const meta = { mapping: new Map(), isOMark: new Map() };
+            updateYFragment(document, xmlFragment, pmNode, meta);
+            const metaMap = document.getMap('metadata');
+            metaMap.set('frontmatter', frontmatter);
+          },
+          {
+            source: 'local',
+            skipStoreHooks: true,
+            context: { origin: 'file-watcher' },
+          } satisfies LocalTransactionOrigin,
+        );
+
+        console.log(`[file-watcher] Applied external change: ${docName}`);
+      }
+
+      startWatcher(CONTENT_DIR, handleExternalChange).then((subscription) => {
+        server.httpServer?.on('close', () => subscription.unsubscribe());
       });
 
       console.log('[hocuspocus] WebSocket server ready on /collab');

@@ -17,6 +17,7 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import simpleGit from 'simple-git';
 import { prependFrontmatter, stripFrontmatter } from '../editor/extensions/frontmatter';
 import { sharedExtensions } from '../editor/extensions/shared';
+import { contentHash, writeTracker } from './file-watcher';
 
 if (!import.meta.dirname) {
   throw new Error('[persistence] import.meta.dirname is undefined — cannot resolve paths');
@@ -188,6 +189,14 @@ export function createPersistenceExtension(): Extension {
       // Atomic write: write to temp file then rename (Layer 1)
       const filePath = safeContentPath(documentName);
       const tmpPath = `${filePath}.tmp`;
+
+      // Record content hash BEFORE writing — Layer 1 of disk bridge feedback prevention.
+      // The file-watcher checks this hash to skip our own persistence writes.
+      writeTracker.set(filePath, {
+        hash: contentHash(markdown),
+        timestamp: Date.now(),
+      });
+
       try {
         await writeFile(tmpPath, markdown, 'utf-8');
         await rename(tmpPath, filePath);
