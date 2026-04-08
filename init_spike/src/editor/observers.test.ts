@@ -1,16 +1,28 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from './extensions/shared';
-import { ORIGIN_TEXT_TO_TREE, ORIGIN_TREE_TO_TEXT, setupObservers } from './observers';
+import {
+  __resetCoordinationState,
+  ORIGIN_TEXT_TO_TREE,
+  ORIGIN_TREE_TO_TEXT,
+  setupObservers,
+} from './observers';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-/** Helper: wait for debounce + microtask to settle */
-function wait(ms = 80): Promise<void> {
+// Reset module-level coordination state between tests so the typing-defer and
+// other-write-defer windows don't leak between unrelated test cases.
+beforeEach(() => {
+  __resetCoordinationState();
+});
+
+/** Helper: wait for debounce + microtask to settle. Must exceed TYPING_DEFER_MS (300ms)
+ *  for tests that trigger the defer path (e.g., Y.Text writes from non-local origin). */
+function wait(ms = 400): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -639,5 +651,116 @@ describe('Y.Text CRDT foundation', () => {
 
     const ytext2 = doc2.getText('source');
     expect(ytext2.toString()).toBe('Tab 1 typed this');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Regression tests for concurrent edit loss (debug finding)
+// Root cause: Observer B's updateYFragment replaced the XmlFragment tree during
+// its debounce window, obliterating concurrent user edits. Observer A's diffLines
+// could also subtract agent content from Y.Text when user typing arrived first.
+// Fix: mutual-exclusion via TYPING_DEFER_MS guard on both observers.
+// ─────────────────────────────────────────────────────────────
+
+describe('Concurrent edit race conditions (regression)', () => {
+  test('Observer B defers while user is typing to avoid destroying in-flight edits', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Existing\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent writes to Y.Text (would normally trigger Observer B → updateYFragment)
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\n\nAgent content');
+    }, 'agent-write');
+
+    // User is "typing" — keep the defer window fresh
+    const typingInterval = setInterval(() => markUserTyping(), 20);
+
+    // Meanwhile, the user's typing has mutated XmlFragment (simulated)
+    markUserTyping();
+    const para = new Y.XmlElement('paragraph');
+    const text = new Y.XmlText();
+    text.applyDelta([{ insert: 'USER TYPED' }]);
+    para.insert(0, [text]);
+    fragment.push([para]);
+
+    // Let typing continue for 500ms — during this time, Observer B should keep deferring
+    await wait(500);
+
+    // Stop typing
+    clearInterval(typingInterval);
+
+    // Wait for typing window to expire + observers to catch up
+    await wait(500);
+
+    // Final state: user-typed content must still be in XmlFragment.
+    // (This is what matters — the tree is the WYSIWYG source of truth.)
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const fragmentMd = mdManager.serialize(json);
+    expect(fragmentMd).toContain('USER TYPED');
+    cleanup();
+  });
+
+  test('Observer B early-exits when XmlFragment already matches Y.Text', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    // Put the same content into both via a normal markdown apply
+    applyMarkdown(doc, fragment, 'Synced content\n');
+    await wait();
+
+    // Count Observer B log firings by snapshotting console.log calls would require
+    // more setup; instead verify the end state is stable — Observer B should not
+    // have introduced any drift.
+    const md = ytext.toString();
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const serializedBody = mdManager.serialize(json);
+    expect(md.trim()).toBe(serializedBody.trim());
+    cleanup();
+  });
+
+  test('Observer A defers after agent write so the diff does not subtract agent content', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'User typed this first\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    // Baseline: Y.Text should have the seed content after initial sync
+    expect(ytext.toString()).toContain('User typed this first');
+
+    // Agent writes directly to Y.Text (this sets lastYTextWriteFromOther via Observer B's handler)
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\n\nAgent content');
+    }, 'agent-write');
+
+    // Now force an Observer A firing via an empty XmlFragment mutation
+    // (e.g., attribute tweak). Without the fix, Observer A's diffLines would
+    // subtract "Agent content" from Y.Text because the XmlFragment doesn't have it yet.
+    const para = new Y.XmlElement('paragraph');
+    para.setAttribute('class', 'trigger-observer-a');
+    fragment.push([para]);
+
+    // Wait for both observers to run (including the TYPING_DEFER_MS defer window)
+    await wait(600);
+
+    // Final Y.Text must still contain the agent's content.
+    // The user's typed content and seed content must still be there too.
+    const md = ytext.toString();
+    expect(md).toContain('User typed this first');
+    expect(md).toContain('Agent content');
+    cleanup();
   });
 });

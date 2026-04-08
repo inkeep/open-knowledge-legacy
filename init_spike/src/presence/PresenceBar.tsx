@@ -4,29 +4,17 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { type Participant, usePresence } from './use-presence';
 
-const MODE_DISPLAY: Record<string, string> = {
-  wysiwyg: 'WYSIWYG',
-  source: 'Source',
-  idle: 'idle',
-  editing: 'editing',
-};
-
 function PresenceBadge({ user, mode }: { user: Participant['user']; mode: Participant['mode'] }) {
-  const modeLabel = MODE_DISPLAY[mode] ?? mode;
-
   if (user.type === 'agent') {
     return (
       <Badge
         variant="outline"
         data-presence-badge="agent"
         data-presence-mode={mode}
-        className={cn(
-          'gap-1.5 border-agent/50 text-agent font-mono text-[11px] uppercase tracking-wide',
-        )}
+        className={cn('gap-1.5 border-agent/50 text-agent font-mono text-[11px] tracking-wide')}
       >
         <ClaudeIcon width={14} height={14} className="text-agent" />
         <span>{user.name}</span>
-        <span className="text-muted-foreground">{modeLabel}</span>
       </Badge>
     );
   }
@@ -36,14 +24,13 @@ function PresenceBadge({ user, mode }: { user: Participant['user']; mode: Partic
       variant="outline"
       data-presence-badge="human"
       data-presence-mode={mode}
-      className="gap-1.5 font-mono text-[11px] uppercase tracking-wide"
+      className="gap-1.5 font-mono text-[11px] tracking-wide"
     >
       <span
         className="inline-block size-2 rounded-full shrink-0"
         style={{ backgroundColor: user.color }}
       />
       <span>{user.name}</span>
-      <span className="text-muted-foreground">{modeLabel}</span>
     </Badge>
   );
 }

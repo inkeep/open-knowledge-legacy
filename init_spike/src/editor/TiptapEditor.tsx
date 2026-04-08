@@ -4,12 +4,12 @@ import Collaboration from '@tiptap/extension-collaboration';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { prependFrontmatter } from './extensions/frontmatter';
 import { sharedExtensions } from './extensions/shared';
-import { setupObservers } from './observers';
+import { markUserTyping, setupObservers } from './observers';
 import {
   evictStaleEntries,
   FLASH_DEBOUNCE_MS,
@@ -123,7 +123,11 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
 
 export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
   const frontmatterRef = useRef<string>('');
-  const [flashState, setFlashState] = useState<AgentFlashState>(INITIAL_FLASH_STATE);
+  // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
+  // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
+  // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const flashStateRef = useRef<AgentFlashState>(INITIAL_FLASH_STATE);
   const provider = getProvider();
   const identity = useIdentity();
 
@@ -149,6 +153,25 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       }),
     ],
   });
+
+  // Mark user typing on the editor DOM. Observer B uses this timestamp to defer
+  // its tree-replacement sync while the user is actively editing, preventing concurrent
+  // user edits from being obliterated by updateYFragment.
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const mark = () => markUserTyping();
+    dom.addEventListener('keydown', mark);
+    dom.addEventListener('paste', mark);
+    dom.addEventListener('drop', mark);
+    dom.addEventListener('cut', mark);
+    return () => {
+      dom.removeEventListener('keydown', mark);
+      dom.removeEventListener('paste', mark);
+      dom.removeEventListener('drop', mark);
+      dom.removeEventListener('cut', mark);
+    };
+  }, [editor]);
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.
@@ -197,6 +220,19 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       return latest;
     };
 
+    /** Imperative DOM update — bypasses React re-render to avoid disrupting typing. */
+    const applyFlashStateToDom = (state: AgentFlashState) => {
+      flashStateRef.current = state;
+      window.__agentFlashState = state;
+      const el = wrapperRef.current;
+      if (el) {
+        el.setAttribute('data-agent-flash-state', state.state);
+        el.setAttribute('data-agent-flash-count', String(state.count));
+        el.setAttribute('data-agent-flash-position', state.position);
+        el.setAttribute('data-agent-flash-agent-id', state.lastAgentId ?? '');
+      }
+    };
+
     const triggerFlash = () => {
       const latest = getLatestActivity();
       const position: 'append' | 'prepend' = latest?.description?.toLowerCase().includes('prepend')
@@ -211,15 +247,8 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
         lastAgentId: latest?.agentId ?? null,
       };
 
-      setFlashState(nextState);
-      // Expose on window for programmatic test inspection
-      window.__agentFlashState = nextState;
-      // Emit start event — tests can `document.addEventListener('agent-flash', ...)`
-      document.dispatchEvent(
-        new CustomEvent('agent-flash', {
-          detail: nextState,
-        }),
-      );
+      applyFlashStateToDom(nextState);
+      document.dispatchEvent(new CustomEvent('agent-flash', { detail: nextState }));
 
       // Clear any prior end timers (in case of rapid re-trigger)
       if (flashEndTimeout) clearTimeout(flashEndTimeout);
@@ -228,25 +257,18 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       // Transition editing → settled after animation completes
       flashEndTimeout = setTimeout(() => {
         const settledState: AgentFlashState = { ...nextState, state: 'settled' };
-        setFlashState(settledState);
-        window.__agentFlashState = settledState;
-        document.dispatchEvent(
-          new CustomEvent('agent-flash-end', {
-            detail: settledState,
-          }),
-        );
+        applyFlashStateToDom(settledState);
+        document.dispatchEvent(new CustomEvent('agent-flash-end', { detail: settledState }));
 
         // Return to idle after a brief settled window (lets tests observe the transition)
         flashSettledTimeout = setTimeout(() => {
-          const idleState: AgentFlashState = { ...settledState, state: 'idle' };
-          setFlashState(idleState);
-          window.__agentFlashState = idleState;
+          applyFlashStateToDom({ ...settledState, state: 'idle' });
         }, 300);
       }, FLASH_DURATION_MS);
     };
 
-    // Initialize window state
-    window.__agentFlashState = INITIAL_FLASH_STATE;
+    // Initialize DOM + window state to idle
+    applyFlashStateToDom(INITIAL_FLASH_STATE);
 
     const observer = () => {
       evictStaleEntries(activityMap);
@@ -353,13 +375,16 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
     [editor, mdManager, provider.document, provider],
   );
 
+  // Data attributes are set once on initial render; the flash useEffect updates them
+  // imperatively via wrapperRef to avoid triggering React re-renders during typing.
   return (
     <div
+      ref={wrapperRef}
       className="tiptap-editor"
-      data-agent-flash-state={flashState.state}
-      data-agent-flash-count={flashState.count}
-      data-agent-flash-position={flashState.position}
-      data-agent-flash-agent-id={flashState.lastAgentId ?? ''}
+      data-agent-flash-state="idle"
+      data-agent-flash-count="0"
+      data-agent-flash-position="append"
+      data-agent-flash-agent-id=""
     >
       <EditorContent editor={editor} />
     </div>
