@@ -1,0 +1,10 @@
+node_modules/
+dist/
+tmp/
+.DS_Store
+*.log
+.next/
+.source/
+
+# Runtime content file — accumulates test artifacts from dev/agent-sim runs
+init_spike/content/test-doc.md
