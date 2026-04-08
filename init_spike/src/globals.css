@@ -40,13 +40,54 @@
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, monospace;
 
-  /* Agent flash animation */
+  /* Strong custom easing curves (Emil / easing.dev) — punchier than default ease-out */
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* Agent flash keyframes — refined version with accent slide + subtle background pulse.
+     Combines three effects in a single animation:
+     1. Inset box-shadow left accent bar slides in then out
+     2. Subtle background tint pulses once
+     3. Slight scale nudge (barely perceptible, adds "alive" quality) */
   @keyframes agent-flash {
-    0% { background: rgba(217, 119, 87, 0.2); }
-    100% { background: transparent; }
+    0% {
+      box-shadow: inset 3px 0 0 transparent;
+      background: transparent;
+      transform: translateX(0);
+    }
+    8% {
+      box-shadow: inset 3px 0 0 var(--color-agent);
+      background: rgba(217, 119, 87, 0.09);
+      transform: translateX(1px);
+    }
+    35% {
+      box-shadow: inset 3px 0 0 var(--color-agent);
+      background: rgba(217, 119, 87, 0.06);
+      transform: translateX(0);
+    }
+    100% {
+      box-shadow: inset 3px 0 0 transparent;
+      background: transparent;
+      transform: translateX(0);
+    }
   }
 
-  --animate-agent-flash: agent-flash 2s ease-out forwards;
+  /* Agent badge breathing — subtle pulse when agent is editing */
+  @keyframes agent-breathing {
+    0%, 100% { background: rgba(217, 119, 87, 0.04); }
+    50% { background: rgba(217, 119, 87, 0.14); }
+  }
+
+  /* Undo button nudge — scale + glow when transitioning to enabled */
+  @keyframes undo-ready {
+    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(217, 119, 87, 0); }
+    40% { transform: scale(1.02); box-shadow: 0 0 0 4px rgba(217, 119, 87, 0.15); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(217, 119, 87, 0); }
+  }
+
+  --animate-agent-flash: agent-flash 2s var(--ease-out-strong) forwards;
+  --animate-agent-breathing: agent-breathing 2.4s ease-in-out infinite;
+  --animate-undo-ready: undo-ready 600ms var(--ease-out-strong) forwards;
 }
 
 /* Base styles */
@@ -64,25 +105,44 @@
   }
 }
 
-/* Agent flash utility class */
-.agent-flash {
-  animation: agent-flash 2s ease-out forwards;
+/* Agent flash — surgical, survives ProseMirror reconciliation.
+   The data-agent-flash-state attribute lives on the React wrapper (stable across PM updates).
+   Targets only the last 3 blocks (append) or first 3 blocks (prepend) — covers most agent writes.
+   Uses :nth-last-child / :nth-child to scope the flash without touching PM-managed DOM.
+
+   Staggered entry (30ms per block) via animation-delay for a cascading feel on multi-block writes. */
+
+[data-agent-flash-state="editing"][data-agent-flash-position="append"] .ProseMirror > *:nth-last-child(-n+3),
+[data-agent-flash-state="editing"][data-agent-flash-position="prepend"] .ProseMirror > *:nth-child(-n+3) {
+  animation: agent-flash 2s var(--ease-out-strong) forwards;
+  position: relative;
 }
 
-/* Container-based flash: applied to .tiptap-editor wrapper, propagates to children.
-   Survives ProseMirror DOM reconciliation because the class is on the React wrapper,
-   not on ProseMirror-managed DOM nodes. */
-.agent-flashing .ProseMirror > * {
-  animation: agent-flash 2s ease-out forwards;
+/* Stagger — second affected block fires 30ms after first, third at 60ms */
+[data-agent-flash-state="editing"][data-agent-flash-position="append"] .ProseMirror > *:nth-last-child(2) {
+  animation-delay: 30ms;
+}
+[data-agent-flash-state="editing"][data-agent-flash-position="append"] .ProseMirror > *:nth-last-child(1) {
+  animation-delay: 0ms;
+}
+[data-agent-flash-state="editing"][data-agent-flash-position="prepend"] .ProseMirror > *:nth-child(1) {
+  animation-delay: 0ms;
+}
+[data-agent-flash-state="editing"][data-agent-flash-position="prepend"] .ProseMirror > *:nth-child(2) {
+  animation-delay: 30ms;
+}
+[data-agent-flash-state="editing"][data-agent-flash-position="prepend"] .ProseMirror > *:nth-child(3) {
+  animation-delay: 60ms;
 }
 
-/* Accessibility: reduce flash animation for users with motion sensitivity */
+/* Reduced motion — keep opacity/color transition for comprehension, remove movement.
+   Static terracotta left accent bar fades in and out, no transform, no background tint. */
 @media (prefers-reduced-motion: reduce) {
-  .agent-flash,
-  .agent-flashing .ProseMirror > * {
+  [data-agent-flash-state="editing"][data-agent-flash-position="append"] .ProseMirror > *:nth-last-child(-n+3),
+  [data-agent-flash-state="editing"][data-agent-flash-position="prepend"] .ProseMirror > *:nth-child(-n+3) {
     animation: none;
-    outline: 2px solid rgba(217, 119, 87, 0.3);
-    outline-offset: -2px;
+    box-shadow: inset 3px 0 0 var(--color-agent);
+    transition: box-shadow 2s ease;
   }
 }
 
@@ -187,4 +247,61 @@
 
 .cm-editor.cm-focused {
   outline: none;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Presence polish — agent badge, undo button, presence bar
+   ───────────────────────────────────────────────────────────── */
+
+/* Agent badge breathes subtly when editing — signals "alive, currently writing".
+   Also respects reduced-motion: opacity-only pulse instead of background. */
+[data-presence-badge="agent"][data-presence-mode="editing"] {
+  animation: agent-breathing 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-presence-badge="agent"][data-presence-mode="editing"] {
+    animation: none;
+    background: rgba(217, 119, 87, 0.08);
+  }
+}
+
+/* All presence badges fade in on mount — uses @starting-style where supported.
+   Fallback: no animation, just instant appearance (graceful degradation). */
+[data-presence-badge] {
+  transition: opacity 220ms var(--ease-out-strong);
+}
+
+@supports (transition-behavior: allow-discrete) {
+  [data-presence-badge] {
+    @starting-style {
+      opacity: 0;
+      transform: translateY(-2px);
+    }
+  }
+}
+
+/* Undo button — scale nudge + glow ring when transitioning to enabled.
+   The `data-undo-state` attribute is set by AgentUndoButton based on canUndo polling.
+   The animation only fires when state transitions from 'disabled' to 'ready' — not on every render. */
+[data-undo-state="ready"][data-undo-just-enabled="true"] {
+  animation: undo-ready 600ms var(--ease-out-strong) forwards;
+}
+
+/* Button press feedback — every interactive button gets scale(0.97) on :active.
+   Emil principle: "Buttons must feel responsive to press." */
+button {
+  transition: transform 160ms var(--ease-out-strong);
+}
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-undo-state="ready"][data-undo-just-enabled="true"] {
+    animation: none;
+  }
+  button:active:not(:disabled) {
+    transform: none;
+  }
 }

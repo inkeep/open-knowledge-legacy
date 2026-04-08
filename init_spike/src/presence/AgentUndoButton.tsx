@@ -1,5 +1,5 @@
 import { Undo2 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 interface AgentUndoState {
@@ -78,12 +78,30 @@ function useAgentUndo(): AgentUndoState {
 export function AgentUndoButton() {
   const { canUndo, isPending, undo } = useAgentUndo();
 
+  // Track false→true transition so the scale+glow animation fires exactly once per enable,
+  // not on every re-render. Reset when canUndo returns to false.
+  const [justEnabled, setJustEnabled] = useState(false);
+  const prevCanUndoRef = useRef(false);
+  useEffect(() => {
+    if (canUndo && !prevCanUndoRef.current) {
+      setJustEnabled(true);
+      const timer = setTimeout(() => setJustEnabled(false), 600);
+      prevCanUndoRef.current = canUndo;
+      return () => clearTimeout(timer);
+    }
+    prevCanUndoRef.current = canUndo;
+  }, [canUndo]);
+
+  const undoState = isPending ? 'pending' : canUndo ? 'ready' : 'disabled';
+
   return (
     <Button
       variant="outline"
       size="sm"
       disabled={!canUndo || isPending}
       onClick={undo}
+      data-undo-state={undoState}
+      data-undo-just-enabled={justEnabled ? 'true' : 'false'}
       className="border-agent/50 text-agent hover:bg-agent/10 disabled:opacity-40"
     >
       <Undo2 className="size-3.5" />

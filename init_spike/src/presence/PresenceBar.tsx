@@ -18,6 +18,8 @@ function PresenceBadge({ user, mode }: { user: Participant['user']; mode: Partic
     return (
       <Badge
         variant="outline"
+        data-presence-badge="agent"
+        data-presence-mode={mode}
         className={cn(
           'gap-1.5 border-agent/50 text-agent font-mono text-[11px] uppercase tracking-wide',
         )}
@@ -30,7 +32,12 @@ function PresenceBadge({ user, mode }: { user: Participant['user']; mode: Partic
   }
 
   return (
-    <Badge variant="outline" className="gap-1.5 font-mono text-[11px] uppercase tracking-wide">
+    <Badge
+      variant="outline"
+      data-presence-badge="human"
+      data-presence-mode={mode}
+      className="gap-1.5 font-mono text-[11px] uppercase tracking-wide"
+    >
       <span
         className="inline-block size-2 rounded-full shrink-0"
         style={{ backgroundColor: user.color }}

@@ -95,9 +95,35 @@ function getProvider(): HocuspocusProvider {
   return singletonProvider;
 }
 
+/**
+ * Flash state — observable programmatically via `window.__agentFlashState`.
+ * Tests can poll this, listen for the `agent-flash` / `agent-flash-end` events,
+ * or assert on the wrapper's `data-agent-flash-state` attribute.
+ */
+interface AgentFlashState {
+  /** 'idle' (no flash active), 'editing' (flash animation running), 'settled' (just finished) */
+  state: 'idle' | 'editing' | 'settled';
+  /** Monotonic counter — increments on every flash trigger (useful for debounce tests) */
+  count: number;
+  /** Unix ms timestamp of the last flash trigger */
+  lastFiredAt: number | null;
+  /** 'append' flashes last N blocks; 'prepend' flashes first N blocks */
+  position: 'append' | 'prepend';
+  /** Agent ID that triggered the flash */
+  lastAgentId: string | null;
+}
+
+const INITIAL_FLASH_STATE: AgentFlashState = {
+  state: 'idle',
+  count: 0,
+  lastFiredAt: null,
+  position: 'append',
+  lastAgentId: null,
+};
+
 export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
   const frontmatterRef = useRef<string>('');
-  const [isFlashing, setIsFlashing] = useState(false);
+  const [flashState, setFlashState] = useState<AgentFlashState>(INITIAL_FLASH_STATE);
   const provider = getProvider();
   const identity = useIdentity();
 
@@ -124,30 +150,118 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
     ],
   });
 
-  // Watch activity map and trigger flash through the editor's ProseMirror dispatch.
-  // This lives in React (not in the ProseMirror plugin) to avoid StrictMode
-  // double-mount issues with stale view references in plugin closures.
+  // Watch activity map and trigger flash. Tracks latest agent activity entry
+  // to determine position (append vs prepend) and emits observable state.
+  //
+  // Observability layers (use whichever is ergonomic for your test):
+  //   1. `data-agent-flash-state` attribute on the wrapper (Radix pattern)
+  //   2. `window.__agentFlashState` object (poll-based)
+  //   3. `document` events: 'agent-flash' (start) and 'agent-flash-end' (complete)
   useEffect(() => {
     if (!editor) return;
     const activityMap = provider.document.getMap('activity');
     let lastSeenTimestamp = Date.now();
     let lastFlashTime = 0;
     let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
+    let flashEndTimeout: ReturnType<typeof setTimeout> | null = null;
+    let flashSettledTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    /** Extract the latest activity entry to know what the agent just wrote */
+    const getLatestActivity = (): {
+      agentId: string;
+      type: string;
+      description?: string;
+    } | null => {
+      let latest: {
+        agentId: string;
+        type: string;
+        description?: string;
+        timestamp: number;
+      } | null = null;
+      for (const [, value] of activityMap.entries()) {
+        const entry = value as {
+          agentId?: string;
+          timestamp?: number;
+          type?: string;
+          description?: string;
+        };
+        if (entry.timestamp && (!latest || entry.timestamp > latest.timestamp)) {
+          latest = {
+            agentId: entry.agentId ?? 'unknown',
+            timestamp: entry.timestamp,
+            type: entry.type ?? 'insert',
+            description: entry.description,
+          };
+        }
+      }
+      return latest;
+    };
 
     const triggerFlash = () => {
-      setIsFlashing(true);
-      setTimeout(() => setIsFlashing(false), FLASH_DURATION_MS);
+      const latest = getLatestActivity();
+      const position: 'append' | 'prepend' = latest?.description?.toLowerCase().includes('prepend')
+        ? 'prepend'
+        : 'append';
+
+      const nextState: AgentFlashState = {
+        state: 'editing',
+        count: (window.__agentFlashState?.count ?? 0) + 1,
+        lastFiredAt: Date.now(),
+        position,
+        lastAgentId: latest?.agentId ?? null,
+      };
+
+      setFlashState(nextState);
+      // Expose on window for programmatic test inspection
+      window.__agentFlashState = nextState;
+      // Emit start event — tests can `document.addEventListener('agent-flash', ...)`
+      document.dispatchEvent(
+        new CustomEvent('agent-flash', {
+          detail: nextState,
+        }),
+      );
+
+      // Clear any prior end timers (in case of rapid re-trigger)
+      if (flashEndTimeout) clearTimeout(flashEndTimeout);
+      if (flashSettledTimeout) clearTimeout(flashSettledTimeout);
+
+      // Transition editing → settled after animation completes
+      flashEndTimeout = setTimeout(() => {
+        const settledState: AgentFlashState = { ...nextState, state: 'settled' };
+        setFlashState(settledState);
+        window.__agentFlashState = settledState;
+        document.dispatchEvent(
+          new CustomEvent('agent-flash-end', {
+            detail: settledState,
+          }),
+        );
+
+        // Return to idle after a brief settled window (lets tests observe the transition)
+        flashSettledTimeout = setTimeout(() => {
+          const idleState: AgentFlashState = { ...settledState, state: 'idle' };
+          setFlashState(idleState);
+          window.__agentFlashState = idleState;
+        }, 300);
+      }, FLASH_DURATION_MS);
     };
+
+    // Initialize window state
+    window.__agentFlashState = INITIAL_FLASH_STATE;
 
     const observer = () => {
       evictStaleEntries(activityMap);
 
       if (!hasNewEntries(activityMap, lastSeenTimestamp)) return;
 
+      // Skip flash while tab is hidden — the visibility handler will fire a
+      // "missed while away" flash when the user returns (FR15). Don't advance
+      // lastSeenTimestamp here so the refocus check still detects the new entries.
+      if (document.visibilityState !== 'visible') return;
+
       const now = Date.now();
       lastSeenTimestamp = now;
 
-      // Debounce
+      // Debounce — rapid writes collapse into at most one queued flash
       if (now - lastFlashTime < FLASH_DEBOUNCE_MS) {
         if (!pendingTimeout) {
           const delay = FLASH_DEBOUNCE_MS - (now - lastFlashTime);
@@ -166,7 +280,7 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
 
     activityMap.observe(observer);
 
-    // Visibility change handler for FR15
+    // Visibility change handler (FR15): flash on tab refocus for missed writes
     const visibilityHandler = () => {
       if (document.visibilityState === 'visible') {
         if (hasNewEntries(activityMap, lastSeenTimestamp)) {
@@ -184,6 +298,8 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       activityMap.unobserve(observer);
       document.removeEventListener('visibilitychange', visibilityHandler);
       if (pendingTimeout) clearTimeout(pendingTimeout);
+      if (flashEndTimeout) clearTimeout(flashEndTimeout);
+      if (flashSettledTimeout) clearTimeout(flashSettledTimeout);
     };
   }, [editor, provider.document]);
 
@@ -238,8 +354,21 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
   );
 
   return (
-    <div className={`tiptap-editor ${isFlashing ? 'agent-flashing' : ''}`}>
+    <div
+      className="tiptap-editor"
+      data-agent-flash-state={flashState.state}
+      data-agent-flash-count={flashState.count}
+      data-agent-flash-position={flashState.position}
+      data-agent-flash-agent-id={flashState.lastAgentId ?? ''}
+    >
       <EditorContent editor={editor} />
     </div>
   );
 });
+
+// Expose flash state type on window for test access
+declare global {
+  interface Window {
+    __agentFlashState?: AgentFlashState;
+  }
+}

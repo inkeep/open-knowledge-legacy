@@ -61,9 +61,12 @@ export function App() {
         </div>
       </div>
 
-      {/* Editor container */}
+      {/* Editor container.
+          overflow-anchor: auto preserves the user's scroll position when content
+          is inserted above the viewport (e.g. agent prepends). Browser default, but
+          set explicitly to document intent and guard against future overrides. */}
       <div className="relative flex-1 rounded-lg border bg-white overflow-hidden">
-        <div className="h-[calc(100vh-280px)] overflow-y-auto">
+        <div className="h-[calc(100vh-280px)] overflow-y-auto" style={{ overflowAnchor: 'auto' }}>
           {isSourceMode && editorRef.current && (
             <div className="p-6">
               <SourceEditor
