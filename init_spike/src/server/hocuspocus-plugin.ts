@@ -50,6 +50,9 @@ const agentSessions = new Map<string, AgentDirectConnection>();
 /** Agent write origin — tracked by server-side UndoManager (US-007). */
 export const AGENT_WRITE_ORIGIN = 'agent-write';
 
+/** Default agent identity. Key used in Y.Map('activity') per D11. */
+const DEFAULT_AGENT_ID = 'claude-1';
+
 // --- Server-side UndoManager for per-origin undo (US-007) ---
 // Tracks only 'agent-write' origin on Y.Text('source').
 // captureTimeout: 0 ensures each agent transaction is a separate undo entry.
@@ -187,8 +190,8 @@ export function hocuspocusPlugin(): Plugin {
 
             // Activity map write INSIDE the same transaction (F1/C3 fix)
             const activityMap = dc.document.getMap('activity');
-            activityMap.set('agent-1', {
-              agentId: 'agent-1',
+            activityMap.set(DEFAULT_AGENT_ID, {
+              agentId: DEFAULT_AGENT_ID,
               timestamp: Date.now(),
               type: 'insert',
               description: `Added: ${content.slice(0, 50)}`,
@@ -276,10 +279,10 @@ export function hocuspocusPlugin(): Plugin {
 
             // Activity map write INSIDE the same transaction (F1/C3 fix)
             const activityMap = dc.document.getMap('activity');
-            activityMap.set('agent-1', {
-              agentId: 'agent-1',
+            activityMap.set(DEFAULT_AGENT_ID, {
+              agentId: DEFAULT_AGENT_ID,
               timestamp: Date.now(),
-              type: position === 'prepend' ? 'insert' : 'insert',
+              type: 'insert',
               description: `Added: ${markdown.trim().slice(0, 50)}`,
             });
           }, AGENT_WRITE_ORIGIN);

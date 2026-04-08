@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useState } from 'react';
 
 // --- Types ---
 
@@ -115,7 +115,10 @@ export function getIdentity(): Identity {
 // --- React hook ---
 
 export function useIdentity(): Identity {
-  return useMemo(() => getIdentity(), []);
+  // Lazy initializer — identity is derived once per component mount (stable per tab).
+  // useState(() => ...) runs the initializer once and caches it for the component lifetime.
+  const [identity] = useState(getIdentity);
+  return identity;
 }
 
 // --- Exported for testing ---
