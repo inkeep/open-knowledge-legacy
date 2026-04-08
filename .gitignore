@@ -6,6 +6,9 @@ tmp/
 .next/
 .source/
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # Local review artifacts — generated on demand, not meant to be committed
 .claude/pr-diff/
 

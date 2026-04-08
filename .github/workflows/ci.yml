@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main, feat/init-spike]
+  pull_request:
+    branches: [main, feat/init-spike]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+          cache: true
+
+      - name: Install root tooling
+        run: bun install --frozen-lockfile
+
+      - name: Install docs deps
+        working-directory: docs
+        run: bun install --frozen-lockfile
+
+      - name: Lint (biome)
+        run: bun run lint
+
+      - name: Typecheck (docs)
+        working-directory: docs
+        run: bun run typecheck
+
+      - name: Build (docs)
+        working-directory: docs
+        run: bun run build

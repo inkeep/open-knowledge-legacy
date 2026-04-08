@@ -8,6 +8,7 @@
     "dev": "next dev --port 3010",
     "build": "next build",
     "start": "next start --port 3010",
+    "typecheck": "next typegen && tsc --noEmit",
     "postinstall": "fumadocs-mdx"
   },
   "dependencies": {
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/node": "^24.0.7",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "fumadocs-typescript": "~4.0.13",
