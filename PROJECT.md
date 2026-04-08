@@ -525,3 +525,4 @@ Auto-sync from external sources. Enterprise ingest at scale.
 | [worktree-orchestration-landscape](reports/worktree-orchestration-landscape/REPORT.md) | Worktree Orchestration Landscape: How AI Coding Tools Manage Parallel Work and the Un... | Cross-cutting | 2026-04-03 | 8 files |
 <!-- CI validation trigger -->
 <!-- second validation attempt -->
+<!-- internal-ci installed -->
