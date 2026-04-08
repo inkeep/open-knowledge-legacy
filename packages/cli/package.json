@@ -5,18 +5,27 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
     }
   },
   "bin": {
-    "open-knowledge": "./src/cli.ts"
+    "open-knowledge": "./dist/cli.mjs"
   },
+  "files": [
+    "dist"
+  ],
   "engines": {
     "node": ">=22"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build && bun run test"
   },
   "dependencies": {
     "@inkeep/open-knowledge-core": "workspace:*",
@@ -30,6 +39,7 @@
   "devDependencies": {
     "@types/node": "^22.16.0",
     "@types/ws": "^8.18.1",
+    "tsdown": "^0.21.7",
     "typescript": "^5.9.3"
   }
 }
