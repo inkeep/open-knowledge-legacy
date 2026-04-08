@@ -261,6 +261,12 @@ export function setupObservers(deps: ObserverDeps): () => void {
 
   const observerA = (_events: Y.YEvent<Y.XmlFragment>[], transaction: Y.Transaction) => {
     if (transaction.origin === ORIGIN_TEXT_TO_TREE) return;
+    // Skip remote XmlFragment changes (from other tabs/peers). The originating
+    // tab already ran Observer A to sync Y.Text — both changes arrive together
+    // via the Yjs sync protocol. Processing remote XmlFragment changes here
+    // would create an infinite cross-tab loop: Tab A Observer A → Y.Text sync →
+    // Tab B Observer B → XmlFragment sync → Tab A Observer A → ...
+    if (!transaction.local) return;
     if (debounceA) clearTimeout(debounceA);
     debounceA = setTimeout(runObserverASync, DEBOUNCE_MS);
   };
