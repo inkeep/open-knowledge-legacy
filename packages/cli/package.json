@@ -1,0 +1,32 @@
+{
+  "name": "@inkeep/open-knowledge",
+  "version": "0.0.1",
+  "private": false,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "bin": {
+    "open-knowledge": "./src/cli.ts"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@inkeep/open-knowledge-core": "workspace:*",
+    "@inkeep/open-knowledge-server": "workspace:*",
+    "commander": "^14.0.0",
+    "yaml": "^2.7.1",
+    "zod": "^3.25.17"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.0",
+    "typescript": "^5.9.3"
+  }
+}
