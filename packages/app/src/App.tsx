@@ -1,5 +1,5 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { useCallback, useRef, useState } from 'react';
+import { Activity, useCallback, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SourceEditor } from './editor/SourceEditor';
 import type { TiptapEditorHandle } from './editor/TiptapEditor';
@@ -20,7 +20,7 @@ export function App() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-[800px] min-h-screen flex flex-col px-6 py-8">
+    <div className="mx-auto max-w-200 min-h-screen flex flex-col px-6 py-8">
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-2xl font-semibold tracking-tight">Open Knowledge</h1>

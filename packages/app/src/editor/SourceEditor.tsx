@@ -52,5 +52,5 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
     };
   }, [ytext, provider]);
 
-  return <div ref={containerRef} className="source-editor" />;
+  return <div ref={containerRef} className="source-editor h-full" />;
 }
