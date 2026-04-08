@@ -524,3 +524,4 @@ Auto-sync from external sources. Enterprise ingest at scale.
 | [wiki-links-backlinks-architecture](reports/wiki-links-backlinks-architecture/REPORT.md) | Wiki-Links and Backlinks Architecture for Agent-Native Knowledge Platforms | CC6, S10, S8, TQ7 | 2026-04-04 | 0 files |
 | [worktree-orchestration-landscape](reports/worktree-orchestration-landscape/REPORT.md) | Worktree Orchestration Landscape: How AI Coding Tools Manage Parallel Work and the Un... | Cross-cutting | 2026-04-03 | 8 files |
 <!-- CI validation trigger -->
+<!-- second validation attempt -->
