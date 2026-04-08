@@ -35,12 +35,11 @@ function textResult(text: string, isError?: boolean) {
   return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) };
 }
 
-// Use `any` typed reference to avoid MCP SDK's TS2589 deep type instantiation
-// with multi-field Zod schemas. Runtime validation is still provided by Zod.
-type ToolFn = McpServer['tool'];
-
 export function registerTools(server: McpServer, httpUrl: string): void {
-  const tool: ToolFn = server.tool.bind(server);
+  // Cast to any for tool registration — MCP SDK's server.tool() has deeply
+  // recursive generics that cause TS2589 with multi-field Zod schemas.
+  // Runtime behavior is correct: Zod still validates inputs at the MCP layer.
+  const tool = server.tool.bind(server) as any;
 
   // Tool 1: read_document
   tool('read_document', { path: z.string() }, (async (args: { path: string }) => {
