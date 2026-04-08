@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/node": "^24.0.7",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "fumadocs-typescript": "~4.0.13",
