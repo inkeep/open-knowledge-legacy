@@ -1,6 +1,7 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { getSchema } from '@tiptap/core';
+import { Extension, getSchema } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
+import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
@@ -9,8 +10,32 @@ import { useIdentity } from '../presence/identity';
 import { prependFrontmatter } from './extensions/frontmatter';
 import { sharedExtensions } from './extensions/shared';
 import { setupObservers } from './observers';
+import { createAgentFlashPlugin } from './plugins/agent-flash-wysiwyg';
 
 const DOC_NAME = 'test-doc';
+
+/** Custom cursor renderer — agents don't get cursors (NG1: no fake cursor animation). */
+function renderCursor(user: Record<string, string>): HTMLElement {
+  const cursor = document.createElement('span');
+
+  // Agents: return invisible element (no cursor per NG1)
+  if (user.type === 'agent') {
+    cursor.style.display = 'none';
+    return cursor;
+  }
+
+  // Humans: colored caret + name label
+  cursor.classList.add('collaboration-cursor__caret');
+  cursor.style.borderColor = user.color;
+
+  const label = document.createElement('div');
+  label.classList.add('collaboration-cursor__label');
+  label.style.backgroundColor = user.color;
+  label.textContent = user.name;
+  cursor.append(label);
+
+  return cursor;
+}
 
 export interface TiptapEditorHandle {
   getMarkdown: () => string;
@@ -77,6 +102,21 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       ...sharedExtensions,
       Collaboration.configure({
         document: provider.document,
+      }),
+      CollaborationCursor.configure({
+        provider,
+        user: {
+          name: identity.name,
+          color: identity.color,
+          type: 'human',
+        },
+        render: renderCursor,
+      }),
+      Extension.create({
+        name: 'agentFlash',
+        addProseMirrorPlugins() {
+          return [createAgentFlashPlugin(provider.document)];
+        },
       }),
     ],
   });
