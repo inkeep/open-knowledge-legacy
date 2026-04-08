@@ -821,6 +821,31 @@ Every scenario must pass before this work is considered complete. Scenarios are 
 | U03 | Agent writes while user is editing → user presses Ctrl+Z → agent's content is NOT undone by user's undo |
 | U04 | If UndoManager cannot exclude observer origins → document the failure mode and whether it blocks the implementation |
 
+**Persistence and recovery (P0):**
+
+| ID | Scenario |
+|---|---|
+| PR01 | Edit → persist → kill server → restart → content still there (full lifecycle across restart) |
+| PR02 | Edit → persist → `git log refs/wip/main` shows commit with the changes |
+| PR03 | Two users editing → persist → both edits in the .md file after debounce |
+| PR04 | Agent writes → persist → .md file includes agent content |
+| PR05 | Source mode edit → persist directly (no toggle-back needed, since source writes flow through Observer B to XmlFragment to persistence) — .md file correct |
+| PR06 | Server crash during persist (simulate with kill -9) → no partial writes, atomic file writes (temp+rename) prevent corruption, next restart recovers from last good state |
+
+**Edge cases and stress (P1):**
+
+| ID | Scenario |
+|---|---|
+| EC01 | Toggle source while agent is mid-write → no crash, partial agent content handled gracefully |
+| EC02 | Close browser tab while in source mode with unsaved edits → edits persist via CRDT sync (no manual save), other tabs unaffected |
+| EC03 | Open same document in 5 tabs simultaneously, all editing → system stable, CRDT handles 5-way concurrent edits |
+| EC04 | Network disconnect while editing → reconnect → offline edits sync, no duplicate content |
+| EC05 | Agent writes to a document that no browser tab has open → content persists to disk, when a browser opens the document later, content is there |
+| EC06 | Two agents writing to the same document simultaneously → both agents' content present, CRDT resolves, no corruption |
+| EC07 | Unicode content — emoji, CJK, RTL text — survives all sync paths without encoding issues |
+| EC08 | Very long paragraph (10,000 characters, no line breaks) → no truncation, no performance cliff, renders and syncs correctly |
+| EC09 | Document with 50+ void nodes → no performance degradation in rendering or sync |
+
 **Performance (P1):**
 
 | ID | Scenario |
@@ -924,4 +949,3 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 | `~/reports/mdx-cross-mode-sync-implications/` | Void node handling through observers, MDX construct coverage, comparison matrix |
 | `~/reports/parcel-watcher-crdt-disk-bridge/` | Disk bridge implementation details — @parcel/watcher internals, feedback loop prevention, concurrent edit scenarios, all 9 dimensions traced at source code level |
 | `init_spike/RESULTS.md` | Current sync matrix, V1b convergence data, V4b toggle architecture |
-| `specs/next-sync-explorations.md` | Decision record, test matrix (103+ scenarios), execution plan |
