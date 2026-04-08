@@ -1,0 +1,16 @@
+node_modules/
+dist/
+tmp/
+.DS_Store
+*.log
+.next/
+.source/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Local review artifacts — generated on demand, not meant to be committed
+.claude/pr-diff/
+
+# Runtime content file — accumulates test artifacts from dev/agent-sim runs
+init_spike/content/test-doc.md

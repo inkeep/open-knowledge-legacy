@@ -1,0 +1,5 @@
+{
+  "title": "Open Knowledge",
+  "icon": "LuBookOpen",
+  "pages": ["overview", "architecture", "agent-write-path", "validations"]
+}
