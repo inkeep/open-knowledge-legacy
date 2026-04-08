@@ -8,10 +8,9 @@
  * This file defines a standalone JsxBlock extension + exhaustive round-trip tests.
  */
 import { describe, expect, test } from 'bun:test';
-import { type JSONContent, getSchema } from '@tiptap/core';
+import { getSchema, type JSONContent, Node } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import StarterKit from '@tiptap/starter-kit';
-import { Node } from '@tiptap/core';
 
 // ---------------------------------------------------------------------------
 // Extension: JsxBlock — raw JSX via custom markdownTokenizer
@@ -211,9 +210,7 @@ describe('JsxBlock tokenizer — serialization', () => {
   test('serializes jsxBlock node back to raw JSX', () => {
     const json: JSONContent = {
       type: 'doc',
-      content: [
-        { type: 'jsxBlock', attrs: { content: '<Video src="demo.mp4" />' } },
-      ],
+      content: [{ type: 'jsxBlock', attrs: { content: '<Video src="demo.mp4" />' } }],
     };
     const md = serialize(json);
     expect(md.trim()).toBe('<Video src="demo.mp4" />');
@@ -225,9 +222,7 @@ describe('JsxBlock tokenizer — serialization', () => {
 </Callout>`;
     const json: JSONContent = {
       type: 'doc',
-      content: [
-        { type: 'jsxBlock', attrs: { content } },
-      ],
+      content: [{ type: 'jsxBlock', attrs: { content } }],
     };
     const md = serialize(json);
     expect(md.trim()).toBe(content);
