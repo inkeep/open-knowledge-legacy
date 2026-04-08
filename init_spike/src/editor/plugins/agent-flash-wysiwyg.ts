@@ -13,11 +13,12 @@
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import type * as Y from 'yjs';
-import type { ActivityEntry } from '../../presence/identity';
-
-const FLASH_DURATION_MS = 2000;
-const FLASH_DEBOUNCE_MS = 500;
-const ACTIVITY_TTL_MS = 30_000;
+import {
+  evictStaleEntries,
+  FLASH_DEBOUNCE_MS,
+  FLASH_DURATION_MS,
+  hasNewEntries,
+} from './flash-shared';
 
 export const agentFlashPluginKey = new PluginKey('agentFlash');
 
@@ -25,19 +26,6 @@ interface FlashPluginState {
   lastFlashTime: number;
   lastSeenTimestamp: number;
   pendingTimeout: ReturnType<typeof setTimeout> | null;
-}
-
-/**
- * Auto-evict activity entries older than 30s.
- */
-function evictStaleEntries(activityMap: Y.Map<unknown>): void {
-  const now = Date.now();
-  for (const [key, value] of activityMap.entries()) {
-    const entry = value as ActivityEntry;
-    if (entry.timestamp && now - entry.timestamp > ACTIVITY_TTL_MS) {
-      activityMap.delete(key);
-    }
-  }
 }
 
 /**
@@ -91,17 +79,7 @@ export function createAgentFlashPlugin(doc: Y.Doc): Plugin {
       const activityObserver = (_event: Y.YMapEvent<unknown>) => {
         evictStaleEntries(activityMap);
 
-        // Check for new entries since last seen
-        let hasNew = false;
-        for (const [, value] of activityMap.entries()) {
-          const entry = value as ActivityEntry;
-          if (entry.timestamp && entry.timestamp > state.lastSeenTimestamp) {
-            hasNew = true;
-            break;
-          }
-        }
-
-        if (!hasNew) return;
+        if (!hasNewEntries(activityMap, state.lastSeenTimestamp)) return;
 
         // Update last seen timestamp
         state.lastSeenTimestamp = Date.now();
@@ -130,16 +108,7 @@ export function createAgentFlashPlugin(doc: Y.Doc): Plugin {
       // Visibility change handler for FR15 (flash on tab refocus)
       const visibilityHandler = () => {
         if (document.visibilityState === 'visible') {
-          // Check for activity entries newer than lastSeenTimestamp
-          let hasNew = false;
-          for (const [, value] of activityMap.entries()) {
-            const entry = value as ActivityEntry;
-            if (entry.timestamp && entry.timestamp > state.lastSeenTimestamp) {
-              hasNew = true;
-              break;
-            }
-          }
-          if (hasNew) {
+          if (hasNewEntries(activityMap, state.lastSeenTimestamp)) {
             state.lastSeenTimestamp = Date.now();
             state.lastFlashTime = Date.now();
             applyFlash(view);

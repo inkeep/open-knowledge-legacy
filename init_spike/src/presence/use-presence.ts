@@ -1,17 +1,11 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { useEffect, useState } from 'react';
+import type { AwarenessState, AwarenessUser } from './identity';
 
 export interface Participant {
   clientId: number;
-  user: {
-    name: string;
-    color: string;
-    type: 'human' | 'agent';
-    icon?: string;
-    coeditor?: string;
-    tabId?: string;
-  };
-  mode: 'wysiwyg' | 'source' | 'idle' | 'editing';
+  user: AwarenessUser;
+  mode: AwarenessState['mode'];
 }
 
 /**

@@ -4,7 +4,16 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { type Participant, usePresence } from './use-presence';
 
+const MODE_DISPLAY: Record<string, string> = {
+  wysiwyg: 'WYSIWYG',
+  source: 'Source',
+  idle: 'idle',
+  editing: 'editing',
+};
+
 function PresenceBadge({ user, mode }: { user: Participant['user']; mode: Participant['mode'] }) {
+  const modeLabel = MODE_DISPLAY[mode] ?? mode;
+
   if (user.type === 'agent') {
     return (
       <Badge
@@ -15,7 +24,7 @@ function PresenceBadge({ user, mode }: { user: Participant['user']; mode: Partic
       >
         <ClaudeIcon width={14} height={14} className="text-agent" />
         <span>{user.name}</span>
-        <span className="text-muted-foreground">{mode === 'editing' ? 'editing' : 'idle'}</span>
+        <span className="text-muted-foreground">{modeLabel}</span>
       </Badge>
     );
   }
@@ -27,7 +36,7 @@ function PresenceBadge({ user, mode }: { user: Participant['user']; mode: Partic
         style={{ backgroundColor: user.color }}
       />
       <span>{user.name}</span>
-      <span className="text-muted-foreground">{mode}</span>
+      <span className="text-muted-foreground">{modeLabel}</span>
     </Badge>
   );
 }

@@ -6,13 +6,14 @@ export interface AwarenessUser {
   name: string;
   color: string;
   type: 'human' | 'agent';
+  icon?: string;
   coeditor?: string;
   tabId: string;
 }
 
 export interface AwarenessState {
   user: AwarenessUser;
-  mode: 'wysiwyg' | 'source' | 'idle';
+  mode: 'wysiwyg' | 'source' | 'idle' | 'editing';
   cursor?: {
     anchor: unknown;
     head: unknown;

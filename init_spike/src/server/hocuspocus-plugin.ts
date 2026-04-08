@@ -308,14 +308,26 @@ export function hocuspocusPlugin(): Plugin {
           return;
         }
         try {
-          const dc = await getAgentSession('test-doc');
-          const um = getAgentUndoManager(dc);
+          // Don't create a session just to check status — only check if one exists
+          const dc = agentSessions.get('test-doc');
+          if (!dc) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, canUndo: false, canRedo: false }));
+            return;
+          }
+          const um = agentUndoManagers.get('test-doc');
           res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ canUndo: um.canUndo(), canRedo: um.canRedo() }));
+          res.end(
+            JSON.stringify({
+              ok: true,
+              canUndo: um?.canUndo() ?? false,
+              canRedo: um?.canRedo() ?? false,
+            }),
+          );
         } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: message }));
+          res.end(JSON.stringify({ ok: false, error: message }));
         }
       });
 
@@ -360,7 +372,7 @@ export function hocuspocusPlugin(): Plugin {
             return;
           }
           um.redo();
-          console.log('[agent-undo] Redo performed');
+          console.log('[agent-redo] Redo performed');
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() }));
         } catch (e) {

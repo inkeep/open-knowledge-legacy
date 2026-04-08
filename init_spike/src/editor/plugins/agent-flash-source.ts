@@ -16,11 +16,12 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 import type * as Y from 'yjs';
-import type { ActivityEntry } from '../../presence/identity';
-
-const FLASH_DURATION_MS = 2000;
-const FLASH_DEBOUNCE_MS = 500;
-const ACTIVITY_TTL_MS = 30_000;
+import {
+  evictStaleEntries,
+  FLASH_DEBOUNCE_MS,
+  FLASH_DURATION_MS,
+  hasNewEntries,
+} from './flash-shared';
 
 /** Effect to add flash decorations for a line range */
 const addFlash = StateEffect.define<{ from: number; to: number }>();
@@ -60,19 +61,6 @@ const flashField = StateField.define<DecorationSet>({
 });
 
 /**
- * Auto-evict activity entries older than 30s.
- */
-function evictStaleEntries(activityMap: Y.Map<unknown>): void {
-  const now = Date.now();
-  for (const [key, value] of activityMap.entries()) {
-    const entry = value as ActivityEntry;
-    if (entry.timestamp && now - entry.timestamp > ACTIVITY_TTL_MS) {
-      activityMap.delete(key);
-    }
-  }
-}
-
-/**
  * Creates a CodeMirror extension that flashes lines when agent activity is detected.
  */
 export function createAgentFlashSourceExtension(doc: Y.Doc): Extension {
@@ -100,17 +88,7 @@ export function createAgentFlashSourceExtension(doc: Y.Doc): Extension {
     const activityObserver = (_event: Y.YMapEvent<unknown>) => {
       evictStaleEntries(activityMap);
 
-      // Check for new entries since last seen
-      let hasNew = false;
-      for (const [, value] of activityMap.entries()) {
-        const entry = value as ActivityEntry;
-        if (entry.timestamp && entry.timestamp > lastSeenTimestamp) {
-          hasNew = true;
-          break;
-        }
-      }
-
-      if (!hasNew) return;
+      if (!hasNewEntries(activityMap, lastSeenTimestamp)) return;
 
       lastSeenTimestamp = Date.now();
 
@@ -137,15 +115,7 @@ export function createAgentFlashSourceExtension(doc: Y.Doc): Extension {
     // Visibility change handler for FR15 (flash on tab refocus)
     const visibilityHandler = () => {
       if (document.visibilityState === 'visible') {
-        let hasNew = false;
-        for (const [, value] of activityMap.entries()) {
-          const entry = value as ActivityEntry;
-          if (entry.timestamp && entry.timestamp > lastSeenTimestamp) {
-            hasNew = true;
-            break;
-          }
-        }
-        if (hasNew) {
+        if (hasNewEntries(activityMap, lastSeenTimestamp)) {
           lastSeenTimestamp = Date.now();
           lastFlashTime = Date.now();
           flashAllLines();
