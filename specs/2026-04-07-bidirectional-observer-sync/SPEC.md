@@ -467,10 +467,20 @@ writeTracker.set(filePath, {
 });
 ```
 
-3. **Apply external changes to Y.Doc** — Only for documents already open in Hocuspocus (Strategy C: piggyback on open documents, don't force-load). Apply via CRDT merge — Yjs's conflict resolution handles concurrent browser + external edits correctly:
+3. **Upgrade Hocuspocus to v4-rc.** The disk bridge needs `skipStoreHooks` to prevent persistence from re-writing files we just loaded from disk. This is a v4 API (`LocalTransactionOrigin.skipStoreHooks`). Verified absent in v3.4.4 (`node_modules/@hocuspocus/server@3.4.4`), present in v4 (`~/.claude/oss-repos/hocuspocus/packages/server/src/types.ts:16-18`).
+
+```bash
+bun add @hocuspocus/server@4.0.0-rc.1 @hocuspocus/provider@4.0.0-rc.1
+```
+
+Verify after upgrade: existing init_spike functionality still works (V2, V3, V5 validations still pass).
+
+4. **Apply external changes to Y.Doc** — Only for documents already open in Hocuspocus (Strategy C: piggyback on open documents, don't force-load). Apply via CRDT merge — Yjs's conflict resolution handles concurrent browser + external edits correctly:
 
 ```typescript
-async function handleExternalChange(docName: string, content: string) {
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
+
+async function handleExternalChange(docName: string, content: string, filePath: string) {
   // Only sync documents already open in the browser
   if (!hocuspocus.documents.has(docName)) return;
 
@@ -480,37 +490,44 @@ async function handleExternalChange(docName: string, content: string) {
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
-  // Tag the transaction with our origin so persistence can identify it.
-  // NOTE: Hocuspocus v3.4.4 does NOT support skipStoreHooks (that's a v4 API).
-  // Layer 2 feedback loop prevention is NOT available — Layer 1 (content hash)
-  // is the sole defense. The persistence layer will fire onStoreDocument after
-  // this transaction; the resulting disk write will match the content hash
-  // we record below, so the watcher's next event is filtered.
+  // Layer 2: skipStoreHooks prevents persistence from re-writing the file
+  // we just loaded from disk. Hocuspocus v4 inspects the transaction origin
+  // and skips onStoreDocument when skipStoreHooks is true.
   document.transact(() => {
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
     const metaMap = document.getMap('metadata');
     metaMap.set('frontmatter', frontmatter);
-  }, 'file-watcher');
-
-  // Pre-record the content hash so the impending persistence write is
-  // recognized as our own write when the watcher fires for it.
-  writeTracker.set(filePath, {
-    hash: createHash('sha256').update(content).digest('hex'),
-    timestamp: Date.now(),
-  });
+  }, {
+    source: 'local',
+    skipStoreHooks: true,
+    context: { origin: 'file-watcher' },
+  } satisfies LocalTransactionOrigin);
 }
 ```
 
-**Single-layer feedback prevention (Layer 1 only):**
+**Two-layer feedback prevention:**
 
-The original two-layer design assumed `skipStoreHooks` was available. Verification against `node_modules/@hocuspocus/server@3.4.4` confirms it isn't (it's a v4 API). The single-layer design works because:
+- **Layer 1 (content hash):** Watcher callback compares the file content hash against `writeTracker`. Skips if it matches our own persistence write. Handles 4 of 5 race scenarios.
+- **Layer 2 (skipStoreHooks):** Watcher-originated transactions tell Hocuspocus to skip `onStoreDocument`. The disk write doesn't propagate back to disk, so the watcher doesn't fire for it. Handles the 5th race scenario (rapid persistence + external write within the 50ms coalescing window).
 
-1. External edit arrives → Layer 1 hash check passes (not our write) → apply to Y.Doc
-2. Y.Doc change triggers `onStoreDocument` → persistence serializes → records hash → writes to disk
-3. Watcher fires for our disk write → Layer 1 hash matches → skip
+Together, the two layers eliminate feedback loops regardless of round-trip idempotency.
 
-**Load-bearing invariant:** This approach requires the markdown round-trip to be idempotent. If the persistence write produces different bytes than the external editor's write (due to formatting normalization), the hash mismatches and the cycle could repeat. Test scenario S05 (tilde → backtick fence normalization) is exactly this case. **A3 (round-trip idempotency) is now load-bearing for the disk bridge — not just an assumption but a correctness requirement.** All test fixture content patterns must produce idempotent round-trips.
+---
+
+**Hocuspocus v3.4.4 fallback path** *(only if v4-rc proves irreparably broken)*
+
+If the v4-rc upgrade introduces blockers we cannot resolve (provider incompatibility, runtime crashes, broken transitive deps), fall back to v3.4.4 with single-layer feedback prevention:
+
+1. Revert package.json to `@hocuspocus/server@^3.4.0` and `@hocuspocus/provider@^3.4.0`
+2. Replace the `LocalTransactionOrigin` object with a string origin: `document.transact(() => {...}, 'file-watcher')`
+3. Drop Layer 2 — Layer 1 (content hash) becomes the sole feedback defense
+4. **Elevate A3 (round-trip idempotency) to a load-bearing invariant** — every test fixture content pattern must produce identical bytes after parse + serialize. If a pattern doesn't (e.g., tilde fence → backtick fence normalization in S05), the disk bridge can produce a feedback loop for that pattern.
+5. Add a test scenario (FW01) verifying idempotency for every content type in the test fixture. Any non-idempotent pattern blocks the disk bridge for that content type.
+
+**Scope of the fallback:** ~30 lines of code change in `file-watcher.ts` and `persistence.ts`, plus the new idempotency test. The architecture is otherwise unchanged. The disk bridge still works for the common case; the failure mode is a small performance cost (one extra disk write + one extra watcher event per non-idempotent edit) rather than data loss or infinite loops.
+
+**Decision criteria for falling back:** v4-rc has a runtime crash that doesn't have a workaround within 1 day of investigation, OR `@hocuspocus/provider@4.0.0-rc.1` is incompatible with a critical transitive dep we can't replace.
 
 4. **Wire into Vite plugin** — Start the watcher in `hocuspocus-plugin.ts` `configureServer()` after Hocuspocus is ready:
 
@@ -563,6 +580,16 @@ This is the **CRDT-merge strategy** (not a deferral strategy). Differences from 
 ## 4. Implementation Order
 
 ```
+Phase 0: Dependency upgrades
+  - bun add y-codemirror.next
+  - bun add @hocuspocus/server@4.0.0-rc.1 @hocuspocus/provider@4.0.0-rc.1
+  - bun add @parcel/watcher
+  - Verify init_spike still works after Hocuspocus v4 upgrade:
+    * V2: dev server starts, WebSocket connects on /collab
+    * V3: agent-sim writes appear in browser
+    * V5: persistence writes .md and creates git commits
+  - If v4-rc breaks anything, fall back to v3.4.4 per Section 3.10
+
 Phase 1: Infrastructure
   - Fix triple backtick bug in jsx-component renderMarkdown (Section 3.9)
   - Add Y.Text('source') to Y.Doc
@@ -606,13 +633,29 @@ Phase 6: Validation + RESULTS.md
 
 ## 5. Tech Stack
 
-Same as init_spike foundation. **New dependency required:** `y-codemirror.next` must be explicitly added to `package.json` — it exists in `node_modules/` as a transitive dependency but is NOT listed as a direct dependency. The V4a evaluation path (Yjs v14) never executed (V7 FAIL → V4b), so y-codemirror.next was never imported.
+Same as init_spike foundation, with two changes:
+
+**1. New dependency: `y-codemirror.next`** — must be explicitly added. Exists in `node_modules/` as a transitive dependency but is NOT listed as a direct dependency. The V4a evaluation path (Yjs v14) never executed (V7 FAIL → V4b), so y-codemirror.next was never imported.
 
 ```bash
 bun add y-codemirror.next
 ```
 
-**Verify during Phase 1:** `y-codemirror.next` peer dependencies are compatible with `yjs@^13.6.30` and `@codemirror/state@^6.0.0` (research report confirms: requires `yjs@^13.5.6`, `@codemirror/state@^6.0.0`, `@codemirror/view@^6.0.0` — all satisfied).
+Verify peer dependencies: requires `yjs@^13.5.6`, `@codemirror/state@^6.0.0`, `@codemirror/view@^6.0.0` — all satisfied by current init_spike deps.
+
+**2. Hocuspocus upgrade: v3.4.4 → v4.0.0-rc.1** — needed for the disk bridge's `skipStoreHooks` API (Section 3.10). v4 is a release candidate, not the `latest` tag, but it's installable and stable enough for our use case.
+
+```bash
+bun add @hocuspocus/server@4.0.0-rc.1 @hocuspocus/provider@4.0.0-rc.1
+```
+
+**3. New dependency: `@parcel/watcher`** — for the disk bridge file watcher.
+
+```bash
+bun add @parcel/watcher
+```
+
+**Verify after upgrade:** Existing init_spike validations still pass (V2 Hocuspocus embedding, V3 DirectConnection, V5 persistence). If v4-rc breaks any of these, see the v3.4.4 fallback path documented in Section 3.10.
 
 ---
 
@@ -648,11 +691,28 @@ bun add y-codemirror.next
 
 ## 7. Test Scenarios
 
-### Test scenarios
+Every scenario must pass before this work is considered complete. Scenarios are tagged P0 (must pass) or P1 (target). All P0 scenarios are validated against real browser sessions, real WebSocket connections, real concurrent editing, and real agent writes per the End-to-End Validation Principle in Section 2.
 
-Scenarios prefixed with `T` are from the universal test matrix in `specs/next-sync-explorations.md`. Scenarios prefixed with `S` (shimmer), `TS` (toggle simplification), `P`/`PB` (performance), `U` (undo/redo), `FB` (fallback) are spec-specific additions.
+**Single-user editing (P0):**
 
-**Multi-tab source mode (P0 — these are the primary validation):**
+| ID | Scenario |
+|---|---|
+| E01 | Type a paragraph in WYSIWYG → content persists, renders correctly, no console errors |
+| E02 | Type a paragraph in source mode → content persists, syntax highlighting works, CRDT-backed via Y.Text |
+| E03 | Toggle WYSIWYG → source → WYSIWYG with no edits → content identical before and after, zero diff |
+| E04 | Toggle WYSIWYG → source, edit, toggle back → edit appears in WYSIWYG, no content loss |
+| E05 | Toggle WYSIWYG → source, edit, toggle back — 10 times in a row → content stable, no progressive drift |
+
+**Multi-tab WYSIWYG collaboration (P0):**
+
+| ID | Scenario |
+|---|---|
+| W01 | Tab 1 types in WYSIWYG, Tab 2 in WYSIWYG → both see each other's keystrokes in real-time, sub-second latency |
+| W02 | Tab 1 types at top of doc, Tab 2 types at bottom — simultaneously → no content interleaving or corruption |
+| W03 | Tab 1 bolds a word while Tab 2 italicizes an overlapping range → both marks applied to overlap (Peritext boundary test) |
+| W04 | Tab 1 deletes a paragraph while Tab 2 is editing inside it → no crash, graceful resolution, document structurally valid |
+
+**Multi-tab source mode (P0 — primary validation):**
 
 | ID | Scenario |
 |---|---|
@@ -807,6 +867,7 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 | # | Assumption | Confidence | Verification | Expiry |
 |---|-----------|------------|-------------|--------|
 | A1 | y-codemirror.next@0.3.5 is compatible with yjs@13.6.30 | HIGH | Check peer deps during Phase 1 | Phase 1 |
+| A6 | Hocuspocus v4.0.0-rc.1 is stable enough for our use case (DirectConnection, persistence hooks, WebSocket sync) | MEDIUM | Phase 1: install v4-rc, run existing init_spike validations (V2/V3/V5). If broken, fall back per Section 3.10. | Phase 1 |
 | A2 | Observer debounce at 50ms is responsive enough for live cross-mode editing | MEDIUM | Empirical test during Phase 5 | Phase 5 |
 | A3 | Void nodes (jsx-component fenced code blocks) round-trip idempotently through the observer cycle | HIGH | V1b proved this for single round-trip; observer cycle is repeated round-trips | Phase 5 |
 | A4 | y-codemirror.next's undoManager works correctly alongside our custom observers | MEDIUM | Not tested — may need to configure undoManager origins to exclude observer writes | Phase 2 |

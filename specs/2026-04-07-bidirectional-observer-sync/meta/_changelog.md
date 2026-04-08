@@ -46,3 +46,12 @@
 - STOP_IF undo criterion broadened to "either UndoManager"
 - FB01 fallback test scenario added
 - Test scenario attribution clarified (T = universal, others = spec-specific)
+
+## 2026-04-07 — Hocuspocus v4-rc upgrade decided
+- Reverted single-layer fallback decision: upgrading Hocuspocus to v4.0.0-rc.1 instead
+- Two-layer feedback prevention restored: Layer 1 (content hash) + Layer 2 (skipStoreHooks)
+- A3 (round-trip idempotency) demoted from "load-bearing for disk bridge" back to "verification target"
+- Added A6: Hocuspocus v4-rc stability assumption (verify in Phase 1)
+- v3.4.4 fallback path documented in Section 3.10 with explicit decision criteria
+- Phase 0 added to implementation order: dep upgrades + V2/V3/V5 re-validation
+- Section 5 updated to list all 3 new dependencies (y-codemirror.next, hocuspocus v4-rc, @parcel/watcher)
