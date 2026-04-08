@@ -8,8 +8,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": true,
-    "sourceMap": true,
+    "noEmit": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "jsx": "react-jsx",
@@ -19,5 +18,10 @@
     }
   },
   "include": ["src"],
-  "exclude": ["node_modules", "dist", "src/v7-test"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "src/v7-test",
+    "**/*.test.ts"
+  ]
 }

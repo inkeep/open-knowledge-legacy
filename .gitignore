@@ -1,5 +1,9 @@
 node_modules/
 dist/
+
+# init_spike: accidental tsc JS emit beside src/ (sources are .ts/.tsx; .d.ts may live under src/types/)
+init_spike/src/**/*.js
+init_spike/src/**/*.js.map
 tmp/
 .DS_Store
 *.log
