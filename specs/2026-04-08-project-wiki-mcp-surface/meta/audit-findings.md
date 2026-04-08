@@ -1,6 +1,6 @@
 # Audit Findings
 
-**Artifact:** /Users/timothycardona/inkeep/open-knowledge/specs/2026-04-08-project-wiki-mcp-surface/SPEC.md
+**Artifact:** specs/2026-04-08-project-wiki-mcp-surface/SPEC.md
 **Audit date:** 2026-04-08
 **Total findings:** 8 (2 high, 3 medium, 3 low)
 

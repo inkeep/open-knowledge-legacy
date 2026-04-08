@@ -6,7 +6,7 @@
 **Baseline commit:** bfee3dc
 **Links:**
 - Parent project: [PROJECT.md](../../PROJECT.md), [STORIES.md](../../STORIES.md)
-- Evidence: [./evidence/](./evidence/)
+- Evidence: No spec-local evidence files. Research grounded in 48 reports in `../../reports/` (see PROJECT.md §Evidence).
 - Related specs: [bidirectional-observer-sync](../2026-04-07-bidirectional-observer-sync/), [agent-markdown-writes](../2026-04-07-agent-markdown-writes/)
 
 ---
@@ -68,7 +68,7 @@
 
 ### P1: Failure path — stale wiki
 
-1. PR merges that changes the auth flow
+1. PR merges that change the auth flow
 2. Nobody runs `/ingest` on the PR
 3. Wiki still describes the old auth flow
 4. Agent reads stale article, produces wrong suggestion
@@ -123,7 +123,7 @@
 - **48 research reports** inform architectural decisions
 - **PROJECT.md + STORIES.md** define the broader project; this spec covers Tim's buckets (2, 7 deferred, skills)
 - **`.mcp.json` support** exists in Claude Code for project-scoped MCP servers
-- **just-bash** (Vercel Labs) validated by Mintlify at scale (30K+ daily conversations)
+- **just-bash** (Vercel Labs) reportedly validated by Mintlify at scale (30K+ daily conversations; not independently verified)
 
 ## 9) Proposed solution (vertical slice)
 
@@ -295,6 +295,7 @@ myproject/
 title: Infrastructure
 description: Deployment, CI/CD, and infrastructure knowledge
 generated: true
+schema_version: 1
 ---
 
 ## Articles
@@ -313,6 +314,7 @@ Root INDEX.md:
 title: Project Wiki
 description: Living knowledge base for [project name]
 generated: true
+schema_version: 1
 ---
 
 ## Sections
@@ -347,6 +349,10 @@ markdown serialize + file write, git WIP ref commits (30s debounce).
 - Hocuspocus server hooks — onStoreDocument, afterStoreDocument
 - node:fs, node:path — atomic file writes (temp + rename)
 ```
+
+> **Note on `path` field:** The `path` frontmatter field duplicates information derivable from the file's location in `code-index/`. This is intentional — it makes annotations self-contained (readable without knowing the directory convention). `/ingest` must update both the filename AND the `path` field atomically when source files are renamed.
+
+> **Note on bash exploration:** `/init-wiki` Phase 1 uses `find`, `ls`, `cat`, `head`, `wc` for filesystem exploration. Some agent environments have bash sandboxing. Skills should document environment requirements. For restricted environments, agents can use native Read/Glob tools as a fallback.
 
 ### Code-index directory summary format
 
@@ -399,6 +405,8 @@ This repo has a living knowledge base in `.openknowledge/`.
   }
 }
 ```
+
+> **Note:** STORIES.md T6.1-T6.2 define `npx openknowledge` as the main editor server command (Bucket 6 — Andrew). The `serve` subcommand here is a placeholder — coordinate with Bucket 6 to resolve namespace. Options: `--mcp-only` flag, separate subcommand, or integrated into the main server.
 
 ### Skill definitions (SKILL.md stubs)
 
@@ -456,7 +464,7 @@ Phase 5 (extensions): /ingest (external), /consolidate, /research, status tool
 | D13 | Code mirror index: every file gets an annotation | P | DIRECTED | No | Comprehensive codebase understanding; `/init-wiki` generates all annotations on first run | Conversation with Tim |
 | D14 | Code-index freshness via CLAUDE.md convention + `/ingest` at PR boundaries | X | ASSUMED | No | CLAUDE.md tells agent to update code-index after code edits (real-time best-effort); `/ingest` does systematic updates at PR granularity. CLAUDE.md compliance is unvalidated — agents may not reliably follow maintenance instructions. `/ingest` is the reliable backstop. | Conversation with Tim |
 | D15 | Knowledge articles updated at PR cycle via `/ingest` | P | DIRECTED | No | PR granularity is right for higher-level knowledge; acceptable staleness | Conversation with Tim |
-| D16 | MCP server tools: `init` + `instructions` (core), `rebuild_catalogs` + `status` (extensions) | T | DIRECTED | No | Minimal core; extensions added if needed | Conversation with Tim |
+| D16 | MCP server tools: `init` (core), `rebuild_catalogs` + `status` (extensions). `instructions` is a server capability, not a tool (see Section 9). | T | DIRECTED | No | Minimal core; extensions added if needed | Conversation with Tim |
 | D17 | Code-index annotation contains: frontmatter (title, description, tags, path) + purpose + key exports/functions + dependencies | P | DIRECTED | No | Rich enough for agent orientation; kept current by CLAUDE.md convention + `/ingest` | Conversation with Tim |
 | D18 | Code-index exclusions: follow .gitignore + skip files < 25 lines. Note exclusions at directory summary level. | T | DIRECTED | No | Small config/boilerplate files not worth annotating individually | Conversation with Tim |
 | D19 | External sources land in `.openknowledge/external-sources/` | P | DIRECTED | No | Separate from authored knowledge articles | Conversation with Tim |

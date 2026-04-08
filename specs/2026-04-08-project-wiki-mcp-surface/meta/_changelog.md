@@ -79,7 +79,7 @@
 ## 2026-04-08 — Finalization
 
 - All 19 open questions resolved (0 remaining)
-- 23 decisions in decision log (18 LOCKED/DIRECTED, 3 DEFERRED, 1 ASSUMED, 1 DELEGATED)
+- 23 decisions in decision log (21 LOCKED/DIRECTED, 1 DEFERRED (D9), 1 ASSUMED (D14))
 - Section 16 (Agent constraints) filled: SCOPE, EXCLUDE, STOP_IF, ASK_FIRST
 - Status set to Approved
 - Baseline commit: bfee3dc (unchanged — no commits during session)
