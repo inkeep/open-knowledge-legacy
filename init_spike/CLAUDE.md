@@ -135,6 +135,18 @@ Agent write flow:
 - `tests/e2e/sync.spec.ts` — Playwright E2E browser tests
 - `tests/e2e/qa-scenarios.spec.ts` — Playwright QA scenarios
 
+## Changesets
+
+This repo uses [changesets](https://github.com/changesets/changesets) for versioning and changelogs.
+
+```bash
+bun run changeset        # Create a new changeset (interactive — picks bump type + summary)
+bun run version          # Apply pending changesets → bump version + update CHANGELOG.md
+bun run release          # Publish to npm
+```
+
+Every PR that changes runtime behavior should include a changeset. Run `bun run changeset` before committing, select the bump type (patch/minor/major), and write a short summary. The `.changeset/*.md` file it creates gets committed with your PR.
+
 ## Research references
 
 If you hit a wall, check these reports for context:
