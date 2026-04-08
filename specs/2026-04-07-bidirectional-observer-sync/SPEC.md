@@ -5,9 +5,9 @@
 **Baseline commit:** 9c07f4b
 **Implementer:** AI coding agent (Claude Code)
 **Location:** `init_spike/` (extends existing spike code)
-**Nature:** Derisking spike. Validate that bidirectional observers between Y.XmlFragment and Y.Text enable full collaborative source mode with no shimmer, acceptable performance, and correct void node handling. Simplify the toggle path from serialize-on-toggle + three-way merge to show/hide.
+**Nature:** Foundational architecture. This builds the collaborative source mode that everything else depends on — multi-user editing, agent co-creation, cross-mode sync. The bidirectional observer layer is the bridge between WYSIWYG and source that makes the product work as one cohesive editor, not two disconnected tools. Write it like production code: clean architecture, proper error handling, well-structured modules. The validations are end-to-end integration tests that prove the foundation works.
 
-**Pace:** Thoroughness over speed. The research says shimmer doesn't occur — this spike proves it under real editing conditions. Every validation must be tested with real content, real editors, real concurrent editing.
+**Pace:** There is no time pressure. Take as long as needed. The goal is thoroughness and quality, not speed. Every validation should be done methodically and completely — understand what you're building before you build it, read the research reports when you hit uncertainty, and don't move to the next validation until the current one is solid.
 
 ---
 
@@ -24,7 +24,7 @@
 | Source → Disk | Source mode edits are in-memory React state, not persisted until toggle-back. |
 | WYSIWYG → Source (usable) | Y.Doc observer replaces entire CodeMirror buffer on every WYSIWYG keystroke, resetting cursor. |
 
-**Note on gap decomposition:** 3 of 4 gaps share a single root cause (source mode has no CRDT binding) and are solved by Y.Text + y-codemirror.next + one-way Observer A alone. The 4th gap (live source→WYSIWYG) is the incremental win from bidirectional Observer B. The spike validates both layers: the guaranteed wins (Y.Text binding + Observer A) and the stretch validation (bidirectional Observer B with incremental Y.Text writes).
+**Note on gap decomposition:** 3 of 4 gaps share a single root cause (source mode has no CRDT binding) and are solved by Y.Text + y-codemirror.next + one-way Observer A alone. The 4th gap (live source→WYSIWYG) is the incremental win from bidirectional Observer B. This work validates both layers: the guaranteed wins (Y.Text binding + Observer A) and the stretch validation (bidirectional Observer B with incremental Y.Text writes).
 
 The current architecture uses a plain CodeMirror text buffer with no CRDT binding. The three-way merge on toggle-back is a workaround — it reconciles diverged state after the fact rather than preventing divergence.
 
@@ -34,9 +34,23 @@ The current architecture uses a plain CodeMirror text buffer with no CRDT bindin
 
 ## 2. Success Criteria
 
+### End-to-End Validation Principle
+
+**Every validation must be tested "for real" — against real files, with real editors, using real browser sessions, and using the AI coding agent itself (Claude Code) as the agent writer.** No mock unit tests as a substitute for integration testing. Server-side unit tests verify CRDT mechanics; they do NOT replace browser-level verification.
+
+Specifically:
+- **Real browser sessions** — TipTap and CodeMirror run in actual browser tabs, not jsdom/happy-dom. The observer sync is tested by typing in one tab and watching the other tab update.
+- **Real multi-tab testing** — open two real browser tabs to verify cross-mode sync. Tab 1 in WYSIWYG, Tab 2 in source. Type in one, verify the other updates. This is the core validation — if it doesn't work in real browser tabs, it doesn't work.
+- **Real WebSocket connections** — Hocuspocus sync over actual WebSocket, not mocked transports. Both tabs connect via the same Hocuspocus server.
+- **Real AI agent writes** — use Claude Code itself to run agent-sim.ts and watch the content appear in both editor modes. The implementer IS the agent.
+- **Real concurrent editing** — two tabs editing simultaneously, not sequential. Type in both tabs at the same time and verify no content loss or corruption.
+- **Shimmer measured empirically** — instrument observer firing count per keystroke. Not "the research says it doesn't shimmer" — measure it.
+
+The validation procedure for each scenario describes the manual steps to execute. Results are observed visually in the browser and verified by inspecting the Y.Doc state. Screenshots and terminal output are valid evidence.
+
 ### Primary: The sync matrix fills completely
 
-After this spike, every CRDT-mediated cell in the sync matrix is green:
+After this work, every CRDT-mediated cell in the sync matrix is green:
 
 ```
                     WYSIWYG   Source   Agent
@@ -49,7 +63,7 @@ Agent       →         ✅        ✅       ✅
 
 ### Secondary: Shimmer does not occur in practice
 
-The shimmer research (~/reports/yjs-dual-key-shimmer-analysis/) confirmed 3 independent prevention mechanisms via source code analysis. This spike proves it empirically:
+The shimmer research (~/reports/yjs-dual-key-shimmer-analysis/) confirmed 3 independent prevention mechanisms via source code analysis. This work proves it empirically:
 
 - **PASS:** A single keystroke in either editor produces at most 2 observer firings before dampening. No visible content flickering. No cursor jumps from observer-induced changes.
 - **FAIL:** Observer firings cascade beyond 2 cycles, or visible content changes appear that the user didn't type. Document the exact content pattern that causes it.
@@ -70,7 +84,7 @@ The toggle path changes from "serialize + snapshot + three-way merge" to "show/h
 
 ### 3.1 Add Y.Text to Y.Doc
 
-**Y.Doc structure after this spike:**
+**Y.Doc structure after this work:**
 
 ```
 Y.Doc
@@ -87,7 +101,7 @@ Both types are keys in the same Y.Doc. Hocuspocus syncs, persists, and broadcast
 
 **Current SourceEditor.tsx:** Creates a plain CodeMirror with `content` prop (React state) and `onChange` callback. No CRDT binding. Content is pushed in from App.tsx state.
 
-**After this spike:** SourceEditor receives the Y.Text instance and binds via y-codemirror.next's `yCollab` extension. CodeMirror becomes a collaborative CRDT editor — two tabs in source mode see each other's keystrokes in real-time.
+**After:** SourceEditor receives the Y.Text instance and binds via y-codemirror.next's `yCollab` extension. CodeMirror becomes a collaborative CRDT editor — two tabs in source mode see each other's keystrokes in real-time.
 
 **y-codemirror.next binding pattern (from research report):**
 
@@ -308,7 +322,7 @@ doc.transact(() => {
 }, 'agent-write');
 ```
 
-This is simpler and more natural — the agent writes markdown text, the observer handles the tree update. **Evaluate during the spike:** does this produce the same quality results as the current serialize→splice→parse path? The direct Y.Text insertion preserves CRDT history for the inserted text (each character has its own CRDT ID), while the updateYFragment approach replaces the entire tree.
+This is simpler and more natural — the agent writes markdown text, the observer handles the tree update. **Evaluate during implementation:** does this produce the same quality results as the current serialize→splice→parse path? The direct Y.Text insertion preserves CRDT history for the inserted text (each character has its own CRDT ID), while the updateYFragment approach replaces the entire tree.
 
 ### 3.7 Persistence layer impact
 
@@ -365,7 +379,7 @@ Phase 5: Validation + RESULTS.md
 
 ## 5. Tech Stack
 
-Same as init-spike. **New dependency required:** `y-codemirror.next` must be explicitly added to `package.json` — it exists in `node_modules/` as a transitive dependency but is NOT listed as a direct dependency. The V4a evaluation path (Yjs v14) never executed (V7 FAIL → V4b), so y-codemirror.next was never imported.
+Same as init_spike foundation. **New dependency required:** `y-codemirror.next` must be explicitly added to `package.json` — it exists in `node_modules/` as a transitive dependency but is NOT listed as a direct dependency. The V4a evaluation path (Yjs v14) never executed (V7 FAIL → V4b), so y-codemirror.next was never imported.
 
 ```bash
 bun add y-codemirror.next
@@ -389,13 +403,13 @@ bun add y-codemirror.next
 - Void node (jsx-component) fidelity through observer cycle
 
 **Out of scope:**
-- Disk bridge / file watcher (@parcel/watcher) — Exploration 3, separate spike **(Explored)** — heavily researched in ~/reports/parcel-watcher-crdt-disk-bridge/, has own spec slot, ready to promote
+- Disk bridge / file watcher (@parcel/watcher) — Exploration 3, separate work **(Explored)** — heavily researched in ~/reports/parcel-watcher-crdt-disk-bridge/, has own spec slot, ready to promote
 - Awareness / cursor presence in source mode — **(Identified)** — y-codemirror.next's yCollab supports awareness parameter, UX design needed
 - Per-block code toggle — existing feature, unchanged **(Noted)**
 - Prop panel / component editing UI — existing void node UX, unchanged **(Noted)**
 - Changes outside init_spike/ (scope constraint)
 
-*Note: This is a derisking spike, not a full feature spec. Consumer Matrix, User Journeys, and surface-area maps are omitted as the spike has a single consumer (init_spike codebase) and a single user journey (cross-mode collaborative editing).*
+*Note: Consumer Matrix, User Journeys, and surface-area maps are omitted as this work has a single consumer (init_spike codebase) and a single user journey (cross-mode collaborative editing). The surface area is fully described in Section 3.*
 
 ---
 
@@ -431,7 +445,7 @@ bun add y-codemirror.next
 | T45 | User typing in source while agent writes simultaneously — non-conflicting → both present |
 | T47 | Agent writes while two tabs open (one WYSIWYG, one source) — appears in both |
 
-**Shimmer validation (P0 — spike-specific):**
+**Shimmer validation (P0):**
 
 | ID | Scenario |
 |---|---|
@@ -490,7 +504,7 @@ bun add y-codemirror.next
 | U01 | User types in source mode, presses Ctrl+Z → only user's edit is undone, observer-synced content in XmlFragment NOT affected |
 | U02 | User types in WYSIWYG, presses Ctrl+Z → only user's edit is undone, observer-synced content in Y.Text NOT affected |
 | U03 | Agent writes while user is editing → user presses Ctrl+Z → agent's content is NOT undone by user's undo |
-| U04 | If UndoManager cannot exclude observer origins → document the failure mode and whether it blocks the spike |
+| U04 | If UndoManager cannot exclude observer origins → document the failure mode and whether it blocks the implementation |
 
 **Performance (P1):**
 
@@ -524,7 +538,7 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 | D4 | Observer origin as string, not symbol | DIRECTED | HIGH | Yjs transaction origins are compared by identity. Strings work for our guards since we control both sides. y-codemirror.next uses object reference (YSyncConfig instance) — no collision with our string origins. |
 | D5 | Three-way merge removed from toggle path, kept as module | DIRECTED | HIGH | Toggle is show/hide — no merge needed. Module useful for disk bridge (Exploration 3). |
 | D6 | SourceEditor receives Y.Text + provider, not content string | LOCKED | HIGH | y-codemirror.next requires Y.Text binding. React state intermediary is eliminated. |
-| D7 | Agent markdown write path: evaluate direct Y.Text insertion | INVESTIGATING | MEDIUM | Direct Y.Text insertion is simpler but changes CRDT history semantics. Spike will evaluate. |
+| D7 | Agent markdown write path: evaluate direct Y.Text insertion | INVESTIGATING | MEDIUM | Direct Y.Text insertion is simpler but changes CRDT history semantics. Evaluate during implementation. |
 | D8 | Fallback strategy: disable Observer B, re-enable three-way merge, keep Observer A | DIRECTED | HIGH | Graceful degradation if bidirectional fails. One-way observer still delivers 3/4 sync gaps. |
 | D9 | Observer module: dedicated file, not inline in TiptapEditor | DIRECTED | HIGH | Separation of concerns. Observers are complex enough to warrant their own module. |
 | D10 | Observer A uses incremental Y.Text writes (diff-based), not full replacement | LOCKED | HIGH | Full replacement destroys concurrent source-mode edits. Incremental writes are collaborative. Design challenge H1. |
