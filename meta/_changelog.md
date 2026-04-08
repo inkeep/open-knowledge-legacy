@@ -1,3 +1,36 @@
+## 2026-04-08
+
+### TQ25 + TQ26 upgraded to Locked — PR #6 provides browser E2E confirmation
+- **TQ25 (observer sync):** Open → Decided (Locked). PR #6 merged with 22 server-side + 6 Playwright E2E tests. Full sync matrix green. Toggle simplified to instant show/hide.
+- **TQ26 (disk bridge):** Open → Decided (Locked). PR #6 merged with 10 unit + 5 Playwright E2E tests. External edits appear in both modes.
+- **CC1 sync matrix updated:** All cells confirmed by E2E tests. "Needs browser verification" caveats removed. PR #6 body has the definitive sync matrix.
+- **Key PR #6 finding:** Toggle simplified from serialize-on-toggle + three-way-merge to instant show/hide. Three-way merge kept as utility for future disk bridge conflict resolution.
+- **CC1 updated:** Source mode now has TWO implementations (V4b serialize-on-toggle + TQ25 observer sync). Cross-mode sync matrix updated to show TQ25 upgrades.
+
+### Catalog file design refined — naming OPEN, core requirements locked
+- **CC6 rewritten:** "Index files" → "catalog files" throughout. Naming left OPEN (candidates: llms.txt, _index.md, CATALOGUE.md). Core requirements locked: recursive uniform structure, eager render all frontmatter, fully computed, write-protected, content-type agnostic, folder entries link to child catalogs.
+- **Folder metadata separated from catalog:** Input (human/agent-authored, e.g. meta.json) vs output (catalog, product-computed). Product reads Fumadocs meta.json where present. Agent writes via `update_frontmatter` tool (works on files AND folders).
+- **Naming collision analysis:** index.md eliminated (Fumadocs collision). INDEX.md eliminated (case-insensitive FS). .index.md eliminated (hidden). Remaining candidates viable. Decision deferred to spec.
+- **llms.txt format compatibility confirmed:** Our format fits within spec. Subpath placement explicitly allowed. Zero-work publishing bridge.
+- **S4 updated:** Catalog file refs, `update_frontmatter` for folder metadata.
+
+### Index.md format, frontmatter schema, folder metadata decisions (earlier this session)
+- **CC6 index.md format:** Eager render ALL frontmatter fields from children. No filtering at P0. Fields prefixed with `_` excluded (internal convention). Configurable exclusions are a later feature.
+- **CC6 folder metadata:** Per-folder `meta.json`/`meta.yaml` (Fumadocs convention). Open schema (accepts arbitrary fields, unlike Fumadocs' strict 7-field schema). Provides folder title, description, icon, child ordering. Meta overrides index page frontmatter.
+- **TQ6 refined:** Open/flexible frontmatter schema. Product recognizes known fields but accepts arbitrary additional fields. Different content types (articles, skills, MDX docs) have different shapes — product handles the mapping.
+- **PQ17 decided:** Eager render all. Root index at P0 (~100 articles) is ~5-10KB. Naturally groups by folders at 500+.
+- **Skills frontmatter research:** Agent Skills spec requires only `name` + `description` (different from docs' `title` + `description`). Confirms need for open frontmatter that supports multiple content type shapes.
+- **Fumadocs meta.json deep dive:** D12 added to fumadocs-stack-reusability report. 7-field schema, pages ordering syntax (7 patterns), 3 extension mechanisms. Pattern-copy the concept and ordering; build our own open schema.
+- **Evidence:** /reports/fumadocs-stack-reusability-deep-analysis/ D12, /reports/frontmatter-schema-conventions-for-agent-readable-docs/, Agent Skills spec at agentskills.io/specification.
+
+### Init spike audit — PROJECT.md updated with validated findings
+- **TQ1 upgraded to Locked:** CRDT via Hocuspocus confirmed working by spike V2, V3, A1.
+- **CC1 CRDT bindings corrected:** Source mode has NO CRDT binding (V7 unified YType FAILED). Serialize-on-toggle via updateYFragment (V4b). Three-way merge on toggle-back (A2). Cross-mode sync matrix added from spike findings.
+- **S2 rewritten:** Architecture reflects V4b (serialize-on-toggle), not dual-binding. Three-way merge documented. Forward path to collaborative source editing noted (Yjs v14 or y-codemirror.next with observer sync).
+- **TQ28 added (Locked):** Three-way merge on source toggle-back. Confirmed by spike A2+A3. Snapshot on toggle-to-source, diff on toggle-back, agent additions preserved, human wins on conflict.
+- **Already updated by prior session:** TQ3 (validated server-side), TQ4 (TipTap confirmed), TQ12 (Vite browser-confirmed), TQ13 (Yjs v13 stays, v14 FAIL), TQ15 (partially validated), TQ20 (simple-git confirmed).
+- **Key architectural finding:** V7 FAIL means source mode is snapshot-based, not CRDT-connected. This is acceptable for P0 (single IC + one agent) but collaborative source editing remains an open problem for Later. TQ25 (dual observer sync) is the next spike to address this.
+
 ## 2026-04-07
 
 ### Walkable index design + search engine deferral
