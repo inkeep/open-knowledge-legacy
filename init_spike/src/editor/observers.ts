@@ -233,14 +233,21 @@ export function setupObservers(deps: ObserverDeps): () => void {
       if (lastSyncedXmlMd === md) return; // No change since last sync
 
       const currentText = ytext.toString();
+
+      // If Y.Text already matches the serialized XmlFragment (e.g., the file
+      // watcher updated both XmlFragment and Y.Text in one transaction), skip
+      // the write — there's nothing to sync and writing would trigger
+      // persistence → disk → watcher feedback.
+      if (currentText === md) {
+        lastSyncedXmlMd = md;
+        return;
+      }
+
       console.log('[Observer A] sync tree→text');
       doc.transact(() => {
         if (currentText === lastSyncedXmlMd) {
-          // Y.Text is in the state we last synced to. Safe to full-diff.
           applyIncrementalDiff(ytext, currentText, md);
         } else {
-          // Y.Text has diverged — apply only the user's delta (lastSyncedXmlMd → md)
-          // without subtracting the content that diverged.
           applyUserDelta(ytext, lastSyncedXmlMd, md);
         }
       }, ORIGIN_TREE_TO_TEXT);

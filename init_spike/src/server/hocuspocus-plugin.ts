@@ -13,8 +13,12 @@ import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 import { stripFrontmatter } from '../editor/extensions/frontmatter';
 import { sharedExtensions } from '../editor/extensions/shared';
-import { startWatcher } from './file-watcher';
+import { type AsyncSubscription, startWatcher } from './file-watcher';
 import { createPersistenceExtension } from './persistence';
+
+// Module-level watcher subscription — survives Vite HMR restarts so we can
+// unsubscribe the previous instance before starting a new one.
+let activeWatcher: AsyncSubscription | null = null;
 
 /**
  * The DirectConnection class exposes `.document` at runtime but the exported
@@ -425,12 +429,24 @@ export function hocuspocusPlugin(): Plugin {
 
           // Layer 2: skipStoreHooks prevents persistence from re-writing the file
           // we just loaded from disk.
+          //
+          // Update BOTH XmlFragment AND Y.Text in the same transaction so the
+          // client-side Observer A doesn't need to generate a follow-on Y.Text
+          // write (which would trigger onStoreDocument → disk write → watcher
+          // event, creating a feedback loop).
           document.transact(
             () => {
               const meta = { mapping: new Map(), isOMark: new Map() };
               updateYFragment(document, xmlFragment, pmNode, meta);
               const metaMap = document.getMap('metadata');
               metaMap.set('frontmatter', frontmatter);
+
+              const ytext = document.getText('source');
+              const currentText = ytext.toString();
+              if (currentText !== content) {
+                ytext.delete(0, currentText.length);
+                ytext.insert(0, content);
+              }
             },
             {
               source: 'local',
@@ -445,13 +461,24 @@ export function hocuspocusPlugin(): Plugin {
         }
       }
 
-      startWatcher(CONTENT_DIR, handleExternalChange)
-        .then((subscription) => {
-          server.httpServer?.on('close', () => subscription.unsubscribe());
-        })
-        .catch((err) => {
+      (async () => {
+        if (activeWatcher) {
+          console.log('[hocuspocus] Unsubscribing previous file watcher (HMR restart)');
+          await activeWatcher.unsubscribe();
+          activeWatcher = null;
+        }
+        try {
+          activeWatcher = await startWatcher(CONTENT_DIR, handleExternalChange);
+          server.httpServer?.on('close', async () => {
+            if (activeWatcher) {
+              await activeWatcher.unsubscribe();
+              activeWatcher = null;
+            }
+          });
+        } catch (err) {
           console.error('[hocuspocus] Disk bridge watcher failed to start:', err);
-        });
+        }
+      })();
 
       console.log('[hocuspocus] WebSocket server ready on /collab');
       console.log('[hocuspocus] Agent write API at POST /api/agent-write');
