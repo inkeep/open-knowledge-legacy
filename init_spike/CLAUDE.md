@@ -4,8 +4,10 @@
 
 ```bash
 bun run dev          # Start Vite dev server + Hocuspocus (http://localhost:5173)
+bun run test         # Unit + integration tests (excludes Playwright E2E)
+bun run test:e2e     # Playwright browser E2E tests (starts dev server automatically)
 bun run check:fast   # Typecheck + lint (~5s) — run after every change
-bun run check        # Full gate: typecheck + lint + build
+bun run check        # Full gate: typecheck + lint + test + build
 bun run format       # Auto-fix formatting via Biome
 bun run build        # TypeScript check + Vite production build
 ```
@@ -40,21 +42,41 @@ When you hit uncertainty or want to understand how others solve something:
 - Use `/eng:research` skill for deeper investigation when warranted.
 - The research reports in `../../reports/` have deep analysis — read them when the spec references them.
 
+## Architecture
+
+The editor uses bidirectional CRDT observer sync between WYSIWYG and source mode:
+
+```
+Y.Doc
+├── Y.XmlFragment('default')  ← TipTap binds here
+├── Y.Text('source')          ← CodeMirror binds here via y-codemirror.next
+└── Y.Map('metadata')         ← frontmatter cache
+
+Observer A: XmlFragment → Text (incremental diff-based writes, origin: 'sync-from-tree')
+Observer B: Text → XmlFragment (parse + updateYFragment, origin: 'sync-from-text')
+```
+
+Both modes are always in sync. Toggle is show/hide — no serialization or merge needed.
+
 ## Key files
 
-- `vite.config.ts` — Vite + Hocuspocus plugin (V2)
-- `src/App.tsx` — Main app with source toggle state, Y.Doc observer for live agent writes in source mode (V4, A1)
-- `src/editor/TiptapEditor.tsx` — WYSIWYG editor with Hocuspocus collab (V1, V3, V6)
-- `src/editor/SourceEditor.tsx` — CodeMirror 6 source view (V4)
-- `src/editor/three-way-merge.ts` — Three-way merge for source toggle-back: preserves agent writes in untouched paragraphs (A2)
-- `src/editor/extensions/frontmatter.ts` — Frontmatter strip/prepend (V1)
-- `src/editor/extensions/jsx-component.ts` — Void node extension, priority 60 (V6)
-- `src/editor/extensions/JsxComponentView.tsx` — React node view renderer (V6)
-- `src/editor/Callout.tsx` — Sample React component for void node (V6)
-- `src/server/hocuspocus-plugin.ts` — Embedded Hocuspocus + DirectConnection APIs: `/api/agent-write` (raw) and `/api/agent-write-md` (markdown) (V2, V3, A1)
-- `src/server/agent-sim.ts` — CLI tool to simulate agent writes: `--markdown` flag for unified write path (V3, A1)
-- `src/server/persistence.ts` — CRDT → markdown → git pipeline (V5)
+- `vite.config.ts` — Vite + Hocuspocus plugin
+- `src/App.tsx` — Main app, source toggle (show/hide)
+- `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider singleton, observer setup
+- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next CRDT binding
+- `src/editor/observers.ts` — Bidirectional observer module (Observer A + B with origin guards, debounce, error handling)
+- `src/editor/three-way-merge.ts` — Three-way merge utility (kept for future disk bridge use, not in toggle path)
+- `src/editor/extensions/frontmatter.ts` — Frontmatter strip/prepend
+- `src/editor/extensions/jsx-component.ts` — Void node extension with dynamic backtick fencing (priority 60)
+- `src/editor/extensions/JsxComponentView.tsx` — React node view renderer
+- `src/editor/Callout.tsx` — Sample React component for void node
+- `src/server/hocuspocus-plugin.ts` — Embedded Hocuspocus v4 + DirectConnection APIs + disk bridge wiring
+- `src/server/agent-sim.ts` — CLI tool to simulate agent writes
+- `src/server/persistence.ts` — CRDT → markdown → disk → git pipeline (with writeTracker for disk bridge)
+- `src/server/file-watcher.ts` — Disk bridge: @parcel/watcher for external editor sync
 - `content/test-fixture.md` — Test markdown file with all content patterns
+- `tests/e2e/sync.spec.ts` — Playwright E2E browser tests (12 tests)
+- `tests/e2e/qa-scenarios.spec.ts` — Playwright QA scenarios (11 tests)
 
 ## Research references
 
@@ -63,4 +85,6 @@ If you hit a wall, check these reports for context:
 - `../../reports/peritext-on-yjs-feasibility/` — Yjs v14 delta protocol
 - `../../reports/markdown-roundtrip-fidelity-tiptap/` — round-trip fix recipes
 - `../../reports/crdt-mcp-filesystem-bridge/` — file watcher + persistence
-- `../../specs/2026-04-07-init-spike/SPEC.md` — this spec (section 5b has implementation notes)
+- `../../reports/yjs-dual-key-shimmer-analysis/` — shimmer prevention analysis
+- `../../reports/parcel-watcher-crdt-disk-bridge/` — @parcel/watcher for disk bridge
+- `../../specs/2026-04-07-bidirectional-observer-sync/SPEC.md` — bidirectional observer sync spec
