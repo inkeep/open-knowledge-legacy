@@ -407,6 +407,9 @@ bun add y-codemirror.next
 - Awareness / cursor presence in source mode — **(Identified)** — y-codemirror.next's yCollab supports awareness parameter, UX design needed
 - Per-block code toggle — existing feature, unchanged **(Noted)**
 - Prop panel / component editing UI — existing void node UX, unchanged **(Noted)**
+- Triple backtick bug in jsx-component extension — JSX containing ``` breaks fenced code block encoding. Needs N+1 backtick fence. In test matrix (T93) but fix is in the existing extension, not observer sync. **(Identified)** — fix is ~5 lines in renderMarkdown, ready to implement independently
+- Typed void node registry — per-component extensions (CalloutNode, TabsNode, etc.) with typed attributes and auto-generated prop panels from TypeScript interfaces. TQ27/PQ8. This spec validates existing void nodes survive observers, not that we expand the component set. **(Explored)** — component inventory complete (agents-docs: ~20 components, 846 uses), architecture defined in PROJECT.md PQ8
+- Init-spike browser verification gaps — cursor preservation during agent writes (V3 step 5), controlled two-tab sync test (V2), source toggle button click (V4). The End-to-End Validation Principle in this spec should cover these naturally since the same scenarios reappear. **(Identified)** — T30, T20, TS01 cover the same flows
 - Changes outside init_spike/ (scope constraint)
 
 *Note: Consumer Matrix, User Journeys, and surface-area maps are omitted as this work has a single consumer (init_spike codebase) and a single user journey (cross-mode collaborative editing). The surface area is fully described in Section 3.*
