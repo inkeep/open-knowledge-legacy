@@ -8,7 +8,7 @@
 
 ---
 
-## 1 · Customer-facing surfaces &amp; interaction patterns
+## 1 · Customer-facing surfaces & interaction patterns
 
 **What users (and agents) touch.** Humans and agents are both first-class participants — not a human product with an "AI feature" bolted on.
 
@@ -64,12 +64,12 @@
 | --- | -------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | S1  | **WYSIWYG editor** (TipTap + y-prosemirror)        | Human writer                       | Rich editing of .md/.mdx — slash commands, images, lists, callouts, JSX void nodes. Obsidian-grade, not terminal-grade.                                                               | Spike validated                                |
 | S2  | **Source toggle** (CodeMirror + y-codemirror.next) | Developer-leaning writer           | Flip to raw markdown without leaving the editor. Both modes share the same Y.Doc via bidirectional observers.                                                                         | Spike validated (browser verification pending) |
-| S3  | **Presence &amp; awareness UX**                    | Human in multi-participant session | Cursors for humans, region-flash + activity pill for agent batch writes, presence bar with human/agent identity, dedicated "Undo Agent Edit".                                         | Specced (S5 v0)                                |
+| S3  | **Presence & awareness UX**                        | Human in multi-participant session | Cursors for humans, region-flash + activity pill for agent batch writes, presence bar with human/agent identity, dedicated "Undo Agent Edit".                                         | Specced (S5 v0)                                |
 | S4  | **Bidirectional MCP surface**                      | AI agent                           | Read, write, edit, list, search, grep, draft. Two approaches under evaluation: semantic tools (A) vs. `just-bash` unix-command shell (B). Writes go through CRDT, not raw filesystem. | Open: XQ1                                      |
 | S5  | **Component prop panels** (JSX void nodes)         | Writer inserting MDX components    | `<Callout>`, `<Tab>`, `<Accordion>`, etc. render live; prop panel auto-generated from TypeScript via react-docgen-typescript. ReactNode children become inline editing zones.         | Layer 1 shipped (PR #6); Layers 2-4 specced    |
 | S6  | **Disk bridge** (external editors)                 | VS Code / Cursor / vim user        | `@parcel/watcher` reconciles external saves into the Y.Doc so browser + IDE stay in sync.                                                                                             | Specced in observer-sync spec §3.10            |
 | S7  | **Git versioning (auto-persistence)**              | All users                          | CRDT → markdown → disk (debounced 2-10s), git WIP ref commits (30s). No "save" button; git is invisible but present. Branching = experiments / drafts.                                | Spike validated                                |
-| S8  | **Reference skills** (OSS `npx skills add`)        | Agent                              | Research, compile, ingest, lint, Q&amp;A — shipped as Agent Skills spec (compatible with 33+ agents: Claude Code, Cursor, Codex, Copilot, Gemini, …).                                 | Directed (PQ4)                                 |
+| S8  | **Reference skills** (OSS `npx skills add`)        | Agent                              | Research, compile, ingest, lint, Q&A — shipped as Agent Skills spec (compatible with 33+ agents: Claude Code, Cursor, Codex, Copilot, Gemini, …).                                     | Directed (PQ4)                                 |
 | S9  | **Embeddable web editor** (future)                 | Third-party agent environments     | Same TipTap core embeddable in Cowork, Claude, Inkeep dashboards.                                                                                                                     | Architectural hook, not built                  |
 | S10 | **Wiki-links + backlinks + index.md**              | All                                | Derived index pipeline on `onStoreDocument`: auto-generated catalog, backlink graph.                                                                                                  | P0 scope (TQ7)                                 |
 
@@ -330,11 +330,3 @@
 - **Channels not tapped:** full PROJECT.md items table beyond PQ1–PQ9 area (124KB file, read surface); ~50 related reports in `/reports/` flagged by PROJECT.md references but not deep-read.
 - **UNRESOLVED:** exact shape of the publishing-engine surface (LATER phase); whether CX skill packs live in this repo or Inkeep's.
 - **ADJACENT (not chased):** agent-memory layer (Mem0, Zep, Letta) — distinct category from authored knowledge, boundary may blur (XQ3).
-
-
-
-&nbsp;
-
-&nbsp;
-
-&nbsp;
