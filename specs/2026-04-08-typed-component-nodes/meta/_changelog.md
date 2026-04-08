@@ -165,3 +165,130 @@ All coherence issues from D1→D13 revision cascade (stale references to fenced 
 **Status:** SPEC.md set to **Final**. Baseline commit: 5c35f8f (unchanged — no codebase changes during spec work).
 
 **Ready for implementation.**
+
+### Session 3 — Post-merge audit (PR #7 integration)
+
+**Trigger:** User created worktree, pulled `origin/main`. PR #7 (commit `8e3845d`: "feat: presence & awareness UX") had merged since the spec was finalized, adding substantive changes to `observers.ts` (+320 lines, delta-based Observer A + typing-defer Observer B + early-exit), `TiptapEditor.tsx` (+292 lines, awareness/cursor wiring, `markUserTyping` listener), and a new `src/presence/` module.
+
+**Audit findings (7 total: 3 high, 3 medium, 1 low — all decision-implicating):**
+
+- **PM-H1 (Prop panel bypasses typing-defer):** Radix popovers portal to `document.body`. `markUserTyping()` is only bound to `editor.view.dom` keydown/paste/drop/cut. Prop panel mutations never trigger the typing-defer, and concurrent agent writes can silently overwrite user prop changes via `updateYFragment` tree replacement. **Applied:** §3.6 now requires every prop panel change handler to call `markUserTyping()`. Added R9 and test CE05. §13 EXCLUDE updated to acknowledge the carve-out.
+- **PM-H2 (Observer B early-exit requires byte-identical serialization):** PR #7 added `currentBody === body` early-exit at `observers.ts:288-301`. Prototype tests use `.trim()` which is evidence that cycle 1 is NOT byte-identical. Without fixing, every Observer B fire misses the early-exit and runs destructive `updateYFragment`, disrupting cursors inside NodeViewContent. **Applied:** Added Phase 0 steps 5a and 5b for explicit cycle-1 byte-identity test and Observer B no-op early-exit test. Added R10 (High likelihood, High impact), test scenarios OS06 and OS07, and assumption A8 (pending verification).
+- **PM-H3 (Observer A delta-based `applyUserDelta`):** Spec's §2 Tertiary criterion was factually wrong about how Observer A serializes — it's now delta-based, not full serialization. The `applyUserDelta` line-matching via `indexOf` can mis-target duplicate JSX lines. **Applied:** Rewrote §2 Tertiary criterion to describe the delta architecture. Added R11, test scenario OS08, and assumption A7.
+- **PM-M1 (Baseline commit stale):** `5597eb7` → `8e3845d`. **Applied.** Added assumption A6 for presence/undo coexistence.
+- **PM-M2 (Missing test scenarios):** Added OS06, OS07, OS08, CE05, CE06.
+- **PM-M3 (Schema construction order):** `editorSchema` (TiptapEditor.tsx:53) and server `MarkdownManager` (persistence.ts:28) both run at module load, BEFORE the registry exists. **Applied:** Added Phase 1 step 0 to defer schema construction. Added R12.
+- **PM-L1 (§13 EXCLUDE overly absolute):** **Applied** — carve-out for typing-defer protocol participation.
+
+**Non-findings (investigated but clean):**
+- Presence/undo interaction with prop panel: server-side UndoManager correctly scopes to `'agent-write'` origin on Y.Text; prop panel XmlFragment transactions don't carry that origin.
+- yCursorPlugin + NodeViewContent: same pattern as table cells, no conflict.
+- Agent flash UX on typed components: works correctly via `Y.Map('activity')`; fine-grained per-component highlighting is a Future Work UX gap but not a spec blocker.
+
+**Live preview analysis (user asked separately):**
+Analyzed whether the spec addresses "live preview" for source editing and WYSIWYG. Key findings:
+- WYSIWYG IS live preview (sense C: the editor is the render). Already covered by the spec's Primary success criterion.
+- Split-pane preview (sense A: source + WYSIWYG side-by-side) NOT addressed. **Critical finding:** architecture supports it nearly for free — bidirectional observer sync keeps both modes live in memory; current `App.tsx` mounts TipTap unconditionally, SourceEditor conditionally. Split-pane = unconditional mount + CSS layout.
+- Obsidian-style inline rendering (sense B) deliberately rejected per `mdx-text-editor-preview-approach` report.
+- Publish-fidelity preview (sense D) not addressed; low priority unless editor/publish fidelity diverges.
+
+**Applied:** Added split-pane to Future Work (Explored, ~1 day). Added publish-fidelity and Obsidian-style to Future Work (Noted). Added explicit clarification to §2 Tertiary: "WYSIWYG mode IS live preview — components render with their real React implementation in real-time as props and children change."
+
+**Spec status:** Still **Final** — all fixes are additive (new test scenarios, new risks, new assumptions, clearer requirements). No core decisions reopened. Baseline advanced to `8e3845d`. In Scope items still pass the resolution completeness gate; some assumptions (A6, A7, A8) are now "pending verification" in Phase 0/2, which is correct — they require the code to be written to verify.
+
+**Ready for implementation** with the Phase 0 byte-identity gate as the first hard test.
+
+### Session 4 — Scope clarification (built-ins only, custom deferred)
+
+**Trigger:** User asked whether `.openknowledge/*` folder was being set up for component config, and whether the spec defined an entry point contract for custom components. Follow-up questions surfaced scope ambiguity: slash commands vs. drag-and-drop palette, built-ins vs. custom components, drop-in fumadocs support.
+
+**Key evidence gathered:**
+- `reports/fumadocs-full-pipeline/evidence/d4-custom-component-registration.md` **CONFIRMED:** Fumadocs uses `mdx-components.tsx` with `getMDXComponents()` returning a flat object. No separate registration API, no plugin system — it's just MDX's `components` prop. The filename is a convention, not a framework requirement.
+- `reports/fumadocs-full-pipeline/evidence/d4-custom-component-registration.md` **CONFIRMED:** Fumadocs does NOT use TypeScript prop types for validation or introspection. The visual editor has to add its own extraction layer.
+- `@inkeep/docskit/package.json` **CONFIRMED:** Docskit ships only compiled `.js` + `.d.ts` (no source `.tsx`). react-docgen-typescript needs a fallback path for library components without source.
+
+**Scope decisions (user-directed):**
+- **Built-ins only in P0.** Custom component discovery, drop-in fumadocs support, and drag-and-drop component palette all move to Future Work.
+- **Slash commands stay in scope** — they work on the built-in registry.
+- **`.openknowledge/*` is cache-only for P0.** No new user-facing config file (no `.openknowledge/components.ts`). For Future Work, the recommended approach is to reuse fumadocs's `mdx-components.tsx` convention rather than invent a new namespace — this gives drop-in support for free.
+- **Drop-in fumadocs support is coupled to custom component discovery.** Both move to Future Work together — one feature, not two.
+- **MCP endpoint for agent component discovery:** Future Work (Explored, ~1-2 days). Near-term alternative in Phase 4: generate `init_spike/COMPONENTS.md` from the registry at build time, link from `CLAUDE.md` / `AGENTS.md` so agents learn components by reading the repo.
+
+**Spec updates applied:**
+- **§6 In Scope:** Removed custom component discovery language. Clarified that built-ins are 15 components hardcoded in editor source. `.openknowledge/` described as cache-only.
+- **§6 Out of Scope:** Added "Custom component discovery," "Drop-in support for existing fumadocs projects," "Component library palette / drag-and-drop insertion" with rationale for each.
+- **§6 Future Work (Explored):** Added "Custom component discovery" with the fumadocs `mdx-components.tsx` reuse strategy, noting the `node_modules` compiled-only package challenge. Added "Drop-in fumadocs project support" with agents-docs as reference corpus. Added "MCP endpoint: component registry query" with the Phase 4 COMPONENTS.md fallback noted. Added "Component library palette with drag-and-drop."
+- **Phase 1:** Clarified built-ins-only scope. Added detail on source paths for react-docgen-typescript (fumadocs ships source, docskit doesn't — hand-write PropDef for docskit). Created `built-ins.ts` as the canonical list in editor source code.
+- **Phase 4:** Added step 4 to generate `init_spike/COMPONENTS.md` from the registry and link it from CLAUDE.md/AGENTS.md for agent discovery.
+
+**Rationale for reusing fumadocs `mdx-components.tsx` (Future Work):**
+- Single source of truth (users only maintain one file)
+- Drop-in fumadocs compatibility is natural (existing projects already have the file)
+- Zero friction onboarding (users already know the pattern)
+- No bikeshedding over file names or export formats
+- The only wrinkle is library components shipping only `.d.ts` (docskit case) — handled by a manual PropDef override path.
+
+**Spec status:** Still **Final**. Scope narrowed (simpler, clearer Phase 1). In Scope items still pass the resolution completeness gate. Future Work expanded with explicit maturity tiers.
+
+### Session 5 — v2 audit + factual correction on .d.ts extraction
+
+**Trigger:** User requested re-audit after scope narrowing. Two subprocesses spawned in parallel: auditor (coherence sweep) and challenger (design stress-test).
+
+**Auditor findings (11 total: 2 high, 6 medium, 3 low):**
+- **H1 (decision-implicating):** Phase 1 step 4 claimed fumadocs-ui ships .tsx source — FALSE. Direct package inspection confirmed the installed `fumadocs-ui` package ships only `dist/*.js` + `*.d.ts`. The cited evidence file was reading the GitHub source tree, not the npm package. This invalidated the extraction plan for 13 of 15 components.
+- **H2, M1-M6, L1-L3:** All coherence issues from scope narrowing — stale D5/D15 sentences, duplicate Phase 4 step number, OQ1/OQ2/OQ3 pre-narrowing resolutions, canonical count inconsistency, stale propFilter example, stale "Leaning: Option C" prose, missing Folder in evidence file, stale auto-discovery section.
+
+**Challenger findings (6 total: 3 high, 2 medium, 1 low):**
+- **H1 (decision-implicating):** Corpus validation gap — 55% of agents-docs components would fall through to raw-string fallback. Three options: narrow+validate, custom discovery in P0, honest restatement.
+- **H2 (decision-implicating):** react-docgen-typescript cannot run against fumadocs-ui (confirms audit H1). Prior session-3 rejection of "drop react-docgen-typescript" based on false premise.
+- **H3 (decision-implicating):** Silent namespace collision — agents-docs `<Card>` has different props than fumadocs `<Card>`. Spec had no collision policy.
+- **M4:** COMPONENTS.md strictly worse than committed JSON.
+- **M5:** Fumadocs mdx-components.tsx reuse has architectural mismatches — it's a function with runtime logic, not a data file. Walking it requires AST walker, not a static scan.
+- **L6:** Hand-written PropDef drift detection unspecified.
+
+**Critical factual correction (user D1 question):**
+Investigation of react-docgen-typescript source + test suite revealed that **the library DOES support .d.ts extraction**:
+- `src/parser.ts:377-409` explicitly handles the `!rootExp.valueDeclaration` case for `ForwardRefExoticComponent`, `FunctionComponent`, `MemoExoticComponent` (the exact patterns compiled libraries use)
+- `src/__tests__/parser.ts:48-58` has the test "should parse simple typescript definition file with default export" — directly parses `Stateless.d.ts` and extracts props
+- Verified fumadocs-ui's installed `callout.d.ts` has enum unions, prop interfaces, TSDoc comments (`@defaultValue info`), and component signatures — everything needed for extraction
+
+**This invalidated both audit H1 and challenger H2.** The original "fumadocs ships no source" observation was true; the implication "must hand-write PropDef" was false. One pipeline works for all 15 built-ins: point react-docgen-typescript at the installed `.d.ts` files. The only fix needed: change propFilter from blanket `node_modules` exclusion to specific `@types/react` exclusion.
+
+**User decisions:**
+- **D1:** Keep react-docgen-typescript for all 15 via `.d.ts` extraction. Strictly better than hand-writing (auto drift detection, TSDoc preserved, no maintenance burden).
+- **D2:** Interpretation A — keep all 15 built-ins, built-ins only in P0, custom discovery and drop-in in Future Work. Add real-corpus test (RT07) as secondary validation.
+- **D3:** Collision policy — preserve unknown attributes + reserve built-in names (A + C from the options).
+- **D4:** Future Work custom discovery = dual-track (Track 1 primary: static `.openknowledge/components.ts`, Track 2 secondary: static-import scan of `mdx-components.tsx`). Optionally Track 3 (full AST walker) as stretch.
+- **D5:** Commit `.openknowledge/components.json` instead of generating separate `COMPONENTS.md`. Forward-compatible with MCP endpoint.
+
+**Spec updates applied:**
+- **Frontmatter:** Baseline unchanged (still `8e3845d`).
+- **§2 Tertiary:** Previously updated for delta-based Observer A (session 3 audit).
+- **§3.2:** Updated propFilter example to exclude only `@types/react` (not all node_modules). Removed stale OQ2 "Leaning: Option C" prose. Clarified startup performance for 15 components (<1s cold).
+- **§3.8:** Added collision policy (preserve-and-render + reserved built-in names). Renamed section to "Unregistered Component Fallback + Collision Policy."
+- **§4 Phase 1:** Rewrote step 4 with the unified `.d.ts` + `.tsx` extraction pipeline across all 15 components. Documented per-file-type extraction paths. Added step 7 per-built-in extraction tests (serves as drift detection). Changed cache file path to `.openknowledge/components.json` (same file as Phase 4 artifact).
+- **§4 Phase 4:** Renumbered (was 1,2,3,4,4,5,6 → now 1-8). Replaced COMPONENTS.md generation with committed `.openknowledge/components.json`. Added step 6 real-corpus secondary validation (open agents-docs page, verify built-ins render + customs fall back cleanly). Step 5 updated to reference D15 built-ins instead of stale Note/Warning/Tip.
+- **§6 In Scope / Out of Scope:** Minor cleanup from scope narrowing session 4.
+- **§6 Future Work:** Rewrote "Custom component discovery" as dual-track (Track 1 + Track 2 + Track 3 stretch). Rewrote "Drop-in fumadocs support" as natural consequence of Track 2 with honest "partial drop-in" framing. Updated MCP endpoint entry to reference committed `components.json` file instead of COMPONENTS.md.
+- **§7 Test Scenarios:** Added RT07 (real corpus validation) and RT08 (collision policy).
+- **§9 Decision Log:** D5 marked superseded by D15. D15 reworded to "10 families / 15 total" with "custom component discovery is Future Work" clarification (removing stale "user components auto-discovered" trailing sentence).
+- **§11 Risks:** R3 likelihood dropped to Low (`.d.ts` extraction verified). R13 added (collision policy — Medium likelihood, High impact, mitigated by preserve-and-render).
+- **§12 Open Questions:** OQ1/OQ2/OQ3 resolutions rewritten to match current Phase 1 plan (static from built-ins.ts, no src/components/ scan, cache irrelevant at 15 components).
+- **evidence/component-inventory-and-gaps.md:** Added Folder sub-component row. Rewrote "agents-docs Custom Components" section as "Reference Corpus for Future Work" — clarifies that these are NOT auto-discovered in P0 and maps each to the Future Work dual-track path.
+- **evidence/react-docgen-typescript-dts-extraction.md (NEW):** Documents the verification that react-docgen-typescript supports `.d.ts` extraction. Evidence: test suite, parser source, live inspection of fumadocs-ui callout.d.ts. Resolves v2 Audit H1 + Challenger H2.
+
+**Challenger L6 (drift detection) — invalidated:** No longer applies because we're not hand-writing PropDef. Phase 1 per-built-in extraction tests (step 7) automatically catch drift on every CI run.
+
+**Spec status:** Still **Final**. All changes are additive or corrective (no core decisions reopened — the `.d.ts` finding is a strengthening of the original session-3 decision, not a reversal). Baseline `8e3845d` unchanged. In Scope items pass the resolution completeness gate.
+
+### Session 5 — Self-assessment of v2 fixes (3 introduced issues caught and fixed)
+
+After applying the v2 audit + challenger fixes, ran a self-assessment per `/eng:assess-findings` to catch any incoherence I introduced during the fix pass. Three issues found:
+
+- **SA1: §6 In Scope line 569 still said `.openknowledge/` was "cache only (`component-cache.json`, gitignored)"** — stale from before the D5 swap to committed `components.json`. Fixed to reference the committed manifest file.
+- **SA2: Phase 4 step 4 said "instead of gitignoring it, commit it"** — historical-artifact language from the transition. Phase 1 step 5 already establishes the file as committed; Phase 4 step 4 should only cover discoverability wiring (header comment, AGENTS.md link). Rewrote step 4 to remove the gitignore language.
+- **SA3: Phase 1 step 2 example used `require.resolve('fumadocs-ui/dist/components/callout.d.ts')`** — **broken at runtime** because fumadocs-ui's `package.json` `exports` field restricts access to raw `dist/` paths. Verified by reading `docs/node_modules/fumadocs-ui/package.json`: `"./components/*": { "import": "./dist/components/*.js", "types": "./dist/components/*.d.ts" }` — the `.d.ts` is only accessible via TypeScript's type resolution, not Node's module resolution. Rewrote the example to use `path.dirname(require.resolve('fumadocs-ui/package.json'))` + manual dist/ path construction. Also added a "Docskit-specific pattern" section (docskit only exports `./mdx` aggregate, so extraction points at `dist/mdx.d.ts`). Updated `evidence/react-docgen-typescript-dts-extraction.md` with the same gotcha documented.
+
+Additional minor correction: also fixed the `§3.8` collision policy text which said "The 15 component names in D15" but then listed 21 names (sub-components like `Tab`, `Cards`, `Step`, etc. each need individual name reservation). Rewrote to "21 names across the 15 built-in families."
+
+**Spec status:** Still **Final**. Self-assessment caught 3 issues I introduced during session 5 fixes — all fixed before finalization. No outstanding findings. Implementation can proceed with Phase 0 byte-identity gate as the first hard test.

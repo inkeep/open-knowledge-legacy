@@ -37,6 +37,7 @@ sources:
 | **ImageZoom** | Image props + zoom behavior | GREEN (client) | Image size control + zoom |
 | **Files** | File tree container | GREEN (client) | File explorer (core plugin) |
 | **File** | Individual file node | GREEN (client) | — |
+| **Folder** | Folder node inside Files tree | GREEN (client) | — |
 | **TypeTable** | `type: Record<string, ObjectType>` | GREEN (client) | No equivalent |
 | **Banner** | Text + dismissible | GREEN (client) | No equivalent |
 | **InlineTOC** | `TOCItemType[]` | GREEN (client) | TOC (core feature) |
@@ -131,17 +132,19 @@ Fumadocs Callout supports 6 types. Obsidian supports 13 types with 25+ aliases.
 
 ---
 
-## agents-docs Custom Components (auto-discovered by registry)
+## agents-docs Custom Components — Reference Corpus for Future Work
 
-These exist in `~/agents/agents-docs/src/components/mdx/` and are NOT built-in. The registry auto-discovers them from the user's component directory.
+**Note on P0 scope:** These components are NOT auto-discovered in P0. Custom component discovery is Future Work (SPEC.md §6 Future Work, Explored tier). In P0, these components appear in content as unregistered `jsxComponentVoid` nodes (raw-string fallback). Listed here as the canonical reference corpus for the Future Work custom discovery mechanism.
 
-| Component | Props | Origin |
-|---|---|---|
-| OptionCard / OptionCards | `title`, `icon?`, `href?`, `badge?`, `highlighted?`, `cta?`, `subtitle?`, children | agents-docs custom |
-| BigVideo | `src`, `maxWidth?`, `height?` | agents-docs custom |
-| SkillRule | `id`, `skills`, `title`, `description?`, children | agents-docs custom (passthrough) |
-| ComparisonTable | custom | agents-docs custom |
-| NumberedStepsTOC | custom | agents-docs custom |
-| AutoTypeTable | wraps fumadocs TypeTable | agents-docs custom |
+These exist in `~/agents/agents-docs/src/components/mdx/`:
 
-These validate the registry's extensibility — no special handling needed. If their .tsx files are in the component discovery path, they appear automatically.
+| Component | Props | Origin | P0 behavior | Future Work (dual-track discovery) |
+|---|---|---|---|---|
+| OptionCard / OptionCards | `title`, `icon?`, `href?`, `badge?`, `highlighted?`, `cta?`, `subtitle?`, children | agents-docs custom `.tsx` | Void node (raw string) | **Track 1** — user lists in `.openknowledge/components.ts`. `.tsx` source extractable via react-docgen-typescript. |
+| BigVideo | `src`, `maxWidth?`, `height?` | agents-docs custom `.tsx` | Void node | **Track 1** — extractable |
+| SkillRule | `id`, `skills`, `title`, `description?`, children | agents-docs custom (passthrough) `.tsx` | Void node | **Track 1** — extractable (thin passthrough, valid PropDef) |
+| ComparisonTable | custom schema | agents-docs custom `.tsx` | Void node | **Track 1** — extractable |
+| NumberedStepsTOC | custom | agents-docs custom `.tsx` | Void node | **Track 1** — extractable |
+| AutoTypeTable | wraps fumadocs TypeTable with `generator` prop | agents-docs custom wrapper in `mdx-components.tsx` | Void node | **Track 1** required — the wrapper is inline in `mdx-components.tsx`, not a separate file. User must add an explicit entry to `.openknowledge/components.ts` pointing at a wrapper file. **Track 2** (static-import scan) would miss this. |
+
+These validate what the Future Work custom discovery mechanism must handle. The AutoTypeTable case shows why Track 2 alone is insufficient — wrapped components need Track 1 explicit registration.
