@@ -233,14 +233,21 @@ export function setupObservers(deps: ObserverDeps): () => void {
       if (lastSyncedXmlMd === md) return; // No change since last sync
 
       const currentText = ytext.toString();
+
+      // If Y.Text already matches the serialized XmlFragment (e.g., the file
+      // watcher updated both XmlFragment and Y.Text in one transaction), skip
+      // the write — there's nothing to sync and writing would trigger
+      // persistence → disk → watcher feedback.
+      if (currentText === md) {
+        lastSyncedXmlMd = md;
+        return;
+      }
+
       console.log('[Observer A] sync tree→text');
       doc.transact(() => {
         if (currentText === lastSyncedXmlMd) {
-          // Y.Text is in the state we last synced to. Safe to full-diff.
           applyIncrementalDiff(ytext, currentText, md);
         } else {
-          // Y.Text has diverged — apply only the user's delta (lastSyncedXmlMd → md)
-          // without subtracting the content that diverged.
           applyUserDelta(ytext, lastSyncedXmlMd, md);
         }
       }, ORIGIN_TREE_TO_TEXT);
@@ -254,6 +261,12 @@ export function setupObservers(deps: ObserverDeps): () => void {
 
   const observerA = (_events: Y.YEvent<Y.XmlFragment>[], transaction: Y.Transaction) => {
     if (transaction.origin === ORIGIN_TEXT_TO_TREE) return;
+    // Skip remote XmlFragment changes (from other tabs/peers). The originating
+    // tab already ran Observer A to sync Y.Text — both changes arrive together
+    // via the Yjs sync protocol. Processing remote XmlFragment changes here
+    // would create an infinite cross-tab loop: Tab A Observer A → Y.Text sync →
+    // Tab B Observer B → XmlFragment sync → Tab A Observer A → ...
+    if (!transaction.local) return;
     if (debounceA) clearTimeout(debounceA);
     debounceA = setTimeout(runObserverASync, DEBOUNCE_MS);
   };
@@ -319,6 +332,12 @@ export function setupObservers(deps: ObserverDeps): () => void {
 
   const observerB = (_event: Y.YTextEvent, transaction: Y.Transaction) => {
     if (transaction.origin === ORIGIN_TREE_TO_TEXT) return;
+    // Skip remote Y.Text changes (from other tabs/peers). When another tab's
+    // Observer A writes Y.Text, the corresponding XmlFragment change also arrives
+    // via sync — no local Observer B processing needed. For server-side writes
+    // (agent), the server now updates both Y.Text and XmlFragment in the same
+    // transaction, so clients receive paired changes that are already in sync.
+    if (!transaction.local) return;
     if (debounceB) clearTimeout(debounceB);
     debounceB = setTimeout(runObserverBSync, DEBOUNCE_MS);
   };

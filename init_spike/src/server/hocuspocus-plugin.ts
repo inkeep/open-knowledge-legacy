@@ -13,8 +13,12 @@ import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 import { stripFrontmatter } from '../editor/extensions/frontmatter';
 import { sharedExtensions } from '../editor/extensions/shared';
-import { startWatcher } from './file-watcher';
+import { type AsyncSubscription, startWatcher } from './file-watcher';
 import { createPersistenceExtension } from './persistence';
+
+// Module-level watcher subscription — survives Vite HMR restarts so we can
+// unsubscribe the previous instance before starting a new one.
+let activeWatcher: AsyncSubscription | null = null;
 
 /**
  * The DirectConnection class exposes `.document` at runtime but the exported
@@ -136,6 +140,24 @@ async function closeAllAgentSessions(): Promise<void> {
   }
 }
 
+/**
+ * After writing to Y.Text, sync the full Y.Text content to XmlFragment so
+ * clients receive paired changes. This is necessary because client-side
+ * Observer B skips remote Y.Text changes to prevent cross-tab amplification.
+ */
+function syncTextToFragment(document: Document): void {
+  const ytext = document.getText('source');
+  const fullText = ytext.toString();
+  const { frontmatter, body } = stripFrontmatter(fullText);
+  const parsedJson = mdManager.parse(body);
+  const pmNode = schema.nodeFromJSON(parsedJson);
+  const xmlFragment = document.getXmlFragment('default');
+  const meta = { mapping: new Map(), isOMark: new Map() };
+  updateYFragment(document, xmlFragment, pmNode, meta);
+  const metaMap = document.getMap('metadata');
+  metaMap.set('frontmatter', frontmatter);
+}
+
 export function hocuspocusPlugin(): Plugin {
   return {
     name: 'hocuspocus',
@@ -182,9 +204,6 @@ export function hocuspocusPlugin(): Plugin {
           // Set awareness to 'editing' during write, reset to 'idle' even on failure
           dc.document.awareness.setLocalStateField('mode', 'editing');
           try {
-            // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
-            // which hardcodes origin to { source: 'local' }.
-            // Write to Y.Text (not XmlFragment) — Observer B propagates to tree.
             dc.document.transact(() => {
               const ytext = dc.document.getText('source');
               const currentText = ytext.toString();
@@ -192,7 +211,10 @@ export function hocuspocusPlugin(): Plugin {
               const separator = currentText.trim() ? '\n\n' : '';
               ytext.insert(insertAt, `${separator}${content}\n`);
 
-              // Activity map write INSIDE the same transaction (F1/C3 fix)
+              // Sync Y.Text → XmlFragment in the same transaction so clients
+              // receive paired changes (Observer B skips remote Y.Text changes).
+              syncTextToFragment(dc.document);
+
               const activityMap = dc.document.getMap('activity');
               activityMap.set(DEFAULT_AGENT_ID, {
                 agentId: DEFAULT_AGENT_ID,
@@ -267,8 +289,6 @@ export function hocuspocusPlugin(): Plugin {
           // Set awareness to 'editing' during write, reset to 'idle' even on failure
           dc.document.awareness.setLocalStateField('mode', 'editing');
           try {
-            // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
-            // Direct Y.Text insertion — Observer B handles the tree update.
             dc.document.transact(() => {
               const ytext = dc.document.getText('source');
               const currentText = ytext.toString();
@@ -281,7 +301,10 @@ export function hocuspocusPlugin(): Plugin {
                 ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
               }
 
-              // Activity map write INSIDE the same transaction (F1/C3 fix)
+              // Sync Y.Text → XmlFragment in the same transaction so clients
+              // receive paired changes (Observer B skips remote Y.Text changes).
+              syncTextToFragment(dc.document);
+
               const activityMap = dc.document.getMap('activity');
               activityMap.set(DEFAULT_AGENT_ID, {
                 agentId: DEFAULT_AGENT_ID,
@@ -425,12 +448,24 @@ export function hocuspocusPlugin(): Plugin {
 
           // Layer 2: skipStoreHooks prevents persistence from re-writing the file
           // we just loaded from disk.
+          //
+          // Update BOTH XmlFragment AND Y.Text in the same transaction so the
+          // client-side Observer A doesn't need to generate a follow-on Y.Text
+          // write (which would trigger onStoreDocument → disk write → watcher
+          // event, creating a feedback loop).
           document.transact(
             () => {
               const meta = { mapping: new Map(), isOMark: new Map() };
               updateYFragment(document, xmlFragment, pmNode, meta);
               const metaMap = document.getMap('metadata');
               metaMap.set('frontmatter', frontmatter);
+
+              const ytext = document.getText('source');
+              const currentText = ytext.toString();
+              if (currentText !== content) {
+                ytext.delete(0, currentText.length);
+                ytext.insert(0, content);
+              }
             },
             {
               source: 'local',
@@ -445,13 +480,24 @@ export function hocuspocusPlugin(): Plugin {
         }
       }
 
-      startWatcher(CONTENT_DIR, handleExternalChange)
-        .then((subscription) => {
-          server.httpServer?.on('close', () => subscription.unsubscribe());
-        })
-        .catch((err) => {
+      (async () => {
+        if (activeWatcher) {
+          console.log('[hocuspocus] Unsubscribing previous file watcher (HMR restart)');
+          await activeWatcher.unsubscribe();
+          activeWatcher = null;
+        }
+        try {
+          activeWatcher = await startWatcher(CONTENT_DIR, handleExternalChange);
+          server.httpServer?.on('close', async () => {
+            if (activeWatcher) {
+              await activeWatcher.unsubscribe();
+              activeWatcher = null;
+            }
+          });
+        } catch (err) {
           console.error('[hocuspocus] Disk bridge watcher failed to start:', err);
-        });
+        }
+      })();
 
       console.log('[hocuspocus] WebSocket server ready on /collab');
       console.log('[hocuspocus] Agent write API at POST /api/agent-write');

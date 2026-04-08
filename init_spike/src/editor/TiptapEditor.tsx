@@ -134,6 +134,11 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
   const mdManager = useMemo(() => new MarkdownManager({ extensions: sharedExtensions }), []);
 
   const editor = useEditor({
+    editorProps: {
+      attributes: {
+        class: 'p-6 h-full',
+      },
+    },
     extensions: [
       ...sharedExtensions,
       Collaboration.configure({
@@ -389,13 +394,13 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
   return (
     <div
       ref={wrapperRef}
-      className="tiptap-editor"
+      className="tiptap-editor h-full"
       data-agent-flash-state="idle"
       data-agent-flash-count="0"
       data-agent-flash-position="append"
       data-agent-flash-agent-id=""
     >
-      <EditorContent editor={editor} />
+      <EditorContent editor={editor} className="h-full" />
     </div>
   );
 });

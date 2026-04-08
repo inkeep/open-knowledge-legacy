@@ -8,7 +8,10 @@
     "format": "biome check --write .",
     "typecheck": "cd docs && bun run typecheck",
     "check": "bun run typecheck && bun run lint",
-    "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true"
+    "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset publish"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md}": [
@@ -17,6 +20,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
+    "@changesets/cli": "^2.29.7",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0"
   }

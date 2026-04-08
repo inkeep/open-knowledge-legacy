@@ -17,22 +17,32 @@ import { readFile } from 'node:fs/promises';
 import { relative } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 
+export type { AsyncSubscription };
+
 // Content-hash tracker — persistence layer registers writes via registerWrite().
 // Watcher checks this to skip self-writes. TTL cleanup prevents unbounded growth.
+// Stores a QUEUE of hashes per path so rapid sequential writes (e.g., XmlFragment
+// change followed by Observer A's Y.Text change) don't race: each filesystem event
+// consumes only its matching entry, leaving others intact for subsequent events.
 // Exported for test access; production code should use registerWrite().
-export const writeTracker = new Map<string, { hash: string; timestamp: number }>();
+export const writeTracker = new Map<string, Array<{ hash: string; timestamp: number }>>();
 const WRITE_TRACKER_TTL_MS = 10_000;
 
 /** Register an upcoming persistence write so the watcher skips the resulting FSEvent. */
 export function registerWrite(filePath: string, hash: string): void {
-  writeTracker.set(filePath, { hash, timestamp: Date.now() });
+  const queue = writeTracker.get(filePath) ?? [];
+  queue.push({ hash, timestamp: Date.now() });
+  writeTracker.set(filePath, queue);
 }
 
 export function evictStaleTrackerEntries(): void {
   const now = Date.now();
-  for (const [path, entry] of writeTracker) {
-    if (now - entry.timestamp > WRITE_TRACKER_TTL_MS) {
+  for (const [path, queue] of writeTracker) {
+    const fresh = queue.filter((e) => now - e.timestamp <= WRITE_TRACKER_TTL_MS);
+    if (fresh.length === 0) {
       writeTracker.delete(path);
+    } else if (fresh.length !== queue.length) {
+      writeTracker.set(path, fresh);
     }
   }
 }
@@ -80,11 +90,15 @@ export async function startWatcher(
         const content = await readFile(event.path, 'utf-8');
         const hash = contentHash(content);
 
-        // Self-write check (Layer 1)
-        const tracked = writeTracker.get(event.path);
-        if (tracked && tracked.hash === hash) {
-          writeTracker.delete(event.path);
-          continue; // Our own persistence write — skip
+        // Self-write check (Layer 1) — search the hash queue for a match
+        const queue = writeTracker.get(event.path);
+        if (queue) {
+          const idx = queue.findIndex((e) => e.hash === hash);
+          if (idx >= 0) {
+            queue.splice(idx, 1);
+            if (queue.length === 0) writeTracker.delete(event.path);
+            continue; // Our own persistence write — skip
+          }
         }
 
         const docName = pathToDocName(event.path, contentDir);
