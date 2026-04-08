@@ -5,6 +5,7 @@ tmp/
 *.log
 .next/
 .source/
+.idea/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
