@@ -292,3 +292,37 @@ After applying the v2 audit + challenger fixes, ran a self-assessment per `/eng:
 Additional minor correction: also fixed the `§3.8` collision policy text which said "The 15 component names in D15" but then listed 21 names (sub-components like `Tab`, `Cards`, `Step`, etc. each need individual name reservation). Rewrote to "21 names across the 15 built-in families."
 
 **Spec status:** Still **Final**. Self-assessment caught 3 issues I introduced during session 5 fixes — all fixed before finalization. No outstanding findings. Implementation can proceed with Phase 0 byte-identity gate as the first hard test.
+
+### Session 6 — Observer model refactor integration (post PR #8 + cross-tab fixes)
+
+**Trigger:** User pulled origin/main into the worktree. 13 new commits since baseline `8e3845d` (post-merge audit baseline). Of the 13, 4 are spec-relevant:
+
+- **`9f215ef`** — Observer A now skips remote transactions (`if (!transaction.local) return`). Prevents cross-tab infinite loop.
+- **`99ea308`** — Observer B also skips remote transactions. Agent write endpoints now call a new server-side `syncTextToFragment()` helper that writes to both Y.Text AND XmlFragment in a single transaction. Clients receive paired changes via Yjs sync and both observers skip them.
+- **`b289cc6`** — Disk bridge feedback loop fixes (writeTracker per-path hash queue, stable file watcher subscription across Vite HMR).
+- **`456b6fc`** — jsx-tokenizer test fix (DOMParser dependency removal for Bun/Node test env).
+
+**New observer model:** "Both observers follow the same principle: only process LOCAL changes. Remote changes arrive pre-synced via the Yjs CRDT protocol."
+
+**Impact analysis on session 4/5 spec claims:**
+
+The post-merge audit findings (PM-H1, PM-H2, PM-H3) were based on an observer model where Observer A and Observer B both processed remote transactions. That model is now obsolete. Updated the spec to describe the new local-only observer model without reopening architectural decisions.
+
+**Spec updates applied:**
+- **Baseline commit:** `8e3845d` → `02c2211`.
+- **§2 Tertiary criterion:** Added local-only observer rule, syncTextToFragment description, disk bridge per-path hash queue note. Clarified that agent writes never trigger client-side Observer A or B at all now.
+- **§3.6 Prop panel typing-defer:** Added a "Scope of the race" subsection. Clarified that the original PM-H1 "agent write race" scenario is now fixed at the server layer (via syncTextToFragment paired writes), and the remaining race is the narrower single-user two-pane scenario (WYSIWYG + source simultaneously).
+- **§11 R9:** Likelihood dropped from Medium → Low. Impact from High → Medium. Updated description: race is now single-user two-pane, not agent-write collision.
+- **§11 R10:** Still High/High (byte-identity is still load-bearing). Scope note added: only LOCAL Y.Text changes trigger Observer B now.
+- **§11 R11:** Likelihood dropped from Medium → Low. Updated description: "Y.Text has unsynced content" scenario is rare because agent writes sync both trees server-side.
+- **§11 R14 (NEW):** Agent writes + concurrent local prop edits — Yjs merge edge case at the `@tiptap/y-tiptap` layer. Low/Medium. Accepted as P0 edge case with mitigation path documented (flush Observer A before server writes if observed).
+- **§10 A7:** Scope note added. OS08 test still valid but exercises only the local Observer A path now.
+- **§7 OS07:** Rewrote test scenario to exercise the LOCAL Observer B path explicitly (remote writes no longer trigger Observer B).
+- **§7 CE05:** Updated to reflect the new server-side merge path. Still validates end-to-end behavior but the mechanism is now Yjs CRDT merge, not client-side Observer B.
+- **§7 CE07 (NEW):** Added the narrower R9 race test — prop panel edit + concurrent local source-mode edit. This is what `markUserTyping()` actually protects against now.
+
+**No decisions reopened.** All changes are factual corrections describing the new observer reality. The spec's architectural plan (Phase 0 byte-identity gate, Phase 1 `.d.ts` extraction, Phase 2 prop panel + typing-defer, Phase 3 inline children) is unchanged.
+
+**Good sign:** The jsx-tokenizer prototype test was updated (`456b6fc`) to remove a DOMParser dependency — meaning the team is already exercising the jsx-tokenizer infrastructure the spec builds on, validating that Phase 0's tokenizer is healthy.
+
+**Spec status:** Still **Final**. Baseline advanced to `02c2211`. Implementation can proceed with Phase 0 byte-identity gate as the first hard test.
