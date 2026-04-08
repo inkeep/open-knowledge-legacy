@@ -6,6 +6,7 @@
  * Config loaded via preAction hook: CLI > ENV > workspace > user > Zod defaults.
  */
 import { Command } from 'commander';
+import { mcpCommand } from './commands/mcp';
 import { startCommand } from './commands/start';
 import { type Config, loadConfig } from './index';
 
@@ -49,5 +50,9 @@ program
 // Start command (default)
 const start = startCommand(() => resolvedConfig);
 program.addCommand(start, { isDefault: true });
+
+// MCP command
+const mcp = mcpCommand(() => resolvedConfig);
+program.addCommand(mcp);
 
 await program.parseAsync();

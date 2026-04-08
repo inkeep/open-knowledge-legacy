@@ -28,8 +28,10 @@
     "prepublishOnly": "bun run build && bun run test"
   },
   "dependencies": {
+    "@hocuspocus/provider": "4.0.0-rc.1",
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "commander": "^14.0.0",
     "sirv": "^3.0.1",
     "ws": "^8.20.0",
