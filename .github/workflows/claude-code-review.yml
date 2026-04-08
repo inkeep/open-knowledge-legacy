@@ -357,7 +357,7 @@ jobs:
           # The pr-review agent is constrained to always start its review body with "## PR Review Summary".
           LAST_REVIEW_SHA=$(echo "$REVIEWS" | jq -r '
             [.[] | select(
-              (.author.login == "claude" or .author.login == "claude[bot]") and
+              (.author.login == "claude" or .author.login == "claude[bot]" or .author.login == "inkeep-internal-ci[bot]") and
               ((.body // "") | test("^## PR Review Summary"))
             )] |
             sort_by(.submittedAt) | last | .commit.oid // ""
@@ -498,7 +498,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api repos/${{ github.repository }}/issues/${{ steps.pr.outputs.number }}/comments \
-            --jq '.[] | select(.user.login == "claude[bot]" and (.body | test("Claude encountered an error|Claude finished|Starting PR review|🔄|PR Review in Progress"))) | .id' \
+            --jq '.[] | select((.user.login == "claude[bot]" or .user.login == "inkeep-internal-ci[bot]") and (.body | test("Claude encountered an error|Claude finished|Starting PR review|🔄|PR Review in Progress"))) | .id' \
           | xargs -I {} gh api -X DELETE repos/${{ github.repository }}/issues/comments/{} 2>/dev/null || true
 
       - name: Generate PR Context Skill
@@ -624,14 +624,16 @@ jobs:
 
           echo "PR context skill generated at .claude/skills/pr-context/SKILL.md ($(wc -c < .claude/skills/pr-context/SKILL.md) bytes)"
 
-      - name: Generate GitHub App token for team-skills
+      - name: Generate GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.INTERNAL_CI_APP_ID }}
           private-key: ${{ secrets.INTERNAL_CI_APP_PRIVATE_KEY }}
           owner: inkeep
-          repositories: team-skills
+          repositories: |
+            open-knowledge
+            team-skills
 
       - name: Clone team-skills (CI-only PR review agents)
         run: gh repo clone inkeep/team-skills /tmp/team-skills -- --depth 1
@@ -645,7 +647,8 @@ jobs:
           CLAUDE_CODE_DEBUG_LOGS_DIR: ${{ runner.temp }}/claude-debug
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          allowed_bots: "claude[bot]"
+          github_token: ${{ steps.app-token.outputs.token }}
+          allowed_bots: "inkeep-internal-ci[bot]"
           track_progress: true
           claude_args: |
             --plugin-dir /tmp/team-skills/ci/pr-review
@@ -661,7 +664,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api repos/${{ github.repository }}/issues/${{ steps.pr.outputs.number }}/comments \
-            --jq '.[] | select(.user.login == "claude[bot]" and (.body | contains("actions/runs/${{ github.run_id }}"))) | .id' \
+            --jq '.[] | select((.user.login == "claude[bot]" or .user.login == "inkeep-internal-ci[bot]") and (.body | contains("actions/runs/${{ github.run_id }}"))) | .id' \
           | xargs -I {} gh api -X DELETE repos/${{ github.repository }}/issues/comments/{} 2>/dev/null || true
 
       - name: Upload Debug Artifacts
