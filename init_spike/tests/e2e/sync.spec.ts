@@ -37,12 +37,7 @@ async function openEditor(page: Page) {
 }
 
 /** Poll until content appears (Playwright best practice for async sync). */
-async function expectContent(
-  page: Page,
-  selector: string,
-  expected: string,
-  timeout = 15_000,
-) {
+async function expectContent(page: Page, selector: string, expected: string, timeout = 15_000) {
   await expect(async () => {
     const text = await page.locator(selector).innerText();
     expect(text).toContain(expected);

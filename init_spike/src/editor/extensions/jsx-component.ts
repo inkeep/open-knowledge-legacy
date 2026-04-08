@@ -12,10 +12,7 @@ declare module '@tiptap/core' {
 
 /** Returns a backtick fence that safely wraps `content` — N+1 backticks where N is the longest run in content (minimum 3). */
 export function fenceFor(content: string): string {
-  const maxRun = (content.match(/`+/g) || []).reduce(
-    (max, run) => Math.max(max, run.length),
-    2,
-  );
+  const maxRun = (content.match(/`+/g) || []).reduce((max, run) => Math.max(max, run.length), 2);
   return '`'.repeat(maxRun + 1);
 }
 

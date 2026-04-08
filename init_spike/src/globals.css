@@ -68,3 +68,113 @@
 .agent-flash {
   animation: agent-flash 2s ease-out forwards;
 }
+
+/* Container-based flash: applied to .tiptap-editor wrapper, propagates to children.
+   Survives ProseMirror DOM reconciliation because the class is on the React wrapper,
+   not on ProseMirror-managed DOM nodes. */
+.agent-flashing .ProseMirror > * {
+  animation: agent-flash 2s ease-out forwards;
+}
+
+/* Collaboration cursor styles (WYSIWYG — TipTap) */
+.collaboration-cursor__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 2px solid;
+  border-right: 0;
+  word-break: normal;
+  pointer-events: none;
+}
+
+.collaboration-cursor__label {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #fff;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* CodeMirror cursor styles (Source mode) */
+.cm-ySelectionCaret {
+  position: relative;
+  border-left: 2px solid;
+  margin-left: -1px;
+  margin-right: -1px;
+  pointer-events: none;
+  word-break: normal;
+}
+
+.cm-ySelectionInfo {
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #fff;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.cm-ySelection {
+  opacity: 0.3;
+}
+
+/* Editor polish */
+.ProseMirror {
+  outline: none;
+  min-height: 200px;
+  line-height: 1.7;
+}
+
+.ProseMirror p {
+  margin-bottom: 0.5em;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3 {
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+}
+
+.ProseMirror h1 { font-size: 1.5em; }
+.ProseMirror h2 { font-size: 1.25em; }
+.ProseMirror h3 { font-size: 1.1em; }
+
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: 'Start writing...';
+  color: var(--color-muted-foreground);
+  pointer-events: none;
+  float: left;
+  height: 0;
+}
+
+/* CodeMirror polish */
+.cm-editor {
+  min-height: 200px;
+  font-size: 14px;
+}
+
+.cm-editor .cm-content {
+  padding: 0;
+}
+
+.cm-editor.cm-focused {
+  outline: none;
+}

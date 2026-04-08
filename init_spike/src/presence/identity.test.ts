@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { HUMAN_COLORS, generateRandomColor, generateRandomName, getIdentity } from './identity';
+import { generateRandomColor, generateRandomName, getIdentity, HUMAN_COLORS } from './identity';
 
 // --- Stub browser globals for bun test environment ---
 

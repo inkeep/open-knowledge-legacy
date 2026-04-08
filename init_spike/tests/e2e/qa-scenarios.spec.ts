@@ -5,7 +5,7 @@
  * scenarios from SPEC.md Section 7 not covered by sync.spec.ts.
  */
 
-import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, type Page, test } from '@playwright/test';
@@ -31,12 +31,7 @@ async function openEditor(page: Page) {
   await page.waitForTimeout(2000);
 }
 
-async function expectContent(
-  page: Page,
-  selector: string,
-  expected: string,
-  timeout = 15_000,
-) {
+async function expectContent(page: Page, selector: string, expected: string, timeout = 15_000) {
   await expect(async () => {
     const text = await page.locator(selector).innerText();
     expect(text).toContain(expected);
@@ -121,9 +116,7 @@ test.describe('QA-002: W02 — Two tabs typing simultaneously, different paragra
 });
 
 test.describe('QA-003: T33 — Cross-mode concurrent editing', () => {
-  test('WYSIWYG and source editing non-conflicting areas — both survive', async ({
-    browser,
-  }) => {
+  test('WYSIWYG and source editing non-conflicting areas — both survive', async ({ browser }) => {
     const page1 = await browser.newPage();
     await openEditor(page1);
     await resetDoc(page1);

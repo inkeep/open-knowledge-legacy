@@ -8,11 +8,12 @@
  *   - Observer A writes with origin 'sync-from-tree', Observer B skips those.
  *   - Observer B writes with origin 'sync-from-text', Observer A skips those.
  */
-import type { Schema } from '@tiptap/pm/model';
+
 import type { MarkdownManager } from '@tiptap/markdown';
+import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { diffLines } from 'diff';
-import * as Y from 'yjs';
+import type * as Y from 'yjs';
 import { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter';
 
 export const ORIGIN_TREE_TO_TEXT = 'sync-from-tree';
@@ -33,11 +34,7 @@ interface ObserverDeps {
  * Apply incremental diff from `currentText` to `newText` on a Y.Text instance.
  * Uses diffLines to minimize CRDT mutations — preserves concurrent source-mode edits.
  */
-function applyIncrementalDiff(
-  ytext: Y.Text,
-  currentText: string,
-  newText: string,
-): void {
+function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: string): void {
   if (currentText === newText) return;
 
   const changes = diffLines(currentText, newText);

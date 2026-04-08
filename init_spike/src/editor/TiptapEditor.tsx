@@ -1,16 +1,15 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { Extension, getSchema } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
-import CollaborationCursor from '@tiptap/extension-collaboration-cursor';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { yCursorPlugin } from '@tiptap/y-tiptap';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { prependFrontmatter } from './extensions/frontmatter';
 import { sharedExtensions } from './extensions/shared';
 import { setupObservers } from './observers';
-import { createAgentFlashPlugin } from './plugins/agent-flash-wysiwyg';
 
 const DOC_NAME = 'test-doc';
 
@@ -92,6 +91,7 @@ function getProvider(): HocuspocusProvider {
 
 export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
   const frontmatterRef = useRef<string>('');
+  const [isFlashing, setIsFlashing] = useState(false);
   const provider = getProvider();
   const identity = useIdentity();
 
@@ -103,23 +103,112 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       Collaboration.configure({
         document: provider.document,
       }),
-      CollaborationCursor.configure({
-        provider,
-        user: {
-          name: identity.name,
-          color: identity.color,
-          type: 'human',
-        },
-        render: renderCursor,
-      }),
+      // Use yCursorPlugin from @tiptap/y-tiptap directly (same module as Collaboration v3)
+      // to avoid ySyncPluginKey mismatch with y-prosemirror's yCursorPlugin
       Extension.create({
-        name: 'agentFlash',
+        name: 'collaborationCursor',
         addProseMirrorPlugins() {
-          return [createAgentFlashPlugin(provider.document)];
+          // Set user on awareness so other clients see us
+          provider.awareness?.setLocalStateField('user', {
+            name: identity.name,
+            color: identity.color,
+            type: 'human',
+          });
+          return [
+            yCursorPlugin(provider.awareness ?? ({} as never), {
+              cursorBuilder: renderCursor,
+            }),
+          ];
         },
       }),
     ],
   });
+
+  // Watch activity map and trigger flash through the editor's ProseMirror dispatch.
+  // This lives in React (not in the ProseMirror plugin) to avoid StrictMode
+  // double-mount issues with stale view references in plugin closures.
+  useEffect(() => {
+    if (!editor) return;
+    const activityMap = provider.document.getMap('activity');
+    let lastSeenTimestamp = Date.now();
+    let lastFlashTime = 0;
+    let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const triggerFlash = () => {
+      setIsFlashing(true);
+      setTimeout(() => setIsFlashing(false), 2000);
+    };
+
+    const observer = () => {
+      // Evict stale entries
+      const now = Date.now();
+      for (const [key, value] of activityMap.entries()) {
+        const entry = value as { timestamp?: number };
+        if (entry.timestamp && now - entry.timestamp > 30_000) {
+          activityMap.delete(key);
+        }
+      }
+
+      // Check for new entries
+      let hasNew = false;
+      for (const [, value] of activityMap.entries()) {
+        const entry = value as { timestamp?: number };
+        if (entry.timestamp && entry.timestamp > lastSeenTimestamp) {
+          hasNew = true;
+          break;
+        }
+      }
+      if (!hasNew) return;
+
+      lastSeenTimestamp = Date.now();
+
+      // Debounce
+      if (now - lastFlashTime < 500) {
+        if (!pendingTimeout) {
+          const delay = 500 - (now - lastFlashTime);
+          pendingTimeout = setTimeout(() => {
+            pendingTimeout = null;
+            lastFlashTime = Date.now();
+            triggerFlash();
+          }, delay);
+        }
+        return;
+      }
+
+      lastFlashTime = now;
+      triggerFlash();
+    };
+
+    activityMap.observe(observer);
+
+    // Visibility change handler for FR15
+    const visibilityHandler = () => {
+      if (document.visibilityState === 'visible') {
+        let hasNew = false;
+        for (const [, value] of activityMap.entries()) {
+          const entry = value as { timestamp?: number };
+          if (entry.timestamp && entry.timestamp > lastSeenTimestamp) {
+            hasNew = true;
+            break;
+          }
+        }
+        if (hasNew) {
+          lastSeenTimestamp = Date.now();
+          lastFlashTime = Date.now();
+          triggerFlash();
+        }
+      } else {
+        lastSeenTimestamp = Date.now();
+      }
+    };
+    document.addEventListener('visibilitychange', visibilityHandler);
+
+    return () => {
+      activityMap.unobserve(observer);
+      document.removeEventListener('visibilitychange', visibilityHandler);
+      if (pendingTimeout) clearTimeout(pendingTimeout);
+    };
+  }, [editor, provider.document]);
 
   // Read frontmatter from Y.Doc metadata map (set by server persistence on load)
   useEffect(() => {
@@ -172,7 +261,7 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
   );
 
   return (
-    <div className="tiptap-editor">
+    <div className={`tiptap-editor ${isFlashing ? 'agent-flashing' : ''}`}>
       <EditorContent editor={editor} />
     </div>
   );
