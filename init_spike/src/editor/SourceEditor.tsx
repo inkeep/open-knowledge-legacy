@@ -37,6 +37,11 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         markdown(),
         yCollab(ytext, provider.awareness),
         createAgentFlashSourceExtension(provider.document),
+        EditorView.theme({
+          '&': {
+            height: '100%',
+          },
+        }),
       ],
     });
 
@@ -52,5 +57,5 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
     };
   }, [ytext, provider]);
 
-  return <div ref={containerRef} className="source-editor" />;
+  return <div ref={containerRef} className="source-editor h-full" />;
 }
