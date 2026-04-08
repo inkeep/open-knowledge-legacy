@@ -10,6 +10,7 @@ import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
+import * as Y from 'yjs';
 import { stripFrontmatter } from '../editor/extensions/frontmatter';
 import { sharedExtensions } from '../editor/extensions/shared';
 import { startWatcher } from './file-watcher';
@@ -49,6 +50,30 @@ const agentSessions = new Map<string, AgentDirectConnection>();
 /** Agent write origin — tracked by server-side UndoManager (US-007). */
 export const AGENT_WRITE_ORIGIN = 'agent-write';
 
+// --- Server-side UndoManager for per-origin undo (US-007) ---
+// Tracks only 'agent-write' origin on Y.Text('source').
+// captureTimeout: 0 ensures each agent transaction is a separate undo entry.
+const agentUndoManagers = new Map<string, Y.UndoManager>();
+
+/**
+ * Get or create a server-side UndoManager for agent writes on a document.
+ * Created alongside the agent session — tracks Y.Text('source') with origin 'agent-write'.
+ */
+function getAgentUndoManager(dc: AgentDirectConnection): Y.UndoManager {
+  const docName = dc.document.name;
+  let um = agentUndoManagers.get(docName);
+  if (!um) {
+    const ytext = dc.document.getText('source');
+    um = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set([AGENT_WRITE_ORIGIN]),
+      captureTimeout: 0,
+    });
+    agentUndoManagers.set(docName, um);
+    console.log(`[agent-undo] Created UndoManager for: ${docName}`);
+  }
+  return um;
+}
+
 /**
  * Get or create a persistent agent DirectConnection for a document.
  * Sets agent awareness (name, color, type) on first open.
@@ -71,6 +96,8 @@ async function getAgentSession(docName: string): Promise<AgentDirectConnection> 
       mode: 'idle',
     });
     agentSessions.set(docName, dc);
+    // Initialize the UndoManager alongside the session
+    getAgentUndoManager(dc);
     console.log(`[agent-session] Created persistent session for: ${docName}`);
   }
   return dc;
@@ -82,6 +109,13 @@ async function getAgentSession(docName: string): Promise<AgentDirectConnection> 
 async function closeAgentSession(docName: string): Promise<void> {
   const dc = agentSessions.get(docName);
   if (dc) {
+    // Destroy UndoManager before disconnecting
+    const um = agentUndoManagers.get(docName);
+    if (um) {
+      um.destroy();
+      agentUndoManagers.delete(docName);
+      console.log(`[agent-undo] Destroyed UndoManager for: ${docName}`);
+    }
     dc.document.awareness.setLocalState(null);
     await dc.disconnect();
     agentSessions.delete(docName);
@@ -257,6 +291,77 @@ export function hocuspocusPlugin(): Plugin {
           res.end(JSON.stringify({ ok: true, timestamp }));
         } catch (e) {
           console.error('[agent-write-md]', e);
+          const message = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: message }));
+        }
+      });
+
+      // --- Agent undo/redo endpoints (US-007) ---
+      server.middlewares.use('/api/agent-undo-status', async (req, res) => {
+        if (req.method !== 'GET') {
+          res.writeHead(405);
+          res.end('Method not allowed');
+          return;
+        }
+        try {
+          const dc = await getAgentSession('test-doc');
+          const um = getAgentUndoManager(dc);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ canUndo: um.canUndo(), canRedo: um.canRedo() }));
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: message }));
+        }
+      });
+
+      server.middlewares.use('/api/agent-undo', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.writeHead(405);
+          res.end('Method not allowed');
+          return;
+        }
+        try {
+          const dc = await getAgentSession('test-doc');
+          const um = getAgentUndoManager(dc);
+          if (!um.canUndo()) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, canUndo: false, canRedo: um.canRedo() }));
+            return;
+          }
+          um.undo();
+          console.log('[agent-undo] Undo performed');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() }));
+        } catch (e) {
+          console.error('[agent-undo]', e);
+          const message = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: message }));
+        }
+      });
+
+      server.middlewares.use('/api/agent-redo', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.writeHead(405);
+          res.end('Method not allowed');
+          return;
+        }
+        try {
+          const dc = await getAgentSession('test-doc');
+          const um = getAgentUndoManager(dc);
+          if (!um.canRedo()) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, canUndo: um.canUndo(), canRedo: false }));
+            return;
+          }
+          um.redo();
+          console.log('[agent-undo] Redo performed');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() }));
+        } catch (e) {
+          console.error('[agent-redo]', e);
           const message = e instanceof Error ? e.message : String(e);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: message }));

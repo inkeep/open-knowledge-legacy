@@ -431,6 +431,187 @@ describe('Agent write origin and activity map', () => {
   });
 });
 
+describe('Per-origin undo (server-side UndoManager)', () => {
+  test('UndoManager with trackedOrigins only captures agent-write transactions', async () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    // Server-side UndoManager tracking only 'agent-write' origin
+    // captureTimeout: 0 ensures each transaction is a separate undo entry
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Human edit (no tracked origin)
+    doc.transact(() => {
+      ytext.insert(0, 'Human wrote this\n');
+    }, 'user-edit');
+
+    // Agent edit (tracked origin)
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Agent wrote this\n');
+    }, 'agent-write');
+
+    expect(ytext.toString()).toBe('Human wrote this\nAgent wrote this\n');
+    expect(undoManager.canUndo()).toBe(true);
+
+    // Undo should only reverse the agent edit
+    undoManager.undo();
+
+    expect(ytext.toString()).toBe('Human wrote this\n');
+    expect(undoManager.canUndo()).toBe(false);
+    expect(undoManager.canRedo()).toBe(true);
+  });
+
+  test('interleaved human+agent edits — undo reverses only agent changes in order', async () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Interleave: human → agent → human → agent
+    doc.transact(() => {
+      ytext.insert(0, 'Human 1\n');
+    }, 'user-edit');
+
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Agent 1\n');
+    }, 'agent-write');
+
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Human 2\n');
+    }, 'user-edit');
+
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Agent 2\n');
+    }, 'agent-write');
+
+    expect(ytext.toString()).toBe('Human 1\nAgent 1\nHuman 2\nAgent 2\n');
+
+    // First undo: removes Agent 2
+    undoManager.undo();
+    expect(ytext.toString()).toBe('Human 1\nAgent 1\nHuman 2\n');
+
+    // Second undo: removes Agent 1
+    undoManager.undo();
+    expect(ytext.toString()).toBe('Human 1\nHuman 2\n');
+
+    // No more agent edits to undo
+    expect(undoManager.canUndo()).toBe(false);
+
+    // Human edits preserved
+    expect(ytext.toString()).toContain('Human 1');
+    expect(ytext.toString()).toContain('Human 2');
+  });
+
+  test('redo restores agent edits', () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    doc.transact(() => {
+      ytext.insert(0, 'Agent content\n');
+    }, 'agent-write');
+
+    undoManager.undo();
+    expect(ytext.toString()).toBe('');
+    expect(undoManager.canRedo()).toBe(true);
+
+    undoManager.redo();
+    expect(ytext.toString()).toBe('Agent content\n');
+  });
+
+  test('agent undo propagates through Observer B to XmlFragment', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Original content\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    await wait();
+
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Agent writes via Y.Text
+    doc.transact(() => {
+      const insertAt = ytext.length;
+      const separator = ytext.toString().trim() ? '\n\n' : '';
+      ytext.insert(insertAt, `${separator}Agent added this section\n`);
+    }, 'agent-write');
+
+    await wait();
+
+    // Verify agent content is in XmlFragment
+    let json = yXmlFragmentToProsemirrorJSON(fragment);
+    let md = mdManager.serialize(json);
+    expect(md).toContain('Agent added this section');
+
+    // Undo agent edit
+    undoManager.undo();
+
+    await wait();
+
+    // Observer B should propagate the undo to XmlFragment
+    json = yXmlFragmentToProsemirrorJSON(fragment);
+    md = mdManager.serialize(json);
+    expect(md).toContain('Original content');
+    expect(md).not.toContain('Agent added this section');
+
+    cleanup();
+  });
+
+  test('multiple UndoManagers on same Y.Text do not conflict', () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    // Simulates: browser-side UM (TipTap) + server-side UM (agent)
+    const browserUM = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['browser-edit']),
+    });
+
+    const agentUM = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+    });
+
+    doc.transact(() => {
+      ytext.insert(0, 'Browser typed this\n');
+    }, 'browser-edit');
+
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Agent wrote this\n');
+    }, 'agent-write');
+
+    expect(ytext.toString()).toBe('Browser typed this\nAgent wrote this\n');
+
+    // Agent undo doesn't affect browser edit
+    agentUM.undo();
+    expect(ytext.toString()).toBe('Browser typed this\n');
+
+    // Browser undo doesn't affect (already undone) agent edit
+    browserUM.undo();
+    expect(ytext.toString()).toBe('');
+
+    // Both can redo independently
+    browserUM.redo();
+    expect(ytext.toString()).toBe('Browser typed this\n');
+
+    agentUM.redo();
+    expect(ytext.toString()).toBe('Browser typed this\nAgent wrote this\n');
+  });
+});
+
 describe('Y.Text CRDT foundation', () => {
   test('Y.Text content is accessible after write — simulates collaborative source mode', () => {
     const doc = new Y.Doc();
