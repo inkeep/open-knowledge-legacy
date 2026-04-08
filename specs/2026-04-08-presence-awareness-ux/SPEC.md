@@ -591,7 +591,30 @@ function getIdentity(): { name: string; color: string; coeditor: string; tabId: 
 - **EXCLUDE:** `init_spike/src/server/persistence.ts` (no changes needed), `init_spike/src/editor/extensions/frontmatter.ts`, `init_spike/src/editor/extensions/jsx-component.ts`, git pipeline
 - **STOP_IF:** Changes to y-tiptap or y-codemirror.next source (fork/patch), changes to Yjs core, new npm dependencies not in the awareness/collaboration ecosystem
 - **ASK_FIRST:** UndoManager scope decisions (which Y.Types to track), keyboard shortcut assignments, activity indicator placement
-- **REACT_FIRST:** All new browser-side code MUST be idiomatic React. Use hooks (`useEffect`, `useState`, `useCallback`, custom hooks) for state, side effects, and lifecycle — not raw `document.addEventListener` or imperative DOM. Exceptions: (1) TipTap's `CollaborationCursor.render()` requires a DOM-returning function (TipTap API constraint), (2) ProseMirror plugins are inherently imperative. Everything OUTSIDE those plugin boundaries should be React hooks and components. Specifically: flash trigger logic → `useAgentFlash()` hook, visibility/refocus → `useVisibilityChange()` hook, identity → `useIdentity()` hook, awareness state → `usePresence()` hook, agent undo → `<AgentUndoButton>` component using the copied Button from ~/agents.
+- **REACT_FIRST:** All new browser-side code MUST follow ~/agents React patterns (React 19). See `evidence/frontend-design-system.md` for full pattern reference.
+
+  **Pattern alignment with ~/agents:**
+  - `use()` hook for context (NOT `useContext` — Biome blocks it in ~/agents)
+  - `'use memo'` directive on components/hooks that benefit from memoization (React Compiler annotation mode) — instead of manual `useMemo`/`useCallback`
+  - `useEffect` with proper cleanup for event subscriptions (awareness listeners, visibility change, Y.Map observers) — this is still the ~/agents pattern for subscriptions
+  - Zustand store if presence state needs to be global across components (e.g., `usePresenceStore`)
+  - TanStack React Query `useMutation` for agent undo HTTP calls (`POST /api/agent-undo`)
+
+  **Exceptions** (TipTap/ProseMirror API constraints — imperative by design):
+  - CollaborationCursor `render()` must return HTMLElement (TipTap API)
+  - ProseMirror flash plugin internals are imperative
+
+  **Hooks to create:**
+  - `usePresence(provider)` — watches `awareness.on('change')`, returns participants array. Uses `useEffect` for subscription + cleanup.
+  - `useAgentFlash(doc)` — watches Y.Map('activity') + XmlFragment observeDeep, triggers flash. `useEffect` for observers.
+  - `useVisibilityChange(callback)` — wraps `document.addEventListener('visibilitychange')` in `useEffect` with cleanup.
+  - `useIdentity()` — reads `?coeditor=` param + localStorage, returns `{ name, color, coeditor, tabId }`. Pure derivation, no effects needed.
+  - `useAgentUndo(docName)` — wraps `useMutation` for `POST /api/agent-undo` and `POST /api/agent-redo`. Returns `{ undo, redo, canUndo, canRedo }`.
+
+  **Components to create:**
+  - `<PresenceBar provider={...} />` — uses `usePresence()` hook
+  - `<PresenceBadge user={...} mode={...} />` — pure display, uses Badge from ~/agents
+  - `<AgentUndoButton docName={...} />` — uses `useAgentUndo()` hook + Button from ~/agents
 - **DESIGN_SYSTEM:** All new UI components MUST align with ~/agents design system. Copy source files directly from `~/agents/agents-manage-ui/` — no wrappers, no abstractions. See `evidence/frontend-design-system.md` for full token reference.
 
   **Direct copies (unmodified):**
