@@ -344,7 +344,14 @@ export function setupObservers(deps: ObserverDeps): () => void {
     const initialBody = mdManager.serialize(initialJson);
     const initialFrontmatter = getFrontmatter(doc);
     lastSyncedXmlMd = prependFrontmatter(initialFrontmatter, initialBody);
-  } catch {
+  } catch (err) {
+    // Baseline init failure means Observer A starts from an empty snapshot;
+    // the first sync will effectively be a full replacement. Surface this so
+    // initialization failures are diagnosable rather than silent.
+    console.warn(
+      '[Observer A] Baseline init failed — starting from empty snapshot:',
+      err instanceof Error ? err.message : String(err),
+    );
     lastSyncedXmlMd = '';
   }
 

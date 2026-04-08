@@ -93,21 +93,44 @@ function generateRandomColor(): string {
 
 // --- Core ---
 
+/**
+ * Safe localStorage getter — returns null on any access error (Safari private
+ * browsing, iframe sandboxing, user-disabled storage). Without this guard, the
+ * entire editor mount crashes in private browsing mode.
+ */
+function safeLocalStorageGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** Safe localStorage setter — silently no-ops on error. */
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Swallow — QuotaExceededError in private browsing, etc.
+    // Identity stays fresh-per-session, which is the correct graceful degradation.
+  }
+}
+
 export function getIdentity(): Identity {
   const params = new URLSearchParams(window.location.search);
   const coeditor = params.get('coeditor') || 'standalone';
   const tabId = crypto.randomUUID();
 
-  let name = localStorage.getItem(LS_NAME_KEY);
-  let color = localStorage.getItem(LS_COLOR_KEY);
+  let name = safeLocalStorageGet(LS_NAME_KEY);
+  let color = safeLocalStorageGet(LS_COLOR_KEY);
 
   if (!name) {
     name = generateRandomName();
-    localStorage.setItem(LS_NAME_KEY, name);
+    safeLocalStorageSet(LS_NAME_KEY, name);
   }
   if (!color) {
     color = generateRandomColor();
-    localStorage.setItem(LS_COLOR_KEY, color);
+    safeLocalStorageSet(LS_COLOR_KEY, color);
   }
 
   return { name, color, coeditor, tabId };

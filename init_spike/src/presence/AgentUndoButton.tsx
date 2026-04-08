@@ -15,9 +15,21 @@ function useAgentUndo(): AgentUndoState {
   const [canRedo, setCanRedo] = useState(false);
   const [isPending, setIsPending] = useState(false);
 
-  // Poll status every 2s
+  // Poll status with exponential backoff on failures.
+  // Base interval 2s. Failures double up to a 30s cap; resets on next success.
+  // Prevents thundering-herd during server outages.
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let currentDelayMs = 2000;
+    const BASE_DELAY_MS = 2000;
+    const MAX_DELAY_MS = 30_000;
+
+    const scheduleNext = () => {
+      if (!active) return;
+      timer = setTimeout(poll, currentDelayMs);
+    };
+
     const poll = async () => {
       try {
         const res = await fetch('/api/agent-undo-status');
@@ -26,17 +38,24 @@ function useAgentUndo(): AgentUndoState {
           const data = (await res.json()) as { canUndo: boolean; canRedo: boolean };
           setCanUndo(data.canUndo);
           setCanRedo(data.canRedo);
+          currentDelayMs = BASE_DELAY_MS; // reset backoff on success
+        } else {
+          // Non-2xx response — back off (server is reachable but unhealthy)
+          currentDelayMs = Math.min(currentDelayMs * 2, MAX_DELAY_MS);
+          console.warn('[agent-undo] Status poll returned non-ok:', res.status);
         }
       } catch (e) {
-        console.debug('[agent-undo] Status poll failed:', e);
+        // Network error — back off more aggressively
+        currentDelayMs = Math.min(currentDelayMs * 2, MAX_DELAY_MS);
+        console.warn('[agent-undo] Status poll failed (backoff →', currentDelayMs, 'ms):', e);
       }
+      scheduleNext();
     };
 
     poll();
-    const interval = setInterval(poll, 2000);
     return () => {
       active = false;
-      clearInterval(interval);
+      if (timer) clearTimeout(timer);
     };
   }, []);
 
@@ -48,9 +67,11 @@ function useAgentUndo(): AgentUndoState {
         const data = (await res.json()) as { ok: boolean; canUndo: boolean; canRedo: boolean };
         setCanUndo(data.canUndo);
         setCanRedo(data.canRedo);
+      } else {
+        console.warn('[agent-undo] Undo request returned non-ok:', res.status);
       }
     } catch (e) {
-      console.error('[agent-undo] Undo request failed:', e);
+      console.warn('[agent-undo] Undo request failed:', e);
     } finally {
       setIsPending(false);
     }
@@ -64,9 +85,11 @@ function useAgentUndo(): AgentUndoState {
         const data = (await res.json()) as { ok: boolean; canUndo: boolean; canRedo: boolean };
         setCanUndo(data.canUndo);
         setCanRedo(data.canRedo);
+      } else {
+        console.warn('[agent-undo] Redo request returned non-ok:', res.status);
       }
     } catch (e) {
-      console.error('[agent-undo] Redo request failed:', e);
+      console.warn('[agent-undo] Redo request failed:', e);
     } finally {
       setIsPending(false);
     }

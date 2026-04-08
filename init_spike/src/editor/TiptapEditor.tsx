@@ -144,8 +144,17 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       Extension.create({
         name: 'collaborationCursor',
         addProseMirrorPlugins() {
+          const awareness = provider.awareness;
+          if (!awareness) {
+            // HocuspocusProvider constructs its awareness instance synchronously,
+            // so this should never happen. If it does, fail loudly with context
+            // instead of passing a bogus object that yCursorPlugin will blow up on.
+            throw new Error(
+              '[TiptapEditor] HocuspocusProvider has no awareness instance — cursor plugin cannot initialize',
+            );
+          }
           return [
-            yCursorPlugin(provider.awareness ?? ({} as never), {
+            yCursorPlugin(awareness, {
               cursorBuilder: renderCursor,
             }),
           ];

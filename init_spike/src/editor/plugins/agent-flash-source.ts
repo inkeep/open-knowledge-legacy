@@ -70,15 +70,23 @@ export function createAgentFlashSourceExtension(doc: Y.Doc): Extension {
     let lastFlashTime = 0;
     let lastSeenTimestamp = Date.now();
     let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
+    // Track the removeFlash timeout so destroy() can cancel it before it dispatches
+    // on a torn-down view (which would throw).
+    let flashRemoveTimeout: ReturnType<typeof setTimeout> | null = null;
+    let destroyed = false;
 
     function flashAllLines() {
       const docLength = view.state.doc.length;
       if (docLength === 0) return;
+      if (destroyed) return;
       view.dispatch({
         effects: addFlash.of({ from: 0, to: docLength }),
       });
-      // Remove flash after duration
-      setTimeout(() => {
+      // Clear any prior remove timer before scheduling a new one
+      if (flashRemoveTimeout) clearTimeout(flashRemoveTimeout);
+      flashRemoveTimeout = setTimeout(() => {
+        flashRemoveTimeout = null;
+        if (destroyed) return;
         view.dispatch({
           effects: removeFlash.of(null),
         });
@@ -132,10 +140,16 @@ export function createAgentFlashSourceExtension(doc: Y.Doc): Extension {
         // No-op — flash is driven by Y.Map observation, not editor updates
       },
       destroy() {
+        destroyed = true;
         activityMap.unobserve(activityObserver);
         document.removeEventListener('visibilitychange', visibilityHandler);
         if (pendingTimeout) {
           clearTimeout(pendingTimeout);
+          pendingTimeout = null;
+        }
+        if (flashRemoveTimeout) {
+          clearTimeout(flashRemoveTimeout);
+          flashRemoveTimeout = null;
         }
       },
     };

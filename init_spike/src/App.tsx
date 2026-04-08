@@ -36,7 +36,10 @@ export function App() {
 
       {/* Toolbar */}
       <div className="flex items-center gap-2 mb-3">
-        <div className="flex items-center gap-1 rounded-md border p-0.5">
+        <fieldset
+          className="flex items-center gap-1 rounded-md border p-0.5 m-0"
+          aria-label="Editor mode"
+        >
           <Button
             variant={!isSourceMode ? 'default' : 'ghost'}
             size="sm"
@@ -55,7 +58,7 @@ export function App() {
           >
             Source
           </Button>
-        </div>
+        </fieldset>
         <div className="ml-auto">
           <AgentUndoButton />
         </div>

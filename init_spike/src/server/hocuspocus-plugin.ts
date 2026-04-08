@@ -94,7 +94,7 @@ async function getAgentSession(docName: string): Promise<AgentDirectConnection> 
         color: '#D97757',
         type: 'agent',
         icon: 'claude',
-        tabId: `agent-${Date.now()}`,
+        tabId: `agent-${crypto.randomUUID()}`,
       },
       mode: 'idle',
     });
