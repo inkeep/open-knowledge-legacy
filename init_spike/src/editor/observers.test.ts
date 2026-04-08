@@ -1,16 +1,28 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from './extensions/shared';
-import { ORIGIN_TEXT_TO_TREE, ORIGIN_TREE_TO_TEXT, setupObservers } from './observers';
+import {
+  __resetCoordinationState,
+  ORIGIN_TEXT_TO_TREE,
+  ORIGIN_TREE_TO_TEXT,
+  setupObservers,
+} from './observers';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-/** Helper: wait for debounce + microtask to settle */
-function wait(ms = 80): Promise<void> {
+// Reset module-level coordination state between tests so the typing-defer and
+// other-write-defer windows don't leak between unrelated test cases.
+beforeEach(() => {
+  __resetCoordinationState();
+});
+
+/** Helper: wait for debounce + microtask to settle. Must exceed TYPING_DEFER_MS (300ms)
+ *  for tests that trigger the defer path (e.g., Y.Text writes from non-local origin). */
+function wait(ms = 400): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
@@ -353,6 +365,265 @@ describe('Agent writes through observer chain', () => {
   });
 });
 
+describe('Agent write origin and activity map', () => {
+  test('agent-write origin Y.Text write propagates to XmlFragment via Observer B', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Seed content\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    await wait();
+
+    // Simulate the new agent write path: Y.Text write with 'agent-write' origin
+    // + activity map write in the same transaction
+    doc.transact(() => {
+      const currentText = ytext.toString();
+      const insertAt = currentText.length;
+      const separator = currentText.trim() ? '\n\n' : '';
+      ytext.insert(insertAt, `${separator}Agent content via new path\n`);
+
+      const activityMap = doc.getMap('activity');
+      activityMap.set('agent-1', {
+        agentId: 'agent-1',
+        timestamp: Date.now(),
+        type: 'insert',
+        description: 'Added: Agent content via new path',
+      });
+    }, 'agent-write');
+
+    await wait();
+
+    // Observer B should have propagated to XmlFragment
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const md = mdManager.serialize(json);
+    expect(md).toContain('Seed content');
+    expect(md).toContain('Agent content via new path');
+
+    // Activity map should contain the entry
+    const activityMap = doc.getMap('activity');
+    const entry = activityMap.get('agent-1') as Record<string, unknown>;
+    expect(entry).toBeTruthy();
+    expect(entry.agentId).toBe('agent-1');
+    expect(entry.type).toBe('insert');
+    expect(typeof entry.timestamp).toBe('number');
+
+    cleanup();
+  });
+
+  test('activity map entries coexist with content writes in same transaction', async () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+    const activityMap = doc.getMap('activity');
+
+    // Track that both changes arrive in a single transaction
+    let transactionCount = 0;
+    doc.on('afterTransaction', () => {
+      transactionCount++;
+    });
+
+    const beforeCount = transactionCount;
+
+    doc.transact(() => {
+      ytext.insert(0, 'Agent wrote this\n');
+      activityMap.set('agent-1', {
+        agentId: 'agent-1',
+        timestamp: Date.now(),
+        type: 'insert',
+      });
+    }, 'agent-write');
+
+    // Should be exactly one transaction for both writes
+    expect(transactionCount - beforeCount).toBe(1);
+
+    // Both should be present
+    expect(ytext.toString()).toContain('Agent wrote this');
+    expect(activityMap.get('agent-1')).toBeTruthy();
+  });
+});
+
+describe('Per-origin undo (server-side UndoManager)', () => {
+  test('UndoManager with trackedOrigins only captures agent-write transactions', async () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    // Server-side UndoManager tracking only 'agent-write' origin
+    // captureTimeout: 0 ensures each transaction is a separate undo entry
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Human edit (no tracked origin)
+    doc.transact(() => {
+      ytext.insert(0, 'Human wrote this\n');
+    }, 'user-edit');
+
+    // Agent edit (tracked origin)
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Agent wrote this\n');
+    }, 'agent-write');
+
+    expect(ytext.toString()).toBe('Human wrote this\nAgent wrote this\n');
+    expect(undoManager.canUndo()).toBe(true);
+
+    // Undo should only reverse the agent edit
+    undoManager.undo();
+
+    expect(ytext.toString()).toBe('Human wrote this\n');
+    expect(undoManager.canUndo()).toBe(false);
+    expect(undoManager.canRedo()).toBe(true);
+  });
+
+  test('interleaved human+agent edits — undo reverses only agent changes in order', async () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Interleave: human → agent → human → agent
+    doc.transact(() => {
+      ytext.insert(0, 'Human 1\n');
+    }, 'user-edit');
+
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Agent 1\n');
+    }, 'agent-write');
+
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Human 2\n');
+    }, 'user-edit');
+
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Agent 2\n');
+    }, 'agent-write');
+
+    expect(ytext.toString()).toBe('Human 1\nAgent 1\nHuman 2\nAgent 2\n');
+
+    // First undo: removes Agent 2
+    undoManager.undo();
+    expect(ytext.toString()).toBe('Human 1\nAgent 1\nHuman 2\n');
+
+    // Second undo: removes Agent 1
+    undoManager.undo();
+    expect(ytext.toString()).toBe('Human 1\nHuman 2\n');
+
+    // No more agent edits to undo
+    expect(undoManager.canUndo()).toBe(false);
+
+    // Human edits preserved
+    expect(ytext.toString()).toContain('Human 1');
+    expect(ytext.toString()).toContain('Human 2');
+  });
+
+  test('redo restores agent edits', () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    doc.transact(() => {
+      ytext.insert(0, 'Agent content\n');
+    }, 'agent-write');
+
+    undoManager.undo();
+    expect(ytext.toString()).toBe('');
+    expect(undoManager.canRedo()).toBe(true);
+
+    undoManager.redo();
+    expect(ytext.toString()).toBe('Agent content\n');
+  });
+
+  test('agent undo propagates through Observer B to XmlFragment', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Original content\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    await wait();
+
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Agent writes via Y.Text
+    doc.transact(() => {
+      const insertAt = ytext.length;
+      const separator = ytext.toString().trim() ? '\n\n' : '';
+      ytext.insert(insertAt, `${separator}Agent added this section\n`);
+    }, 'agent-write');
+
+    await wait();
+
+    // Verify agent content is in XmlFragment
+    let json = yXmlFragmentToProsemirrorJSON(fragment);
+    let md = mdManager.serialize(json);
+    expect(md).toContain('Agent added this section');
+
+    // Undo agent edit
+    undoManager.undo();
+
+    await wait();
+
+    // Observer B should propagate the undo to XmlFragment
+    json = yXmlFragmentToProsemirrorJSON(fragment);
+    md = mdManager.serialize(json);
+    expect(md).toContain('Original content');
+    expect(md).not.toContain('Agent added this section');
+
+    cleanup();
+  });
+
+  test('multiple UndoManagers on same Y.Text do not conflict', () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    // Simulates: browser-side UM (TipTap) + server-side UM (agent)
+    const browserUM = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['browser-edit']),
+    });
+
+    const agentUM = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+    });
+
+    doc.transact(() => {
+      ytext.insert(0, 'Browser typed this\n');
+    }, 'browser-edit');
+
+    doc.transact(() => {
+      ytext.insert(ytext.length, 'Agent wrote this\n');
+    }, 'agent-write');
+
+    expect(ytext.toString()).toBe('Browser typed this\nAgent wrote this\n');
+
+    // Agent undo doesn't affect browser edit
+    agentUM.undo();
+    expect(ytext.toString()).toBe('Browser typed this\n');
+
+    // Browser undo doesn't affect (already undone) agent edit
+    browserUM.undo();
+    expect(ytext.toString()).toBe('');
+
+    // Both can redo independently
+    browserUM.redo();
+    expect(ytext.toString()).toBe('Browser typed this\n');
+
+    agentUM.redo();
+    expect(ytext.toString()).toBe('Browser typed this\nAgent wrote this\n');
+  });
+});
+
 describe('Y.Text CRDT foundation', () => {
   test('Y.Text content is accessible after write — simulates collaborative source mode', () => {
     const doc = new Y.Doc();
@@ -380,5 +651,116 @@ describe('Y.Text CRDT foundation', () => {
 
     const ytext2 = doc2.getText('source');
     expect(ytext2.toString()).toBe('Tab 1 typed this');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Regression tests for concurrent edit loss (debug finding)
+// Root cause: Observer B's updateYFragment replaced the XmlFragment tree during
+// its debounce window, obliterating concurrent user edits. Observer A's diffLines
+// could also subtract agent content from Y.Text when user typing arrived first.
+// Fix: mutual-exclusion via TYPING_DEFER_MS guard on both observers.
+// ─────────────────────────────────────────────────────────────
+
+describe('Concurrent edit race conditions (regression)', () => {
+  test('Observer B defers while user is typing to avoid destroying in-flight edits', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Existing\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent writes to Y.Text (would normally trigger Observer B → updateYFragment)
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\n\nAgent content');
+    }, 'agent-write');
+
+    // User is "typing" — keep the defer window fresh
+    const typingInterval = setInterval(() => markUserTyping(), 20);
+
+    // Meanwhile, the user's typing has mutated XmlFragment (simulated)
+    markUserTyping();
+    const para = new Y.XmlElement('paragraph');
+    const text = new Y.XmlText();
+    text.applyDelta([{ insert: 'USER TYPED' }]);
+    para.insert(0, [text]);
+    fragment.push([para]);
+
+    // Let typing continue for 500ms — during this time, Observer B should keep deferring
+    await wait(500);
+
+    // Stop typing
+    clearInterval(typingInterval);
+
+    // Wait for typing window to expire + observers to catch up
+    await wait(500);
+
+    // Final state: user-typed content must still be in XmlFragment.
+    // (This is what matters — the tree is the WYSIWYG source of truth.)
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const fragmentMd = mdManager.serialize(json);
+    expect(fragmentMd).toContain('USER TYPED');
+    cleanup();
+  });
+
+  test('Observer B early-exits when XmlFragment already matches Y.Text', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    // Put the same content into both via a normal markdown apply
+    applyMarkdown(doc, fragment, 'Synced content\n');
+    await wait();
+
+    // Count Observer B log firings by snapshotting console.log calls would require
+    // more setup; instead verify the end state is stable — Observer B should not
+    // have introduced any drift.
+    const md = ytext.toString();
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const serializedBody = mdManager.serialize(json);
+    expect(md.trim()).toBe(serializedBody.trim());
+    cleanup();
+  });
+
+  test('Observer A defers after agent write so the diff does not subtract agent content', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'User typed this first\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    // Baseline: Y.Text should have the seed content after initial sync
+    expect(ytext.toString()).toContain('User typed this first');
+
+    // Agent writes directly to Y.Text (this sets lastYTextWriteFromOther via Observer B's handler)
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\n\nAgent content');
+    }, 'agent-write');
+
+    // Now force an Observer A firing via an empty XmlFragment mutation
+    // (e.g., attribute tweak). Without the fix, Observer A's diffLines would
+    // subtract "Agent content" from Y.Text because the XmlFragment doesn't have it yet.
+    const para = new Y.XmlElement('paragraph');
+    para.setAttribute('class', 'trigger-observer-a');
+    fragment.push([para]);
+
+    // Wait for both observers to run (including the TYPING_DEFER_MS defer window)
+    await wait(600);
+
+    // Final Y.Text must still contain the agent's content.
+    // The user's typed content and seed content must still be there too.
+    const md = ytext.toString();
+    expect(md).toContain('User typed this first');
+    expect(md).toContain('Agent content');
+    cleanup();
   });
 });

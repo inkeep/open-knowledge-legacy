@@ -1,8 +1,13 @@
 /**
- * V3: Agent simulator — triggers DirectConnection writes via HTTP API.
+ * V4: Agent simulator — triggers DirectConnection writes via HTTP API.
+ *
+ * The agent write endpoints (/api/agent-write, /api/agent-write-md) now:
+ * - Set agent awareness (name: Claude, color: #D97757, type: agent)
+ * - Write Y.Map('activity') entry alongside content for flash plugins
+ * - Use 'agent-write' origin for per-origin undo tracking
  *
  * Usage:
- *   bun run src/server/agent-sim.ts                    # single raw Y.XmlElement write
+ *   bun run src/server/agent-sim.ts                    # single raw write
  *   bun run src/server/agent-sim.ts --rapid 5          # 5 rapid writes (100ms apart)
  *   bun run src/server/agent-sim.ts --markdown         # single markdown write (unified path)
  *   bun run src/server/agent-sim.ts --markdown --rapid 5
@@ -31,34 +36,72 @@ async function agentWriteMarkdown(
   return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
 }
 
+async function checkUndoStatus(): Promise<{ canUndo: boolean; canRedo: boolean } | null> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/agent-undo-status`);
+    if (res.ok) return (await res.json()) as { canUndo: boolean; canRedo: boolean };
+  } catch {
+    // Server not running or endpoint not available
+  }
+  return null;
+}
+
 const args = process.argv.slice(2);
 const useMarkdown = args.includes('--markdown');
 const rapidIndex = args.indexOf('--rapid');
 const count = rapidIndex >= 0 ? Number.parseInt(args[rapidIndex + 1] || '5', 10) : 1;
 
-async function doWrite() {
+async function doWrite(index: number) {
   const timestamp = new Date().toISOString();
-  if (useMarkdown) {
-    return agentWriteMarkdown(`Agent markdown write at ${timestamp}`, 'append');
+  try {
+    let result: { ok: boolean; timestamp?: string; error?: string };
+    if (useMarkdown) {
+      result = await agentWriteMarkdown(`Agent markdown write at ${timestamp}`, 'append');
+    } else {
+      result = await agentWriteRaw();
+    }
+
+    if (result.ok) {
+      console.log(
+        `  [write ${index}] OK — awareness: editing→idle, activity map updated, origin: agent-write`,
+      );
+    } else {
+      console.error(`  [write ${index}] FAIL — ${result.error ?? 'unknown error'}`);
+    }
+    return result;
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`  [write ${index}] ERROR — ${message}`);
+    console.error('    Is the dev server running? (bun run dev)');
+    return { ok: false, error: message };
   }
-  return agentWriteRaw();
 }
 
+console.log(`\n--- Agent Simulator (v4) ---`);
+console.log(`Mode: ${useMarkdown ? 'markdown' : 'raw'}`);
+console.log(`Writes: ${count}${count > 1 ? ' (rapid, 100ms apart)' : ''}`);
+console.log(`Presence: Agent connects with awareness (Claude, #D97757, type: agent)`);
+console.log(`Activity: Y.Map('activity') updated per write for flash plugins`);
+console.log(`Undo: writes tracked with 'agent-write' origin\n`);
+
 if (count > 1) {
-  console.log(`Rapid mode: ${count} writes, 100ms apart (${useMarkdown ? 'markdown' : 'raw'})\n`);
   for (let i = 0; i < count; i++) {
-    const result = await doWrite();
-    console.log(
-      `  Write ${i + 1}/${count}: ${result.ok ? 'OK' : 'FAIL'} ${result.timestamp ?? result.error}`,
-    );
+    await doWrite(i + 1);
     if (i < count - 1) {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
 } else {
-  console.log(`Single agent write (${useMarkdown ? 'markdown' : 'raw'})...`);
-  const result = await doWrite();
-  console.log(`  Result: ${result.ok ? 'OK' : 'FAIL'} ${result.timestamp ?? result.error}`);
+  await doWrite(1);
 }
 
-console.log('\nDone. Check the browser editor for new paragraph(s).');
+// Check undo status after writes
+const undoStatus = await checkUndoStatus();
+if (undoStatus) {
+  console.log(`\nUndo status: canUndo=${undoStatus.canUndo}, canRedo=${undoStatus.canRedo}`);
+}
+
+console.log('\nDone. Check the browser for:');
+console.log('  - Agent in presence bar (Claude badge)');
+console.log('  - Region flash on new content');
+console.log('  - "Undo Agent Edit" button enabled');

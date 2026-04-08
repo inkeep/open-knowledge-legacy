@@ -29,9 +29,7 @@ describe('jsx-component renderMarkdown', () => {
   test('serializes content without backticks using 3-backtick fence', () => {
     const json = {
       type: 'doc',
-      content: [
-        { type: 'jsxComponent', attrs: { content: '<Button>Click</Button>' } },
-      ],
+      content: [{ type: 'jsxComponent', attrs: { content: '<Button>Click</Button>' } }],
     };
     const md = mdManager.serialize(json);
     expect(md).toContain('```jsx-component');
@@ -59,16 +57,13 @@ describe('jsx-component round-trip', () => {
     const parsed = mdManager.parse(original);
     const pmNode = schema.nodeFromJSON(parsed);
     expect(pmNode.firstChild?.type.name).toBe('jsxComponent');
-    expect(pmNode.firstChild?.attrs.content).toBe(
-      '<Button variant="primary">Go</Button>',
-    );
+    expect(pmNode.firstChild?.attrs.content).toBe('<Button variant="primary">Go</Button>');
     const serialized = mdManager.serialize(parsed);
     expect(serialized.trim()).toBe(original);
   });
 
   test('content with triple backticks round-trips through parse→serialize', () => {
-    const original =
-      '````jsx-component\ncode:\n```js\nconst x = 1;\n```\n````';
+    const original = '````jsx-component\ncode:\n```js\nconst x = 1;\n```\n````';
     const parsed = mdManager.parse(original);
     const pmNode = schema.nodeFromJSON(parsed);
     expect(pmNode.firstChild?.type.name).toBe('jsxComponent');
@@ -78,8 +73,7 @@ describe('jsx-component round-trip', () => {
   });
 
   test('content with 4 backticks round-trips through parse→serialize', () => {
-    const original =
-      '`````jsx-component\n````example\nstuff\n````\n`````';
+    const original = '`````jsx-component\n````example\nstuff\n````\n`````';
     const parsed = mdManager.parse(original);
     const pmNode = schema.nodeFromJSON(parsed);
     expect(pmNode.firstChild?.type.name).toBe('jsxComponent');

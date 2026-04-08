@@ -1,5 +1,10 @@
 import { resolve } from 'node:path';
-import { Hocuspocus, type LocalTransactionOrigin } from '@hocuspocus/server';
+import {
+  type DirectConnection,
+  type Document,
+  Hocuspocus,
+  type LocalTransactionOrigin,
+} from '@hocuspocus/server';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment } from '@tiptap/y-tiptap';
@@ -10,6 +15,16 @@ import { stripFrontmatter } from '../editor/extensions/frontmatter';
 import { sharedExtensions } from '../editor/extensions/shared';
 import { startWatcher } from './file-watcher';
 import { createPersistenceExtension } from './persistence';
+
+/**
+ * The DirectConnection class exposes `.document` at runtime but the exported
+ * interface only declares `transact()` and `disconnect()`. We extend the
+ * interface so we can access `document` (needed for `dc.document.transact()`
+ * with a custom origin string and for awareness).
+ */
+interface AgentDirectConnection extends DirectConnection {
+  document: Document;
+}
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 const CONTENT_DIR = resolve(
@@ -26,6 +41,100 @@ export const hocuspocus = new Hocuspocus({
   maxDebounce: 10000,
   extensions: [createPersistenceExtension()],
 });
+
+// --- Persistent agent session model ---
+// DirectConnections stay open for the agent's session lifetime.
+// Awareness persists between transactions.
+const agentSessions = new Map<string, AgentDirectConnection>();
+
+/** Agent write origin — tracked by server-side UndoManager (US-007). */
+export const AGENT_WRITE_ORIGIN = 'agent-write';
+
+/** Default agent identity. Key used in Y.Map('activity') per D11. */
+const DEFAULT_AGENT_ID = 'claude-1';
+
+// --- Server-side UndoManager for per-origin undo (US-007) ---
+// Tracks only 'agent-write' origin on Y.Text('source').
+// captureTimeout: 0 ensures each agent transaction is a separate undo entry.
+const agentUndoManagers = new Map<string, Y.UndoManager>();
+
+/**
+ * Get or create a server-side UndoManager for agent writes on a document.
+ * Created alongside the agent session — tracks Y.Text('source') with origin 'agent-write'.
+ */
+function getAgentUndoManager(dc: AgentDirectConnection): Y.UndoManager {
+  const docName = dc.document.name;
+  let um = agentUndoManagers.get(docName);
+  if (!um) {
+    const ytext = dc.document.getText('source');
+    um = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set([AGENT_WRITE_ORIGIN]),
+      captureTimeout: 0,
+    });
+    agentUndoManagers.set(docName, um);
+    console.log(`[agent-undo] Created UndoManager for: ${docName}`);
+  }
+  return um;
+}
+
+/**
+ * Get or create a persistent agent DirectConnection for a document.
+ * Sets agent awareness (name, color, type) on first open.
+ */
+async function getAgentSession(docName: string): Promise<AgentDirectConnection> {
+  let dc = agentSessions.get(docName);
+  if (!dc) {
+    // Cast: the runtime DirectConnection class has `.document` but the
+    // exported interface doesn't declare it. See AgentDirectConnection type above.
+    dc = (await hocuspocus.openDirectConnection(docName)) as AgentDirectConnection;
+    // Set agent presence (persists across transactions)
+    dc.document.awareness.setLocalState({
+      user: {
+        name: 'Claude',
+        color: '#D97757',
+        type: 'agent',
+        icon: 'claude',
+        tabId: `agent-${crypto.randomUUID()}`,
+      },
+      mode: 'idle',
+    });
+    agentSessions.set(docName, dc);
+    // Initialize the UndoManager alongside the session
+    getAgentUndoManager(dc);
+    console.log(`[agent-session] Created persistent session for: ${docName}`);
+  }
+  return dc;
+}
+
+/**
+ * Disconnect and remove an agent session. Clears awareness before disconnect.
+ */
+async function closeAgentSession(docName: string): Promise<void> {
+  const dc = agentSessions.get(docName);
+  if (dc) {
+    // Destroy UndoManager before disconnecting
+    const um = agentUndoManagers.get(docName);
+    if (um) {
+      um.destroy();
+      agentUndoManagers.delete(docName);
+      console.log(`[agent-undo] Destroyed UndoManager for: ${docName}`);
+    }
+    dc.document.awareness.setLocalState(null);
+    await dc.disconnect();
+    agentSessions.delete(docName);
+    console.log(`[agent-session] Closed session for: ${docName}`);
+  }
+}
+
+/**
+ * Close all agent sessions. Used during test reset.
+ */
+async function closeAllAgentSessions(): Promise<void> {
+  const entries = [...agentSessions.keys()];
+  for (const docName of entries) {
+    await closeAgentSession(docName);
+  }
+}
 
 export function hocuspocusPlugin(): Plugin {
   return {
@@ -48,11 +157,16 @@ export function hocuspocusPlugin(): Plugin {
             ws.on('close', (code: number, reason: Buffer) => {
               clientConnection.handleClose({ code, reason: reason.toString() });
             });
+            ws.on('error', (err) => {
+              console.error('[collab] WebSocket error:', err);
+              ws.terminate();
+            });
           });
         }
       });
 
       // HTTP API for agent-sim DirectConnection writes
+      // Migrated: XmlFragment → Y.Text writes (audit C2), conn.transact → dc.document.transact
       server.middlewares.use('/api/agent-write', async (req, res) => {
         if (req.method !== 'POST') {
           res.writeHead(405);
@@ -61,20 +175,34 @@ export function hocuspocusPlugin(): Plugin {
         }
 
         try {
-          const conn = await hocuspocus.openDirectConnection('test-doc');
+          const dc = await getAgentSession('test-doc');
           const timestamp = new Date().toISOString();
+          const content = `Hello from the agent! ${timestamp}`;
 
+          // Set awareness to 'editing' during write, reset to 'idle' even on failure
+          dc.document.awareness.setLocalStateField('mode', 'editing');
           try {
-            await conn.transact((doc) => {
-              const fragment = doc.getXmlFragment('default');
-              const paragraph = new Y.XmlElement('paragraph');
-              const text = new Y.XmlText();
-              text.applyDelta([{ insert: `Hello from the agent! ${timestamp}` }]);
-              paragraph.insert(0, [text]);
-              fragment.push([paragraph]);
-            });
+            // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
+            // which hardcodes origin to { source: 'local' }.
+            // Write to Y.Text (not XmlFragment) — Observer B propagates to tree.
+            dc.document.transact(() => {
+              const ytext = dc.document.getText('source');
+              const currentText = ytext.toString();
+              const insertAt = currentText.length;
+              const separator = currentText.trim() ? '\n\n' : '';
+              ytext.insert(insertAt, `${separator}${content}\n`);
+
+              // Activity map write INSIDE the same transaction (F1/C3 fix)
+              const activityMap = dc.document.getMap('activity');
+              activityMap.set(DEFAULT_AGENT_ID, {
+                agentId: DEFAULT_AGENT_ID,
+                timestamp: Date.now(),
+                type: 'insert',
+                description: `Added: ${content.slice(0, 50)}`,
+              });
+            }, AGENT_WRITE_ORIGIN);
           } finally {
-            await conn.disconnect();
+            dc.document.awareness.setLocalStateField('mode', 'idle');
           }
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -88,6 +216,7 @@ export function hocuspocusPlugin(): Plugin {
       });
 
       // HTTP API for agent-sim markdown writes (unified write path)
+      // Migrated: conn.transact → dc.document.transact with 'agent-write' origin
       server.middlewares.use('/api/agent-write-md', async (req, res) => {
         if (req.method !== 'POST') {
           res.writeHead(405);
@@ -132,15 +261,16 @@ export function hocuspocusPlugin(): Plugin {
           }
 
           const position = pos === 'prepend' ? 'prepend' : 'append';
-          const conn = await hocuspocus.openDirectConnection('test-doc');
+          const dc = await getAgentSession('test-doc');
           const timestamp = new Date().toISOString();
 
+          // Set awareness to 'editing' during write, reset to 'idle' even on failure
+          dc.document.awareness.setLocalStateField('mode', 'editing');
           try {
+            // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
             // Direct Y.Text insertion — Observer B handles the tree update.
-            // Simpler than serialize→splice→parse→updateYFragment, and preserves
-            // per-character CRDT IDs in the inserted text.
-            await conn.transact((doc) => {
-              const ytext = doc.getText('source');
+            dc.document.transact(() => {
+              const ytext = dc.document.getText('source');
               const currentText = ytext.toString();
 
               if (position === 'prepend') {
@@ -150,15 +280,107 @@ export function hocuspocusPlugin(): Plugin {
                 const separator = currentText.trim() ? '\n\n' : '';
                 ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
               }
-            });
+
+              // Activity map write INSIDE the same transaction (F1/C3 fix)
+              const activityMap = dc.document.getMap('activity');
+              activityMap.set(DEFAULT_AGENT_ID, {
+                agentId: DEFAULT_AGENT_ID,
+                timestamp: Date.now(),
+                type: 'insert',
+                description: `Added: ${markdown.trim().slice(0, 50)}`,
+              });
+            }, AGENT_WRITE_ORIGIN);
           } finally {
-            await conn.disconnect();
+            dc.document.awareness.setLocalStateField('mode', 'idle');
           }
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, timestamp }));
         } catch (e) {
           console.error('[agent-write-md]', e);
+          const message = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: message }));
+        }
+      });
+
+      // --- Agent undo/redo endpoints (US-007) ---
+      server.middlewares.use('/api/agent-undo-status', async (req, res) => {
+        if (req.method !== 'GET') {
+          res.writeHead(405);
+          res.end('Method not allowed');
+          return;
+        }
+        try {
+          // Don't create a session just to check status — only check if one exists
+          const dc = agentSessions.get('test-doc');
+          if (!dc) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: true, canUndo: false, canRedo: false }));
+            return;
+          }
+          const um = agentUndoManagers.get('test-doc');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              ok: true,
+              canUndo: um?.canUndo() ?? false,
+              canRedo: um?.canRedo() ?? false,
+            }),
+          );
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: message }));
+        }
+      });
+
+      server.middlewares.use('/api/agent-undo', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.writeHead(405);
+          res.end('Method not allowed');
+          return;
+        }
+        try {
+          const dc = await getAgentSession('test-doc');
+          const um = getAgentUndoManager(dc);
+          if (!um.canUndo()) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, canUndo: false, canRedo: um.canRedo() }));
+            return;
+          }
+          um.undo();
+          console.log('[agent-undo] Undo performed');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() }));
+        } catch (e) {
+          console.error('[agent-undo]', e);
+          const message = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: message }));
+        }
+      });
+
+      server.middlewares.use('/api/agent-redo', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.writeHead(405);
+          res.end('Method not allowed');
+          return;
+        }
+        try {
+          const dc = await getAgentSession('test-doc');
+          const um = getAgentUndoManager(dc);
+          if (!um.canRedo()) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, canUndo: um.canUndo(), canRedo: false }));
+            return;
+          }
+          um.redo();
+          console.log('[agent-redo] Redo performed');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() }));
+        } catch (e) {
+          console.error('[agent-redo]', e);
           const message = e instanceof Error ? e.message : String(e);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: message }));
@@ -173,6 +395,8 @@ export function hocuspocusPlugin(): Plugin {
           return;
         }
         try {
+          // Close agent sessions before closing connections
+          await closeAllAgentSessions();
           hocuspocus.closeConnections('test-doc');
           const doc = hocuspocus.documents.get('test-doc');
           if (doc) await hocuspocus.unloadDocument(doc);
@@ -221,11 +445,13 @@ export function hocuspocusPlugin(): Plugin {
         }
       }
 
-      startWatcher(CONTENT_DIR, handleExternalChange).then((subscription) => {
-        server.httpServer?.on('close', () => subscription.unsubscribe());
-      }).catch((err) => {
-        console.error('[hocuspocus] Disk bridge watcher failed to start:', err);
-      });
+      startWatcher(CONTENT_DIR, handleExternalChange)
+        .then((subscription) => {
+          server.httpServer?.on('close', () => subscription.unsubscribe());
+        })
+        .catch((err) => {
+          console.error('[hocuspocus] Disk bridge watcher failed to start:', err);
+        });
 
       console.log('[hocuspocus] WebSocket server ready on /collab');
       console.log('[hocuspocus] Agent write API at POST /api/agent-write');

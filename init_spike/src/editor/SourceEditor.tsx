@@ -1,11 +1,12 @@
-import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { markdown } from '@codemirror/lang-markdown';
 import { EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
+import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { basicSetup } from 'codemirror';
 import { useEffect, useRef } from 'react';
 import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
+import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
 
 interface SourceEditorProps {
   ytext: Y.Text;
@@ -16,6 +17,16 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
 
+  // Update awareness mode to 'source' when SourceEditor mounts
+  useEffect(() => {
+    const awareness = provider.awareness;
+    if (!awareness) return;
+    awareness.setLocalStateField('mode', 'source');
+    return () => {
+      awareness.setLocalStateField('mode', 'wysiwyg');
+    };
+  }, [provider]);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -25,6 +36,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         basicSetup,
         markdown(),
         yCollab(ytext, provider.awareness),
+        createAgentFlashSourceExtension(provider.document),
       ],
     });
 
