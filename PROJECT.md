@@ -1,6 +1,6 @@
 # Project: Build an agent-native knowledge platform
 
-**Last verified:** 2026-04-04
+**Last verified:** 2026-04-08
 **Traces to:** Karpathy LLM Knowledge Bases vision + OpenDesign architectural precedent
 **Appetite:** Unbounded (AI-agent-driven implementation)
 
@@ -183,7 +183,7 @@ Same pipeline applies to drafts — Layer 2 writes to `refs/drafts/<name>` inste
 No save button. No git terminology. Per-writer WIP refs for attribution. Pipeline uses Hocuspocus hooks (not filesystem watchers — race conditions with multi-file writes). See evidence/auto-persistence-architecture.md. Transferred from OpenDesign Reports 46 with evidence from Figma, v0, Lovable, Replit, Cline, Google Docs commit frequency strategies.
 
 ### CC3: Web UI shell
-The application frame: sidebar/file tree, top bar, settings, routing between views. Built once as the foundation. Technology: React web app, local dev server. Web framework is TQ12 (open — research recommends Vite over Next.js).
+The application frame: sidebar/file tree, top bar, settings, routing between views. Built once as the foundation. Technology: React web app on Vite dev server (TQ12, locked — validated by init-spike V2, browser-confirmed).
 
 Touches: S1 (editor pane), S2 (source toggle within editor pane), S3 (sidebar/file tree navigation), S4 (MCP status indicator), S5 (presence indicators in top bar + sidebar), S6 (version timeline panel, draft panel). Constrains: all stories share layout, routing, and theming.
 
@@ -297,7 +297,7 @@ Touches: S4 (MCP server must auto-configure), S1 (editor must work immediately).
 ### Now
 
 #### S1: Create and edit articles with a unified WYSIWYG editor
-One WYSIWYG editor (TipTap or Milkdown + y-prosemirror) handles both .md and .mdx files. The editor provides:
+One WYSIWYG editor (TipTap + y-prosemirror, confirmed in TQ4) handles both .md and .mdx files. The editor provides:
 
 - **Markdown content → WYSIWYG blocks.** Headings, paragraphs, lists, tables, code blocks, images, links — fully editable as rendered blocks. Slash commands for inserting blocks. Drag-and-drop files and images.
 - **Registered JSX components (Callout, Tabs, CodeGroup, etc.) → void nodes with visual preview + prop panel.** Slash command to insert. Click to open prop editing panel (auto-generated from schema — dropdowns, toggles, text inputs). Rich text children editable inline within the component block.
@@ -315,7 +315,7 @@ P0 ships a set of default components (Callout, Tabs/Tab, CodeGroup, Steps, Accor
 
 **Value:** This is the product for humans (customer) — without a great editor, there's no reason to use this over Obsidian or VS Code. AND it's the surface that makes agent-written content visible and reviewable (platform). One editor serves both knowledge workers (WYSIWYG for articles) and developers (code view for components) without feeling like two separate products (GTM).
 
-**Constraints:** Editor framework choice (TipTap or Milkdown + y-prosemirror). Custom block schemas needed for registered components (P0: fixed set). Mini CodeMirror instances inside void nodes for unregistered JSX. CRDT: void nodes are atomic in y-prosemirror — concurrent editing around components is safe, but concurrent editing of the same component's raw string is LWW.
+**Constraints:** TipTap + y-prosemirror (TQ4, locked). Custom block schemas needed for registered components (P0: fixed set). Mini CodeMirror instances inside void nodes for unregistered JSX. CRDT: void nodes are atomic in y-prosemirror — concurrent editing around components is safe, but concurrent editing of the same component's raw string is LWW.
 **Lateral:** S4 (MCP server) writes content that this editor renders. S5 (presence) overlays on this editor. S2 (source toggle) provides full-file code access.
 **Forward:** Editor plugin/extension model (PQ8) for additional block types. Auto-extract component schemas from TypeScript (OpenDesign pattern). Live preview of MDX output in a side panel.
 
@@ -349,7 +349,7 @@ Write tools: `write_file` and `edit_file` with same signatures. Behind the scene
 
 Knowledge-specific tools (no filesystem equivalent): `update_frontmatter`, `create_draft`, `apply_draft`, `discard_draft`, `get_active_context`.
 
-Research finding: tool count is the strongest failure predictor (Microsoft: 85% degradation as tools increase). Tool descriptions are the highest-leverage investment (Anthropic). Total: 5 filesystem-compatible + 5 knowledge-specific = 10 tools.
+Research finding: tool count is the strongest failure predictor (Microsoft: 85% degradation as tools increase). Tool descriptions are the highest-leverage investment (Anthropic). **Core P0 surface: 5 filesystem-compatible + 5 knowledge-specific = 10 tools.** The 6 link-graph tools added by S10 (`get_backlinks`, `get_forward_links`, `get_orphans`, `get_hubs`, `get_link_graph`, `suggest_links`) are a separate opt-in namespace registered only when S10 ships — keeping the core MCP surface at 10. Total-when-S10-lands: 16 tools across two namespaces. Spec-time decision: whether to gate the link namespace behind a capability flag to preserve the 10-tool ceiling for agents that don't need the graph.
 
 **Value:** This is what makes the product "agent-native" — any agent that speaks MCP can use the KB as its brain (customer + platform). Claude Code, Cowork, Cursor, Codex all work out of the box. AND this is what every reference skill (research, ingest, compile, lint) operates against — the MCP tools ARE the platform API (platform). No other knowledge tool has this (GTM differentiation).
 
@@ -371,7 +371,7 @@ Every change (human or agent) auto-persists invisibly. No save button. Three-tie
 
 **Value:** Users trust the system — no data loss, no "did I save?" anxiety (customer). Figma/Notion mental model — continuous editing without friction. AND git-backed history enables branching, PRs, collaboration without architectural changes (platform). Attribution distinguishes human vs agent edits (customer trust).
 
-**Constraints:** Depends on CRDT layer (CC1) and git. WIP refs pattern from OpenDesign Report 46. No git terminology in UI (PQ5, locked). isomorphic-git for pure JS implementation. Pipeline is parameterized by context: main writes to `refs/wip/<writer>/main`, drafts write to `refs/drafts/<name>`. Same hooks, same debounce, different branch target (CC2, CC4).
+**Constraints:** Depends on CRDT layer (CC1) and git. WIP refs pattern from OpenDesign Report 46. No git terminology in UI (PQ5, locked). simple-git for git operations (TQ20, validated by init-spike V5). Pipeline is parameterized by context: main writes to `refs/wip/<writer>/main`, drafts write to `refs/drafts/<name>`. Same hooks, same debounce, different branch target (CC2, CC4).
 **Lateral:** Enables S5 (presence) to show origin of edits. Shares CRDT infrastructure with S1 and S4. Draft apply = squash-merge draft branch to main (one clean checkpoint).
 **Forward:** Branching ("Start experiment"), publishing ("Publish" = PR), team collaboration all build on this git infrastructure. Draft→main merge is the same git operation that team review→main merge will use.
 
@@ -436,6 +436,7 @@ Browse articles in a sidebar file tree. Create folders. Edit frontmatter tags vi
 **Constraints:** Project structure conventions (PQ7, parked) will shape this. Frontmatter as source of truth (TQ6, decided).
 **Lateral:** Depends on S1 (editor) for article rendering. Complements S4 (MCP tools for agent discovery mirror human browsing).
 **Forward:** Knowledge graph visualization, cross-KB linking, multi-project management.
+**Promote when:** PQ7 (project structure conventions) resolves AND the Now core loop (S1+S4+S5+S6) is production-stable, so sidebar/search UX can be designed against settled conventions.
 
 #### S7: Skills live alongside knowledge articles
 Skills (SKILL.md files with optional scripts/) live in the same project. The editor renders and edits them like any markdown article. The product doesn't execute skills — it stores and serves them. External agents discover skills via MCP list/read tools.
@@ -445,13 +446,24 @@ Skills (SKILL.md files with optional scripts/) live in the same project. The edi
 **Constraints:** Skills are just .md files — no special product handling needed beyond what S1 and S3 already provide. The value is the convention and the reference skills, not a product feature.
 **Lateral:** Uses S1 (editor) and S4 (MCP). Skills consume MCP tools.
 **Forward:** Skill distribution registry. Skill marketplace. Community ecosystem.
+**Promote when:** S1+S4 core loop is production-stable AND the first reference skills (research, ingest, lint) demonstrate the workflow against real KBs.
+
+#### S8: Semantic search for humans and agents
+Local embeddings (small model, ~80MB, runs on CPU) power concept-level search across the KB. Both the editor's search bar and the MCP `search_articles` tool return semantically relevant results — "deployment" finds articles about CI/CD, Docker, rollback, staging even without keyword matches. Wiki-link autocomplete (`[[`) suggests articles by semantic relevance to what you're currently writing, not just title matching.
+
+**Value:** This is the single biggest search quality improvement over Obsidian (keyword-only) AND over every Obsidian MCP plugin (keyword search via MCP). When you ask Claude "what do we know about rate limiting?" and the MCP search finds the API throttling article, the request quotas article, AND the billing limits article — that's the moment the product feels smarter than a folder of files (customer). AND the same embedding index powers relationship detection for future knowledge graph features (platform). The index is local, no cloud needed — consistent with zero-LLM-compute for generative AI while using representational AI for search infrastructure.
+
+**Constraints:** Research findings on search stack (see /reports/local-search-retrieval-stacks-2025-2026/, /reports/orama-deep-dive/): Orama is the leading candidate (pure TypeScript, in-process, hybrid search, Apache 2.0, 2.1M monthly npm downloads). Embedding model: bge-small-en-v1.5 (~67MB, 24% better than all-MiniLM-L6-v2) via @huggingface/transformers v4 (6 lines, zero Python). Content extraction: Fumadocs' remarkStructure → per-section document chunking (reusable, see TQ11). Persistence: Orama seqproto binary serialization for fast startup (load cached index, don't rebuild). Incremental indexing: Orama supports insert/update/remove per document (Fumadocs doesn't use this — we must build the incremental layer). Full-text search works without embeddings — semantic is an enhancement, not a requirement.
+**Lateral:** Enhances S4 (MCP search quality), S1 (wiki-link autocomplete), S3 (sidebar search when promoted).
+**Forward:** Knowledge graph visualization, relationship suggestions ("these 3 articles overlap — consider linking"), stale content detection.
+**Promote when:** KBs reach 100+ articles AND walkable catalog + grep discovery shows diminishing returns, OR when S3 promotes (shared sidebar search surface).
 
 ### Later
 
 #### S-L1: Multi-human collaboration (real-time multiplayer)
 Multiple humans editing the same KB simultaneously. Multi-user cursors, presence, avatars. Cloud Hocuspocus for remote sync. Auth, permissions, roles.
 
-**Value:** Team knowledge bases. The Confluence/Notion replacement story. Monetization trigger.
+**Value:** Team knowledge bases become agent-native (customer — the Confluence/Notion replacement story) AND the Yjs awareness infrastructure built for S5 (human+AI presence) extends naturally to multi-human without architectural rework (platform — the presence UX is the same), BUT only after IC adoption validates that the single-player experience is differentiated enough to drive team pull-through (GTM — monetization trigger).
 **Trigger to promote:** When IC adoption validates the core loop and team demand emerges.
 
 #### S-L2: Publishing engine (docs site from KB)
@@ -463,7 +475,7 @@ Render a KB as a public docs site. The Mintlify/GitBook replacement. Same conten
 #### S-L3: Cloud hosting + SaaS
 Hosted KBs, team management, SSO, analytics. The enterprise tier.
 
-**Value:** Monetization. Network effects. Team virality.
+**Value:** Cloud hosting monetizes the IC adoption built in Now (customer) AND enables team network effects that local-first cannot (platform — shared KBs, org discovery) BUT depends on self-hosted adoption reaching critical mass first, because cloud-first pricing without proven product-market fit is the "build it and they will come" trap.
 **Trigger to promote:** When self-hosted/local adoption reaches critical mass.
 
 #### S-L4: Knowledge graph visualization
@@ -472,23 +484,23 @@ Visual graph of article relationships, tags, concepts. The Obsidian graph view e
 **Value:** Navigation, discovery, seeing the shape of your knowledge. Visual feedback that the KB is a connected graph, not isolated files.
 **Trigger to promote:** When KBs reach 50+ articles and users report navigation difficulty. S10 (backlinks) is the prerequisite — provides the index the graph reads from.
 
-#### S-L7: shadcn component registry (@openknowledge/*)
-Publish our component set as a shadcn registry — the first knowledge-focused registry in a 201+ registry ecosystem. `npx shadcn add @openknowledge/callout`, `@openknowledge/code-block`, `@openknowledge/mermaid`, `@openknowledge/math`, `@openknowledge/backlinks-panel`, `@openknowledge/wikilink`, etc. Any Fumadocs, Docusaurus, or Next.js docs site could use these.
-
-**Value:** Distribution channel for the product (GTM). Developers discover our components → try the editor → adopt the platform. AND it's a contribution back to the ecosystem — nobody has published docs/knowledge components for shadcn (platform).
-**Trigger to promote:** When the component set is stable and used internally. The registry is just a publishing step on top of components we already build for S1.
-
 #### S-L5: Browser extension for web clipping
 One-click clip web articles to the KB with images. The Obsidian Web Clipper equivalent.
 
-**Value:** Fastest ingest path for individual use. High adoption driver.
+**Value:** Fastest ingest path for individual use — removes the friction between "saw an interesting article" and "it's in my KB where my agent can reason over it" (customer) AND proves the ingest skill pattern at user-scale, creating a high-frequency touchpoint with the product (GTM — adoption driver).
 **Trigger to promote:** When the ingest skill pattern proves the workflow and users want less friction.
 
 #### S-L6: Connectors (Slack, Zendesk, GitHub, Confluence import)
 Auto-sync from external sources. Enterprise ingest at scale.
 
-**Value:** Enterprise adoption. Confluence migration path. The "import your Confluence space" acquisition channel.
+**Value:** Enterprise adoption path — Confluence migration removes the #1 switching cost for teams (customer + GTM — acquisition channel) AND validates the platform against high-volume, high-variety source formats that solo ICs never stress-test (platform).
 **Trigger to promote:** When enterprise/team adoption is the growth priority.
+
+#### S-L7: shadcn component registry (@openknowledge/*)
+Publish our component set as a shadcn registry — the first knowledge-focused registry in a 201+ registry ecosystem. `npx shadcn add @openknowledge/callout`, `@openknowledge/code-block`, `@openknowledge/mermaid`, `@openknowledge/math`, `@openknowledge/backlinks-panel`, `@openknowledge/wikilink`, etc. Any Fumadocs, Docusaurus, or Next.js docs site could use these.
+
+**Value:** Distribution channel for the product (GTM). Developers discover our components → try the editor → adopt the platform. AND it's a contribution back to the ecosystem — nobody has published docs/knowledge components for shadcn (platform).
+**Trigger to promote:** When the component set is stable and used internally. The registry is just a publishing step on top of components we already build for S1.
 
 #### S-L8: Frontmatter schema configuration (per-content-type validation)
 Declarative schema for frontmatter validation — required fields per content type, field types, valid values. Enables configurable enforcement (warn or block on missing fields), migration versioning, and richer editor affordances (auto-complete frontmatter fields). At P0, the product recognizes structural patterns (has `description`? has `compiled_at`?) without declared types (TQ6: open/flexible schema). This story adds the optional formalization layer.
@@ -498,13 +510,24 @@ Declarative schema for frontmatter validation — required fields per content ty
 
 ## Phasing rationale
 
-**Now: S1 + S2 + S4 + S5 + S6 + S9 + S10.** The core loop: editor (human surface) + source toggle (developer-expected, competitive necessity) + MCP (agent surface) + presence (the differentiating UX) + auto-persistence (trust) + embeddable editor + wiki-links/backlinks. These share the CRDT layer and must ship together. S2 promoted from Next based on competitive evidence. TQ3 (round-trip fidelity) is the gating risk — needs an early spike. Heuristics: customer-journey-first, value-first, dependency-first.
+**Now: S1 + S2 + S4 + S5 + S6 + S9 + S10.** The core loop: editor (human surface) + source toggle (developer-expected, competitive necessity) + MCP (agent surface) + presence (the differentiating UX) + auto-persistence (trust) + embeddable editor + wiki-links/backlinks. These share the CRDT layer and must ship together as one delivery group.
+
+**Per-story heuristic assignment:**
+- **S1 (unified editor) — customer-journey-first.** Without the human surface, no story delivers value. Editor quality is existential (see Pre-mortem #1).
+- **S4 (MCP server) — dependency-first.** S5, S6, S9, S10 all read/write through the CRDT that S4 exposes. Three Now stories depend on it directly.
+- **S2 (source toggle) — risk-first + competitive necessity.** TQ3 round-trip fidelity is the gating technical risk; competitive evidence (Obsidian love, Outline rejection per TQ9) makes it a must-have for the developer P0 audience. If TQ3 spike fails, S2 drops to Next.
+- **S5 (presence) — value-first.** This is the defining differentiated UX (see XQ2: one of four concrete differentiators). Without it, the "agent-native" positioning collapses into "Obsidian + conventions" (Pre-mortem #6).
+- **S6 (auto-persistence) — risk-first.** Trust and data-safety are table stakes; the WIP refs pipeline is load-bearing architecture that every other Now story assumes.
+- **S9 (embeddable editor) — customer-journey-first.** S5 presence only delivers value if the editor is OPEN in the agent environment. S9 is what makes the co-editing experience actually materialize.
+- **S10 (wiki-links + backlinks) — value-first + customer-journey-first.** Backlinks are the #1 feature Obsidian users cite; this is the "knowledge base vs folder of files" pivot.
+
+**Barrel count check.** 7 Now stories, but they form **one delivery group** (shared CRDT + editor + MCP + persistence pipeline). All seven must ship together — the walking skeleton requires every piece. This is not 7 parallel barrels; it is 1 integrated barrel with internal sequencing: S1+S4 (CRDT+MCP foundation) → S6 (persistence) → S5+S10 (presence + knowledge graph) → S2+S9 (source mode + embeddability as polish). Assumes ~2-4 engineers on the core barrel; if team shape changes, revisit.
 
 **S8 (semantic search) moved to Next.** Walkable hierarchical index files (CC6) + grep on CRDT content (TQ17: 2-8ms) cover agent orientation and discovery at P0 scale (100-1K articles). Research grounding: Amazon Science found keyword search achieves 94.5% of RAG performance; RAPTOR found hierarchical summaries outperform flat retrieval; Dust.tt found agents spontaneously prefer tree navigation. No dedicated search engine needed at P0 — the per-folder index.md files ARE the discovery layer. Search engine (BM25/vector) deferred to when S3 (sidebar search) or S8 is promoted. The `SearchEngine` abstraction layer (~200 lines) means it slots in without changing consumer code.
 
 **Next: S3 + S7 + S8** — organization, ecosystem, and semantic search. S3 (navigation/organization) is Next because it's blocked by PQ7 (project structure conventions, parked) — can't build a polished sidebar/search without knowing the folder and frontmatter conventions. Heuristic: dependency-first. S7 (skills alongside articles) is Next because it has low product complexity (skills are just .md files) but requires the core editing+MCP loop (S1+S4) to be stable before ecosystem value materializes. Heuristic: value-first (high ecosystem value, low product cost, but depends on core stability).
 
-**Later: S-L1 through S-L6** — multiplayer, publishing, cloud, graph view, browser extension, connectors. Each has a promotion trigger tied to adoption milestones or market demand.
+**Later: S-L1 through S-L8** — multiplayer, publishing, cloud, graph view, browser extension, connectors, shadcn component registry, frontmatter schema configuration. Each has a promotion trigger tied to adoption milestones or market demand.
 
 **Walking skeleton test:** If Next and Later never happen, does Now deliver standalone value? Yes — an IC has a rich markdown editor with source/WYSIWYG toggle, where their AI agent co-creates knowledge in real-time with presence, everything auto-saves to git, and agents navigate via walkable per-folder index files + grep. That's a usable, differentiated product even without polished sidebar navigation, semantic search, or team features. (S2 source toggle is in Now because developers expect it — competitive necessity per TQ9. If TQ3 round-trip spike fails, S2 drops to Next.)
 
@@ -546,7 +569,36 @@ Declarative schema for frontmatter validation — required fields per content ty
 - That the Obsidian-grade editing bar is achievable with current OSS editor frameworks (TipTap/BlockNote/ProseMirror)
 - That markdown is the right canonical format (vs a richer document model like AFFiNE's BlockSuite)
 
-## Research Reports
+## Evidence & References
+
+### Upstream Artifacts
+- **Karpathy LLM Knowledge Bases vision** — the strategic bet this project traces to (see Strategic context).
+- **OpenDesign architectural precedent** — parallel Figma-alternative exploration; transfers Yjs/Hocuspocus/git-auto-persist/MCP-filesystem-bridge patterns (see Strategic context §Architectural precedent).
+
+### Evidence Files
+Located in `evidence/` alongside this PROJECT.md. Support specific decisions and cross-cutting concerns.
+
+- [evidence/auto-persistence-architecture.md](evidence/auto-persistence-architecture.md) — three-layer persistence pipeline (CC2).
+- [evidence/component-ecosystem-findings.md](evidence/component-ecosystem-findings.md) — MDX component scope and TypeScript interface introspection (PQ8, S1).
+- [evidence/day0-obsidian-switcher-pain-points.md](evidence/day0-obsidian-switcher-pain-points.md) — Karpathy workflow gaps in Obsidian that motivate the bet (PQ13, XQ2).
+- [evidence/editing-context-design.md](evidence/editing-context-design.md) — main/draft/proposal as git branches (CC4).
+- [evidence/fumadocs-editor-shell-coverage-assessment.md](evidence/fumadocs-editor-shell-coverage-assessment.md) — reusability analysis for TQ11.
+- [evidence/mdx-conversion-chain-risk.md](evidence/mdx-conversion-chain-risk.md) — round-trip fidelity risk assessment (TQ3, TQ4).
+- [evidence/permission-model-zanzibar.md](evidence/permission-model-zanzibar.md) — Zanzibar-style permission model (PQ7, PQ9, TQ10).
+- [evidence/runtime-decision-bun-node.md](evidence/runtime-decision-bun-node.md) — hybrid runtime decision (TQ23).
+- [evidence/source-of-truth-analysis.md](evidence/source-of-truth-analysis.md) — CRDT-as-source-of-truth analysis (CC1).
+- [evidence/tiptap-markdown-roundtrip.md](evidence/tiptap-markdown-roundtrip.md) — server-side round-trip validation (TQ3, TQ4).
+- [evidence/worldmodel-key-findings.md](evidence/worldmodel-key-findings.md) — grounding findings from initial landscape discovery.
+
+### Code Repositories
+- **init_spike/** — the in-repo implementation spike that validates TQ1, TQ3, TQ4, TQ8, TQ12, TQ15, TQ20, TQ25, TQ26, TQ28. See `init_spike/RESULTS.md` for the validation matrix.
+- **[inkeep/nick-reports](https://github.com/inkeep/nick-reports)** — `reports/` submodule containing 43 research reports with evidence files.
+
+### External Sources
+- [agentskills.io specification](https://agentskills.io/specification) — Agent Skills spec adopted by 33+ agents (PQ14).
+- [llms.txt specification](https://llmstxt.org) — agent-readable web content format (CC6 catalog naming).
+
+### Research Reports
 
 48 research reports inform the architectural decisions in this document. Reports live in the `reports/` submodule ([inkeep/nick-reports](https://github.com/inkeep/nick-reports)). Each contains a REPORT.md (synthesis) and evidence/ files (primary sources with file:line citations from cloned OSS repos, verbatim document extractions, and web research).
 
