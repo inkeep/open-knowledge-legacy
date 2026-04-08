@@ -332,6 +332,12 @@ export function setupObservers(deps: ObserverDeps): () => void {
 
   const observerB = (_event: Y.YTextEvent, transaction: Y.Transaction) => {
     if (transaction.origin === ORIGIN_TREE_TO_TEXT) return;
+    // Skip remote Y.Text changes (from other tabs/peers). When another tab's
+    // Observer A writes Y.Text, the corresponding XmlFragment change also arrives
+    // via sync — no local Observer B processing needed. For server-side writes
+    // (agent), the server now updates both Y.Text and XmlFragment in the same
+    // transaction, so clients receive paired changes that are already in sync.
+    if (!transaction.local) return;
     if (debounceB) clearTimeout(debounceB);
     debounceB = setTimeout(runObserverBSync, DEBOUNCE_MS);
   };

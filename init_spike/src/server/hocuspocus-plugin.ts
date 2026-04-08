@@ -140,6 +140,24 @@ async function closeAllAgentSessions(): Promise<void> {
   }
 }
 
+/**
+ * After writing to Y.Text, sync the full Y.Text content to XmlFragment so
+ * clients receive paired changes. This is necessary because client-side
+ * Observer B skips remote Y.Text changes to prevent cross-tab amplification.
+ */
+function syncTextToFragment(document: Document): void {
+  const ytext = document.getText('source');
+  const fullText = ytext.toString();
+  const { frontmatter, body } = stripFrontmatter(fullText);
+  const parsedJson = mdManager.parse(body);
+  const pmNode = schema.nodeFromJSON(parsedJson);
+  const xmlFragment = document.getXmlFragment('default');
+  const meta = { mapping: new Map(), isOMark: new Map() };
+  updateYFragment(document, xmlFragment, pmNode, meta);
+  const metaMap = document.getMap('metadata');
+  metaMap.set('frontmatter', frontmatter);
+}
+
 export function hocuspocusPlugin(): Plugin {
   return {
     name: 'hocuspocus',
@@ -186,9 +204,6 @@ export function hocuspocusPlugin(): Plugin {
           // Set awareness to 'editing' during write, reset to 'idle' even on failure
           dc.document.awareness.setLocalStateField('mode', 'editing');
           try {
-            // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
-            // which hardcodes origin to { source: 'local' }.
-            // Write to Y.Text (not XmlFragment) — Observer B propagates to tree.
             dc.document.transact(() => {
               const ytext = dc.document.getText('source');
               const currentText = ytext.toString();
@@ -196,7 +211,10 @@ export function hocuspocusPlugin(): Plugin {
               const separator = currentText.trim() ? '\n\n' : '';
               ytext.insert(insertAt, `${separator}${content}\n`);
 
-              // Activity map write INSIDE the same transaction (F1/C3 fix)
+              // Sync Y.Text → XmlFragment in the same transaction so clients
+              // receive paired changes (Observer B skips remote Y.Text changes).
+              syncTextToFragment(dc.document);
+
               const activityMap = dc.document.getMap('activity');
               activityMap.set(DEFAULT_AGENT_ID, {
                 agentId: DEFAULT_AGENT_ID,
@@ -271,8 +289,6 @@ export function hocuspocusPlugin(): Plugin {
           // Set awareness to 'editing' during write, reset to 'idle' even on failure
           dc.document.awareness.setLocalStateField('mode', 'editing');
           try {
-            // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
-            // Direct Y.Text insertion — Observer B handles the tree update.
             dc.document.transact(() => {
               const ytext = dc.document.getText('source');
               const currentText = ytext.toString();
@@ -285,7 +301,10 @@ export function hocuspocusPlugin(): Plugin {
                 ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
               }
 
-              // Activity map write INSIDE the same transaction (F1/C3 fix)
+              // Sync Y.Text → XmlFragment in the same transaction so clients
+              // receive paired changes (Observer B skips remote Y.Text changes).
+              syncTextToFragment(dc.document);
+
               const activityMap = dc.document.getMap('activity');
               activityMap.set(DEFAULT_AGENT_ID, {
                 agentId: DEFAULT_AGENT_ID,
