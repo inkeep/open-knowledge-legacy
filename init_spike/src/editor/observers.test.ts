@@ -213,3 +213,33 @@ describe('Frontmatter handling', () => {
     cleanup();
   });
 });
+
+describe('Y.Text CRDT foundation', () => {
+  test('Y.Text content is accessible after write — simulates collaborative source mode', () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    doc.transact(() => {
+      ytext.insert(0, '# Hello from source\n\nCollaborative editing works.\n');
+    });
+
+    expect(ytext.toString()).toBe('# Hello from source\n\nCollaborative editing works.\n');
+    expect(ytext.length).toBeGreaterThan(0);
+  });
+
+  test('two Y.Docs sync Y.Text via state exchange — simulates multi-tab', () => {
+    const doc1 = new Y.Doc();
+    const doc2 = new Y.Doc();
+
+    const ytext1 = doc1.getText('source');
+    doc1.transact(() => {
+      ytext1.insert(0, 'Tab 1 typed this');
+    });
+
+    // Simulate Hocuspocus sync: exchange full state
+    Y.applyUpdate(doc2, Y.encodeStateAsUpdate(doc1));
+
+    const ytext2 = doc2.getText('source');
+    expect(ytext2.toString()).toBe('Tab 1 typed this');
+  });
+});

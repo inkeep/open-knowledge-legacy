@@ -20,6 +20,10 @@ export interface TiptapEditorHandle {
   applyThreeWayMerge: (snapshotMarkdown: string, userEditedMarkdown: string) => ThreeWayMergeResult;
   /** Subscribe to Y.Doc content changes. Returns unsubscribe function. */
   onContentChange: (callback: (markdown: string) => void) => () => void;
+  /** Get Y.Text('source') for CodeMirror CRDT binding */
+  getYText: () => Y.Text;
+  /** Get HocuspocusProvider for awareness (cursor presence) */
+  getProvider: () => HocuspocusProvider;
 }
 
 const editorSchema = getSchema(sharedExtensions);
@@ -171,8 +175,14 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
         yFragment.observeDeep(observer);
         return () => yFragment.unobserveDeep(observer);
       },
+      getYText(): Y.Text {
+        return provider.document.getText('source');
+      },
+      getProvider(): HocuspocusProvider {
+        return provider;
+      },
     }),
-    [editor, mdManager, provider.document],
+    [editor, mdManager, provider.document, provider],
   );
 
   // No cleanup — provider is a singleton that survives component lifecycle.

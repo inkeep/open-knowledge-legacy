@@ -106,7 +106,12 @@ export function App() {
         </div>
       )}
 
-      {isSourceMode && <SourceEditor content={sourceContent} onChange={setSourceContent} />}
+      {isSourceMode && editorRef.current && (
+        <SourceEditor
+          ytext={editorRef.current.getYText()}
+          provider={editorRef.current.getProvider()}
+        />
+      )}
       <div style={{ display: isSourceMode ? 'none' : 'block' }}>
         <TiptapEditor ref={editorRef} />
       </div>
