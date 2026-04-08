@@ -3,14 +3,14 @@ import { getSchema } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
-import type * as Y from 'yjs';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import type * as Y from 'yjs';
+import { useIdentity } from '../presence/identity';
 import { prependFrontmatter } from './extensions/frontmatter';
 import { sharedExtensions } from './extensions/shared';
 import { setupObservers } from './observers';
 
 const DOC_NAME = 'test-doc';
-
 
 export interface TiptapEditorHandle {
   getMarkdown: () => string;
@@ -68,6 +68,7 @@ function getProvider(): HocuspocusProvider {
 export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
   const frontmatterRef = useRef<string>('');
   const provider = getProvider();
+  const identity = useIdentity();
 
   const mdManager = useMemo(() => new MarkdownManager({ extensions: sharedExtensions }), []);
 
@@ -96,6 +97,20 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
     metaMap.observe(observer);
     return () => metaMap.unobserve(observer);
   }, [provider.document]);
+
+  // Set awareness state on mount (user identity + mode)
+  useEffect(() => {
+    const awareness = provider.awareness;
+    if (!awareness) return;
+    awareness.setLocalStateField('user', {
+      name: identity.name,
+      color: identity.color,
+      type: 'human' as const,
+      coeditor: identity.coeditor,
+      tabId: identity.tabId,
+    });
+    awareness.setLocalStateField('mode', 'wysiwyg');
+  }, [provider, identity]);
 
   useImperativeHandle(
     ref,
