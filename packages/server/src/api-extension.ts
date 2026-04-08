@@ -186,11 +186,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      if (!sessionManager.hasSession('test-doc')) {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') || 'test-doc';
+      if (!sessionManager.hasSession(docName)) {
         json(res, 200, { ok: true, canUndo: false, canRedo: false });
         return;
       }
-      const um = sessionManager.getExistingUndoManager('test-doc');
+      const um = sessionManager.getExistingUndoManager(docName);
       json(res, 200, {
         ok: true,
         canUndo: um?.canUndo() ?? false,
@@ -209,7 +211,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      const dc = await sessionManager.getSession('test-doc');
+      let docName = 'test-doc';
+      try {
+        const raw = await readBody(req);
+        if (raw.length > 0) {
+          const body = JSON.parse(raw.toString()) as Record<string, unknown>;
+          if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+        }
+      } catch {
+        // No body or invalid JSON — use default docName
+      }
+      const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
       if (!um.canUndo()) {
         json(res, 200, { ok: false, canUndo: false, canRedo: um.canRedo() });
@@ -232,7 +244,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      const dc = await sessionManager.getSession('test-doc');
+      let docName = 'test-doc';
+      try {
+        const raw = await readBody(req);
+        if (raw.length > 0) {
+          const body = JSON.parse(raw.toString()) as Record<string, unknown>;
+          if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+        }
+      } catch {
+        // No body or invalid JSON — use default docName
+      }
+      const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
       if (!um.canRedo()) {
         json(res, 200, { ok: false, canUndo: um.canUndo(), canRedo: false });
