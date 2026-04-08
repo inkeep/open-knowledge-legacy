@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme {
+  /* Color tokens */
+  --color-background: #ffffff;
+  --color-foreground: #0a0a0a;
+  --color-muted: #f5f5f5;
+  --color-muted-foreground: #737373;
+  --color-popover: #ffffff;
+  --color-popover-foreground: #0a0a0a;
+  --color-border: #e5e5e5;
+  --color-input: #e5e5e5;
+  --color-ring: #3784FF;
+
+  /* Primary: Azure */
+  --color-primary: #3784FF;
+  --color-primary-foreground: #ffffff;
+
+  /* Secondary */
+  --color-secondary: #f5f5f5;
+  --color-secondary-foreground: #171717;
+
+  /* Accent */
+  --color-accent: #f5f5f5;
+  --color-accent-foreground: #171717;
+
+  /* Destructive */
+  --color-destructive: #ef4444;
+
+  /* Agent terracotta */
+  --color-agent: #D97757;
+  --color-agent-foreground: #ffffff;
+
+  /* Radius tokens */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+
+  /* Font tokens */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+
+  /* Agent flash animation */
+  @keyframes agent-flash {
+    0% { background: rgba(217, 119, 87, 0.2); }
+    100% { background: transparent; }
+  }
+
+  --animate-agent-flash: agent-flash 2s ease-out forwards;
+}
+
+/* Base styles */
+@layer base {
+  *,
+  *::before,
+  *::after {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+}
+
+/* Agent flash utility class */
+.agent-flash {
+  animation: agent-flash 2s ease-out forwards;
+}
