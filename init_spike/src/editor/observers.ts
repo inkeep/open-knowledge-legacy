@@ -145,6 +145,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
       }, ORIGIN_TREE_TO_TEXT);
     } catch (err) {
       console.error('[Observer A] Failed initial sync:', err);
+      deps.onSyncError?.('tree-to-text', err instanceof Error ? err : new Error(String(err)));
     }
   }
 
