@@ -235,23 +235,12 @@ export function setupObservers(deps: ObserverDeps): () => void {
       const currentText = ytext.toString();
       console.log('[Observer A] sync tree→text');
       doc.transact(() => {
-        // Compute the incremental user delta: diff lastSyncedXmlMd → md.
-        // This produces a sequence of inserts/deletes that represents ONLY what
-        // the user changed in the XmlFragment. Apply that delta at the matching
-        // positions in Y.Text (translating positions via a simple alignment).
-        //
-        // For simplicity, when Y.Text matches lastSyncedXmlMd exactly (no other
-        // source wrote to Y.Text since last sync), we apply the delta via diffLines
-        // as before. When Y.Text has diverged (e.g., agent wrote to it), we still
-        // apply the delta but with a position-alignment fallback that appends the
-        // user's new content at the end rather than risking corruption.
         if (currentText === lastSyncedXmlMd) {
           // Y.Text is in the state we last synced to. Safe to full-diff.
           applyIncrementalDiff(ytext, currentText, md);
         } else {
-          // Y.Text has diverged. Apply only the user's delta (computed from
-          // lastSyncedXmlMd → md) and translate positions. For markdown-line diffs,
-          // we insert new lines at end/beginning and delete removed lines by match.
+          // Y.Text has diverged — apply only the user's delta (lastSyncedXmlMd → md)
+          // without subtracting the content that diverged.
           applyUserDelta(ytext, lastSyncedXmlMd, md);
         }
       }, ORIGIN_TREE_TO_TEXT);
