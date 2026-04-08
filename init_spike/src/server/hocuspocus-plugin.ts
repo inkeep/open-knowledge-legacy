@@ -37,7 +37,17 @@ export function hocuspocusPlugin(): Plugin {
       server.httpServer?.prependListener('upgrade', (req, socket, head) => {
         if (req.url?.startsWith('/collab')) {
           wss.handleUpgrade(req, socket, head, (ws) => {
-            hocuspocus.handleConnection(ws, req);
+            // Hocuspocus v4: handleConnection returns a ClientConnection.
+            // The caller must route WebSocket events to it.
+            const clientConnection = hocuspocus.handleConnection(ws, req);
+            ws.on('message', (data: ArrayBuffer | Buffer) => {
+              clientConnection.handleMessage(
+                data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data),
+              );
+            });
+            ws.on('close', (code: number, reason: Buffer) => {
+              clientConnection.handleClose({ code, reason: reason.toString() });
+            });
           });
         }
       });
@@ -149,6 +159,29 @@ export function hocuspocusPlugin(): Plugin {
           res.end(JSON.stringify({ ok: true, timestamp }));
         } catch (e) {
           console.error('[agent-write-md]', e);
+          const message = e instanceof Error ? e.message : String(e);
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: message }));
+        }
+      });
+
+      // --- Test reset endpoint: unload document for E2E test isolation ---
+      server.middlewares.use('/api/test-reset', async (req, res) => {
+        if (req.method !== 'POST') {
+          res.writeHead(405);
+          res.end('Method not allowed');
+          return;
+        }
+        try {
+          hocuspocus.closeConnections('test-doc');
+          const doc = hocuspocus.documents.get('test-doc');
+          if (doc) await hocuspocus.unloadDocument(doc);
+          // Reset the file to known content
+          const { writeFileSync } = await import('node:fs');
+          writeFileSync(resolve(CONTENT_DIR, 'test-doc.md'), '', 'utf-8');
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: true }));
+        } catch (e) {
           const message = e instanceof Error ? e.message : String(e);
           res.writeHead(500, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: false, error: message }));

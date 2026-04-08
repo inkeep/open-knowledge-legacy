@@ -87,6 +87,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
 
         const currentText = ytext.toString();
         if (currentText !== md) {
+          console.log('[Observer A] sync tree→text');
           doc.transact(() => {
             applyIncrementalDiff(ytext, currentText, md);
           }, ORIGIN_TREE_TO_TEXT);
@@ -112,6 +113,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const parsedJson = mdManager.parse(body);
         const pmNode = schema.nodeFromJSON(parsedJson);
 
+        console.log('[Observer B] sync text→tree');
         doc.transact(() => {
           const meta = { mapping: new Map(), isOMark: new Map() };
           updateYFragment(doc, xmlFragment, pmNode, meta);

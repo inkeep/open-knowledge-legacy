@@ -10,9 +10,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "test": "bun test",
+    "test": "bun test --path-ignore-patterns 'tests/e2e'",
     "check:fast": "tsc --noEmit && biome check .",
-    "check": "tsc --noEmit && biome check . && bun test && vite build"
+    "check": "tsc --noEmit && biome check . && bun test && vite build",
+    "test:e2e": "npx playwright test"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.0.0",
@@ -43,6 +44,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.0",
+    "@playwright/test": "^1.59.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.0.0",

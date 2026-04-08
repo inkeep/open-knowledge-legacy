@@ -11,6 +11,7 @@ import { setupObservers } from './observers';
 
 const DOC_NAME = 'test-doc';
 
+
 export interface TiptapEditorHandle {
   getMarkdown: () => string;
   /** Get Y.Text('source') for CodeMirror CRDT binding */
@@ -28,6 +29,7 @@ let observerCleanup: (() => void) | null = null;
 
 function getProvider(): HocuspocusProvider {
   if (!singletonProvider) {
+    console.log('[TiptapEditor] Creating provider singleton');
     singletonProvider = new HocuspocusProvider({
       url: 'ws://localhost:5173/collab',
       name: DOC_NAME,
@@ -35,7 +37,9 @@ function getProvider(): HocuspocusProvider {
 
     // Set up bidirectional observers once after first sync
     const provider = singletonProvider;
+    console.log('[TiptapEditor] Registering onSync handler');
     const onSync = () => {
+      console.log('[TiptapEditor] onSync fired, observerCleanup=', !!observerCleanup);
       if (observerCleanup) return; // Already set up
       const doc = provider.document;
       const mdMgr = new MarkdownManager({ extensions: sharedExtensions });
@@ -49,6 +53,11 @@ function getProvider(): HocuspocusProvider {
       provider.off('synced', onSync);
     };
     provider.on('synced', onSync);
+
+    // Expose provider on window for E2E test access
+    if (typeof window !== 'undefined') {
+      (window as unknown as Record<string, unknown>).__hocuspocusProvider = provider;
+    }
   }
   return singletonProvider;
 }
