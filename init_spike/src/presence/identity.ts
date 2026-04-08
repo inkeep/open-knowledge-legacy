@@ -19,6 +19,14 @@ export interface AwarenessState {
   };
 }
 
+/** Entry in Y.Map('activity') side-channel for agent write attribution. */
+export interface ActivityEntry {
+  agentId: string;
+  timestamp: number;
+  type: 'insert' | 'replace' | 'delete';
+  description?: string;
+}
+
 export interface Identity {
   name: string;
   color: string;
@@ -111,4 +119,4 @@ export function useIdentity(): Identity {
 }
 
 // --- Exported for testing ---
-export { HUMAN_COLORS, generateRandomName, generateRandomColor };
+export { generateRandomColor, generateRandomName, HUMAN_COLORS };

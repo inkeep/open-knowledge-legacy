@@ -353,6 +353,84 @@ describe('Agent writes through observer chain', () => {
   });
 });
 
+describe('Agent write origin and activity map', () => {
+  test('agent-write origin Y.Text write propagates to XmlFragment via Observer B', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Seed content\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    await wait();
+
+    // Simulate the new agent write path: Y.Text write with 'agent-write' origin
+    // + activity map write in the same transaction
+    doc.transact(() => {
+      const currentText = ytext.toString();
+      const insertAt = currentText.length;
+      const separator = currentText.trim() ? '\n\n' : '';
+      ytext.insert(insertAt, `${separator}Agent content via new path\n`);
+
+      const activityMap = doc.getMap('activity');
+      activityMap.set('agent-1', {
+        agentId: 'agent-1',
+        timestamp: Date.now(),
+        type: 'insert',
+        description: 'Added: Agent content via new path',
+      });
+    }, 'agent-write');
+
+    await wait();
+
+    // Observer B should have propagated to XmlFragment
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const md = mdManager.serialize(json);
+    expect(md).toContain('Seed content');
+    expect(md).toContain('Agent content via new path');
+
+    // Activity map should contain the entry
+    const activityMap = doc.getMap('activity');
+    const entry = activityMap.get('agent-1') as Record<string, unknown>;
+    expect(entry).toBeTruthy();
+    expect(entry.agentId).toBe('agent-1');
+    expect(entry.type).toBe('insert');
+    expect(typeof entry.timestamp).toBe('number');
+
+    cleanup();
+  });
+
+  test('activity map entries coexist with content writes in same transaction', async () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+    const activityMap = doc.getMap('activity');
+
+    // Track that both changes arrive in a single transaction
+    let transactionCount = 0;
+    doc.on('afterTransaction', () => {
+      transactionCount++;
+    });
+
+    const beforeCount = transactionCount;
+
+    doc.transact(() => {
+      ytext.insert(0, 'Agent wrote this\n');
+      activityMap.set('agent-1', {
+        agentId: 'agent-1',
+        timestamp: Date.now(),
+        type: 'insert',
+      });
+    }, 'agent-write');
+
+    // Should be exactly one transaction for both writes
+    expect(transactionCount - beforeCount).toBe(1);
+
+    // Both should be present
+    expect(ytext.toString()).toContain('Agent wrote this');
+    expect(activityMap.get('agent-1')).toBeTruthy();
+  });
+});
+
 describe('Y.Text CRDT foundation', () => {
   test('Y.Text content is accessible after write — simulates collaborative source mode', () => {
     const doc = new Y.Doc();
