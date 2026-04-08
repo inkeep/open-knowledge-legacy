@@ -22,6 +22,7 @@
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
     "commander": "^14.0.0",
+    "sirv": "^3.0.1",
     "ws": "^8.20.0",
     "yaml": "^2.7.1",
     "zod": "^3.25.17"

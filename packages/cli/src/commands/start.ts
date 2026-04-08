@@ -1,10 +1,13 @@
 /**
- * `open-knowledge start` command — launches standalone Hocuspocus server.
+ * `open-knowledge start` command — launches standalone Hocuspocus server
+ * with optional static React app serving.
  */
+import { existsSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { resolve } from 'node:path';
 import { createServer } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
+import sirv from 'sirv';
 import { WebSocketServer } from 'ws';
 import type { Config } from '../config/schema';
 
@@ -41,15 +44,40 @@ export function startCommand(getConfig: () => Config): Command {
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
 
+      // Static asset serving — locate built React app
+      // Convention: ../app/dist/ relative to CLI package, or search common locations
+      const assetPaths = [resolve(cwd, 'packages/app/dist'), resolve(cwd, 'dist')];
+      const assetDir = assetPaths.find((p) => existsSync(p));
+      const staticHandler = assetDir
+        ? sirv(assetDir, { single: true, gzip: true, immutable: true })
+        : null;
+
+      if (assetDir) {
+        console.log(`[start] Serving static assets from ${assetDir}`);
+      }
+
       // Create HTTP server and wire up Hocuspocus
       const httpServer = createHttpServer((req, res) => {
-        // Let Hocuspocus handle onRequest extensions (API routes)
-        hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
-          if (!res.writableEnded) {
-            res.writeHead(404);
-            res.end('Not found');
-          }
-        });
+        // Priority 1: API routes via Hocuspocus onRequest extensions
+        const url = req.url?.split('?')[0];
+        if (url?.startsWith('/api/')) {
+          hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
+            if (!res.writableEnded) {
+              res.writeHead(500);
+              res.end('Internal server error');
+            }
+          });
+          return;
+        }
+
+        // Priority 2: Static file serving (SPA fallback)
+        if (staticHandler) {
+          staticHandler(req, res);
+          return;
+        }
+
+        res.writeHead(404);
+        res.end('Not found');
       });
 
       const wss = new WebSocketServer({ noServer: true });
