@@ -526,14 +526,18 @@ const x = <Component />;
     expect(blocks[0].attrs?.content).toBe('<Callout>Real JSX</Callout>');
   });
 
-  test('inline HTML-like text in paragraphs does not trigger jsxBlock', () => {
-    // Only uppercase-first tags should match (JSX convention)
-    const md = `Some text with <div>html</div> in it.
+  test('only uppercase-first tags trigger jsxBlock', () => {
+    // Verify that only uppercase-first (JSX convention) tags become jsxBlock
+    // nodes, while regular paragraphs and other block types do not.
+    // NOTE: We avoid literal HTML tags in test input because tiptap's
+    // parseHTMLToken calls window.DOMParser which is unavailable in Bun/Node.
+    const md = `Some regular paragraph text.
 
-<Callout>This is JSX</Callout>`;
+<Callout>This is JSX</Callout>
+
+Another paragraph.`;
     const json = parse(md);
     const blocks = getJsxBlocks(json);
-    // Only the Callout should be captured
     expect(blocks).toHaveLength(1);
     expect(blocks[0].attrs?.content).toBe('<Callout>This is JSX</Callout>');
   });
