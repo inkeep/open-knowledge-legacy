@@ -24,6 +24,8 @@
 | Source → Disk | Source mode edits are in-memory React state, not persisted until toggle-back. |
 | WYSIWYG → Source (usable) | Y.Doc observer replaces entire CodeMirror buffer on every WYSIWYG keystroke, resetting cursor. |
 
+**Note on gap decomposition:** 3 of 4 gaps share a single root cause (source mode has no CRDT binding) and are solved by Y.Text + y-codemirror.next + one-way Observer A alone. The 4th gap (live source→WYSIWYG) is the incremental win from bidirectional Observer B. The spike validates both layers: the guaranteed wins (Y.Text binding + Observer A) and the stretch validation (bidirectional Observer B with incremental Y.Text writes).
+
 The current architecture uses a plain CodeMirror text buffer with no CRDT binding. The three-way merge on toggle-back is a workaround — it reconciles diverged state after the fact rather than preventing divergence.
 
 **Resolution:** Add `Y.Text('source')` to the Y.Doc alongside `Y.XmlFragment('default')`. Bind CodeMirror to Y.Text via y-codemirror.next (collaborative). Run bidirectional observers: XmlFragment→Text (serialize on tree change) and Text→XmlFragment (parse + updateYFragment on text change). Transaction origin guards prevent infinite loops. The toggle simplifies from serialize-on-toggle + three-way merge to show/hide — both editors are always in sync via observers.
@@ -139,13 +141,34 @@ xmlFragment.observeDeep((_events, transaction) => {
   const body = mdManager.serialize(json);
   const md = prependFrontmatter(frontmatterRef.current, body);
 
-  // Write to Y.Text with our origin (so Observer B skips it)
-  doc.transact(() => {
-    ytext.delete(0, ytext.length);
-    ytext.insert(0, md);
-  }, ORIGIN_TREE_TO_TEXT);
+  // INCREMENTAL write to Y.Text — NOT full replacement.
+  // Full replacement (delete all + insert all) would tombstone concurrent
+  // source-mode edits from y-codemirror.next. Instead, diff the current
+  // Y.Text content against the serialized markdown and apply only the delta.
+  // This makes Observer A's writes collaborative: concurrent source-mode
+  // keystrokes are preserved as long as they don't overlap with the
+  // tree-originated changes.
+  const currentText = ytext.toString();
+  if (currentText !== md) {
+    const changes = diffLines(currentText, md);
+    doc.transact(() => {
+      let offset = 0;
+      for (const change of changes) {
+        if (change.removed) {
+          ytext.delete(offset, change.value.length);
+        } else if (change.added) {
+          ytext.insert(offset, change.value);
+          offset += change.value.length;
+        } else {
+          offset += change.value.length;
+        }
+      }
+    }, ORIGIN_TREE_TO_TEXT);
+  }
 });
 ```
+
+**CRITICAL: Observer A must use incremental writes, not full replacement.** The design challenge (meta/design-challenge.md H1) identified that `ytext.delete(0, length)` followed by `ytext.insert(0, md)` tombstones all Y.Text content, including concurrent source-mode keystrokes from y-codemirror.next. The incremental diff approach (using the `diff` package already in dependencies) applies only the delta — new paragraphs are inserted, deleted paragraphs are removed, unchanged content is retained with its CRDT history intact. This makes Observer A's writes collaborative: a WYSIWYG edit in Tab 1 produces a targeted Y.Text mutation that doesn't destroy Tab 2's source-mode keystrokes in unrelated paragraphs.
 
 **Observer B: Text → XmlFragment (source changes → update Y.XmlFragment)**
 
@@ -266,6 +289,8 @@ export interface TiptapEditorHandle {
 
 **Observer error handling:** If Observer B's markdown parse fails (user typed invalid markdown in source mode), log the error but do NOT crash or disable the observer. The invalid state lives in Y.Text; Y.XmlFragment keeps its last valid state. When the user fixes the markdown, the next observer firing succeeds and syncs.
 
+**Expected UX during active source typing:** While a source-mode user is actively typing, the WYSIWYG view may show stale content until the markdown becomes parseable. This is expected behavior, not a bug. Markdown is frequently invalid mid-keystroke (partial heading, incomplete code fence, unclosed emphasis). The 50ms debounce helps — it waits for a typing pause — but brief staleness during fast typing is inherent to the parse-based Observer B approach.
+
 **Where observers live:** In the TiptapEditor component (or a dedicated module), registered after the HocuspocusProvider connects. They persist for the lifetime of the app — not tied to source mode toggle.
 
 ### 3.6 Agent write path changes
@@ -340,9 +365,13 @@ Phase 5: Validation + RESULTS.md
 
 ## 5. Tech Stack
 
-Same as init-spike. `y-codemirror.next` is already a dependency (was used in V4a evaluation, currently unused in the source editor). No new packages needed.
+Same as init-spike. **New dependency required:** `y-codemirror.next` must be explicitly added to `package.json` — it exists in `node_modules/` as a transitive dependency but is NOT listed as a direct dependency. The V4a evaluation path (Yjs v14) never executed (V7 FAIL → V4b), so y-codemirror.next was never imported.
 
-**Verify:** `y-codemirror.next@0.3.5` is compatible with `yjs@13.6.30` and `@codemirror/state@^6.0.0`. Check peer dependencies.
+```bash
+bun add y-codemirror.next
+```
+
+**Verify during Phase 1:** `y-codemirror.next` peer dependencies are compatible with `yjs@^13.6.30` and `@codemirror/state@^6.0.0` (research report confirms: requires `yjs@^13.5.6`, `@codemirror/state@^6.0.0`, `@codemirror/view@^6.0.0` — all satisfied).
 
 ---
 
@@ -360,11 +389,13 @@ Same as init-spike. `y-codemirror.next` is already a dependency (was used in V4a
 - Void node (jsx-component) fidelity through observer cycle
 
 **Out of scope:**
-- Disk bridge / file watcher (@parcel/watcher) — Exploration 3, separate spike
-- Awareness / cursor presence in source mode — future enhancement (the binding supports it, but UX design is separate)
-- Per-block code toggle — existing feature, unchanged
-- Prop panel / component editing UI — existing void node UX, unchanged
-- Changes outside init_spike/
+- Disk bridge / file watcher (@parcel/watcher) — Exploration 3, separate spike **(Explored)** — heavily researched in ~/reports/parcel-watcher-crdt-disk-bridge/, has own spec slot, ready to promote
+- Awareness / cursor presence in source mode — **(Identified)** — y-codemirror.next's yCollab supports awareness parameter, UX design needed
+- Per-block code toggle — existing feature, unchanged **(Noted)**
+- Prop panel / component editing UI — existing void node UX, unchanged **(Noted)**
+- Changes outside init_spike/ (scope constraint)
+
+*Note: This is a derisking spike, not a full feature spec. Consumer Matrix, User Journeys, and surface-area maps are omitted as the spike has a single consumer (init_spike codebase) and a single user journey (cross-mode collaborative editing).*
 
 ---
 
@@ -452,6 +483,15 @@ Same as init-spike. `y-codemirror.next` is already a dependency (was used in V4a
 | TS03 | Toggle 10 times rapidly → no state corruption, no stale content |
 | TS04 | Toggle while agent is writing → no crash, content consistent after toggle |
 
+**Undo/redo (P0):**
+
+| ID | Scenario |
+|---|---|
+| U01 | User types in source mode, presses Ctrl+Z → only user's edit is undone, observer-synced content in XmlFragment NOT affected |
+| U02 | User types in WYSIWYG, presses Ctrl+Z → only user's edit is undone, observer-synced content in Y.Text NOT affected |
+| U03 | Agent writes while user is editing → user presses Ctrl+Z → agent's content is NOT undone by user's undo |
+| U04 | If UndoManager cannot exclude observer origins → document the failure mode and whether it blocks the spike |
+
 **Performance (P1):**
 
 | ID | Scenario |
@@ -485,6 +525,9 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 | D5 | Three-way merge removed from toggle path, kept as module | DIRECTED | HIGH | Toggle is show/hide — no merge needed. Module useful for disk bridge (Exploration 3). |
 | D6 | SourceEditor receives Y.Text + provider, not content string | LOCKED | HIGH | y-codemirror.next requires Y.Text binding. React state intermediary is eliminated. |
 | D7 | Agent markdown write path: evaluate direct Y.Text insertion | INVESTIGATING | MEDIUM | Direct Y.Text insertion is simpler but changes CRDT history semantics. Spike will evaluate. |
+| D8 | Fallback strategy: disable Observer B, re-enable three-way merge, keep Observer A | DIRECTED | HIGH | Graceful degradation if bidirectional fails. One-way observer still delivers 3/4 sync gaps. |
+| D9 | Observer module: dedicated file, not inline in TiptapEditor | DIRECTED | HIGH | Separation of concerns. Observers are complex enough to warrant their own module. |
+| D10 | Observer A uses incremental Y.Text writes (diff-based), not full replacement | LOCKED | HIGH | Full replacement destroys concurrent source-mode edits. Incremental writes are collaborative. Design challenge H1. |
 
 ---
 
@@ -517,6 +560,8 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 | OQ1 | Does y-codemirror.next's yCollab extension handle undo correctly when external writes (from observers) modify Y.Text? | Technical | P0 | Resolves during Phase 2 |
 | OQ2 | Should Observer B parse the full markdown on every Y.Text change, or can it diff and apply incrementally? | Technical | P1 | Start with full parse. Optimize if P02 performance target missed. |
 | OQ3 | How should Observer B handle frontmatter? Y.Text includes frontmatter as text. Observer B needs to strip it before parsing. | Technical | P0 | Use existing stripFrontmatter utility. Update Y.Map('metadata') in the same transaction. |
+| OQ4 | How to configure UndoManager tracked origins to exclude observer writes? Does y-codemirror.next expose this? Does y-prosemirror's undoManager also need configuration for Observer B writes? | Technical | P0 | Resolves during Phase 2. If unresolvable, add to STOP_IF. |
+| OQ5 | Observer registration race on initial document load: what if HocuspocusProvider syncs before the observer is registered (Y.Text never gets initial content), or observer fires before document loads (writes empty content to Y.Text)? | Technical | P0 | Need to register observer after provider.on('synced') fires. Resolves during Phase 1. |
 
 ---
 
@@ -529,6 +574,7 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 **STOP_IF:**
 - Shimmer cascades beyond 2 observer cycles for any content pattern — document the pattern, fall back to one-way observer
 - y-codemirror.next binding causes Y.Doc corruption or state inconsistency
+- UndoManager cannot exclude observer origins AND undo reverts observer-synced content (user's undo desynchronizes the views) — document the failure, evaluate whether one-way fallback resolves it
 
 **ASK_FIRST:**
 - Before changing the agent markdown write endpoint path (D7 — this affects agent API contract)
