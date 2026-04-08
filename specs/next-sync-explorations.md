@@ -3,7 +3,23 @@
 **Status:** Seed — to be deepened before implementation
 **Context:** The init-spike validated the core stack (TipTap + Hocuspocus + Yjs v13 + CodeMirror). The agent-markdown-writes spike solved the R3 clobber problem with three-way merge. What remains is the set of sync gaps documented in the cross-mode sync matrix (RESULTS.md).
 
-**Goal:** Spike each viable approach to full bidirectional sync. Each exploration produces a PASS/FAIL with evidence — not production code. The value is in learning what actually works vs what the research predicted.
+**Goal:** Two concrete spikes to close all sync gaps:
+1. **Spike 1 (Explorations 1+2 combined): Full bidirectional observer sync** — the primary deliverable. Closes gaps 1, 2, 4, 5.
+2. **Spike 2 (Exploration 3): Disk bridge** — independent, closes gap 3.
+
+Together these produce a complete sync matrix — every cell green.
+
+---
+
+## Decision Record
+
+**Decided: Explorations 1+2 are one spike, not two.** Full bidirectional observer sync between Y.XmlFragment and Y.Text. The constrained (one-way) version is a fallback if bidirectional fails, not a separate deliverable. The shimmer research (`~/reports/yjs-dual-key-shimmer-analysis/`) confirms three independent mechanisms prevent cascading — this spike proves it in practice.
+
+**Decided: Exploration 6 (Y.Text canonical) is demoted to long-term option.** Real content analysis of fumadocs (openbolts) and agents-docs (201 .mdx files, 846 component uses) shows: zero top-level MDX imports, ~20 known components with simple string props, all resolved via global `getMDXComponents()`. The complex MDX patterns that would favor Y.Text canonical (expression props, inline expressions, imports) don't exist in real content. Observer sync handles the actual usage patterns fully. Y.Text canonical's dual-parser complexity and concurrent syntax corruption risk aren't justified.
+
+**Decided: Explorations 4 (Automerge) and 5 (Loro) are not pursued now.** Automerge doesn't actually solve dual-view natively (CodeMirror binding doesn't understand rich text). Loro's ecosystem is too immature (content-wipe bug, 1 production user, no sync server). Loro's fork/merge is genuinely differentiated for the draft/branch architecture but not needed at P0. Revisit Loro in 12-18 months.
+
+**MDX scope for P0:** Predefined component registry (~20 known fumadocs/agents-docs components) as typed void nodes. No import statement handling needed (components resolved globally). Slash command insertion, visual preview, prop panel editing, per-block code toggle. This maps cleanly to the void node / atom model in Y.XmlFragment.
 
 ---
 
@@ -16,6 +32,8 @@ These are the scenarios that don't work today:
 3. **Disk → CRDT** — External editor changes (VS Code, Cursor) are invisible to the system.
 4. **Source → Disk** — Source mode edits are in-memory only, not persisted until toggle-back.
 5. **WYSIWYG → Source (usable)** — The mechanism exists but replaces the entire CodeMirror buffer, resetting cursor position. Technically works, practically unusable.
+
+**Spike 1 (Explorations 1+2) closes gaps 1, 2, 4, 5. Spike 2 (Exploration 3) closes gap 3.**
 
 ---
 
@@ -192,21 +210,30 @@ These are the scenarios that don't work today:
 
 ---
 
-## Suggested Order
+## Execution Plan
 
-**Phase A — Improve the Yjs architecture (low risk, incremental):**
-1. **Exploration 4 (constrained observer)** — lowest risk, reuses everything we built, highest chance of working
-2. **Exploration 1 (shimmer test)** — cheap experiment on top of #1, turn on reverse observer and measure
-3. **Exploration 2 (disk bridge)** — independent, can run in parallel with 1-2, unlocks Cursor interop
+**Spike 1: Full Bidirectional Observer Sync (Explorations 1+2 combined)**
+- Add `Y.Text('source')` to the Y.Doc alongside `Y.XmlFragment('default')`
+- Bind CodeMirror to Y.Text via y-codemirror.next (collaborative source mode)
+- Bidirectional observers: XmlFragment→Text (serialize) and Text→XmlFragment (parse + updateYFragment)
+- Transaction origin guards to prevent infinite loops
+- Validate: shimmer doesn't occur in practice, all component editing UX works through the observer cycle
+- Fallback if bidirectional fails: constrain to one-way (XmlFragment→Text only) + toggle-back merge (what we have today but with collaborative source via Y.Text)
+- **Success = all T-scenarios involving source mode sync pass, full sync matrix green for CRDT-mediated cells**
 
-**Phase B — Evaluate alternative stacks (higher risk, higher ceiling):**
-4. **Exploration 5 (Automerge)** — mature Peritext implementation, existing ProseMirror binding, evaluate migration cost
-5. **Exploration 6 (Loro)** — Peritext + native branching, younger ecosystem, evaluate readiness
+**Spike 2: Disk Bridge (Exploration 3)**
+- @parcel/watcher on content directory
+- Content-hash feedback loop prevention
+- External file changes → parse → updateYFragment into Y.Doc
+- Independent of Spike 1 — can run in parallel
+- **Success = Cursor/VS Code edits appear in browser editor, no feedback loops, complete disk column in sync matrix**
 
-**Phase C — Only if needed:**
-6. **Exploration 3 (Y.Text canonical)** — rebuild the binding layer within Yjs. Only worth it if Phase A fails AND Phase B shows the migration cost is too high
+**Demoted (not pursued now):**
+- **Exploration 6 (Y.Text canonical)** — long-term architectural option, only if Spike 1 fails. Real content analysis showed the complex MDX patterns that favor Y.Text canonical don't exist in practice. Observer sync handles actual usage fully.
+- **Exploration 5 (Automerge)** — doesn't solve dual-view natively, 12-20 week migration, 1.7MB WASM. Not worth the cost.
+- **Exploration 4 (Loro)** — revisit in 12-18 months when ecosystem matures. Fork/merge is the differentiator but not needed at P0. Content-wipe bug in PM binding, no production sync server.
 
-The results of Phase A directly inform whether Phase B is worth pursuing. If the constrained observer + shimmer test give us full collaborative sync on Yjs, the migration cost of switching stacks needs to be justified by something beyond dual-view (e.g., Loro's native branching for the draft architecture).
+**Combined: Spike 1 + Spike 2 = complete sync matrix.** Every cell green.
 
 ---
 
