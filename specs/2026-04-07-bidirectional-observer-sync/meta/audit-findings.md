@@ -1,243 +1,241 @@
 # Audit Findings: Bidirectional Observer Sync SPEC
 
 **Artifact:** `specs/2026-04-07-bidirectional-observer-sync/SPEC.md`
-**Audit date:** 2026-04-07
-**Auditor:** Claude (eng:spec framework audit)
-**Prior review:** `meta/design-challenge.md` (7 findings: 2 high, 4 medium, 1 low)
-
-This audit evaluates the spec against the eng:spec quality bar, structural requirements, factual accuracy of codebase claims, and cross-reference integrity. It supplements (not replaces) the design challenge findings.
+**Audit date:** 2026-04-07 (second pass)
+**Auditor:** Claude (eng:spec quality bar + resolution completeness gate)
+**Prior reviews:** `meta/design-challenge.md` (7 findings), prior audit (12 findings)
+**Spec state:** Post-revision — many prior audit and design challenge findings have been addressed
 
 ---
 
 ## Audit Summary
 
-| Category | Findings | Critical | High | Medium | Low |
-|---|---|---|---|---|---|
-| Factual accuracy (codebase claims) | 14 verified, 1 contradicted, 1 unverifiable | 0 | 1 | 0 | 0 |
-| Structural completeness | 5 findings | 0 | 1 | 3 | 1 |
-| Cross-reference integrity | 2 findings | 0 | 0 | 2 | 0 |
-| Framework compliance | 3 findings | 0 | 1 | 1 | 1 |
-| Design challenge overlap | 7 findings already captured | — | — | — | — |
-| **Total new findings** | **12** | **0** | **3** | **6** | **3** |
+| Category | Findings | High | Medium | Low |
+|---|---|---|---|---|
+| Prior finding resolution status | 19 reviewed | — | — | — |
+| Factual accuracy (new) | 1 new finding | 1 | 0 | 0 |
+| Structural completeness (new) | 4 new findings | 0 | 3 | 1 |
+| Internal consistency (new) | 3 new findings | 0 | 2 | 1 |
+| Framework compliance (residual) | 2 findings | 1 | 1 | 0 |
+| **Total new/open findings** | **10** | **2** | **6** | **2** |
 
 ---
 
-## A. Factual Accuracy — Codebase Claims
+## A. Prior Finding Resolution Status
 
-Every load-bearing technical claim in the spec was verified against the current codebase (`feat/init-spike` branch at `9c07f4b`).
+The spec has been substantially revised since the first audit and design challenge. This section tracks what was addressed.
 
-### CONFIRMED
+### Design Challenge Findings
 
-| # | Claim (spec location) | Verification |
-|---|---|---|
-| F1 | App.tsx has `sourceContent`, `snapshotMarkdown`, `toggleError`, `applyThreeWayMerge` (Section 3.4) | `init_spike/src/App.tsx` lines 8-9, 13, 43 |
-| F2 | TiptapEditorHandle has `getMarkdown`, `applyThreeWayMerge`, `onContentChange` (Section 3.4) | `init_spike/src/editor/TiptapEditor.tsx` lines 14-20 |
-| F3 | HocuspocusProvider is a singleton in TiptapEditor.tsx (Section 3.1) | Lines 24-34, singleton pattern confirmed |
-| F4 | SourceEditor has `content: string` / `onChange` props (Section 3.2) | `init_spike/src/editor/SourceEditor.tsx` lines 7-10 |
-| F5 | Y.XmlFragment('default') exists in Y.Doc (Section 3.1) | TiptapEditor.tsx:98, TiptapEditor.tsx:127, persistence.ts:158 |
-| F6 | Y.Map('metadata') exists in Y.Doc (Section 3.1) | TiptapEditor.tsx:53, TiptapEditor.tsx:111, persistence.ts:151, persistence.ts:182 |
-| F7 | persistence.ts reads Y.XmlFragment in onStoreDocument (Section 3.7) | `init_spike/src/server/persistence.ts` lines 175-177 |
-| F8 | `/api/agent-write` endpoint exists (Section 3.6) | `init_spike/src/server/hocuspocus-plugin.ts` lines 38-70 |
-| F9 | `/api/agent-write-md` endpoint exists (Section 3.6) | Same file, lines 73-156 |
-| F10 | `three-way-merge.ts` exists with `threeWayMerge()` function (Section 3.8) | `init_spike/src/editor/three-way-merge.ts` confirmed |
-| F11 | `agent-flow.test.ts` exists (Section 3.8) | `init_spike/src/server/agent-flow.test.ts` — 9 test cases |
-| F12 | `yjs@^13.6.30` in package.json (Section 5) | `init_spike/package.json` line 40 |
-| F13 | `@codemirror/state@^6.0.0` in package.json (Section 5) | Confirmed in package.json |
-| F14 | y-codemirror.next peer deps are compatible: requires `yjs@^13.5.6`, `@codemirror/state@^6.0.0`, `@codemirror/view@^6.0.0` (Section 5) | `node_modules/y-codemirror.next/package.json` — all satisfied by current deps |
-
-### CONTRADICTED
-
-| # | Claim (spec location) | What's actually true | Severity |
+| ID | Finding | Status | Resolution |
 |---|---|---|---|
-| **F15** | "y-codemirror.next is already a dependency (was used in V4a evaluation)" / "No new packages needed" (Section 5, line 343) | **`y-codemirror.next` is NOT in `package.json`.** It exists in `node_modules/` as a transitive dependency only. The V4a evaluation was a conditional validation path (Yjs v14) that never executed — V7 FAILED, so V4b ran instead. No code in `init_spike/src/` imports or references y-codemirror.next. The spec's ASK_FIRST constraint ("Before adding any package not already in package.json") would apply. | **HIGH** |
+| H1 | Observer A full-replacement writes destroy concurrent edits | **RESOLVED** | D10 added: incremental diff-based Y.Text writes. Section 3.3 (lines 157-183) now shows `diffLines()` approach with the `diff` package. Observer A applies only deltas. |
+| H2 | One-way observer delivers 3/4 gaps; bidirectional doesn't safely deliver 4th | **RESOLVED** | H1 resolution (incremental writes) addresses the concurrent-write destruction that made bidirectional unsafe. D2 can now stand. |
+| M1 | y-codemirror.next not installed | **RESOLVED** | Section 5 (line 555) now acknowledges it as a new dependency with explicit `bun add` instruction. |
+| M2 | Full-replacement writes produce maximal CodeMirror deltas | **RESOLVED** | Addressed by H1 resolution — incremental writes produce minimal deltas. |
+| M3 | 4-cell gap framing inflates root causes | **RESOLVED** | Section 1 (lines 27-29) now includes decomposition note: "3 of 5 gaps share a single root cause... The 4th gap is the incremental win from bidirectional Observer B." |
+| M4 | UndoManager has no fallback | **PARTIALLY RESOLVED** | OQ4 added to Open Questions. STOP_IF (line 783-784) now includes undo criterion. But see finding IC3 below — the STOP_IF condition is too narrowly coupled. |
+| L1 | Observer B parse-error UX unspecified | **RESOLVED** | Section 3.5 (lines 305-306) now documents expected UX: "WYSIWYG view may show stale content until the markdown becomes parseable. This is expected behavior, not a bug." |
 
-> **Note:** This finding was independently identified in `meta/design-challenge.md` [M1]. The audit confirms it with additional evidence: the V4a path in `specs/2026-04-07-init-spike/SPEC.md` (line 287) was a conditional branch that did not execute, and grep for `y-codemirror\|yCollab` in `init_spike/src/` returns zero matches.
+### Prior Audit Findings
 
-### UNVERIFIABLE
-
-| # | Claim (spec location) | What was checked |
-|---|---|---|
-| F16 | "y-codemirror.next uses the YSyncConfig object instance as its transaction origin (not a string). It filters via strict reference equality" (Section 3.2, line 104) | The package source exists at `node_modules/y-codemirror.next/` but this is a behavioral claim about internal implementation. Could be verified by reading the source, but the current package version's source was not audited. The claim originates from the research report `~/reports/yjs-constrained-observer-sync/` which performed source-code analysis — treating as credible but unverified by this audit. |
-
----
-
-## B. Structural Completeness
-
-### [S1] HIGH — Evidence directory is empty
-
-**Requirement:** The eng:spec framework requires `evidence/` files for factual findings that support design decisions.
-
-**Finding:** The `evidence/` directory exists but contains **zero files**. The spec references 4 external research reports (`~/reports/`) as evidence sources but has no spec-local evidence documenting:
-- Peer dependency compatibility verification results
-- Observer origin guard transaction flow analysis
-- Debounce timing evaluation data
-- V4a/V4b execution history supporting the "already a dependency" claim
-
-**Impact:** Evidence is not self-contained. An implementer must locate and cross-reference 4 external reports to validate the spec's claims. If those reports are updated or restructured, the spec's evidence chain breaks.
-
-**Recommendation:** Create evidence files that capture the spec-relevant subset of each research report's findings, at minimum:
-- `evidence/y-codemirror-next-binding-mechanics.md` — transaction origin behavior, peer dep compatibility
-- `evidence/shimmer-prevention-mechanisms.md` — the 3 mechanisms and their proofs
-- `evidence/observer-origin-guard-flow.md` — how origin guards prevent cascading
-
----
-
-### [S2] MEDIUM — Decision Log missing 2 decisions from body text
-
-**Decisions in body text not captured in Decision Log (Section 9):**
-
-1. **Missing D8: Fallback strategy** (Section 8) — The spec specifies a concrete fallback: disable Observer B, re-enable three-way merge, keep Observer A. This is a DIRECTED decision with rationale (graceful degradation) but isn't in the log. An implementer hitting a failure condition has no decision reference for which fallback to execute.
-
-2. **Missing D9: Observer module location** (Section 3.5, line 269) — The text says observers live "In the TiptapEditor component (or a dedicated module)." This is an unresolved choice, not a deferred one. Section 13 (Agent Constraints, line 525) says "New file for observer module" — implying the decision IS made (dedicated file), but the body text hedges. The Decision Log should capture this as DIRECTED with the dedicated module as the resolution.
-
----
-
-### [S3] MEDIUM — Open Questions missing 2 items from body text
-
-**Uncertainties raised in body text not captured in Open Questions (Section 12):**
-
-1. **Missing OQ4: UndoManager configuration for observer origins** — Risk R4 (line 509) and Assumption A4 (line 498) both flag undo/redo as uncertain. The mitigation says "configure undoManager's tracked origins to exclude observer origins" but this is presented only as a mitigation, not as an open question that needs resolution. OQ1 asks a narrower question (does yCollab handle it?) while the broader question (how do we configure it, what if we can't?) is uncaptured.
-
-2. **Missing OQ5: Observer A timing guarantee on initial document load** — Section 3.5 (line 263) describes the initial sync: "Observer A fires, populating Y.Text." But the spec doesn't address: what if HocuspocusProvider's sync completes before the observer is registered? What if the observer is registered before the document loads, firing on empty content? This is a race condition with implications for the initial toggle-to-source experience.
-
----
-
-### [S4] MEDIUM — Future Work lacks maturity tiers
-
-**Requirement:** The eng:spec framework requires Out of Scope items to have maturity tiers (Explored / Identified / Noted).
-
-**Finding:** Section 6 (Scope Boundaries) lists 5 out-of-scope items as bare bullets:
-- Disk bridge / file watcher — no tier (should be **Explored**: heavily researched in `~/reports/parcel-watcher-crdt-disk-bridge/`, has its own spec slot as "Exploration 3")
-- Awareness / cursor presence — no tier (should be **Identified**: the binding supports it, noted in Section 3.2)
-- Per-block code toggle — no tier (should be **Noted**: existing feature, unchanged)
-- Prop panel / component editing UI — no tier (should be **Noted**: existing feature, unchanged)
-- Changes outside init_spike/ — no tier (scope constraint, not future work)
-
-**Impact:** Without tiers, an implementer or future spec author can't distinguish items that are well-understood and ready to promote (disk bridge) from items that were merely mentioned (cursor presence).
-
----
-
-### [S5] LOW — Missing template sections (justified by spike nature)
-
-The spec omits several sections from the eng:spec template:
-- Consumer Matrix
-- User Journeys
-- Product surface-area map
-- Internal surface-area map
-
-**Assessment:** These omissions are **justified** for a derisking spike spec. The spike has a single consumer (the init_spike codebase), a single user journey (cross-mode collaborative editing), and the surface area is fully described in Section 3. However, there is no explicit statement in the spec justifying the omissions. A one-line note would prevent future reviewers from flagging the same gap.
-
----
-
-## C. Cross-Reference Integrity
-
-### [X1] MEDIUM — Test scenario attribution is inaccurate
-
-**Finding:** Section 7 (line 373) headers all test scenarios as "From the universal test matrix (specs/next-sync-explorations.md)." This is partially incorrect:
-
-| Test suite | In next-sync-explorations.md? | Actually defined in |
-|---|---|---|
-| T20-T23 (Multi-tab source) | Yes | next-sync-explorations.md |
-| T30-T33 (Cross-mode sync) | Yes | next-sync-explorations.md |
-| T40-T47 (Agent writes) | Yes | next-sync-explorations.md |
-| T60-T65 (Content fidelity) | Yes | next-sync-explorations.md |
-| T90-T99 (MDX fidelity) | Yes | next-sync-explorations.md |
-| T100-T107 (Component editing UX) | Yes | next-sync-explorations.md |
-| **S01-S06 (Shimmer validation)** | **No** | **Defined only in this SPEC** |
-| **TS01-TS04 (Toggle simplification)** | **No** | **Defined only in this SPEC** |
-| **P01-P03 (Performance)** | **No** | **Defined only in this SPEC** |
-
-12 test scenarios (S01-S06, TS01-TS04, P01-P03) are presented as "from the universal test matrix" but are spec-specific additions.
-
-**Impact:** Misleading provenance. An implementer looking in `next-sync-explorations.md` for S01-S06 won't find them.
-
-**Recommendation:** Add a sub-header distinguishing "Universal test matrix scenarios (from next-sync-explorations.md)" from "Spike-specific validation scenarios (defined in this spec)."
-
----
-
-### [X2] MEDIUM — Research report reference uses ambiguous home-dir path
-
-**Finding:** Section 14 references reports using `~/reports/` paths (e.g., `~/reports/yjs-dual-key-shimmer-analysis/`). All 4 reports exist at `/Users/edwingomezcuellar/reports/`. However, this path is machine-specific — another contributor, or the same contributor on a different machine, would not find these reports.
-
-**Verified existence:**
-- `~/reports/yjs-constrained-observer-sync/` — EXISTS
-- `~/reports/yjs-dual-key-shimmer-analysis/` — EXISTS
-- `~/reports/mdx-cross-mode-sync-implications/` — EXISTS
-- `~/reports/parcel-watcher-crdt-disk-bridge/` — EXISTS
-
-**Impact:** Low for the current sole-contributor context, but the spec is not portable.
-
-**Recommendation:** Either (a) use repo-relative paths if reports are in the repo, or (b) note that `~/reports/` resolves via the contributor's local Claude research directory.
-
----
-
-## D. Framework Compliance
-
-### [D1] HIGH — Resolution completeness gate not passable for bidirectional path
-
-**Requirement:** The eng:spec framework requires every In Scope item to pass the resolution completeness gate before scope freeze, including: "Architectural viability validated (the recommended path works in the current runtime — confirmed by investigation, not assumed)."
-
-**Finding:** The design challenge document (`meta/design-challenge.md`) identified two HIGH-severity findings (H1: Observer A destroys concurrent source edits, H2: one-way observer delivers 3/4 gaps with less risk) that directly challenge the architectural viability of the bidirectional approach. These findings are substantive and well-evidenced.
-
-The spec's Decision D2 ("Bidirectional observers, not one-way" — HIGH confidence) was made before these design challenges were raised. The challenges have status CHALLENGED but no resolution is captured in the Decision Log or changelog.
-
-**Impact:** The spec cannot pass the resolution completeness gate until D2 is either:
-- **Confirmed** with a response to H1 (specifying how Observer A writes to Y.Text safely under concurrent source-mode editing), or
-- **Revised** to promote one-way observer as primary with bidirectional as stretch
-
-**Recommendation:** Resolve D2 in light of the H1/H2 challenges before implementation begins. This is a blocking prerequisite, not a "resolves during the spike" item — it determines the fundamental architecture.
-
----
-
-### [D2] MEDIUM — Changelog is minimal; no design challenge resolution tracked
-
-**Requirement:** `meta/_changelog.md` should capture all substantive changes including decision resolutions and design challenge outcomes.
-
-**Finding:** The changelog has a single entry (initial draft). The design challenge was conducted and produced 7 findings, but neither the challenge event nor any resolutions are logged. The changelog does not reflect the current state of the spec process.
-
----
-
-### [D3] LOW — No scope hypothesis checkpoint documented
-
-**Requirement:** The eng:spec framework calls for explicit scope checkpoints — presenting scope with evidence when investigation changes cost/feasibility.
-
-**Finding:** The scope in Section 6 is stated as final but was never presented as a hypothesis with investigation-driven evolution. Given that the design challenge fundamentally questions whether "bidirectional" should be the primary scope (vs. one-way + stretch), a scope checkpoint is overdue.
-
----
-
-## E. Design Challenge Coverage (Already Captured)
-
-For completeness, these findings from `meta/design-challenge.md` are relevant to the audit but not repeated here:
-
-| ID | Finding | Severity | Status |
+| ID | Finding | Status | Resolution |
 |---|---|---|---|
-| H1 | Observer A's full-replacement writes destroy concurrent source-mode edits | HIGH | CHALLENGED — unresolved |
-| H2 | One-way observer delivers 3/4 gaps; bidirectional doesn't safely deliver the 4th | HIGH | CHALLENGED — unresolved |
-| M1 | y-codemirror.next is not installed (overlaps F15 above) | MEDIUM | CHALLENGED — unresolved |
-| M2 | Full-replacement Y.Text writes produce maximal CodeMirror deltas | MEDIUM | CHALLENGED — unresolved |
-| M3 | 4-cell gap framing inflates distinct root causes | MEDIUM | CHALLENGED — unresolved |
-| M4 | UndoManager interaction has no fallback (overlaps S3/OQ4 above) | MEDIUM | CHALLENGED — unresolved |
-| L1 | Observer B's parse-error UX during typing is unspecified | LOW | CHALLENGED — unresolved |
+| F15 | y-codemirror.next not in package.json | **RESOLVED** | Section 5 updated (see M1 above). |
+| S1 | Evidence directory empty | **UNRESOLVED** | `evidence/` still contains zero files. See FC1 below. |
+| S2 | Decision Log missing D8/D9 | **RESOLVED** | D8 (fallback strategy) and D9 (observer module location) now in Decision Log. D10 also added. |
+| S3 | Open Questions missing OQ4/OQ5 | **RESOLVED** | OQ4 (UndoManager configuration) and OQ5 (observer registration race) now in Section 12. |
+| S4 | Future Work lacks maturity tiers | **RESOLVED** | Section 6 now has Explored/Identified/Noted tiers for each out-of-scope item. |
+| S5 | Missing template sections | **RESOLVED** | Section 6 (line 591) now has explicit justification note for omitted sections. |
+| X1 | Test scenario attribution inaccurate | **UNRESOLVED** | Section 7 (line 597) still headers all scenarios as "From the universal test matrix." S01-S06, TS01-TS04, P01-P03, U01-U04, and T50-T58 are spec-specific additions not in next-sync-explorations.md. See IC1 below. |
+| X2 | Research report paths use ~/reports/ | **UNRESOLVED** | Still uses machine-specific paths. Low priority. |
+| D1 | Resolution completeness gate not passable | **RESOLVED** | H1/H2 resolution (D10 incremental writes) addresses architectural viability. D2 can now pass the gate. |
+| D2 | Changelog minimal | **UNRESOLVED** | Changelog still has single entry from initial draft. No entries for design challenge, spec revisions, D10 addition, Section 3.9/3.10 additions. See FC2 below. |
+| D3 | No scope hypothesis checkpoint | **PARTIALLY RESOLVED** | Scope was expanded (disk bridge and triple backtick moved in-scope) but no checkpoint documented in changelog. |
 
-**Critical observation:** All 7 design challenge findings remain at CHALLENGED status with no resolutions captured in the Decision Log or changelog. This is the single most important blocker for this spec.
+---
+
+## B. New Factual Accuracy Findings
+
+### [FA1] HIGH — Section 3.10 `document.transact()` with skipStoreHooks is unverified API
+
+**Location:** Section 3.10, line 459-465
+
+**Claim:** The disk bridge uses `document.transact()` with `{ source: 'local', skipStoreHooks: true, context: { origin: 'file-watcher' } }` to prevent feedback loops (Layer 2 of the self-write prevention).
+
+**Finding:** The Yjs `Doc.transact` signature is `transact<T>(f: (arg0: Transaction) => T, origin?: any): T`. The second parameter is `origin` — an opaque value stored on the transaction. There is no `skipStoreHooks` parameter in the Yjs API.
+
+Hocuspocus's `Document` class extends `Y.Doc`. For `skipStoreHooks` to work, Hocuspocus must inspect the origin object in its `onChange`/`onStoreDocument` handler and check for a `skipStoreHooks` property. This is plausible (Hocuspocus passes options through to hooks) but was not verified against the Hocuspocus source.
+
+**Why this matters:** This is Layer 2 of the disk bridge feedback loop prevention. If `skipStoreHooks` doesn't work:
+- External file edits applied to Y.Doc would trigger `onStoreDocument` → write the same content back to disk → trigger the file watcher again → infinite feedback loop.
+- Layer 1 (content-hash check) would catch this at the watcher level, so the system doesn't break. But it means every external edit produces a redundant disk write + watcher event before being filtered.
+
+**Impact:** Medium — Layer 1 (content hash) provides a safety net, so this isn't catastrophic. But the spec presents a two-layer defense and Layer 2 may not exist. If Layer 2 fails, Layer 1 handles it with a performance penalty (one extra disk write + one extra watcher event per external edit).
+
+**Recommendation:** Verify `skipStoreHooks` behavior against Hocuspocus source (check `node_modules/@hocuspocus/server/src/Document.ts` or similar). If unsupported, remove Layer 2 from the spec and document that Layer 1 alone is sufficient. Add a comment to the code explaining the single-layer defense.
+
+---
+
+## C. Structural Completeness (New Findings)
+
+### [SC1] MEDIUM — Evidence directory still empty
+
+**Carries forward from prior audit S1.** The `evidence/` directory contains zero files. The spec references 4 external research reports and makes numerous source-code-verified claims, but none of the spec-local evidence is captured.
+
+The eng:spec framework requires evidence files for factual findings. With D10 (incremental writes) now a LOCKED decision and the disk bridge (Section 3.10) adding significant new architecture, the evidence gap is wider than before.
+
+**Minimum evidence files needed:**
+- `evidence/y-codemirror-next-binding.md` — peer dep compatibility, transaction origin mechanics, version verified
+- `evidence/incremental-diff-approach.md` — why diff-based writes solve H1, diff package capabilities, performance characteristics
+- `evidence/disk-bridge-parcel-watcher.md` — spec-local summary of the 9 dimensions from the research report, adapted to this spec's architecture
+- `evidence/observer-origin-guards.md` — how origin guards prevent cascading, source-code references
+
+**Impact:** An implementer cannot validate design decisions without locating and cross-referencing 4 external reports. If reports are restructured, the spec's evidence chain breaks.
+
+---
+
+### [SC2] MEDIUM — Changelog doesn't reflect spec evolution
+
+**Carries forward from prior audit D2.** The changelog has a single entry ("Initial draft"). The spec has undergone significant revisions:
+- Design challenge conducted (7 findings)
+- H1 resolved with D10 (incremental writes) — fundamental architecture change
+- Section 3.9 added (triple backtick bug fix)
+- Section 3.10 added (disk bridge — major new scope)
+- Scope expanded (disk bridge, triple backtick moved in-scope)
+- OQ4, OQ5 added; D8, D9, D10 added
+- Future Work items got maturity tiers
+- Multiple body text clarifications
+
+None of these are tracked. The changelog should be the audit trail of how the spec reached its current state.
+
+---
+
+### [SC3] MEDIUM — No test for three-way merge fallback path
+
+**Location:** Section 3.8, Section 7, Section 8
+
+Section 3.8 says three-way merge is "Kept as utility module" for disk bridge and fallback. Section 8 describes the fallback: "Re-enable three-way merge on toggle-back." But Section 7 has no test scenario that validates the three-way merge still works after the codebase changes from Phases 1-3.
+
+The fallback is a safety net — if bidirectional observers fail, the team reverts to three-way merge. If that path is broken (because Phases 1-3 changed the code it depends on), the fallback doesn't work.
+
+**Recommendation:** Add a test scenario:
+- `FB01`: After Phases 1-3, re-enable three-way merge on toggle-back (simulate fallback). Verify the merge produces correct results for a simple edit scenario.
+
+---
+
+### [SC4] LOW — Test scenario attribution still inaccurate
+
+**Carries forward from prior audit X1.** Section 7 (line 597) headers all scenarios as "From the universal test matrix (specs/next-sync-explorations.md)." But 20+ scenarios are spec-specific additions:
+- S01-S06 (shimmer validation)
+- TS01-TS04 (toggle simplification)
+- P01-P03 (performance)
+- U01-U04 (undo/redo)
+- T50-T58 (disk sync)
+- FB01 (if added per SC3)
+
+**Recommendation:** Add sub-headers: "Universal test matrix scenarios" vs. "Spike-specific validation scenarios."
+
+---
+
+## D. Internal Consistency (New Findings)
+
+### [IC1] MEDIUM — OQ3 is resolved in body text but listed as open
+
+**Location:** Section 12 (OQ3), Section 3.3 (lines 202-214)
+
+OQ3 asks: "How should Observer B handle frontmatter?" The answer is fully implemented in Observer B's code (lines 202-204): `const { frontmatter, body } = stripFrontmatter(md)` followed by `metaMap.set('frontmatter', frontmatter)`. The status should be RESOLVED, not open.
+
+---
+
+### [IC2] MEDIUM — Frontmatter in Y.Text is an implicit assumption
+
+**Location:** Section 3.1, Section 3.3
+
+Observer A (lines 153-155) writes full markdown including frontmatter to Y.Text: `const md = prependFrontmatter(frontmatterRef.current, body)`. Observer B (line 202-203) expects to strip frontmatter from Y.Text: `const md = ytext.toString()` → `stripFrontmatter(md)`.
+
+This means Y.Text contains the complete document (frontmatter + body), not just body content. This is a load-bearing assumption — if Y.Text ever contains only body content, Observer B would fail to find frontmatter and the metadata map would be cleared.
+
+This should be either:
+- Explicitly stated in Section 3.1 where the Y.Doc structure is defined: "Y.Text('source') contains the full markdown document including frontmatter"
+- Added as Assumption A5
+
+---
+
+### [IC3] LOW — STOP_IF undo criterion is narrowly coupled to OQ4
+
+**Location:** Section 13 (line 783-784), OQ4
+
+The STOP_IF says: "UndoManager cannot exclude observer origins AND undo reverts observer-synced content." OQ4 asks about configuring tracked origins.
+
+These are coupled: if OQ4 discovers that y-codemirror.next's UndoManager CAN be configured but y-prosemirror's UndoManager (WYSIWYG side) CANNOT, then OQ4 is "resolved" for one layer but undo is still broken on the other. The STOP_IF should say "either layer's UndoManager" to cover both sides.
+
+---
+
+## E. Framework Compliance (Residual)
+
+### [FC1] HIGH — Resolution completeness gate: disk bridge (Section 3.10) has unverified API dependency
+
+The disk bridge relies on `document.transact()` with `skipStoreHooks` (FA1 above). The resolution completeness gate requires: "Architectural viability validated (the recommended path works in the current runtime — confirmed by investigation, not assumed)."
+
+The `skipStoreHooks` mechanism has not been confirmed by investigation. This is a gap in the gate for the disk bridge scope item specifically. The rest of the spec passes the gate.
+
+**Options:**
+1. Verify `skipStoreHooks` against Hocuspocus source (resolves the gate)
+2. Remove Layer 2 from the disk bridge design and document that Layer 1 (content hash) is the sole feedback loop prevention (simplifies and resolves)
+3. Accept the risk — Layer 1 is sufficient, Layer 2 is defense-in-depth (document the acceptance)
+
+---
+
+### [FC2] MEDIUM — Quality bar gap: no success metrics with baseline/target/instrumentation
+
+**Requirement:** "Success metrics defined: what to measure, baseline, target, instrumentation plan"
+
+The spec has Success Criteria (Section 2) with pass/fail conditions, Performance targets (P01-P03) with numeric targets, and Shimmer criteria (S01-S06) with firing count thresholds. But there are no baselines (what is the current performance?), no instrumentation plan (how will metrics be collected beyond manual testing?), and no ongoing measurement strategy.
+
+For a derisking spike this is likely acceptable — the validation is manual and ephemeral. But the quality bar formally requires it. **Recommendation:** Add a one-line note acknowledging this is a spike with manual validation, not a production feature with ongoing metrics.
+
+---
+
+## F. Quality Bar Checklist
+
+| Must-have | Status | Notes |
+|---|---|---|
+| Problem statement (who, pain, why now) | PASS | Section 1 SCR is specific and well-decomposed |
+| Goals and non-goals explicit | PASS | Section 2 + Section 6 |
+| Primary personas/consumers identified | PASS (waived) | Single consumer (init_spike), justified in Section 6 note |
+| End-to-end user journey | PASS (waived) | Single journey (cross-mode editing), justified |
+| Requirements prioritized with ACs | PASS | Test scenarios serve as acceptance criteria |
+| ACs describe observable behavior | PASS | Scenarios describe what to type, what to observe |
+| Current state described | PASS | Section 3.2 (current SourceEditor), Section 3.4 (current toggle) |
+| Proposed solution as vertical slice | PASS | Sections 3.1-3.10 cover full stack |
+| Decision Log with rationale + door-type + evidence | PASS | Section 9, 10 decisions, evidence links present |
+| Open Questions with status + next actions | PARTIAL | OQ3 should be marked resolved (IC1) |
+| Spec includes PRD + technical design | PASS | Integrated throughout |
+| Assertions evidence-backed or labeled ASSUMPTION | PARTIAL | FA1 (skipStoreHooks) is unverified and unlabeled |
+| Future Work with maturity tiers | PASS | Section 6 has tiers |
+| Success metrics with baseline/target/instrumentation | PARTIAL | Targets exist, baselines and instrumentation absent (FC2) |
+| Evidence files contain primary source | FAIL | evidence/ directory empty (SC1) |
 
 ---
 
 ## Recommended Action Plan
 
-**Priority 1 — Blocking (resolve before implementation):**
-1. Resolve D2 in light of H1/H2. Either specify incremental Y.Text writes for Observer A, or promote one-way observer to primary.
-2. Correct F15: add `y-codemirror.next` as an explicit dependency; update Section 5.
-3. Update Decision Log with D2 resolution and add missing D8/D9.
+### Priority 1 — Blocking (before implementation)
 
-**Priority 2 — Should fix (before scope freeze):**
-4. Add missing OQ4 (undo configuration) and OQ5 (initial sync race).
-5. Create evidence files (at minimum: binding mechanics, shimmer mechanisms, origin guard flow).
-6. Add maturity tiers to Future Work items.
-7. Fix test scenario attribution (X1).
-8. Update changelog with design challenge event and resolutions.
+1. **Verify or remove `skipStoreHooks`** (FA1/FC1). Check Hocuspocus Document source, or simplify to Layer 1 only.
+2. **Create minimum evidence files** (SC1). At least: binding mechanics, incremental diff rationale, observer origin guards. 30 min of work captures the most load-bearing claims.
 
-**Priority 3 — Nice to have:**
-9. Add justification note for omitted template sections (S5).
-10. Clarify research report path portability (X2).
-11. Add scope hypothesis checkpoint (D3).
+### Priority 2 — Should fix (before scope freeze)
+
+3. **Update changelog** (SC2). Backfill entries for design challenge, D10, Section 3.9/3.10, scope expansion.
+4. **Mark OQ3 as resolved** (IC1).
+5. **Add Assumption A5: Y.Text contains full markdown including frontmatter** (IC2).
+6. **Add fallback test scenario FB01** (SC3).
+7. **Fix test scenario attribution** (SC4).
+8. **Broaden STOP_IF undo criterion** to cover both UndoManager layers (IC3).
+
+### Priority 3 — Nice to have
+
+9. **Add quality bar waiver note** for success metrics (FC2).
+10. **Clarify D7 ASK_FIRST language** — "implementation strategy" not "endpoint path."

@@ -2,242 +2,288 @@
 
 **Artifact:** specs/2026-04-07-bidirectional-observer-sync/SPEC.md
 **Challenge date:** 2026-04-07
-**Total findings:** 7 (2 high, 4 medium, 1 low)
+**Challenger:** Second pass — fresh challenge of updated spec (post-H1/H2 resolution)
+**Total findings:** 7 (2 high, 3 medium, 2 low)
+
+**Context:** The spec was previously challenged and updated to address those findings. Key changes: Observer A now uses incremental `diffLines` writes (D10), gap decomposition note added to SCR, y-codemirror.next acknowledged as new dependency, UndoManager test scenarios added, `skipStoreHooks`-based parse-error UX documented. This challenge evaluates the spec's **current state**, focusing on the newly added disk bridge (Section 3.10) and the implications of the `diffLines` choice for Observer A.
 
 ---
 
 ## High Severity
 
-### [H1] Finding: Observer A's full-replacement writes to Y.Text destroy concurrent source-mode edits
+### [H1] Finding: Disk bridge Layer 2 feedback loop prevention (`skipStoreHooks`) relies on a nonexistent API
 
 **Category:** DESIGN
-**Source:** DC1 (Simpler alternative) + DC2 (Stakeholder gap)
-**Location:** Section 3.3 (Observer A code), Section 3.5 (Observer lifecycle), Section 2 (Success Criteria T30/T31)
+**Source:** DC2 (Stakeholder gap)
+**Location:** Section 3.10 (Disk bridge — `handleExternalChange` code block, line ~459-466)
 
-**Issue:** The spec's own research base contains a direct warning against this architecture. The constrained observer sync report (`~/reports/yjs-constrained-observer-sync/`) explicitly states: "Simultaneous writes to Y.Text from both the observer and y-codemirror.next binding destroy concurrent edits. The observer MUST be paused while the user is in source mode." The spec's bidirectional design runs Observer A continuously (Section 3.5: "They persist for the lifetime of the app -- not tied to source mode toggle"), creating exactly the concurrent-write condition the research warns against.
+**Issue:** The disk bridge claims two-layer feedback loop prevention:
+- **Layer 1:** Content-hash check in the watcher callback (skip if hash matches `writeTracker`)
+- **Layer 2:** `skipStoreHooks: true` in the `document.transact()` options to prevent persistence from re-writing the file
 
-**Current design:** Observer A fires on every Y.XmlFragment change and performs a full-replacement write to Y.Text:
-```typescript
-doc.transact(() => {
-  ytext.delete(0, ytext.length);
-  ytext.insert(0, md);
-}, ORIGIN_TREE_TO_TEXT);
+Layer 2 does not exist. Verified against the codebase:
+
+1. `Y.Doc.transact(f, origin = null)` accepts only a function and an optional origin parameter (`node_modules/yjs/src/utils/Doc.js:184`). It does not accept an options object.
+2. Hocuspocus `Document` extends `Y.Doc` without overriding `transact` (`node_modules/@hocuspocus/server/src/Document.ts`). No `skipStoreHooks` concept exists in Hocuspocus.
+3. When the spec code calls `document.transact(() => { ... }, { source: 'local', skipStoreHooks: true, context: { origin: 'file-watcher' } })`, Yjs treats the entire object as the transaction `origin` — a passive label. It does **not** interpret `skipStoreHooks` as a directive.
+
+**Consequence:** Every external file edit triggers a redundant persistence write cycle:
+
 ```
-When a remote user types in WYSIWYG while a local user edits in source mode, Observer A fires (the XmlFragment change has y-prosemirror's origin, not `ORIGIN_TEXT_TO_TREE`, so the guard doesn't skip it). The `delete(0, length)` tombstones ALL Y.Text content, including the local user's uncommitted source-mode keystrokes. The subsequent `insert(0, md)` writes back serialized content that doesn't include those keystrokes (they were in Y.Text, not yet in Y.XmlFragment).
+External edit → watcher reads file → parse → updateYFragment → Y.Doc 'update' event
+→ Hocuspocus onUpdate callback → debounce → onStoreDocument fires
+→ persistence serializes Y.Doc → records hash in writeTracker → writes to disk
+→ watcher fires for THIS write → content-hash matches → skip (Layer 1 catches it)
+```
 
-This is not a shimmer problem -- the shimmer analysis addresses whether observers infinitely cascade. This is a concurrent-write destruction problem: two sources (Observer A and y-codemirror.next) write to the same Y.Text, and the full-replacement pattern is inherently non-collaborative.
+Layer 1 prevents infinite loops **only if the round-trip is idempotent** (i.e., `serialize(parse(content)) === content`). If the markdown round-trip alters content (trailing whitespace, list marker normalization, fence style normalization `~~~` → `` ``` ``), the hash won't match and the cycle repeats:
 
-**Consequence for test scenarios:**
-- T30 ("No cursor jump in Tab 2") -- FAILS. Full-replacement produces a maximal delta; y-codemirror.next applies it as a complete buffer replacement, causing cursor jump and scroll reset.
-- T31 ("Tab 1 in source types -- paragraph appears in Tab 2's WYSIWYG. Live") -- At risk. While Observer B syncs source→tree, a concurrent WYSIWYG edit triggers Observer A, which clobbers source edits.
-- T33 ("Simultaneous, non-conflicting -- both survive") -- FAILS under this design without incremental writes.
-- T45 ("User typing in source while agent writes simultaneously -- both present") -- FAILS. Agent write → XmlFragment → Observer A → full Y.Text replacement → source user's edits lost.
+```
+External edit (content B) → parse → Y.Doc → persistence serializes → content B' (≠ B)
+→ writeTracker records hash(B') → writes B' to disk
+→ watcher fires → reads B' → hash(B') matches → skip ✓
+BUT: external editor sees B' (different from B), may re-save B → loop resumes
+```
 
-**Alternative:** The architecture requires one of:
-1. **Incremental Y.Text updates in Observer A** -- diff the current Y.Text against the serialized markdown and apply only the delta (e.g., using `diff` library already in package.json). This makes Observer A's writes collaborative rather than destructive. Significantly more complex to implement but preserves the bidirectional architecture.
-2. **Pause Observer A while source mode is active** (the constrained observer report's recommendation). This means WYSIWYG→Source sync is NOT live when a local user is in source mode. Remote WYSIWYG edits accumulate in Y.XmlFragment and sync to Y.Text only when the source user toggles back. This is functionally equivalent to the one-way observer approach the spec explicitly deprioritized.
-3. **Accept the one-way observer as the production path.** The one-way observer (tree→text, paused in source mode) + y-codemirror.next binding delivers 3 of 4 broken sync cells safely. Only "live source→WYSIWYG" requires bidirectional observers, and the spec's current design can't deliver that cell safely without solving incremental writes.
+Test scenario S05 (tilde fence → backtick normalization) is exactly this case. T56 ("Rapid external saves ~1/sec for 10 sec — system keeps up, no feedback loops") depends on Layer 2 to prevent the echo cycle, but Layer 2 doesn't function.
 
-**Trade-off:**
-- Option 1 adds significant complexity (diffing serialized markdown against Y.Text character-by-character) and is itself unproven.
-- Option 2 is functionally the one-way observer the spec rejected -- it has the same effective capability with less risk.
-- Option 3 accepts a smaller scope win but delivers it safely.
+**Current design:** "Apply with skipStoreHooks to prevent feedback loop (Layer 2) / Access document directly (DirectConnection.transact doesn't expose skipStoreHooks)"
 
-**Decision Log interaction:** D2 ("Bidirectional observers, not one-way") was made with HIGH confidence based on the shimmer analysis. But the shimmer analysis proves a DIFFERENT property (observers don't cascade infinitely) than what's needed here (concurrent writes from two sources to Y.Text are safe). The evidence that justified D2 doesn't address this finding.
+**Alternative:** Two viable approaches to implement actual Layer 2:
+
+1. **Origin-based persistence skip.** Use Hocuspocus's `onStoreDocument` hook to check the transaction origin. If recent updates came from the file-watcher origin, skip the store. This requires tracking which origins contributed to the pending document state — non-trivial because Hocuspocus debounces multiple updates before calling `onStoreDocument`.
+
+2. **Timestamp-based write suppression.** After `handleExternalChange` applies changes, record `lastExternalChangeTime`. In the persistence layer's `onStoreDocument`, if `Date.now() - lastExternalChangeTime < threshold`, skip the write. Simple, imprecise, but effective.
+
+3. **Accept Layer 1 only — but document the constraint.** If round-trip idempotency is guaranteed (A3 says HIGH confidence), Layer 1 alone is sufficient. But the spec must explicitly acknowledge that Layer 2 doesn't exist and that loop-freedom depends on idempotent serialization, converting A3 from "assumption" to "load-bearing invariant" with test coverage for the specific patterns external editors produce.
+
+**Trade-off:** Option 1 is correct but complex. Option 2 is pragmatic but racy. Option 3 is simplest but converts a safety mechanism into a correctness assumption.
 
 **Status:** CHALLENGED
 
-**Suggested resolution:** Before committing to bidirectional observers, the spec must specify how Observer A writes to Y.Text when source mode is active. If the answer is "full replacement," test scenarios T30, T33, and T45 need to be revised or the concurrent-write destruction must be addressed. If the answer is "pause Observer A in source mode," the spec should acknowledge this is effectively the one-way observer approach and re-evaluate whether the bidirectional framing is accurate.
+**Suggested resolution:** Remove the `skipStoreHooks` code and comment. Implement an actual Layer 2 mechanism, or demote to single-layer (content-hash only) with explicit documentation that loop-freedom requires idempotent round-trips and a test scenario that verifies this property for all content patterns in the test fixture.
 
 ---
 
-### [H2] Finding: The one-way observer delivers 3 of 4 gaps and the bidirectional design doesn't safely deliver the 4th
+### [H2] Finding: Disk bridge concurrent-edit handling — code applies changes unconditionally but text says "defer"
 
 **Category:** DESIGN
-**Source:** DC1 (Simpler alternative)
-**Location:** Section 1 (Problem Statement), Section 3.3-3.5, Section 8 (Fallback)
+**Source:** DC2 (Stakeholder gap)
+**Location:** Section 3.10 ("Concurrent edit handling" paragraph + `handleExternalChange` code)
 
-**Issue:** The spec frames bidirectional observers as the primary approach and one-way observers as a fallback (Section 8). But once H1 is accounted for, the effective capability of both approaches converges. Here's the gap analysis:
+**Issue:** The spec's text and code describe **different strategies** for concurrent browser + external edits:
 
-| Broken cell | One-way observer | Bidirectional (with H1 unresolved) |
-|-------------|------------------|------------------------------------|
-| Source ↔ Source | FIXED (y-codemirror.next + Y.Text) | FIXED (same) |
-| Source → Disk | FIXED (Observer A keeps XmlFragment in sync → persistence works) | FIXED (same) |
-| WYSIWYG → Source (cursor reset) | FIXED (Y.Text updated by Observer A when not in source; y-codemirror.next handles cursor) | FIXED (same mechanism, but with concurrent-write risk when source active) |
-| Source → WYSIWYG (live) | NOT LIVE (toggle-back sync) | UNSAFE (Observer B works, but Observer A's response to the resulting XmlFragment change clobbers Y.Text) |
+**Text says (Section 3.10, "Concurrent edit handling"):**
+> "Detection: Compare `document.lastChangeTime` against the watcher event timestamp. If Y.Doc was modified since the last known disk state, this is a concurrent edit."
+> "P0 strategy: CRDT wins. Defer the watcher update — the external change is overwritten by the next persistence write."
 
-The one-way observer approach fixes gaps 1, 3, and 4 from the Complication. The 4th gap (live source→WYSIWYG) is the only incremental win from bidirectional observers, and H1 shows it's not safely delivered without solving incremental Y.Text writes.
+**Code does:** `handleExternalChange` unconditionally calls `updateYFragment(document, xmlFragment, pmNode, meta)`. There is no `lastChangeTime` comparison, no timestamp check, no deferral. Every external change is applied immediately via CRDT merge.
 
-**Current design:** "Bidirectional observers, not one-way" (D2, HIGH confidence). The one-way approach is relegated to fallback status (Section 8).
+These are different strategies with different outcomes:
+- **"Defer" (text):** External change is ignored; it's overwritten by the next persistence cycle. External editor's change is lost. Simple, safe, data-lossy for the external editor.
+- **"Apply via updateYFragment" (code):** External change is merged into the CRDT alongside browser edits. Both survive (Yjs conflict resolution handles concurrent mutations). More correct, but introduces the complexity of merging a full-document parse result with in-flight browser edits.
 
-**Alternative:** Promote the one-way observer to the primary design. The spike still validates the same infrastructure (Y.Text, y-codemirror.next binding, Observer A with origin guards). The toggle simplification still works (show/hide, because Observer A keeps Y.Text populated when not in source mode; toggle-back applies source changes to XmlFragment). The spike scope shrinks but delivers provably safe capabilities.
+Test scenario T53 ("Edit .md file externally while user is typing in WYSIWYG — no clobber (CRDT wins, external edit deferred)") tests the text's strategy, not the code's. If the code is correct, T53's expected behavior should be "both edits survive via CRDT merge" — not "external edit deferred."
 
-If the spike succeeds with one-way, bidirectional can be attempted as a stretch goal WITH incremental Y.Text writes, informed by what was learned.
+`document.lastChangeTime` DOES exist in Hocuspocus (`Document.ts:45`), so the detection mechanism is implementable. But it's not implemented.
 
-**Trade-off:**
-- Gained: Simpler, safer, fewer failure modes, no concurrent-write risk
-- Lost: Live source→WYSIWYG sync (source edits appear in WYSIWYG on toggle-back, not in real-time)
-- Impact on Success Criteria: The sync matrix would show 3 green cells (not 4). Source→WYSIWYG becomes "on toggle-back" rather than "live."
+**Current design:** Text describes defer-with-detection. Code applies unconditionally.
 
-**Decision Log interaction:** The next-sync-explorations spec demoted the one-way observer because "The shimmer concern was based on outdated data (pre-V1b validation)" and "The decision prioritizes full collaboration." But the demotion assumed shimmer was the only risk. H1 identifies a different risk (concurrent-write destruction) that the shimmer analysis doesn't address. The rejection rationale for one-way observers doesn't hold against this new finding.
+**Alternative:** Align code and text. Either:
+1. **Implement the detection logic.** Check `document.lastChangeTime`, defer if concurrent. Simpler, matches T53's expected behavior, but loses the external edit.
+2. **Keep the code (unconditional merge).** Update T53 and the concurrent-edit description to reflect CRDT merge semantics. More data-preserving, but the merge quality depends on `updateYFragment`'s diff algorithm applied to a full-document parse result vs. in-flight CRDT state.
+
+**Trade-off:** Option 1 matches stated strategy but loses data. Option 2 preserves data but needs T53 rewritten and the CRDT merge behavior characterized for external-edit scenarios.
 
 **Status:** CHALLENGED
 
-**Suggested resolution:** Re-evaluate D2. Either (a) specify an incremental Y.Text write strategy for Observer A that's safe under concurrent source-mode editing, or (b) promote one-way observer to primary with bidirectional as a stretch goal.
+**Suggested resolution:** Decide which strategy is intended and align code, text, and test scenario T53. If defer: implement the `lastChangeTime` check. If merge: update the description and T53.
 
 ---
 
 ## Medium Severity
 
-### [M1] Finding: y-codemirror.next is not installed -- "no new packages" claim is incorrect
+### [M1] Finding: `diffLines` granularity in Observer A produces line-level replacements for within-line WYSIWYG edits
 
 **Category:** DESIGN
-**Source:** DC2 (Stakeholder gap) + DC3 (Framing validity)
-**Location:** Section 5 (Tech Stack)
+**Source:** DC1 (Simpler alternative)
+**Location:** Section 3.3 (Observer A — CRITICAL note, `diffLines` code block)
 
-**Issue:** The spec states: "y-codemirror.next is already a dependency (was used in V4a evaluation, currently unused in the source editor). No new packages needed." This is factually incorrect. `package.json` does not include `y-codemirror.next`. The package is referenced in `CLAUDE.md` as available in `~/.claude/oss-repos/` for source reading, and `RESULTS.md` mentions it as a concept, but it was never added as a dependency.
+**Issue:** Observer A uses `diffLines` from the `diff` package to compute incremental Y.Text updates. `diffLines` operates on line boundaries — it splits input by `\n` and compares whole lines. For within-line WYSIWYG edits (bolding a word, inserting a link, changing emphasis), the entire containing line appears as a changed unit:
 
-**Current design:** "No new packages needed."
+```
+Before: "Hello world, this is a paragraph"
+After:  "Hello **world**, this is a paragraph"
 
-**Alternative:** Acknowledge y-codemirror.next as a new dependency. Verify peer dependency compatibility with yjs@13.6.30 and @codemirror/state@^6.0.0 before Phase 1. The ASK_FIRST constraint (Section 13) says to ask before "adding any package not already in package.json" -- this applies.
+diffLines result: 1 line removed, 1 line added (entire line replaced)
+```
 
-**Trade-off:** Minor scope correction. No design change needed, but the claim that this spike adds zero dependencies is wrong.
+In Y.Text, this translates to `ytext.delete(offset, lineLength)` + `ytext.insert(offset, newLine)` — the entire line is removed and re-inserted. For a source-mode user with their cursor in that line:
+
+- y-codemirror.next receives a remote delta that deletes and re-inserts the line text
+- Cursor position within the line must be re-inferred after the delete+insert — likely resets to start or end of the re-inserted range
+- T30 ("No cursor jump in Tab 2") may fail for same-line cross-mode edits
+
+The `diff` package also provides `diffChars` (character-level) and `diffWords` (word-level), which would produce minimal deltas for within-line changes. The spec doesn't discuss this granularity trade-off.
+
+**Current design:** `diffLines` with no discussion of alternatives.
+
+**Alternative:** Use `diffChars` for maximum precision (smallest possible Y.Text mutations, best cursor preservation). Trade-off: `diffChars` on a 50KB document is more expensive than `diffLines` (~O(n*m) for character diff vs ~O(n*m) for line diff, but with much larger n and m for chars). A hybrid approach (diffLines first, then diffChars within changed lines) could balance precision and performance.
+
+**Trade-off:**
+- `diffLines`: Fast, handles most cross-paragraph edits well. Fails for same-line cross-mode edits (cursor jumps within line). ~2ms for 1KB, ~20ms for 50KB.
+- `diffChars`: Precise, minimal Y.Text mutations, best cursor preservation. ~5-15ms for 1KB, ~50-200ms for 50KB (may exceed debounce budget).
+- Hybrid (diffLines → diffChars within changed lines): Best of both — fast for multi-line changes, precise for within-line changes. ~3-5ms typical, bounded by changed line length.
 
 **Status:** CHALLENGED
 
-**Suggested resolution:** Update Section 5 to acknowledge y-codemirror.next as a new dependency and move the peer-dep verification from Assumption A1 to a Phase 0 prerequisite.
+**Suggested resolution:** Add the granularity trade-off to the spec (inline or in a decision log entry). At minimum, document that `diffLines` produces line-level replacements and T30's "no cursor jump" assertion applies to cross-paragraph edits but may not hold for same-line cross-mode edits. Consider the hybrid approach as the recommended implementation.
 
 ---
 
-### [M2] Finding: Full-replacement Y.Text writes produce maximal CodeMirror deltas regardless of change size
+### [M2] Finding: Performance targets don't cover Observer B's parse + updateYFragment round-trip
 
 **Category:** DESIGN
 **Source:** DC2 (Stakeholder gap)
-**Location:** Section 3.3 (Observer A), Performance targets P01-P02
+**Location:** Section 7 (Performance test scenarios P01-P03)
 
-**Issue:** Observer A performs `ytext.delete(0, length); ytext.insert(0, md)` for every Y.XmlFragment change, regardless of how small the change is. A single character typed in WYSIWYG triggers a full Y.Text replacement. The Y.Text event delta received by y-codemirror.next reflects the actual operations (delete all + insert all), not a minimized diff. This means:
+**Issue:** The performance targets measure "Observer serialization latency" — the Observer A direction (XmlFragment → markdown serialization → Y.Text write). Observer B's cost is unmeasured:
 
-1. **Every WYSIWYG keystroke produces a full-document delta in CodeMirror.** For a 50KB document, that's ~50KB of delete + ~50KB of insert dispatched to CodeMirror on every remote keystroke. The performance targets (P01: <10ms for 1KB, P02: <100ms for 50KB) measure serialization latency only -- they don't account for CodeMirror applying a full-document replacement delta.
+| Operation | Measured by | Observer |
+|-----------|------------|---------|
+| XmlFragment → markdown serialization | P01, P02 | A |
+| `diffLines` computation + Y.Text apply | Not measured | A |
+| Markdown parse (`mdManager.parse()`) | Not measured | B |
+| ProseMirror node construction (`schema.nodeFromJSON()`) | Not measured | B |
+| `updateYFragment()` tree diff + Y.XmlFragment mutations | Not measured | B |
 
-2. **Cursor position preservation depends on y-codemirror.next's delta application.** Full-replacement deltas are the worst case for cursor tracking -- the old position is deleted and a new position must be inferred from the reinserted text.
+During active source-mode typing, Observer B fires every 50ms (after debounce). Each firing performs a full-document markdown parse, constructs a ProseMirror node tree, and runs `updateYFragment`'s structural diff against the existing Y.XmlFragment. For a 50KB document, this is a non-trivial pipeline.
 
-3. **The 50ms debounce (D3) helps reduce frequency but not per-event cost.** Each firing still produces a maximal delta.
+The spec's R2 risk ("Observer performance degrades on large documents") has mitigation "Debounce. If still too slow, debounce increases or observers become incremental." But without performance targets for Observer B, "too slow" has no definition.
 
-**Current design:** Full-replacement write pattern with 50ms debounce. Performance targets measure serialization only.
+**Current design:** P01-P03 cover serialization latency only.
 
-**Alternative:** Use the `diff` package (already in package.json) to compute a minimal edit script between Y.Text's current content and the serialized markdown. Apply only the changed segments to Y.Text. This produces minimal deltas for CodeMirror and preserves cursor position naturally. Adds ~5-10ms of diff computation but eliminates the full-replacement cost on the receiving end.
+**Alternative:** Add performance targets for Observer B:
+- `PB01`: Observer B parse+apply latency for ~1KB — target: <15ms
+- `PB02`: Observer B parse+apply latency for ~50KB — target: <150ms
 
-**Trade-off:** More complex Observer A implementation vs. dramatically better CodeMirror UX and performance for cross-mode editing.
+If PB02 exceeds 150ms, the 50ms debounce budget is blown and source-mode typing produces visible WYSIWYG lag.
 
-**Status:** CHALLENGED
-
-**Suggested resolution:** Add incremental Y.Text update strategy to the spike's evaluation scope (alongside D7's agent write path evaluation). At minimum, extend performance targets to measure CodeMirror delta application cost, not just serialization.
-
----
-
-### [M3] Finding: The 4-cell gap framing inflates distinct root causes into separate problems
-
-**Category:** DESIGN
-**Source:** DC3 (Framing validity)
-**Location:** Section 1 (Problem Statement -- Complication)
-
-**Issue:** The Complication presents 4 broken sync cells as separate problems requiring the bidirectional observer architecture. But 3 of 4 share a single root cause: source mode uses a plain text buffer with no CRDT binding.
-
-| Gap | Root cause | Fixed by... |
-|-----|-----------|-------------|
-| Source ↔ Source | No CRDT binding | y-codemirror.next + Y.Text |
-| WYSIWYG → Source (cursor reset) | Observer replaces full buffer | y-codemirror.next handles remote writes correctly |
-| Source → Disk | Not persisted until toggle-back | Observer A (one-way) keeps XmlFragment in sync |
-| Source → WYSIWYG (live) | Edits don't flow until toggle-back | Observer B (bidirectional only) |
-
-Only the 4th gap (live source→WYSIWYG) requires bidirectional observers. The other 3 are solved by y-codemirror.next binding + one-way Observer A. The Resolution ("Add Y.Text to Y.Doc... Run bidirectional observers") is presented as necessary for ALL 4 gaps, but the marginal complexity of bidirectional over one-way serves only 1 gap.
-
-This matters because the spec's framing leads to an architecture whose primary justification (filling all 4 cells) is achievable with a simpler subset for 3 of 4 cells.
-
-**Current design:** "The cross-mode sync matrix has 4 broken cells" → bidirectional observers fill them all.
-
-**Alternative:** Reframe the Complication as: "Source mode has no CRDT binding (3 gaps). Additionally, source→WYSIWYG is not live (1 gap). The first 3 are solved by Y.Text + y-codemirror.next + one-way observer. The 4th is the stretch goal that bidirectional observers attempt."
-
-**Trade-off:** More honest framing at the cost of weaker justification for bidirectional complexity.
+**Trade-off:** Additional measurements during validation. No design change needed — just measurement coverage.
 
 **Status:** CHALLENGED
 
-**Suggested resolution:** Restructure the SCR to distinguish "guaranteed wins" (y-codemirror.next + one-way observer) from "stretch validation" (bidirectional observers for live source→WYSIWYG).
+**Suggested resolution:** Add Observer B performance targets to the test scenario table (Section 7, Performance).
 
 ---
 
-### [M4] Finding: UndoManager interaction is identified but has no fallback if resolution fails
+### [M3] Finding: `writeTracker` Map has no TTL or cleanup for missed watcher events
 
 **Category:** DESIGN
 **Source:** DC2 (Stakeholder gap)
-**Location:** Assumption A4, Risk R4, Open Question OQ1
+**Location:** Section 3.10 (Disk bridge — `writeTracker` code)
 
-**Issue:** Three separate sections flag undo/redo as uncertain:
-- A4: "y-codemirror.next's undoManager works correctly alongside our custom observers -- MEDIUM confidence"
-- R4: "Undo/redo behavior breaks -- user undoes their edit but also undoes an observer write"
-- OQ1: "Does y-codemirror.next's yCollab extension handle undo correctly when external writes modify Y.Text?"
+**Issue:** The `writeTracker` Map (`Map<string, { hash: string; timestamp: number }>`) is populated on every persistence write (before `writeFile`) and cleaned up only when a matching watcher event fires and the hash matches. Entries that never get a matching watcher event accumulate indefinitely:
 
-The mitigation for R4 is "Configure undoManager's tracked origins to exclude observer origins." But the spec doesn't specify:
-1. What happens if origin exclusion doesn't work (y-codemirror.next may not expose this configuration)
-2. Whether undo in WYSIWYG (via y-prosemirror's undoManager) also needs origin configuration for Observer B's writes
-3. What the user experience is if undo IS broken -- is this a spike-blocking failure or a known limitation?
+- Watcher errors (rare but possible — `if (err) { console.error(...); return; }`)
+- Watcher event coalescing: @parcel/watcher's 50ms debounce may coalesce rapid writes into a single event, leaving intermediate hashes unmatched
+- Race conditions: persistence writes file A, then immediately writes file A again (different content) before the watcher fires for the first write. The watcher fires once for the second write — its hash matches the second entry, but the first entry is orphaned.
 
-The STOP_IF criteria (Section 13) don't include undo breakage. A user whose undo reverts observer syncs (making the views desynchronize) would experience significant UX degradation, but the spec would not flag this as a failure.
+The `timestamp` field is stored but never read — suggesting it was intended for TTL but isn't implemented.
 
-**Current design:** "Resolves during Phase 2" with a mitigation strategy of origin exclusion.
+**Current design:** No cleanup mechanism. The `timestamp` field is present but unused.
 
-**Alternative:** Add undo breakage to STOP_IF criteria, or at minimum specify the fallback: if undo can't be configured to exclude observer origins, what changes? Does the spike continue with broken undo? Does the one-way fallback resolve it?
+**Alternative:** Add a TTL-based cleanup sweep. Before each `writeTracker.set()`, evict entries older than 10 seconds. This is 2 lines of code and prevents unbounded growth.
 
-**Trade-off:** Tighter spike criteria vs. more flexible spike execution.
+```typescript
+const TTL = 10_000;
+for (const [path, entry] of writeTracker) {
+  if (Date.now() - entry.timestamp > TTL) writeTracker.delete(path);
+}
+```
+
+**Trade-off:** Negligible code complexity. The TTL value is generous (watcher fires within 2-52ms typically). Prevents a slow memory leak in long-running dev sessions.
 
 **Status:** CHALLENGED
 
-**Suggested resolution:** Add a test scenario for undo behavior (e.g., "User types in source, undoes, observer-synced content in XmlFragment is NOT affected"). Specify the fallback if UndoManager can't exclude observer origins.
+**Suggested resolution:** Add TTL-based cleanup using the existing `timestamp` field. 3 lines of code in the watcher callback.
 
 ---
 
 ## Low Severity
 
-### [L1] Finding: Observer B's parse-error UX during typing is unspecified
+### [L1] Finding: The SCR Complication lists 4 gaps but the success matrix requires 5 gaps (including disk) to be green
 
 **Category:** DESIGN
-**Source:** DC2 (Stakeholder gap)
-**Location:** Section 3.5 (Observer error handling)
+**Source:** DC3 (Framing validity)
+**Location:** Section 1 (SCR Complication) vs Section 2 (Success Criteria — sync matrix)
 
-**Issue:** The spec says Observer B logs parse errors and Y.XmlFragment keeps its last valid state. During active source-mode typing, markdown is frequently invalid (mid-heading, partial table, incomplete code fence). This means Y.XmlFragment can be significantly behind Y.Text during active editing. If another user views WYSIWYG while a source user is mid-sentence, they see stale content.
+**Issue:** The Complication names 4 broken cells:
+1. Source ↔ Source (2 tabs)
+2. Source → WYSIWYG (live)
+3. Source → Disk
+4. WYSIWYG → Source (usable)
 
-This is likely acceptable for a spike (and may be the correct long-term behavior), but the UX implication isn't documented. The debounce (50ms) helps slightly -- it waits for typing to pause -- but a 50ms pause between keystrokes is common during normal typing.
+The success matrix in Section 2 shows Disk→WYSIWYG and Disk→Source as green — these are cells the disk bridge (Section 3.10) fills. The gap decomposition note says "3 of 5 gaps" — implying 5 total gaps — but only 4 are named in the Complication.
 
-**Current design:** "Log the error but do NOT crash or disable the observer."
+The 5th gap (Disk → WYSIWYG/Source: external file changes don't appear in the browser) is real and addressed by the disk bridge, but it's not called out in the Complication. The Resolution doesn't mention it either — it focuses on Y.Text + observers.
 
-**Alternative:** No design change needed, but document the expected UX: "While a source-mode user is actively typing, the WYSIWYG view may lag until the markdown becomes parseable. This is expected behavior, not a bug." This prevents the spike from flagging it as a failure.
+**Current design:** 4 gaps named, 5 gaps solved, disk bridge added to scope mid-spec.
 
-**Trade-off:** Documentation clarity only.
+**Alternative:** No design change needed. Add the disk gap to the Complication table: "Disk → Browser: External editor saves are not reflected in the browser until page reload."
+
+**Trade-off:** Framing completeness only.
 
 **Status:** CHALLENGED
 
-**Suggested resolution:** Add a note to Section 3.5 or the test scenarios acknowledging that WYSIWYG may show stale content during active source-mode typing when the markdown is temporarily unparseable.
+**Suggested resolution:** Add the 5th gap to the Complication table and update the gap decomposition note to "4 of 5 gaps share a single root cause" → "3 of 5 gaps share a single root cause... the 5th gap (disk → browser) is addressed by the disk bridge."
 
 ---
 
-## Confirmed Design Choices
+### [L2] Finding: Disk bridge `delete` event handling may cause phantom file recreation
 
-**DC1 (Simpler alternative) -- confirmed:**
-- Y.Text as a separate shared type alongside Y.XmlFragment is the right architectural choice. Both types in the same Y.Doc travel together through Hocuspocus automatically.
-- y-codemirror.next as the binding library is correct -- it's the canonical CRDT-aware CodeMirror binding.
-- Transaction origin guards are proven by source-code analysis to prevent observer cascading.
-- Toggle simplification from serialize+merge to show/hide is a genuine improvement that holds regardless of one-way vs bidirectional.
-- Keeping three-way merge as a utility module (for disk bridge) is prudent.
+**Category:** DESIGN
+**Source:** DC2 (Stakeholder gap)
+**Location:** Section 3.10 (File events table — `delete` row)
 
-**DC2 (Stakeholder gap) -- confirmed:**
-- Debounce on observers is appropriate as a performance optimization.
-- Persistence layer requires no changes -- Observer A keeps XmlFragment in sync.
-- Agent write path through XmlFragment → Observer A → Y.Text is clean for the raw write endpoint.
-- The fallback architecture (Section 8) is well-designed and pragmatic.
-- The STOP_IF criteria for shimmer cascading are correct and actionable.
+**Issue:** When an external editor deletes a .md file while the document is open in the browser:
+- The spec says: "Log warning. Do NOT close the Y.Doc — the user may be editing."
+- The document persists in memory with all its content intact.
+- The persistence layer's `onStoreDocument` will fire on the next debounce cycle and **recreate the file** from Y.Doc state.
 
-**DC3 (Framing validity) -- confirmed:**
-- The problem (no collaborative source mode, broken sync cells) is real and worth solving.
-- The dual-key (Y.Text + Y.XmlFragment) architecture is the right foundation for any variant of the solution.
-- The research base (3 reports) is thorough and the findings are source-code-verified.
-- The spike-oriented approach (prove empirically, fall back if it fails) is appropriate for a derisking spike.
+The user experience: external editor deletes a file, it reappears within seconds. No UI indication that the file was deleted and recreated. The external editor may interpret this as a save failure or file system error.
+
+T54 ("Delete .md file externally while document is open — no crash, editor retains content, warning logged") tests that the editor doesn't crash, but doesn't address the phantom recreation behavior.
+
+**Current design:** "Log warning. Do NOT close the Y.Doc."
+
+**Alternative:** After detecting a delete event, set a flag on the document that suppresses the next N persistence writes (or until the user makes an edit). This prevents phantom recreation while keeping the content in memory for the user.
+
+**Trade-off:** Slightly more complex delete handling. Prevents confusing external editor behavior.
+
+**Status:** CHALLENGED
+
+**Suggested resolution:** Document the phantom recreation behavior in T54's expected outcome. Consider a persistence-suppression flag as a P1 enhancement.
+
+---
+
+## Confirmed Design Choices (summary)
+
+**DC1 (Simpler alternative) — confirmed:**
+- Incremental `diffLines` writes in Observer A (D10) are the correct direction — addresses the prior challenge's H1 finding. The line-level granularity is a reasonable starting point; character-level optimization is deferred.
+- The gap decomposition note honestly acknowledges that 3 of 5 gaps don't require bidirectional observers. The bidirectional approach is justified as a validation goal, not as necessary infrastructure.
+- Content-hash self-write detection (Layer 1) is a sound feedback-loop prevention mechanism for the common case.
+- @parcel/watcher with FSEvents backend is appropriate for macOS file watching.
+
+**DC2 (Stakeholder gap) — confirmed:**
+- Observer origin guards with transaction origin comparison are proven by source code analysis.
+- UndoManager is now properly tracked (OQ4, U01-U04 test scenarios, STOP_IF criteria). The uncertainty is acknowledged and bounded.
+- Observer B parse-error UX is documented: WYSIWYG may show stale content during active source typing. This is the correct long-term behavior.
+- The three-way merge module kept as utility for disk bridge concurrent edits is prudent foresight.
+- Strategy C (piggyback on open documents, don't force-load) for the disk bridge is the right scope constraint.
+
+**DC3 (Framing validity) — confirmed:**
+- The problem (broken sync cells, no collaborative source mode) is real and well-scoped.
+- The dual-key architecture (Y.Text + Y.XmlFragment in one Y.Doc) is the correct foundation.
+- The spike-oriented approach (validate empirically, fall back if it fails) is appropriate.
+- The research base (4 reports) provides strong evidence for the core observer mechanics and shimmer prevention.

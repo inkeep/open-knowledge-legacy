@@ -15,7 +15,7 @@
 
 **Situation:** The init-spike validated the core editor stack (TipTap + Hocuspocus + Yjs v13). The agent-markdown-writes spike added a three-way merge for source toggle toggle-back and an agent markdown write endpoint. The foundation works: WYSIWYG editing, agent writes, persistence, void nodes, markdown round-trip.
 
-**Complication:** The cross-mode sync matrix has 4 broken cells:
+**Complication:** The cross-mode sync matrix has 5 broken cells:
 
 | Gap | What's broken |
 |-----|--------------|
@@ -23,8 +23,9 @@
 | Source → WYSIWYG (live) | Source mode edits don't flow to WYSIWYG tabs until user clicks toggle-back. |
 | Source → Disk | Source mode edits are in-memory React state, not persisted until toggle-back. |
 | WYSIWYG → Source (usable) | Y.Doc observer replaces entire CodeMirror buffer on every WYSIWYG keystroke, resetting cursor. |
+| Disk → Browser | External editor saves (VS Code, Cursor, vim) are not reflected in the browser editor. No file watcher exists. |
 
-**Note on gap decomposition:** 3 of 5 gaps share a single root cause (source mode has no CRDT binding) and are solved by Y.Text + y-codemirror.next + one-way Observer A alone. The 4th gap (live source→WYSIWYG) is the incremental win from bidirectional Observer B. This work validates both layers: the guaranteed wins (Y.Text binding + Observer A) and the stretch validation (bidirectional Observer B with incremental Y.Text writes).
+**Note on gap decomposition:** 3 of 5 gaps share a single root cause (source mode has no CRDT binding) and are solved by Y.Text + y-codemirror.next + one-way Observer A alone. The 4th gap (live source→WYSIWYG) is the incremental win from bidirectional Observer B. The 5th gap (disk → browser) is independent and addressed by the disk bridge (Section 3.10) using @parcel/watcher. This work validates all three layers: the guaranteed wins (Y.Text binding + Observer A), the stretch validation (bidirectional Observer B with incremental Y.Text writes), and the disk bridge.
 
 The current architecture uses a plain CodeMirror text buffer with no CRDT binding. The three-way merge on toggle-back is a workaround — it reconciles diverged state after the fact rather than preventing divergence.
 
@@ -181,7 +182,21 @@ xmlFragment.observeDeep((_events, transaction) => {
 });
 ```
 
-**CRITICAL: Observer A must use incremental writes, not full replacement.** The design challenge (meta/design-challenge.md H1) identified that `ytext.delete(0, length)` followed by `ytext.insert(0, md)` tombstones all Y.Text content, including concurrent source-mode keystrokes from y-codemirror.next. The incremental diff approach (using the `diff` package already in dependencies) applies only the delta — new paragraphs are inserted, deleted paragraphs are removed, unchanged content is retained with its CRDT history intact. This makes Observer A's writes collaborative: a WYSIWYG edit in Tab 1 produces a targeted Y.Text mutation that doesn't destroy Tab 2's source-mode keystrokes in unrelated paragraphs.
+**CRITICAL: Observer A must use incremental writes, not full replacement.** The design challenge (meta/design-challenge.md H1) identified that `ytext.delete(0, length)` followed by `ytext.insert(0, md)` tombstones all Y.Text content, including concurrent source-mode keystrokes from y-codemirror.next. The incremental diff approach (using the `diff` package already in dependencies) applies only the delta — new paragraphs are inserted, deleted paragraphs are removed, unchanged content is retained with its CRDT history intact.
+
+**Diff granularity — hybrid approach (line-level → character-level within changed lines):**
+
+The spec snippet above uses `diffLines` for simplicity. `diffLines` is fast but coarse: a within-line edit (bolding a word, changing a link) replaces the entire line. For a source-mode user with their cursor in that line, the line delete+insert may reset their cursor position — failing T30's "no cursor jump" criterion for same-line cross-mode edits.
+
+The recommended implementation uses a **hybrid approach**:
+
+1. Run `diffLines(currentText, md)` to identify changed line ranges (fast, ~2ms for 1KB)
+2. For each changed range, run `diffChars(oldLine, newLine)` to compute character-level deltas within the line
+3. Apply character-level deltas to Y.Text — preserves cursor position naturally for within-line edits
+
+The hybrid keeps performance bounded by changed-line length (not full document length) while producing minimal CRDT mutations. Trade-off: ~3-5ms typical vs ~2ms for pure `diffLines`. The cursor preservation benefit outweighs the small performance cost for cross-mode editing.
+
+**Validate during implementation:** Measure cursor preservation in scenario T30 with both `diffLines`-only and the hybrid approach. If `diffLines` is sufficient (cursor doesn't visibly jump), use it. If not, use the hybrid.
 
 **Observer B: Text → XmlFragment (source changes → update Y.XmlFragment)**
 
@@ -400,7 +415,18 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 // Content-hash tracker — populated by persistence layer before disk writes
+// TTL cleanup prevents unbounded growth from missed watcher events.
 export const writeTracker = new Map<string, { hash: string; timestamp: number }>();
+const WRITE_TRACKER_TTL_MS = 10_000;
+
+function evictStaleTrackerEntries() {
+  const now = Date.now();
+  for (const [path, entry] of writeTracker) {
+    if (now - entry.timestamp > WRITE_TRACKER_TTL_MS) {
+      writeTracker.delete(path);
+    }
+  }
+}
 
 export async function startWatcher(
   contentDir: string,
@@ -441,7 +467,7 @@ writeTracker.set(filePath, {
 });
 ```
 
-3. **Apply external changes to Y.Doc** — Only for documents already open in Hocuspocus (Strategy C: piggyback on open documents, don't force-load):
+3. **Apply external changes to Y.Doc** — Only for documents already open in Hocuspocus (Strategy C: piggyback on open documents, don't force-load). Apply via CRDT merge — Yjs's conflict resolution handles concurrent browser + external edits correctly:
 
 ```typescript
 async function handleExternalChange(docName: string, content: string) {
@@ -454,17 +480,37 @@ async function handleExternalChange(docName: string, content: string) {
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
-  // Apply with skipStoreHooks to prevent feedback loop (Layer 2)
-  // Access document directly (DirectConnection.transact doesn't expose skipStoreHooks)
+  // Tag the transaction with our origin so persistence can identify it.
+  // NOTE: Hocuspocus v3.4.4 does NOT support skipStoreHooks (that's a v4 API).
+  // Layer 2 feedback loop prevention is NOT available — Layer 1 (content hash)
+  // is the sole defense. The persistence layer will fire onStoreDocument after
+  // this transaction; the resulting disk write will match the content hash
+  // we record below, so the watcher's next event is filtered.
   document.transact(() => {
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
-    // Update frontmatter
     const metaMap = document.getMap('metadata');
     metaMap.set('frontmatter', frontmatter);
-  }, { source: 'local', skipStoreHooks: true, context: { origin: 'file-watcher' } });
+  }, 'file-watcher');
+
+  // Pre-record the content hash so the impending persistence write is
+  // recognized as our own write when the watcher fires for it.
+  writeTracker.set(filePath, {
+    hash: createHash('sha256').update(content).digest('hex'),
+    timestamp: Date.now(),
+  });
 }
 ```
+
+**Single-layer feedback prevention (Layer 1 only):**
+
+The original two-layer design assumed `skipStoreHooks` was available. Verification against `node_modules/@hocuspocus/server@3.4.4` confirms it isn't (it's a v4 API). The single-layer design works because:
+
+1. External edit arrives → Layer 1 hash check passes (not our write) → apply to Y.Doc
+2. Y.Doc change triggers `onStoreDocument` → persistence serializes → records hash → writes to disk
+3. Watcher fires for our disk write → Layer 1 hash matches → skip
+
+**Load-bearing invariant:** This approach requires the markdown round-trip to be idempotent. If the persistence write produces different bytes than the external editor's write (due to formatting normalization), the hash mismatches and the cycle could repeat. Test scenario S05 (tilde → backtick fence normalization) is exactly this case. **A3 (round-trip idempotency) is now load-bearing for the disk bridge — not just an assumption but a correctness requirement.** All test fixture content patterns must produce idempotent round-trips.
 
 4. **Wire into Vite plugin** — Start the watcher in `hocuspocus-plugin.ts` `configureServer()` after Hocuspocus is ready:
 
@@ -481,10 +527,18 @@ configureServer(server) {
 
 **Concurrent edit handling:**
 
-When both a browser user and an external editor modify the same document simultaneously:
-- **Detection:** Compare `document.lastChangeTime` against the watcher event timestamp. If Y.Doc was modified since the last known disk state, this is a concurrent edit.
-- **P0 strategy: CRDT wins.** Defer the watcher update — the external change is overwritten by the next persistence write. This is safe (no data corruption) but means the external editor's change is lost.
-- **The three-way merge module (Section 3.8) could be used here** for smarter merging. But for P0, CRDT-wins is the simplest correct strategy. Three-way merge for disk concurrent edits is future work.
+When both a browser user and an external editor modify the same document simultaneously, the disk bridge applies the external change via `updateYFragment`. Yjs's CRDT conflict resolution merges the external change with in-flight browser edits at the structural level — both sets of changes survive, with conflicts resolved by Yjs's deterministic algorithm.
+
+This is the **CRDT-merge strategy** (not a deferral strategy). Differences from a hypothetical "defer" strategy:
+- Defer: external change ignored, overwritten by next persistence write. External editor's change lost. Simpler but data-lossy.
+- Merge (this design): external change applied via `updateYFragment` alongside browser edits. CRDT handles structural conflicts. More data-preserving, depends on `updateYFragment`'s diff against in-flight Y.Doc state.
+
+**Trade-offs:**
+- **Pros:** No data loss for non-overlapping edits. Same code path as toggle-back and Observer B (we already trust `updateYFragment` to merge concurrent edits).
+- **Cons:** Quality of the merge depends on `updateYFragment`'s tree diff. For deeply overlapping edits (both editing the same paragraph mid-keystroke), Yjs's deterministic resolution may not match user intent. This is the same R3 risk that the three-way merge module addresses for source toggle.
+- **Three-way merge for disk:** The three-way merge module (Section 3.8) could be used here for smarter merging. Future work — needs the snapshot mechanism.
+
+**Test scenario T53 reflects the merge strategy:** "Edit .md file externally while user is typing in WYSIWYG — both edits survive via CRDT merge."
 
 **File events:**
 
@@ -594,7 +648,9 @@ bun add y-codemirror.next
 
 ## 7. Test Scenarios
 
-### From the universal test matrix (specs/next-sync-explorations.md)
+### Test scenarios
+
+Scenarios prefixed with `T` are from the universal test matrix in `specs/next-sync-explorations.md`. Scenarios prefixed with `S` (shimmer), `TS` (toggle simplification), `P`/`PB` (performance), `U` (undo/redo), `FB` (fallback) are spec-specific additions.
 
 **Multi-tab source mode (P0 — these are the primary validation):**
 
@@ -676,6 +732,12 @@ bun add y-codemirror.next
 | TS03 | Toggle 10 times rapidly → no state corruption, no stale content |
 | TS04 | Toggle while agent is writing → no crash, content consistent after toggle |
 
+**Fallback validation (P0):**
+
+| ID | Scenario |
+|---|---|
+| FB01 | Disable Observer B (simulate bidirectional fallback) → re-enable three-way merge on toggle-back → verify three-way merge module still works after Phases 1-3 changes (the three-way-merge.ts module is preserved as a utility) |
+
 **Disk sync (P0):**
 
 | ID | Scenario |
@@ -683,7 +745,7 @@ bun add y-codemirror.next
 | T50 | Edit in WYSIWYG, wait — .md file on disk reflects changes (existing, re-verify with observers active) |
 | T51 | Edit .md file in external editor (vim/echo), save — WYSIWYG editor reflects changes within 2-52ms + parse time |
 | T52 | Edit .md file externally while editor is in source mode — source view updates (via observer chain: disk→XmlFragment→Y.Text→CodeMirror) |
-| T53 | Edit .md file externally while user is typing in WYSIWYG — no clobber (CRDT wins, external edit deferred) |
+| T53 | Edit .md file externally while user is typing in WYSIWYG — both edits survive via CRDT merge. For non-overlapping changes, both present. For overlapping changes (same paragraph), document the merge outcome. |
 | T54 | Delete .md file externally while document is open — no crash, editor retains content, warning logged |
 | T55 | Create new .md file in content directory externally — not auto-loaded (Strategy C: piggyback only), loads on next browser access |
 | T56 | Rapid external saves (~1/sec for 10 sec, simulating Cursor auto-save) — system keeps up, no feedback loops |
@@ -703,9 +765,11 @@ bun add y-codemirror.next
 
 | ID | Scenario |
 |---|---|
-| P01 | Observer serialization latency for test fixture (~1KB) — target: <10ms |
-| P02 | Observer serialization latency for large document (~50KB) — target: <100ms |
+| P01 | Observer A serialization latency for test fixture (~1KB) — target: <10ms |
+| P02 | Observer A serialization latency for large document (~50KB) — target: <100ms |
 | P03 | Toggle time (show/hide) — target: <10ms (no serialization involved) |
+| PB01 | Observer B parse + updateYFragment latency for ~1KB — target: <15ms |
+| PB02 | Observer B parse + updateYFragment latency for ~50KB — target: <150ms (must stay within 50ms debounce budget for typical edits) |
 
 ---
 
@@ -746,6 +810,7 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 | A2 | Observer debounce at 50ms is responsive enough for live cross-mode editing | MEDIUM | Empirical test during Phase 5 | Phase 5 |
 | A3 | Void nodes (jsx-component fenced code blocks) round-trip idempotently through the observer cycle | HIGH | V1b proved this for single round-trip; observer cycle is repeated round-trips | Phase 5 |
 | A4 | y-codemirror.next's undoManager works correctly alongside our custom observers | MEDIUM | Not tested — may need to configure undoManager origins to exclude observer writes | Phase 2 |
+| A5 | Y.Text('source') contains the full markdown document including frontmatter, not just body content | LOCKED | Observer A's `prependFrontmatter()` writes the full document to Y.Text. Observer B's `stripFrontmatter()` separates them on read. This is load-bearing — if Y.Text ever contains body-only, frontmatter would be lost. | n/a |
 
 ---
 
@@ -766,7 +831,7 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 |---|----------|------|----------|--------|
 | OQ1 | Does y-codemirror.next's yCollab extension handle undo correctly when external writes (from observers) modify Y.Text? | Technical | P0 | Resolves during Phase 2 |
 | OQ2 | Should Observer B parse the full markdown on every Y.Text change, or can it diff and apply incrementally? | Technical | P1 | Start with full parse. Optimize if P02 performance target missed. |
-| OQ3 | How should Observer B handle frontmatter? Y.Text includes frontmatter as text. Observer B needs to strip it before parsing. | Technical | P0 | Use existing stripFrontmatter utility. Update Y.Map('metadata') in the same transaction. |
+| OQ3 | ~~How should Observer B handle frontmatter?~~ **RESOLVED** | Technical | P0 | Observer B strips frontmatter via stripFrontmatter() before parsing markdown body. Updates Y.Map('metadata') with the frontmatter in the same transaction. Implemented in Section 3.3 Observer B code. |
 | OQ4 | How to configure UndoManager tracked origins to exclude observer writes? Does y-codemirror.next expose this? Does y-prosemirror's undoManager also need configuration for Observer B writes? | Technical | P0 | Resolves during Phase 2. If unresolvable, add to STOP_IF. |
 | OQ5 | Observer registration race on initial document load: what if HocuspocusProvider syncs before the observer is registered (Y.Text never gets initial content), or observer fires before document loads (writes empty content to Y.Text)? | Technical | P0 | Need to register observer after provider.on('synced') fires. Resolves during Phase 1. |
 
@@ -781,7 +846,7 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 **STOP_IF:**
 - Shimmer cascades beyond 2 observer cycles for any content pattern — document the pattern, fall back to one-way observer
 - y-codemirror.next binding causes Y.Doc corruption or state inconsistency
-- UndoManager cannot exclude observer origins AND undo reverts observer-synced content (user's undo desynchronizes the views) — document the failure, evaluate whether one-way fallback resolves it
+- Either UndoManager (y-codemirror.next OR y-prosemirror) cannot exclude observer origins AND undo reverts observer-synced content (user's undo desynchronizes the views) — document the failure, evaluate whether one-way fallback resolves it
 
 **ASK_FIRST:**
 - Before changing the agent markdown write endpoint path (D7 — this affects agent API contract)
