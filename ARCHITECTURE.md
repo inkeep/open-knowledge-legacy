@@ -195,7 +195,7 @@ Not five missing features — five structural combinations that each incumbent's
 |---|---|---|---|---|---|
 | S1 | **WYSIWYG editor** (TipTap + y-prosemirror) | Human writer | Rich editing of .md/.mdx — slash commands, images, lists, callouts, JSX void nodes. Obsidian-grade, not terminal-grade. | U3 | Spike validated |
 | S2 | **Source toggle** (CodeMirror + y-codemirror.next) | Developer-leaning writer | Flip to raw markdown without leaving the editor. Both modes share the same Y.Doc via bidirectional observers. | U3 | Spike validated (browser verification pending) |
-| S3 | **Presence & awareness UX** | Human in multi-participant session | Cursors for humans, region-flash + activity pill for agent batch writes, presence bar with human/agent identity, dedicated "Undo Agent Edit". | U1 | Specced (S5 v0) |
+| S3 | **Presence & awareness UX** | Human in multi-participant session | Cursors for humans, region-flash + activity pill for agent batch writes, presence bar with human/agent identity, dedicated "Undo Agent Edit". | U1 | **Shipped (PR #7)** |
 | S4 | **Bidirectional MCP surface** | AI agent | Read, write, edit, list, search, grep, draft. Two approaches under evaluation: semantic tools (A) vs. `just-bash` unix-command shell (B). Writes go through CRDT, not raw filesystem. | U1, U4, U6 | Open: XQ1 |
 | S5 | **Component prop panels** (JSX void nodes) | Writer inserting MDX components | `<Callout>`, `<Tab>`, `<Accordion>`, etc. render live; prop panel auto-generated from TypeScript via react-docgen-typescript. ReactNode children become inline editing zones. | U3, U5 | Layer 1 shipped (PR #6); Layers 2-4 specced |
 | S6 | **Disk bridge** (external editors) | VS Code / Cursor / vim user | `@parcel/watcher` reconciles external saves into the Y.Doc so browser + IDE stay in sync. | U6 | Specced in observer-sync spec §3.10 |
@@ -310,8 +310,8 @@ Not five missing features — five structural combinations that each incumbent's
 | **L8 Disk bridge** | `@parcel/watcher` → markdown parse → Y.Doc | External editors (VS Code, Cursor, vim) are just another writer. | Specced |
 | **L9 Derived index** | `onStoreDocument` → index.md, backlink graph | Walkable catalog files (committed) + cached backlinks (per-branch). Search index deferred. | Directed (TQ7) |
 | **L10 Component registry** | react-docgen-typescript reads `.tsx` → ComponentMeta → prop panels + slash commands + render | Layer 2 of the MDX component pipeline. Typed props → auto controls. ReactNode children → inline edit zones. | Specced (typed-component-nodes) |
-| **L11 Undo / attribution** | Per-origin `UndoManager` (human, observer, agent) | User-stack stays clean; "Undo Agent Edit" targets only the agent stack. | Specced (PQ1) |
-| **L12 Awareness / presence** | Yjs awareness protocol — cursors, identity, mode, agent activity | Wire exists; UX layer in current spec (S5 v0). | In build |
+| **L11 Undo / attribution** | Per-origin `UndoManager` (human, observer, agent) | User-stack stays clean; "Undo Agent Edit" targets only the agent stack. | **Shipped (PR #7)** |
+| **L12 Awareness / presence** | Yjs awareness protocol — cursors, identity, mode, agent activity | Cursors for humans, region-flash + activity pill for agent batch writes, presence bar. | **Shipped (PR #7)** |
 
 ### Why this shape
 
