@@ -642,7 +642,7 @@ jobs:
 
       - name: Run PR Review
         id: claude
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@01e756b34ef7a1447e9508f674143b07d20c2631
         env:
           CLAUDE_CODE_DEBUG_LOGS_DIR: ${{ runner.temp }}/claude-debug
         with:
