@@ -24,7 +24,7 @@
 | Source → Disk | Source mode edits are in-memory React state, not persisted until toggle-back. |
 | WYSIWYG → Source (usable) | Y.Doc observer replaces entire CodeMirror buffer on every WYSIWYG keystroke, resetting cursor. |
 
-**Note on gap decomposition:** 3 of 4 gaps share a single root cause (source mode has no CRDT binding) and are solved by Y.Text + y-codemirror.next + one-way Observer A alone. The 4th gap (live source→WYSIWYG) is the incremental win from bidirectional Observer B. This work validates both layers: the guaranteed wins (Y.Text binding + Observer A) and the stretch validation (bidirectional Observer B with incremental Y.Text writes).
+**Note on gap decomposition:** 3 of 5 gaps share a single root cause (source mode has no CRDT binding) and are solved by Y.Text + y-codemirror.next + one-way Observer A alone. The 4th gap (live source→WYSIWYG) is the incremental win from bidirectional Observer B. This work validates both layers: the guaranteed wins (Y.Text binding + Observer A) and the stretch validation (bidirectional Observer B with incremental Y.Text writes).
 
 The current architecture uses a plain CodeMirror text buffer with no CRDT binding. The three-way merge on toggle-back is a workaround — it reconciles diverged state after the fact rather than preventing divergence.
 
@@ -50,16 +50,15 @@ The validation procedure for each scenario describes the manual steps to execute
 
 ### Primary: The sync matrix fills completely
 
-After this work, every CRDT-mediated cell in the sync matrix is green:
+After this work, the complete sync matrix is green:
 
 ```
-                    WYSIWYG   Source   Agent
-WYSIWYG     →         ✅        ✅       ✅
-Source      →         ✅        ✅       ✅
-Agent       →         ✅        ✅       ✅
+                    WYSIWYG   Source   Disk   Agent
+WYSIWYG     →         ✅        ✅      ✅      ✅
+Source      →         ✅        ✅      ✅      ✅
+Disk        →         ✅        ✅      —       —
+Agent       →         ✅        ✅      ✅      —
 ```
-
-(Disk sync is Exploration 3 — not in scope here.)
 
 ### Secondary: Shimmer does not occur in practice
 
@@ -342,12 +341,178 @@ This is simpler and more natural — the agent writes markdown text, the observe
 
 ---
 
+### 3.9 Fix triple backtick bug in jsx-component extension
+
+The `renderMarkdown` function in `jsx-component.ts` hardcodes 3 backticks for the fenced code block delimiter. If the JSX content itself contains triple backticks (e.g., a component that renders a code example), the fence closes prematurely and the void node breaks.
+
+**Fix:** Count the longest consecutive backtick sequence in the JSX content. Use N+1 backticks for the outer fence.
+
+```typescript
+// In renderMarkdown:
+function fenceFor(content: string): string {
+  const maxRun = (content.match(/`+/g) || []).reduce(
+    (max, run) => Math.max(max, run.length), 2
+  );
+  return '`'.repeat(maxRun + 1);
+}
+
+// Usage:
+const fence = fenceFor(node.attrs.content);
+state.write(`${fence}jsx-component\n`);
+state.text(node.attrs.content, false);
+state.write(`\n${fence}`);
+state.closeBlock(node);
+```
+
+This is ~5 lines and directly affects content fidelity through the observer cycle (T93 tests this case).
+
+---
+
+### 3.10 Disk bridge — external editor sync via @parcel/watcher
+
+**What it does:** Watches the content directory for external file changes (VS Code, Cursor, vim). When an external editor saves a .md file, the watcher reads the file, parses it, and applies the changes to the Y.Doc via updateYFragment. With bidirectional observers active (Section 3.3), the change then propagates from Y.XmlFragment → Y.Text → CodeMirror automatically.
+
+**New dependency:**
+
+```bash
+bun add @parcel/watcher
+```
+
+**Architecture:**
+
+```
+External editor saves .md file
+  → macOS FSEvents (1ms latency)
+  → @parcel/watcher C++ debounce (50ms min, 500ms max)
+  → JavaScript callback with { path, type: 'create'|'update'|'delete' }
+  → Content-hash check: is this our own persistence write? → skip
+  → Read file → strip frontmatter → parse markdown → updateYFragment
+  → Observer A propagates to Y.Text → CodeMirror updates
+```
+
+**Implementation:**
+
+1. **Watcher module** (`src/server/file-watcher.ts`):
+
+```typescript
+import { subscribe } from '@parcel/watcher';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+
+// Content-hash tracker — populated by persistence layer before disk writes
+export const writeTracker = new Map<string, { hash: string; timestamp: number }>();
+
+export async function startWatcher(
+  contentDir: string,
+  onExternalChange: (docName: string, content: string) => Promise<void>,
+) {
+  return subscribe(contentDir, async (err, events) => {
+    if (err) { console.error('[file-watcher]', err); return; }
+
+    for (const event of events) {
+      // Filter to .md files only (no native include option)
+      if (!event.path.endsWith('.md')) continue;
+      if (event.type === 'delete') continue; // Handle separately
+
+      const content = await readFile(event.path, 'utf-8');
+      const hash = createHash('sha256').update(content).digest('hex');
+
+      // Self-write check (Layer 1)
+      const tracked = writeTracker.get(event.path);
+      if (tracked && tracked.hash === hash) {
+        writeTracker.delete(event.path);
+        continue; // Our own persistence write — skip
+      }
+
+      const docName = pathToDocName(event.path, contentDir);
+      await onExternalChange(docName, content);
+    }
+  });
+}
+```
+
+2. **Persistence layer integration** — Before writing to disk, record the content hash:
+
+```typescript
+// In persistence.ts onStoreDocument, BEFORE writeFile:
+writeTracker.set(filePath, {
+  hash: createHash('sha256').update(markdown).digest('hex'),
+  timestamp: Date.now(),
+});
+```
+
+3. **Apply external changes to Y.Doc** — Only for documents already open in Hocuspocus (Strategy C: piggyback on open documents, don't force-load):
+
+```typescript
+async function handleExternalChange(docName: string, content: string) {
+  // Only sync documents already open in the browser
+  if (!hocuspocus.documents.has(docName)) return;
+
+  const document = hocuspocus.documents.get(docName);
+  const { frontmatter, body } = stripFrontmatter(content);
+  const parsedJson = mdManager.parse(body);
+  const pmNode = schema.nodeFromJSON(parsedJson);
+  const xmlFragment = document.getXmlFragment('default');
+
+  // Apply with skipStoreHooks to prevent feedback loop (Layer 2)
+  // Access document directly (DirectConnection.transact doesn't expose skipStoreHooks)
+  document.transact(() => {
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(document, xmlFragment, pmNode, meta);
+    // Update frontmatter
+    const metaMap = document.getMap('metadata');
+    metaMap.set('frontmatter', frontmatter);
+  }, { source: 'local', skipStoreHooks: true, context: { origin: 'file-watcher' } });
+}
+```
+
+4. **Wire into Vite plugin** — Start the watcher in `hocuspocus-plugin.ts` `configureServer()` after Hocuspocus is ready:
+
+```typescript
+configureServer(server) {
+  // ... existing WebSocket setup ...
+  
+  // Start file watcher for external editor sync
+  startWatcher(CONTENT_DIR, handleExternalChange).then(subscription => {
+    server.httpServer?.on('close', () => subscription.unsubscribe());
+  });
+}
+```
+
+**Concurrent edit handling:**
+
+When both a browser user and an external editor modify the same document simultaneously:
+- **Detection:** Compare `document.lastChangeTime` against the watcher event timestamp. If Y.Doc was modified since the last known disk state, this is a concurrent edit.
+- **P0 strategy: CRDT wins.** Defer the watcher update — the external change is overwritten by the next persistence write. This is safe (no data corruption) but means the external editor's change is lost.
+- **The three-way merge module (Section 3.8) could be used here** for smarter merging. But for P0, CRDT-wins is the simplest correct strategy. Three-way merge for disk concurrent edits is future work.
+
+**File events:**
+
+| Event | Action |
+|-------|--------|
+| `update` | Read file, hash check, parse, updateYFragment |
+| `create` | Same as update (new .md file created externally) |
+| `delete` | Log warning. Do NOT close the Y.Doc — the user may be editing. The document persists in memory until all connections close. |
+
+**@parcel/watcher on macOS:**
+- FSEvents backend, 2-52ms latency from file save to JS callback
+- Atomic writes (temp+rename) produce a single clean `update` event
+- 50ms debounce coalesces rapid saves (~2 callbacks/second max)
+- 1000 files: single FSEvents stream, ~144KB memory, negligible CPU
+- No native .md filter — filter in JS callback
+- VS Code uses truncate-and-write (not atomic), Cursor inherits this — both produce single `update` events
+
+**Key research reference:** `~/reports/parcel-watcher-crdt-disk-bridge/` — all 9 dimensions traced at source-code level.
+
+---
+
 ## 4. Implementation Order
 
 ```
 Phase 1: Infrastructure
+  - Fix triple backtick bug in jsx-component renderMarkdown (Section 3.9)
   - Add Y.Text('source') to Y.Doc
-  - Wire observers (A and B) with origin guards
+  - Wire observers (A and B) with origin guards and incremental writes
   - Debounce (50ms)
   - Observer error handling
   - Initial sync on document load
@@ -368,7 +533,15 @@ Phase 4: Agent write simplification
   - Evaluate direct Y.Text insertion vs current serialize→splice→parse path
   - Update agent-sim.ts if write path changes
 
-Phase 5: Validation + RESULTS.md
+Phase 5: Disk bridge
+  - Install @parcel/watcher
+  - Create file-watcher.ts module
+  - Wire content-hash tracking into persistence.ts
+  - Wire watcher into Vite plugin configureServer
+  - Test: edit .md file externally → appears in browser editor
+  - Test: feedback loop prevention (no ping-pong)
+
+Phase 6: Validation + RESULTS.md
   - Run all applicable test scenarios
   - Measure shimmer (observer firing count per keystroke)
   - Measure performance (toggle time, serialization latency)
@@ -401,13 +574,16 @@ bun add y-codemirror.next
 - Performance measurement
 - All applicable test scenarios from the universal test matrix
 - Void node (jsx-component) fidelity through observer cycle
+- Disk bridge via @parcel/watcher for external editor interop
+- Content-hash feedback loop prevention
+- Triple backtick bug fix in jsx-component extension
 
 **Out of scope:**
-- Disk bridge / file watcher (@parcel/watcher) — Exploration 3, separate work **(Explored)** — heavily researched in ~/reports/parcel-watcher-crdt-disk-bridge/, has own spec slot, ready to promote
+- ~~Disk bridge~~ — moved in scope (Section 3.10)
 - Awareness / cursor presence in source mode — **(Identified)** — y-codemirror.next's yCollab supports awareness parameter, UX design needed
 - Per-block code toggle — existing feature, unchanged **(Noted)**
 - Prop panel / component editing UI — existing void node UX, unchanged **(Noted)**
-- Triple backtick bug in jsx-component extension — JSX containing ``` breaks fenced code block encoding. Needs N+1 backtick fence. In test matrix (T93) but fix is in the existing extension, not observer sync. **(Identified)** — fix is ~5 lines in renderMarkdown, ready to implement independently
+- ~~Triple backtick bug~~ — moved in scope (Section 3.9)
 - Typed void node registry — per-component extensions (CalloutNode, TabsNode, etc.) with typed attributes and auto-generated prop panels from TypeScript interfaces. TQ27/PQ8. This spec validates existing void nodes survive observers, not that we expand the component set. **(Explored)** — component inventory complete (agents-docs: ~20 components, 846 uses), architecture defined in PROJECT.md PQ8
 - Init-spike browser verification gaps — cursor preservation during agent writes (V3 step 5), controlled two-tab sync test (V2), source toggle button click (V4). The End-to-End Validation Principle in this spec should cover these naturally since the same scenarios reappear. **(Identified)** — T30, T20, TS01 cover the same flows
 - Changes outside init_spike/ (scope constraint)
@@ -500,6 +676,20 @@ bun add y-codemirror.next
 | TS03 | Toggle 10 times rapidly → no state corruption, no stale content |
 | TS04 | Toggle while agent is writing → no crash, content consistent after toggle |
 
+**Disk sync (P0):**
+
+| ID | Scenario |
+|---|---|
+| T50 | Edit in WYSIWYG, wait — .md file on disk reflects changes (existing, re-verify with observers active) |
+| T51 | Edit .md file in external editor (vim/echo), save — WYSIWYG editor reflects changes within 2-52ms + parse time |
+| T52 | Edit .md file externally while editor is in source mode — source view updates (via observer chain: disk→XmlFragment→Y.Text→CodeMirror) |
+| T53 | Edit .md file externally while user is typing in WYSIWYG — no clobber (CRDT wins, external edit deferred) |
+| T54 | Delete .md file externally while document is open — no crash, editor retains content, warning logged |
+| T55 | Create new .md file in content directory externally — not auto-loaded (Strategy C: piggyback only), loads on next browser access |
+| T56 | Rapid external saves (~1/sec for 10 sec, simulating Cursor auto-save) — system keeps up, no feedback loops |
+| T57 | Edit in WYSIWYG → persistence writes to disk → edit same file externally → external edit appears in editor (self-write correctly skipped, external write processed) |
+| T58 | Persistence write and external write within same 50ms coalescing window — document the behavior (Scenario 4 from research: CRDT wins, external change may be lost) |
+
 **Undo/redo (P0):**
 
 | ID | Scenario |
@@ -584,9 +774,9 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 
 ## 13. Agent Constraints
 
-**SCOPE:** Only files within `init_spike/`. Core files to modify: `src/App.tsx`, `src/editor/TiptapEditor.tsx`, `src/editor/SourceEditor.tsx`. New file for observer module. Test files in `src/server/agent-flow.test.ts` (extend or new file).
+**SCOPE:** Only files within `init_spike/`. Core files to modify: `src/App.tsx`, `src/editor/TiptapEditor.tsx`, `src/editor/SourceEditor.tsx`, `src/editor/extensions/jsx-component.ts`, `src/server/persistence.ts` (content-hash tracking), `src/server/hocuspocus-plugin.ts` (watcher setup + agent write path). New files: observer module, `src/server/file-watcher.ts`. Test files in `src/server/` (extend or new).
 
-**EXCLUDE:** Do not modify persistence.ts (persistence is unaware of Y.Text). Do not modify hocuspocus-plugin.ts unless agent write path changes (D7). Do not touch files outside init_spike/.
+**EXCLUDE:** Do not touch files outside init_spike/.
 
 **STOP_IF:**
 - Shimmer cascades beyond 2 observer cycles for any content pattern — document the pattern, fall back to one-way observer
@@ -606,6 +796,6 @@ This fallback gives us collaborative source mode + live WYSIWYG→source sync, b
 | `~/reports/yjs-constrained-observer-sync/` | Observer mechanics, y-codemirror.next binding internals, transaction origins, toggle-back protocol |
 | `~/reports/yjs-dual-key-shimmer-analysis/` | Shimmer prevention proof (3 mechanisms), round-trip idempotency, cascade analysis |
 | `~/reports/mdx-cross-mode-sync-implications/` | Void node handling through observers, MDX construct coverage, comparison matrix |
-| `~/reports/parcel-watcher-crdt-disk-bridge/` | Future: disk bridge uses three-way merge module we're keeping |
+| `~/reports/parcel-watcher-crdt-disk-bridge/` | Disk bridge implementation details — @parcel/watcher internals, feedback loop prevention, concurrent edit scenarios, all 9 dimensions traced at source code level |
 | `init_spike/RESULTS.md` | Current sync matrix, V1b convergence data, V4b toggle architecture |
 | `specs/next-sync-explorations.md` | Decision record, test matrix (103+ scenarios), execution plan |
