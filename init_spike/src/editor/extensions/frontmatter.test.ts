@@ -35,6 +35,13 @@ describe('stripFrontmatter', () => {
     expect(frontmatter).toBe('');
     expect(body).toBe('');
   });
+
+  test('handles frontmatter without trailing newline', () => {
+    const input = '---\ntitle: No Trailing\n---';
+    const { frontmatter, body } = stripFrontmatter(input);
+    expect(frontmatter).toBe('---\ntitle: No Trailing\n---');
+    expect(body).toBe('');
+  });
 });
 
 describe('prependFrontmatter', () => {

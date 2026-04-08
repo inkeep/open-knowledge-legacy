@@ -26,6 +26,7 @@ interface ObserverDeps {
   ytext: Y.Text;
   mdManager: MarkdownManager;
   schema: Schema;
+  onSyncError?: (direction: 'tree-to-text' | 'text-to-tree', error: Error) => void;
 }
 
 /**
@@ -94,6 +95,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
         }
       } catch (err) {
         console.error('[Observer A] Failed to sync tree→text:', err);
+        deps.onSyncError?.('tree-to-text', err instanceof Error ? err : new Error(String(err)));
       }
     }, DEBOUNCE_MS);
   };
@@ -123,6 +125,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
       } catch (err) {
         // Parse error — log but don't crash. XmlFragment keeps last valid state.
         console.error('[Observer B] Failed to sync text→tree:', err);
+        deps.onSyncError?.('text-to-tree', err instanceof Error ? err : new Error(String(err)));
       }
     }, DEBOUNCE_MS);
   };

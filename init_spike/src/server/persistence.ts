@@ -28,7 +28,7 @@ const PROJECT_DIR = resolve(import.meta.dirname, '../..');
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-const git = simpleGit(PROJECT_DIR);
+const git = simpleGit(PROJECT_DIR, { timeout: { block: 30_000 } });
 
 // Track frontmatter per document (set when loading, re-prepended on save)
 const frontmatterCache = new Map<string, string>();

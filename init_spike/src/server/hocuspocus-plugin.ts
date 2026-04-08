@@ -190,35 +190,41 @@ export function hocuspocusPlugin(): Plugin {
 
       // --- Disk bridge: watch content directory for external .md changes ---
       async function handleExternalChange(docName: string, content: string): Promise<void> {
-        // Strategy C: only sync documents already open in the browser
-        const document = hocuspocus.documents.get(docName);
-        if (!document) return;
-        const { frontmatter, body } = stripFrontmatter(content);
-        const parsedJson = mdManager.parse(body);
-        const pmNode = schema.nodeFromJSON(parsedJson);
-        const xmlFragment = document.getXmlFragment('default');
+        try {
+          // Strategy C: only sync documents already open in the browser
+          const document = hocuspocus.documents.get(docName);
+          if (!document) return;
+          const { frontmatter, body } = stripFrontmatter(content);
+          const parsedJson = mdManager.parse(body);
+          const pmNode = schema.nodeFromJSON(parsedJson);
+          const xmlFragment = document.getXmlFragment('default');
 
-        // Layer 2: skipStoreHooks prevents persistence from re-writing the file
-        // we just loaded from disk.
-        document.transact(
-          () => {
-            const meta = { mapping: new Map(), isOMark: new Map() };
-            updateYFragment(document, xmlFragment, pmNode, meta);
-            const metaMap = document.getMap('metadata');
-            metaMap.set('frontmatter', frontmatter);
-          },
-          {
-            source: 'local',
-            skipStoreHooks: true,
-            context: { origin: 'file-watcher' },
-          } satisfies LocalTransactionOrigin,
-        );
+          // Layer 2: skipStoreHooks prevents persistence from re-writing the file
+          // we just loaded from disk.
+          document.transact(
+            () => {
+              const meta = { mapping: new Map(), isOMark: new Map() };
+              updateYFragment(document, xmlFragment, pmNode, meta);
+              const metaMap = document.getMap('metadata');
+              metaMap.set('frontmatter', frontmatter);
+            },
+            {
+              source: 'local',
+              skipStoreHooks: true,
+              context: { origin: 'file-watcher' },
+            } satisfies LocalTransactionOrigin,
+          );
 
-        console.log(`[file-watcher] Applied external change: ${docName}`);
+          console.log(`[file-watcher] Applied external change: ${docName}`);
+        } catch (err) {
+          console.error(`[file-watcher] Failed to apply external change for ${docName}:`, err);
+        }
       }
 
       startWatcher(CONTENT_DIR, handleExternalChange).then((subscription) => {
         server.httpServer?.on('close', () => subscription.unsubscribe());
+      }).catch((err) => {
+        console.error('[hocuspocus] Disk bridge watcher failed to start:', err);
       });
 
       console.log('[hocuspocus] WebSocket server ready on /collab');
