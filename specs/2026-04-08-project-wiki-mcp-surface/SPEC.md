@@ -273,6 +273,12 @@ myproject/
 **Server capability:**
 - `instructions` field (returned on MCP initialize) — guides agent on wiki conventions, navigation pattern (catalog first → grep → read), CLAUDE.md hint for code-index updates. This is a standard MCP server capability, not a tool or resource.
 
+**Transport:** stdio. Server starts when agent connects, dies when agent disconnects.
+
+**Startup behavior:**
+- On server start, immediately rebuild ALL catalog files (full pass). Catches any changes that happened while the server was off (human edits in VS Code, editor writes, etc.). Milliseconds at P0 scale.
+- Then start the file watcher for live changes going forward.
+
 **File watcher behavior:**
 - Watches `.openknowledge/` recursively
 - On any `.md` file create/update/delete (excluding `INDEX.md` files):
