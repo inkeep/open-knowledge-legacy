@@ -526,3 +526,4 @@ Auto-sync from external sources. Enterprise ingest at scale.
 <!-- CI validation trigger -->
 <!-- second validation attempt -->
 <!-- internal-ci installed -->
+<!-- final validation attempt after 30min wait -->
