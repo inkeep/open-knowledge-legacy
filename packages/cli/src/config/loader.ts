@@ -59,7 +59,10 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
       return parsed as Record<string, unknown>;
     }
     return null;
-  } catch {
+  } catch (err) {
+    console.warn(
+      `[config] Failed to parse ${filePath}: ${err instanceof Error ? err.message : err}`,
+    );
     return null;
   }
 }

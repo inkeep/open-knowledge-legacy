@@ -106,12 +106,15 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   // Tool 4: list_documents
   tool('list_documents', { directory: z.string() }, (async (args: { directory: string }) => {
     log(`list_documents: ${args.directory || '(root)'}`);
-    const contentDir = resolve(process.cwd(), 'content', args.directory);
-    if (!existsSync(contentDir)) return textResult(`Directory not found: ${args.directory}`);
-    const entries = readdirSync(contentDir, { recursive: true })
+    const dirPath = resolve(contentDir, args.directory);
+    if (!dirPath.startsWith(`${contentDir}/`) && dirPath !== contentDir) {
+      return textResult('Error: invalid directory path', true);
+    }
+    if (!existsSync(dirPath)) return textResult(`Directory not found: ${args.directory}`);
+    const entries = readdirSync(dirPath, { recursive: true })
       .filter((f) => typeof f === 'string' && f.endsWith('.md'))
       .map((f) => {
-        const fullPath = resolve(contentDir, f as string);
+        const fullPath = resolve(dirPath, f as string);
         const stat = statSync(fullPath);
         return {
           path: (f as string).replace(/\.md$/, ''),

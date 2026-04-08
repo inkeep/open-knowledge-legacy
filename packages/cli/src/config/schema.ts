@@ -10,7 +10,10 @@ export const ConfigSchema = z.object({
   server: z
     .object({
       port: z.number().int().min(1).max(65535).default(3000),
-      host: z.string().default('localhost'),
+      host: z
+        .string()
+        .regex(/^[\w.\-:]+$/, 'Invalid hostname')
+        .default('localhost'),
     })
     .default({}),
   git: z

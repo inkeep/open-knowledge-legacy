@@ -33,9 +33,6 @@ export interface PersistenceOptions {
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-// Track frontmatter per document (set when loading, re-prepended on save)
-const frontmatterCache = new Map<string, string>();
-
 export function safeContentPath(documentName: string, contentDir: string): string {
   const filePath = resolve(contentDir, `${documentName}.md`);
   if (!filePath.startsWith(`${contentDir}/`)) {
@@ -47,6 +44,10 @@ export function safeContentPath(documentName: string, contentDir: string): strin
 export function createPersistenceExtension(options?: PersistenceOptions): Extension {
   const contentDir = options?.contentDir ?? process.cwd();
   const projectDir = options?.projectDir ?? process.cwd();
+
+  // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
+  // Lives inside the closure so multiple server instances don't share mutable state.
+  const frontmatterCache = new Map<string, string>();
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 30_000;
   const wipRef = options?.wipRef ?? 'refs/wip/main';
