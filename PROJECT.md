@@ -523,3 +523,5 @@ Auto-sync from external sources. Enterprise ingest at scale.
 | [virtualized-mcp-filesystem-servers](reports/virtualized-mcp-filesystem-servers/REPORT.md) | Virtualized MCP Filesystem Servers: Who Has Built Them, What Patterns Exist, and How ... | XQ1 | 2026-04-02 | 8 files |
 | [wiki-links-backlinks-architecture](reports/wiki-links-backlinks-architecture/REPORT.md) | Wiki-Links and Backlinks Architecture for Agent-Native Knowledge Platforms | CC6, S10, S8, TQ7 | 2026-04-04 | 0 files |
 | [worktree-orchestration-landscape](reports/worktree-orchestration-landscape/REPORT.md) | Worktree Orchestration Landscape: How AI Coding Tools Manage Parallel Work and the Un... | Cross-cutting | 2026-04-03 | 8 files |
+
+<!-- CI PR review validation: this comment triggers a small diff for testing -->
