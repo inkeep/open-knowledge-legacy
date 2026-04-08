@@ -6,6 +6,7 @@ import { basicSetup } from 'codemirror';
 import { useEffect, useRef } from 'react';
 import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
+import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
 
 interface SourceEditorProps {
   ytext: Y.Text;
@@ -31,7 +32,12 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
 
     const state = EditorState.create({
       doc: ytext.toString(),
-      extensions: [basicSetup, markdown(), yCollab(ytext, provider.awareness)],
+      extensions: [
+        basicSetup,
+        markdown(),
+        yCollab(ytext, provider.awareness),
+        createAgentFlashSourceExtension(provider.document),
+      ],
     });
 
     const view = new EditorView({
