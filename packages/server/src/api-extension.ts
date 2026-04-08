@@ -52,9 +52,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
-      const dc = await sessionManager.getSession('test-doc');
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      const body =
+        rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
+      const docName =
+        typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
+      const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
-      const content = `Hello from the agent! ${timestamp}`;
+      const content =
+        typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
 
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
@@ -121,8 +133,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const position = pos === 'prepend' ? 'prepend' : 'append';
-      const dc = await sessionManager.getSession('test-doc');
+      const position = pos === 'prepend' ? 'prepend' : pos === 'replace' ? 'replace' : 'append';
+      const docName = (body as Record<string, unknown>).docName;
+      const resolvedDocName =
+        typeof docName === 'string' && docName.length > 0 ? docName : 'test-doc';
+      const dc = await sessionManager.getSession(resolvedDocName);
       const timestamp = new Date().toISOString();
 
       dc.document.awareness.setLocalStateField('mode', 'editing');
@@ -131,7 +146,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const ytext = dc.document.getText('source');
           const currentText = ytext.toString();
 
-          if (position === 'prepend') {
+          if (position === 'replace') {
+            ytext.delete(0, currentText.length);
+            ytext.insert(0, markdown.trim());
+          } else if (position === 'prepend') {
             ytext.insert(0, `${markdown.trim()}\n\n`);
           } else {
             const insertAt = currentText.length;

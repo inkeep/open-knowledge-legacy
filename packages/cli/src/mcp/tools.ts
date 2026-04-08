@@ -23,19 +23,28 @@ async function httpPost(
   path: string,
   body?: Record<string, unknown>,
 ): Promise<{ ok: boolean; [key: string]: unknown }> {
-  const res = await fetch(`${baseUrl}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return (await res.json()) as { ok: boolean; [key: string]: unknown };
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (err) {
+    return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
+  }
+  try {
+    return (await res.json()) as { ok: boolean; [key: string]: unknown };
+  } catch {
+    return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
+  }
 }
 
 function textResult(text: string, isError?: boolean) {
   return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) };
 }
 
-export function registerTools(server: McpServer, httpUrl: string): void {
+export function registerTools(server: McpServer, httpUrl: string, contentDir: string): void {
   // Cast to any for tool registration — MCP SDK's server.tool() has deeply
   // recursive generics that cause TS2589 with multi-field Zod schemas.
   // Runtime behavior is correct: Zod still validates inputs at the MCP layer.
@@ -44,9 +53,9 @@ export function registerTools(server: McpServer, httpUrl: string): void {
   // Tool 1: read_document
   tool('read_document', { path: z.string() }, (async (args: { path: string }) => {
     log(`read_document: ${args.path}`);
-    const contentDir = resolve(process.cwd(), 'content');
+
     const filePath = resolve(contentDir, `${args.path}.md`);
-    if (!filePath.startsWith(contentDir)) return textResult('Error: invalid path', true);
+    if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
     if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
     return textResult(readFileSync(filePath, 'utf-8'));
   }) as any);
@@ -56,11 +65,11 @@ export function registerTools(server: McpServer, httpUrl: string): void {
     'write_document',
     { path: z.string(), markdown: z.string(), mode: z.enum(['append', 'prepend', 'replace']) },
     (async (args: { path: string; markdown: string; mode: string }) => {
-      log(`write_document: mode=${args.mode}`);
-      const position = args.mode === 'prepend' ? 'prepend' : 'append';
+      log(`write_document: ${args.path} mode=${args.mode}`);
       const result = await httpPost(httpUrl, '/api/agent-write-md', {
         markdown: args.markdown,
-        position,
+        position: args.mode,
+        docName: args.path,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       return textResult(`Written successfully (${args.mode})`);
@@ -73,9 +82,8 @@ export function registerTools(server: McpServer, httpUrl: string): void {
     { path: z.string(), find: z.string(), replace: z.string(), dry_run: z.boolean() },
     (async (args: { path: string; find: string; replace: string; dry_run: boolean }) => {
       log(`edit_document: ${args.path} (dry_run=${args.dry_run})`);
-      const contentDir = resolve(process.cwd(), 'content');
       const filePath = resolve(contentDir, `${args.path}.md`);
-      if (!filePath.startsWith(contentDir)) return textResult('Error: invalid path', true);
+      if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
       if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
       const content = readFileSync(filePath, 'utf-8');
       if (!content.includes(args.find)) return textResult('Find text not found in document', true);
@@ -88,6 +96,7 @@ export function registerTools(server: McpServer, httpUrl: string): void {
       const result = await httpPost(httpUrl, '/api/agent-write-md', {
         markdown: newContent,
         position: 'replace',
+        docName: args.path,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       return textResult('Edit applied successfully');
@@ -119,7 +128,7 @@ export function registerTools(server: McpServer, httpUrl: string): void {
     case_sensitive: boolean;
   }) => {
     log(`search_documents: "${args.query}"`);
-    const contentDir = resolve(process.cwd(), 'content');
+
     if (!existsSync(contentDir)) return textResult('Content directory not found');
     const results: Array<{ path: string; line: number; text: string }> = [];
     const files = readdirSync(contentDir, { recursive: true }).filter(
@@ -174,9 +183,8 @@ export function registerTools(server: McpServer, httpUrl: string): void {
     { path: z.string(), fields: z.record(z.string(), z.string()) },
     (async (args: { path: string; fields: Record<string, string> }) => {
       log(`update_frontmatter: ${args.path}`);
-      const contentDir = resolve(process.cwd(), 'content');
       const filePath = resolve(contentDir, `${args.path}.md`);
-      if (!filePath.startsWith(contentDir)) return textResult('Error: invalid path', true);
+      if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
       if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
 
       const content = readFileSync(filePath, 'utf-8');
@@ -202,6 +210,7 @@ export function registerTools(server: McpServer, httpUrl: string): void {
       const result = await httpPost(httpUrl, '/api/agent-write-md', {
         markdown: newContent,
         position: 'replace',
+        docName: args.path,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       return textResult(`Frontmatter updated: ${Object.keys(args.fields).join(', ')}`);

@@ -9,8 +9,10 @@ export default defineConfig({
   outputExtension: () => ({ js: '.js', dts: '.d.ts' }),
   dts: true,
   clean: true,
-  // Native addons — must not be bundled
   deps: {
+    // Workspace packages must be bundled — they're private and won't be on npm
+    alwaysBundle: ['@inkeep/open-knowledge-core', '@inkeep/open-knowledge-server'],
+    // Native addons — must not be bundled
     neverBundle: ['@parcel/watcher', 'simple-git'],
   },
 });

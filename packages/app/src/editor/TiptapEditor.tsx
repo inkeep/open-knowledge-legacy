@@ -5,7 +5,6 @@ import {
   FLASH_DURATION_MS,
   hasNewEntries,
   prependFrontmatter,
-  sharedExtensions,
 } from '@inkeep/open-knowledge-core';
 import { Extension, getSchema } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
@@ -15,6 +14,7 @@ import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
+import { sharedExtensions } from './extensions/shared.ts';
 import { markUserTyping, setupObservers } from './observers';
 
 const DOC_NAME = 'test-doc';

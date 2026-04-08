@@ -10,6 +10,7 @@ import { registerTools } from './tools.ts';
 
 export interface McpServerOptions {
   serverUrl: string;
+  contentDir: string;
 }
 
 function log(msg: string): void {
@@ -17,7 +18,7 @@ function log(msg: string): void {
 }
 
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
-  const { serverUrl } = options;
+  const { serverUrl, contentDir } = options;
 
   // Verify server is reachable before starting
   try {
@@ -37,7 +38,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   });
 
   const httpUrl = serverUrl.replace('ws://', 'http://').replace('wss://', 'https://');
-  registerTools(server, httpUrl);
+  registerTools(server, httpUrl, contentDir);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

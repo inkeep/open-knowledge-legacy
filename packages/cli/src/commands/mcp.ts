@@ -4,9 +4,10 @@
  * Connects to a running Hocuspocus server via HTTP API.
  * All diagnostic logging goes to stderr.
  */
+import { resolve } from 'node:path';
 import { Command } from 'commander';
-import type { Config } from '../config/schema';
-import { startMcpServer } from '../mcp/server';
+import type { Config } from '../config/schema.ts';
+import { startMcpServer } from '../mcp/server.ts';
 
 export function mcpCommand(getConfig: () => Config): Command {
   const cmd = new Command('mcp')
@@ -14,7 +15,8 @@ export function mcpCommand(getConfig: () => Config): Command {
     .action(async () => {
       const config = getConfig();
       const serverUrl = `ws://${config.server.host}:${config.server.port}`;
-      await startMcpServer({ serverUrl });
+      const contentDir = resolve(process.cwd(), config.content.dir);
+      await startMcpServer({ serverUrl, contentDir });
     });
 
   return cmd;

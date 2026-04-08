@@ -119,8 +119,11 @@ export function startCommand(getConfig: () => Config): Command {
       });
 
       if (opts.open) {
-        const { exec } = await import('node:child_process');
-        exec(`open http://${config.server.host}:${config.server.port}`);
+        const { execFile } = await import('node:child_process');
+        const url = `http://${config.server.host}:${config.server.port}`;
+        execFile('open', [url], (err) => {
+          if (err) console.error(`Failed to open browser: ${err.message}`);
+        });
       }
     });
 
