@@ -157,6 +157,10 @@ export function hocuspocusPlugin(): Plugin {
             ws.on('close', (code: number, reason: Buffer) => {
               clientConnection.handleClose({ code, reason: reason.toString() });
             });
+            ws.on('error', (err) => {
+              console.error('[collab] WebSocket error:', err);
+              ws.terminate();
+            });
           });
         }
       });
@@ -175,31 +179,31 @@ export function hocuspocusPlugin(): Plugin {
           const timestamp = new Date().toISOString();
           const content = `Hello from the agent! ${timestamp}`;
 
-          // Set awareness to 'editing' during write
+          // Set awareness to 'editing' during write, reset to 'idle' even on failure
           dc.document.awareness.setLocalStateField('mode', 'editing');
+          try {
+            // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
+            // which hardcodes origin to { source: 'local' }.
+            // Write to Y.Text (not XmlFragment) — Observer B propagates to tree.
+            dc.document.transact(() => {
+              const ytext = dc.document.getText('source');
+              const currentText = ytext.toString();
+              const insertAt = currentText.length;
+              const separator = currentText.trim() ? '\n\n' : '';
+              ytext.insert(insertAt, `${separator}${content}\n`);
 
-          // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
-          // which hardcodes origin to { source: 'local' }.
-          // Write to Y.Text (not XmlFragment) — Observer B propagates to tree.
-          dc.document.transact(() => {
-            const ytext = dc.document.getText('source');
-            const currentText = ytext.toString();
-            const insertAt = currentText.length;
-            const separator = currentText.trim() ? '\n\n' : '';
-            ytext.insert(insertAt, `${separator}${content}\n`);
-
-            // Activity map write INSIDE the same transaction (F1/C3 fix)
-            const activityMap = dc.document.getMap('activity');
-            activityMap.set(DEFAULT_AGENT_ID, {
-              agentId: DEFAULT_AGENT_ID,
-              timestamp: Date.now(),
-              type: 'insert',
-              description: `Added: ${content.slice(0, 50)}`,
-            });
-          }, AGENT_WRITE_ORIGIN);
-
-          // Set awareness back to 'idle' after write
-          dc.document.awareness.setLocalStateField('mode', 'idle');
+              // Activity map write INSIDE the same transaction (F1/C3 fix)
+              const activityMap = dc.document.getMap('activity');
+              activityMap.set(DEFAULT_AGENT_ID, {
+                agentId: DEFAULT_AGENT_ID,
+                timestamp: Date.now(),
+                type: 'insert',
+                description: `Added: ${content.slice(0, 50)}`,
+              });
+            }, AGENT_WRITE_ORIGIN);
+          } finally {
+            dc.document.awareness.setLocalStateField('mode', 'idle');
+          }
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, timestamp }));
@@ -260,35 +264,35 @@ export function hocuspocusPlugin(): Plugin {
           const dc = await getAgentSession('test-doc');
           const timestamp = new Date().toISOString();
 
-          // Set awareness to 'editing' during write
+          // Set awareness to 'editing' during write, reset to 'idle' even on failure
           dc.document.awareness.setLocalStateField('mode', 'editing');
+          try {
+            // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
+            // Direct Y.Text insertion — Observer B handles the tree update.
+            dc.document.transact(() => {
+              const ytext = dc.document.getText('source');
+              const currentText = ytext.toString();
 
-          // Use dc.document.transact() with 'agent-write' origin — NOT conn.transact()
-          // Direct Y.Text insertion — Observer B handles the tree update.
-          dc.document.transact(() => {
-            const ytext = dc.document.getText('source');
-            const currentText = ytext.toString();
+              if (position === 'prepend') {
+                ytext.insert(0, `${markdown.trim()}\n\n`);
+              } else {
+                const insertAt = currentText.length;
+                const separator = currentText.trim() ? '\n\n' : '';
+                ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
+              }
 
-            if (position === 'prepend') {
-              ytext.insert(0, `${markdown.trim()}\n\n`);
-            } else {
-              const insertAt = currentText.length;
-              const separator = currentText.trim() ? '\n\n' : '';
-              ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
-            }
-
-            // Activity map write INSIDE the same transaction (F1/C3 fix)
-            const activityMap = dc.document.getMap('activity');
-            activityMap.set(DEFAULT_AGENT_ID, {
-              agentId: DEFAULT_AGENT_ID,
-              timestamp: Date.now(),
-              type: 'insert',
-              description: `Added: ${markdown.trim().slice(0, 50)}`,
-            });
-          }, AGENT_WRITE_ORIGIN);
-
-          // Set awareness back to 'idle' after write
-          dc.document.awareness.setLocalStateField('mode', 'idle');
+              // Activity map write INSIDE the same transaction (F1/C3 fix)
+              const activityMap = dc.document.getMap('activity');
+              activityMap.set(DEFAULT_AGENT_ID, {
+                agentId: DEFAULT_AGENT_ID,
+                timestamp: Date.now(),
+                type: 'insert',
+                description: `Added: ${markdown.trim().slice(0, 50)}`,
+              });
+            }, AGENT_WRITE_ORIGIN);
+          } finally {
+            dc.document.awareness.setLocalStateField('mode', 'idle');
+          }
 
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true, timestamp }));

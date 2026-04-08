@@ -10,6 +10,12 @@ import { useIdentity } from '../presence/identity';
 import { prependFrontmatter } from './extensions/frontmatter';
 import { sharedExtensions } from './extensions/shared';
 import { setupObservers } from './observers';
+import {
+  evictStaleEntries,
+  FLASH_DEBOUNCE_MS,
+  FLASH_DURATION_MS,
+  hasNewEntries,
+} from './plugins/flash-shared';
 
 const DOC_NAME = 'test-doc';
 
@@ -108,12 +114,6 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       Extension.create({
         name: 'collaborationCursor',
         addProseMirrorPlugins() {
-          // Set user on awareness so other clients see us
-          provider.awareness?.setLocalStateField('user', {
-            name: identity.name,
-            color: identity.color,
-            type: 'human',
-          });
           return [
             yCursorPlugin(provider.awareness ?? ({} as never), {
               cursorBuilder: renderCursor,
@@ -136,36 +136,21 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
 
     const triggerFlash = () => {
       setIsFlashing(true);
-      setTimeout(() => setIsFlashing(false), 2000);
+      setTimeout(() => setIsFlashing(false), FLASH_DURATION_MS);
     };
 
     const observer = () => {
-      // Evict stale entries
+      evictStaleEntries(activityMap);
+
+      if (!hasNewEntries(activityMap, lastSeenTimestamp)) return;
+
       const now = Date.now();
-      for (const [key, value] of activityMap.entries()) {
-        const entry = value as { timestamp?: number };
-        if (entry.timestamp && now - entry.timestamp > 30_000) {
-          activityMap.delete(key);
-        }
-      }
-
-      // Check for new entries
-      let hasNew = false;
-      for (const [, value] of activityMap.entries()) {
-        const entry = value as { timestamp?: number };
-        if (entry.timestamp && entry.timestamp > lastSeenTimestamp) {
-          hasNew = true;
-          break;
-        }
-      }
-      if (!hasNew) return;
-
-      lastSeenTimestamp = Date.now();
+      lastSeenTimestamp = now;
 
       // Debounce
-      if (now - lastFlashTime < 500) {
+      if (now - lastFlashTime < FLASH_DEBOUNCE_MS) {
         if (!pendingTimeout) {
-          const delay = 500 - (now - lastFlashTime);
+          const delay = FLASH_DEBOUNCE_MS - (now - lastFlashTime);
           pendingTimeout = setTimeout(() => {
             pendingTimeout = null;
             lastFlashTime = Date.now();
@@ -184,15 +169,7 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
     // Visibility change handler for FR15
     const visibilityHandler = () => {
       if (document.visibilityState === 'visible') {
-        let hasNew = false;
-        for (const [, value] of activityMap.entries()) {
-          const entry = value as { timestamp?: number };
-          if (entry.timestamp && entry.timestamp > lastSeenTimestamp) {
-            hasNew = true;
-            break;
-          }
-        }
-        if (hasNew) {
+        if (hasNewEntries(activityMap, lastSeenTimestamp)) {
           lastSeenTimestamp = Date.now();
           lastFlashTime = Date.now();
           triggerFlash();

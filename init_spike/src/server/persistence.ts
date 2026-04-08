@@ -83,9 +83,16 @@ async function commitToWipRef(): Promise<void> {
 
     const commitSha = (await git.raw(...args)).trim();
     await git.raw('update-ref', 'refs/wip/main', commitSha);
+    consecutiveGitFailures = 0;
     console.log(`[persistence] Git commit: ${commitSha.slice(0, 8)} on refs/wip/main`);
   } catch (e) {
-    console.error('[persistence] Git commit failed:', e);
+    consecutiveGitFailures++;
+    console.error(`[persistence] Git commit failed (attempt ${consecutiveGitFailures}):`, e);
+    if (consecutiveGitFailures >= 3) {
+      console.error(
+        '[persistence] CRITICAL: Git auto-save has failed 3+ times. Version history is NOT being recorded.',
+      );
+    }
   } finally {
     try {
       unlinkSync(tmpIndex);
@@ -95,6 +102,7 @@ async function commitToWipRef(): Promise<void> {
   }
 }
 
+let consecutiveGitFailures = 0;
 let commitInFlight: Promise<void> | null = null;
 let pendingAfterCommit = false;
 
@@ -190,13 +198,12 @@ export function createPersistenceExtension(): Extension {
       const filePath = safeContentPath(documentName);
       const tmpPath = `${filePath}.tmp`;
 
-      // Record content hash BEFORE writing — Layer 1 of disk bridge feedback prevention.
-      // The file-watcher checks this hash to skip our own persistence writes.
-      registerWrite(filePath, contentHash(markdown));
-
       try {
         await writeFile(tmpPath, markdown, 'utf-8');
         await rename(tmpPath, filePath);
+        // Record content hash AFTER successful write — disk bridge feedback prevention.
+        // The file-watcher checks this hash to skip our own persistence writes.
+        registerWrite(filePath, contentHash(markdown));
       } catch (e) {
         try {
           unlinkSync(tmpPath);

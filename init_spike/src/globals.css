@@ -76,6 +76,16 @@
   animation: agent-flash 2s ease-out forwards;
 }
 
+/* Accessibility: reduce flash animation for users with motion sensitivity */
+@media (prefers-reduced-motion: reduce) {
+  .agent-flash,
+  .agent-flashing .ProseMirror > * {
+    animation: none;
+    outline: 2px solid rgba(217, 119, 87, 0.3);
+    outline-offset: -2px;
+  }
+}
+
 /* Collaboration cursor styles (WYSIWYG — TipTap) */
 .collaboration-cursor__caret {
   position: relative;

@@ -112,7 +112,6 @@ Agent write flow:
 - `src/presence/PresenceBar.tsx` — Presence bar component showing all connected participants
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button with useAgentUndo hook
 - `src/presence/use-presence.ts` — usePresence hook (watches awareness.on('change'))
-- `src/editor/plugins/agent-flash-wysiwyg.ts` — ProseMirror plugin: flash on agent write (direct DOM)
 - `src/editor/plugins/agent-flash-source.ts` — CodeMirror extension: flash on agent write (StateEffect/StateField)
 - `src/editor/plugins/flash-shared.ts` — Shared flash constants and utilities
 

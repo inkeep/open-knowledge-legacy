@@ -41,6 +41,7 @@ export function App() {
             variant={!isSourceMode ? 'default' : 'ghost'}
             size="sm"
             className="h-7 px-3 text-xs"
+            aria-pressed={!isSourceMode}
             onClick={() => setIsSourceMode(false)}
           >
             WYSIWYG
@@ -49,6 +50,7 @@ export function App() {
             variant={isSourceMode ? 'default' : 'ghost'}
             size="sm"
             className="h-7 px-3 text-xs"
+            aria-pressed={isSourceMode}
             onClick={() => setIsSourceMode(true)}
           >
             Source

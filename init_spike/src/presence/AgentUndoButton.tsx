@@ -27,8 +27,8 @@ function useAgentUndo(): AgentUndoState {
           setCanUndo(data.canUndo);
           setCanRedo(data.canRedo);
         }
-      } catch {
-        // Silently ignore fetch errors
+      } catch (e) {
+        console.debug('[agent-undo] Status poll failed:', e);
       }
     };
 
@@ -49,6 +49,8 @@ function useAgentUndo(): AgentUndoState {
         setCanUndo(data.canUndo);
         setCanRedo(data.canRedo);
       }
+    } catch (e) {
+      console.error('[agent-undo] Undo request failed:', e);
     } finally {
       setIsPending(false);
     }
@@ -63,6 +65,8 @@ function useAgentUndo(): AgentUndoState {
         setCanUndo(data.canUndo);
         setCanRedo(data.canRedo);
       }
+    } catch (e) {
+      console.error('[agent-undo] Redo request failed:', e);
     } finally {
       setIsPending(false);
     }
