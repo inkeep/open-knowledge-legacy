@@ -480,7 +480,7 @@ describe('Agent write → Editor reflection', () => {
     await conn.disconnect();
   });
 
-  test('agent markdown write via unified path (parse→updateYFragment) appends paragraph', async () => {
+  test('agent markdown write via direct Y.Text insertion appends content', async () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const conn = await hocuspocus.openDirectConnection('test-md-write');
 
@@ -494,29 +494,32 @@ describe('Agent write → Editor reflection', () => {
       fragment.push([p1]);
     });
 
-    // Simulate the markdown write path: serialize → splice → parse → updateYFragment
-    // This is what POST /api/agent-write-md does
+    // Simulate the new agent-write-md path: direct Y.Text insertion
+    // This is what POST /api/agent-write-md now does
+    const doc = getDoc(conn);
+    const ytext = doc.getText('source');
+
+    // First, populate Y.Text (simulates Observer A initial sync)
     const fragment = getFragment(conn);
     const currentJson = yXmlFragmentToProsemirrorJSON(fragment);
     const currentMarkdown = mdManager.serialize(currentJson);
-
-    const agentMarkdown = 'Agent wrote this via markdown path';
-    const combined = `${currentMarkdown.trim()}\n\n${agentMarkdown}\n`;
-
-    const parsedJson = mdManager.parse(combined);
-    const pmNode = schema.nodeFromJSON(parsedJson);
-
-    getDoc(conn).transact(() => {
-      const meta = { mapping: new Map(), isOMark: new Map() };
-      updateYFragment(getDoc(conn), fragment, pmNode, meta);
+    doc.transact(() => {
+      ytext.insert(0, currentMarkdown);
     });
 
-    // Verify both paragraphs are present
-    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
-    const finalMarkdown = mdManager.serialize(finalJson);
+    // Agent appends markdown via Y.Text insertion
+    const agentMarkdown = 'Agent wrote this via markdown path';
+    const currentText = ytext.toString();
+    const insertAt = currentText.length;
+    const separator = currentText.trim() ? '\n\n' : '';
+    doc.transact(() => {
+      ytext.insert(insertAt, `${separator}${agentMarkdown.trim()}\n`);
+    }, 'agent-write');
 
-    expect(finalMarkdown).toContain('Existing paragraph one');
-    expect(finalMarkdown).toContain('Agent wrote this via markdown path');
+    // Verify Y.Text has both contents
+    const finalText = ytext.toString();
+    expect(finalText).toContain('Existing paragraph one');
+    expect(finalText).toContain('Agent wrote this via markdown path');
 
     await conn.disconnect();
   });

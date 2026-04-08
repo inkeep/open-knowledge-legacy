@@ -214,6 +214,145 @@ describe('Frontmatter handling', () => {
   });
 });
 
+describe('Agent writes through observer chain', () => {
+  test('raw agent write to XmlFragment → Observer A → Y.Text updated', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    // Simulate POST /api/agent-write: DirectConnection writes to XmlFragment
+    const paragraph = new Y.XmlElement('paragraph');
+    const text = new Y.XmlText();
+    text.applyDelta([{ insert: 'Hello from the agent!' }]);
+    paragraph.insert(0, [text]);
+    fragment.push([paragraph]);
+
+    await wait();
+
+    // Observer A should have propagated to Y.Text
+    expect(ytext.toString()).toContain('Hello from the agent!');
+    cleanup();
+  });
+
+  test('agent markdown write to Y.Text → Observer B → XmlFragment updated', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Seed with initial content so observers have something
+    applyMarkdown(doc, fragment, 'Existing content\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    await wait();
+
+    // Simulate POST /api/agent-write-md: direct Y.Text insertion
+    // (same as hocuspocus-plugin.ts agent-write-md endpoint)
+    const currentText = ytext.toString();
+    const insertAt = currentText.length;
+    const separator = currentText.trim() ? '\n\n' : '';
+    doc.transact(() => {
+      ytext.insert(insertAt, `${separator}Agent wrote this via markdown path\n`);
+    }, 'agent-write');
+
+    await wait();
+
+    // Observer B should have updated XmlFragment
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const md = mdManager.serialize(json);
+    expect(md).toContain('Existing content');
+    expect(md).toContain('Agent wrote this via markdown path');
+    cleanup();
+  });
+
+  test('agent markdown prepend to Y.Text → Observer B → XmlFragment updated with correct order', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Original first paragraph\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    await wait();
+
+    // Simulate prepend: insert at position 0
+    doc.transact(() => {
+      ytext.insert(0, 'Agent prepended this\n\n');
+    }, 'agent-write');
+
+    await wait();
+
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const md = mdManager.serialize(json);
+    expect(md).toContain('Agent prepended this');
+    expect(md).toContain('Original first paragraph');
+
+    // Verify order
+    const agentIdx = md.indexOf('Agent prepended this');
+    const originalIdx = md.indexOf('Original first paragraph');
+    expect(agentIdx).toBeLessThan(originalIdx);
+    cleanup();
+  });
+
+  test('multiple rapid agent writes via XmlFragment all propagate to Y.Text', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Seed content\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    await wait();
+
+    // 5 rapid raw agent writes
+    for (let i = 0; i < 5; i++) {
+      const p = new Y.XmlElement('paragraph');
+      const t = new Y.XmlText();
+      t.applyDelta([{ insert: `Agent write #${i + 1}` }]);
+      p.insert(0, [t]);
+      fragment.push([p]);
+    }
+
+    // Wait for debounce to settle
+    await wait(200);
+
+    const textContent = ytext.toString();
+    expect(textContent).toContain('Seed content');
+    for (let i = 0; i < 5; i++) {
+      expect(textContent).toContain(`Agent write #${i + 1}`);
+    }
+    cleanup();
+  });
+
+  test('agent writes propagate bidirectionally: XmlFragment write visible in both', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    // Raw agent write to XmlFragment (simulates WYSIWYG-side agent)
+    const p = new Y.XmlElement('paragraph');
+    const t = new Y.XmlText();
+    t.applyDelta([{ insert: 'Agent content for both modes' }]);
+    p.insert(0, [t]);
+    fragment.push([p]);
+
+    await wait();
+
+    // Verify Y.Text has the content (source mode would show this)
+    expect(ytext.toString()).toContain('Agent content for both modes');
+
+    // Verify XmlFragment still has it (WYSIWYG mode shows this)
+    const json = yXmlFragmentToProsemirrorJSON(fragment);
+    const md = mdManager.serialize(json);
+    expect(md).toContain('Agent content for both modes');
+
+    cleanup();
+  });
+});
+
 describe('Y.Text CRDT foundation', () => {
   test('Y.Text content is accessible after write — simulates collaborative source mode', () => {
     const doc = new Y.Doc();
