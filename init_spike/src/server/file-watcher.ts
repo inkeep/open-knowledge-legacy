@@ -17,10 +17,16 @@ import { readFile } from 'node:fs/promises';
 import { relative } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 
-// Content-hash tracker — populated by persistence layer before disk writes.
-// TTL cleanup prevents unbounded growth from missed watcher events.
+// Content-hash tracker — persistence layer registers writes via registerWrite().
+// Watcher checks this to skip self-writes. TTL cleanup prevents unbounded growth.
+// Exported for test access; production code should use registerWrite().
 export const writeTracker = new Map<string, { hash: string; timestamp: number }>();
 const WRITE_TRACKER_TTL_MS = 10_000;
+
+/** Register an upcoming persistence write so the watcher skips the resulting FSEvent. */
+export function registerWrite(filePath: string, hash: string): void {
+  writeTracker.set(filePath, { hash, timestamp: Date.now() });
+}
 
 export function evictStaleTrackerEntries(): void {
   const now = Date.now();

@@ -49,6 +49,9 @@ function getProvider(): HocuspocusProvider {
         ytext: doc.getText('source'),
         mdManager: mdMgr,
         schema: editorSchema,
+        onSyncError: (direction, error) => {
+          console.warn(`[Sync] ${direction} failed:`, error.message);
+        },
       });
       provider.off('synced', onSync);
     };
