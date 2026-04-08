@@ -13,7 +13,7 @@ import {
   type AgentSessionManager,
   DEFAULT_AGENT_ID,
   syncTextToFragment,
-} from './agent-sessions';
+} from './agent-sessions.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 

@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { type Config, ConfigSchema } from './schema';
+import { type Config, ConfigSchema } from './schema.ts';
 
 export interface LoadConfigResult {
   config: Config;

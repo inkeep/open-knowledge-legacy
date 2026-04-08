@@ -1,5 +1,3 @@
-// Extensions
-
 // Constants
 export {
   ACTIVITY_TTL_MS,
@@ -7,9 +5,11 @@ export {
   FLASH_DEBOUNCE_MS,
   FLASH_DURATION_MS,
   hasNewEntries,
-} from './constants/activity';
-export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter';
-export { fenceFor, JsxComponent } from './extensions/jsx-component';
+} from './constants/activity.ts';
+
+// Extensions
+export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
+export { fenceFor, JsxComponent } from './extensions/jsx-component.ts';
 export {
   createJsxBlockExtension,
   type JsxToken,
@@ -18,11 +18,12 @@ export {
   jsxTokenizerB,
   jsxTokenizerC,
   type TokenizerVersion,
-} from './extensions/jsx-tokenizer';
-export { sharedExtensions } from './extensions/shared';
+} from './extensions/jsx-tokenizer.ts';
+export { sharedExtensions } from './extensions/shared.ts';
+
 // Types
-export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness';
-export type { Identity } from './types/identity';
+export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';
+export type { Identity } from './types/identity.ts';
 
 // Utils
 export {
@@ -30,4 +31,4 @@ export {
   generateRandomName,
   getIdentity,
   HUMAN_COLORS,
-} from './utils/identity';
+} from './utils/identity.ts';

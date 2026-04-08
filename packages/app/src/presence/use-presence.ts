@@ -1,6 +1,6 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { useEffect, useState } from 'react';
-import type { AwarenessState, AwarenessUser } from './identity';
+import type { AwarenessState, AwarenessUser } from './identity.ts';
 
 export interface Participant {
   clientId: number;

@@ -6,9 +6,9 @@
  * Config loaded via preAction hook: CLI > ENV > workspace > user > Zod defaults.
  */
 import { Command } from 'commander';
-import { mcpCommand } from './commands/mcp';
-import { startCommand } from './commands/start';
-import { type Config, loadConfig } from './index';
+import { mcpCommand } from './commands/mcp.ts';
+import { startCommand } from './commands/start.ts';
+import { type Config, loadConfig } from './index.ts';
 
 const program = new Command();
 

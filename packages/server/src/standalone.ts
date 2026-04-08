@@ -4,10 +4,10 @@ import { sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core'
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment } from '@tiptap/y-tiptap';
-import { AgentSessionManager } from './agent-sessions';
-import { createApiExtension } from './api-extension';
-import { type AsyncSubscription, startWatcher } from './file-watcher';
-import { createPersistenceExtension, type PersistenceOptions } from './persistence';
+import { AgentSessionManager } from './agent-sessions.ts';
+import { createApiExtension } from './api-extension.ts';
+import { type AsyncSubscription, startWatcher } from './file-watcher.ts';
+import { createPersistenceExtension, type PersistenceOptions } from './persistence.ts';
 
 export interface ServerOptions {
   port?: number;

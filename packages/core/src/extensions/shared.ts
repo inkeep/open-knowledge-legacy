@@ -6,7 +6,7 @@ import Image from '@tiptap/extension-image';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
-import { JsxComponent } from './jsx-component';
+import { JsxComponent } from './jsx-component.ts';
 
 export const sharedExtensions = [
   // JsxComponent MUST be before StarterKit so its markdown parseMarkdown handler

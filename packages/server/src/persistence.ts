@@ -20,7 +20,7 @@ import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import simpleGit from 'simple-git';
-import { contentHash, registerWrite } from './file-watcher';
+import { contentHash, registerWrite } from './file-watcher.ts';
 
 export interface PersistenceOptions {
   contentDir: string;

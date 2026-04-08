@@ -52,8 +52,11 @@ export function syncTextToFragment(document: Document): void {
 export class AgentSessionManager {
   private sessions = new Map<string, AgentDirectConnection>();
   private undoManagers = new Map<string, Y.UndoManager>();
+  private hocuspocus: Hocuspocus;
 
-  constructor(private hocuspocus: Hocuspocus) {}
+  constructor(hocuspocus: Hocuspocus) {
+    this.hocuspocus = hocuspocus;
+  }
 
   /**
    * Get or create a server-side UndoManager for agent writes on a document.

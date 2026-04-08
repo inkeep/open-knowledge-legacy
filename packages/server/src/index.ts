@@ -4,8 +4,8 @@ export {
   AgentSessionManager,
   DEFAULT_AGENT_ID,
   syncTextToFragment,
-} from './agent-sessions';
-export { type ApiExtensionOptions, createApiExtension } from './api-extension';
+} from './agent-sessions.ts';
+export { type ApiExtensionOptions, createApiExtension } from './api-extension.ts';
 export {
   type AsyncSubscription,
   contentHash,
@@ -14,10 +14,10 @@ export {
   registerWrite,
   startWatcher,
   writeTracker,
-} from './file-watcher';
+} from './file-watcher.ts';
 export {
   createPersistenceExtension,
   type PersistenceOptions,
   safeContentPath,
-} from './persistence';
-export { createServer, type ServerInstance, type ServerOptions } from './standalone';
+} from './persistence.ts';
+export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
