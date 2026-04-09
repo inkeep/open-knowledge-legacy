@@ -158,6 +158,7 @@ function Sidebar({
     return (
       <div
         data-slot="sidebar"
+        data-variant={variant}
         className={cn(
           'flex h-full w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground',
           className,

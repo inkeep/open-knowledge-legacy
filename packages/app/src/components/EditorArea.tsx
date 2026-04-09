@@ -26,14 +26,14 @@ export function EditorArea({ isSourceMode, onProviderReady }: EditorAreaProps) {
     // intent and guard against future overrides.
     <div className="flex-1 overflow-y-auto" style={{ overflowAnchor: 'auto' }}>
       {isSourceMode && editorRef.current && (
-        <div className="p-6">
+        <div className="p-6 h-full">
           <SourceEditor
             ytext={editorRef.current.getYText()}
             provider={editorRef.current.getProvider()}
           />
         </div>
       )}
-      <div className="p-6" style={{ display: isSourceMode ? 'none' : 'block' }}>
+      <div className="p-6 h-full" style={{ display: isSourceMode ? 'none' : 'block' }}>
         <TiptapEditor ref={editorCallbackRef} />
       </div>
     </div>
