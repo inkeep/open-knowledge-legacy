@@ -228,6 +228,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       um.undo();
+      syncTextToFragment(dc.document);
       console.log('[agent-undo] Undo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
@@ -261,6 +262,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       um.redo();
+      syncTextToFragment(dc.document);
       console.log('[agent-redo] Redo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
