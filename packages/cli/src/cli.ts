@@ -1,4 +1,18 @@
 #!/usr/bin/env node
+
+// Early --no-color/--color argv detection — MUST run before picocolors loads.
+// picocolors reads NO_COLOR/FORCE_COLOR at require() time. Our color helpers
+// (src/ui/colors.ts) lazy-load picocolors, so these env vars are guaranteed
+// to be set before first use. Explicit flags always win over env vars.
+if (process.argv.includes('--no-color')) {
+  process.env.NO_COLOR = '1';
+  delete process.env.FORCE_COLOR;
+}
+if (process.argv.includes('--color')) {
+  process.env.FORCE_COLOR = '1';
+  delete process.env.NO_COLOR;
+}
+
 /**
  * CLI entry point for @inkeep/open-knowledge.
  *
@@ -21,6 +35,8 @@ program
   .version('0.0.1')
   .option('--cwd <path>', 'Working directory')
   .option('--log-level <level>', 'Log level', 'info')
+  .option('--no-color', 'Disable color output')
+  .option('--color', 'Force color output')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     const cwd = opts.cwd as string | undefined;
