@@ -763,4 +763,91 @@ describe('Concurrent edit race conditions (regression)', () => {
     expect(md).toContain('Agent content');
     cleanup();
   });
+
+  test('agent undo during active user typing — user keystrokes preserved, agent text removed', async () => {
+    // Regression for the interaction between the race-condition fix and the undo path.
+    //
+    // Scenario:
+    //   1. Agent writes content to Y.Text with origin 'agent-write'
+    //   2. User starts typing in WYSIWYG (markUserTyping fires repeatedly)
+    //   3. Server-side UndoManager fires undo() — reverses the agent write
+    //   4. The undo's Y.Text mutation propagates via Observer B
+    //   5. Observer B defers because user typing is active
+    //   6. After typing pauses, Observer B runs and rebuilds XmlFragment from Y.Text
+    //
+    // Expected: user's typed content is preserved (it was synced to Y.Text by Observer A
+    // during the typing window), agent content is gone, no race condition wipes either side.
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Seed line\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Server-side UndoManager (mirrors hocuspocus-plugin.ts setup)
+    const undoManager = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Step 1: agent writes (lands in Y.Text + propagates to XmlFragment via Observer B)
+    doc.transact(() => {
+      const insertAt = ytext.length;
+      const sep = ytext.toString().endsWith('\n') ? '\n' : '\n\n';
+      ytext.insert(insertAt, `${sep}Agent paragraph\n`);
+    }, 'agent-write');
+
+    await wait();
+
+    // Sanity: agent content visible in both halves
+    {
+      const json = yXmlFragmentToProsemirrorJSON(fragment);
+      const md = mdManager.serialize(json);
+      expect(md).toContain('Agent paragraph');
+      expect(ytext.toString()).toContain('Agent paragraph');
+    }
+
+    // Step 2: user begins typing — keep the typing window fresh
+    const typingInterval = setInterval(() => markUserTyping(), 20);
+    markUserTyping();
+
+    // Mutate XmlFragment to simulate user typing a new paragraph in WYSIWYG
+    const userPara = new Y.XmlElement('paragraph');
+    const userText = new Y.XmlText();
+    userText.applyDelta([{ insert: 'USER TYPED WHILE UNDOING' }]);
+    userPara.insert(0, [userText]);
+    fragment.push([userPara]);
+
+    // Step 3: server-side undo fires WHILE user is still typing.
+    // 80ms > DEBOUNCE_MS (50ms) — ensures Observer A's debounce has had time to fire
+    // at least once since the XmlFragment mutation above.
+    await wait(80);
+    undoManager.undo();
+
+    // Keep typing for another window so Observer B keeps deferring.
+    // 300ms = TYPING_DEFER_MS — ensures we span at least one full defer window.
+    await wait(300);
+
+    // Stop typing and let observers settle.
+    // 600ms > TYPING_DEFER_MS (300ms) + DEBOUNCE_MS (50ms) — enough for Observer B
+    // to stop deferring and both observers to complete their sync cycles.
+    clearInterval(typingInterval);
+    await wait(600);
+
+    // Final state: user content preserved, agent content gone
+    const finalJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const finalMd = mdManager.serialize(finalJson);
+    expect(finalMd).toContain('USER TYPED WHILE UNDOING');
+    expect(finalMd).not.toContain('Agent paragraph');
+
+    // Y.Text and XmlFragment must be in sync at the end
+    const finalYText = ytext.toString();
+    expect(finalYText).toContain('USER TYPED WHILE UNDOING');
+    expect(finalYText).not.toContain('Agent paragraph');
+
+    cleanup();
+  });
 });
