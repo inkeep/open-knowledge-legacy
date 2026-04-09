@@ -134,6 +134,10 @@ const CONTENT = {
   smallUnicode: stabilize(generateMarkdown(TIERS.small.lines, { unicode: true })),
   mediumUnicode: stabilize(generateMarkdown(TIERS.medium.lines, { unicode: true })),
   largeUnicode: stabilize(generateMarkdown(TIERS.large.lines, { unicode: true })),
+  // No-trailing-newline variants for S4b (gap 2 regression trigger)
+  smallNoNewline: stabilize(generateMarkdown(TIERS.small.lines, { noTrailingNewline: true })),
+  mediumNoNewline: stabilize(generateMarkdown(TIERS.medium.lines, { noTrailingNewline: true })),
+  largeNoNewline: stabilize(generateMarkdown(TIERS.large.lines, { noTrailingNewline: true })),
 };
 
 function contentFor(tier: Tier, unicode = false): string {
@@ -152,6 +156,16 @@ function contentFor(tier: Tier, unicode = false): string {
             : 'large'
           : 'small'; // adversarial generated on-the-fly
   return CONTENT[key as keyof typeof CONTENT];
+}
+
+function contentForNoNewline(tier: Tier): string {
+  const key =
+    tier === TIERS.small
+      ? 'smallNoNewline'
+      : tier === TIERS.medium
+        ? 'mediumNoNewline'
+        : 'largeNoNewline';
+  return CONTENT[key];
 }
 
 // ---------- S1: Single agent write propagation ----------
@@ -309,4 +323,422 @@ describe('S9: observer init from restored doc', () => {
     },
     TIERS.medium.timeout,
   );
+});
+
+// ---------- S2: Concurrent user typing + agent write ----------
+
+describe('S2: concurrent typing + agent write', () => {
+  /**
+   * Scenario: agent writes large content to Y.Text while the user simultaneously
+   * types into XmlFragment. After observers settle, both user content and agent
+   * content must be present (content preservation) and the bridge invariant holds.
+   *
+   * Flow:
+   *   1. Agent writes content to Y.Text with origin 'agent-write'
+   *   2. User types marker text into XmlFragment (simulated via Y.XmlElement push)
+   *   3. markUserTyping() called to activate the typing-defer window
+   *   4. Wait for all observers to settle
+   *   5. Assert bridge invariant + content preservation
+   */
+  function runS2(tier: Tier, content: string, userMarker: string, label: string) {
+    return async () => {
+      const start = performance.now();
+      const doc = new Y.Doc();
+      const fragment = doc.getXmlFragment('default');
+      const ytext = doc.getText('source');
+      const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+      try {
+        // Agent writes large content
+        doc.transact(() => {
+          ytext.delete(0, ytext.length);
+          ytext.insert(0, content);
+        }, 'agent-write');
+
+        // Small wait for Observer B debounce to start
+        await wait(100);
+
+        // User types concurrently — markUserTyping keeps Observer B deferred
+        markUserTyping();
+        const userPara = new Y.XmlElement('paragraph');
+        const userText = new Y.XmlText();
+        userText.applyDelta([{ insert: userMarker }]);
+        userPara.insert(0, [userText]);
+        fragment.push([userPara]);
+
+        // Simulate typing window (300ms+ so Observer B defers)
+        const typingInterval = setInterval(() => markUserTyping(), 50);
+        await wait(400);
+        clearInterval(typingInterval);
+
+        // Let observers fully settle after typing stops
+        await wait(600);
+
+        assertBridgeInvariant(ytext, fragment, label);
+        expect(ytext.toString()).toContain(userMarker);
+        expect(ytext.toString()).toContain('Section 1');
+
+        const elapsed = Math.round(performance.now() - start);
+        logTiming('S2', tier.name, elapsed, true);
+      } catch (e) {
+        const elapsed = Math.round(performance.now() - start);
+        logTiming('S2', tier.name, elapsed, false);
+        throw e;
+      } finally {
+        cleanup();
+      }
+    };
+  }
+
+  // ASCII variants — all 4 tiers (adversarial is probe-only)
+  for (const tier of ALL_TIERS) {
+    const testFn = tier.probe ? test.todo : test;
+    testFn(
+      `ASCII ${tier.name} (${tier.lines}L)`,
+      runS2(
+        tier,
+        tier.probe ? stabilize(generateMarkdown(tier.lines)) : contentFor(tier),
+        `USER-S2-${tier.name.toUpperCase()}`,
+        `S2-ascii/${tier.name}`,
+      ),
+      tier.timeout,
+    );
+  }
+
+  // Unicode variants — 3 realistic tiers only
+  for (const tier of REALISTIC_TIERS) {
+    test(
+      `Unicode ${tier.name} (${tier.lines}L)`,
+      runS2(tier, contentFor(tier, true), `USER-S2-UNICODE-\u{1F680}`, `S2-unicode/${tier.name}`),
+      tier.timeout,
+    );
+  }
+});
+
+// ---------- S4: Agent undo during active user typing ----------
+
+describe('S4: agent undo during active typing', () => {
+  /**
+   * Scenario: agent writes content, user begins typing, server-side undo fires
+   * while user is still typing. After observers settle, user content must be
+   * preserved and agent content must be removed.
+   *
+   * Flow:
+   *   1. Agent writes content to Y.Text with origin 'agent-write'
+   *   2. Wait for Observer B to propagate → XmlFragment has agent content
+   *   3. User begins typing (markUserTyping + XmlFragment mutation)
+   *   4. UndoManager.undo() fires (reverses agent write in Y.Text)
+   *   5. Observer B defers because typing is active
+   *   6. User stops typing → observers settle
+   *   7. Assert: user content preserved, agent content gone, bridge invariant holds
+   */
+  function runS4(tier: Tier, content: string, userMarker: string, label: string) {
+    return async () => {
+      const start = performance.now();
+      const doc = new Y.Doc();
+      const fragment = doc.getXmlFragment('default');
+      const ytext = doc.getText('source');
+      const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+      // Local UndoManager mirroring server config
+      const undoManager = new Y.UndoManager(ytext, {
+        trackedOrigins: new Set(['agent-write']),
+        captureTimeout: 0,
+      });
+
+      try {
+        // Step 1: agent writes
+        doc.transact(() => {
+          ytext.delete(0, ytext.length);
+          ytext.insert(0, content);
+        }, 'agent-write');
+
+        // Step 2: wait for propagation
+        await wait(500);
+        expect(undoManager.canUndo()).toBe(true);
+
+        // Step 3: user begins typing
+        markUserTyping();
+        const userPara = new Y.XmlElement('paragraph');
+        const userText = new Y.XmlText();
+        userText.applyDelta([{ insert: userMarker }]);
+        userPara.insert(0, [userText]);
+        fragment.push([userPara]);
+
+        const typingInterval = setInterval(() => markUserTyping(), 50);
+
+        // Step 4: undo fires during typing
+        await wait(100);
+        undoManager.undo();
+
+        // Step 5: keep typing to defer Observer B
+        await wait(400);
+        clearInterval(typingInterval);
+
+        // Step 6: let observers settle
+        await wait(600);
+
+        // Step 7: assertions
+        expect(ytext.toString()).toContain(userMarker);
+        expect(ytext.toString()).not.toContain('Section 1');
+        assertBridgeInvariant(ytext, fragment, label);
+
+        const elapsed = Math.round(performance.now() - start);
+        logTiming('S4', tier.name, elapsed, true);
+      } catch (e) {
+        const elapsed = Math.round(performance.now() - start);
+        logTiming('S4', tier.name, elapsed, false);
+        throw e;
+      } finally {
+        undoManager.destroy();
+        cleanup();
+      }
+    };
+  }
+
+  // ASCII variants — 3 realistic tiers
+  for (const tier of REALISTIC_TIERS) {
+    test(
+      `ASCII ${tier.name} (${tier.lines}L)`,
+      runS4(tier, contentFor(tier), `USER-S4-${tier.name.toUpperCase()}`, `S4-ascii/${tier.name}`),
+      tier.timeout,
+    );
+  }
+
+  // Unicode variants — 3 realistic tiers
+  for (const tier of REALISTIC_TIERS) {
+    test(
+      `Unicode ${tier.name} (${tier.lines}L)`,
+      runS4(tier, contentFor(tier, true), `USER-S4-UNICODE-\u{1F680}`, `S4-unicode/${tier.name}`),
+      tier.timeout,
+    );
+  }
+});
+
+// ---------- S4b: applyUserDelta unterminated-final-line regression ----------
+
+describe('S4b: unterminated-final-line gap 2 regression', () => {
+  /**
+   * Scenario: exercises the applyUserDelta oldPadded/prefix-trim code path
+   * (gap 2 fix) at scale. Content is generated WITHOUT a trailing newline so
+   * the diffLines alignment padding logic is exercised.
+   *
+   * Flow:
+   *   1. Agent writes content (no trailing newline) to Y.Text
+   *   2. Wait for Observer B propagation
+   *   3. User types a marker into XmlFragment (triggers Observer A → applyUserDelta)
+   *   4. Observer A runs applyUserDelta with oldXmlMd lacking trailing newline
+   *   5. Wait for observers to settle
+   *   6. Assert bridge invariant + content preservation
+   */
+  for (const tier of REALISTIC_TIERS) {
+    test(
+      `${tier.name} (${tier.lines}L)`,
+      async () => {
+        const start = performance.now();
+        const doc = new Y.Doc();
+        const fragment = doc.getXmlFragment('default');
+        const ytext = doc.getText('source');
+        const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+        try {
+          const content = contentForNoNewline(tier);
+
+          // Step 1: agent writes content without trailing newline
+          doc.transact(() => {
+            ytext.delete(0, ytext.length);
+            ytext.insert(0, content);
+          }, 'agent-write');
+
+          // Step 2: wait for Observer B to propagate to XmlFragment
+          await wait(500);
+
+          // Step 3: user types — triggers Observer A → applyUserDelta with
+          // oldXmlMd that may lack trailing newline
+          markUserTyping();
+          const userPara = new Y.XmlElement('paragraph');
+          const userText = new Y.XmlText();
+          const marker = `USER-S4B-${tier.name.toUpperCase()}`;
+          userText.applyDelta([{ insert: marker }]);
+          userPara.insert(0, [userText]);
+          fragment.push([userPara]);
+
+          // Keep typing briefly then stop
+          const typingInterval = setInterval(() => markUserTyping(), 50);
+          await wait(400);
+          clearInterval(typingInterval);
+
+          // Wait for observers to settle
+          await wait(600);
+
+          // Step 6: assert convergence
+          assertBridgeInvariant(ytext, fragment, `S4b/${tier.name}`);
+          expect(ytext.toString()).toContain(marker);
+          expect(ytext.toString()).toContain('Section 1');
+
+          const elapsed = Math.round(performance.now() - start);
+          logTiming('S4b', tier.name, elapsed, true);
+        } catch (e) {
+          const elapsed = Math.round(performance.now() - start);
+          logTiming('S4b', tier.name, elapsed, false);
+          throw e;
+        } finally {
+          cleanup();
+        }
+      },
+      tier.timeout,
+    );
+  }
+});
+
+// ---------- S3: Undo chain: N agent writes, N undos ----------
+
+describe('S3: undo chain', () => {
+  const configs = [
+    { tier: TIERS.small, N: 5 },
+    { tier: TIERS.medium, N: 5 },
+    { tier: TIERS.large, N: 3 },
+  ];
+
+  for (const { tier, N } of configs) {
+    test(
+      `${tier.name} (${tier.lines}L, N=${N})`,
+      async () => {
+        const start = performance.now();
+        const doc = new Y.Doc();
+        const fragment = doc.getXmlFragment('default');
+        const ytext = doc.getText('source');
+        const undoManager = new Y.UndoManager(ytext, {
+          trackedOrigins: new Set(['agent-write']),
+          captureTimeout: 0,
+        });
+        const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+        try {
+          const initialText = ytext.toString();
+
+          for (let i = 0; i < N; i++) {
+            const content = stabilize(generateMarkdown(tier.lines));
+            doc.transact(() => {
+              ytext.delete(0, ytext.length);
+              ytext.insert(0, `${content}\n\n## Write ${i + 1}\n`);
+            }, 'agent-write');
+            await wait(200);
+          }
+
+          expect(undoManager.canUndo()).toBe(true);
+
+          for (let i = 0; i < N; i++) {
+            undoManager.undo();
+            await wait(200);
+          }
+
+          expect(undoManager.canUndo()).toBe(false);
+          await wait(500);
+
+          assertBridgeInvariant(ytext, fragment, `S3/${tier.name}`);
+          expect(stripTrailingWhitespace(ytext.toString())).toBe(
+            stripTrailingWhitespace(initialText),
+          );
+
+          const elapsed = Math.round(performance.now() - start);
+          logTiming('S3', tier.name, elapsed, true);
+        } catch (e) {
+          const elapsed = Math.round(performance.now() - start);
+          logTiming('S3', tier.name, elapsed, false);
+          throw e;
+        } finally {
+          undoManager.destroy();
+          cleanup();
+        }
+      },
+      tier.timeout + N * 5_000,
+    );
+  }
+});
+
+// ---------- S5: Rapid sequential writes ----------
+
+describe('S5: rapid sequential writes', () => {
+  const variants: Array<{ label: string; unicode: boolean }> = [
+    { label: 'ASCII', unicode: false },
+    { label: 'Unicode', unicode: true },
+  ];
+
+  for (const { label, unicode } of variants) {
+    for (const tier of REALISTIC_TIERS) {
+      test(
+        `${label} ${tier.name} (${tier.lines}L, N=5 at 100ms)`,
+        async () => {
+          const start = performance.now();
+          const doc = new Y.Doc();
+          const fragment = doc.getXmlFragment('default');
+          const ytext = doc.getText('source');
+          const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+          try {
+            for (let i = 0; i < 5; i++) {
+              const content = contentFor(tier, unicode);
+              doc.transact(() => {
+                ytext.delete(0, ytext.length);
+                ytext.insert(0, `${content}\n\n## Rapid write ${i + 1}\n`);
+              }, 'agent-write');
+              await wait(100);
+            }
+
+            await wait(600);
+
+            assertBridgeInvariant(ytext, fragment, `S5/${label}/${tier.name}`);
+            expect(ytext.toString()).toContain('Rapid write 5');
+
+            const elapsed = Math.round(performance.now() - start);
+            logTiming(`S5-${label}`, tier.name, elapsed, true);
+          } catch (e) {
+            const elapsed = Math.round(performance.now() - start);
+            logTiming(`S5-${label}`, tier.name, elapsed, false);
+            throw e;
+          } finally {
+            cleanup();
+          }
+        },
+        tier.timeout,
+      );
+    }
+  }
+});
+
+// ---------- S5b: High-throughput burst ----------
+
+describe('S5b: high-throughput burst', () => {
+  test('small-realistic (100 writes at ~1ms)', async () => {
+    const start = performance.now();
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    try {
+      for (let i = 0; i < 100; i++) {
+        doc.transact(() => {
+          ytext.delete(0, ytext.length);
+          ytext.insert(0, `## Burst write ${i + 1}\n\nContent line for burst ${i + 1}.\n`);
+        }, 'agent-write');
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      await wait(1000);
+
+      assertBridgeInvariant(ytext, fragment, 'S5b/small-realistic');
+      expect(ytext.toString()).toContain('Burst write 100');
+
+      const elapsed = Math.round(performance.now() - start);
+      logTiming('S5b', 'small-realistic', elapsed, true);
+    } catch (e) {
+      const elapsed = Math.round(performance.now() - start);
+      logTiming('S5b', 'small-realistic', elapsed, false);
+      throw e;
+    } finally {
+      cleanup();
+    }
+  }, 30_000);
 });
