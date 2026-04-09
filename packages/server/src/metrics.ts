@@ -10,6 +10,8 @@ export interface ReconciliationMetrics {
   batchCount: number;
   upstreamImportCount: number;
   rescueBufferCount: number;
+  branchSwitchCount: number;
+  parkCount: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -18,6 +20,8 @@ const counters: ReconciliationMetrics = {
   batchCount: 0,
   upstreamImportCount: 0,
   rescueBufferCount: 0,
+  branchSwitchCount: 0,
+  parkCount: 0,
 };
 
 export function incrementReconcile(): void {
@@ -40,6 +44,14 @@ export function incrementRescueBuffer(): void {
   counters.rescueBufferCount++;
 }
 
+export function incrementBranchSwitch(): void {
+  counters.branchSwitchCount++;
+}
+
+export function incrementPark(): void {
+  counters.parkCount++;
+}
+
 export function getMetrics(): ReconciliationMetrics {
   return { ...counters };
 }
@@ -50,4 +62,6 @@ export function resetMetrics(): void {
   counters.batchCount = 0;
   counters.upstreamImportCount = 0;
   counters.rescueBufferCount = 0;
+  counters.branchSwitchCount = 0;
+  counters.parkCount = 0;
 }
