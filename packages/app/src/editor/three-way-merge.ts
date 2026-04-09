@@ -14,8 +14,9 @@
 import type { MarkdownManager } from '@tiptap/markdown';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
-import { diffArrays, diffLines } from 'diff';
+import { diffArrays } from 'diff';
 import type * as Y from 'yjs';
+import { diffLinesFast as diffLines } from './diff-lines-fast';
 
 export interface ThreeWayMergeResult {
   /** Whether the merge was applied selectively (true) or fell back to whole-doc (false) */

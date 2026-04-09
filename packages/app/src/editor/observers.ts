@@ -35,8 +35,8 @@ import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-cor
 import type { MarkdownManager } from '@tiptap/markdown';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
-import { diffLines } from 'diff';
 import type * as Y from 'yjs';
+import { diffLinesFast as diffLines } from './diff-lines-fast';
 
 export const ORIGIN_TREE_TO_TEXT = 'sync-from-tree';
 export const ORIGIN_TEXT_TO_TREE = 'sync-from-text';
@@ -117,6 +117,32 @@ function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: strin
 }
 
 /**
+ * Apply a text change to Y.Text using prefix/suffix comparison — O(n) string
+ * scan, zero diff algorithm overhead. Produces at most one delete + one insert
+ * CRDT operation. Used by applyUserDelta to avoid a second diff pass.
+ */
+function applyByPrefixSuffix(ytext: Y.Text, currentText: string, newText: string): void {
+  if (currentText === newText) return;
+
+  let prefixLen = 0;
+  const minLen = Math.min(currentText.length, newText.length);
+  while (prefixLen < minLen && currentText[prefixLen] === newText[prefixLen]) prefixLen++;
+
+  let suffixLen = 0;
+  while (
+    suffixLen < minLen - prefixLen &&
+    currentText[currentText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
+  ) {
+    suffixLen++;
+  }
+
+  const deleteLen = currentText.length - prefixLen - suffixLen;
+  const insertStr = newText.slice(prefixLen, newText.length - suffixLen);
+  if (deleteLen > 0) ytext.delete(prefixLen, deleteLen);
+  if (insertStr.length > 0) ytext.insert(prefixLen, insertStr);
+}
+
+/**
  * Apply ONLY the user's delta to Y.Text, when Y.Text has diverged from the last
  * synced XmlFragment state. This is used in the race-condition path where another
  * source (agent, peer, file watcher) wrote to Y.Text between Observer A syncs.
@@ -188,8 +214,9 @@ function applyUserDelta(ytext: Y.Text, oldXmlMd: string, newXmlMd: string): void
   const newText = resultLines.join('\n');
   if (newText === currentText) return;
 
-  // Apply the result via the standard incremental diff
-  applyIncrementalDiff(ytext, currentText, newText);
+  // Apply the result directly via prefix/suffix comparison — avoids a second
+  // diff pass that applyIncrementalDiff would perform.
+  applyByPrefixSuffix(ytext, currentText, newText);
 }
 
 /** Read frontmatter from Y.Doc metadata map. */
