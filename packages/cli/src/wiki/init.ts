@@ -110,6 +110,69 @@ The MCP server exposes three prompts that codify the main workflows. Each MCP cl
 These prompts are discovered via the standard MCP \`prompts/list\` handshake — no client-specific installation step is needed. When referring to them in docs or conversation, use the canonical \`mcp__openknowledge__<name>\` form so they're unambiguous across clients.
 `;
 
+export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
+#
+# This file overrides built-in defaults for this workspace. Every key below
+# is commented out and shows its current default value. Uncomment any key
+# to override it.
+#
+# Precedence (lowest -> highest):
+#   Built-in defaults
+#     -> ~/.open-knowledge/config.yml         (user defaults)
+#     -> ./.open-knowledge/config.yml         (this file)
+#     -> ENV vars
+#     -> CLI flags
+#
+# Schema reference: packages/cli/src/config/schema.ts
+
+
+# --- Content ---------------------------------------------------------------
+# Where editable markdown content lives. Path is relative to the workspace
+# root (the directory containing .open-knowledge/), NOT to this file.
+# content:
+#   dir: ./content
+#   exclude: []
+
+
+# --- Server ----------------------------------------------------------------
+# Hocuspocus collaboration server + static React app.
+# server:
+#   port: 3000
+#   host: localhost
+
+
+# --- Git -------------------------------------------------------------------
+# Auto-commit edits to a working ref so every save is reversible.
+# git:
+#   enabled: true
+#   autosave: true
+#   commitDebounceMs: 30000
+#   wipRef: refs/wip/main
+
+
+# --- Persistence -----------------------------------------------------------
+# How aggressively CRDT updates are flushed to disk.
+# persistence:
+#   debounceMs: 2000
+#   maxDebounceMs: 10000
+
+
+# --- Editor ----------------------------------------------------------------
+# Default mode for the React editor app.
+# editor:
+#   defaultMode: wysiwyg   # one of: wysiwyg, source
+
+
+# --- Wiki ------------------------------------------------------------------
+# Subdirectory layout inside .open-knowledge/. Paths are relative to this
+# directory. Usually leave these alone — the init command and the MCP server
+# both assume the defaults.
+# wiki:
+#   articles_path: ./articles
+#   external_sources_path: ./external-sources
+#   research_path: ./research
+`;
+
 export const CLAUDE_MD_SECTION = `## .open-knowledge/ — Project Wiki
 
 This repo has a living knowledge base in \`.open-knowledge/\`.
@@ -157,6 +220,17 @@ export function initWiki(projectDir: string): { created: string[]; skipped: stri
     created.push('.gitignore');
   } else {
     skipped.push('.gitignore');
+  }
+
+  // config.yml — fully-commented starter so every key is discoverable.
+  // The loader treats an empty/all-comments YAML as no-op, so this file is
+  // safe to ship as-is — uncommenting a key is the only way it changes
+  // runtime behavior.
+  const configPath = join(okDir, 'config.yml');
+  if (writeIfMissing(configPath, CONFIG_YML_CONTENT)) {
+    created.push('config.yml');
+  } else {
+    skipped.push('config.yml');
   }
 
   // Section catalogs

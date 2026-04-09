@@ -45,6 +45,11 @@ const INSTRUCTIONS = `# Open Knowledge — Project Wiki
 
 This project may have a \`.open-knowledge/\` wiki for structured project knowledge.
 
+## Getting Started
+If \`.open-knowledge/\` doesn't exist yet, scaffolding is a **terminal-side** operation — the user (or the agent via \`Bash\`) runs \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That scaffolds the directory structure, registers this MCP server in \`.mcp.json\`, and returns. After scaffolding, reconnect the MCP client so this server sees the new directory and starts its file watcher.
+
+This MCP server intentionally exposes **no tools** — scaffolding belongs in the CLI, runtime behavior (catalogs, watcher, prompts, instructions) belongs here.
+
 ## Navigation
 1. Read \`.open-knowledge/INDEX.md\` for a top-level overview of all wiki sections
 2. Follow links to section INDEX.md files (articles/, external-sources/, research/)
@@ -80,11 +85,6 @@ When you create a new subfolder (e.g., \`articles/auth/\`), set \`title\` and \`
 **Every time you create or edit an article, also check the containing folder's \`INDEX.md\` and decide if the folder's \`title\` or \`description\` needs to be updated.** If you add an RBAC article to \`articles/auth/\`, the folder description should probably mention authorization too. If an article's scope shifts, the folder framing may be stale. The check is cheap (one read); the cost of a stale folder description is that future agents get a misleading map of the wiki.
 
 **Only \`title\` and \`description\` are editable in INDEX.md.** Everything else (the \`generated\`/\`schema_version\` fields, the \`## Articles\` body, the \`## Subfolders\` body) is auto-regenerated and will be overwritten on the next rebuild.
-
-## Getting Started
-If \`.open-knowledge/\` doesn't exist yet, scaffolding is a **terminal-side** operation — the user (or the agent via \`Bash\`) runs \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That scaffolds the directory structure, registers this MCP server in \`.mcp.json\`, and returns. After scaffolding, reconnect the MCP client so this server sees the new directory and starts its file watcher.
-
-This MCP server intentionally exposes **no tools** — scaffolding belongs in the CLI, runtime behavior (catalogs, watcher, prompts, instructions) belongs here.
 `;
 
 async function detectHocuspocus(serverUrl: string): Promise<boolean> {

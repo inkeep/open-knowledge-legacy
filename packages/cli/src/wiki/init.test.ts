@@ -30,6 +30,7 @@ describe('initWiki', () => {
     expect(existsSync(join(okDir, 'cache'))).toBe(true);
     expect(existsSync(join(okDir, 'AGENTS.md'))).toBe(true);
     expect(existsSync(join(okDir, '.gitignore'))).toBe(true);
+    expect(existsSync(join(okDir, 'config.yml'))).toBe(true);
     expect(existsSync(join(okDir, 'INDEX.md'))).toBe(true);
     expect(existsSync(join(okDir, 'articles', 'INDEX.md'))).toBe(true);
     expect(existsSync(join(okDir, 'external-sources', 'INDEX.md'))).toBe(true);
@@ -68,6 +69,24 @@ describe('initWiki', () => {
     // .gitignore excludes cache/
     const gitignore = readFileSync(join(okDir, '.gitignore'), 'utf-8');
     expect(gitignore).toContain('cache/');
+
+    // config.yml is the fully-commented starter — every section header
+    // present, every key commented out so the file parses to a no-op.
+    const configYml = readFileSync(join(okDir, 'config.yml'), 'utf-8');
+    expect(configYml).toContain('Open Knowledge — workspace configuration');
+    expect(configYml).toContain('# content:');
+    expect(configYml).toContain('# server:');
+    expect(configYml).toContain('# git:');
+    expect(configYml).toContain('# persistence:');
+    expect(configYml).toContain('# editor:');
+    expect(configYml).toContain('# wiki:');
+    // No uncommented top-level keys — every non-empty, non-comment line
+    // would mean we accidentally shipped an active override.
+    const activeLines = configYml
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0 && !l.startsWith('#'));
+    expect(activeLines).toEqual([]);
 
     // Root INDEX.md has sections
     const rootIndex = readFileSync(join(okDir, 'INDEX.md'), 'utf-8');
