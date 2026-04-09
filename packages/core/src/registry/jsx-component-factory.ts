@@ -10,6 +10,7 @@
  */
 import { Node } from '@tiptap/core';
 import { jsxStart, jsxTokenizerB } from '../extensions/jsx-tokenizer.ts';
+import { parseJsx } from './jsx-parser.ts';
 import type { ComponentMeta } from './types.ts';
 
 export interface JsxComponentExtensions {
@@ -35,16 +36,6 @@ function collectPropAttributes(
     }
   }
   return attrs;
-}
-
-/**
- * Extract the component tag name from a raw JSX string.
- * Simple regex — just gets the first uppercase tag name.
- * Full prop extraction via acorn is added in US-007.
- */
-function extractTagName(rawJsx: string): string | null {
-  const match = rawJsx.match(/^<([A-Z][A-Za-z0-9]*)\b/);
-  return match ? match[1] : null;
 }
 
 export function createJsxComponentExtensions(
@@ -120,13 +111,20 @@ export function createJsxComponentExtensions(
 
     parseMarkdown(token, helpers) {
       const rawContent = token.content || '';
-      const tagName = extractTagName(rawContent);
+      const parsed = parseJsx(rawContent);
+
+      // parseJsx returns null for non-primitive expressions → void fallback
+      if (!parsed) {
+        return helpers.createNode('jsxComponentVoid', { content: rawContent });
+      }
+
+      const { componentName, props } = parsed;
 
       // Route: registered → editable, unregistered → void
-      if (tagName && tagName in manifest) {
+      if (componentName in manifest) {
         return helpers.createNode(
           'jsxComponentEditable',
-          { componentName: tagName, _rawContent: rawContent },
+          { componentName, _rawContent: rawContent, ...props },
           [helpers.createNode('paragraph')],
         );
       }
