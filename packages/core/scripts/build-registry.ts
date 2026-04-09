@@ -119,6 +119,7 @@ for (const entry of BUILT_INS) {
     props,
     displayName: entry.displayName,
     category: entry.category,
+    ...(entry.description ? { description: entry.description } : {}),
     ...(entry.icon ? { icon: entry.icon } : {}),
     ...(entry.searchTerms ? { searchTerms: entry.searchTerms } : {}),
   };

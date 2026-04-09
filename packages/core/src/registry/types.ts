@@ -55,6 +55,8 @@ export interface ComponentMeta {
   props: PropDef[];
   /** Display name for slash commands and panels */
   displayName: string;
+  /** One-line description for slash menu and agent discovery */
+  description?: string;
   /** Category for slash command grouping */
   category: 'content' | 'layout' | 'media' | 'data';
   /** Icon name for slash command menu (resolved to a React icon in app) */
@@ -77,6 +79,8 @@ export interface BuiltInManifestEntry {
   category: ComponentMeta['category'];
   /** Display name for slash commands and panels */
   displayName: string;
+  /** One-line description for slash menu and agent discovery */
+  description?: string;
   /** Icon name for slash command menu */
   icon?: string;
   /** Aliases for slash-command search (e.g., 'note', 'warning' for Callout) */

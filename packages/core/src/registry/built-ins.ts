@@ -50,6 +50,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Callout',
     icon: 'info',
+    description: 'Highlight important context in a bordered callout box.',
     searchTerms: ['note', 'warning', 'tip', 'info', 'alert'],
   },
   {
@@ -58,6 +59,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'layout',
     displayName: 'Tabs',
     icon: 'columns-2',
+    description: 'Show multiple tabbed content variants side by side.',
     searchTerms: ['tab', 'switcher'],
   },
   {
@@ -65,6 +67,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/tabs.d.ts'),
     category: 'layout',
     displayName: 'Tab',
+    description: 'A single tab inside a Tabs container.',
     searchTerms: ['tab-item'],
   },
   {
@@ -73,6 +76,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Card',
     icon: 'square',
+    description: 'Linked documentation card with title and optional description.',
     searchTerms: ['link', 'cta'],
   },
   {
@@ -80,6 +84,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/card.d.ts'),
     category: 'layout',
     displayName: 'Cards',
+    description: 'Grid container for multiple Card components.',
     searchTerms: ['card-grid', 'card-list'],
   },
   {
@@ -88,6 +93,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'layout',
     displayName: 'Steps',
     icon: 'list-ordered',
+    description: 'Numbered sequence of steps for guides and tutorials.',
     searchTerms: ['guide', 'process', 'tutorial'],
   },
   {
@@ -95,6 +101,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/steps.d.ts'),
     category: 'layout',
     displayName: 'Step',
+    description: 'A single step inside a Steps container.',
     searchTerms: ['step-item'],
   },
   {
@@ -103,6 +110,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Accordion',
     icon: 'chevrons-down-up',
+    description: 'Collapsible disclosure section with a title.',
     searchTerms: ['details', 'collapse', 'foldable'],
   },
   {
@@ -110,6 +118,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/accordion.d.ts'),
     category: 'layout',
     displayName: 'Accordions',
+    description: 'Container that groups multiple Accordion items.',
     searchTerms: ['accordion-group'],
   },
   {
@@ -118,6 +127,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'media',
     displayName: 'Image Zoom',
     icon: 'zoom-in',
+    description: 'Zoomable image with click-to-expand.',
     searchTerms: ['image', 'photo', 'screenshot', 'zoom'],
   },
   {
@@ -126,6 +136,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'layout',
     displayName: 'Files',
     icon: 'folder',
+    description: 'File tree display with nested files and folders.',
     searchTerms: ['file-tree', 'directory'],
   },
   {
@@ -133,6 +144,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/files.d.ts'),
     category: 'layout',
     displayName: 'File',
+    description: 'A single file entry inside a Files tree.',
     searchTerms: ['file-item'],
   },
   {
@@ -140,6 +152,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/files.d.ts'),
     category: 'layout',
     displayName: 'Folder',
+    description: 'A folder entry inside a Files tree.',
     searchTerms: ['folder-item', 'directory-item'],
   },
   {
@@ -148,6 +161,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'data',
     displayName: 'Type Table',
     icon: 'table',
+    description: 'Auto-generated props/types reference table.',
     searchTerms: ['type-table', 'props-table', 'api'],
   },
   {
@@ -156,6 +170,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Banner',
     icon: 'megaphone',
+    description: 'Full-width announcement or notice banner.',
     searchTerms: ['announcement', 'notice'],
   },
   {
@@ -164,6 +179,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Inline TOC',
     icon: 'list',
+    description: 'Inline table of contents for the current page.',
     searchTerms: ['toc', 'table-of-contents'],
   },
 
@@ -175,6 +191,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'media',
     displayName: 'Video',
     icon: 'play',
+    description: 'Embedded video player with optional title.',
     searchTerms: ['video', 'media', 'player'],
   },
   {
@@ -183,6 +200,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'media',
     displayName: 'Frame',
     icon: 'frame',
+    description: 'Embedded iframe for external content.',
     searchTerms: ['iframe', 'embed', 'frame'],
   },
   {
@@ -191,6 +209,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Code Group',
     icon: 'braces',
+    description: 'Grouped code examples under a shared heading.',
     searchTerms: ['code-group', 'code-tabs', 'snippet'],
   },
 
@@ -202,6 +221,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'data',
     displayName: 'Mermaid',
     icon: 'git-branch',
+    description: 'Mermaid diagram rendered from a chart definition.',
     searchTerms: ['diagram', 'chart', 'flowchart'],
   },
   {
@@ -210,6 +230,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'media',
     displayName: 'Audio',
     icon: 'volume-2',
+    description: 'Embedded audio player with optional title.',
     searchTerms: ['audio', 'sound', 'podcast'],
   },
 ];

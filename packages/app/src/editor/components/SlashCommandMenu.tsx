@@ -103,8 +103,15 @@ export function SlashCommandMenu({ items, command, ref }: SlashCommandMenuProps)
                   backgroundColor: isSelected ? '#f3f0ff' : 'transparent',
                 }}
               >
-                <span style={itemNameStyle}>{item.meta.displayName}</span>
-                <span style={itemHintStyle}>{item.name}</span>
+                <div
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <span style={itemNameStyle}>{item.meta.displayName}</span>
+                  <span style={itemHintStyle}>{item.name}</span>
+                </div>
+                {item.meta.description && (
+                  <span style={itemDescStyle}>{item.meta.description}</span>
+                )}
               </button>
             );
           })}
@@ -138,8 +145,7 @@ const categoryLabelStyle: React.CSSProperties = {
 
 const itemStyle: React.CSSProperties = {
   display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
+  flexDirection: 'column',
   width: '100%',
   padding: '6px 12px',
   border: 'none',
@@ -160,4 +166,11 @@ const itemHintStyle: React.CSSProperties = {
   fontSize: '11px',
   color: '#999',
   fontFamily: 'monospace',
+};
+
+const itemDescStyle: React.CSSProperties = {
+  fontSize: '11px',
+  color: '#888',
+  lineHeight: 1.3,
+  marginTop: '1px',
 };

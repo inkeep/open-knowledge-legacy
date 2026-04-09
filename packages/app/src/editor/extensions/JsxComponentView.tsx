@@ -60,6 +60,30 @@ class ComponentErrorBoundary extends Component<
   }
 }
 
+/**
+ * Wrapper that stops mousedown from bubbling to ProseMirror's view handler.
+ * Without this, clicking inside the PropPanel (e.g., a text input) causes PM
+ * to deselect the node → selected becomes false → panel unmounts mid-interaction.
+ * This is the ProseMirror-documented pattern for clickable controls in node views.
+ */
+// biome-ignore lint/a11y/noStaticElementInteractions: ProseMirror node view event isolation — see comment above
+function PropPanelWrapper(props: {
+  meta: import('@inkeep/open-knowledge-core').ComponentMeta;
+  currentProps: Record<string, unknown>;
+  onChange: (propName: string, value: unknown) => void;
+}) {
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: ProseMirror node view event isolation
+    <div
+      contentEditable={false}
+      style={{ userSelect: 'none', marginTop: '4px' }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <PropPanel meta={props.meta} currentProps={props.currentProps} onChange={props.onChange} />
+    </div>
+  );
+}
+
 export function JsxComponentView({ node, updateAttributes, selected }: NodeViewProps) {
   const componentName = (node.attrs.componentName as string) || '';
   const meta = componentManifest[componentName];
@@ -128,9 +152,7 @@ export function JsxComponentView({ node, updateAttributes, selected }: NodeViewP
         )}
       </ComponentErrorBoundary>
       {selected && (
-        <div contentEditable={false} style={{ userSelect: 'none', marginTop: '4px' }}>
-          <PropPanel meta={meta} currentProps={currentProps} onChange={handlePropChange} />
-        </div>
+        <PropPanelWrapper meta={meta} currentProps={currentProps} onChange={handlePropChange} />
       )}
     </NodeViewWrapper>
   );
