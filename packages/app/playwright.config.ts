@@ -1,7 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-  testDir: './tests/e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -13,8 +12,17 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      name: 'e2e',
+      testDir: './tests/e2e',
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'stress',
+      testDir: './tests/stress',
+      testMatch: /.*\.spec\.ts$/,
+      timeout: 120_000,
+      retries: 0,
+      use: { headless: true },
     },
   ],
   webServer: {
