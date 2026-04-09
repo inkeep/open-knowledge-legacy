@@ -11,10 +11,13 @@
     "docs"
   ],
   "scripts": {
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "typecheck": "cd docs && bun run typecheck",
-    "check": "bun run typecheck && bun run lint",
+    "check:fast": "bun run typecheck && bun run lint",
+    "check": "bun run typecheck && bun run lint && bun run test",
     "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true",
     "changeset": "changeset",
     "version": "changeset version",
@@ -30,7 +33,14 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@changesets/cli": "^2.29.7",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.41.0",
     "husky": "^9.1.7",
-    "lint-staged": "^16.4.0"
+    "lint-staged": "^16.4.0",
+    "turbo": "^2.7.0"
+  },
+  "overrides": {
+    "@codemirror/state": "$@codemirror/state",
+    "@codemirror/view": "$@codemirror/view"
   }
 }

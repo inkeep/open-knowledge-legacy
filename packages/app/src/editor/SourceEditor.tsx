@@ -37,6 +37,11 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         markdown(),
         yCollab(ytext, provider.awareness),
         createAgentFlashSourceExtension(provider.document),
+        EditorView.theme({
+          '&': {
+            height: '100%',
+          },
+        }),
       ],
     });
 

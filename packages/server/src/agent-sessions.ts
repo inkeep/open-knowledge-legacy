@@ -61,6 +61,14 @@ export class AgentSessionManager {
   /**
    * Get or create a server-side UndoManager for agent writes on a document.
    * Tracks Y.Text('source') with origin 'agent-write'.
+   *
+   * captureTimeout: 0 — each agent transaction is its own undo entry.
+   *   Diverges from spec Q11 ("use default 500ms"). Justified for the spike because every
+   *   /api/agent-write* HTTP call wraps exactly one dc.document.transact() call, so each
+   *   request is already one logical action — grouping would only matter if a single agent
+   *   action emitted multiple transactions (e.g., token streaming). Revisit when streaming
+   *   agent writes land: at that point 500ms grouping would better match "one agent reply =
+   *   one undo step" UX. Until then, 0ms is the simpler model.
    */
   getUndoManager(dc: AgentDirectConnection): Y.UndoManager {
     const docName = dc.document.name;
