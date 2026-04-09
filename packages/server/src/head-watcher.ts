@@ -30,8 +30,8 @@ export interface BatchBeginInfo {
   trigger: string;
 }
 
-export type OnBatchBegin = (info: BatchBeginInfo) => void;
-export type OnBatchEnd = (info: BatchEndInfo) => void;
+export type OnBatchBegin = (info: BatchBeginInfo) => void | Promise<void>;
+export type OnBatchEnd = (info: BatchEndInfo) => void | Promise<void>;
 
 export interface HeadWatcherHandle {
   unsubscribe: () => Promise<void>;
@@ -153,7 +153,6 @@ export async function startHeadWatcher(
 
   async function emitBatchEnd(timeout: boolean): Promise<void> {
     if (!inBatch) return;
-    inBatch = false;
 
     if (quietTimer) {
       clearTimeout(quietTimer);
@@ -180,41 +179,49 @@ export async function startHeadWatcher(
 
     const oldBranch = lastKnownBranch;
 
-    // Await callback before updating oldHead to prevent races with concurrent batches
-    await onBatchEnd({
-      headMoved,
-      oldHead,
-      newHead,
-      timeout,
-      batchKind,
-      oldBranch,
-      newBranch,
-    });
-
-    oldHead = newHead;
-    lastKnownBranch = newBranch;
+    try {
+      await onBatchEnd({
+        headMoved,
+        oldHead,
+        newHead,
+        timeout,
+        batchKind,
+        oldBranch,
+        newBranch,
+      });
+    } catch (e) {
+      console.error('[head-watcher] onBatchEnd callback failed:', e);
+    } finally {
+      // Set inBatch = false AFTER the async callback completes
+      // so new file events stay buffered during branch-switch orchestration
+      inBatch = false;
+      oldHead = newHead;
+      lastKnownBranch = newBranch;
+    }
   }
 
   function resetQuietWindow(): void {
     if (quietTimer) clearTimeout(quietTimer);
     quietTimer = setTimeout(() => {
       quietTimer = null;
-      emitBatchEnd(false).catch((e) => console.error('[head-watcher] batch end failed:', e));
+      void emitBatchEnd(false);
     }, QUIET_WINDOW_MS);
   }
 
-  function handleGitEvent(trigger: string): void {
+  async function handleGitEvent(trigger: string): Promise<void> {
     if (!inBatch) {
       inBatch = true;
       oldHead = readHeadSha(gitDir);
-      onBatchBegin({ trigger });
+      try {
+        await onBatchBegin({ trigger });
+      } catch (e) {
+        console.error('[head-watcher] onBatchBegin callback failed:', e);
+      }
 
       // Start timeout cap
       timeoutTimer = setTimeout(() => {
         timeoutTimer = null;
-        emitBatchEnd(true).catch((e) =>
-          console.error('[head-watcher] batch end (timeout) failed:', e),
-        );
+        void emitBatchEnd(true);
       }, BATCH_TIMEOUT_MS);
     }
 
@@ -233,7 +240,7 @@ export async function startHeadWatcher(
         // Extract filename from path (last segment)
         const fileName = event.path.split('/').pop() ?? '';
         if (WATCHED_FILES.has(fileName)) {
-          handleGitEvent(fileName);
+          void handleGitEvent(fileName);
           break; // One event per batch is enough to trigger
         }
       }

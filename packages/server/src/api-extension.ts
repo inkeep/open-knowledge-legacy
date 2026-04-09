@@ -588,7 +588,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const filePath = resolve(shadowRepo.gitDir, 'rescue', `${docName}.md`);
+    const rescueBase = resolve(shadowRepo.gitDir, 'rescue');
+    const filePath = resolve(rescueBase, `${docName}.md`);
+    if (!filePath.startsWith(`${rescueBase}/`)) {
+      res.writeHead(400);
+      res.end('Invalid document name');
+      return;
+    }
     if (!existsSync(filePath)) {
       res.writeHead(404);
       res.end('Not found');

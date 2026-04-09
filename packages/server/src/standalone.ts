@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
@@ -138,6 +138,14 @@ export function createServer(options: ServerOptions): ServerInstance {
     contentRoot,
   });
   hocuspocus.configuration.extensions.push(apiExtension);
+
+  /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
+  function safeRescuePath(shadowGitDir: string, docName: string): string | null {
+    const rescueBase = resolve(shadowGitDir, 'rescue');
+    const filePath = resolve(rescueBase, `${docName}.md`);
+    if (!filePath.startsWith(`${rescueBase}/`)) return null;
+    return filePath;
+  }
 
   /** Serialize current Y.Doc to markdown for reconciliation. */
   function serializeDoc(docName: string): string | null {
@@ -292,11 +300,13 @@ export function createServer(options: ServerOptions): ServerInstance {
           const isDirty = ours !== base;
 
           if (isDirty && shadowRef.current) {
-            const rescueDir = `${shadowRef.current.gitDir}/rescue`;
-            await mkdir(dirname(`${rescueDir}/${docName}.md`), { recursive: true });
-            await writeFile(`${rescueDir}/${docName}.md`, ours, 'utf-8');
-            incrementRescueBuffer();
-            console.log(`[reconcile] Rescue buffer saved: ${docName}`);
+            const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
+            if (rescuePath) {
+              mkdirSync(dirname(rescuePath), { recursive: true });
+              writeFileSync(rescuePath, ours, 'utf-8');
+              incrementRescueBuffer();
+              console.log(`[reconcile] Rescue buffer saved: ${docName}`);
+            }
           }
 
           const lifecycleMap = document.getMap('lifecycle');
@@ -395,8 +405,8 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus.flushPendingStores();
     hocuspocus.closeConnections();
     // Release shadow-root writer lock
-    if (resolvedShadow) {
-      destroyShadowRepo(resolvedShadow);
+    if (shadowRef.current) {
+      destroyShadowRepo(shadowRef.current);
     }
   }
 
@@ -447,7 +457,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           persistence.flushPendingGitCommit();
 
           // Park current branch's Y.Doc state to shadow refs
-          if (resolvedShadow) {
+          if (shadowRef.current) {
             const currentBranch = getActiveBranch();
             const docs: ParkableDoc[] = [];
             for (const [docName] of hocuspocus.documents) {
@@ -458,7 +468,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             }
             if (docs.length > 0) {
               try {
-                const sha = await parkBranch(resolvedShadow, currentBranch, 'server', docs);
+                const sha = await parkBranch(shadowRef.current, currentBranch, 'server', docs);
                 if (sha) {
                   incrementPark();
                   console.log(
@@ -505,12 +515,14 @@ export function createServer(options: ServerOptions): ServerInstance {
                   const ours = serializeDoc(docName) ?? '';
                   const isDirty = ours !== base;
 
-                  if (isDirty && resolvedShadow) {
-                    const rescueDir = `${resolvedShadow.gitDir}/rescue`;
-                    mkdirSync(dirname(`${rescueDir}/${docName}.md`), { recursive: true });
-                    writeFileSync(`${rescueDir}/${docName}.md`, ours, 'utf-8');
-                    incrementRescueBuffer();
-                    console.log(`[reconcile] Rescue buffer saved on branch switch: ${docName}`);
+                  if (isDirty && shadowRef.current) {
+                    const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
+                    if (rescuePath) {
+                      mkdirSync(dirname(rescuePath), { recursive: true });
+                      writeFileSync(rescuePath, ours, 'utf-8');
+                      incrementRescueBuffer();
+                      console.log(`[reconcile] Rescue buffer saved on branch switch: ${docName}`);
+                    }
                   }
 
                   const lifecycleMap = document.getMap('lifecycle');
@@ -534,12 +546,12 @@ export function createServer(options: ServerOptions): ServerInstance {
             );
 
             // Restore parked WIP if exists (three-way merge parked state against current disk)
-            if (resolvedShadow && info.batchKind === 'cross-branch') {
+            if (shadowRef.current && info.batchKind === 'cross-branch') {
               let restoredCount = 0;
               for (const [docName] of hocuspocus.documents) {
                 try {
                   const parked = await readParkedState(
-                    resolvedShadow,
+                    shadowRef.current,
                     newBranch,
                     'server',
                     docName,
@@ -601,9 +613,9 @@ export function createServer(options: ServerOptions): ServerInstance {
             }
 
             // Clean up detached HEAD context if switching FROM detached TO named branch
-            if (info.oldBranch?.startsWith('detached-') && resolvedShadow) {
+            if (info.oldBranch?.startsWith('detached-') && shadowRef.current) {
               try {
-                const sg = shadowGit(resolvedShadow);
+                const sg = shadowGit(shadowRef.current);
                 // List refs under the detached context
                 const refs = (
                   await sg.raw('for-each-ref', `refs/wip/${info.oldBranch}/`, '--format=%(refname)')
@@ -623,7 +635,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
 
           // Record upstream import if HEAD moved and content files were affected
-          if (info.headMoved && info.newHead && resolvedShadow) {
+          if (info.headMoved && info.newHead && shadowRef.current) {
             const contentRootForShadow = contentRoot ?? 'content';
             try {
               const sha = await commitUpstreamImport(

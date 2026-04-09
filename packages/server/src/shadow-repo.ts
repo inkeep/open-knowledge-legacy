@@ -351,16 +351,25 @@ export async function readParkedState(
   const sg = shadowGit(shadow);
   const ref = `refs/wip/${branch}/human-${sessionId}`;
 
+  // Check if ref exists — expected to be missing on first visit to a branch
+  let refSha: string;
   try {
-    const refSha = (await sg.raw('rev-parse', ref)).trim();
+    refSha = (await sg.raw('rev-parse', ref)).trim();
+  } catch {
+    return null; // ref doesn't exist — no parked state
+  }
+
+  // Ref exists — read park commit data. Errors here are unexpected and should propagate.
+  try {
     const msg = (await sg.raw('log', '-1', '--format=%s', refSha)).trim();
     if (!msg.startsWith('park:')) return null;
 
     const markdown = (await sg.raw('show', `${refSha}:${docName}`)).trim();
     const diskSnapshot = (await sg.raw('show', `${refSha}:.park-base/${docName}`)).trim();
     return { markdown, diskSnapshot };
-  } catch {
-    return null;
+  } catch (e) {
+    console.error(`[shadow] Failed to read parked state for ${docName} from ${ref}:`, e);
+    throw e;
   }
 }
 
