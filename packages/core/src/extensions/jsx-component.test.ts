@@ -91,8 +91,12 @@ yarn add package
 </Tabs>`;
     const json = parse(md);
     const nodes = getJsxNodes(json);
-    expect(nodes).toHaveLength(1);
-    expect(getRawContent(nodes[0])).toBe(md.trim());
+    // Layer 3: children are parsed into ProseMirror content —
+    // getJsxNodes finds Tabs + 2 Tab children = 3 total (recursive walk)
+    expect(nodes).toHaveLength(3);
+    expect(nodes[0].attrs?.componentName).toBe('Tabs');
+    expect(nodes[1].attrs?.componentName).toBe('Tab');
+    expect(nodes[2].attrs?.componentName).toBe('Tab');
   });
 
   test('parses nested same-name tags', () => {
@@ -101,8 +105,10 @@ yarn add package
 </Callout>`;
     const json = parse(md);
     const nodes = getJsxNodes(json);
-    expect(nodes).toHaveLength(1);
-    expect(getRawContent(nodes[0])).toBe(md.trim());
+    // Layer 3: outer Callout + inner Callout = 2 nodes (recursive walk)
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0].attrs?.componentName).toBe('Callout');
+    expect(nodes[1].attrs?.componentName).toBe('Callout');
   });
 
   test('parses JSX with boolean attributes', () => {
@@ -208,10 +214,15 @@ Second step content.
   });
 
   test('Callout inside Callout (nested same-name)', () => {
+    // Layer 3: children parsed through ProseMirror → normalized to flush-left canonical format
     const jsx = `<Callout>
 <Callout>inner content</Callout>
 </Callout>\n`;
-    expect(serialize(parse(jsx))).toBe(jsx);
+    const result = serialize(parse(jsx));
+    // Cycle-1 normalizes: inner Callout becomes a child node with its own content
+    // Cycle-2 must be stable
+    const cycle2 = serialize(parse(result));
+    expect(cycle2).toBe(result);
   });
 
   test('multiple attributes', () => {
@@ -220,11 +231,18 @@ Second step content.
   });
 
   test('single-line paired tag', () => {
+    // Layer 3: single-line children are normalized to multi-line flush-left on cycle 1
     const jsx = '<Callout type="info">Short note.</Callout>\n';
-    expect(serialize(parse(jsx))).toBe(jsx);
+    const result = serialize(parse(jsx));
+    // Canonical form has children on their own line
+    const expected = '<Callout type="info">\nShort note.\n</Callout>\n';
+    expect(result).toBe(expected);
+    // Cycle-2 is byte-stable
+    expect(serialize(parse(result))).toBe(result);
   });
 
   test('JSX with blank lines in children', () => {
+    // Layer 3: blank lines in children are normalized through ProseMirror paragraph parsing
     const jsx = `<Callout>
 
 First paragraph.
@@ -232,7 +250,16 @@ First paragraph.
 Second paragraph.
 
 </Callout>\n`;
-    expect(serialize(parse(jsx))).toBe(jsx);
+    const result = serialize(parse(jsx));
+    // Canonical form: flush-left paragraphs separated by \n\n
+    const expected = `<Callout>
+First paragraph.
+
+Second paragraph.
+</Callout>\n`;
+    expect(result).toBe(expected);
+    // Cycle-2 is byte-stable
+    expect(serialize(parse(result))).toBe(result);
   });
 });
 
@@ -372,7 +399,9 @@ Some trailing text.`;
     expect(cycle2).toBe(cycle1);
   });
 
-  test('preserves exact whitespace inside JSX content', () => {
+  test('preserves component structure through round-trip', () => {
+    // Layer 3: children parsed through ProseMirror → whitespace normalized
+    // to flush-left canonical format. Cycle-2 must be stable.
     const content = `<Tabs>
   <Tab title="first">
     Content with  extra  spaces.
@@ -380,8 +409,14 @@ Some trailing text.`;
 </Tabs>`;
     const json = parse(content);
     const nodes = getJsxNodes(json);
-    expect(nodes).toHaveLength(1);
-    expect(getRawContent(nodes[0])).toBe(content);
+    // Layer 3: Tabs + Tab = 2 nodes (recursive walk of parsed children)
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0].attrs?.componentName).toBe('Tabs');
+    expect(nodes[1].attrs?.componentName).toBe('Tab');
+    // Cycle-2 stability
+    const cycle1 = roundTrip(content);
+    const cycle2 = roundTrip(cycle1);
+    expect(cycle2).toBe(cycle1);
   });
 });
 

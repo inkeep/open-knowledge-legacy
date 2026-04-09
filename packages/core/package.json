@@ -21,6 +21,7 @@
     "@tiptap/starter-kit": "^3.22.3",
     "acorn": "^8.16.0",
     "acorn-jsx": "^5.3.2",
+    "marked": "^18.0.0",
     "yjs": "^13.6.30"
   },
   "devDependencies": {

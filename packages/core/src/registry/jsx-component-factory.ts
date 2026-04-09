@@ -9,9 +9,41 @@
  * a shared parseMarkdown handler that checks the manifest for type routing.
  */
 import { Node } from '@tiptap/core';
+import { marked } from 'marked';
 import { jsxStart, jsxTokenizerB } from '../extensions/jsx-tokenizer.ts';
 import { parseJsx } from './jsx-parser.ts';
 import type { ComponentMeta } from './types.ts';
+
+// Register the jsxBlock tokenizer on the standalone marked instance so that
+// marked.lexer(childrenString) handles nested JSX tags correctly (D10).
+// Without this, nested JSX in children (e.g. <Tab> inside <Tabs>) would be
+// tokenized as HTML blocks, causing DOMParser failures in Node environments.
+let _jsxTokenizerRegistered = false;
+function ensureJsxTokenizer(): void {
+  if (_jsxTokenizerRegistered) return;
+  _jsxTokenizerRegistered = true;
+  marked.use({
+    extensions: [
+      {
+        name: 'jsxBlock',
+        level: 'block' as const,
+        start(src: string) {
+          return jsxStart(src);
+        },
+        tokenizer(src: string) {
+          const result = jsxTokenizerB(src);
+          if (!result) return undefined;
+          return {
+            type: 'jsxBlock',
+            raw: result.raw,
+            content: result.content ?? result.raw,
+            tokens: [],
+          };
+        },
+      },
+    ],
+  });
+}
 
 export interface JsxComponentExtensions {
   editable: ReturnType<typeof Node.create>;
@@ -86,6 +118,7 @@ function buildJsxString(
 export function createJsxComponentExtensions(
   manifest: Record<string, ComponentMeta>,
 ): JsxComponentExtensions {
+  ensureJsxTokenizer();
   const propAttrs = collectPropAttributes(manifest);
 
   // ─── jsxComponentEditable (registered components) ────────────────────
@@ -192,12 +225,26 @@ export function createJsxComponentExtensions(
           attrs._unknownAttrs = JSON.stringify(unknownProps);
         }
 
-        return helpers.createNode('jsxComponentEditable', attrs, [helpers.createNode('paragraph')]);
+        // Parse children into real ProseMirror content (Layer 3).
+        // Tokenize via marked.lexer → helpers.parseBlockChildren → ProseMirror fragment.
+        // Nested JSX in children works because marked's globally-configured instance
+        // includes the jsxBlock tokenizer (D10).
+        let childContent: ReturnType<typeof helpers.createNode>[] | undefined;
+        if (childrenString.trim()) {
+          const childTokens = marked.lexer(childrenString);
+          const parseBlock = helpers.parseBlockChildren ?? helpers.parseChildren;
+          childContent = parseBlock(childTokens) as ReturnType<typeof helpers.createNode>[];
+        }
+        if (!childContent || childContent.length === 0) {
+          childContent = [helpers.createNode('paragraph')];
+        }
+
+        return helpers.createNode('jsxComponentEditable', attrs, childContent);
       }
       return helpers.createNode('jsxComponentVoid', { content: rawContent });
     },
 
-    renderMarkdown(node) {
+    renderMarkdown(node, helpers) {
       const componentName = node.attrs?.componentName || '';
       if (!componentName) {
         // Fallback: use raw content if componentName missing
@@ -227,7 +274,43 @@ export function createJsxComponentExtensions(
         }
       }
 
-      const childrenString = attrs._childrenString || '';
+      // Layer 3: serialize ProseMirror children content to markdown via helpers.
+      // Children are flush-left on disk (zero indentation, §3.5).
+      // Always uses multi-line format: <Tag>\ncontent\n</Tag>
+      // This is the canonical form — cycle-1 may normalize whitespace from
+      // the source, but cycle-2 onward is byte-stable.
+      // Falls back to _childrenString for backward compat / void nodes.
+      let childrenString = '';
+      if (
+        helpers?.renderChild &&
+        node.content &&
+        Array.isArray(node.content) &&
+        node.content.length > 0
+      ) {
+        // Render each child individually, then join with context-aware spacing:
+        // - If previous child already ends with \n (e.g., jsxComponent), no extra sep
+        // - Otherwise add \n\n between children (paragraph separator)
+        const parts: string[] = [];
+        for (let i = 0; i < node.content.length; i++) {
+          const rendered = helpers.renderChild(node.content[i], i);
+          if (i > 0 && parts.length > 0) {
+            const prev = parts[parts.length - 1];
+            if (!prev.endsWith('\n')) {
+              parts.push('\n\n');
+            }
+          }
+          parts.push(rendered);
+        }
+        const joined = parts.join('');
+        const trimmed = joined.replace(/^\n+|\n+$/g, '');
+        if (trimmed) {
+          childrenString = `\n${trimmed}\n`;
+        }
+      }
+      if (!childrenString) {
+        childrenString = attrs._childrenString || '';
+      }
+
       return `${buildJsxString(componentName, allProps, childrenString)}\n`;
     },
   });
