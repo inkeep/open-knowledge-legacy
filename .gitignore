@@ -4,6 +4,8 @@ dist/
 # Per-package lockfiles — only root bun.lock should exist in monorepo
 packages/*/bun.lock
 
+# Turbo cache
+.turbo/
 tmp/
 .DS_Store
 *.log

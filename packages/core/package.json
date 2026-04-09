@@ -18,6 +18,10 @@
     "@tiptap/starter-kit": "^3.22.3",
     "yjs": "^13.6.30"
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
   "devDependencies": {
     "typescript": "^5.9.3"
   }
