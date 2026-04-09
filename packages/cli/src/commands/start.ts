@@ -9,7 +9,7 @@ import { createServer, getLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import sirv from 'sirv';
 import { WebSocketServer } from 'ws';
-import type { Config } from '../config/schema';
+import type { Config } from '../config/schema.ts';
 import { renderBanner } from '../ui/banner.ts';
 import { dim, error, info } from '../ui/colors.ts';
 
