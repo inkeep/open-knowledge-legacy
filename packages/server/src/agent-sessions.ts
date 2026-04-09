@@ -6,10 +6,14 @@
  * UndoManager tracks 'agent-write' origin for per-agent undo/redo.
  */
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
-import { sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  prependFrontmatter,
+  sharedExtensions,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
-import { updateYFragment } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 
 /**
@@ -45,6 +49,18 @@ export function syncTextToFragment(document: Document): void {
   const xmlFragment = document.getXmlFragment('default');
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(document, xmlFragment, pmNode, meta);
+
+  // Enforce bridge invariant: ytext must be byte-equal to canonical serialization.
+  // Raw markdown may differ from round-tripped form (e.g., `## H\nP` → `## H\n\nP`).
+  // Without this, Observer A's guard (currentText === md) fails on the client,
+  // triggering content duplication via applyUserDelta with a stale baseline.
+  const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+  const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
+  if (canonicalFull !== fullText) {
+    ytext.delete(0, fullText.length);
+    ytext.insert(0, canonicalFull);
+  }
+
   const metaMap = document.getMap('metadata');
   metaMap.set('frontmatter', frontmatter);
 }

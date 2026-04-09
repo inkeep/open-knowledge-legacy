@@ -851,3 +851,63 @@ describe('Concurrent edit race conditions (regression)', () => {
     cleanup();
   });
 });
+
+describe('Remote write baseline staleness (regression)', () => {
+  test('remote agent write with non-stable markdown does not duplicate on local type', async () => {
+    // Two Y.Docs with live CRDT sync — simulates server + client
+    const serverDoc = new Y.Doc();
+    const clientDoc = new Y.Doc();
+    serverDoc.on('update', (update: Uint8Array) => Y.applyUpdate(clientDoc, update));
+    clientDoc.on('update', (update: Uint8Array) => Y.applyUpdate(serverDoc, update));
+
+    const clientFragment = clientDoc.getXmlFragment('default');
+    const clientYtext = clientDoc.getText('source');
+    __resetCoordinationState();
+    const cleanup = setupObservers({
+      doc: clientDoc,
+      xmlFragment: clientFragment,
+      ytext: clientYtext,
+      mdManager,
+      schema,
+    });
+
+    // Server agent write — NON-round-trip-stable markdown.
+    // Single \n after heading normalizes to \n\n through parse→serialize,
+    // causing byte divergence between ytext (raw) and serialize(xmlFragment).
+    const rawMd = '## Heading\nParagraph content here.\n\n## Second\nMore text.\n';
+    const serverYtext = serverDoc.getText('source');
+    const serverFragment = serverDoc.getXmlFragment('default');
+    serverDoc.transact(() => {
+      serverYtext.insert(0, rawMd);
+      const parsed = mdManager.parse(rawMd);
+      const pmNode = schema.nodeFromJSON(parsed);
+      updateYFragment(serverDoc, serverFragment, pmNode, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
+    }, 'agent-write');
+
+    await wait();
+
+    const beforeLen = clientYtext.toString().length;
+    expect(beforeLen).toBeGreaterThan(0);
+
+    // Local user types into XmlFragment (simulates ProseMirror keystroke)
+    const userPara = new Y.XmlElement('paragraph');
+    const userText = new Y.XmlText();
+    userText.applyDelta([{ insert: 'USER-TYPED' }]);
+    userPara.insert(0, [userText]);
+    clientFragment.push([userPara]);
+    await wait();
+
+    const afterText = clientYtext.toString();
+
+    // Y.Text must NOT have duplicated — delta should be small (typed text + formatting)
+    expect(afterText.length - beforeLen).toBeLessThan(200);
+    expect(afterText).toContain('USER-TYPED');
+    // "Paragraph content" must appear exactly once (not duplicated)
+    expect(afterText.split('Paragraph content here.').length - 1).toBe(1);
+
+    cleanup();
+  });
+});
