@@ -15,13 +15,13 @@
 **Category:** DESIGN
 **Source:** DC3 (Framing validity) + DC1 (Simpler alternative)
 **Location:** Section 1 (Problem statement), Section 9 (Proposed solution — System architecture, MCP server implementation)
-**Issue:** The spec frames the problem as "scattered docs go stale" and proposes a solution where agents write directly to `.openknowledge/` files on disk, with a thin MCP server doing file watching and catalog generation. This creates a self-contained system that operates entirely outside the broader Open Knowledge architecture described in PROJECT.md and STORIES.md.
+**Issue:** The spec frames the problem as "scattered docs go stale" and proposes a solution where agents write directly to `.open-knowledge/` files on disk, with a thin MCP server doing file watching and catalog generation. This creates a self-contained system that operates entirely outside the broader Open Knowledge architecture described in PROJECT.md and STORIES.md.
 
 PROJECT.md CC1 states explicitly: "The CRDT is the source of truth during editing. Files on disk are projections." MCP tools "read from CRDT (fresh), not from disk (stale)." STORIES.md Bucket 2 defines T2.1 as building MCP tools with filesystem-compatible signatures that route through Hocuspocus DirectConnection, and T2.4 says "Wire MCP writes through Hocuspocus DirectConnection to Y.Docs — already validated in init-spike TQ15."
 
 The spec's architecture bypasses this entirely. It has agents using native Read/Write/Edit tools directly on the filesystem, and the MCP server is reduced to a file watcher + catalog regenerator. There is no CRDT layer, no Hocuspocus, no integration with the editor that the init spike already validated.
 
-This is not merely a phasing decision (build simpler now, integrate later). The spec's architecture would create a **second, parallel write path** for `.openknowledge/` content that doesn't go through the CRDT — meaning the editor and the wiki MCP server would fight over the same files. When the editor is running and someone writes via the wiki's "thin MCP server" path, the editor's CRDT is not updated. When someone writes via the editor, the wiki's file watcher fires but the CRDT already has the content. Two independent systems watching the same directory is a recipe for race conditions, double-processing, and feedback loops.
+This is not merely a phasing decision (build simpler now, integrate later). The spec's architecture would create a **second, parallel write path** for `.open-knowledge/` content that doesn't go through the CRDT — meaning the editor and the wiki MCP server would fight over the same files. When the editor is running and someone writes via the wiki's "thin MCP server" path, the editor's CRDT is not updated. When someone writes via the editor, the wiki's file watcher fires but the CRDT already has the content. Two independent systems watching the same directory is a recipe for race conditions, double-processing, and feedback loops.
 
 **Current design:** "Agent uses native tools (Read, Write, Edit, Grep) for file operations. MCP server does NOT proxy file reads/writes; agent uses its built-in tools directly." (D2)
 **Alternative:** Build the wiki MCP surface as part of the existing S4 MCP server architecture — filesystem-compatible tool signatures that route through Hocuspocus DirectConnection when the editor is running, and fall back to direct file I/O when it's not. This is already the design in PROJECT.md S4 and STORIES.md T2.1-T2.4.
@@ -65,11 +65,11 @@ Risk row 2 in the spec already acknowledges this: "Code mirror index too expensi
 **Location:** Section 9 (MCP server implementation, File watcher behavior), D2
 **Issue:** The spec requires a persistent MCP server process running @parcel/watcher to detect file changes and regenerate INDEX.md catalogs. This introduces: (a) a process that must be running for catalogs to stay current, (b) debounce tuning (500ms quiet / 2s max), (c) loop prevention (content-hash check), (d) a dependency on @parcel/watcher. Q14 (file watcher loop prevention) is still open.
 
-Since the spec has agents writing files directly (not through the MCP server), the file watcher is purely reactive — it watches for external changes and regenerates catalogs. An alternative: make catalog regeneration a **post-write step in the skills themselves**. `/init-wiki` and `/ingest` already know when they write files. They could call a `regenerate_catalogs` function (or a simple script) after their batch of writes completes. For manual agent writes (agent uses Edit/Write directly), the CLAUDE.md convention could say "after writing to .openknowledge/, run `npx openknowledge rebuild-catalogs`."
+Since the spec has agents writing files directly (not through the MCP server), the file watcher is purely reactive — it watches for external changes and regenerates catalogs. An alternative: make catalog regeneration a **post-write step in the skills themselves**. `/init-wiki` and `/ingest` already know when they write files. They could call a `regenerate_catalogs` function (or a simple script) after their batch of writes completes. For manual agent writes (agent uses Edit/Write directly), the CLAUDE.md convention could say "after writing to .open-knowledge/, run `npx openknowledge rebuild-catalogs`."
 
 This eliminates: the persistent watcher process, debounce tuning, loop prevention complexity, and the @parcel/watcher dependency for catalog generation. The MCP server becomes even thinner — just `instructions` + `init`. Catalog freshness is equivalent because catalogs only matter when an agent reads them, and the agent that just wrote knows to rebuild.
 
-**Current design:** "@parcel/watcher on `.openknowledge/` directory. Every .md file write triggers parent folder's INDEX.md regeneration." (Q10 resolution)
+**Current design:** "@parcel/watcher on `.open-knowledge/` directory. Every .md file write triggers parent folder's INDEX.md regeneration." (Q10 resolution)
 **Alternative:** Catalog regeneration as an explicit post-write step in skills and a CLI command for manual use. No file watcher needed for catalogs.
 **Trade-off:** Catalogs could be transiently stale if someone edits a file outside a skill and forgets to rebuild. But the spec already accepts this for the code-index (CLAUDE.md conventions are "best-effort"). The same tolerance should apply to catalogs, especially since catalogs are fully regenerable and deterministic (D16).
 **Status:** CHALLENGED
@@ -82,17 +82,17 @@ This eliminates: the persistent watcher process, debounce tuning, loop preventio
 **Category:** DESIGN
 **Source:** DC2 (Stakeholder gap)
 **Location:** Section 9 (System architecture), Section 14 (Risks)
-**Issue:** The spec assumes `.openknowledge/` is a standalone directory with one system (the thin MCP server) watching it. But the parent project (init spike, STORIES.md Buckets 1-4) describes a Hocuspocus server with persistence hooks, a disk bridge (@parcel/watcher in `src/server/file-watcher.ts`), and auto-commit pipeline — all operating on files that would overlap with `.openknowledge/`.
+**Issue:** The spec assumes `.open-knowledge/` is a standalone directory with one system (the thin MCP server) watching it. But the parent project (init spike, STORIES.md Buckets 1-4) describes a Hocuspocus server with persistence hooks, a disk bridge (@parcel/watcher in `src/server/file-watcher.ts`), and auto-commit pipeline — all operating on files that would overlap with `.open-knowledge/`.
 
 When both systems are running:
-1. The editor's disk bridge (TQ26, already validated) watches the filesystem with @parcel/watcher and syncs changes into CRDT. If the wiki's MCP server also watches `.openknowledge/` with @parcel/watcher, two watchers compete on the same directory.
+1. The editor's disk bridge (TQ26, already validated) watches the filesystem with @parcel/watcher and syncs changes into CRDT. If the wiki's MCP server also watches `.open-knowledge/` with @parcel/watcher, two watchers compete on the same directory.
 2. The editor's persistence pipeline writes files from CRDT to disk (2-10s debounce). The wiki's file watcher would see these writes as "new changes" and re-trigger catalog regeneration, even though nothing semantically changed.
 3. The editor's auto-commit pipeline (30s debounce) commits changes to git. The wiki content would be committed through this pipeline, but the spec doesn't acknowledge or plan for it.
 
-None of these coexistence scenarios are addressed in the spec's risks table or the open questions. The spec treats `.openknowledge/` as if it exists in isolation. An SRE or integration engineer would flag this immediately.
+None of these coexistence scenarios are addressed in the spec's risks table or the open questions. The spec treats `.open-knowledge/` as if it exists in isolation. An SRE or integration engineer would flag this immediately.
 
-**Current design:** The spec's system architecture diagram shows one MCP server watching `.openknowledge/`. No mention of the Hocuspocus server, disk bridge, or persistence pipeline.
-**Alternative:** Either (a) scope the spec explicitly to the "no editor running" case and document the integration plan for when the editor exists, or (b) design the wiki MCP server as a mode of the existing Hocuspocus server that handles `.openknowledge/` content alongside regular KB content.
+**Current design:** The spec's system architecture diagram shows one MCP server watching `.open-knowledge/`. No mention of the Hocuspocus server, disk bridge, or persistence pipeline.
+**Alternative:** Either (a) scope the spec explicitly to the "no editor running" case and document the integration plan for when the editor exists, or (b) design the wiki MCP server as a mode of the existing Hocuspocus server that handles `.open-knowledge/` content alongside regular KB content.
 **Trade-off:** Option (a) is simpler but creates technical debt. Option (b) requires understanding the full architecture but produces a coherent system.
 **Status:** CHALLENGED
 **Suggested resolution:** Add a section addressing coexistence with the editor/Hocuspocus stack. At minimum, document what happens when both systems are running and how conflicts are resolved. If the intent is "this runs independently, editor integration comes later," make that explicit as a scoping decision with a convergence plan.
@@ -106,11 +106,11 @@ None of these coexistence scenarios are addressed in the spec's risks table or t
 **Category:** DESIGN
 **Source:** DC2 (Stakeholder gap)
 **Location:** D14, Section 9 (CLAUDE.md additions)
-**Issue:** D14 relies on CLAUDE.md conventions for real-time code-index freshness: "CLAUDE.md tells agent to update code-index after code edits." The spec treats this as a decided mechanism (DIRECTED status), but there is no evidence that agents reliably follow CLAUDE.md instructions for maintenance tasks unrelated to their current goal. When an agent is fixing a bug in `persistence.ts`, it is optimizing for the bug fix — updating `.openknowledge/code-index/src/server/persistence.md` is a side task that agents routinely skip.
+**Issue:** D14 relies on CLAUDE.md conventions for real-time code-index freshness: "CLAUDE.md tells agent to update code-index after code edits." The spec treats this as a decided mechanism (DIRECTED status), but there is no evidence that agents reliably follow CLAUDE.md instructions for maintenance tasks unrelated to their current goal. When an agent is fixing a bug in `persistence.ts`, it is optimizing for the bug fix — updating `.open-knowledge/code-index/src/server/persistence.md` is a side task that agents routinely skip.
 
 The spec's own A4 assumption ("Teams will maintain the wiki if the friction is low enough — MEDIUM confidence") acknowledges this uncertainty. But D14 treats the CLAUDE.md mechanism as DIRECTED (decided), not ASSUMED.
 
-**Current design:** "CLAUDE.md instructs agent to update relevant `.openknowledge/code-index/` entries after significant code changes" (D14)
+**Current design:** "CLAUDE.md instructs agent to update relevant `.open-knowledge/code-index/` entries after significant code changes" (D14)
 **Alternative:** Classify D14's CLAUDE.md mechanism as ASSUMED (MEDIUM confidence) rather than DIRECTED, with a verification plan: "Test whether Claude Code reliably updates code-index entries when CLAUDE.md instructs it to, across 10+ diverse editing sessions."
 **Trade-off:** No trade-off in scope — this is a classification correction. The mechanism may work; it just hasn't been validated.
 **Status:** CHALLENGED
