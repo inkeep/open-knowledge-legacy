@@ -135,7 +135,11 @@ const mutators: Array<{ name: string; fn: Mutator }> = [
       // inserts produce unparseable markdown that breaks the bridge invariant.
       const lines = ctx.prng.nextInt(5) + 1;
       const content = `## Fuzz heading\n\n${randomContent(ctx.prng, lines)}\n`;
-      const stabilized = mdManager.serialize(mdManager.parse(content));
+      let stabilized = mdManager.serialize(mdManager.parse(content));
+      // Randomly omit trailing newline to exercise gap 2 code path
+      if (ctx.prng.next() < 0.3) {
+        stabilized = stabilized.replace(/\n$/, '');
+      }
       ctx.doc.transact(() => {
         ctx.ytext.delete(0, ctx.ytext.length);
         ctx.ytext.insert(0, stabilized);

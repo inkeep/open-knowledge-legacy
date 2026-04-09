@@ -93,13 +93,19 @@ function createProvider(): { provider: HocuspocusProvider; doc: Y.Doc; destroy: 
 
 /** Wait for provider to sync initial state. */
 async function waitForSync(provider: HocuspocusProvider, timeoutMs = 10_000): Promise<void> {
-  if (provider.isSynced) return;
   return new Promise((resolve, reject) => {
+    // Attach listener BEFORE checking isSynced to avoid TOCTOU race
+    // where sync completes between the check and listener attachment.
     const timer = setTimeout(() => reject(new Error('Provider sync timeout')), timeoutMs);
     provider.on('synced', () => {
       clearTimeout(timer);
       resolve();
     });
+    // Check after attaching — if already synced, resolve immediately
+    if (provider.isSynced) {
+      clearTimeout(timer);
+      resolve();
+    }
   });
 }
 

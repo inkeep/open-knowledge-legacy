@@ -77,8 +77,8 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
       await page.waitForFunction(
         (m: string) => {
           const txt = (window as any).__hocuspocusProvider?.document?.getText('source')?.toString();
-          // After undo, text should be much shorter (agent content removed) and marker preserved
-          return txt && txt.length < 5000 && txt.includes(m);
+          // After undo, agent content (Section 1) should be gone but user marker preserved
+          return txt && !txt.includes('Section 1') && txt.includes(m);
         },
         marker,
         { timeout: 60_000 },
