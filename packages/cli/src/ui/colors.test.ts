@@ -208,3 +208,50 @@ describe('--no-color argv detection', () => {
     expect(output).toContain('FORCE_COLOR=undefined');
   });
 });
+
+describe('link() OSC 8 hyperlinks', () => {
+  test('link() produces OSC 8 escape sequence when colors enabled', () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        'bun',
+        '-e',
+        `
+        process.env.FORCE_COLOR = '1';
+        delete process.env.NO_COLOR;
+        const { link } = require('./src/ui/colors.ts');
+        const output = link('click me', 'https://example.com');
+        process.stdout.write(output);
+        `,
+      ],
+      cwd: import.meta.dir.replace('/src/ui', ''),
+      env: { ...process.env, FORCE_COLOR: '1', NO_COLOR: undefined },
+    });
+    const output = result.stdout.toString();
+    // Verify OSC 8 structure: ESC]8;;<url>BEL<text>ESC]8;;BEL
+    expect(output).toContain('\x1b]8;;https://example.com\x07');
+    expect(output).toContain('click me');
+    expect(output).toContain('\x1b]8;;\x07');
+  });
+
+  test('link() returns plain text when NO_COLOR is set', () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        'bun',
+        '-e',
+        `
+        process.env.NO_COLOR = '1';
+        delete process.env.FORCE_COLOR;
+        const { link } = require('./src/ui/colors.ts');
+        const output = link('click me', 'https://example.com');
+        process.stdout.write(output);
+        `,
+      ],
+      cwd: import.meta.dir.replace('/src/ui', ''),
+      env: { ...process.env, NO_COLOR: '1', FORCE_COLOR: undefined },
+    });
+    const output = result.stdout.toString();
+    expect(output).toBe('click me');
+    // No OSC 8 sequences
+    expect(output).not.toContain('\x1b]8;;');
+  });
+});
