@@ -326,3 +326,74 @@ The post-merge audit findings (PM-H1, PM-H2, PM-H3) were based on an observer mo
 **Good sign:** The jsx-tokenizer prototype test was updated (`456b6fc`) to remove a DOMParser dependency — meaning the team is already exercising the jsx-tokenizer infrastructure the spec builds on, validating that Phase 0's tokenizer is healthy.
 
 **Spec status:** Still **Final**. Baseline advanced to `02c2211`. Implementation can proceed with Phase 0 byte-identity gate as the first hard test.
+
+### Session 6 — Monorepo restructure adaptation (baseline `12f49c9`)
+
+**Trigger:** PR #10 (`8971f7c spec: CLI packaging as @inkeep/open-knowledge`) landed on `main` on 2026-04-08, restructuring `init_spike/` into a four-package monorepo: `packages/core`, `packages/server`, `packages/cli`, `packages/app`. Worktree merged with `origin/main` at commit `12f49c9`. Spec was written against the pre-restructure layout — every `init_spike/` path is stale and several architectural assumptions broke.
+
+**Audit:** Ran `/eng:audit` producing `meta/audit-monorepo-restructure.md` (14 findings: 5H, 6M, 3L). Verdict: NOT patchable with mechanical rewrites alone — 4 architectural blockers required decisions first.
+
+**Decision 1 — H1: Does `.extend({ addNodeView })` preserve markdown hooks? RESOLVED via source read.**
+
+Read `@tiptap/markdown@3.22.3/src/MarkdownManager.ts:113-120` → `registerExtension()` reads `markdownTokenName` / `parseMarkdown` / `renderMarkdown` via `getExtensionField(ext, ...)`. Read `@tiptap/core@3.22.3/src/helpers/getExtensionField.ts:17-20` → walks `extension.parent` recursively when the field is undefined on the child config. Verdict: app's `.extend({ addNodeView })` inherits core's markdown hooks transparently. The split is safe by construction.
+
+**Spec action:** Added §3.3 "parent-chain invariant" subsection documenting the finding + the hard invariant "schema changes in core only; app `.extend()` for view layer only."
+
+**Decision 2 — H3: Component registry home — 3-way split across packages.**
+
+| Layer | Location | Owns |
+|-------|----------|------|
+| A: Types + built-ins manifest + factory | `packages/core/src/registry/` | `PropDef`, `ComponentMeta` (no React field), `BUILT_INS[]`, `createJsxComponentExtensions(manifest)` |
+| B: Generated cache | `packages/core/src/generated/components.ts` | Extracted `componentManifest` (committed, single `.ts` file — no JSON twin) |
+| C: React component map | `packages/app/src/editor/components/componentMap.ts` | Browser-only `Record<string, React.ComponentType>` — imports fumadocs-ui / docskit / shadcn |
+| D: Dev script | `packages/core/scripts/build-registry.ts` | Runs `react-docgen-typescript` at dev time, writes Layer B |
+
+Core stays React-free. Server reads the generated manifest directly for `MarkdownManager` schema. App reads the manifest (for PropDef lookup) and the React map (for rendering). Only the dev script depends on `react-docgen-typescript`, held in `packages/core/devDependencies` — never shipped to end users.
+
+**Decision 3 — H3 sub-decision: where does the introspection script live? (ultrathink)**
+
+Considered Option A (CLI subcommand — `open-knowledge build-registry`) vs Option B (core dev script — `packages/core/scripts/build-registry.ts`). Chose B decisively:
+
+- Option A would ship `react-docgen-typescript` + TypeScript compiler (~5-15MB bundled) to every end user of the published CLI for a command they never run. Workarounds (devDep + runtime error, conditional bundling, thin wrapper) all introduced worse UX or broken subcommands.
+- Option B keeps the published CLI lean, co-locates input (`built-ins.ts`), tool (`scripts/build-registry.ts`), and output (`generated/components.ts`) in one package, has no build-order bootstrapping loop (runs as raw TS via bun), enables trivial CI drift detection.
+- The future MCP endpoint (§6 Future Work) was the strongest argument for A but dissolved — the endpoint reads the committed file and serves JSON over the wire; does not need `react-docgen-typescript`.
+
+**Mitigations for B's discoverability con:** (1) root-level `build-registry` script alias in root `package.json`, (2) one line in root `CLAUDE.md` Commands table, (3) CI drift check that fails loudly + self-documents by existing.
+
+**Decision 4 — M2: One `sharedExtensions` or two?**
+
+Two files stay (`packages/core/src/extensions/shared.ts` + `packages/app/src/editor/extensions/shared.ts`). Given Decision 1, they produce byte-identical schemas today (schema is orthogonal to NodeView). Future risk is someone adding attributes via `.extend({ addAttributes })` in app — Decision 1's invariant prohibits this, and Phase 0 Step 5c adds a **mandatory drift-detection test** (OS09) that asserts `getSchema()` structural equality across both imports, failing CI if the invariant is violated.
+
+**Decision 5 — H5: `.openknowledge/` vs `.open-knowledge/` vs elsewhere?**
+
+Killed `.openknowledge/` entirely. The generated file is a build artifact, not user configuration. Moved to `packages/core/src/generated/components.ts` (regular TypeScript file, committed, ESM-importable). `.open-knowledge/` stays reserved for user YAML config per the CLI packaging spec (`specs/2026-04-08-cli-packaging/SPEC.md`).
+
+**Mechanical rewrites applied (from audit M1-M6, L1-L3):**
+- **Baseline commit:** `02c2211` → `12f49c9`.
+- **Header Location field:** `init_spike/` → four-package breakdown.
+- **§2 Tertiary:** Observer paths corrected to `packages/app/src/editor/observers.ts`. `syncTextToFragment` path corrected from `hocuspocus-plugin.ts:148` → `packages/server/src/agent-sessions.ts:39` + `api-extension.ts:79,160`. Noted that it's now public API of `@inkeep/open-knowledge-server`.
+- **§3.1:** Rewritten — 3-way split across packages. Factory-based extension creation. React map in app as Layer D.
+- **§3.2:** Rewritten — Node-only dev script at `packages/core/scripts/build-registry.ts`. Documents dev-time execution model, devDep isolation, CI drift check.
+- **§3.3:** Added parent-chain invariant subsection; documented factory pattern; updated OQ4 resolution.
+- **§3.6:** Clarified `@/editor/observers` alias is package-local to `packages/app/`.
+- **§4 Phase 0:** Step 1 rewritten to "wire existing tokenizer" (`packages/core/src/extensions/jsx-tokenizer.ts` already exists). Step 4 → `packages/app/content/test-fixture.md`. Step 5c added — mandatory drift-detection test (OS09). Step 10 → per-package quality gates (root `bun run check` no longer a unified gate).
+- **§4 Phase 1:** Step 0 updated with full 9-site schema refactor table. Step 1 updated with per-package dependency placement. Shadcn install target → `cd packages/app && npx shadcn@latest add`. Steps 2-4 rewritten for `packages/core/src/registry/` layout. Step 5 rewritten as dev script + root alias + commit. Step 5a added — CI drift check. Step 8 → per-package gates.
+- **§4 Phase 2, 3, 4:** All path references updated. Phase 2 Step 11 added — app must swap BOTH editable + void node types. Phase 4 Step 4 rewritten — update root `CLAUDE.md`, create `packages/core/AGENTS.md`. Verify steps → per-package gates.
+- **§5 Tech Stack:** New table with per-package dependency placement rationale.
+- **§6 In Scope:** `.openknowledge/` → `packages/core/src/generated/components.ts` with explicit note about `.open-knowledge/` reservation.
+- **§7 Test Scenarios:** OS06/OS07/OS08 observer paths corrected. OS09 added (schema-parity drift test).
+- **§10 A7, §11 R9/R10/R11:** Observer path references corrected.
+- **§11 R12:** Rewritten — 9 sites across 4 packages, not 2. Factory-centralization pattern. Synchronous ESM import eliminates async-boot concern.
+- **§11 R14:** `syncTextToFragment` path corrected.
+- **§12 OQ1/OQ2/OQ3:** Resolutions updated for new package layout + synchronous manifest import + dev-time extraction.
+- **§13 STOP_IF:** `bun run check` replaced with per-package gates; OS09 drift test + CI drift check added as explicit stop conditions.
+- **§9 Decision Log:** D17 added consolidating all 5 session-6 decisions with evidence refs.
+
+**Decisions reopened:** None. The architectural plan (Phase 0 byte-identity gate, Phase 1 extraction, Phase 2 prop panel, Phase 3 inline children, Phase 4 polish) is unchanged. The factory pattern makes the registry-driven attributes story explicit rather than implicit.
+
+**Invariants re-verification status:**
+- **Preserved (moved only):** Observer A/B, `markUserTyping()`, early-exit logic, disk bridge, `syncTextToFragment` behavior, test-fixture content.
+- **Broken by construction in the restructure, now fixed by the spec amendment:** `sharedExtensions` single source of truth (fixed via D17 invariant + OS09), schema construction ordering (fixed via factory centralization + 9-site refactor), single-extension `JsxComponent` (fixed via parent-chain invariant + factory pattern), `MarkdownManager` schema consistency across packages (fixed — core owns all schema fields).
+- **Needs empirical re-check during Phase 0:** OS06 byte-identity, OS09 schema parity, OS08 `applyUserDelta` with duplicate JSX lines.
+
+**Spec status:** Still **Final**. Baseline advanced to `12f49c9`. Implementation can proceed with Phase 0 byte-identity gate + schema-parity drift test + tokenizer wire-in as the first hard tests. /ship resumes at Phase 1 exit.

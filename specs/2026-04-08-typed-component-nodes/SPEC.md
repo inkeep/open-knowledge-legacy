@@ -2,9 +2,9 @@
 
 **Status:** Final
 **Created:** 2026-04-08
-**Baseline commit:** 02c2211
+**Baseline commit:** 12f49c9 (post-PR-#10 monorepo restructure merge)
 **Implementer:** AI coding agent (Claude Code)
-**Location:** `init_spike/` (extends existing spike code)
+**Location:** `packages/core/` (schema, extensions, registry data, factory, generated manifest, dev script) + `packages/app/` (React NodeView, prop panel, component map, slash commands) + `packages/server/` (re-verification of MarkdownManager schema parity). No changes to `packages/cli/`.
 **Nature:** Product-facing feature build on top of the bidirectional observer sync foundation. This turns opaque JSX string blobs into structured, visually-editable component blocks — the difference between "markdown editor with code fences" and "knowledge editor with a component system." Two layers ship together because Layer 3 (inline children) depends on Layer 2 (component registry + typed props) and the combined UX is what makes the editor feel like a real component system.
 
 **Pace:** Moderate. The foundation (observer sync, persistence, disk bridge) is proven and stable. This builds on it with new editor extension architecture. Take care with ProseMirror node spec design — the schema decisions here are load-bearing for everything that follows.
@@ -59,11 +59,11 @@ Two users editing the same component:
 The bidirectional observer sync from PR #6 + PR #7 + PR #8 (and the subsequent cross-tab fixes in `9f215ef`, `99ea308`, `b289cc6`) continues to work:
 - The serialization format (raw JSX on disk) works transparently with observer sync.
 - **Both observers are LOCAL-ONLY.** As of commits `9f215ef` + `99ea308`, both Observer A and Observer B skip remote transactions (`if (!transaction.local) return`). Remote changes (from peer tabs or server-side agent writes) arrive pre-synced via the Yjs CRDT protocol — the originating side already ran its observers locally, so the paired XmlFragment + Y.Text updates propagate together and neither side needs to re-run an observer.
-- **Observer A (XmlFragment → Text)** processes only local XmlFragment changes. Computes an incremental delta between `lastSyncedXmlMd` and the current XmlFragment markdown, then applies only that delta to Y.Text via line-level diff (`applyIncrementalDiff` for clean path, `applyUserDelta` when Y.Text has concurrent unsynced content). For typed components, a prop change appears as a line-replacement (single-line JSX) or tag-line replacement (multi-line JSX). See `observers.ts:125-253` for the delta logic.
+- **Observer A (XmlFragment → Text)** processes only local XmlFragment changes. Computes an incremental delta between `lastSyncedXmlMd` and the current XmlFragment markdown, then applies only that delta to Y.Text via line-level diff (`applyIncrementalDiff` for clean path, `applyUserDelta` when Y.Text has concurrent unsynced content). For typed components, a prop change appears as a line-replacement (single-line JSX) or tag-line replacement (multi-line JSX). See `packages/app/src/editor/observers.ts` (~125-253) for the delta logic.
 - **Observer B (Text → XmlFragment)** processes only local Y.Text changes. Parses raw JSX via the custom markdownTokenizer, then:
   1. Checks an **early-exit** that requires byte-identical serialization (`currentBody === body`) to skip destructive tree replacement — still load-bearing for local source-mode edits, though the exposure is narrower than before since remote agent writes no longer reach Observer B. See §11 R10.
-  2. **Defers** tree replacement while the user is actively typing (TYPING_DEFER_MS = 300ms, signaled via `markUserTyping()` from `observers.ts`). Phase 2 prop panel must participate in this protocol — see §3.6 and §11 R9.
-- **Agent writes use server-side `syncTextToFragment()`** (`hocuspocus-plugin.ts:148`) which writes to both Y.Text AND XmlFragment in the same server transaction. Clients receive paired changes via Yjs sync and both observers skip them. This means agent writes never trigger client-side Observer A or Observer B at all — the tree replacement happens server-side via `updateYFragment`, and Yjs's CRDT merge handles any concurrent local mutations from clients.
+  2. **Defers** tree replacement while the user is actively typing (TYPING_DEFER_MS = 300ms, signaled via `markUserTyping()` from `packages/app/src/editor/observers.ts:66`). Phase 2 prop panel must participate in this protocol — see §3.6 and §11 R9.
+- **Agent writes use server-side `syncTextToFragment()`** — now public API of `@inkeep/open-knowledge-server`, defined at `packages/server/src/agent-sessions.ts:39` and called from `packages/server/src/api-extension.ts:79,160`. It writes to both Y.Text AND XmlFragment in the same server transaction. Clients receive paired changes via Yjs sync and both observers skip them. This means agent writes never trigger client-side Observer A or Observer B at all — the tree replacement happens server-side via `updateYFragment`, and Yjs's CRDT merge handles any concurrent local mutations from clients.
 - Source mode editing of component JSX round-trips correctly through the observer cycle (via the local Observer B path).
 - Disk bridge and agent writes continue to work. The disk bridge now uses a per-path hash queue to prevent feedback loops during rapid sequential writes (`b289cc6`).
 - **WYSIWYG mode IS live preview** — components render with their real React implementation in real-time as props and children change. No separate preview pane is needed for the "does my edit render correctly?" question. Split-pane and publish-fidelity modes (Future Work) address distinct concerns.
@@ -81,27 +81,17 @@ No schema files, no JSON config, no extension code. The TypeScript interface IS 
 
 ## 3. What to Build
 
-### 3.1 Component Registry
+### 3.1 Component Registry — 3-way split across packages
 
-A central registry that maps component names to their implementations and metadata.
+The "registry" is actually three concerns with incompatible dependency constraints. Trying to put them in one place forces a choice between React-polluting `core`, non-reachable `server`, or hidden-inside-`app`. The restructure makes the split explicit:
+
+**Layer A — PropDef types + hand-maintained built-ins manifest + factory** (`packages/core/src/registry/`)
+
+Pure TypeScript — no React, no Node-only tools, no browser APIs. This is the canonical data layer shared by every downstream consumer.
 
 ```typescript
-// src/editor/components/registry.ts
-
-interface ComponentMeta {
-  /** The React component to render in the editor */
-  component: React.ComponentType<any>;
-  /** Auto-extracted or manually provided prop definitions */
-  props: PropDef[];
-  /** Display name for slash commands and panels */
-  displayName: string;
-  /** Category for slash command grouping */
-  category: 'content' | 'layout' | 'media' | 'data';
-  /** Icon for slash command menu */
-  icon?: string;
-}
-
-interface PropDef {
+// packages/core/src/registry/types.ts
+export interface PropDef {
   name: string;
   type: 'string' | 'boolean' | 'enum' | 'number' | 'reactnode';
   required: boolean;
@@ -112,34 +102,138 @@ interface PropDef {
   description?: string;
 }
 
-// Registry singleton
-const registry = new Map<string, ComponentMeta>();
+/** Metadata known at build time, independent of React. */
+export interface ComponentMeta {
+  /** Auto-extracted prop definitions */
+  props: PropDef[];
+  /** Display name for slash commands and panels */
+  displayName: string;
+  /** Category for slash command grouping */
+  category: 'content' | 'layout' | 'media' | 'data';
+  /** Icon name for slash command menu (resolved to a React icon in app) */
+  icon?: string;
+}
 
-export function registerComponent(name: string, meta: ComponentMeta): void;
-export function getComponent(name: string): ComponentMeta | undefined;
-export function getAllComponents(): Map<string, ComponentMeta>;
+// packages/core/src/registry/built-ins.ts — HAND-MAINTAINED SOURCE OF TRUTH
+// Lists the 15 built-in families, where to extract props from, and their
+// display metadata. Does NOT import React components — just names + paths.
+export interface BuiltInManifestEntry {
+  name: string;                       // e.g., 'Callout'
+  sourceFile: string;                 // abs path resolved via require.resolve
+  category: ComponentMeta['category'];
+  displayName: string;
+  icon?: string;
+}
+export const BUILT_INS: BuiltInManifestEntry[] = [ /* 15 entries */ ];
 ```
 
-**OQ1: Should the registry be static (build-time) or dynamic (runtime)?**
-- Static: react-docgen-typescript runs at build/dev-server start, outputs a JSON manifest. Editor imports the manifest. Simpler, faster at runtime. But requires restart to pick up new components.
-- Dynamic: react-docgen-typescript runs in a file watcher. Registry updates on component file save. More complex, but hot-reload for component development.
-- **Leaning:** Static for P0. The init-spike is a validation — hot-reload is a polish item.
+**Layer B — Generated cache of extracted PropDefs** (`packages/core/src/generated/components.ts`)
 
-### 3.2 react-docgen-typescript Integration
-
-Auto-extract prop schemas from TypeScript interfaces at project load. Works against both `.tsx` source (shadcn-installed components) and `.d.ts` declaration files (fumadocs-ui, docskit — see `evidence/react-docgen-typescript-dts-extraction.md` for verification).
+A committed TypeScript file produced by the dev script (see §3.2). Typed, importable via ESM, readable by agents reading the repo. **No `.json` twin** — the wire format for the future MCP endpoint (§6 Future Work) is derived at request time, not maintained on disk.
 
 ```typescript
-// src/server/component-introspection.ts (runs server-side at startup)
+// packages/core/src/generated/components.ts
+// GENERATED FROM packages/core/src/registry/built-ins.ts + react-docgen-typescript.
+// Do not edit by hand. Run `bun run build-registry` to regenerate.
+import type { ComponentMeta } from '../registry/types.ts';
+
+export const componentManifest: Record<string, ComponentMeta> = {
+  Callout: { props: [ /* extracted */ ], displayName: 'Callout', category: 'content', icon: 'info' },
+  // ... 14 more
+};
+```
+
+**Layer C — Factory that produces registry-aware TipTap extensions** (`packages/core/src/registry/jsx-component-factory.ts`)
+
+The central piece that solves the D6 "single extension with dynamic attributes" problem without violating core's React-free constraint. The factory takes the generated manifest as input and returns a tuple of two fully-configured `Node.create(...)` extensions: `[jsxComponentEditable, jsxComponentVoid]`. Attributes are derived from the union of all known PropDefs across the manifest. Both extensions share `parseMarkdown` / `renderMarkdown` / `markdownTokenName` / `parseHTML` / `renderHTML`. See §3.3 for the factory signature and D8 for why two extensions (not one) are needed.
+
+```typescript
+// packages/core/src/registry/jsx-component-factory.ts
+import type { Node as TiptapNode } from '@tiptap/core';
+import { componentManifest } from '../generated/components.ts';
+
+export interface JsxComponentExtensions {
+  editable: TiptapNode;  // non-atom, content: 'block+' — Phase 3 inline children
+  void: TiptapNode;      // atom: true — unregistered fallback
+}
+
+export function createJsxComponentExtensions(
+  manifest: Record<string, ComponentMeta> = componentManifest,
+): JsxComponentExtensions;
+```
+
+**Layer D — React component map** (`packages/app/src/editor/components/componentMap.ts`)
+
+Browser-only. The runtime lookup that maps component name → React component. Imports `fumadocs-ui`, `@inkeep/docskit`, and shadcn-installed components. Never loaded by `packages/server/`. The NodeView reads from this map at render time:
+
+```typescript
+// packages/app/src/editor/components/componentMap.ts
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+// ... 13 more imports
+
+export const componentMap: Record<string, React.ComponentType<any>> = {
+  Callout, Tabs, Tab, /* ... */
+};
+```
+
+**How the layers connect:**
+
+```
+packages/core/src/registry/built-ins.ts   (hand-maintained — 15 entries)
+            │
+            ▼  [build-registry dev script — see §3.2]
+packages/core/src/generated/components.ts (committed, typed ESM export)
+            │
+     ┌──────┴─────────────────────────────────┐
+     ▼                                        ▼
+packages/core/src/registry/jsx-component-factory.ts
+            │                    │            │
+            ▼                    ▼            ▼
+      server/persistence     app/editor   core tests
+      (no React)             (+NodeView)  (schema parity)
+                                  │
+                                  └── reads componentMap for React lookup
+```
+
+**Why this topology works:**
+- Core stays React-free and Node-free (manifest is pure data + TS types).
+- Server reads the manifest from core → schema identical to client's.
+- App reads the manifest from core + the React map alongside it → prop panel PropDef lookup is identical to server's.
+- Only the dev script (§3.2) depends on `react-docgen-typescript`, and it lives in core's devDependencies — never shipped to end users of the published CLI.
+
+**OQ1: Should the registry be static (build-time) or dynamic (runtime)?**
+- **Resolved: static for P0.** The generated cache at `packages/core/src/generated/components.ts` is committed. Regeneration requires `bun run build-registry`. Hot-reload of new built-ins is Future Work (restart required in P0). Custom component discovery (§6 Future Work) will introduce a runtime loading path for user-registered components.
+
+### 3.2 react-docgen-typescript — Build-time dev script in `packages/core/scripts/`
+
+Auto-extract prop schemas from TypeScript interfaces at **dev time** (not runtime). A Node-only script lives in `packages/core/scripts/build-registry.ts` and writes its output to `packages/core/src/generated/components.ts`. The script is invoked manually by maintainers when built-ins change and by CI as a drift detector.
+
+**Why a dev script, not a CLI subcommand or a runtime loader:**
+
+1. **Shipped CLI stays lean.** `react-docgen-typescript` has `typescript` as a peer dependency (~5-15MB bundled). Shipping it inside `@inkeep/open-knowledge` would bloat every end-user install for a command end users never run. Putting it in `packages/core/devDependencies` means only monorepo contributors carry the cost.
+2. **Semantic locality.** The script reads from `packages/core/src/registry/built-ins.ts` and writes to `packages/core/src/generated/components.ts` — input, tool, and output all live in the same package.
+3. **No build-order coupling.** The script runs as raw TypeScript via `bun scripts/build-registry.ts`. It doesn't require the CLI to be built first. A fresh clone can regenerate the manifest with `bun run build-registry` after `bun install`.
+4. **CI drift detection is trivial.** `bun run build-registry && git diff --exit-code packages/core/src/generated/components.ts` catches every case of "contributor added a built-in or upgraded `fumadocs-ui` without regenerating."
+
+```typescript
+// packages/core/scripts/build-registry.ts
+// Runs at dev time. NEVER imported by app, server, cli, or published core.
+// Invoked via: bun run --cwd packages/core build-registry
+//           or: bun run build-registry  (root-level alias)
 
 import { withDefaultConfig } from 'react-docgen-typescript';
+import { writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { BUILT_INS } from '../src/registry/built-ins.ts';
+import type { ComponentMeta, PropDef } from '../src/registry/types.ts';
 
 const parser = withDefaultConfig({
   shouldExtractLiteralValuesFromEnum: true,   // "warning"|"error" → dropdown values
   shouldRemoveUndefinedFromOptional: true,    // Clean optional types
   skipChildrenPropWithoutDoc: false,          // CRITICAL: include children (A1)
   propFilter: (prop) => {
-    // CRITICAL: filter ONLY @types/react inherited DOM props, NOT all node_modules.
+    // Filter ONLY @types/react inherited DOM props, NOT all node_modules.
     // A blanket `node_modules` filter would drop fumadocs-ui's own props because
     // they live in node_modules/fumadocs-ui/dist/*.d.ts.
     if (prop.parent?.fileName.includes('@types/react')) return false;
@@ -150,28 +244,49 @@ const parser = withDefaultConfig({
   },
 });
 
-export function extractComponentProps(filePaths: string[]): Map<string, PropDef[]> {
-  const docs = parser.parse(filePaths);
-  // Transform react-docgen output to our PropDef format
-  // Map TypeScript types to our simplified type system:
-  //   string → 'string'
-  //   boolean → 'boolean'
-  //   "warning" | "error" | "info" → 'enum' with enumValues
-  //   number → 'number'
-  //   React.ReactNode | ReactNode → 'reactnode'
-  //   everything else → hidden from panel
-}
+const filePaths = BUILT_INS.map((entry) => entry.sourceFile);
+const docs = parser.parse(filePaths);
+// Transform react-docgen output to our PropDef format + merge with BUILT_INS metadata
+// Map TypeScript types to our simplified type system:
+//   string → 'string'
+//   boolean → 'boolean'
+//   "warning" | "error" | "info" → 'enum' with enumValues
+//   number → 'number'
+//   React.ReactNode | ReactNode → 'reactnode'
+//   everything else → hidden from panel
+const manifest: Record<string, ComponentMeta> = { /* built from docs + BUILT_INS */ };
+
+// Serialize as a TS file (not JSON) so downstream consumers get type safety
+const out = `// GENERATED FROM packages/core/src/registry/built-ins.ts + react-docgen-typescript.
+// Do not edit by hand. Run \`bun run build-registry\` to regenerate.
+import type { ComponentMeta } from '../registry/types.ts';
+
+export const componentManifest: Record<string, ComponentMeta> = ${JSON.stringify(manifest, null, 2)};
+`;
+writeFileSync(path.join(import.meta.dir, '../src/generated/components.ts'), out);
 ```
 
-**Component location:** Built-in components are hardcoded in `src/editor/components/built-ins.ts` (editor source code). The manifest entries name exact `.d.ts` / `.tsx` file paths for extraction — no file system scanning, no user configuration. Custom component discovery is Future Work (see §6 Future Work, Explored tier).
+**Script entry points:**
+- `packages/core/package.json` → `"scripts": { "build-registry": "bun scripts/build-registry.ts" }`
+- Root `package.json` → `"scripts": { "build-registry": "bun run --cwd packages/core build-registry" }` (convenience — run from anywhere in the repo)
+- `packages/core/devDependencies` adds: `react-docgen-typescript`, `fumadocs-ui`, `@inkeep/docskit`, `typescript` (peer of r-d-ts). None of these ship to downstream consumers — devDeps are isolated.
 
-**Startup performance:** With only 15 built-ins, cold extraction is <1s on modern hardware. Caching to `.openknowledge/components.json` is a polish item, not a requirement. The cache file doubles as the agent-discoverable component manifest (Phase 4 step 4).
+**Component source files:** Built-ins are declared in `packages/core/src/registry/built-ins.ts`. Each entry names the exact `.d.ts` / `.tsx` file to extract props from:
+- **fumadocs-ui** (10 families) → `node_modules/fumadocs-ui/dist/components/*.d.ts` (resolved via `require.resolve('fumadocs-ui/package.json')` + path join; see Phase 1 Step 1 for the resolution pattern).
+- **docskit** (3 families) → `node_modules/@inkeep/docskit/dist/mdx.d.ts` (aggregate re-export; per-component subpaths aren't in docskit's `exports` map).
+- **shadcn-installed** (2 families: Mermaid, Audio) → `packages/app/src/components/ui/*.tsx` (local project files).
 
-### 3.3 TipTap Node Spec Evolution
+No file system scanning, no user configuration. Custom component discovery is Future Work (see §6 Future Work, Explored tier).
 
-The JsxComponent extension evolves from a single `content` attribute to structured attributes.
+**Startup performance:** With only 15 built-ins, cold extraction is <1s on modern hardware. The generated file is committed and imported synchronously via ESM — no runtime extraction, no startup latency at all for end users. Contributors re-run the script only when they change `built-ins.ts` or upgrade `fumadocs-ui` / `@inkeep/docskit`.
 
-**Current (Layer 1):**
+**Agent-discoverable manifest:** The committed `packages/core/src/generated/components.ts` doubles as the reference consumed by agents reading the repo (Phase 4 step 4). Agents parse it as TypeScript — intellisense-friendly, typed, same format as every other generated file in the repo. The future MCP endpoint (§6 Future Work) serializes this to JSON at request time.
+
+### 3.3 TipTap Node Spec Evolution — factory pattern across the core/app split
+
+The JsxComponent extension evolves from a single `content` attribute to structured attributes. In the monorepo, this extension is split across two packages — `packages/core/` owns the schema + markdown hooks + attribute definitions, and `packages/app/` extends it with the React NodeView only.
+
+**Current (Layer 1) — `packages/core/src/extensions/jsx-component.ts`:**
 ```typescript
 addAttributes() {
   return {
@@ -180,27 +295,36 @@ addAttributes() {
 }
 ```
 
-**Target (Layer 2 + 3):**
+**Target (Layer 2 + 3) — produced by the core factory:**
 ```typescript
+// packages/core/src/registry/jsx-component-factory.ts
 addAttributes() {
   return {
     componentName: { default: '' },
-    // Dynamic: one attribute per primitive prop, keyed by prop name
-    // Example for Callout: { componentName: 'Callout', type: 'warning' }
-    // ReactNode props are NOT stored as attributes — they're content holes
+    // Union of all known prop names across the manifest, each with its own attribute.
+    // Example for a manifest containing Callout + Card:
+    //   { componentName, type, title, icon, href, external, ... }
+    // Only the attributes belonging to the active componentName are read by the
+    // renderer. ReactNode props (children) are NOT attributes — they're content holes.
   };
 }
 ```
 
+**Where this runs:**
+1. `packages/core/src/registry/jsx-component-factory.ts` exports `createJsxComponentExtensions(manifest)` which returns `{ editable, void }` — two TipTap `Node.create(...)` extensions with fully-configured attributes derived from the manifest. Both extensions share `parseMarkdown` / `renderMarkdown` / `markdownTokenName` / `parseHTML` / `renderHTML`.
+2. `packages/core/src/extensions/shared.ts` imports the factory, calls it with the generated manifest, and exports the resulting extensions inside `sharedExtensions`. Server-side consumers (`persistence`, `agent-sessions`, `standalone`) use these directly.
+3. `packages/app/src/editor/extensions/jsx-component.ts` imports both extensions from core and extends **each** with `.extend({ addNodeView() { return ReactNodeViewRenderer(...); } })`. App's own `sharedExtensions` (`packages/app/src/editor/extensions/shared.ts`) swaps in the extended variants while keeping the rest of the array identical to core's.
+
+**The parent-chain invariant** (load-bearing — do not violate):
+
+TipTap's `.extend()` preserves non-standard extension fields via `getExtensionField()`'s parent-chain walk (`@tiptap/core/src/helpers/getExtensionField.ts`). When `MarkdownManager.registerExtension()` reads `markdownTokenName` / `parseMarkdown` / `renderMarkdown` from the app's extended extension, it finds them undefined on the child config, falls back to `extension.parent`, and returns the core implementation. This is verified by source read of `@tiptap/markdown@3.22.3/src/MarkdownManager.ts:113-120` + `@tiptap/core/src/helpers/getExtensionField.ts:17-20`.
+
+**Invariant:** Schema changes (new nodes, attribute changes, `addAttributes`, `parseHTML` / `renderHTML`, `parseMarkdown` / `renderMarkdown`, `content` spec, `atom`) MUST be made in `packages/core/`. App-side extensions may ONLY override view-layer fields (`addNodeView`, `addKeyboardShortcuts` that are view-specific). Any new attribute added in `packages/app/src/editor/extensions/*.ts` via `.extend({ addAttributes() { ... } })` would produce a schema that diverges from `packages/server/`'s schema — server persistence would serialize without the attribute, client editor would serialize with it, round-trip would silently lose data on every save. The drift-detection test in Phase 0 catches this mechanically.
+
 **Key design decision:** Props are flattened to top-level node attributes. This gives attribute-level LWW in y-prosemirror — two users editing different props don't conflict.
 
 **OQ4: How to handle dynamic attributes in TipTap?**
-TipTap node specs define attributes statically. But each component has different props. Options:
-- Option A: Single extension with `addAttributes()` returning a catch-all pattern (e.g., store all props in a `props` JSON attribute). Simpler but loses attribute-level LWW.
-- Option B: Dynamically create a TipTap extension per registered component (e.g., `CalloutNode`, `TabsNode`). Each has its own attribute set. Complex but gives per-prop LWW.
-- Option C: One extension with `addAttributes()` that reads the registry and returns all known prop names as attributes. Requires extension re-creation when registry changes.
-- Option D: Use `parseHTML`/`renderHTML` to handle arbitrary `data-*` attributes, and store the prop-attribute mapping in the registry rather than the TipTap node spec.
-- **Leaning:** Option D. The TipTap node spec stays generic. The registry maps prop names to attribute names. `parseHTML` reads `data-prop-*` attributes, `renderHTML` writes them. The markdown serialization handles the JSX↔attributes translation. This avoids dynamic extension creation while preserving attribute-level LWW.
+- **Resolved: factory returns an extension with attributes derived from the manifest at call time.** Core's `createJsxComponentExtensions(manifest)` reads all known prop names across the manifest and returns them as a unioned attribute set. TipTap node specs are defined at `Node.create(...)` call time — by deferring that call to a factory function, we get registry-driven attributes without dynamic extension creation at runtime. The manifest is static (generated and committed), so the factory runs once at module load on both server and app. See Phase 1 Step 0 for the schema construction ordering implications.
 
 ### 3.4 Inline Rich-Text Children (Layer 3)
 
@@ -316,7 +440,7 @@ A visual interface for editing component props.
 | `CSSProperties` | (hidden) | Not shown |
 | Complex objects | (hidden) | Not shown |
 
-**Typing-defer protocol (required by PR #7 observers):** The prop panel is rendered in a Radix Popover that portals to `document.body`. Keydown/click events inside the portal do NOT bubble to `editor.view.dom`, so they do NOT trigger `markUserTyping()` automatically. **Every prop panel change handler must call `markUserTyping()` (imported from `src/editor/observers.ts`) before/during the `editor.commands.updateAttributes()` call.** See §11 R9 and test scenario CE05.
+**Typing-defer protocol (required by PR #7 observers):** The prop panel is rendered in a Radix Popover that portals to `document.body`. Keydown/click events inside the portal do NOT bubble to `editor.view.dom`, so they do NOT trigger `markUserTyping()` automatically. **Every prop panel change handler must call `markUserTyping()` (imported from `@/editor/observers`, where the `@/*` alias resolves to `packages/app/src/*` per `packages/app/vite.config.ts`) before/during the `editor.commands.updateAttributes()` call.** See §11 R9 and test scenario CE05.
 
 **Scope of the race (post commits `9f215ef` + `99ea308`):** The original PM-H1 concern was "concurrent agent write to Y.Text triggers Observer B → overwrites prop edit." That specific race no longer exists — agent writes now go through server-side `syncTextToFragment()` which updates both trees in one transaction, and clients' Observer B skips remote Y.Text changes entirely. The remaining (narrower) race the typing-defer protects against is **single-user two-pane editing**: user edits a prop in WYSIWYG while simultaneously typing in source mode. The source-mode edit is a local Y.Text change → Observer B fires → destructive tree replacement via `updateYFragment` → may overwrite the prop edit if the debounce windows overlap. `markUserTyping()` keeps Observer B deferred while the user is actively editing, giving Observer A time to serialize the prop change first. The protocol is still required; the exposure is just smaller than documented in the original PM-H1 finding.
 
@@ -428,32 +552,58 @@ function JsxComponentView({ node, editor }: NodeViewProps) {
 
 ## 4. Implementation Order
 
-### Phase 0: Raw JSX Serialization (Foundation — fumadocs compatibility)
+### Phase 0: Raw JSX Serialization + schema-parity drift test (Foundation — fumadocs compatibility + monorepo safety net)
 
-Switch the on-disk format from `jsx-component` fenced code blocks to raw JSX. This is the foundation everything else builds on.
+Switch the on-disk format from `jsx-component` fenced code blocks to raw JSX. Also install the schema-parity drift test that guards the core/app split documented in §3.3. These are the foundations everything else builds on.
 
-1. **Build the markdownTokenizer (D11, D12):** Version B tokenizer (~80 lines) with tag-counting for nested same-name components. Register as `markdownTokenName: 'jsxBlock'` with `level: 'block'`. The tokenizer intercepts `<UppercaseTag>` blocks before marked's HTML tokenizer.
+**Key monorepo fact:** The `jsxTokenizer` prototype has **already landed** at `packages/core/src/extensions/jsx-tokenizer.ts` — it exports `jsxTokenizerA`, `jsxTokenizerB`, `jsxTokenizerC`, `jsxStart`, and `createJsxBlockExtension` (see `packages/core/src/index.ts:14-21`). The prototype tests are at `packages/core/src/extensions/jsx-tokenizer-prototype.test.ts`. Phase 0 wires the existing Version B tokenizer into `JsxComponent`; it does NOT re-build the tokenizer from scratch.
+
+1. **Wire the existing `jsxTokenizerB` into `JsxComponent`.** `packages/core/src/extensions/jsx-component.ts` currently uses `markdownTokenName: 'code'` and emits fenced `jsx-component` code blocks via `fenceFor()`. Change `markdownTokenName` from `'code'` to `'jsxBlock'`, register `jsxTokenizerB` via TipTap's `markdownTokenizer` field, delete the orphaned `fenceFor` helper (`packages/core/src/extensions/jsx-component.ts:12-15`) once migration completes. The tokenizer intercepts `<UppercaseTag>` blocks before marked's HTML tokenizer.
 2. **Update renderMarkdown:** Output raw JSX (no fence). `renderMarkdown(node)` returns `node.attrs.content` directly.
 3. **Raw JSX only (D13 revised):** Single extension with `markdownTokenName: 'jsxBlock'` + custom tokenizer. No fenced-format backward compatibility (greenfield).
-4. **Update test-fixture.md:** Convert the existing `jsx-component` fenced block to raw JSX.
-5. Write tokenizer tests: all 24 test cases from prototype (edge cases, round-trip, mixed documents).
-5a. **Verify cycle-1 byte-identity (REQUIRED by PM-H2):** For every production-shape JSX input, assert `serialize(parse(jsx)) === jsx` byte-for-byte — NO `.trim()` normalization. This is load-bearing for Observer B's early-exit (`observers.ts:288-301`). If the current renderMarkdown adds a trailing newline that the raw input didn't have, fix the serializer to match the parse result OR normalize both sides (and document the normalization as an observer-layer change). See §11 R10.
+4. **Update test fixture:** Convert the existing `jsx-component` fenced block in `packages/app/content/test-fixture.md` to raw JSX.
+5. Write tokenizer integration tests in `packages/core/src/extensions/jsx-component.test.ts`: exercise all 24 test cases from the prototype (edge cases, round-trip, mixed documents) through the wired `JsxComponent` rather than the standalone tokenizer.
+5a. **Verify cycle-1 byte-identity (REQUIRED by PM-H2):** For every production-shape JSX input, assert `serialize(parse(jsx)) === jsx` byte-for-byte — NO `.trim()` normalization. This is load-bearing for Observer B's early-exit (`packages/app/src/editor/observers.ts:287-315`). If the current renderMarkdown adds a trailing newline that the raw input didn't have, fix the serializer to match the parse result OR normalize both sides (and document the normalization as an observer-layer change). See §11 R10.
 5b. **Verify Observer B no-op early-exit fires for raw JSX:** Write raw JSX to Y.Text, wait for Observer B to process, then write the EXACT same raw JSX again. Assert no second `updateYFragment` call (count XmlFragment mutations or observe tree events). This confirms the byte-identity property holds end-to-end.
+5c. **NEW: Schema-parity drift test.** Write a test at `packages/core/src/extensions/shared.test.ts` that imports both `sharedExtensions` from `@inkeep/open-knowledge-core` and from `packages/app/src/editor/extensions/shared.ts`, runs `getSchema()` on each, and asserts structural equality of the resulting `Schema.spec.nodes` and `Schema.spec.marks`. This is the mechanical guard against the invariant in §3.3 ("attributes in core only"). If anyone ever adds `.extend({ addAttributes() { ... } })` in `packages/app/`, this test fails loudly. Mandatory — not a polish item.
 6. Verify observer sync: Observer A/B work with raw JSX in Y.Text (no shimmer).
-7. Verify persistence: .md files on disk contain raw JSX after save.
-8. Verify disk bridge: external edit of raw JSX in .md file → editor updates correctly.
+7. Verify persistence: .md files on disk contain raw JSX after save (via `packages/server/src/persistence.ts` MarkdownManager).
+8. Verify disk bridge: external edit of raw JSX in .md file → editor updates correctly (via `packages/server/src/file-watcher.ts`).
 9. Verify source mode: CodeMirror shows raw JSX (not fenced blocks).
-10. **Verify:** All existing tests pass. `bun run check` green.
+10. **Verify all 4 packages green:**
+    - `cd packages/core && bunx tsc --noEmit && bun test`
+    - `cd packages/server && bunx tsc --noEmit && bun test`
+    - `cd packages/app && bun run check` (includes tsc + biome + test + vite build)
+    - `cd packages/cli && bunx tsc --noEmit && bun test`
+    - Root: `bun run lint` (Biome across all packages). Note: root `bun run check` only runs `docs` typecheck — it is NOT a full monorepo gate.
 
 ### Phase 1: Component Registry + react-docgen-typescript (built-ins only)
 
-**Scope:** P0 ships with built-in components only — the 15-component set from D15 (fumadocs canonical 10 + docskit gap fill 3 + shadcn gap fill 2). No custom component discovery, no user-facing `mdx-components.tsx` scanning, no `.openknowledge/components.ts` loader. Custom components + drop-in fumadocs support are Future Work (Explored tier).
+**Scope:** P0 ships with built-in components only — the 15-component set from D15 (fumadocs canonical 10 + docskit gap fill 3 + shadcn gap fill 2). No custom component discovery, no user-facing `mdx-components.tsx` scanning, no `.open-knowledge/components.ts` loader. Custom components + drop-in fumadocs support are Future Work (Explored tier).
 
 **Key mechanism (resolves v2 Audit H1 + Challenger H2):** `react-docgen-typescript` extracts props from `.d.ts` declaration files, not just `.tsx` source. This is **verified from the library's own test suite** (`react-docgen-typescript/src/__tests__/parser.ts:48-58` — "should parse simple typescript definition file with default export") and **from reading the parser source** (`parser.ts:377-409` explicitly handles `!rootExp.valueDeclaration` case for `ForwardRefExoticComponent`, `FunctionComponent`, `MemoExoticComponent` — the exact patterns compiled libraries expose). Both fumadocs-ui and `@inkeep/docskit` ship usable `.d.ts` files in their `dist/` directories. See `evidence/react-docgen-typescript-dts-extraction.md`.
 
-0. **Refactor schema construction order (REQUIRED by PM-M3):** `editorSchema = getSchema(sharedExtensions)` currently runs at `TiptapEditor.tsx:53` module top-level — BEFORE the registry exists. Server-side `MarkdownManager` (`persistence.ts:28`) has the same constraint. Both must be deferred until after the component registry loads, because `JsxComponent`'s attributes are derived from the registry (D6). Move schema construction into a registry-aware initializer that runs after `loadComponentRegistry()` resolves on both browser and server. See §11 R12.
-1. Add `react-docgen-typescript`, `acorn`, `acorn-jsx` dependencies. Add `fumadocs-ui`, `@inkeep/docskit` as peer deps for built-in imports. Install shadcn components (Mermaid from MermaidCN, Audio from AI Elements) into `init_spike/src/components/` via `npx shadcn@latest add`.
-2. Create `src/editor/components/built-ins.ts` — the canonical list of built-in components. Imports the 15 component families from their sources (fumadocs-ui, docskit, shadcn-installed files) and exports a manifest. Each entry names the exact `.d.ts` or `.tsx` file to extract props from. **Path resolution gotcha:** fumadocs-ui (and most published packages) use `package.json` `exports` fields that restrict direct access to `dist/` paths — you can `import { Callout } from 'fumadocs-ui/components/callout'` but `require.resolve('fumadocs-ui/dist/components/callout.d.ts')` will fail because that path isn't in the exports map. Use one of these patterns instead:
+0. **Refactor schema construction order at all 9 sites (REQUIRED by R12 — scope 5× larger than original PM-M3):** `editorSchema = getSchema(sharedExtensions)` / `new MarkdownManager({ extensions: sharedExtensions })` currently runs at module top-level at nine sites across four packages. All must be deferred until after the generated manifest loads, because the factory-produced `JsxComponent` extension's attributes are derived from the manifest (D6).
+
+   | # | File | Line | Package |
+   |---|------|------|---------|
+   | 1 | `packages/app/src/editor/TiptapEditor.tsx` | 53 | app |
+   | 2 | `packages/app/src/editor/observers.test.ts` | 15 | app |
+   | 3 | `packages/app/src/editor/observer-sync.test.ts` | 20 | app |
+   | 4 | `packages/app/src/server/hocuspocus-plugin.ts` | 34 | app (Vite plugin) |
+   | 5 | `packages/app/src/server/agent-flow.test.ts` | 24 | app |
+   | 6 | `packages/server/src/standalone.ts` | 32 | server |
+   | 7 | `packages/server/src/persistence.ts` | 34 | server |
+   | 8 | `packages/server/src/agent-sessions.ts` | 32 | server |
+   | 9 | `packages/core/src/extensions/jsx-component.test.ts` | 8 | core |
+
+   **Pattern:** because the generated manifest is committed as a synchronously-importable ESM module (`packages/core/src/generated/components.ts`), the factory can run at module load time deterministically — no async boot, no `loadComponentRegistry()` Promise. The refactor is mechanical: each site switches from `import { sharedExtensions } from '@inkeep/open-knowledge-core'` (or `./extensions/shared.ts` in app) to importing a factory-memoized version that threads the manifest through the extension. Put the factory call + memoization inside `packages/core/src/extensions/shared.ts` so every consumer automatically gets the registry-aware extension set without needing to know about the factory. See §11 R12.
+1. **Install dependencies:**
+    - `packages/core/devDependencies`: `react-docgen-typescript`, `fumadocs-ui`, `@inkeep/docskit`, `typescript` (r-d-ts peer). These are dev-only and never ship to downstream consumers — the introspection script runs at dev time; generated output is committed.
+    - `packages/core/dependencies`: `acorn`, `acorn-jsx` (isomorphic — browser + Node). The markdown parser in `JsxComponent.parseMarkdown` uses acorn at runtime to parse JSX strings into structured props.
+    - `packages/app/dependencies`: `fumadocs-ui`, `@inkeep/docskit` (runtime — the React NodeView needs the actual React components for rendering via `componentMap.ts`).
+    - Install shadcn components (Mermaid from MermaidCN, Audio from AI Elements) into `packages/app/src/components/ui/` via `cd packages/app && npx shadcn@latest add ...`. This requires a `packages/app/components.json` shadcn config file pointing at `src/components/ui`. (Note: shadcn's `components.json` is NOT related to the generated registry manifest — just a naming collision.)
+2. Create `packages/core/src/registry/built-ins.ts` — the canonical list of built-in components. **Does NOT import React component implementations** (core is React-free). Each entry names the exact `.d.ts` or `.tsx` file to extract props from, plus display metadata. **Path resolution gotcha:** fumadocs-ui (and most published packages) use `package.json` `exports` fields that restrict direct access to `dist/` paths — you can `import { Callout } from 'fumadocs-ui/components/callout'` but `require.resolve('fumadocs-ui/dist/components/callout.d.ts')` will fail because that path isn't in the exports map. Use one of these patterns instead:
    ```ts
    import path from 'node:path';
    import { fileURLToPath } from 'node:url';
@@ -466,26 +616,30 @@ Switch the on-disk format from `jsx-component` fenced code blocks to raw JSX. Th
    const calloutJs = require.resolve('fumadocs-ui/components/callout');
    const calloutDts = calloutJs.replace(/\.js$/, '.d.ts');
    ```
-   For docskit (whose `exports` field only exposes `./mdx` — not per-component subpaths), point extraction at the aggregate `dist/mdx.d.ts` file via the same `dirname(require.resolve(...))` pattern. This file re-exports every component with its full type signature. For shadcn-installed components (Mermaid, Audio), the files live in local `src/components/*.tsx` — standard path resolution, no workaround needed.
+   For docskit (whose `exports` field only exposes `./mdx` — not per-component subpaths), point extraction at the aggregate `dist/mdx.d.ts` file via the same `dirname(require.resolve(...))` pattern. This file re-exports every component with its full type signature. For shadcn-installed components (Mermaid, Audio), the files live in `packages/app/src/components/ui/*.tsx` — standard path resolution from the script's location in `packages/core/scripts/`.
    
    Manifest shape:
    ```ts
-   export const BUILT_INS: ComponentManifestEntry[] = [
+   // packages/core/src/registry/built-ins.ts
+   import type { BuiltInManifestEntry } from './types.ts';
+
+   export const BUILT_INS: BuiltInManifestEntry[] = [
      {
        name: 'Callout',
-       component: Callout,
        sourceFile: resolveDts('fumadocs-ui', 'dist/components/callout.d.ts'),
        category: 'content',
+       displayName: 'Callout',
+       icon: 'info',
      },
      // ... 14 more
    ];
    ```
-   This is editor source code, not user-facing config.
-3. Create `src/editor/components/registry.ts` — `ComponentMeta`, `PropDef`, `registerComponent()`, `getComponent()`, `getAllComponents()` API. Registry is initialized at editor startup by calling `registerBuiltIns()` which iterates `built-ins.ts` manifest entries and runs extraction for each.
-4. Create `src/server/component-introspection.ts` — runs `react-docgen-typescript` against each built-in's declared source file. Handles three file shapes uniformly:
+   This is editor source code, not user-facing config. The React component lookup (`{ Callout, Tabs, ... }`) lives separately at `packages/app/src/editor/components/componentMap.ts`.
+3. Create `packages/core/src/registry/` — the types (`types.ts`), the factory (`jsx-component-factory.ts`), and the public API (`index.ts` exporting `BUILT_INS`, `componentManifest` re-export from `../generated/components.ts`, and `createJsxComponentExtensions`). No `registerComponent()` runtime API — the manifest is static and the factory consumes it directly.
+4. Create `packages/core/scripts/build-registry.ts` — the dev script that runs `react-docgen-typescript` against each built-in's declared source file and writes `packages/core/src/generated/components.ts`. Handles three file shapes uniformly:
    - **fumadocs-ui** (10 components): extract from `node_modules/fumadocs-ui/dist/components/*.d.ts`. These `.d.ts` files contain the prop interfaces, TSDoc comments (`@defaultValue`, descriptions), enum unions, and component signatures. Verified extractable.
-   - **docskit** (3 components): extract from `node_modules/@inkeep/docskit/dist/components/*.d.ts`. Same shape as fumadocs-ui. Fewer TSDoc comments upstream → descriptions may be empty for some props (acceptable; prop names + types + required/optional still extract correctly).
-   - **shadcn-installed** (2 components): extract from local `src/components/*.tsx` files. Standard shadcn layout, standard react-docgen-typescript path.
+   - **docskit** (3 components): extract from `node_modules/@inkeep/docskit/dist/mdx.d.ts` (aggregate re-export). Same extraction mechanics as fumadocs-ui. Fewer TSDoc comments upstream → descriptions may be empty for some props (acceptable; prop names + types + required/optional still extract correctly).
+   - **shadcn-installed** (2 components): extract from `packages/app/src/components/ui/*.tsx` files. Standard shadcn layout, standard react-docgen-typescript path. The script resolves these via relative path from `packages/core/scripts/` → `../../app/src/components/ui/`.
    
    Parser configuration:
    ```typescript
@@ -505,63 +659,79 @@ Switch the on-disk format from `jsx-component` fenced code blocks to raw JSX. Th
      },
    });
    ```
-5. Generate `.openknowledge/components.json` on every `loadComponentRegistry()` call (dev server startup). With only 15 components, cold extraction is <1s — the file doubles as (a) a cache to skip re-extraction on hot reload, (b) the agent-discoverable component manifest (see Phase 4 step 4). Invalidate on source file mtime change. **This file is committed** (see Phase 4 step 4) — the header should read `// GENERATED FROM src/editor/components/built-ins.ts + react-docgen-typescript. Do not edit by hand.` See §11 R3.
-6. Add acorn+acorn-jsx JSX parser (D7): parse JSX strings into `{ componentName, props, childrenString }`
-7. Write tests:
-   - Registry lookup smoke tests
-   - **Per-built-in extraction tests:** one test per component in D15, asserting the expected PropDef shape (component name, required props, enum values, optional props, description presence). These tests validate both (a) the extraction pipeline works on each component's specific file shape and (b) drift from upstream is caught on every CI run (auto-detects when fumadocs-ui adds a new prop, changes a type, etc.).
-   - JSX parsing via acorn
-8. **Verify:** `bun run check:fast` passes. Manual test: each of the 15 built-ins appears in the registry with correct PropDef. Inspect `.openknowledge/components.json` to verify fumadocs-ui + docskit + shadcn components all extracted successfully.
+5. Wire the dev script via `packages/core/package.json` → `"scripts": { "build-registry": "bun scripts/build-registry.ts" }`. Add a root-level convenience alias in the root `package.json` → `"scripts": { "build-registry": "bun run --cwd packages/core build-registry" }`. Run it once manually to generate `packages/core/src/generated/components.ts`. **Commit the generated file.** It has the header: `// GENERATED FROM packages/core/src/registry/built-ins.ts + react-docgen-typescript. Do not edit by hand. Run \`bun run build-registry\` to regenerate.`
+5a. **CI drift check.** Add to root CI: `bun run build-registry && git diff --exit-code packages/core/src/generated/components.ts`. This fails loudly if any PR touches `built-ins.ts` or upgrades `fumadocs-ui` / `@inkeep/docskit` without regenerating. Also catches the anti-pattern of hand-editing the generated file.
+6. Add acorn+acorn-jsx JSX parser (D7) inside `packages/core/src/extensions/jsx-component.ts`: parse JSX strings into `{ componentName, props, childrenString }`.
+7. Write tests in the appropriate package per the test location convention (`foo.test.ts` next to `foo.ts`):
+   - `packages/core/src/registry/registry.test.ts` — factory smoke tests (createJsxComponentExtensions returns two extensions, attributes union across manifest, markdown hooks preserved through factory).
+   - `packages/core/scripts/build-registry.test.ts` OR `packages/core/src/generated/components.test.ts` — **per-built-in extraction tests:** one test per component in D15, asserting the expected PropDef shape (component name, required props, enum values, optional props, description presence). These tests validate both (a) the extraction pipeline works on each component's specific file shape and (b) drift from upstream is caught on every CI run (auto-detects when fumadocs-ui adds a new prop, changes a type, etc.).
+   - `packages/core/src/extensions/jsx-component.test.ts` — JSX parsing via acorn (existing test file, extend with new cases).
+8. **Verify all 4 packages green:**
+   - `cd packages/core && bunx tsc --noEmit && bun test`
+   - `cd packages/server && bunx tsc --noEmit && bun test` (server must consume the factory cleanly)
+   - `cd packages/app && bun run check:fast` (tsc + biome)
+   - `cd packages/cli && bunx tsc --noEmit`
+   - Inspect `packages/core/src/generated/components.ts` to verify fumadocs-ui + docskit + shadcn components all extracted successfully.
 
 ### Phase 2: Typed Node Spec + Prop Panel (Layer 2)
 
-1. Evolve node attributes from `{ content }` to `{ componentName, ...propAttributes }` (D6). Single extension, formal attributes from registry.
-2. Two node types (D8): `jsxComponentEditable` (registered, non-atom for Phase 3) + `jsxComponentVoid` (unregistered, atom: true). Single parseMarkdown handler checks registry to decide type.
-3. Update `parseMarkdown()`: acorn parses JSX → extract componentName + props → set as individual attributes on correct node type.
-4. Update `renderMarkdown()`: read individual attributes → reconstruct raw JSX string.
-5. Update `parseHTML()` / `renderHTML()`: handle `data-component-name` + `data-prop-*` attributes.
-6. Create `PropPanel.tsx`: auto-generated controls from PropDef[] (popover, D14).
-7. Create `ComponentToolbar.tsx`: component name badge + gear icon to open panel.
-8. Update `JsxComponentView.tsx`: registry-driven rendering + prop panel integration.
-9. Wire prop changes to `editor.commands.updateAttributes()`.
-10. Add slash commands for component insertion from registry.
-11. Write round-trip tests: typed node → raw JSX → typed node (byte-identical from cycle 2).
-12. Write E2E tests: insert component via slash command, change prop via panel, verify markdown output, verify observer sync with structured props.
-13. **Verify:** `bun run check` green. Manual verification: open editor, insert Callout, change type via dropdown, see preview update, check source mode shows raw JSX with new prop value.
+1. Evolve node attributes from `{ content }` to `{ componentName, ...propAttributes }` (D6). The factory in `packages/core/src/registry/jsx-component-factory.ts` owns this — attributes are derived from the committed manifest via `createJsxComponentExtensions(componentManifest)`.
+2. Two node types (D8): `jsxComponentEditable` (registered, non-atom for Phase 3) + `jsxComponentVoid` (unregistered, atom: true). Factory returns both. Shared `parseMarkdown` handler checks `componentManifest` to decide which type to create.
+3. Update `parseMarkdown()` (in `packages/core/src/extensions/jsx-component.ts` or the factory output): acorn parses JSX → extract componentName + props → set as individual attributes on correct node type.
+4. Update `renderMarkdown()` (same file): read individual attributes → reconstruct raw JSX string.
+5. Update `parseHTML()` / `renderHTML()` (same file): handle `data-component-name` + `data-prop-*` attributes.
+6. Create `packages/app/src/editor/components/PropPanel.tsx`: auto-generated controls from PropDef[] (popover, D14). Imports `componentManifest` from `@inkeep/open-knowledge-core` for PropDef lookup.
+7. Create `packages/app/src/editor/components/ComponentToolbar.tsx`: component name badge + gear icon to open panel.
+8. Update `packages/app/src/editor/extensions/JsxComponentView.tsx`: registry-driven rendering + prop panel integration. Looks up the React component via `packages/app/src/editor/components/componentMap.ts`.
+9. Create `packages/app/src/editor/components/componentMap.ts` — the React component lookup (see §3.1 Layer D). Imports `fumadocs-ui`, `@inkeep/docskit`, and shadcn-installed components.
+10. Wire prop changes to `editor.commands.updateAttributes()` inside the prop panel change handlers. Every handler calls `markUserTyping()` per §3.6.
+11. Update `packages/app/src/editor/extensions/jsx-component.ts` — extend **both** core extensions (editable + void) with `.extend({ addNodeView() { ... } })`. App's `sharedExtensions` (`packages/app/src/editor/extensions/shared.ts`) swaps **both** variants in the array.
+12. Add slash commands for component insertion from the manifest (in `packages/app/src/editor/extensions/`).
+13. Write round-trip tests: typed node → raw JSX → typed node (byte-identical from cycle 2). Tests in `packages/core/src/extensions/jsx-component.test.ts` (parse + render) and `packages/app/src/editor/observer-sync.test.ts` (with live TipTap instance).
+14. Write E2E tests in `packages/app/tests/e2e/`: insert component via slash command, change prop via panel, verify markdown output, verify observer sync with structured props.
+15. **Verify all 4 packages green:** `cd packages/core && bunx tsc --noEmit && bun test` + `cd packages/server && bunx tsc --noEmit && bun test` + `cd packages/app && bun run check` + `cd packages/cli && bunx tsc --noEmit`. Manual verification: open editor, insert Callout, change type via dropdown, see preview update, check source mode shows raw JSX with new prop value.
 
 ### Phase 3: Inline Rich-Text Children (Layer 3)
 
-1. Change `jsxComponentEditable` node spec: add `content: 'block+'` (already non-atom from Phase 2).
-2. Update node view: add `<NodeViewContent />` for the editable children region.
-3. Update `parseMarkdown()` for editable type: children are flush-left → `marked.lexer(childrenString)` → `helpers.parseBlockChildren()` → pass as third argument to `helpers.createNode()` (D10).
+1. Change `jsxComponentEditable` node spec in the core factory: add `content: 'block+'` (already non-atom from Phase 2).
+2. Update app's `JsxComponentView.tsx` node view: add `<NodeViewContent />` for the editable children region.
+3. Update `parseMarkdown()` for editable type (in core's jsx-component.ts): children are flush-left → `marked.lexer(childrenString)` → `helpers.parseBlockChildren()` → pass as third argument to `helpers.createNode()` (D10).
 4. Update `renderMarkdown()` for editable type: `h.renderChildren(node.content)` → flush-left (no indentation) → wrap in JSX tags.
 5. `jsxComponentVoid` (unregistered) remains atom: true with raw content attribute — unchanged.
-6. Write tests: type inside children, verify bold/links/code work, verify CRDT sync, verify markdown round-trip with children.
-7. Write E2E tests: two tabs editing same component — one changes props (panel), other edits children (inline) — both merge correctly.
-8. **Verify:** `bun run check` green. Full sync matrix still works.
+6. Write tests in `packages/core/src/extensions/jsx-component.test.ts` (parse/serialize children) and `packages/app/src/editor/` (interactive — type inside children, verify bold/links/code work, verify CRDT sync, verify markdown round-trip with children).
+7. Write E2E tests in `packages/app/tests/e2e/`: two tabs editing same component — one changes props (panel), other edits children (inline) — both merge correctly.
+8. **Verify all 4 packages green:** `cd packages/core && bunx tsc --noEmit && bun test` + `cd packages/server && bunx tsc --noEmit && bun test` + `cd packages/app && bun run check` + `cd packages/cli && bunx tsc --noEmit`. Full sync matrix still works.
 
 ### Phase 4: Polish + Full Test Suite
 
 1. Unregistered component fallback path (gray box with syntax highlighting).
 2. Error boundaries: graceful handling of parse failures, missing components, invalid props.
 3. Keyboard navigation: Tab/Shift+Tab between prop controls, Enter to close panel, Escape to dismiss.
-4. **Wire up the committed `init_spike/.openknowledge/components.json` as the agent-discoverable manifest.** Phase 1 step 5 already generates and commits this file. Phase 4 step 4 is about **discoverability**: add the file's header comment (`"// GENERATED FROM src/editor/components/built-ins.ts + react-docgen-typescript. Do not edit by hand."`), link from `init_spike/CLAUDE.md`, and create `init_spike/AGENTS.md` with a brief description pointing at `.openknowledge/components.json` as the component registry reference. Agents (Claude Code, Cursor, Copilot) that read the repo via file tools will parse the JSON directly — unambiguous schema, queryable, forward-compatible with the MCP endpoint (Future Work). See Future Work "MCP endpoint: component registry query" for the query-time version.
-5. Full E2E test suite covering a representative selection from D15's built-in set: Callout (enum + children), Tabs/Tab (container + string title + children), Card (optional ReactNode title + href + external), Steps/Step (numbered container), Accordion (foldable title + children), Video (simple src prop). Cover all edit paths (WYSIWYG props, WYSIWYG children, source mode, agent write, disk bridge).
+4. **Wire up the committed `packages/core/src/generated/components.ts` as the agent-discoverable manifest.** Phase 1 step 5 already generates and commits this file. Phase 4 step 4 is about **discoverability**:
+   - The file's header comment already reads: `// GENERATED FROM packages/core/src/registry/built-ins.ts + react-docgen-typescript. Do not edit by hand. Run \`bun run build-registry\` to regenerate.`
+   - Add an entry to the root `CLAUDE.md` under "Package: core" → "Component registry" subsection pointing at `packages/core/src/generated/components.ts` as the canonical PropDef reference for agents.
+   - Add `bun run build-registry` to the root `CLAUDE.md` "Commands" table with a one-sentence description.
+   - Create `packages/core/AGENTS.md` with a brief description of the registry, the 21 reserved built-in names (§3.8), and the drop-in replacement for `componentManifest`. Link from root `CLAUDE.md`.
+   - Agents (Claude Code, Cursor, Copilot) that read the repo via file tools will parse the TS file directly — intellisense-friendly, strongly typed, ESM-importable, forward-compatible with the MCP endpoint (Future Work). See Future Work "MCP endpoint: component registry query" for the query-time version (serializes the same data to JSON over the wire).
+5. Full E2E test suite in `packages/app/tests/e2e/` covering a representative selection from D15's built-in set: Callout (enum + children), Tabs/Tab (container + string title + children), Card (optional ReactNode title + href + external), Steps/Step (numbered container), Accordion (foldable title + children), Video (simple src prop). Cover all edit paths (WYSIWYG props, WYSIWYG children, source mode, agent write, disk bridge).
 6. **Real-corpus secondary validation (RT07):** Open a representative agents-docs MDX page (e.g., `~/agents/agents-docs/content/agents-quickstart.mdx` or similar) in the editor. Verify: (a) the 15 built-ins render correctly as typed component nodes with prop panels, (b) custom components (OptionCard, BigVideo, SkillRule, ComparisonTable, etc.) fall back cleanly to `jsxComponentVoid` raw-string display without errors, (c) no data loss on round-trip save (collision policy from §3.8 preserves unknown attributes — see RT07 test scenario). This validates that built-ins-only scope is viable for real-world content even if full coverage requires the Future Work custom discovery path.
-7. Update test-fixture.md with all 15 built-in component types for manual verification.
-8. **Verify:** `bun run check` green. Open test-fixture.md — all 15 built-ins render correctly with prop panels + editable children. Real-corpus test (step 6) passes without errors.
+7. Update `packages/app/content/test-fixture.md` with all 15 built-in component types for manual verification.
+8. **Verify all 4 packages green:** `cd packages/core && bunx tsc --noEmit && bun test` + `cd packages/server && bunx tsc --noEmit && bun test` + `cd packages/app && bun run check` + `cd packages/cli && bunx tsc --noEmit`. CI drift check passes: `bun run build-registry && git diff --exit-code packages/core/src/generated/components.ts`. Open `packages/app/content/test-fixture.md` — all 15 built-ins render correctly with prop panels + editable children. Real-corpus test (step 6) passes without errors.
 
 ---
 
 ## 5. Tech Stack
 
-### New Dependencies
+### New Dependencies — by package
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `react-docgen-typescript` | ^2.2 | Extract prop schemas from TypeScript interfaces at project load |
-| `acorn` | ^8.x | Lightweight JavaScript parser (~58KB min) |
-| `acorn-jsx` | ^5.x | JSX plugin for acorn (~15KB min). Combined: ~23KB gzipped — 6x smaller than @babel/parser |
+| Package | Host | Purpose | Reason for host choice |
+|---------|------|---------|-----------------------|
+| `react-docgen-typescript` | `packages/core/devDependencies` | Extract prop schemas from TypeScript interfaces at dev time | Dev tool only — the script that consumes it runs via `bun run build-registry` and writes output committed to the repo. Never imported at runtime. devDeps never ship to downstream consumers (`app`, `server`, `cli`). |
+| `fumadocs-ui` | `packages/core/devDependencies` AND `packages/app/dependencies` | Core: introspection source for 10 built-ins' `.d.ts` files. App: runtime React components loaded by `componentMap.ts`. | Dev-time extraction (core) and runtime rendering (app) have different concerns but share the same package. Core's devDep lets `require.resolve('fumadocs-ui/package.json')` work from `packages/core/scripts/`. |
+| `@inkeep/docskit` | `packages/core/devDependencies` AND `packages/app/dependencies` | Same as fumadocs-ui — 3 built-ins (Video, Frame, CodeGroup). | Same reason. |
+| `acorn` | `packages/core/dependencies` | Lightweight JavaScript parser (~58KB min). Runtime — used by `JsxComponent.parseMarkdown` to parse JSX strings. | Isomorphic (browser + Node). Lives alongside the extension that consumes it. |
+| `acorn-jsx` | `packages/core/dependencies` | JSX plugin for acorn (~15KB min). Combined: ~23KB gzipped — 6x smaller than @babel/parser. | Same reason as acorn. |
+| `typescript` | `packages/core/devDependencies` | Peer dependency of `react-docgen-typescript`. | Only needed at dev time; already a repo-wide devDep in other packages. |
 
 ### Existing Dependencies (No Changes)
 
@@ -597,7 +767,7 @@ The `markdownTokenizer` API is built into `@tiptap/markdown` (v3.22+). The custo
   - **Fumadocs (canonical):** Callout, Tabs/Tab, Card/Cards, Steps/Step, Accordion/Accordions, ImageZoom, Files/File/Folder, TypeTable, Banner, InlineTOC
   - **Docskit (gap fill):** Video, Frame, CodeGroup
   - **Shadcn (gap fill):** Mermaid (MermaidCN registry), Audio (AI Elements registry)
-- `.openknowledge/` directory used for `components.json` only (committed, generated from `built-ins.ts` + react-docgen-typescript extraction — serves as both prop panel data source and agent-discoverable registry manifest; see Phase 4 step 4). No user-facing config files in scope for P0.
+- Generated component manifest at `packages/core/src/generated/components.ts` (committed, generated from `packages/core/src/registry/built-ins.ts` + react-docgen-typescript extraction via `bun run build-registry` — serves as both prop panel data source and agent-discoverable registry manifest; see Phase 4 step 4). Single TypeScript file; no `.json` twin. **Not a dotfile, not in `.open-knowledge/`** — that directory is reserved for user-facing YAML config per the CLI packaging spec (`specs/2026-04-08-cli-packaging/SPEC.md`). No user-facing config files in scope for P0.
 - Observer sync compatibility (no changes to observer layer, modulo `markUserTyping()` protocol in prop panel)
 - E2E tests for prop editing, children editing, concurrent editing, round-trip
 
@@ -630,9 +800,9 @@ Full inventory tracked in `evidence/component-inventory-and-gaps.md`.
 | **Multiple ReactNode content holes** | Card `title`/`description` as separate editable zones. ProseMirror supports via tableRole pattern. Architecture doesn't foreclose. | 2-3 days | When Card editing UX is refined |
 | **Per-block code toggle (Layer 4)** | Mini CodeMirror inside void node. Escape hatch for when prop panel isn't enough. | 1-2 days | After Layers 2+3 are stable |
 | **Split-pane live preview (file-level)** | Show WYSIWYG and Source simultaneously in a side-by-side layout. Both panes are live editors bound to the same Y.Doc. Builds developer trust in serialization (WYSIWYG→Source direction) and reduces friction for power users editing MDX directly (Source→WYSIWYG direction). Architecture already supports it — bidirectional observer sync keeps both modes in sync. Current `App.tsx:73-84` mounts `TiptapEditor` unconditionally and `SourceEditor` conditionally; split-pane requires unconditional mount + layout change + scroll sync + focus management. | ~1 day | When source mode usage grows, or when developer adoption is prioritized |
-| **Custom component discovery — dual track** (enables drop-in fumadocs support) | **Track 1 (primary): Static editor config.** Users list custom components in `.openknowledge/components.ts` as a flat static map — plain ESM re-exports of their component modules. Editor parses this file's import statements (via acorn), resolves each to a source file (`.tsx` for user components, `.d.ts` for node_modules library components), runs `react-docgen-typescript` on each (same pipeline as built-ins, now proven to work on `.d.ts`). Simple, explicit, works for any React codebase regardless of whether they use fumadocs. **Track 2 (secondary, optional): Fumadocs `mdx-components.tsx` static-import scanner.** If the project has `mdx-components.tsx` but no `.openknowledge/components.ts`, read only the top-level `import` statements and the named entries in the returned object literal — NOT the function body. Covers plain-import cases like `Accordion, Accordions` from the agents-docs reference file (~60-70% coverage). Runtime spreads (`...defaultMdxComponents`), wrapped arrow functions (`AutoTypeTable: (props) => <AutoTypeTable {...props} generator={generator} />`), and configuration values (`APIPage = createAPIPage(openapi)`) fall through to Track 1 — user must explicitly register them. **Track 3 (future stretch): Full AST walker.** A ts-morph-based walker that handles runtime spreads, wrapper resolution via symbol following, and configuration detection. Probably unnecessary if Track 1 + 2 cover the common cases. **Collision policy:** when a custom component shares a name with a built-in, Track 1/Track 2 registration wins (user's component replaces the built-in). This delivers proper drop-in semantics and fixes the collision handling from §3.8 (which uses preserve-unknown-attributes as a P0 workaround). | 3-5 days (Track 1) + 2-3 days (Track 2) + uncertain (Track 3) | When "drop the editor into an existing fumadocs docs site" becomes a value prop, or when users ask for custom components |
+| **Custom component discovery — dual track** (enables drop-in fumadocs support) | **Track 1 (primary): Static editor config.** Users list custom components in `.open-knowledge/components.ts` (user-workspace config directory per the CLI packaging spec) as a flat static map — plain ESM re-exports of their component modules. Editor parses this file's import statements (via acorn), resolves each to a source file (`.tsx` for user components, `.d.ts` for node_modules library components), runs `react-docgen-typescript` on each (same pipeline as built-ins, now proven to work on `.d.ts`). Simple, explicit, works for any React codebase regardless of whether they use fumadocs. **Track 2 (secondary, optional): Fumadocs `mdx-components.tsx` static-import scanner.** If the project has `mdx-components.tsx` but no `.open-knowledge/components.ts`, read only the top-level `import` statements and the named entries in the returned object literal — NOT the function body. Covers plain-import cases like `Accordion, Accordions` from the agents-docs reference file (~60-70% coverage). Runtime spreads (`...defaultMdxComponents`), wrapped arrow functions (`AutoTypeTable: (props) => <AutoTypeTable {...props} generator={generator} />`), and configuration values (`APIPage = createAPIPage(openapi)`) fall through to Track 1 — user must explicitly register them. **Track 3 (future stretch): Full AST walker.** A ts-morph-based walker that handles runtime spreads, wrapper resolution via symbol following, and configuration detection. Probably unnecessary if Track 1 + 2 cover the common cases. **Collision policy:** when a custom component shares a name with a built-in, Track 1/Track 2 registration wins (user's component replaces the built-in). This delivers proper drop-in semantics and fixes the collision handling from §3.8 (which uses preserve-unknown-attributes as a P0 workaround). | 3-5 days (Track 1) + 2-3 days (Track 2) + uncertain (Track 3) | When "drop the editor into an existing fumadocs docs site" becomes a value prop, or when users ask for custom components |
 | **Drop-in fumadocs project support** | Natural consequence of Track 2 above. The promise: run the editor against an existing fumadocs docs site without migration — editor reads `mdx-components.tsx`'s static imports, discovers the plain-import custom components, generates prop panels automatically. Validates with the `~/agents/agents-docs` corpus as the reference project (~910 component occurrences total; ~45% covered by built-ins + plain imports, rest require explicit Track 1 registration or fall back to raw-string void nodes). Honest framing: "partial drop-in" not "total drop-in". Wrapped/configured components (AutoTypeTable, configured APIPage, img/h1-h6 HTML overrides) require manual Track 1 entries. **Gated on:** Track 1 + Track 2 from Custom component discovery. | ~1 week total (included in the custom discovery estimate above) | Same as custom component discovery |
-| **MCP endpoint: component registry query** | MCP tool that returns the current component registry at query time (component names + PropDef + category + description) so agents can introspect during a conversation rather than relying on a file read at the start. Thin HTTP wrapper around the committed `.openknowledge/components.json` file (Phase 4 step 4). Endpoint shape: `GET /mcp/components` returns the file contents as-is; `GET /mcp/components/:name` returns a single component's metadata. Forward-compatible by construction: the file format IS the API shape. **Note:** Phase 4 of this spec already ships `.openknowledge/components.json` committed to the repo, so agents reading via file tools (Claude Code, Cursor, Copilot) already have access to the registry. The MCP endpoint is for query-time access (LLM asking "what are valid values for Callout.type?" mid-conversation without re-reading the file). | ~1-2 days | When query-time agent access is needed beyond file-read access |
+| **MCP endpoint: component registry query** | MCP tool that returns the current component registry at query time (component names + PropDef + category + description) so agents can introspect during a conversation rather than relying on a file read at the start. Thin wrapper that imports `componentManifest` from `packages/core/src/generated/components.ts` and serializes to JSON over the wire. Endpoint shape: `GET /mcp/components` returns the full manifest; `GET /mcp/components/:name` returns a single component's metadata. Lives in `packages/cli/src/mcp/` alongside the existing stdio server. Does NOT need `react-docgen-typescript` — just reads the committed generated file. **Note:** Phase 4 of this spec already ships `packages/core/src/generated/components.ts` committed to the repo, so agents reading via file tools (Claude Code, Cursor, Copilot) already have access to the registry. The MCP endpoint is for query-time access (LLM asking "what are valid values for Callout.type?" mid-conversation without re-reading the file). | ~1-2 days | When query-time agent access is needed beyond file-read access |
 | **Component library palette with drag-and-drop** | Visual sidebar listing all registered components; drag a component from the palette into the document to insert. Alternative (additive) to slash commands. Better for non-technical users who don't know the component names. Requires: sidebar UI layout, drag-source bindings, drop-target handling in ProseMirror, component preview thumbnails. | ~2-3 days | When non-developer user testing reveals slash commands as a friction point, or when "Notion-style" insertion UX is requested |
 | **Wiki-links + backlinks** | Architecture in `reports/wiki-links-backlinks-architecture/`. Needs page index, link resolver, editor integration. | 2-4 days | When navigation/sidebar work begins |
 | **Graph view** | Force-directed graph over link data. Depends on wiki-links + page index. | 3-5 days | After wiki-links ship |
@@ -721,6 +891,7 @@ Full inventory tracked in `evidence/component-inventory-and-gaps.md`.
 | OS06 | Raw JSX cycle-1 byte-identity: `serialize(parse(jsx)) === jsx` byte-for-byte for all production-shape JSX inputs (no `.trim()` normalization) | Byte-identical. Load-bearing for Observer B early-exit. |
 | OS07 | Observer B no-op early-exit fires for raw JSX: **locally** write raw JSX to Y.Text (e.g., via source-mode CodeMirror typing, NOT via a remote transaction), wait for Observer B, locally write the same raw JSX again — assert no second `updateYFragment` call. (Note: after commits `9f215ef`/`99ea308`, Observer B skips all remote transactions, so this test must exercise the LOCAL path explicitly.) | Early-exit fires; no tree mutation on second local write |
 | OS08 | Observer A `applyUserDelta` with typed components: seed XmlFragment with two `<Callout>` blocks with identical `type="warning"` attribute, change one prop, verify only the changed block is mutated in Y.Text | Only the intended block changes; line-content matching does not mis-target the other identical block |
+| OS09 | **Schema-parity drift test (NEW — Phase 0 Step 5c):** Import both `sharedExtensions` from `@inkeep/open-knowledge-core` and from `packages/app/src/editor/extensions/shared.ts`. Run `getSchema()` on each. Assert structural equality of `Schema.spec.nodes` and `Schema.spec.marks`. Guard for the invariant in §3.3 — catches any `.extend({ addAttributes })` drift introduced in app. | Byte-identical schema specs. Test fails loudly if anyone adds schema-level fields in app's `.extend()`. |
 
 ### Concurrent Editing (P1)
 
@@ -777,6 +948,7 @@ Layer 2 (typed props + prop panels) and Layer 3 (inline rich-text children) ship
 | D14 | Prop panel UX: popover | Click component toolbar → floating panel. Every CMS uses a separate surface for props; popover is lightest-touch for a writing tool. | Medium | See `evidence/cms-prior-art-synthesis.md` |
 | D15 | Built-in component set (3-layer sourcing) | **Fumadocs (canonical, 10 families):** Callout, Tabs/Tab, Card/Cards, Steps/Step, Accordion/Accordions, ImageZoom, Files/File/Folder, TypeTable, Banner, InlineTOC. **Docskit (gap fill, 3):** Video, Frame, CodeGroup — only where fumadocs has no equivalent. **Shadcn (gap fill, 2):** Mermaid (MermaidCN), Audio (AI Elements). Total: 15 component families hardcoded in editor source. No divergent implementations — fumadocs is canonical for any component it ships. Custom component discovery is Future Work (§6 Future Work, Explored tier). | High | See `evidence/component-inventory-and-gaps.md` |
 | D16 | Layer 2+3 ship together, no fallback | All technical risks mitigated. Both layers are required — the component system is not a product without inline children editing. No fallback to Layer 2 only. | High | All evidence files; user decision |
+| D17 | Registry architecture in the monorepo (post-PR #10) | **3-way split across packages.** Layer A (types + hand-maintained `built-ins.ts` + factory) lives in `packages/core/src/registry/`. Layer B (generated cache) at `packages/core/src/generated/components.ts` — single TypeScript file, no JSON twin. Layer C (React component map) at `packages/app/src/editor/components/componentMap.ts` — browser-only, imports fumadocs-ui / docskit / shadcn. Dev-time introspection at `packages/core/scripts/build-registry.ts` — run via `bun run build-registry` (root alias); `react-docgen-typescript` lives in `packages/core/devDependencies` and never ships to end users. **Parent-chain invariant documented** (§3.3): schema changes in core only; app `.extend()` for view layer only. Drift-detection test (OS09) enforces mechanically. `.openknowledge/` directory rejected — `packages/core/src/generated/` is the committed location; `.open-knowledge/` is reserved for user YAML config per CLI packaging spec. | High | `meta/audit-monorepo-restructure.md`; session 6 decision brief; source read of `@tiptap/core/src/helpers/getExtensionField.ts` (parent-chain walk) |
 
 ---
 
@@ -790,7 +962,7 @@ Layer 2 (typed props + prop panels) and Layer 3 (inline rich-text children) ship
 | A4 | Attribute-level LWW in y-prosemirror applies to dynamically-added attributes (not just schema-declared) | **CONFIRMED** — y-prosemirror's `deltaToPSteps()` calls `tr.setNodeAttribute(pos, key, value)` per attribute independently. Each attribute is a separate CRDT entry. See `evidence/tiptap-dynamic-attributes.md` | Phase 1 concurrent editing test | Validated |
 | A5 | mdManager.serialize() can scope to a ProseMirror fragment (children) rather than a full document | **CONFIRMED** via D10. `h.renderChildren()` works for serialization. Parsing uses `marked.lexer()` + `helpers.parseBlockChildren()` (not MarkdownManager.parse()). See `evidence/children-parsing-strategy.md`, `evidence/markdown-manager-fragment-serialization.md` | Phase 3 serialization test | Validated |
 | A6 | The presence/awareness/per-origin-undo system from PR #7 (commit `8e3845d`) coexists with typed component nodes without modification to the awareness or undo layers | **UNVERIFIED** — needs Phase 2 manual test. The new server-side UndoManager tracks only `'agent-write'` origin on Y.Text; prop panel `updateAttributes` produces XmlFragment transactions that don't carry that origin, so the server-side UndoManager correctly ignores them. Browser-side y-prosemirror UndoManager handles per-user WYSIWYG undo. **Verification:** Phase 2 manual test — multi-tab WYSIWYG edit a typed component with cursors visible in both tabs; verify per-user undo works for prop edits and children edits. | Phase 2 manual test | Pending |
-| A7 | `applyUserDelta` (observers.ts:125-174) correctly handles typed-component diffs when the same JSX line appears multiple times in the document | **UNVERIFIED** — the line-content matching uses `indexOf` which could mis-target duplicate lines (PM-H3). Scope narrowed post commits `9f215ef` + `99ea308`: the delta path mostly runs on the clean `applyIncrementalDiff` branch now because agent writes sync both trees in one server transaction, so the "Y.Text has unsynced content" branch is rarely exercised. **Verification:** OS08 test still valid — two `<Callout type="warning">` blocks exist, user changes one prop, assert only that block is mutated (exercises the local Observer A path under concurrent source-mode edits). | Phase 0 test OS08 | Pending |
+| A7 | `applyUserDelta` (`packages/app/src/editor/observers.ts:125-174`) correctly handles typed-component diffs when the same JSX line appears multiple times in the document | **UNVERIFIED** — the line-content matching uses `indexOf` which could mis-target duplicate lines (PM-H3). Scope narrowed post commits `9f215ef` + `99ea308`: the delta path mostly runs on the clean `applyIncrementalDiff` branch now because agent writes sync both trees in one server transaction, so the "Y.Text has unsynced content" branch is rarely exercised. **Verification:** OS08 test still valid — two `<Callout type="warning">` blocks exist, user changes one prop, assert only that block is mutated (exercises the local Observer A path under concurrent source-mode edits). | Phase 0 test OS08 | Pending |
 | A8 | Raw JSX serialization is cycle-1 byte-identical (`serialize(parse(jsx)) === jsx` without `.trim()`) | **UNVERIFIED** — the prototype tests use `.trim()` to pass (PM-H2). Load-bearing for Observer B early-exit. **Verification:** Phase 0 test OS06 — explicit cycle-1 byte-identity assertion without trim. If violated, either fix renderMarkdown to produce byte-identical output OR normalize both sides of the comparison in Observer B (observer-layer change). | Phase 0 test OS06 | Pending |
 
 ---
@@ -803,16 +975,16 @@ Layer 2 (typed props + prop panels) and Layer 3 (inline rich-text children) ship
 | R2 | Observer sync produces shimmer with structured props | Low | Medium | Same dampening mechanisms as PR #6. Props change less frequently than text. |
 | R3 | react-docgen-typescript fails on complex TypeScript types (generics, conditional types) or on a specific `.d.ts` shape | Low | Low | propFilter hides what can't be parsed. Manual override available. `.d.ts` extraction verified on fumadocs-ui callout and docskit types (see `evidence/react-docgen-typescript-dts-extraction.md`). Phase 1 per-built-in extraction tests (step 7) catch any component that extraction misses. |
 | R13 | **Silent namespace collision:** user content with a JSX tag name matching a built-in (e.g., custom `<Card>` with different props) would render with the wrong component and could lose unknown attributes on round-trip | Medium | High | **Preserve-and-render policy (§3.8):** unknown attributes are stored on the node even when they aren't in the built-in's PropDef. Round-trip is byte-identical. Rendered node passes only PropDef-declared props to the built-in. Dev warning logged. Built-in names documented as reserved in `AGENTS.md` / `CLAUDE.md`. Test scenario RT08 verifies. Future Work: custom component discovery replaces this with proper override semantics. |
-| R14 | **Agent writes + concurrent local prop edits — Yjs merge edge case.** Server-side `syncTextToFragment()` (`hocuspocus-plugin.ts:148`) uses `updateYFragment(doc, xmlFragment, pmNode, meta)` which is a destructive tree replacement. When a client has a concurrent in-flight local prop edit (e.g., user just clicked a dropdown and Observer A is still debouncing), the CRDT merge between the server's tree replacement and the client's local mutation may drop the prop edit depending on how `updateYFragment` emits edit operations. | Low | Medium | This is a Yjs-level concern at the `@tiptap/y-tiptap` layer, not a spec-introduced issue. P0 accepts the edge case because: (a) the window is narrow (tens of ms between click and Observer A flush), (b) `updateYFragment` attempts to preserve structural identity when possible, (c) Yjs's Y.XmlFragment CRDT merges attribute updates independently when node identity matches. Mitigation if observed: make the prop panel call `editor.commands.updateAttributes` synchronously and flush Observer A before the next server write (possible via a short `await new Promise(r => setTimeout(r, DEBOUNCE_MS))`). Future Work: custom component discovery may need a more surgical server write path that doesn't use full `updateYFragment`. |
+| R14 | **Agent writes + concurrent local prop edits — Yjs merge edge case.** Server-side `syncTextToFragment()` (now at `packages/server/src/agent-sessions.ts:39`, called from `packages/server/src/api-extension.ts:79,160`, exported as public API of `@inkeep/open-knowledge-server`) uses `updateYFragment(doc, xmlFragment, pmNode, meta)` which is a destructive tree replacement. When a client has a concurrent in-flight local prop edit (e.g., user just clicked a dropdown and Observer A is still debouncing), the CRDT merge between the server's tree replacement and the client's local mutation may drop the prop edit depending on how `updateYFragment` emits edit operations. | Low | Medium | This is a Yjs-level concern at the `@tiptap/y-tiptap` layer, not a spec-introduced issue. P0 accepts the edge case because: (a) the window is narrow (tens of ms between click and Observer A flush), (b) `updateYFragment` attempts to preserve structural identity when possible, (c) Yjs's Y.XmlFragment CRDT merges attribute updates independently when node identity matches. Mitigation if observed: make the prop panel call `editor.commands.updateAttributes` synchronously and flush Observer A before the next server write (possible via a short `await new Promise(r => setTimeout(r, DEBOUNCE_MS))`). Future Work: custom component discovery may need a more surgical server write path that doesn't use full `updateYFragment`. |
 | R4 | Children markdown serialization loses formatting within JSX context | Low | Medium | Use `h.renderChildren()` (proven via blockquote pattern). Children serialized flush-left (zero indent) — eliminates indentation concerns entirely. No dedentation needed during parse. |
 | R5 | ~~Bundle size increase from @babel/parser~~ | ~~Low~~ | ~~Low~~ | **MITIGATED** — switched to acorn+acorn-jsx (23KB vs 148KB). |
 | R7 | markdownTokenizer regex edge cases (nested same-name, expression attrs with >) | Low | Medium | Version B tokenizer handles both via tag-counting + brace-depth tracking (~80 lines). Agents-docs has zero occurrences of either pattern, but they're latent bugs. Mitigation: comprehensive test suite (24 tests proven). |
 | R8 | ~~Indentation normalization breaks markdown semantics in children~~ | ~~Medium~~ | ~~Medium~~ | **MITIGATED** — children serialized flush-left (zero indent). No indentation stacking, no code block triggering, no dedentation function needed. |
 | R6 | Concurrent editing of structured props reveals edge cases in y-prosemirror attribute LWW | Medium | Medium | Thorough E2E concurrent editing tests. Fallback: coarsen to per-node LWW (Layer 1 behavior). |
 | R9 | Prop panel mutations bypass typing-defer protection — local source-mode edits can overwrite user prop changes during the 50ms Observer A debounce window (single-user two-pane scenario) | Low | Medium | Prop panel calls `markUserTyping()` on every change handler (§3.6). Test scenario CE05 verifies. Root cause: Radix popovers portal to `document.body`, events don't bubble to `editor.view.dom` where `markUserTyping` is bound. **Scope narrowed post commits `9f215ef` + `99ea308`:** remote agent writes no longer trigger Observer B on clients (server-side `syncTextToFragment` writes both trees in one transaction), so the original "concurrent agent write" race is fixed at the server layer. The remaining race is single-user two-pane editing (WYSIWYG + source simultaneously). |
-| R10 | Raw JSX serialization not byte-stable on cycle 1 → Observer B early-exit (`observers.ts:288-301`) misses → tree replacement on every observation → cursor disruption inside NodeViewContent | High | High | Cycle-1 byte-identity test in Phase 0 (OS06). If violated, fix renderMarkdown to produce byte-identical output OR normalize trailing whitespace in renderMarkdown. Load-bearing: the prototype tests use `.trim()` to pass, which suggests cycle 1 currently does NOT produce byte-identical output. Phase 0 MUST resolve this before proceeding. **Scope (post commits `9f215ef` + `99ea308`):** Observer B only runs for LOCAL Y.Text changes now, so the cursor-disruption exposure is narrower — primarily source-mode editing and initial document load. Still load-bearing for those paths. |
+| R10 | Raw JSX serialization not byte-stable on cycle 1 → Observer B early-exit (`packages/app/src/editor/observers.ts:287-315`) misses → tree replacement on every observation → cursor disruption inside NodeViewContent | High | High | Cycle-1 byte-identity test in Phase 0 (OS06). If violated, fix renderMarkdown to produce byte-identical output OR normalize trailing whitespace in renderMarkdown. Load-bearing: the prototype tests use `.trim()` to pass, which suggests cycle 1 currently does NOT produce byte-identical output. Phase 0 MUST resolve this before proceeding. **Scope (post commits `9f215ef` + `99ea308`):** Observer B only runs for LOCAL Y.Text changes now, so the cursor-disruption exposure is narrower — primarily source-mode editing and initial document load. Still load-bearing for those paths. |
 | R11 | `applyUserDelta` line-content matching can mis-target when the same JSX line appears multiple times in the document (e.g., two `<Callout type="warning">` opening tags with identical attributes, or a stray `</Callout>` close tag) | Low | Medium | Serialize each component on its own line block with deterministic context lines that disambiguate. Add regression test OS08 for repeated identical JSX nodes. If mis-targeting occurs in practice, add a context-line comparison to `applyUserDelta` (observer-layer change). **Scope narrowed post commits `9f215ef` + `99ea308`:** the "Y.Text has unsynced agent content while XmlFragment has user changes" scenario is now very rare because agent writes sync both trees in one server transaction. The delta path mostly runs on the "clean" branch (`applyIncrementalDiff`) now. |
-| R12 | Schema construction order: `editorSchema` (TiptapEditor.tsx:53) and server-side `MarkdownManager` (persistence.ts:28) are currently created at module load, BEFORE the component registry exists. Phase 1 must refactor to defer both. | Medium | Medium | Move schema construction into a registry-aware initializer that runs after `loadComponentRegistry()` resolves. Both browser and server need this. Registry loads synchronously at server startup; browser loads via JSON manifest bundled at build time. |
+| R12 | Schema construction order: `editorSchema` / `new MarkdownManager(...)` / `getSchema(sharedExtensions)` runs at module load at **9 sites across 4 packages** (see Phase 1 Step 0 table), BEFORE the factory-produced registry-aware extension exists. Phase 1 must refactor all 9 sites. Silent-drift risk if any site is missed — server persistence and client editor would use different schemas, round-trip would lose attributes. | Medium | Medium | Centralize the registry-aware factory call inside `packages/core/src/extensions/shared.ts` so every consumer automatically gets the registry-aware extensions by importing `sharedExtensions`. The committed `packages/core/src/generated/components.ts` is a synchronous ESM import — no async boot needed on browser or server. The schema-parity drift test in Phase 0 Step 5c catches any site that diverges. |
 
 ---
 
@@ -820,9 +992,9 @@ Layer 2 (typed props + prop panels) and Layer 3 (inline rich-text children) ship
 
 | # | Question | Type | Priority | Status |
 |---|----------|------|----------|--------|
-| OQ1 | Static vs dynamic component registry? | Architecture | Medium | **Resolved** → Static: registry loaded at startup from `src/editor/components/built-ins.ts` manifest. TipTap schema built after registry loads (see Phase 1 step 0, R12). Restart required to pick up new built-ins. Custom component hot-reload is Future Work. |
-| OQ2 | Where do component files live? | Convention | Medium | **Resolved** → Built-ins live in `src/editor/components/built-ins.ts` (editor source code, not user-facing). Each manifest entry names a specific `.d.ts` (fumadocs/docskit) or `.tsx` (shadcn-installed) file to extract props from. Custom component discovery is Future Work (§6 Future Work, Explored tier) — see dual-track proposal. |
-| OQ3 | How to handle react-docgen-typescript startup time? | Performance | Medium | **Resolved** → Non-issue for 15 built-ins (~<1s cold extraction). Cache to `.openknowledge/components.json` is polish, not required. Cache file doubles as the agent-discoverable manifest (Phase 4 step 4). |
+| OQ1 | Static vs dynamic component registry? | Architecture | Medium | **Resolved** → Static: registry loaded at module startup from the committed `packages/core/src/generated/components.ts` (ESM import). No async boot. Schema construction is registry-aware via the factory in `packages/core/src/extensions/shared.ts` (see Phase 1 step 0, R12). Restart required to pick up new built-ins. Custom component hot-reload is Future Work. |
+| OQ2 | Where do component files live? | Convention | Medium | **Resolved** → Built-ins list lives in `packages/core/src/registry/built-ins.ts` (hand-maintained, not user-facing). Each manifest entry names a specific `.d.ts` (fumadocs/docskit) or `.tsx` (shadcn-installed) file to extract props from. The React component lookup (`componentMap.ts`) lives in `packages/app/src/editor/components/` — browser-only. Custom component discovery is Future Work (§6 Future Work, Explored tier) — see dual-track proposal. |
+| OQ3 | How to handle react-docgen-typescript startup time? | Performance | Medium | **Resolved** → Extraction runs at dev time via `bun run build-registry`, NOT at app startup. Committed `packages/core/src/generated/components.ts` is imported synchronously as ESM — zero runtime cost. Contributors re-run the script when they change `built-ins.ts` or upgrade `fumadocs-ui`/`docskit`. CI drift check catches missed regenerations. |
 | OQ4 | How to handle dynamic attributes in TipTap? | Architecture | High | **Resolved** → D6: Single extension, formal attributes from registry at init. See `evidence/tiptap-dynamic-attributes.md` |
 | OQ5 | Multiple ReactNode content holes? | Architecture | Medium | **Resolved** → children-only for P0. Other ReactNode props (Card title, description) → text input in panel. Architecture doesn't foreclose multi-slot later. |
 | OQ6 | Layer 1 → Layer 2+3 migration path? | Migration | High | **Resolved** → D13 (revised): Greenfield spike — no legacy content to migrate. Raw JSX only. Single extension with `markdownTokenName: 'jsxBlock'` + custom tokenizer. |
@@ -844,8 +1016,10 @@ Layer 2 (typed props + prop panels) and Layer 3 (inline rich-text children) ship
 **EXCLUDE:** MCP tool changes, persistence changes, git workflow changes, navigation/sidebar. The server-side persistence layer should require ZERO changes. The observer layer requires no *internal* modifications, **but Phase 2's prop panel implementation MUST participate in the typing-defer protocol introduced by PR #7** — every prop mutation handler must call `markUserTyping()` (exported from `observers.ts`) so Observer B defers its tree replacement during prop edits, the same way it does for keystroke edits. See §3.6 and R9.
 
 **STOP_IF:**
-- Observer sync tests from PR #6 start failing *after Phase 0 test fixture migration* → serialization format has changed unexpectedly → debug before proceeding (Phase 0 itself updates test fixtures from fenced to raw JSX — those updates are expected, not regressions)
-- `bun run check` fails after any phase → fix before moving to next phase
+- Observer sync tests from PR #6 start failing *after Phase 0 test fixture migration* → serialization format has changed unexpectedly → debug before proceeding (Phase 0 itself updates `packages/app/content/test-fixture.md` from fenced to raw JSX — those updates are expected, not regressions)
+- Per-package quality gates fail after any phase — `cd packages/core && bunx tsc --noEmit && bun test`, `cd packages/server && bunx tsc --noEmit && bun test`, `cd packages/app && bun run check`, `cd packages/cli && bunx tsc --noEmit` — fix before moving to next phase. Note: root `bun run check` only covers `docs` typecheck + `bun run lint`; it is NOT a full monorepo gate. Per-package gates are the real stop condition.
+- **Schema-parity drift test (OS09) fails** → someone added schema fields in `packages/app/src/editor/extensions/` via `.extend({ addAttributes })`. This violates the §3.3 invariant and causes silent serialization drift between server persistence and client editor. Fix by moving the attribute definition into `packages/core/` before proceeding.
+- **CI drift check fails** (`bun run build-registry && git diff --exit-code packages/core/src/generated/components.ts`) → someone touched `built-ins.ts` or upgraded `fumadocs-ui` / `@inkeep/docskit` without running `bun run build-registry`. Run it locally, commit the regenerated file, then retry.
 - TipTap NodeViewContent doesn't support editable regions inside custom node views → investigate alternative approaches before proceeding with Phase 3
 
 **ASK_FIRST:**
