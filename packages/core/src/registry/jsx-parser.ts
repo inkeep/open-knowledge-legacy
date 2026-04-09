@@ -31,7 +31,9 @@ export function parseJsx(source: string): ParsedJsx | null {
       ecmaVersion: 2020,
       sourceType: 'module',
     });
-  } catch {
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    console.error('[parseJsx] Unexpected parser error:', err);
     return null;
   }
 

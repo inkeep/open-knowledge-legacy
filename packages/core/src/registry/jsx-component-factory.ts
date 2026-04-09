@@ -303,7 +303,10 @@ export function createJsxComponentExtensions(
             allProps[key] = value;
           }
         } catch {
-          // Ignore malformed _unknownAttrs
+          console.warn(
+            `[JsxComponent] Malformed _unknownAttrs on <${componentName}>, attributes dropped:`,
+            unknownRaw,
+          );
         }
       }
 

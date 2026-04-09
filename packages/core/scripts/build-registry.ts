@@ -69,6 +69,13 @@ for (const entry of BUILT_INS) {
   // Find the extracted doc matching this component name
   const doc = allDocs.find((d) => d.displayName === entry.name);
 
+  if (!doc) {
+    console.warn(
+      `WARNING: No react-docgen-typescript output for "${entry.name}" from ${entry.sourceFile}. ` +
+        `Component will have zero props in manifest.`,
+    );
+  }
+
   // Build PropDef array from extracted props
   const props: PropDef[] = [];
   if (doc) {

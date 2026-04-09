@@ -11,12 +11,54 @@
 import { componentManifest } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { useCallback, useMemo, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useCallback, useMemo, useState } from 'react';
 import { markUserTyping } from '@/editor/observers';
 import { ComponentToolbar } from '../components/ComponentToolbar';
 import { componentMap } from '../components/componentMap';
 import { PropPanel } from '../components/PropPanel';
 import { UnregisteredFallback } from '../components/UnregisteredFallback';
+
+/** Error boundary that isolates third-party component render failures per-node. */
+class ComponentErrorBoundary extends Component<
+  { componentName: string; children: ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(
+      `[JsxComponentView] <${this.props.componentName}> crashed during render:`,
+      error,
+      info.componentStack,
+    );
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div
+          style={{
+            padding: '12px 16px',
+            borderRadius: '6px',
+            backgroundColor: '#fef2f2',
+            border: '1px solid #fecaca',
+            fontFamily: 'monospace',
+            fontSize: '13px',
+            color: '#991b1b',
+          }}
+        >
+          <strong>&lt;{this.props.componentName}&gt;</strong> failed to render:{' '}
+          {this.state.error.message}
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export function JsxComponentView({ node, updateAttributes }: NodeViewProps) {
   const componentName = (node.attrs.componentName as string) || '';
@@ -86,24 +128,26 @@ export function JsxComponentView({ node, updateAttributes }: NodeViewProps) {
           </div>
         </PropPanel>
       </div>
-      {Component ? (
-        <Component {...primitiveProps}>
-          <NodeViewContent className="component-children" />
-        </Component>
-      ) : (
-        <div
-          style={{
-            padding: '12px 16px',
-            borderRadius: '6px',
-            backgroundColor: '#f0f0f0',
-            fontFamily: 'monospace',
-            fontSize: '13px',
-          }}
-        >
-          <strong>&lt;{componentName}&gt;</strong> (no React component found)
-          <NodeViewContent className="component-children" />
-        </div>
-      )}
+      <ComponentErrorBoundary componentName={componentName}>
+        {Component ? (
+          <Component {...primitiveProps}>
+            <NodeViewContent className="component-children" />
+          </Component>
+        ) : (
+          <div
+            style={{
+              padding: '12px 16px',
+              borderRadius: '6px',
+              backgroundColor: '#f0f0f0',
+              fontFamily: 'monospace',
+              fontSize: '13px',
+            }}
+          >
+            <strong>&lt;{componentName}&gt;</strong> (no React component found)
+            <NodeViewContent className="component-children" />
+          </div>
+        )}
+      </ComponentErrorBoundary>
     </NodeViewWrapper>
   );
 }

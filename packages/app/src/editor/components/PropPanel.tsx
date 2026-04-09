@@ -265,14 +265,19 @@ function NumberControl({
   onChange,
 }: {
   value: number | undefined;
-  onChange: (v: number) => void;
+  onChange: (v: number | undefined) => void;
 }) {
   return (
     <input
       type="number"
       value={value ?? ''}
       onChange={(e) => {
-        const n = Number(e.target.value);
+        const raw = e.target.value;
+        if (raw === '') {
+          onChange(undefined);
+          return;
+        }
+        const n = Number(raw);
         if (!Number.isNaN(n)) onChange(n);
       }}
       onKeyDown={() => markUserTyping()}

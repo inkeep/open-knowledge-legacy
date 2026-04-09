@@ -196,17 +196,18 @@ describe('Content fidelity through observer cycle', () => {
     cleanup();
   });
 
-  test('T61: void node (jsx-component) survives observer cycle', async () => {
+  test('T61: registered jsxComponentEditable survives observer cycle', async () => {
     const { doc, fragment, ytext, cleanup } = createObservedDoc();
 
-    const jsxMd = '```jsx-component\n<Callout type="warning">\n  Test content\n</Callout>\n```\n';
+    // Raw JSX format (new schema — no fenced code blocks)
+    const jsxMd = '<Callout type="warning">\nTest content\n</Callout>\n';
     applyMarkdown(doc, fragment, `# Title\n\n${jsxMd}`);
     await wait();
 
-    // Y.Text should contain the jsx-component fence
+    // Y.Text should contain raw JSX (no fenced code block)
     const text = ytext.toString();
-    expect(text).toContain('jsx-component');
     expect(text).toContain('<Callout type="warning">');
+    expect(text).not.toContain('```');
 
     // Round-trip: modify text, Observer B → XmlFragment
     doc.transact(() => {
@@ -219,8 +220,34 @@ describe('Content fidelity through observer cycle', () => {
 
     const md = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
     expect(md).toContain('# New Title');
-    expect(md).toContain('jsx-component');
     expect(md).toContain('<Callout type="warning">');
+    expect(md).not.toContain('```');
+    cleanup();
+  });
+
+  test('T61b: unregistered jsxComponentVoid survives observer cycle', async () => {
+    const { doc, fragment, ytext, cleanup } = createObservedDoc();
+
+    // Unregistered component falls back to jsxComponentVoid
+    const jsxMd = '<CustomThingy foo="bar">\nSome body\n</CustomThingy>\n';
+    applyMarkdown(doc, fragment, `# Title\n\n${jsxMd}`);
+    await wait();
+
+    const text = ytext.toString();
+    expect(text).toContain('<CustomThingy foo="bar">');
+
+    // Round-trip: modify text, Observer B → XmlFragment
+    doc.transact(() => {
+      const t = ytext.toString();
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, t.replace('# Title', '# New Title'));
+    }, 'user-edit');
+
+    await wait();
+
+    const md = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    expect(md).toContain('# New Title');
+    expect(md).toContain('<CustomThingy foo="bar">');
     cleanup();
   });
 
