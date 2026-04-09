@@ -42,11 +42,10 @@ export class PinoLogger {
   private transportConfigs: TransportSingleOptions[] = [];
   private pinoInstance: PinoLoggerInstance;
   private options: LoggerOptions;
+  private name: string;
 
-  constructor(
-    private name: string,
-    config: PinoLoggerConfig = {},
-  ) {
+  constructor(name: string, config: PinoLoggerConfig = {}) {
+    this.name = name;
     this.options = {
       name: this.name,
       level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'test' ? 'silent' : 'info'),
