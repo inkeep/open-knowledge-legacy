@@ -120,12 +120,8 @@ export function isBatchInProgress(): boolean {
 
 export interface PersistenceHandle {
   extension: Extension;
-  flushPendingGitCommit: () => void;
-  awaitPendingCommit: () => Promise<void>;
-  /** Per-instance reconciled base — last known-good markdown for each document. */
-  reconciledBase: Map<string, string>;
-  setBatchInProgress: (value: boolean) => void;
-  isBatchInProgress: () => boolean;
+  flushPendingGitCommit: () => Promise<void>;
+  waitForPendingCommits: () => Promise<void>;
 }
 
 export function createPersistenceExtension(options?: PersistenceOptions): PersistenceHandle {
@@ -276,19 +272,22 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     }, commitDebounceMs);
   }
 
-  /** Flush pending git commit immediately. Sets commitInFlight so concurrency guard works. */
-  function flushPendingGitCommit(): void {
+  /** Flush pending L1 writes by forcing the Hocuspocus store cycle. */
+  async function flushPendingGitCommit(): Promise<void> {
     if (gitCommitTimer) {
       clearTimeout(gitCommitTimer);
       gitCommitTimer = null;
-      commitInFlight = commitToWipRef()
-        .catch((e) => {
-          console.error('[persistence] Flush commit failed:', e);
-        })
-        .finally(() => {
+      if (!commitInFlight) {
+        commitInFlight = commitToWipRef().finally(() => {
           commitInFlight = null;
+          if (pendingAfterCommit) {
+            pendingAfterCommit = false;
+            scheduleGitCommit();
+          }
         });
+      }
     }
+    if (commitInFlight) await commitInFlight;
   }
 
   /** Await any in-flight git commit (for graceful shutdown). */
@@ -367,12 +366,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     },
   };
 
-  return {
-    extension,
-    flushPendingGitCommit,
-    awaitPendingCommit,
-    reconciledBase,
-    setBatchInProgress,
-    isBatchInProgress,
-  };
+  async function waitForPendingCommits(): Promise<void> {
+    if (commitInFlight) await commitInFlight;
+  }
+
+  return { extension, flushPendingGitCommit, waitForPendingCommits };
 }

@@ -462,9 +462,12 @@ export async function saveVersion(
         .raw(...commitArgs)
     ).trim();
 
-    // Advance HEAD with CAS guard to detect concurrent commits
-    const expectedOld = parentSha ?? '0000000000000000000000000000000000000000';
-    await projectGit.raw('update-ref', 'HEAD', projectCommitSha, expectedOld);
+    // Advance HEAD atomically — fail if HEAD was concurrently modified
+    if (parentSha) {
+      await projectGit.raw('update-ref', 'HEAD', projectCommitSha, parentSha);
+    } else {
+      await projectGit.raw('update-ref', 'HEAD', projectCommitSha);
+    }
 
     // ── Step 2: Checkpoint ref in shadow with full tree snapshot ──
 

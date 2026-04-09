@@ -403,6 +403,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
     await sessionManager.closeAll();
     hocuspocus.flushPendingStores();
+    await persistence.waitForPendingCommits();
     hocuspocus.closeConnections();
     // Release shadow-root writer lock
     if (shadowRef.current) {
@@ -422,18 +423,23 @@ export function createServer(options: ServerOptions): ServerInstance {
       }
     }
 
-    // Verify shadow repo integrity — reinit if corrupted
-    if (shadowRef.current) {
+    // Verify shadow repo integrity — reinit only on structural corruption, not transient errors
+    if (resolvedShadow) {
       try {
         const sg = shadowGit(shadowRef.current);
         await sg.raw('rev-parse', '--git-dir');
-      } catch {
-        console.warn('[server] Shadow repo appears corrupted — reinitializing');
-        try {
-          shadowRef.current = await initShadowRepo(projectDir);
-        } catch (e) {
-          console.error('[server] Shadow repo reinit failed:', e);
-          shadowRef.current = undefined;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('not a git repository') || msg.includes('invalid object')) {
+          console.warn('[server] Shadow repo appears corrupted — reinitializing');
+          try {
+            resolvedShadow = await initShadowRepo(projectDir);
+          } catch (e2) {
+            console.error('[server] Shadow repo reinit failed:', e2);
+            resolvedShadow = undefined;
+          }
+        } else {
+          console.error('[server] Shadow repo check failed (transient?):', e);
         }
       }
     }
@@ -454,7 +460,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           console.log(`[batch] begin trigger=${trigger}`);
           incrementBatch();
           hocuspocus.flushPendingStores();
-          persistence.flushPendingGitCommit();
+          await persistence.flushPendingGitCommit();
 
           // Park current branch's Y.Doc state to shadow refs
           if (shadowRef.current) {

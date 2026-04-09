@@ -152,6 +152,8 @@ export async function startHeadWatcher(
   let lastKnownBranch: string | null = readBranchFromHead(gitDir);
 
   async function emitBatchEnd(timeout: boolean): Promise<void> {
+    // Wait for onBatchBegin to finish before proceeding
+    if (beginInFlight) await beginInFlight;
     if (!inBatch) return;
 
     if (quietTimer) {
@@ -208,17 +210,24 @@ export async function startHeadWatcher(
     }, QUIET_WINDOW_MS);
   }
 
+  let beginInFlight: Promise<void> | null = null;
+
   async function handleGitEvent(trigger: string): Promise<void> {
     if (!inBatch) {
       inBatch = true;
       oldHead = readHeadSha(gitDir);
-      try {
-        await onBatchBegin({ trigger });
-      } catch (e) {
-        console.error('[head-watcher] onBatchBegin callback failed:', e);
-      }
+      const beginPromise = (async () => {
+        try {
+          await onBatchBegin({ trigger });
+        } catch (e) {
+          console.error('[head-watcher] onBatchBegin callback failed:', e);
+        }
+      })();
+      beginInFlight = beginPromise;
+      await beginPromise;
+      beginInFlight = null;
 
-      // Start timeout cap
+      // Start timeout cap only after begin completes
       timeoutTimer = setTimeout(() => {
         timeoutTimer = null;
         void emitBatchEnd(true);
