@@ -145,7 +145,7 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
   // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const flashStateRef = useRef<AgentFlashState>(INITIAL_FLASH_STATE);
+  const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const slashMenuRef = useRef<SlashMenuState | null>(null);
   const provider = getProvider();
   const identity = useIdentity();
