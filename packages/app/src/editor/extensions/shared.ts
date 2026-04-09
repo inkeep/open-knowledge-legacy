@@ -1,11 +1,14 @@
 /**
  * App-specific shared extensions — uses core's sharedExtensions but swaps
- * JsxComponent for the React-enabled version with NodeView.
+ * BOTH jsxComponentEditable and jsxComponentVoid with React-enabled versions
+ * that have NodeView renderers.
  */
 import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
-import { JsxComponent } from './jsx-component';
+import { JsxComponentEditable, JsxComponentVoid } from './jsx-component';
 
-// Replace core's JsxComponent (no NodeView) with app's (has ReactNodeViewRenderer)
-export const sharedExtensions = coreExtensions.map((ext) =>
-  ext.name === 'jsxComponent' ? JsxComponent : ext,
-);
+// Replace core's jsxComponent extensions (no NodeView) with app's (has ReactNodeViewRenderer)
+export const sharedExtensions = coreExtensions.map((ext) => {
+  if (ext.name === 'jsxComponentEditable') return JsxComponentEditable;
+  if (ext.name === 'jsxComponentVoid') return JsxComponentVoid;
+  return ext;
+});

@@ -19,7 +19,11 @@ export {
   jsxTokenizerC,
   type TokenizerVersion,
 } from './extensions/jsx-tokenizer.ts';
-export { sharedExtensions } from './extensions/shared.ts';
+export {
+  jsxComponentEditable,
+  jsxComponentVoid,
+  sharedExtensions,
+} from './extensions/shared.ts';
 export type { BuiltInManifestEntry, ComponentMeta, PropDef } from './registry/index.ts';
 // Registry
 export { BUILT_INS, componentManifest } from './registry/index.ts';

@@ -20,15 +20,23 @@ function roundTrip(md: string): string {
   return serialize(parse(md));
 }
 
-/** Get all jsxComponent nodes from parsed JSON */
+/** Get all jsxComponent nodes from parsed JSON (editable + void) */
 function getJsxNodes(json: JSONContent): JSONContent[] {
   const nodes: JSONContent[] = [];
   function walk(node: JSONContent) {
-    if (node.type === 'jsxComponent') nodes.push(node);
+    if (node.type === 'jsxComponentEditable' || node.type === 'jsxComponentVoid') {
+      nodes.push(node);
+    }
     if (node.content) node.content.forEach(walk);
   }
   walk(json);
   return nodes;
+}
+
+/** Get raw JSX content from a node (works for both editable and void types) */
+function getRawContent(node: JSONContent): string {
+  if (node.type === 'jsxComponentVoid') return node.attrs?.content || '';
+  return node.attrs?._rawContent || '';
 }
 
 // ---------------------------------------------------------------------------
@@ -41,7 +49,7 @@ describe('JsxComponent raw JSX parsing', () => {
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toBe('<Video src="demo.mp4" />');
+    expect(getRawContent(nodes[0])).toBe('<Video src="demo.mp4" />');
   });
 
   test('parses a paired JSX tag with children', () => {
@@ -51,7 +59,7 @@ describe('JsxComponent raw JSX parsing', () => {
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toBe(md.trim());
+    expect(getRawContent(nodes[0])).toBe(md.trim());
   });
 
   test('parses multiple JSX blocks in a document', () => {
@@ -68,8 +76,8 @@ Some paragraph.
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(2);
-    expect(nodes[0].attrs?.content).toContain('Callout');
-    expect(nodes[1].attrs?.content).toContain('Video');
+    expect(getRawContent(nodes[0])).toContain('Callout');
+    expect(getRawContent(nodes[1])).toContain('Video');
   });
 
   test('parses nested different-name tags', () => {
@@ -84,7 +92,7 @@ yarn add package
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toBe(md.trim());
+    expect(getRawContent(nodes[0])).toBe(md.trim());
   });
 
   test('parses nested same-name tags', () => {
@@ -94,7 +102,7 @@ yarn add package
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toBe(md.trim());
+    expect(getRawContent(nodes[0])).toBe(md.trim());
   });
 
   test('parses JSX with boolean attributes', () => {
@@ -104,7 +112,7 @@ yarn add package
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toContain('fullWidth');
+    expect(getRawContent(nodes[0])).toContain('fullWidth');
   });
 
   test('parses JSX with expression attributes', () => {
@@ -112,7 +120,7 @@ yarn add package
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toBe('<Chart data={metrics} />');
+    expect(getRawContent(nodes[0])).toBe('<Chart data={metrics} />');
   });
 
   test('code blocks are not confused with JSX', () => {
@@ -124,10 +132,10 @@ const x = <Component />;
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toBe('<Callout>Real JSX</Callout>');
+    expect(getRawContent(nodes[0])).toBe('<Callout>Real JSX</Callout>');
   });
 
-  test('only uppercase-first tags trigger jsxComponent', () => {
+  test('only uppercase-first tags trigger jsxComponent nodes', () => {
     const md = `Some regular paragraph text.
 
 <Callout>This is JSX</Callout>
@@ -136,7 +144,7 @@ Another paragraph.`;
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toBe('<Callout>This is JSX</Callout>');
+    expect(getRawContent(nodes[0])).toBe('<Callout>This is JSX</Callout>');
   });
 });
 
@@ -146,10 +154,9 @@ Another paragraph.`;
 
 describe('JsxComponent raw JSX serialization', () => {
   test('serializes to raw JSX (no fence)', () => {
-    const json: JSONContent = {
-      type: 'doc',
-      content: [{ type: 'jsxComponent', attrs: { content: '<Video src="demo.mp4" />' } }],
-    };
+    // Parse from markdown to get correct node structure, then re-serialize
+    const input = '<Video src="demo.mp4" />\n';
+    const json = parse(input);
     const md = serialize(json);
     expect(md).not.toContain('```');
     expect(md.trim()).toBe('<Video src="demo.mp4" />');
@@ -159,10 +166,7 @@ describe('JsxComponent raw JSX serialization', () => {
     const content = `<Callout type="warning">
   Some content here.
 </Callout>`;
-    const json: JSONContent = {
-      type: 'doc',
-      content: [{ type: 'jsxComponent', attrs: { content } }],
-    };
+    const json = parse(content);
     const md = serialize(json);
     expect(md).not.toContain('```');
     expect(md.trim()).toBe(content);
@@ -323,7 +327,7 @@ Paragraph one.
 Paragraph two.`;
     const json = parse(md);
     const types = json.content?.map((n) => n.type) || [];
-    expect(types).toEqual(['heading', 'paragraph', 'jsxComponent', 'paragraph']);
+    expect(types).toEqual(['heading', 'paragraph', 'jsxComponentEditable', 'paragraph']);
   });
 
   test('JSX at start of document', () => {
@@ -333,7 +337,7 @@ Paragraph two.`;
 
 Some trailing text.`;
     const json = parse(md);
-    expect(json.content?.[0]?.type).toBe('jsxComponent');
+    expect(json.content?.[0]?.type).toBe('jsxComponentEditable');
     const cycle1 = roundTrip(md);
     const cycle2 = roundTrip(cycle1);
     expect(cycle2).toBe(cycle1);
@@ -347,7 +351,7 @@ Some trailing text.`;
 </Callout>`;
     const json = parse(md);
     const lastNode = json.content?.[json.content.length - 1];
-    expect(lastNode?.type).toBe('jsxComponent');
+    expect(lastNode?.type).toBe('jsxComponentEditable');
     const cycle1 = roundTrip(md);
     const cycle2 = roundTrip(cycle1);
     expect(cycle2).toBe(cycle1);
@@ -360,9 +364,9 @@ Some trailing text.`;
     const json = parse(md);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(3);
-    expect(nodes[0].attrs?.content).toBe('<Callout type="warning">Warning!</Callout>');
-    expect(nodes[1].attrs?.content).toBe('<Callout type="info">Info!</Callout>');
-    expect(nodes[2].attrs?.content).toBe('<Video src="test.mp4" />');
+    expect(getRawContent(nodes[0])).toBe('<Callout type="warning">Warning!</Callout>');
+    expect(getRawContent(nodes[1])).toBe('<Callout type="info">Info!</Callout>');
+    expect(getRawContent(nodes[2])).toBe('<Video src="test.mp4" />');
     const cycle1 = roundTrip(md);
     const cycle2 = roundTrip(cycle1);
     expect(cycle2).toBe(cycle1);
@@ -377,6 +381,6 @@ Some trailing text.`;
     const json = parse(content);
     const nodes = getJsxNodes(json);
     expect(nodes).toHaveLength(1);
-    expect(nodes[0].attrs?.content).toBe(content);
+    expect(getRawContent(nodes[0])).toBe(content);
   });
 });
