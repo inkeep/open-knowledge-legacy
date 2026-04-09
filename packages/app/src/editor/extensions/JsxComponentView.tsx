@@ -11,7 +11,7 @@
 import { componentManifest } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { Component, type ErrorInfo, type ReactNode, useCallback, useMemo, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useState } from 'react';
 import { markUserTyping } from '@/editor/observers';
 import { ComponentToolbar } from '../components/ComponentToolbar';
 import { componentMap } from '../components/componentMap';
@@ -65,11 +65,13 @@ export function JsxComponentView({ node, updateAttributes }: NodeViewProps) {
   const meta = componentManifest[componentName];
   const [propPanelOpen, setPropPanelOpen] = useState(false);
 
+  // React Compiler handles memoization automatically — do not add useMemo/useCallback.
   // Extract both views of the props in a single pass — primitiveProps filters
   // undefined/null for forwarding to the React component, currentProps includes
   // them so the panel can show empty/unset state.
-  const { primitiveProps, currentProps } = useMemo(() => {
-    if (!meta) return { primitiveProps: {}, currentProps: {} };
+  let primitiveProps: Record<string, unknown> = {};
+  let currentProps: Record<string, unknown> = {};
+  if (meta) {
     const primitive: Record<string, unknown> = {};
     const current: Record<string, unknown> = {};
     for (const propDef of meta.props) {
@@ -80,16 +82,14 @@ export function JsxComponentView({ node, updateAttributes }: NodeViewProps) {
         primitive[propDef.name] = val;
       }
     }
-    return { primitiveProps: primitive, currentProps: current };
-  }, [meta, node.attrs]);
+    primitiveProps = primitive;
+    currentProps = current;
+  }
 
-  const handlePropChange = useCallback(
-    (propName: string, value: unknown) => {
-      markUserTyping();
-      updateAttributes({ [propName]: value });
-    },
-    [updateAttributes],
-  );
+  const handlePropChange = (propName: string, value: unknown) => {
+    markUserTyping();
+    updateAttributes({ [propName]: value });
+  };
 
   // If not registered, fall back to raw display
   if (!meta) {

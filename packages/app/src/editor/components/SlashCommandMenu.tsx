@@ -3,7 +3,7 @@
  * Shows registered components from the manifest, grouped by category.
  */
 import type { ComponentMeta } from '@inkeep/open-knowledge-core';
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import { type Ref, useEffect, useImperativeHandle, useState } from 'react';
 
 export interface SlashCommandItem {
   name: string;
@@ -13,6 +13,8 @@ export interface SlashCommandItem {
 interface SlashCommandMenuProps {
   items: SlashCommandItem[];
   command: (item: SlashCommandItem) => void;
+  // React 19: ref passed as a regular prop (forwardRef is deprecated).
+  ref?: Ref<SlashCommandMenuRef>;
 }
 
 export interface SlashCommandMenuRef {
@@ -26,95 +28,91 @@ const CATEGORY_LABELS: Record<string, string> = {
   data: 'Data',
 };
 
-export const SlashCommandMenu = forwardRef<SlashCommandMenuRef, SlashCommandMenuProps>(
-  ({ items, command }, ref) => {
-    const [selectedIndex, setSelectedIndex] = useState(0);
+export function SlashCommandMenu({ items, command, ref }: SlashCommandMenuProps) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
 
-    // biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when items change (filtering)
-    useEffect(() => {
-      setSelectedIndex(0);
-    }, [items]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset selection when items change (filtering)
+  useEffect(() => {
+    setSelectedIndex(0);
+  }, [items]);
 
-    useImperativeHandle(
-      ref,
-      () => ({
-        onKeyDown: (event: KeyboardEvent) => {
-          // Guard: with items.length === 0, modulo-by-zero produces NaN and
-          // corrupts selectedIndex. The render-time early-return doesn't
-          // prevent the handler from being called while the "No results"
-          // state is showing (ref is still exposed).
-          if (items.length === 0) return false;
-          if (event.key === 'ArrowUp') {
-            setSelectedIndex((prev) => (prev + items.length - 1) % items.length);
-            return true;
+  useImperativeHandle(
+    ref,
+    () => ({
+      onKeyDown: (event: KeyboardEvent) => {
+        // Guard: with items.length === 0, modulo-by-zero produces NaN and
+        // corrupts selectedIndex. The render-time early-return doesn't
+        // prevent the handler from being called while the "No results"
+        // state is showing (ref is still exposed).
+        if (items.length === 0) return false;
+        if (event.key === 'ArrowUp') {
+          setSelectedIndex((prev) => (prev + items.length - 1) % items.length);
+          return true;
+        }
+        if (event.key === 'ArrowDown') {
+          setSelectedIndex((prev) => (prev + 1) % items.length);
+          return true;
+        }
+        if (event.key === 'Enter') {
+          if (items[selectedIndex]) {
+            command(items[selectedIndex]);
           }
-          if (event.key === 'ArrowDown') {
-            setSelectedIndex((prev) => (prev + 1) % items.length);
-            return true;
-          }
-          if (event.key === 'Enter') {
-            if (items[selectedIndex]) {
-              command(items[selectedIndex]);
-            }
-            return true;
-          }
-          return false;
-        },
-      }),
-      [items, selectedIndex, command],
-    );
+          return true;
+        }
+        return false;
+      },
+    }),
+    [items, selectedIndex, command],
+  );
 
-    if (items.length === 0) {
-      return (
-        <div style={menuStyle}>
-          <div style={{ padding: '8px 12px', color: '#999', fontSize: '13px' }}>No results</div>
-        </div>
-      );
-    }
-
-    // Group items by category
-    const groups = new Map<string, SlashCommandItem[]>();
-    for (const item of items) {
-      const cat = item.meta.category;
-      const list = groups.get(cat) || [];
-      list.push(item);
-      groups.set(cat, list);
-    }
-
-    let flatIndex = 0;
-
+  if (items.length === 0) {
     return (
       <div style={menuStyle}>
-        {Array.from(groups.entries()).map(([category, groupItems]) => (
-          <div key={category}>
-            <div style={categoryLabelStyle}>{CATEGORY_LABELS[category] || category}</div>
-            {groupItems.map((item) => {
-              const idx = flatIndex++;
-              const isSelected = idx === selectedIndex;
-              return (
-                <button
-                  type="button"
-                  key={item.name}
-                  onClick={() => command(item)}
-                  onMouseEnter={() => setSelectedIndex(idx)}
-                  style={{
-                    ...itemStyle,
-                    backgroundColor: isSelected ? '#f3f0ff' : 'transparent',
-                  }}
-                >
-                  <span style={itemNameStyle}>{item.meta.displayName}</span>
-                  <span style={itemHintStyle}>{item.name}</span>
-                </button>
-              );
-            })}
-          </div>
-        ))}
+        <div style={{ padding: '8px 12px', color: '#999', fontSize: '13px' }}>No results</div>
       </div>
     );
-  },
-);
+  }
 
-SlashCommandMenu.displayName = 'SlashCommandMenu';
+  // Group items by category
+  const groups = new Map<string, SlashCommandItem[]>();
+  for (const item of items) {
+    const cat = item.meta.category;
+    const list = groups.get(cat) || [];
+    list.push(item);
+    groups.set(cat, list);
+  }
+
+  let flatIndex = 0;
+
+  return (
+    <div style={menuStyle}>
+      {Array.from(groups.entries()).map(([category, groupItems]) => (
+        <div key={category}>
+          <div style={categoryLabelStyle}>{CATEGORY_LABELS[category] || category}</div>
+          {groupItems.map((item) => {
+            const idx = flatIndex++;
+            const isSelected = idx === selectedIndex;
+            return (
+              <button
+                type="button"
+                key={item.name}
+                onClick={() => command(item)}
+                onMouseEnter={() => setSelectedIndex(idx)}
+                style={{
+                  ...itemStyle,
+                  backgroundColor: isSelected ? '#f3f0ff' : 'transparent',
+                }}
+              >
+                <span style={itemNameStyle}>{item.meta.displayName}</span>
+                <span style={itemHintStyle}>{item.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const menuStyle: React.CSSProperties = {
   backgroundColor: 'white',

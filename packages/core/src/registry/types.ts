@@ -3,15 +3,50 @@
  * Pure TypeScript — no React, no Node-only tools, no browser APIs.
  */
 
-export interface PropDef {
+/**
+ * A single prop definition on a component. Discriminated union on `type` —
+ * the enum variant carries `enumValues` as a required field so illegal states
+ * (`type: 'enum'` without `enumValues`) are unrepresentable at the type level.
+ */
+export type PropDef =
+  | PropDefString
+  | PropDefBoolean
+  | PropDefNumber
+  | PropDefEnum
+  | PropDefReactNode;
+
+interface PropDefBase {
   name: string;
-  type: 'string' | 'boolean' | 'enum' | 'number' | 'reactnode';
   required: boolean;
-  defaultValue?: string | boolean | number;
-  /** For enum type: the allowed values */
-  enumValues?: string[];
   /** Human-readable description (from TSDoc or react-docgen) */
   description?: string;
+}
+
+export interface PropDefString extends PropDefBase {
+  type: 'string';
+  defaultValue?: string;
+}
+
+export interface PropDefBoolean extends PropDefBase {
+  type: 'boolean';
+  defaultValue?: boolean;
+}
+
+export interface PropDefNumber extends PropDefBase {
+  type: 'number';
+  defaultValue?: number;
+}
+
+export interface PropDefEnum extends PropDefBase {
+  type: 'enum';
+  /** Allowed values for this enum. Required — empty arrays are invalid. */
+  enumValues: string[];
+  defaultValue?: string;
+}
+
+export interface PropDefReactNode extends PropDefBase {
+  type: 'reactnode';
+  // ReactNode props have no meaningful default (children are structural, not prop values)
 }
 
 /** Metadata known at build time, independent of React. */

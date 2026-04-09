@@ -9,7 +9,7 @@
 
 import type { ComponentMeta, PropDef } from '@inkeep/open-knowledge-core';
 import { Popover, Select, Switch } from 'radix-ui';
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { markUserTyping } from '@/editor/observers';
 
 interface PropPanelProps {
@@ -77,13 +77,11 @@ interface PropControlProps {
 }
 
 function PropControl({ prop, value, onChange }: PropControlProps) {
-  const handleChange = useCallback(
-    (newValue: unknown) => {
-      markUserTyping();
-      onChange(prop.name, newValue);
-    },
-    [prop.name, onChange],
-  );
+  // React Compiler handles memoization automatically — do not add useCallback.
+  const handleChange = (newValue: unknown) => {
+    markUserTyping();
+    onChange(prop.name, newValue);
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
