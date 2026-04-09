@@ -112,6 +112,14 @@ describe('parseJsx', () => {
     expect(result?.childrenString).toContain('Second paragraph.');
   });
 
+  test('spread attribute returns null', () => {
+    expect(parseJsx('<Component {...props} />')).toBeNull();
+  });
+
+  test('spread mixed with primitives returns null', () => {
+    expect(parseJsx('<Callout type="warning" {...rest} />')).toBeNull();
+  });
+
   test('invalid input returns null', () => {
     expect(parseJsx('not jsx at all')).toBeNull();
     expect(parseJsx('')).toBeNull();

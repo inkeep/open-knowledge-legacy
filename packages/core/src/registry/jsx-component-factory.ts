@@ -9,20 +9,20 @@
  * a shared parseMarkdown handler that checks the manifest for type routing.
  */
 import { Node } from '@tiptap/core';
-import { marked } from 'marked';
+import { Marked } from 'marked';
 import { jsxStart, jsxTokenizerB } from '../extensions/jsx-tokenizer.ts';
 import { parseJsx } from './jsx-parser.ts';
 import type { ComponentMeta } from './types.ts';
 
-// Register the jsxBlock tokenizer on the standalone marked instance so that
-// marked.lexer(childrenString) handles nested JSX tags correctly (D10).
-// Without this, nested JSX in children (e.g. <Tab> inside <Tabs>) would be
-// tokenized as HTML blocks, causing DOMParser failures in Node environments.
-let _jsxTokenizerRegistered = false;
-function ensureJsxTokenizer(): void {
-  if (_jsxTokenizerRegistered) return;
-  _jsxTokenizerRegistered = true;
-  marked.use({
+// Scoped marked instance with jsxBlock tokenizer for children parsing (D10).
+// Uses `new Marked()` instead of mutating the global `marked` singleton so that
+// other code using `import { marked } from 'marked'` is unaffected.
+// Without the jsxBlock tokenizer, nested JSX in children (e.g. <Tab> inside <Tabs>)
+// would be tokenized as HTML blocks, causing DOMParser failures in Node environments.
+let _scopedMarked: Marked | null = null;
+function getScopedMarked(): Marked {
+  if (_scopedMarked) return _scopedMarked;
+  _scopedMarked = new Marked({
     extensions: [
       {
         name: 'jsxBlock',
@@ -43,6 +43,7 @@ function ensureJsxTokenizer(): void {
       },
     ],
   });
+  return _scopedMarked;
 }
 
 export interface JsxComponentExtensions {
@@ -130,7 +131,7 @@ function buildJsxString(
 export function createJsxComponentExtensions(
   manifest: Record<string, ComponentMeta>,
 ): JsxComponentExtensions {
-  ensureJsxTokenizer();
+  const scopedMarked = getScopedMarked();
   const propAttrs = collectPropAttributes(manifest);
 
   // ─── jsxComponentEditable (registered components) ────────────────────
@@ -267,7 +268,7 @@ export function createJsxComponentExtensions(
         // includes the jsxBlock tokenizer (D10).
         let childContent: ReturnType<typeof helpers.createNode>[] | undefined;
         if (childrenString.trim()) {
-          const childTokens = marked.lexer(childrenString);
+          const childTokens = scopedMarked.lexer(childrenString);
           const parseBlock = helpers.parseBlockChildren ?? helpers.parseChildren;
           childContent = parseBlock(childTokens) as ReturnType<typeof helpers.createNode>[];
         }
@@ -310,10 +311,11 @@ export function createJsxComponentExtensions(
           for (const [key, value] of Object.entries(unknownMap)) {
             allProps[key] = value;
           }
-        } catch {
+        } catch (err) {
           console.warn(
             `[JsxComponent] Malformed _unknownAttrs on <${componentName}>, attributes dropped:`,
             unknownRaw,
+            err,
           );
         }
       }
@@ -352,6 +354,11 @@ export function createJsxComponentExtensions(
         }
       }
       if (!childrenString) {
+        // Fallback: _childrenString is a parse-time snapshot. In production TipTap
+        // serialization, helpers.renderChild is always present and node.content is
+        // authoritative, so this branch is only reachable in tests or if the content
+        // is genuinely empty. Note: _childrenString is NOT updated when the user edits
+        // inline children — do not rely on it as a source of truth for edited content.
         childrenString = attrs._childrenString || '';
       }
 

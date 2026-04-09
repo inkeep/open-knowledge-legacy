@@ -53,7 +53,8 @@ export function parseJsx(source: string): ParsedJsx | null {
   const props: Record<string, string | boolean | number> = {};
 
   for (const attr of opening.attributes) {
-    if (attr.type !== 'JSXAttribute') continue;
+    // JSXSpreadAttribute ({...props}) → void fallback (non-primitive, can't represent in prop panel)
+    if (attr.type !== 'JSXAttribute') return null;
     if (!attr.name || attr.name.type !== 'JSXIdentifier') continue;
 
     const name = attr.name.name;
