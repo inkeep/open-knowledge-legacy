@@ -121,6 +121,7 @@ Hierarchical YAML in `.open-knowledge/` directories:
 ## Package: app
 
 React editor frontend — TipTap WYSIWYG + CodeMirror source mode with real-time CRDT collaboration.
+Built-in component blocks can be inserted from the slash menu with `/callout`, `/tabs`, `/codegroup`, `/steps`, `/accordion`, `/card`, and `/embed`, then edited inline through a registry-backed prop panel.
 
 ### Editor architecture
 
@@ -148,9 +149,12 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 
 ### Key files
 
-- `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
+- `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider singleton, slash-menu insertion, dynamic collab URL, CollaborationCursor, awareness state init, flash plugin
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
 - `src/editor/observers.ts` — Bidirectional observer sync
+- `src/editor/extensions/JsxComponentView.tsx` — Registry-backed React node view renderer + inline prop panel
+- `src/editor/extensions/jsx-component-registry.tsx` — Built-in component registry, preview renderers, parse/serialize helpers
+- `src/editor/extensions/slash-command.ts` — Slash query matching for component insertion
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
