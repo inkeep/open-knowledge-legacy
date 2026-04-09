@@ -74,12 +74,12 @@ describe('renderBanner', () => {
       localUrl: 'http://localhost:3000',
       networkUrl: 'http://0.0.0.0:3000',
     });
-    // Strip ANSI codes for width comparison
-    const stripped = output.replace(
+    // Strip ANSI color codes and OSC 8 hyperlink sequences for width comparison
+    const stripped = output
       // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI stripping
-      /\x1b\[[0-9;]*m/g,
-      '',
-    );
+      .replace(/\x1b\[[0-9;]*m/g, '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional OSC 8 hyperlink stripping
+      .replace(/\x1b\]8;;[^\x07]*\x07/g, '');
     const lines = stripped.split('\n').filter((l) => l.trim().length > 0);
     const widths = lines.map((l) => l.length);
     // All lines should have the same visible width
