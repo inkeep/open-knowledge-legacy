@@ -20,6 +20,10 @@
     "ws": "^8.20.0",
     "yjs": "^13.6.30"
   },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
   "devDependencies": {
     "@types/ws": "^8.18.1",
     "typescript": "^5.9.3"
