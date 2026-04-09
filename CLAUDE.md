@@ -19,6 +19,8 @@ docs/      — Next.js docs site (Fumadocs)
 bun install                          # Install all workspace dependencies
 cd packages/app && bun run dev       # Start dev server (Vite + Hocuspocus on port 5173)
 cd packages/cli && bun run build     # Build CLI (tsdown → dist/)
+bun run build-registry               # Regenerate component manifest from built-ins + .d.ts extraction
+bun run drift-check                  # Verify generated components.ts matches built-ins (CI gate)
 ```
 
 ### Quality gates
@@ -60,6 +62,15 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
 
 **Key constraint:** `sharedExtensions` MUST stay in sync between core, server, and app — drift causes silent data corruption.
+
+### Component registry
+
+- `src/generated/components.ts` — **GENERATED** PropDef manifest for 15 built-in components (canonical reference for agents). Run `bun run build-registry` to regenerate from `src/registry/built-ins.ts` + react-docgen-typescript.
+- `src/registry/types.ts` — PropDef, ComponentMeta, BuiltInManifestEntry interfaces
+- `src/registry/built-ins.ts` — hand-maintained 15-entry manifest with source file paths
+- `src/registry/jsx-component-factory.ts` — factory producing registry-aware TipTap extensions
+- `src/registry/jsx-parser.ts` — acorn+acorn-jsx JSX string parser
+- See `packages/core/AGENTS.md` for reserved built-in names and agent usage.
 
 ## Package: server
 

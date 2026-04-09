@@ -19,7 +19,8 @@
     "changeset": "changeset",
     "version": "changeset version",
     "release": "changeset publish",
-    "build-registry": "bun run --cwd packages/core build-registry"
+    "build-registry": "bun run --cwd packages/core build-registry",
+    "drift-check": "bun run build-registry && biome check --write packages/core/src/generated/components.ts && git diff --exit-code packages/core/src/generated/components.ts"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md}": [
