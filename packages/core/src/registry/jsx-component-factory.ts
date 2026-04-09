@@ -38,6 +38,51 @@ function collectPropAttributes(
   return attrs;
 }
 
+/** Set of attribute names that are internal carriers, not serialized as JSX props. */
+const INTERNAL_ATTRS = new Set([
+  'componentName',
+  '_rawContent',
+  '_childrenString',
+  '_unknownAttrs',
+]);
+
+/**
+ * Reconstruct a raw JSX string from structured attributes.
+ *
+ * Props are emitted in alphabetical order (deterministic). Format:
+ *   - string  → `prop="value"`
+ *   - true    → `prop` (boolean shorthand)
+ *   - false   → omitted
+ *   - number  → `prop={number}`
+ */
+function buildJsxString(
+  componentName: string,
+  props: Record<string, string | boolean | number>,
+  childrenString: string,
+): string {
+  const propEntries = Object.entries(props)
+    .filter(([, v]) => v !== false) // Omit false booleans
+    .sort(([a], [b]) => a.localeCompare(b));
+
+  const parts: string[] = [];
+  for (const [key, value] of propEntries) {
+    if (value === true) {
+      parts.push(key);
+    } else if (typeof value === 'number') {
+      parts.push(`${key}={${value}}`);
+    } else {
+      parts.push(`${key}="${value}"`);
+    }
+  }
+
+  const propsStr = parts.length > 0 ? ` ${parts.join(' ')}` : '';
+
+  if (!childrenString) {
+    return `<${componentName}${propsStr} />`;
+  }
+  return `<${componentName}${propsStr}>${childrenString}</${componentName}>`;
+}
+
 export function createJsxComponentExtensions(
   manifest: Record<string, ComponentMeta>,
 ): JsxComponentExtensions {
@@ -54,10 +99,14 @@ export function createJsxComponentExtensions(
     addAttributes() {
       return {
         componentName: { default: '' },
-        // Raw JSX content preserved for round-trip (populated by parseMarkdown,
-        // consumed by renderMarkdown). US-007 replaces this with acorn-parsed
-        // structured props; until then this is the round-trip carrier.
+        // Raw JSX content preserved as a parse-time carrier for debugging
         _rawContent: { default: '' },
+        // Children string between opening and closing JSX tags (verbatim).
+        // US-012 replaces this with h.renderChildren(node.content).
+        _childrenString: { default: '' },
+        // JSON-serialized map of attributes not in the propAttrs union.
+        // Preserves unknown attributes through round-trip (§3.8 collision policy).
+        _unknownAttrs: { default: undefined },
         // Union of all prop names across the manifest
         ...propAttrs,
       };
@@ -118,23 +167,68 @@ export function createJsxComponentExtensions(
         return helpers.createNode('jsxComponentVoid', { content: rawContent });
       }
 
-      const { componentName, props } = parsed;
+      const { componentName, props, childrenString } = parsed;
 
       // Route: registered → editable, unregistered → void
       if (componentName in manifest) {
-        return helpers.createNode(
-          'jsxComponentEditable',
-          { componentName, _rawContent: rawContent, ...props },
-          [helpers.createNode('paragraph')],
-        );
+        // Separate known (declared in propAttrs union) from unknown attributes
+        const knownProps: Record<string, string | boolean | number> = {};
+        const unknownProps: Record<string, string | boolean | number> = {};
+        for (const [key, value] of Object.entries(props)) {
+          if (key in propAttrs) {
+            knownProps[key] = value;
+          } else {
+            unknownProps[key] = value;
+          }
+        }
+
+        const attrs: Record<string, unknown> = {
+          componentName,
+          _rawContent: rawContent,
+          _childrenString: childrenString,
+          ...knownProps,
+        };
+        if (Object.keys(unknownProps).length > 0) {
+          attrs._unknownAttrs = JSON.stringify(unknownProps);
+        }
+
+        return helpers.createNode('jsxComponentEditable', attrs, [helpers.createNode('paragraph')]);
       }
       return helpers.createNode('jsxComponentVoid', { content: rawContent });
     },
 
     renderMarkdown(node) {
-      // Until US-008 builds structured serialization, use the raw content
-      const raw = node.attrs?._rawContent || '';
-      return `${raw}\n`;
+      const componentName = node.attrs?.componentName || '';
+      if (!componentName) {
+        // Fallback: use raw content if componentName missing
+        const raw = node.attrs?._rawContent || '';
+        return `${raw}\n`;
+      }
+
+      // Collect all non-internal, non-undefined prop attributes
+      const allProps: Record<string, string | boolean | number> = {};
+      const attrs = node.attrs || {};
+      for (const [key, value] of Object.entries(attrs)) {
+        if (INTERNAL_ATTRS.has(key)) continue;
+        if (value === undefined || value === null || value === '') continue;
+        allProps[key] = value as string | boolean | number;
+      }
+
+      // Merge unknown attributes back in
+      const unknownRaw = attrs._unknownAttrs;
+      if (unknownRaw && typeof unknownRaw === 'string') {
+        try {
+          const unknownMap = JSON.parse(unknownRaw) as Record<string, string | boolean | number>;
+          for (const [key, value] of Object.entries(unknownMap)) {
+            allProps[key] = value;
+          }
+        } catch {
+          // Ignore malformed _unknownAttrs
+        }
+      }
+
+      const childrenString = attrs._childrenString || '';
+      return `${buildJsxString(componentName, allProps, childrenString)}\n`;
     },
   });
 

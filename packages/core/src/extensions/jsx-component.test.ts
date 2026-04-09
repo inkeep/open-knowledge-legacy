@@ -384,3 +384,210 @@ Some trailing text.`;
     expect(getRawContent(nodes[0])).toBe(content);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Structured-attribute round-trip (US-008)
+//
+// Verifies renderMarkdown reconstructs raw JSX from structured node attributes
+// (componentName + individual prop attrs + _childrenString) rather than using
+// the _rawContent passthrough. Props are emitted alphabetically.
+// ---------------------------------------------------------------------------
+
+describe('JsxComponent structured-attribute round-trip (US-008)', () => {
+  /** Get attrs of the first jsxComponentEditable node */
+  function getEditableAttrs(json: JSONContent): Record<string, unknown> | undefined {
+    let found: Record<string, unknown> | undefined;
+    function walk(node: JSONContent) {
+      if (node.type === 'jsxComponentEditable' && !found) {
+        found = node.attrs as Record<string, unknown>;
+      }
+      if (node.content) node.content.forEach(walk);
+    }
+    walk(json);
+    return found;
+  }
+
+  test('Callout with type prop → parse → attrs preserved', () => {
+    const jsx = `<Callout type="warning">
+  Test content.
+</Callout>\n`;
+    const json = parse(jsx);
+    const attrs = getEditableAttrs(json);
+    expect(attrs?.componentName).toBe('Callout');
+    expect(attrs?.type).toBe('warning');
+    expect(attrs?._childrenString).toBe('\n  Test content.\n');
+  });
+
+  test('Callout round-trip is byte-identical', () => {
+    const jsx = `<Callout type="warning">
+  Always run integration tests before deploying.
+</Callout>\n`;
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('Video self-closing with src → attrs preserved', () => {
+    const jsx = '<Video src="demo.mp4" />\n';
+    const json = parse(jsx);
+    const attrs = getEditableAttrs(json);
+    expect(attrs?.componentName).toBe('Video');
+    expect(attrs?.src).toBe('demo.mp4');
+    expect(attrs?._childrenString).toBe('');
+  });
+
+  test('Video self-closing round-trip is byte-identical', () => {
+    const jsx = '<Video src="demo.mp4" />\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('Card with title/href/external → attrs preserved', () => {
+    const jsx = '<Card external href="/github" title="GitHub" />\n';
+    const json = parse(jsx);
+    const attrs = getEditableAttrs(json);
+    expect(attrs?.componentName).toBe('Card');
+    expect(attrs?.title).toBe('GitHub');
+    expect(attrs?.href).toBe('/github');
+    expect(attrs?.external).toBe(true);
+  });
+
+  test('Card with structured props round-trip is byte-identical', () => {
+    const jsx = '<Card external href="/github" title="GitHub" />\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('component with no props round-trips', () => {
+    const jsx = '<Steps>\nSome content.\n</Steps>\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('component with many props (alphabetical order)', () => {
+    const jsx = '<Video fullView hint="Watch this" src="demo.mp4" title="Demo" />\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('many props non-alphabetical source → reordered on cycle-1, stable on cycle-2', () => {
+    const input = '<Video src="demo.mp4" title="Demo" hint="Watch" fullView />\n';
+    const cycle1 = serialize(parse(input));
+    // Cycle-1 may reorder props to alphabetical
+    const cycle2 = serialize(parse(cycle1));
+    expect(cycle2).toBe(cycle1); // Cycle-2 is stable
+    // Verify the reordered form
+    expect(cycle1).toBe('<Video fullView hint="Watch" src="demo.mp4" title="Demo" />\n');
+  });
+
+  test('component with unknown attributes from collision → preserved via _unknownAttrs', () => {
+    // Card has title, href, external as known props (in propAttrs union).
+    // icon (reactnode everywhere → not in propAttrs) and color (not in any component) are unknown.
+    const jsx =
+      '<Card color="#F05032" external href="/github" icon="brand/GitHub" title="GitHub" />\n';
+    const json = parse(jsx);
+    const attrs = getEditableAttrs(json);
+    expect(attrs?.componentName).toBe('Card');
+    expect(attrs?.title).toBe('GitHub');
+    expect(attrs?.href).toBe('/github');
+    expect(attrs?.external).toBe(true);
+    // Unknown attrs stored in _unknownAttrs
+    expect(attrs?._unknownAttrs).toBeDefined();
+    const unknown = JSON.parse(attrs?._unknownAttrs as string);
+    expect(unknown.icon).toBe('brand/GitHub');
+    expect(unknown.color).toBe('#F05032');
+    // Round-trip preserves ALL attributes (known + unknown)
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('collision attrs with non-alphabetical source → cycle-2 stable', () => {
+    // Source has non-alphabetical order
+    const input =
+      '<Card title="GitHub" icon="brand/GitHub" href="/github" color="#F05032" external />\n';
+    const cycle1 = serialize(parse(input));
+    const cycle2 = serialize(parse(cycle1));
+    expect(cycle2).toBe(cycle1);
+    // Alphabetical order in output
+    expect(cycle1).toBe(
+      '<Card color="#F05032" external href="/github" icon="brand/GitHub" title="GitHub" />\n',
+    );
+  });
+
+  test('boolean shorthand round-trips correctly', () => {
+    const jsx = '<Folder defaultOpen name="src" />\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('number prop round-trips correctly', () => {
+    const jsx = '<Tabs defaultIndex={2} />\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('void node (unregistered) still uses raw passthrough', () => {
+    const jsx = '<CustomWidget foo="bar">body</CustomWidget>\n';
+    const json = parse(jsx);
+    const nodes = getJsxNodes(json);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].type).toBe('jsxComponentVoid');
+    expect(serialize(json)).toBe(jsx);
+  });
+
+  test('expression props → void fallback → raw passthrough', () => {
+    const jsx = '<Chart data={metrics} />\n';
+    const json = parse(jsx);
+    const nodes = getJsxNodes(json);
+    expect(nodes[0].type).toBe('jsxComponentVoid');
+    expect(serialize(json)).toBe(jsx);
+  });
+
+  test('children with nested JSX preserved verbatim (Phase 2 carrier)', () => {
+    const jsx = `<Tabs>
+<Tab title="npm">
+npm install package
+</Tab>
+<Tab title="yarn">
+yarn add package
+</Tab>
+</Tabs>\n`;
+    expect(serialize(parse(jsx))).toBe(jsx);
+    // Verify _childrenString preserves nested structure
+    const json = parse(jsx);
+    const attrs = getEditableAttrs(json);
+    expect(attrs?._childrenString).toContain('<Tab title="npm">');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cycle-2 byte-identity with structured attributes (US-008)
+// ---------------------------------------------------------------------------
+
+describe('JsxComponent structured-attr cycle-2 byte-identity', () => {
+  const cases: Array<{ name: string; jsx: string }> = [
+    {
+      name: 'Callout with type',
+      jsx: `<Callout type="warning">
+  Content here.
+</Callout>\n`,
+    },
+    { name: 'Video self-closing', jsx: '<Video src="demo.mp4" />\n' },
+    { name: 'Card with multiple props', jsx: '<Card external href="/gh" title="T" />\n' },
+    { name: 'Steps with children', jsx: '<Steps>\nContent.\n</Steps>\n' },
+    {
+      name: 'Nested Tabs/Tab',
+      jsx: `<Tabs>
+<Tab title="a">
+content a
+</Tab>
+</Tabs>\n`,
+    },
+    {
+      name: 'Collision attrs on Card',
+      jsx: '<Card color="#F05032" external href="/gh" icon="x" title="T" />\n',
+    },
+    { name: 'Number prop', jsx: '<Tabs defaultIndex={3} />\n' },
+    { name: 'Boolean prop', jsx: '<Folder defaultOpen name="src" />\n' },
+    { name: 'Unregistered void', jsx: '<CustomWidget foo="bar">body</CustomWidget>\n' },
+  ];
+
+  for (const { name, jsx } of cases) {
+    test(`cycle-2 stable: ${name}`, () => {
+      const cycle1 = roundTrip(jsx);
+      const cycle2 = roundTrip(cycle1);
+      expect(cycle2).toBe(cycle1);
+    });
+  }
+});
