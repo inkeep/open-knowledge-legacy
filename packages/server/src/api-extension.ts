@@ -528,12 +528,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    if (!shadowRepo) {
+    if (!shadowRef?.current) {
       json(res, 200, []);
       return;
     }
 
-    const rescueDir = resolve(shadowRepo.gitDir, 'rescue');
+    const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
     if (!existsSync(rescueDir)) {
       json(res, 200, []);
       return;
@@ -582,13 +582,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    if (!shadowRepo) {
+    if (!shadowRef?.current) {
       res.writeHead(404);
       res.end('Not found');
       return;
     }
 
-    const rescueBase = resolve(shadowRepo.gitDir, 'rescue');
+    const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
     const filePath = resolve(rescueBase, `${docName}.md`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
       res.writeHead(400);

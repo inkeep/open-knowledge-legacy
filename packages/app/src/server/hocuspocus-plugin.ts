@@ -121,9 +121,7 @@ export function hocuspocusPlugin(): Plugin {
         }
         try {
           activeWatcher = await startWatcher(CONTENT_DIR, async (event) => {
-            if (event.kind === 'update' || event.kind === 'create') {
-              await handleExternalChange(event.docName, event.content);
-            }
+            await handleExternalChange(event);
           });
           server.httpServer?.on('close', async () => {
             if (activeWatcher) {

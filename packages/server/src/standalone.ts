@@ -30,13 +30,14 @@ import {
 } from './metrics.ts';
 import {
   createPersistenceExtension,
+  deleteReconciledBase,
   getActiveBranch,
   getReconciledBase,
   isBatchInProgress,
   type PersistenceOptions,
-  reconciledBase,
   safeContentPath,
   setBatchInProgress,
+  setReconciledBase,
   switchReconciledBaseScope,
 } from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
@@ -210,7 +211,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           const document = hocuspocus.documents.get(docName);
           if (!document) return;
 
-          const base = persistence.reconciledBase.get(docName) ?? '';
+          const base = getReconciledBase(docName) ?? '';
           const ours = serializeDoc(docName) ?? base;
 
           const result = reconcile({ docName, base, ours, theirs });
@@ -237,7 +238,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 );
               }
               // Always update base to track disk state — prevents cascading merge errors
-              persistence.reconciledBase.set(docName, result.newContent);
+              setReconciledBase(docName, result.newContent);
               incrementReconcile();
               break;
 
@@ -250,7 +251,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   e,
                 );
               }
-              persistence.reconciledBase.set(docName, result.newContent);
+              setReconciledBase(docName, result.newContent);
               incrementReconcile();
               break;
 
@@ -263,7 +264,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                   e,
                 );
               }
-              persistence.reconciledBase.set(docName, result.newContent);
+              setReconciledBase(docName, result.newContent);
               incrementReconcile();
               incrementConflict();
               const conflictsMap = document.getMap('conflicts');
@@ -295,7 +296,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           const document = hocuspocus.documents.get(docName);
           if (!document) return;
 
-          const base = persistence.reconciledBase.get(docName) ?? '';
+          const base = getReconciledBase(docName) ?? '';
           const ours = serializeDoc(docName) ?? '';
           const isDirty = ours !== base;
 
@@ -312,7 +313,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           const lifecycleMap = document.getMap('lifecycle');
           lifecycleMap.set('status', 'deleted-upstream');
 
-          persistence.reconciledBase.delete(docName);
+          deleteReconciledBase(docName);
           console.log(`[reconcile] Delete: ${docName} (dirty=${isDirty})`);
 
           // Unload document to prevent re-creation on next persistence cycle
@@ -325,8 +326,8 @@ export function createServer(options: ServerOptions): ServerInstance {
           const { oldDocName, newDocName, content } = event;
           const document = hocuspocus.documents.get(oldDocName);
 
-          persistence.reconciledBase.delete(oldDocName);
-          persistence.reconciledBase.set(newDocName, content);
+          deleteReconciledBase(oldDocName);
+          setReconciledBase(newDocName, content);
 
           if (document) {
             const lifecycleMap = document.getMap('lifecycle');
@@ -364,7 +365,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Wrapper that buffers events during batch operations. */
   async function onDiskEvent(event: DiskEvent): Promise<void> {
-    if (persistence.isBatchInProgress()) {
+    if (isBatchInProgress()) {
       eventBuffer.push(event);
       return;
     }
@@ -390,8 +391,8 @@ export function createServer(options: ServerOptions): ServerInstance {
     await ready.catch(() => {});
 
     // Flush pending git commit before stopping watchers
-    persistence.flushPendingGitCommit();
-    await persistence.awaitPendingCommit();
+    await persistence.flushPendingGitCommit();
+    await persistence.waitForPendingCommits();
 
     if (headWatcher) {
       await headWatcher.unsubscribe();
@@ -424,7 +425,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
 
     // Verify shadow repo integrity — reinit only on structural corruption, not transient errors
-    if (resolvedShadow) {
+    if (shadowRef.current) {
       try {
         const sg = shadowGit(shadowRef.current);
         await sg.raw('rev-parse', '--git-dir');
@@ -433,10 +434,10 @@ export function createServer(options: ServerOptions): ServerInstance {
         if (msg.includes('not a git repository') || msg.includes('invalid object')) {
           console.warn('[server] Shadow repo appears corrupted — reinitializing');
           try {
-            resolvedShadow = await initShadowRepo(projectDir);
+            shadowRef.current = await initShadowRepo(projectDir);
           } catch (e2) {
             console.error('[server] Shadow repo reinit failed:', e2);
-            resolvedShadow = undefined;
+            shadowRef.current = undefined;
           }
         } else {
           console.error('[server] Shadow repo check failed (transient?):', e);
@@ -494,7 +495,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           const bufferedCount = eventBuffer.length;
           const newBranch = info.newBranch ?? 'main';
 
-          persistence.setBatchInProgress(false);
+          setBatchInProgress(false);
 
           console.log(
             `[batch] end kind=${info.batchKind} headMoved=${info.headMoved} docs=${bufferedCount}${info.timeout ? ' timeout' : ''}`,
@@ -540,7 +541,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 // Reset Y.Doc from disk
                 const diskContent = readFileSync(filePath, 'utf-8');
                 applyToDoc(docName, diskContent);
-                reconciledBase.set(docName, diskContent);
+                setReconciledBase(docName, diskContent);
                 console.log(`[branch-switch] reset: ${docName}`);
               } catch (e) {
                 console.error(`[branch-switch] failed to reset ${docName}:`, e);
@@ -580,15 +581,15 @@ export function createServer(options: ServerOptions): ServerInstance {
                     case 'merged':
                     case 'clean':
                       applyToDoc(docName, outcome.newContent);
-                      reconciledBase.set(docName, outcome.newContent);
+                      setReconciledBase(docName, outcome.newContent);
                       restoredCount++;
                       break;
                     case 'conflicts': {
                       applyToDoc(docName, outcome.newContent);
-                      reconciledBase.set(docName, outcome.newContent);
-                      const document = hocuspocus.documents.get(docName);
-                      if (document) {
-                        const conflictsMap = document.getMap('conflicts');
+                      setReconciledBase(docName, outcome.newContent);
+                      const conflictDoc = hocuspocus.documents.get(docName);
+                      if (conflictDoc) {
+                        const conflictsMap = conflictDoc.getMap('conflicts');
                         for (const c of outcome.conflicts) {
                           conflictsMap.set(String(c.blockIndex), {
                             blockIndex: c.blockIndex,
