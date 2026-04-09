@@ -3,6 +3,7 @@
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
+@plugin 'tailwind-scrollbar';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -12,12 +13,51 @@
   --color-agent-foreground: #ffffff;
 
   /* Font tokens */
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
 
   /* Strong custom easing curves (Emil / easing.dev) — punchier than default ease-out */
   --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+
+  --text-2xs: 0.688rem; /* 11px */
+  --text-1sm: 0.813rem; /* 13px */
+  --color-gray-50: oklch(0.985 0.001 106.423);
+  --color-gray-100: oklch(0.97 0.001 106.424);
+  --color-gray-200: oklch(0.923 0.003 48.717);
+  --color-gray-300: oklch(0.869 0.005 56.366);
+  --color-gray-400: oklch(0.709 0.01 56.259);
+  --color-gray-500: oklch(0.553 0.013 58.071);
+  --color-gray-600: oklch(0.444 0.011 73.639);
+  --color-gray-700: oklch(0.374 0.01 67.558);
+  --color-gray-800: oklch(0.268 0.007 34.298);
+  --color-gray-900: oklch(0.216 0.006 56.043);
+  --color-gray-950: oklch(0.147 0.004 49.25);
+
+  /* brand colors */
+  --color-azure-blue: #3784ff;
+  --color-sky-blue: #69a3ff;
+  --color-crystal-blue: #d5e5ff;
+  --color-morning-mist: #fbf9f4;
+  --color-night-sky: #231f20;
+  --color-blue-dark: #29325c;
+  --color-cream: #f7f4ed;
+  --color-white-cream: #fff5e1;
+  --color-orange-light: #fbe1bc;
+  --color-gray-light: #5f5c62;
+
+  /* based on azure blue (#3784ff) */
+  --color-azure-50: oklch(0.9697 0.0148 251.16);
+  --color-azure-100: oklch(0.9308 0.0339 253.71);
+  --color-azure-200: oklch(0.8807 0.0599 252.33);
+  --color-azure-300: oklch(0.8092 0.0999 249.58);
+  --color-azure-400: oklch(0.7135 0.1524 254.03);
+  --color-azure-500: oklch(0.6321 0.1983 259.59);
+  --color-azure-600: oklch(0.5468 0.2329 262.71);
+  --color-azure-700: oklch(0.4895 0.233 263.93);
+  --color-azure-800: oklch(0.4234 0.195 264.97);
+  --color-azure-900: oklch(0.3773 0.1488 264.94);
+  --color-azure-950: oklch(0.2785 0.0961 267.56);
 
   /* Agent flash keyframes — refined version with accent slide + subtle background pulse.
      Combines three effects in a single animation:
@@ -95,6 +135,10 @@
   }
   * {
     @apply border-border outline-ring/50;
+  }
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
   }
   html {
     @apply font-sans;
@@ -317,6 +361,10 @@ button:active:not(:disabled) {
   transform: scale(0.97);
 }
 
+.subtle-scrollbar {
+  @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
+}
+
 @media (prefers-reduced-motion: reduce) {
   [data-undo-state="ready"][data-undo-just-enabled="true"] {
     animation: none;
@@ -328,8 +376,8 @@ button:active:not(:disabled) {
 
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: "Inter", sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
+  --font-sans: "Inter Variable", sans-serif;
+  --font-mono: "JetBrains Mono Variable", monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -377,7 +425,7 @@ button:active:not(:disabled) {
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --primary: oklch(0.6321 0.1983 259.59);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -412,7 +460,7 @@ button:active:not(:disabled) {
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
+  --primary: var(--color-sky-blue);
   --primary-foreground: oklch(0.205 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);

@@ -21,7 +21,7 @@ export function EditorArea({ isSourceMode, onProviderReady }: EditorAreaProps) {
     // overflow-anchor: auto preserves scroll position when content is inserted above the
     // viewport (e.g. agent prepends). Browser default, but set explicitly to document
     // intent and guard against future overrides.
-    <div className="flex-1 overflow-y-auto" style={{ overflowAnchor: 'auto' }}>
+    <div className="flex-1 overflow-y-auto subtle-scrollbar" style={{ overflowAnchor: 'auto' }}>
       {editorRef.current && (
         <Activity mode={isSourceMode ? 'visible' : 'hidden'}>
           <SourceEditor

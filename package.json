@@ -40,5 +40,8 @@
   "overrides": {
     "@codemirror/state": "$@codemirror/state",
     "@codemirror/view": "$@codemirror/view"
+  },
+  "dependencies": {
+    "tailwind-scrollbar": "^4.0.2"
   }
 }
