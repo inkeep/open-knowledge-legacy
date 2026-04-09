@@ -11,7 +11,7 @@ import Collaboration from '@tiptap/extension-collaboration';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { type FC, type RefObject, useEffect, useImperativeHandle, useRef } from 'react';
+import { type FC, type Ref, useEffect, useImperativeHandle, useRef } from 'react';
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { sharedExtensions } from './extensions/shared.ts';
@@ -122,7 +122,7 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
 };
 
 export const TiptapEditor: FC<{
-  ref?: RefObject<TiptapEditorHandle>;
+  ref?: Ref<TiptapEditorHandle>;
 }> = ({ ref }) => {
   const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
@@ -201,9 +201,9 @@ export const TiptapEditor: FC<{
     const activityMap = provider.document.getMap('activity');
     let lastSeenTimestamp = Date.now();
     let lastFlashTime = 0;
-    let pendingTimeout: ReturnType<typeof setTimeout> | null = null;
-    let flashEndTimeout: ReturnType<typeof setTimeout> | null = null;
-    let flashSettledTimeout: ReturnType<typeof setTimeout> | null = null;
+    let pendingTimeout: number | null = null;
+    let flashEndTimeout: number | null = null;
+    let flashSettledTimeout: number | null = null;
 
     /** Extract the latest activity entry to know what the agent just wrote */
     const getLatestActivity = (): {
@@ -271,13 +271,13 @@ export const TiptapEditor: FC<{
       if (flashSettledTimeout) clearTimeout(flashSettledTimeout);
 
       // Transition editing → settled after animation completes
-      flashEndTimeout = setTimeout(() => {
+      flashEndTimeout = window.setTimeout(() => {
         const settledState: AgentFlashState = { ...nextState, state: 'settled' };
         applyFlashStateToDom(settledState);
         document.dispatchEvent(new CustomEvent('agent-flash-end', { detail: settledState }));
 
         // Return to idle after a brief settled window (lets tests observe the transition)
-        flashSettledTimeout = setTimeout(() => {
+        flashSettledTimeout = window.setTimeout(() => {
           applyFlashStateToDom({ ...settledState, state: 'idle' });
         }, 300);
       }, FLASH_DURATION_MS);
@@ -303,7 +303,7 @@ export const TiptapEditor: FC<{
       if (now - lastFlashTime < FLASH_DEBOUNCE_MS) {
         if (!pendingTimeout) {
           const delay = FLASH_DEBOUNCE_MS - (now - lastFlashTime);
-          pendingTimeout = setTimeout(() => {
+          pendingTimeout = window.setTimeout(() => {
             pendingTimeout = null;
             lastFlashTime = Date.now();
             triggerFlash();
