@@ -93,6 +93,15 @@ interface ObserverDeps {
 function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: string): void {
   if (currentText === newText) return;
 
+  // No padding needed here — unlike `applyUserDelta` below, this function walks the
+  // diff with byte-level `delete(offset, len)` + `insert(offset, value)` operations.
+  // Even if `diffLines` produces a spurious `removed: X` + `added: X + Y` pair on an
+  // unterminated final line, deleting X then re-inserting X+Y at the same offset
+  // produces the correct net effect. The aliasing artifact cancels itself out.
+  //
+  // `applyUserDelta` is different: it walks line-by-line with content-matching
+  // (`indexOf`), which IS vulnerable to the aliasing because lines are treated as
+  // atoms. That function pads its inputs before diffing.
   const changes = diffLines(currentText, newText);
   let offset = 0;
   for (const change of changes) {
@@ -362,9 +371,16 @@ export function setupObservers(deps: ObserverDeps): () => void {
         // Serialization failure is non-fatal — use the input body as a best-effort
         // baseline so Observer A's next delta diff starts from a reasonable state.
         // The convergence guard (currentText === md) will correct any remaining drift.
+        //
+        // Note: `onSyncError` is deliberately NOT called here. This is a recoverable
+        // baseline drift (the fallback assignment below + the next-run convergence
+        // guard together recover automatically), not a sync failure. Surfacing it as
+        // an onSyncError would pollute telemetry with transient noise. The outer
+        // catch below reserves onSyncError for actual sync failures (parse errors
+        // that leave XmlFragment in a stale state).
         console.warn(
           '[Observer B] Post-sync re-serialization failed — using input body as baseline:',
-          err instanceof Error ? err.message : String(err),
+          err,
         );
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
       }
