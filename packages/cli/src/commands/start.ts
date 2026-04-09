@@ -78,6 +78,7 @@ export function startCommand(getConfig: () => Config): Command {
         // Priority 1: API routes via Hocuspocus onRequest extensions
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
+          // biome-ignore lint/suspicious/noExplicitAny: HTTP server types don't match Hocuspocus hook signature
           hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
             if (!res.writableEnded) {
               res.writeHead(500);

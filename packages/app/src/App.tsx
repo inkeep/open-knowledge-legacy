@@ -1,5 +1,5 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { Activity, useCallback, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { SourceEditor } from './editor/SourceEditor';
 import type { TiptapEditorHandle } from './editor/TiptapEditor';
