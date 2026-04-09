@@ -59,7 +59,6 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 
 - `src/extensions/shared.ts` — sharedExtensions array (THE schema source of truth). Invokes the registry factory at module load; consumers get registry-aware extensions transparently.
 - `src/extensions/frontmatter.ts` — strip/prepend frontmatter for markdown round-trip
-- `src/extensions/jsx-component.ts` — legacy Layer 1 extension, kept for backwards-compat. New code uses the factory via `shared.ts`.
 - `src/extensions/jsx-tokenizer.ts` — jsxTokenizerA/B/C (raw JSX block tokenizers for `marked`). Version B (tag-counting) is wired into the factory.
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
@@ -69,9 +68,9 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 
 ### Component registry
 
-- `src/generated/components.ts` — **GENERATED** PropDef manifest for 15 built-in components (canonical reference for agents). Run `bun run build-registry` to regenerate from `src/registry/built-ins.ts` + react-docgen-typescript.
+- `src/generated/components.ts` — **GENERATED** PropDef manifest for 21 built-in component entries (canonical reference for agents). Run `bun run build-registry` to regenerate from `src/registry/built-ins.ts` + react-docgen-typescript.
 - `src/registry/types.ts` — PropDef, ComponentMeta, BuiltInManifestEntry interfaces
-- `src/registry/built-ins.ts` — hand-maintained 15-entry manifest with source file paths (fumadocs 10 + docskit 3 + shadcn 2)
+- `src/registry/built-ins.ts` — hand-maintained 21-entry manifest with source file paths, covering 15 component families (fumadocs 10 families / 16 entries: Callout, Tabs+Tab, Card+Cards, Steps+Step, Accordion+Accordions, ImageZoom, Files+File+Folder, TypeTable, Banner, InlineTOC; docskit 3: Video, Frame, CodeGroup; shadcn-installed 2: Mermaid, Audio).
 - `src/registry/jsx-component-factory.ts` — factory producing registry-aware TipTap extensions (`jsxComponentEditable` + `jsxComponentVoid`)
 - `src/registry/jsx-parser.ts` — acorn+acorn-jsx JSX string parser
 - See `packages/core/AGENTS.md` for reserved built-in names and agent usage.

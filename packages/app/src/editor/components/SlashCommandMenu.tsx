@@ -37,6 +37,11 @@ export const SlashCommandMenu = forwardRef<SlashCommandMenuRef, SlashCommandMenu
 
     useImperativeHandle(ref, () => ({
       onKeyDown: (event: KeyboardEvent) => {
+        // Guard: with items.length === 0, modulo-by-zero produces NaN and
+        // corrupts selectedIndex. The render-time early-return doesn't
+        // prevent the handler from being called while the "No results"
+        // state is showing (ref is still exposed).
+        if (items.length === 0) return false;
         if (event.key === 'ArrowUp') {
           setSelectedIndex((prev) => (prev + items.length - 1) % items.length);
           return true;

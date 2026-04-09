@@ -65,29 +65,22 @@ export function JsxComponentView({ node, updateAttributes }: NodeViewProps) {
   const meta = componentManifest[componentName];
   const [propPanelOpen, setPropPanelOpen] = useState(false);
 
-  // Extract only PropDef-declared (non-reactnode) props for forwarding to the component
-  const primitiveProps = useMemo(() => {
-    if (!meta) return {};
-    const result: Record<string, unknown> = {};
+  // Extract both views of the props in a single pass — primitiveProps filters
+  // undefined/null for forwarding to the React component, currentProps includes
+  // them so the panel can show empty/unset state.
+  const { primitiveProps, currentProps } = useMemo(() => {
+    if (!meta) return { primitiveProps: {}, currentProps: {} };
+    const primitive: Record<string, unknown> = {};
+    const current: Record<string, unknown> = {};
     for (const propDef of meta.props) {
       if (propDef.type === 'reactnode') continue;
       const val = node.attrs[propDef.name];
+      current[propDef.name] = val;
       if (val !== undefined && val !== null) {
-        result[propDef.name] = val;
+        primitive[propDef.name] = val;
       }
     }
-    return result;
-  }, [meta, node.attrs]);
-
-  // Current prop values for the panel (includes all non-reactnode props)
-  const currentProps = useMemo(() => {
-    if (!meta) return {};
-    const result: Record<string, unknown> = {};
-    for (const propDef of meta.props) {
-      if (propDef.type === 'reactnode') continue;
-      result[propDef.name] = node.attrs[propDef.name];
-    }
-    return result;
+    return { primitiveProps: primitive, currentProps: current };
   }, [meta, node.attrs]);
 
   const handlePropChange = useCallback(

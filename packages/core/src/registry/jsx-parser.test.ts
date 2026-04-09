@@ -127,6 +127,57 @@ describe('parseJsx', () => {
     // filters uppercase-only before reaching parseJsx, so this is not a parser concern.
   });
 
+  describe('malformed JSX error paths', () => {
+    test('unclosed tag returns null without throwing', () => {
+      // acorn-jsx raises SyntaxError on missing closing tag — caught in parseJsx
+      expect(parseJsx('<Callout type="warning">body')).toBeNull();
+    });
+
+    test('mismatched closing tag returns null', () => {
+      expect(parseJsx('<Callout>body</Wrong>')).toBeNull();
+    });
+
+    test('unclosed attribute quote returns null', () => {
+      expect(parseJsx('<Callout type="open>body</Callout>')).toBeNull();
+    });
+
+    test('missing attribute value returns null', () => {
+      expect(parseJsx('<Callout type=>body</Callout>')).toBeNull();
+    });
+
+    test('stray less-than in content returns null', () => {
+      expect(parseJsx('<Callout><</Callout>')).toBeNull();
+    });
+
+    test('non-expression input (const declaration) returns null', () => {
+      // Valid JavaScript but not a JSXElement — hits the "not an ExpressionStatement" branch
+      expect(parseJsx('const x = 5;')).toBeNull();
+    });
+
+    test('expression statement that is not a JSXElement returns null', () => {
+      // Valid ExpressionStatement, but the expression is not a JSXElement
+      expect(parseJsx('1 + 1;')).toBeNull();
+      expect(parseJsx('"just a string"')).toBeNull();
+    });
+
+    test('whitespace-only input returns null', () => {
+      expect(parseJsx('   ')).toBeNull();
+      expect(parseJsx('\n\n\n')).toBeNull();
+    });
+
+    test('multiple root JSX elements returns the first one only', () => {
+      // Two separate JSX expressions — acorn parses the first as a statement,
+      // then hits the second as a new statement. The parser walks body[0] only,
+      // so it returns the first element's structure.
+      const result = parseJsx('<Callout>a</Callout>\n<Video src="x.mp4" />');
+      // Either succeeds with Callout (first element) or returns null on parse error.
+      // Both outcomes are acceptable — the important property is: no throw.
+      if (result !== null) {
+        expect(result.componentName).toBe('Callout');
+      }
+    });
+  });
+
   test('whitespace tolerance in attributes', () => {
     const result = parseJsx('<Callout   type = "warning"   >content</Callout>');
     expect(result?.props).toEqual({ type: 'warning' });

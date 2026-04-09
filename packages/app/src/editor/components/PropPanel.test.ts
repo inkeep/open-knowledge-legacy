@@ -138,42 +138,30 @@ describe('prop type to control mapping', () => {
 });
 
 describe('componentMap contract', () => {
-  test('componentMap exports all 21 built-in React components', async () => {
+  test('componentMap keys match componentManifest keys exactly', async () => {
+    // Dynamic sync check: forgetting to add a React import to componentMap when
+    // adding a new built-in to BUILT_INS would silently degrade rendering
+    // (unregistered fallback instead of typed component). This test catches
+    // that class of bug by comparing the two sources of truth directly.
     const { componentMap } = await import('./componentMap');
-    const expectedNames = [
-      'Callout',
-      'Tabs',
-      'Tab',
-      'Card',
-      'Cards',
-      'Steps',
-      'Step',
-      'Accordion',
-      'Accordions',
-      'ImageZoom',
-      'Files',
-      'File',
-      'Folder',
-      'TypeTable',
-      'Banner',
-      'InlineTOC',
-      'Video',
-      'Frame',
-      'CodeGroup',
-      'Mermaid',
-      'Audio',
-    ];
-    for (const name of expectedNames) {
-      expect(componentMap[name]).toBeDefined();
-      // React components are functions or forwardRef objects (object with $$typeof + render)
-      const t = typeof componentMap[name];
-      expect(t === 'function' || t === 'object').toBe(true);
-    }
+    const { componentManifest } = await import('@inkeep/open-knowledge-core');
+
+    const mapKeys = Object.keys(componentMap).sort();
+    const manifestKeys = Object.keys(componentManifest).sort();
+
+    expect(mapKeys).toEqual(manifestKeys);
   });
 
-  test('componentMap does not contain unknown entries', async () => {
+  test('every componentMap entry is a valid React component type', async () => {
     const { componentMap } = await import('./componentMap');
-    const keys = Object.keys(componentMap);
-    expect(keys.length).toBe(21);
+    for (const [name, Component] of Object.entries(componentMap)) {
+      expect(Component).toBeDefined();
+      // React components are functions or forwardRef objects (object with $$typeof + render)
+      const t = typeof Component;
+      expect(
+        t === 'function' || t === 'object',
+        `componentMap[${name}] is not a valid React component type (got ${t})`,
+      ).toBe(true);
+    }
   });
 });

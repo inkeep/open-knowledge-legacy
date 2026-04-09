@@ -590,6 +590,60 @@ describe('JsxComponent structured-attribute round-trip (US-008)', () => {
     expect(serialize(parse(jsx))).toBe(jsx);
   });
 
+  test('malformed _unknownAttrs JSON is gracefully dropped with warning, no throw', () => {
+    // Defensive: if _unknownAttrs contains invalid JSON (e.g., from a migration,
+    // external edit, or code bug), renderMarkdown catches the JSON.parse error
+    // and logs a warning, dropping the malformed attrs rather than throwing.
+    // This test constructs a document where _unknownAttrs is deliberately
+    // invalid and verifies the serializer handles it gracefully.
+    const json: JSONContent = {
+      type: 'doc',
+      content: [
+        {
+          type: 'jsxComponentEditable',
+          attrs: {
+            componentName: 'Callout',
+            type: 'warning',
+            _unknownAttrs: '{not valid json', // malformed on purpose
+            _childrenString: 'hello',
+          },
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'hello' }],
+            },
+          ],
+        },
+      ],
+    };
+
+    // Capture console.warn to verify the defensive warning was logged
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' '));
+    };
+
+    let output: string;
+    try {
+      // Must not throw — defensive catch handles the malformed JSON
+      output = serialize(json);
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    // Component still serializes with its known attrs (type="warning")
+    expect(output).toContain('type="warning"');
+    expect(output).toContain('<Callout');
+    expect(output).toContain('</Callout>');
+
+    // Warning was logged
+    const hasMalformedWarning = warnings.some((w) =>
+      w.includes('Malformed _unknownAttrs on <Callout>'),
+    );
+    expect(hasMalformedWarning).toBe(true);
+  });
+
   test('collision attrs with non-alphabetical source → cycle-2 stable', () => {
     // Source has non-alphabetical order
     const input =
