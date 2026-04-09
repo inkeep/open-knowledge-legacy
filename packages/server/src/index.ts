@@ -32,6 +32,11 @@ export {
   type PinoLoggerConfig,
 } from './logger.ts';
 export {
+  getMetrics,
+  type ReconciliationMetrics,
+  resetMetrics,
+} from './metrics.ts';
+export {
   createPersistenceExtension,
   isBatchInProgress,
   type PersistenceHandle,

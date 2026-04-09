@@ -12,8 +12,20 @@ import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
-import { type AsyncSubscription, type DiskEvent, startWatcher } from './file-watcher.ts';
+import {
+  type AsyncSubscription,
+  contentHash,
+  type DiskEvent,
+  startWatcher,
+} from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import {
+  incrementBatch,
+  incrementConflict,
+  incrementReconcile,
+  incrementRescueBuffer,
+  incrementUpstreamImport,
+} from './metrics.ts';
 import {
   createPersistenceExtension,
   isBatchInProgress,
@@ -176,6 +188,14 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           const result = reconcile({ docName, base, ours, theirs });
 
+          // Structured log with content hashes
+          const baseH = contentHash(base).slice(0, 8);
+          const oursH = contentHash(ours).slice(0, 8);
+          const theirsH = contentHash(theirs).slice(0, 8);
+          console.log(
+            `[reconcile] ${docName} base=${baseH} ours=${oursH} theirs=${theirsH} result=${result.kind}`,
+          );
+
           switch (result.kind) {
             case 'noop':
               break;
@@ -183,18 +203,20 @@ export function createServer(options: ServerOptions): ServerInstance {
             case 'clean':
               applyToDoc(docName, result.newContent);
               reconciledBase.set(docName, result.newContent);
-              console.log(`[reconcile] Clean apply: ${docName}`);
+              incrementReconcile();
               break;
 
             case 'merged':
               applyToDoc(docName, result.newContent);
               reconciledBase.set(docName, result.newContent);
-              console.log(`[reconcile] Merged: ${docName} (${result.mergedBlocks} blocks)`);
+              incrementReconcile();
               break;
 
             case 'conflicts': {
               applyToDoc(docName, result.newContent);
               reconciledBase.set(docName, result.newContent);
+              incrementReconcile();
+              incrementConflict();
               const conflictsMap = document.getMap('conflicts');
               for (const c of result.conflicts) {
                 conflictsMap.set(String(c.blockIndex), {
@@ -205,15 +227,14 @@ export function createServer(options: ServerOptions): ServerInstance {
                   resolution: 'pending',
                 });
               }
-              console.log(`[reconcile] Conflicts: ${docName} (${result.conflicts.length} blocks)`);
               break;
             }
 
             case 'refused': {
+              incrementConflict();
               const lifecycleMap = document.getMap('lifecycle');
               lifecycleMap.set('status', 'conflict');
               lifecycleMap.set('reason', result.reason);
-              console.log(`[reconcile] Refused: ${docName} (${result.reason})`);
               break;
             }
           }
@@ -233,6 +254,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             const rescueDir = `${shadowRepo.gitDir}/rescue`;
             mkdirSync(dirname(`${rescueDir}/${docName}.md`), { recursive: true });
             writeFileSync(`${rescueDir}/${docName}.md`, ours, 'utf-8');
+            incrementRescueBuffer();
             console.log(`[reconcile] Rescue buffer saved: ${docName}`);
           }
 
@@ -362,6 +384,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         // onBatchBegin
         () => {
           console.log('[batch] begin');
+          incrementBatch();
           hocuspocus.flushPendingStores();
           persistence.flushPendingGitCommit();
           setBatchInProgress(true);
@@ -387,6 +410,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 info.oldHead,
                 info.newHead,
               );
+              incrementUpstreamImport();
               console.log(
                 `[shadow] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
               );

@@ -14,6 +14,7 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import { getMetrics } from './metrics.ts';
 import { type ShadowHandle, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
@@ -497,6 +498,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleMetricsReconciliation(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    json(res, 200, getMetrics());
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/agent-write': handleAgentWrite,
@@ -506,6 +519,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-redo': handleAgentRedo,
     '/api/save-version': handleSaveVersion,
+    '/api/metrics/reconciliation': handleMetricsReconciliation,
   };
 
   if (enableTestRoutes) {
