@@ -119,16 +119,16 @@ describe('commitWip', () => {
     shadow = await initShadowRepo(projectRoot);
   });
 
-  test('creates commit on refs/wip/<writer-id>', async () => {
+  test('creates commit on refs/wip/<branch>/<writer-id>', async () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
 
     const sha = await commitWip(shadow, writer, 'content/docs', 'WIP: intro');
 
     expect(sha).toHaveLength(40);
 
-    // Verify ref exists
+    // Verify ref exists (default branch = 'main')
     const sg = shadowGit(shadow);
-    const refSha = (await sg.raw('rev-parse', `refs/wip/${writer.id}`)).trim();
+    const refSha = (await sg.raw('rev-parse', `refs/wip/main/${writer.id}`)).trim();
     expect(refSha).toBe(sha);
 
     // Verify commit message
@@ -180,11 +180,33 @@ describe('commitWip', () => {
     const agentSha = await commitWip(shadow, agent, 'content/docs', 'WIP: agent edit');
 
     const sg = shadowGit(shadow);
-    const humanRef = (await sg.raw('rev-parse', 'refs/wip/human-nick')).trim();
-    const agentRef = (await sg.raw('rev-parse', 'refs/wip/agent-cursor')).trim();
+    const humanRef = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+    const agentRef = (await sg.raw('rev-parse', 'refs/wip/main/agent-cursor')).trim();
 
     expect(humanRef).toBe(humanSha);
     expect(agentRef).toBe(agentSha);
+  });
+
+  test('branch-scoped WIP refs are isolated', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Main content\n');
+    const mainSha = await commitWip(shadow, writer, 'content/docs', 'WIP: main edit', 'main');
+
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Feature content\n');
+    const featureSha = await commitWip(
+      shadow,
+      writer,
+      'content/docs',
+      'WIP: feature edit',
+      'feature/xyz',
+    );
+
+    const sg = shadowGit(shadow);
+    const mainRef = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+    const featureRef = (await sg.raw('rev-parse', 'refs/wip/feature/xyz/human-nick')).trim();
+
+    expect(mainRef).toBe(mainSha);
+    expect(featureRef).toBe(featureSha);
+    expect(mainRef).not.toBe(featureRef);
   });
 });
 
@@ -207,15 +229,16 @@ describe('commitUpstreamImport', () => {
     shadow = await initShadowRepo(projectRoot);
   });
 
-  test('creates commit on refs/wip/upstream', async () => {
+  test('creates commit on refs/wip/<branch>/upstream', async () => {
     writeFileSync(resolve(contentDir, 'api.md'), '# API Reference\n');
 
     const sha = await commitUpstreamImport(shadow, 'content/docs', 'aabbccdd', '11223344');
 
     expect(sha).toHaveLength(40);
 
+    // Default branch = 'main'
     const sg = shadowGit(shadow);
-    const refSha = (await sg.raw('rev-parse', 'refs/wip/upstream')).trim();
+    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/upstream')).trim();
     expect(refSha).toBe(sha);
   });
 
@@ -321,7 +344,7 @@ describe('saveVersion', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Checkpoint\n');
     const result = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
 
-    expect(result.checkpointRef).toBe(`refs/checkpoints/${result.projectCommitSha}`);
+    expect(result.checkpointRef).toBe(`refs/checkpoints/main/${result.projectCommitSha}`);
 
     const sg = shadowGit(shadow);
     const checkpointSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
@@ -338,15 +361,15 @@ describe('saveVersion', () => {
 
     // Verify WIP ref exists
     const sg = shadowGit(shadow);
-    const wipBefore = (await sg.raw('rev-parse', 'refs/wip/human-nick')).trim();
+    const wipBefore = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
     expect(wipBefore).toHaveLength(40);
 
     await saveVersion(shadow, projectRoot, 'content/docs', [human]);
 
-    // WIP ref should be deleted
+    // WIP ref should be deleted (branch-scoped)
     let wipExists = true;
     try {
-      await sg.raw('rev-parse', 'refs/wip/human-nick');
+      await sg.raw('rev-parse', 'refs/wip/main/human-nick');
     } catch {
       wipExists = false;
     }

@@ -452,6 +452,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 contentRootForShadow,
                 info.oldHead,
                 info.newHead,
+                info.newBranch ?? 'main',
               );
               incrementUpstreamImport();
               console.log(

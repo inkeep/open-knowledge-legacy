@@ -118,19 +118,22 @@ export function destroyShadowRepo(shadow: ShadowHandle): void {
 // ─── WIP commits ─────────────────────────────────────────────────────────────
 
 /**
- * Commit content changes to a per-writer WIP ref in the shadow.
+ * Commit content changes to a per-writer, per-branch WIP ref in the shadow.
  *
  * Uses commit-tree plumbing with GIT_INDEX_FILE isolation so we never
  * touch any user-visible staging area.
+ *
+ * @param branch - Project branch name (e.g. 'main', 'feature/xyz'). When omitted, defaults to 'main'.
  */
 export async function commitWip(
   shadow: ShadowHandle,
   writer: WriterIdentity,
   contentRoot: string,
   message: string,
+  branch = 'main',
 ): Promise<string> {
   const tmpIndex = resolve(shadow.gitDir, `index-wip-${writer.id}`);
-  const ref = `refs/wip/${writer.id}`;
+  const ref = `refs/wip/${branch}/${writer.id}`;
   const sg = shadowGit(shadow);
 
   try {
@@ -213,18 +216,21 @@ const UPSTREAM_WRITER: WriterIdentity = {
  *
  * Called when HEAD moves (e.g., git pull) to attribute the incoming changes
  * to "upstream" in the attribution journal.
+ *
+ * @param branch - Project branch name for ref scoping. Defaults to 'main'.
  */
 export async function commitUpstreamImport(
   shadow: ShadowHandle,
   contentRoot: string,
   oldHead: string | null,
   newHead: string,
+  branch = 'main',
 ): Promise<string> {
   const message = oldHead
     ? `upstream: import from ${oldHead.slice(0, 8)}..${newHead.slice(0, 8)}`
     : `upstream: initial import at ${newHead.slice(0, 8)}`;
 
-  return commitWip(shadow, UPSTREAM_WRITER, contentRoot, message);
+  return commitWip(shadow, UPSTREAM_WRITER, contentRoot, message, branch);
 }
 
 // ─── Save Version ────────────────────────────────────────────────────────────
@@ -239,12 +245,15 @@ export interface SaveVersionResult {
  * 1. Create a real commit on the project repo (via commit-tree plumbing, never touches staging area)
  * 2. Write a checkpoint ref in the shadow with full tree snapshot
  * 3. Reset per-writer WIP refs so subsequent WIP tracks only post-checkpoint deltas
+ *
+ * @param branch - Project branch name for ref scoping. Defaults to 'main'.
  */
 export async function saveVersion(
   shadow: ShadowHandle,
   projectRoot: string,
   contentRoot: string,
   writers: WriterIdentity[],
+  branch = 'main',
 ): Promise<SaveVersionResult> {
   const projectGit = simpleGit({ baseDir: projectRoot, timeout: { block: GIT_TIMEOUT_MS } });
   const sg = shadowGit(shadow);
@@ -332,11 +341,11 @@ export async function saveVersion(
         await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: shadowTmpIndex }).raw('write-tree')
       ).trim();
 
-      // Find latest shadow WIP to parent on
+      // Find latest shadow WIP to parent on (branch-scoped)
       let shadowParent: string | null = null;
       for (const w of writers) {
         try {
-          shadowParent = (await sg.raw('rev-parse', `refs/wip/${w.id}`)).trim();
+          shadowParent = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
           break;
         } catch {
           // try next writer
@@ -363,21 +372,21 @@ export async function saveVersion(
           .raw(...checkpointArgs)
       ).trim();
 
-      const checkpointRef = `refs/checkpoints/${projectCommitSha}`;
+      const checkpointRef = `refs/checkpoints/${branch}/${projectCommitSha}`;
       await sg.raw('update-ref', checkpointRef, checkpointSha);
 
-      // ── Step 3: Reset WIP refs ──
+      // ── Step 3: Reset WIP refs (branch-scoped) ──
       // Delete per-writer WIP refs so subsequent WIP tracks only post-checkpoint deltas
       for (const w of writers) {
         try {
-          await sg.raw('update-ref', '-d', `refs/wip/${w.id}`);
+          await sg.raw('update-ref', '-d', `refs/wip/${branch}/${w.id}`);
         } catch {
           // ref may not exist
         }
       }
-      // Also reset upstream WIP
+      // Also reset upstream WIP for this branch
       try {
-        await sg.raw('update-ref', '-d', 'refs/wip/upstream');
+        await sg.raw('update-ref', '-d', `refs/wip/${branch}/upstream`);
       } catch {
         // may not exist
       }

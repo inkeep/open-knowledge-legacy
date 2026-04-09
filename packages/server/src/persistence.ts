@@ -46,6 +46,78 @@ export function safeContentPath(documentName: string, contentDir: string): strin
   return filePath;
 }
 
+/**
+ * Reconciled base: last known-good markdown for each document, scoped by branch.
+ * Updated on load, store, and reconciliation. Used as the merge base
+ * for three-way reconciliation.
+ *
+ * Outer key = branch name (e.g. "main", "feature/xyz", "detached-abc123def456")
+ * Inner key = docName, value = last-synced markdown content
+ */
+const reconciledBaseByBranch = new Map<string, Map<string, string>>();
+
+/** Active branch scope for reconciledBase lookups. Defaults to 'main'. */
+let activeBranch = 'main';
+
+/** Switch the active branch scope. Creates a fresh scope if first visit. */
+export function switchReconciledBaseScope(branch: string): void {
+  activeBranch = branch;
+  if (!reconciledBaseByBranch.has(branch)) {
+    reconciledBaseByBranch.set(branch, new Map());
+  }
+}
+
+/** Get the active branch name for reconciledBase. */
+export function getActiveBranch(): string {
+  return activeBranch;
+}
+
+/** Get the reconciledBase value for a doc in the active branch scope. */
+export function getReconciledBase(docName: string): string | undefined {
+  return reconciledBaseByBranch.get(activeBranch)?.get(docName);
+}
+
+/** Set the reconciledBase value for a doc in the active branch scope. */
+export function setReconciledBase(docName: string, content: string): void {
+  if (!reconciledBaseByBranch.has(activeBranch)) {
+    reconciledBaseByBranch.set(activeBranch, new Map());
+  }
+  reconciledBaseByBranch.get(activeBranch)?.set(docName, content);
+}
+
+/** Delete the reconciledBase entry for a doc in the active branch scope. */
+export function deleteReconciledBase(docName: string): void {
+  reconciledBaseByBranch.get(activeBranch)?.delete(docName);
+}
+
+/**
+ * Legacy flat accessor — returns the active branch's map.
+ * Used by standalone.ts for event-driven reconciliation where the flat
+ * Map interface is expected.
+ */
+export const reconciledBase = {
+  get(docName: string): string | undefined {
+    return getReconciledBase(docName);
+  },
+  set(docName: string, content: string): void {
+    setReconciledBase(docName, content);
+  },
+  delete(docName: string): void {
+    deleteReconciledBase(docName);
+  },
+};
+
+/** Batch-in-progress flag — gates L1 writes and L2 commits during coordinated git operations. */
+let batchInProgress = false;
+
+export function setBatchInProgress(value: boolean): void {
+  batchInProgress = value;
+}
+
+export function isBatchInProgress(): boolean {
+  return batchInProgress;
+}
+
 export interface PersistenceHandle {
   extension: Extension;
   flushPendingGitCommit: () => void;
