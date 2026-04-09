@@ -30,14 +30,16 @@ Seven Now stories form **one delivery group** — they share the CRDT layer and 
 
 ### User stories
 
-- **U1.1** A knowledge worker can write markdown in rich-text mode — headings, lists, tables, code blocks, images, links — and see it render as they type
-- **U1.2** A knowledge worker can insert a component (Callout, Tabs, CodeGroup, Steps, Accordion, Card, Embed) via slash command and edit its props through a visual panel
-- **U1.3** A knowledge worker can insert a non-predefined JSX component and edit its raw JSX in a mini code view; the JSX string is preserved verbatim on save
-- **U1.4** A developer can toggle any single component block between visual preview and code view without switching the whole file
-- **U1.5** A developer can toggle the entire file between WYSIWYG and full CodeMirror source mode, and both views stay in sync as they type in either one
-- **U1.6** A user can drag and drop files and images into the editor to insert them
-- **U1.7** (optional Now) A user can open a live MDX preview pane alongside the editor that auto-refreshes as they edit
-- **U1.8** A developer editing in source mode sees agent writes appear in real-time (agent writes via MCP propagate to source mode via observer sync) — no "file changed on disk" dialog
+Status legend: `[x]` implemented, `[~]` partial, `[ ]` not implemented
+
+- [~] **U1.1** A knowledge worker can write markdown in rich-text mode — headings, lists, tables, code blocks, images, links — and see it render as they type
+- [x] **U1.2** A knowledge worker can insert a component (Callout, Tabs, CodeGroup, Steps, Accordion, Card, Embed) via slash command and edit its props through a visual panel
+- [~] **U1.3** A knowledge worker can insert a non-predefined JSX component and edit its raw JSX in a mini code view; the JSX string is preserved verbatim on save
+- [ ] **U1.4** A developer can toggle any single component block between visual preview and code view without switching the whole file
+- [x] **U1.5** A developer can toggle the entire file between WYSIWYG and full CodeMirror source mode, and both views stay in sync as they type in either one
+- [ ] **U1.6** A user can drag and drop files and images into the editor to insert them
+- [ ] **U1.7** (optional Now) A user can open a live MDX preview pane alongside the editor that auto-refreshes as they edit
+- [x] **U1.8** A developer editing in source mode sees agent writes appear in real-time (agent writes via MCP propagate to source mode via observer sync) — no "file changed on disk" dialog
 
 ### Technical stories
 

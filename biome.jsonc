@@ -34,6 +34,7 @@
       "!**/.turbo",
       "!**/tmp",
       "!**/next-env.d.ts",
+      "!.bun",
       "!.claude",
       "!init_spike",
       "!specs",
