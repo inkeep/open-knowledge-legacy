@@ -4,9 +4,10 @@
  *
  * All diagnostic logging goes to stderr (stdout is the MCP wire).
  */
+import { getLogger } from '@inkeep/open-knowledge-server';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { accent, dim, error, info } from '../ui/colors.ts';
+import { accent, error, info } from '../ui/colors.ts';
 import { registerTools } from './tools.ts';
 
 export interface McpServerOptions {
@@ -14,9 +15,7 @@ export interface McpServerOptions {
   contentDir: string;
 }
 
-function log(msg: string): void {
-  process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
-}
+const log = getLogger('mcp');
 
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const { serverUrl, contentDir } = options;
@@ -44,5 +43,5 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  log(`Connected to ${serverUrl}`);
+  log.info({ serverUrl }, 'MCP server connected');
 }
