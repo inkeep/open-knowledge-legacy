@@ -126,7 +126,12 @@ export function JsxComponentView({ node, updateAttributes, selected }: NodeViewP
   const RenderedComponent = componentMap[componentName];
 
   return (
-    <NodeViewWrapper className="jsx-component-wrapper">
+    <NodeViewWrapper
+      className="jsx-component-wrapper"
+      style={
+        selected ? { outline: '2px solid rgba(124, 58, 237, 0.2)', borderRadius: '6px' } : undefined
+      }
+    >
       <div contentEditable={false} style={{ userSelect: 'none' }}>
         <ComponentToolbar componentName={componentName} />
       </div>

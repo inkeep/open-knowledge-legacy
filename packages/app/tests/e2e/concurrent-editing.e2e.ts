@@ -88,16 +88,19 @@ test.describe('Concurrent editing scenarios', () => {
     await pageB.keyboard.press('Enter');
     await pageB.keyboard.type(uniqueB);
 
-    // Wait for CRDT sync to propagate between tabs
-    await pageA.waitForTimeout(2_000);
+    // Poll until CRDT sync propagates — avoids flaky fixed timeouts on slow CI runners.
+    // expect().toPass() retries with backoff until the assertion holds or times out.
+    await expect(async () => {
+      const textA = await pageA.locator('.tiptap').textContent();
+      expect(textA).toContain(uniqueA);
+      expect(textA).toContain(uniqueB);
+    }).toPass({ timeout: 10_000 });
 
-    // Both tabs should contain BOTH unique texts
-    const textA = await pageA.locator('.tiptap').textContent();
-    const textB = await pageB.locator('.tiptap').textContent();
-    expect(textA).toContain(uniqueA);
-    expect(textA).toContain(uniqueB);
-    expect(textB).toContain(uniqueA);
-    expect(textB).toContain(uniqueB);
+    await expect(async () => {
+      const textB = await pageB.locator('.tiptap').textContent();
+      expect(textB).toContain(uniqueA);
+      expect(textB).toContain(uniqueB);
+    }).toPass({ timeout: 10_000 });
 
     await contextA.close();
     await contextB.close();
@@ -111,24 +114,38 @@ test.describe('Concurrent editing scenarios', () => {
     const contentDir = path.resolve(process.cwd(), 'content');
     const testDocPath = path.join(contentDir, 'test-doc.md');
 
-    // First external write — unique content
-    const content1 = `# Disk Bridge Test\n\nFirst external write ${Date.now()}\n`;
-    await fs.writeFile(testDocPath, content1, 'utf-8');
+    // Save original content for cleanup
+    let originalContent: string | null = null;
+    try {
+      originalContent = await fs.readFile(testDocPath, 'utf-8');
+    } catch {
+      // File may not exist — will be created by the test
+    }
 
-    // Wait for @parcel/watcher + Hocuspocus persistence to pick up the change
-    await page.waitForTimeout(3_000);
+    try {
+      // First external write — unique content
+      const content1 = `# Disk Bridge Test\n\nFirst external write ${Date.now()}\n`;
+      await fs.writeFile(testDocPath, content1, 'utf-8');
 
-    const editorText1 = await page.locator('.tiptap').textContent();
-    expect(editorText1).toContain('First external write');
+      // Poll until the editor reflects the external write — avoids flaky fixed timeouts.
+      await expect(async () => {
+        const text = await page.locator('.tiptap').textContent();
+        expect(text).toContain('First external write');
+      }).toPass({ timeout: 10_000 });
 
-    // Second external write — different content
-    const content2 = `# Disk Bridge Test\n\nSecond external write ${Date.now()}\n`;
-    await fs.writeFile(testDocPath, content2, 'utf-8');
+      // Second external write — different content
+      const content2 = `# Disk Bridge Test\n\nSecond external write ${Date.now()}\n`;
+      await fs.writeFile(testDocPath, content2, 'utf-8');
 
-    // Wait for the second write to propagate
-    await page.waitForTimeout(3_000);
-
-    const editorText2 = await page.locator('.tiptap').textContent();
-    expect(editorText2).toContain('Second external write');
+      await expect(async () => {
+        const text = await page.locator('.tiptap').textContent();
+        expect(text).toContain('Second external write');
+      }).toPass({ timeout: 10_000 });
+    } finally {
+      // Restore original content to prevent test pollution across runs
+      if (originalContent !== null) {
+        await fs.writeFile(testDocPath, originalContent, 'utf-8');
+      }
+    }
   });
 });

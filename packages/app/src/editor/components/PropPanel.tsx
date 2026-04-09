@@ -130,7 +130,7 @@ function StringControl({
         borderRadius: '4px',
         padding: '4px 8px',
         fontSize: '13px',
-        outline: 'none',
+        outline: undefined,
         width: '100%',
         boxSizing: 'border-box',
       }}
@@ -195,7 +195,7 @@ function EnumSelectItem({ value }: { value: string }) {
         fontSize: '13px',
         borderRadius: '3px',
         cursor: 'pointer',
-        outline: 'none',
+        outline: undefined,
         backgroundColor: focused ? '#f3f0ff' : 'transparent',
       }}
       onFocus={() => setFocused(true)}
@@ -297,7 +297,7 @@ function NumberControl({
         borderRadius: '4px',
         padding: '4px 8px',
         fontSize: '13px',
-        outline: 'none',
+        outline: undefined,
         width: '100%',
         boxSizing: 'border-box',
       }}
