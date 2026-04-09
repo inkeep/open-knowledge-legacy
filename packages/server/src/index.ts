@@ -53,7 +53,9 @@ export {
   commitUpstreamImport,
   commitWip,
   initShadowRepo,
+  type SaveVersionResult,
   type ShadowHandle,
+  saveVersion,
   shadowGit,
   type WriterIdentity,
 } from './shadow-repo.ts';

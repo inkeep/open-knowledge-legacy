@@ -254,3 +254,102 @@ describe('commitUpstreamImport', () => {
     expect(authorName).toBe('upstream');
   });
 });
+
+describe('saveVersion', () => {
+  const { saveVersion } = require('./shadow-repo') as typeof import('./shadow-repo');
+
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+  let contentDir: string;
+
+  const human: WriterIdentity = {
+    id: 'human-nick',
+    name: 'Nick Gomez',
+    email: 'nick@example.com',
+  };
+
+  const agent: WriterIdentity = {
+    id: 'agent-cursor',
+    name: 'cursor-agent',
+    email: 'cursor@openknowledge.local',
+  };
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    contentDir = resolve(projectRoot, 'content/docs');
+    mkdirSync(contentDir, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    // Initial commit so HEAD exists
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+    await git.add('.');
+    await git.commit('Initial commit');
+
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('creates a commit on the project repo', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Updated\n');
+    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+
+    expect(result.projectCommitSha).toHaveLength(40);
+
+    const git = simpleGit(projectRoot);
+    const msg = (await git.raw('log', '-1', '--format=%s', result.projectCommitSha)).trim();
+    expect(msg).toBe('Save Version: content update');
+  });
+
+  test('project commit has co-authored-by trailers', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Co-authored\n');
+    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human, agent]);
+
+    const git = simpleGit(projectRoot);
+    const body = (await git.raw('log', '-1', '--format=%B', result.projectCommitSha)).trim();
+    expect(body).toContain('Co-authored-by: cursor-agent <cursor@openknowledge.local>');
+
+    // Primary author is the human
+    const author = (await git.raw('log', '-1', '--format=%an', result.projectCommitSha)).trim();
+    expect(author).toBe('Nick Gomez');
+  });
+
+  test('creates checkpoint ref in shadow', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Checkpoint\n');
+    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+
+    expect(result.checkpointRef).toBe(`refs/checkpoints/${result.projectCommitSha}`);
+
+    const sg = shadowGit(shadow);
+    const checkpointSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
+    expect(checkpointSha).toHaveLength(40);
+
+    // Checkpoint tree contains the content
+    const tree = (await sg.raw('ls-tree', '-r', '--name-only', result.checkpointRef)).trim();
+    expect(tree).toContain('content/docs/intro.md');
+  });
+
+  test('resets WIP refs after save', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# WIP content\n');
+    await commitWip(shadow, human, 'content/docs', 'WIP: edit');
+
+    // Verify WIP ref exists
+    const sg = shadowGit(shadow);
+    const wipBefore = (await sg.raw('rev-parse', 'refs/wip/human-nick')).trim();
+    expect(wipBefore).toHaveLength(40);
+
+    await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+
+    // WIP ref should be deleted
+    let wipExists = true;
+    try {
+      await sg.raw('rev-parse', 'refs/wip/human-nick');
+    } catch {
+      wipExists = false;
+    }
+    expect(wipExists).toBe(false);
+  });
+});

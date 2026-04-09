@@ -100,6 +100,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     sessionManager,
     contentDir,
     enableTestRoutes,
+    shadowRepo,
+    projectRoot: projectDir,
+    contentRoot,
   });
   hocuspocus.configuration.extensions.push(apiExtension);
 

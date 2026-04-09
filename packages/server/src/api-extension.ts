@@ -14,6 +14,7 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import { type ShadowHandle, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
@@ -28,6 +29,9 @@ export interface ApiExtensionOptions {
    * local dev mode.
    */
   enableTestRoutes?: boolean;
+  shadowRepo?: ShadowHandle;
+  projectRoot?: string;
+  contentRoot?: string;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -49,7 +53,7 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
-  const { hocuspocus, sessionManager, contentDir, enableTestRoutes = false } = options;
+  const { hocuspocus, sessionManager, contentDir, enableTestRoutes = false, shadowRepo, projectRoot, contentRoot } = options;
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
@@ -433,6 +437,66 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleSaveVersion(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    if (!shadowRepo || !projectRoot) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+
+      // Parse optional writers from body
+      let writers: WriterIdentity[] = [];
+      if (rawBody.length > 0) {
+        const body = JSON.parse(rawBody.toString()) as Record<string, unknown>;
+        if (Array.isArray(body.writers)) {
+          writers = (body.writers as Array<Record<string, string>>).map((w) => ({
+            id: w.id ?? 'unknown',
+            name: w.name ?? 'unknown',
+            email: w.email ?? 'noreply@openknowledge.local',
+          }));
+        }
+      }
+
+      // Default writer if none provided
+      if (writers.length === 0) {
+        writers = [
+          { id: 'server', name: 'openknowledge-server', email: 'noreply@openknowledge.local' },
+        ];
+      }
+
+      const resolvedContentRoot = contentRoot ?? 'content';
+      const result = await saveVersion(shadowRepo, projectRoot, resolvedContentRoot, writers);
+
+      console.log(
+        `[shadow] checkpoint ${result.checkpointRef} → project commit ${result.projectCommitSha.slice(0, 8)}`,
+      );
+
+      json(res, 200, {
+        ok: true,
+        projectCommitSha: result.projectCommitSha,
+        checkpointRef: result.checkpointRef,
+      });
+    } catch (e) {
+      console.error('[save-version]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/agent-write': handleAgentWrite,
@@ -441,6 +505,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-undo-status': handleAgentUndoStatus,
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-redo': handleAgentRedo,
+    '/api/save-version': handleSaveVersion,
   };
 
   if (enableTestRoutes) {
