@@ -143,11 +143,19 @@ export function JsxComponentView({
         contentEditable={false}
         aria-label={`Select ${componentName} component`}
         style={{
-          all: 'unset',
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          margin: 0,
+          font: 'inherit',
+          color: 'inherit',
+          textAlign: 'inherit',
           display: 'block',
           width: '100%',
           userSelect: 'none',
           cursor: 'pointer',
+          borderRadius: '4px',
+          // Focus ring preserved — do NOT use `all: 'unset'` which kills it.
         }}
         // Click the toolbar → create a NodeSelection on this component.
         // For non-atom nodes (content: 'block+'), ProseMirror doesn't auto-create
