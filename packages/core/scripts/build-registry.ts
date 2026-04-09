@@ -120,6 +120,7 @@ for (const entry of BUILT_INS) {
     displayName: entry.displayName,
     category: entry.category,
     ...(entry.icon ? { icon: entry.icon } : {}),
+    ...(entry.searchTerms ? { searchTerms: entry.searchTerms } : {}),
   };
 }
 

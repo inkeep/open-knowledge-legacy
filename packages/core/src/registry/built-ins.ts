@@ -50,6 +50,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Callout',
     icon: 'info',
+    searchTerms: ['note', 'warning', 'tip', 'info', 'alert'],
   },
   {
     name: 'Tabs',
@@ -57,12 +58,14 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'layout',
     displayName: 'Tabs',
     icon: 'columns-2',
+    searchTerms: ['tab', 'switcher'],
   },
   {
     name: 'Tab',
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/tabs.d.ts'),
     category: 'layout',
     displayName: 'Tab',
+    searchTerms: ['tab-item'],
   },
   {
     name: 'Card',
@@ -70,12 +73,14 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Card',
     icon: 'square',
+    searchTerms: ['link', 'cta'],
   },
   {
     name: 'Cards',
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/card.d.ts'),
     category: 'layout',
     displayName: 'Cards',
+    searchTerms: ['card-grid', 'card-list'],
   },
   {
     name: 'Steps',
@@ -83,12 +88,14 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'layout',
     displayName: 'Steps',
     icon: 'list-ordered',
+    searchTerms: ['guide', 'process', 'tutorial'],
   },
   {
     name: 'Step',
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/steps.d.ts'),
     category: 'layout',
     displayName: 'Step',
+    searchTerms: ['step-item'],
   },
   {
     name: 'Accordion',
@@ -96,12 +103,14 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Accordion',
     icon: 'chevrons-down-up',
+    searchTerms: ['details', 'collapse', 'foldable'],
   },
   {
     name: 'Accordions',
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/accordion.d.ts'),
     category: 'layout',
     displayName: 'Accordions',
+    searchTerms: ['accordion-group'],
   },
   {
     name: 'ImageZoom',
@@ -109,6 +118,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'media',
     displayName: 'Image Zoom',
     icon: 'zoom-in',
+    searchTerms: ['image', 'photo', 'screenshot', 'zoom'],
   },
   {
     name: 'Files',
@@ -116,18 +126,21 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'layout',
     displayName: 'Files',
     icon: 'folder',
+    searchTerms: ['file-tree', 'directory'],
   },
   {
     name: 'File',
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/files.d.ts'),
     category: 'layout',
     displayName: 'File',
+    searchTerms: ['file-item'],
   },
   {
     name: 'Folder',
     sourceFile: resolveDts('fumadocs-ui', 'dist/components/files.d.ts'),
     category: 'layout',
     displayName: 'Folder',
+    searchTerms: ['folder-item', 'directory-item'],
   },
   {
     name: 'TypeTable',
@@ -135,6 +148,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'data',
     displayName: 'Type Table',
     icon: 'table',
+    searchTerms: ['type-table', 'props-table', 'api'],
   },
   {
     name: 'Banner',
@@ -142,6 +156,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Banner',
     icon: 'megaphone',
+    searchTerms: ['announcement', 'notice'],
   },
   {
     name: 'InlineTOC',
@@ -149,6 +164,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Inline TOC',
     icon: 'list',
+    searchTerms: ['toc', 'table-of-contents'],
   },
 
   // ─── Docskit (gap fill, 3) ───────────────────────────────────────────
@@ -159,6 +175,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'media',
     displayName: 'Video',
     icon: 'play',
+    searchTerms: ['video', 'media', 'player'],
   },
   {
     name: 'Frame',
@@ -166,6 +183,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'media',
     displayName: 'Frame',
     icon: 'frame',
+    searchTerms: ['iframe', 'embed', 'frame'],
   },
   {
     name: 'CodeGroup',
@@ -173,6 +191,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'content',
     displayName: 'Code Group',
     icon: 'braces',
+    searchTerms: ['code-group', 'code-tabs', 'snippet'],
   },
 
   // ─── Shadcn (gap fill, 2) ───────────────────────────────────────────
@@ -183,6 +202,7 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'data',
     displayName: 'Mermaid',
     icon: 'git-branch',
+    searchTerms: ['diagram', 'chart', 'flowchart'],
   },
   {
     name: 'Audio',
@@ -190,5 +210,6 @@ export const BUILT_INS: BuiltInManifestEntry[] = [
     category: 'media',
     displayName: 'Audio',
     icon: 'volume-2',
+    searchTerms: ['audio', 'sound', 'podcast'],
   },
 ];

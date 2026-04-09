@@ -60,8 +60,9 @@ let observerCleanup: (() => void) | null = null;
 function getProvider(): HocuspocusProvider {
   if (!singletonProvider) {
     console.log('[TiptapEditor] Creating provider singleton');
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     singletonProvider = new HocuspocusProvider({
-      url: `ws://${window.location.host}/collab`,
+      url: `${protocol}//${window.location.host}/collab`,
       name: DOC_NAME,
     });
 

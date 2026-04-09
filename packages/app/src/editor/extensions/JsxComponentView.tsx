@@ -2,8 +2,8 @@
  * Registry-driven React node view for jsxComponentEditable.
  *
  * Looks up the component in componentMap, renders it with its real React implementation,
- * shows ComponentToolbar (name badge + gear icon) and PropPanel (popover with auto-generated
- * controls). Uses <NodeViewContent> as the children placeholder for Phase 3 inline editing.
+ * shows ComponentToolbar (name badge) and PropPanel (inline, auto-shown when selected).
+ * Uses <NodeViewContent> as the children placeholder for Phase 3 inline editing.
  *
  * Only PropDef-declared props are forwarded to the React component — unknown attributes
  * (from collision policy §3.8) are stored on the node but not rendered.
@@ -11,7 +11,7 @@
 import { componentManifest } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { Component, type ErrorInfo, type ReactNode, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { markUserTyping } from '@/editor/observers';
 import { ComponentToolbar } from '../components/ComponentToolbar';
 import { componentMap } from '../components/componentMap';
@@ -60,10 +60,9 @@ class ComponentErrorBoundary extends Component<
   }
 }
 
-export function JsxComponentView({ node, updateAttributes }: NodeViewProps) {
+export function JsxComponentView({ node, updateAttributes, selected }: NodeViewProps) {
   const componentName = (node.attrs.componentName as string) || '';
   const meta = componentManifest[componentName];
-  const [propPanelOpen, setPropPanelOpen] = useState(false);
 
   // React Compiler handles memoization automatically — do not add useMemo/useCallback.
   // Extract both views of the props in a single pass — primitiveProps filters
@@ -101,31 +100,18 @@ export function JsxComponentView({ node, updateAttributes }: NodeViewProps) {
     );
   }
 
-  const Component = componentMap[componentName];
+  const RenderedComponent = componentMap[componentName];
 
   return (
     <NodeViewWrapper className="jsx-component-wrapper">
       <div contentEditable={false} style={{ userSelect: 'none' }}>
-        <PropPanel
-          meta={meta}
-          currentProps={currentProps}
-          onChange={handlePropChange}
-          open={propPanelOpen}
-          onOpenChange={setPropPanelOpen}
-        >
-          <div>
-            <ComponentToolbar
-              componentName={componentName}
-              onOpenProps={() => setPropPanelOpen((o) => !o)}
-            />
-          </div>
-        </PropPanel>
+        <ComponentToolbar componentName={componentName} />
       </div>
       <ComponentErrorBoundary componentName={componentName}>
-        {Component ? (
-          <Component {...primitiveProps}>
+        {RenderedComponent ? (
+          <RenderedComponent {...primitiveProps}>
             <NodeViewContent className="component-children" />
-          </Component>
+          </RenderedComponent>
         ) : (
           <div
             style={{
@@ -141,6 +127,11 @@ export function JsxComponentView({ node, updateAttributes }: NodeViewProps) {
           </div>
         )}
       </ComponentErrorBoundary>
+      {selected && (
+        <div contentEditable={false} style={{ userSelect: 'none', marginTop: '4px' }}>
+          <PropPanel meta={meta} currentProps={currentProps} onChange={handlePropChange} />
+        </div>
+      )}
     </NodeViewWrapper>
   );
 }

@@ -1,14 +1,14 @@
 /**
  * Auto-generated prop panel — renders controls based on PropDef from the registry.
- * Uses Radix Popover to portal to document.body.
+ * Renders as an inline panel (visibility controlled by parent via mount/unmount).
  *
  * CRITICAL: Every change handler calls markUserTyping() before invoking onChange.
- * Radix popovers portal to document.body — events don't bubble to editor.view.dom,
- * so markUserTyping isn't signalled automatically. See SPEC §3.6 and R9.
+ * This signals Observer B to defer its tree-replacement sync while the user is
+ * actively editing props. See SPEC §3.6 and R9.
  */
 
 import type { ComponentMeta, PropDef } from '@inkeep/open-knowledge-core';
-import { Popover, Select, Switch } from 'radix-ui';
+import { Select, Switch } from 'radix-ui';
 import { useState } from 'react';
 import { markUserTyping } from '@/editor/observers';
 
@@ -16,57 +16,40 @@ interface PropPanelProps {
   meta: ComponentMeta;
   currentProps: Record<string, unknown>;
   onChange: (propName: string, value: unknown) => void;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  children: React.ReactNode;
 }
 
-export function PropPanel({
-  meta,
-  currentProps,
-  onChange,
-  open,
-  onOpenChange,
-  children,
-}: PropPanelProps) {
+export function PropPanel({ meta, currentProps, onChange }: PropPanelProps) {
   const editableProps = meta.props.filter((p) => p.type !== 'reactnode');
 
-  // When no editable props exist, still render children (toolbar) without the popover
-  if (editableProps.length === 0) return <>{children}</>;
-
   return (
-    <Popover.Root open={open} onOpenChange={onOpenChange}>
-      <Popover.Trigger asChild>{children}</Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
-          side="bottom"
-          align="start"
-          sideOffset={4}
-          style={{
-            backgroundColor: 'white',
-            borderRadius: '8px',
-            border: '1px solid #e0e0e0',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
-            padding: '12px',
-            minWidth: '240px',
-            maxWidth: '320px',
-            zIndex: 50,
-          }}
-          onOpenAutoFocus={(e) => e.preventDefault()}
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {editableProps.map((prop) => (
-              <PropControl
-                key={prop.name}
-                prop={prop}
-                value={currentProps[prop.name]}
-                onChange={onChange}
-              />
-            ))}
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+    <section
+      aria-label="Component props"
+      style={{
+        backgroundColor: 'white',
+        borderRadius: '8px',
+        border: '1px solid #e0e0e0',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+        padding: '12px',
+        minWidth: '240px',
+        maxWidth: '320px',
+      }}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {editableProps.length === 0 && (
+          <p style={{ margin: 0, fontSize: '13px', color: '#71717a' }}>
+            This component has no editable props. Edit children inline below.
+          </p>
+        )}
+        {editableProps.map((prop) => (
+          <PropControl
+            key={prop.name}
+            prop={prop}
+            value={currentProps[prop.name]}
+            onChange={onChange}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 

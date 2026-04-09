@@ -19,7 +19,8 @@ function filterItems(query: string) {
     (item) =>
       item.name.toLowerCase().includes(lower) ||
       item.meta.displayName.toLowerCase().includes(lower) ||
-      item.meta.category.toLowerCase().includes(lower),
+      item.meta.category.toLowerCase().includes(lower) ||
+      item.meta.searchTerms?.some((term) => term.toLowerCase().includes(lower)),
   );
 }
 
@@ -73,5 +74,20 @@ describe('slash command items', () => {
   test('filter is case-insensitive', () => {
     const items = filterItems('CALLOUT');
     expect(items.some((i) => i.name === 'Callout')).toBe(true);
+  });
+
+  test('filtering by searchTerm "note" returns Callout', () => {
+    const items = filterItems('note');
+    expect(items.some((i) => i.name === 'Callout')).toBe(true);
+  });
+
+  test('filtering by searchTerm "diagram" returns Mermaid', () => {
+    const items = filterItems('diagram');
+    expect(items.some((i) => i.name === 'Mermaid')).toBe(true);
+  });
+
+  test('filtering by searchTerm "embed" returns Frame', () => {
+    const items = filterItems('embed');
+    expect(items.some((i) => i.name === 'Frame')).toBe(true);
   });
 });

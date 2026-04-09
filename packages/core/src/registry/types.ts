@@ -59,6 +59,8 @@ export interface ComponentMeta {
   category: 'content' | 'layout' | 'media' | 'data';
   /** Icon name for slash command menu (resolved to a React icon in app) */
   icon?: string;
+  /** Aliases for slash-command search (e.g., 'note', 'warning' for Callout) */
+  searchTerms?: string[];
 }
 
 /**
@@ -77,4 +79,6 @@ export interface BuiltInManifestEntry {
   displayName: string;
   /** Icon name for slash command menu */
   icon?: string;
+  /** Aliases for slash-command search (e.g., 'note', 'warning' for Callout) */
+  searchTerms?: string[];
 }

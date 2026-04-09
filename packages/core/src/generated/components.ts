@@ -27,6 +27,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Callout',
     category: 'content',
     icon: 'info',
+    searchTerms: ['note', 'warning', 'tip', 'info', 'alert'],
   },
   Tabs: {
     props: [
@@ -98,6 +99,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Tabs',
     category: 'layout',
     icon: 'columns-2',
+    searchTerms: ['tab', 'switcher'],
   },
   Tab: {
     props: [
@@ -115,6 +117,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     ],
     displayName: 'Tab',
     category: 'layout',
+    searchTerms: ['tab-item'],
   },
   Card: {
     props: [
@@ -147,11 +150,13 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Card',
     category: 'content',
     icon: 'square',
+    searchTerms: ['link', 'cta'],
   },
   Cards: {
     props: [],
     displayName: 'Cards',
     category: 'layout',
+    searchTerms: ['card-grid', 'card-list'],
   },
   Steps: {
     props: [
@@ -164,6 +169,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Steps',
     category: 'layout',
     icon: 'list-ordered',
+    searchTerms: ['guide', 'process', 'tutorial'],
   },
   Step: {
     props: [
@@ -175,6 +181,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     ],
     displayName: 'Step',
     category: 'layout',
+    searchTerms: ['step-item'],
   },
   Accordion: {
     props: [
@@ -204,6 +211,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Accordion',
     category: 'content',
     icon: 'chevrons-down-up',
+    searchTerms: ['details', 'collapse', 'foldable'],
   },
   Accordions: {
     props: [
@@ -250,18 +258,21 @@ export const componentManifest: Record<string, ComponentMeta> = {
     ],
     displayName: 'Accordions',
     category: 'layout',
+    searchTerms: ['accordion-group'],
   },
   ImageZoom: {
     props: [],
     displayName: 'Image Zoom',
     category: 'media',
     icon: 'zoom-in',
+    searchTerms: ['image', 'photo', 'screenshot', 'zoom'],
   },
   Files: {
     props: [],
     displayName: 'Files',
     category: 'layout',
     icon: 'folder',
+    searchTerms: ['file-tree', 'directory'],
   },
   File: {
     props: [
@@ -278,6 +289,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     ],
     displayName: 'File',
     category: 'layout',
+    searchTerms: ['file-item'],
   },
   Folder: {
     props: [
@@ -300,12 +312,14 @@ export const componentManifest: Record<string, ComponentMeta> = {
     ],
     displayName: 'Folder',
     category: 'layout',
+    searchTerms: ['folder-item', 'directory-item'],
   },
   TypeTable: {
     props: [],
     displayName: 'Type Table',
     category: 'data',
     icon: 'table',
+    searchTerms: ['type-table', 'props-table', 'api'],
   },
   Banner: {
     props: [
@@ -332,6 +346,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Banner',
     category: 'content',
     icon: 'megaphone',
+    searchTerms: ['announcement', 'notice'],
   },
   InlineTOC: {
     props: [
@@ -359,6 +374,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Inline TOC',
     category: 'content',
     icon: 'list',
+    searchTerms: ['toc', 'table-of-contents'],
   },
   Video: {
     props: [
@@ -391,6 +407,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Video',
     category: 'media',
     icon: 'play',
+    searchTerms: ['video', 'media', 'player'],
   },
   Frame: {
     props: [
@@ -418,12 +435,14 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Frame',
     category: 'media',
     icon: 'frame',
+    searchTerms: ['iframe', 'embed', 'frame'],
   },
   CodeGroup: {
     props: [],
     displayName: 'Code Group',
     category: 'content',
     icon: 'braces',
+    searchTerms: ['code-group', 'code-tabs', 'snippet'],
   },
   Mermaid: {
     props: [
@@ -437,6 +456,7 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Mermaid',
     category: 'data',
     icon: 'git-branch',
+    searchTerms: ['diagram', 'chart', 'flowchart'],
   },
   Audio: {
     props: [
@@ -456,5 +476,6 @@ export const componentManifest: Record<string, ComponentMeta> = {
     displayName: 'Audio',
     category: 'media',
     icon: 'volume-2',
+    searchTerms: ['audio', 'sound', 'podcast'],
   },
 };

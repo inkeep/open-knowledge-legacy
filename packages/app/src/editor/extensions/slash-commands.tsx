@@ -60,7 +60,8 @@ export const SlashCommands = Extension.create({
             (item) =>
               item.name.toLowerCase().includes(lower) ||
               item.meta.displayName.toLowerCase().includes(lower) ||
-              item.meta.category.toLowerCase().includes(lower),
+              item.meta.category.toLowerCase().includes(lower) ||
+              item.meta.searchTerms?.some((term) => term.toLowerCase().includes(lower)),
           );
         },
 
