@@ -5,6 +5,7 @@
  * This plugin wires Hocuspocus into Vite's HTTP/WS server so that
  * `bun run dev` starts everything in a single process.
  */
+import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Hocuspocus, type LocalTransactionOrigin } from '@hocuspocus/server';
 import { sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
@@ -29,6 +30,10 @@ const CONTENT_DIR = resolve(
   import.meta.dirname ?? new URL('.', import.meta.url).pathname,
   '../../../content',
 );
+
+// Ensure content dir exists before hocuspocus/persistence/watcher touches it.
+// Without this, fresh clones and worktrees crash on first write.
+mkdirSync(CONTENT_DIR, { recursive: true });
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
@@ -64,9 +69,21 @@ export function hocuspocusPlugin(): Plugin {
     configureServer(server) {
       const wss = new WebSocketServer({ noServer: true });
 
+      // Prevent wss-level errors from bubbling up as unhandled.
+      wss.on('error', (err) => {
+        console.error('[collab] WebSocketServer error:', err);
+      });
+
       // Use prependListener to intercept /collab BEFORE Vite's HMR handler.
       server.httpServer?.prependListener('upgrade', (req, socket, head) => {
         if (req.url?.startsWith('/collab')) {
+          // Attach error handler on the raw TCP socket BEFORE handleUpgrade.
+          // Without this, an ECONNRESET during/after upgrade emits an 'error'
+          // event with no listener, which crashes the entire Node process.
+          socket.on('error', (err: Error) => {
+            console.error('[collab] Upgrade socket error:', err);
+          });
+
           wss.handleUpgrade(req, socket, head, (ws) => {
             const clientConnection = hocuspocus.handleConnection(ws, req);
             ws.on('message', (data: ArrayBuffer | Buffer) => {

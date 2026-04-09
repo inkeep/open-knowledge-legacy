@@ -228,6 +228,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       um.undo();
+      syncTextToFragment(dc.document);
       console.log('[agent-undo] Undo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
@@ -261,6 +262,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       um.redo();
+      syncTextToFragment(dc.document);
       console.log('[agent-redo] Redo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
@@ -279,6 +281,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       await sessionManager.closeAll();
       hocuspocus.closeConnections('test-doc');
+
+      // D18: Force-flush any pending onStoreDocument debounced work before unload.
+      // Without this, unloadDocument silently no-ops if the debouncer is active
+      // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
+      const debounceId = 'onStoreDocument-test-doc';
+      if (hocuspocus.debouncer.isDebounced(debounceId)) {
+        await hocuspocus.debouncer.executeNow(debounceId);
+      }
+
       const doc = hocuspocus.documents.get('test-doc');
       if (doc) await hocuspocus.unloadDocument(doc);
       const { writeFileSync } = await import('node:fs');
