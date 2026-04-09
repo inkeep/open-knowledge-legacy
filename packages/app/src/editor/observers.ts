@@ -317,12 +317,23 @@ export function setupObservers(deps: ObserverDeps): () => void {
 
   const observerA = (_events: Y.YEvent<Y.XmlFragment>[], transaction: Y.Transaction) => {
     if (transaction.origin === ORIGIN_TEXT_TO_TREE) return;
-    // Skip remote XmlFragment changes (from other tabs/peers). The originating
-    // tab already ran Observer A to sync Y.Text — both changes arrive together
-    // via the Yjs sync protocol. Processing remote XmlFragment changes here
-    // would create an infinite cross-tab loop: Tab A Observer A → Y.Text sync →
-    // Tab B Observer B → XmlFragment sync → Tab A Observer A → ...
-    if (!transaction.local) return;
+    if (!transaction.local) {
+      // Remote XmlFragment change (server agent write, peer, cross-tab).
+      // Don't schedule sync — ytext was updated in the same remote transaction
+      // and re-syncing would create a cross-tab amplification loop.
+      // BUT we must refresh lastSyncedXmlMd so the next local user edit
+      // computes a correct delta. Without this, Observer A uses a stale baseline
+      // and re-inserts the entire remote content, duplicating Y.Text.
+      try {
+        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const body = mdManager.serialize(json);
+        const frontmatter = getFrontmatter(doc);
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+      } catch {
+        // Non-critical — baseline will catch up on next local sync
+      }
+      return;
+    }
     if (debounceA) clearTimeout(debounceA);
     debounceA = setTimeout(runObserverASync, DEBOUNCE_MS);
   };
