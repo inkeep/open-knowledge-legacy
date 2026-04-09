@@ -31,7 +31,8 @@ export function PropPanel({
 }: PropPanelProps) {
   const editableProps = meta.props.filter((p) => p.type !== 'reactnode');
 
-  if (editableProps.length === 0) return null;
+  // When no editable props exist, still render children (toolbar) without the popover
+  if (editableProps.length === 0) return <>{children}</>;
 
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
@@ -270,7 +271,10 @@ function NumberControl({
     <input
       type="number"
       value={value ?? ''}
-      onChange={(e) => onChange(Number(e.target.value))}
+      onChange={(e) => {
+        const n = Number(e.target.value);
+        if (!Number.isNaN(n)) onChange(n);
+      }}
       onKeyDown={() => markUserTyping()}
       style={{
         border: '1px solid #d0d0d0',

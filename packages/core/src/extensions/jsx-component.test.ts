@@ -628,6 +628,43 @@ content a
 });
 
 // ---------------------------------------------------------------------------
+// String prop values with special characters (quote escaping)
+// ---------------------------------------------------------------------------
+
+describe('JsxComponent string prop escaping', () => {
+  test('string prop with double quotes round-trips via &quot; encoding', () => {
+    // User enters: She said "hello" — this must survive the round-trip
+    const jsx = '<Callout type="info">\nShe said &quot;hello&quot;\n</Callout>\n';
+    const cycle1 = roundTrip(jsx);
+    const cycle2 = roundTrip(cycle1);
+    expect(cycle2).toBe(cycle1);
+  });
+
+  test('string prop with ampersand round-trips via &amp; encoding', () => {
+    const jsx = '<Card title="A &amp; B" />\n';
+    const cycle1 = roundTrip(jsx);
+    const cycle2 = roundTrip(cycle1);
+    expect(cycle2).toBe(cycle1);
+  });
+
+  test('prop value with &quot; parses to actual quote character', () => {
+    const jsx = '<Card title="She said &quot;hello&quot;" />\n';
+    const json = parse(jsx);
+    const nodes = getJsxNodes(json);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].attrs?.title).toBe('She said "hello"');
+  });
+
+  test('prop value with &amp; parses to actual ampersand', () => {
+    const jsx = '<Card title="A &amp; B" />\n';
+    const json = parse(jsx);
+    const nodes = getJsxNodes(json);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].attrs?.title).toBe('A & B');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // RT06 — Unregistered component fallback (§3.8)
 // ---------------------------------------------------------------------------
 

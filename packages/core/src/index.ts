@@ -9,7 +9,6 @@ export {
 
 // Extensions
 export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
-export { JsxComponent } from './extensions/jsx-component.ts';
 export {
   createJsxBlockExtension,
   type JsxToken,

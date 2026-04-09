@@ -64,8 +64,13 @@ export function parseJsx(source: string): ParsedJsx | null {
 
     // String literal: <Component type="warning">
     if (attr.value.type === 'Literal' || attr.value.type === 'StringLiteral') {
-      props[name] = attr.value.value;
-      continue;
+      const v = attr.value.value;
+      if (typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number') {
+        props[name] = v;
+        continue;
+      }
+      // Non-primitive literal (null, RegExp, bigint) → void fallback
+      return null;
     }
 
     // Expression container: <Component count={42}>
@@ -74,8 +79,13 @@ export function parseJsx(source: string): ParsedJsx | null {
 
       // Primitive literal: {42}, {true}, {"string"}
       if (exprValue.type === 'Literal') {
-        props[name] = exprValue.value;
-        continue;
+        const v = exprValue.value;
+        if (typeof v === 'string' || typeof v === 'boolean' || typeof v === 'number') {
+          props[name] = v;
+          continue;
+        }
+        // Non-primitive literal (null, RegExp, bigint) → void fallback
+        return null;
       }
 
       // Unary expression for negative numbers: {-1}

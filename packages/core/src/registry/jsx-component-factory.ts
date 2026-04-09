@@ -82,10 +82,19 @@ const INTERNAL_ATTRS = new Set([
 ]);
 
 /**
+ * Escape a string value for use inside a JSX double-quoted attribute.
+ * Encodes `&` → `&amp;` and `"` → `&quot;` so the serialized JSX is valid.
+ * acorn-jsx decodes these HTML entities automatically on parse.
+ */
+function escapeJsxAttrValue(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+/**
  * Reconstruct a raw JSX string from structured attributes.
  *
  * Props are emitted in alphabetical order (deterministic). Format:
- *   - string  → `prop="value"`
+ *   - string  → `prop="value"` (with HTML entity escaping for `"` and `&`)
  *   - true    → `prop` (boolean shorthand)
  *   - false   → omitted
  *   - number  → `prop={number}`
@@ -106,7 +115,7 @@ function buildJsxString(
     } else if (typeof value === 'number') {
       parts.push(`${key}={${value}}`);
     } else {
-      parts.push(`${key}="${value}"`);
+      parts.push(`${key}="${escapeJsxAttrValue(String(value))}"`);
     }
   }
 
@@ -207,11 +216,16 @@ export function createJsxComponentExtensions(
 
       // Route: registered → editable, unregistered → void
       if (componentName in manifest) {
-        // Separate known (declared in propAttrs union) from unknown attributes
+        // Separate known (declared by THIS component) from unknown attributes.
+        // Uses per-component manifest, not the flat propAttrs union, so that
+        // attributes from other components don't cross-bleed. Unknown attrs
+        // are preserved via _unknownAttrs JSON (§3.8 collision policy).
+        const componentMeta = manifest[componentName];
+        const declaredProps = new Set(componentMeta.props.map((p) => p.name));
         const knownProps: Record<string, string | boolean | number> = {};
         const unknownProps: Record<string, string | boolean | number> = {};
         for (const [key, value] of Object.entries(props)) {
-          if (key in propAttrs) {
+          if (declaredProps.has(key) && key in propAttrs) {
             knownProps[key] = value;
           } else {
             unknownProps[key] = value;
@@ -266,11 +280,16 @@ export function createJsxComponentExtensions(
         return `${raw}\n`;
       }
 
-      // Collect all non-internal, non-undefined prop attributes
+      // Collect prop attributes, filtered to the component's own manifest entry.
+      // This prevents cross-bleed from the flat attribute union: a Callout node
+      // won't accidentally serialize a `src` prop that belongs to Video.
       const allProps: Record<string, string | boolean | number> = {};
       const attrs = node.attrs || {};
+      const meta = manifest[componentName];
+      const allowedProps = meta ? new Set(meta.props.map((p) => p.name)) : null;
       for (const [key, value] of Object.entries(attrs)) {
         if (INTERNAL_ATTRS.has(key)) continue;
+        if (allowedProps && !allowedProps.has(key)) continue;
         if (value === undefined || value === null || value === '') continue;
         allProps[key] = value as string | boolean | number;
       }

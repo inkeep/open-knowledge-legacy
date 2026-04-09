@@ -22,8 +22,8 @@ Use this context to:
 | **Author** | Nick Gomez |
 | **Base** | `main` |
 | **Repo** | inkeep/open-knowledge |
-| **Head SHA** | `8edda0578288127f13ca59f31255ab1b2540960b` |
-| **Size** | 29 commits · +6710/-739 · 54 files |
+| **Head SHA** | `9f17264eb44852222c0855d3692061200334e6f4` |
+| **Size** | 30 commits · +6710/-739 · 54 files |
 | **Labels** | _None — local review._ |
 | **Review state** | LOCAL |
 | **Diff mode** | `summary` — reviewers must read tracked file diffs on-demand |
@@ -73,6 +73,7 @@ ebeb2d7 [US-011] Add slash commands for component insertion from manifest
 9e9669d [US-014] Agent-discoverable manifest, AGENTS.md, CLAUDE.md, CI drift check
 6d1b9a0 [US-015] E2E test suite, test-fixture.md with 15 built-ins, real corpus fixtures
 8edda05 docs: update docs for typed-component-nodes (Layers 2-3 shipped)
+9f17264 fixup! local-review: baseline (pre-review state)
 ```
 
 ## Changed Files
