@@ -204,19 +204,41 @@ export function createServer(options: ServerOptions): ServerInstance {
               break;
 
             case 'clean':
-              applyToDoc(docName, result.newContent);
+              try {
+                applyToDoc(docName, result.newContent);
+              } catch (e) {
+                console.error(
+                  `[reconcile] Failed to apply clean content to Y.Doc for ${docName}:`,
+                  e,
+                );
+              }
+              // Always update base to track disk state — prevents cascading merge errors
               persistence.reconciledBase.set(docName, result.newContent);
               incrementReconcile();
               break;
 
             case 'merged':
-              applyToDoc(docName, result.newContent);
+              try {
+                applyToDoc(docName, result.newContent);
+              } catch (e) {
+                console.error(
+                  `[reconcile] Failed to apply merged content to Y.Doc for ${docName}:`,
+                  e,
+                );
+              }
               persistence.reconciledBase.set(docName, result.newContent);
               incrementReconcile();
               break;
 
             case 'conflicts': {
-              applyToDoc(docName, result.newContent);
+              try {
+                applyToDoc(docName, result.newContent);
+              } catch (e) {
+                console.error(
+                  `[reconcile] Failed to apply conflict content to Y.Doc for ${docName}:`,
+                  e,
+                );
+              }
               persistence.reconciledBase.set(docName, result.newContent);
               incrementReconcile();
               incrementConflict();
@@ -337,6 +359,10 @@ export function createServer(options: ServerOptions): ServerInstance {
   let headWatcher: HeadWatcherHandle | null = null;
 
   async function destroy(): Promise<void> {
+    // Wait for async init to complete before cleanup — prevents leaked watcher
+    // subscriptions if destroy() is called during startup (e.g., Ctrl+C)
+    await ready.catch(() => {});
+
     // Flush pending git commit before stopping watchers
     persistence.flushPendingGitCommit();
     await persistence.awaitPendingCommit();
@@ -403,10 +429,10 @@ export function createServer(options: ServerOptions): ServerInstance {
         },
         // onBatchEnd
         async (info) => {
-          persistence.setBatchInProgress(false);
-
           const bufferedCount = eventBuffer.length;
           await drainEventBuffer();
+
+          persistence.setBatchInProgress(false);
 
           console.log(
             `[batch] end (${bufferedCount} docs reconciled, headMoved=${info.headMoved}${info.timeout ? ', timeout' : ''})`,

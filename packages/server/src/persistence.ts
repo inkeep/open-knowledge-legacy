@@ -147,7 +147,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         }
       }
 
-      await sg.env(env).raw('add', 'content/');
+      await sg.env(env).raw('add', contentRoot);
       const treeSha = (await sg.env(env).raw('write-tree')).trim();
 
       let parentSha: string | null = null;

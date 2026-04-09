@@ -461,15 +461,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       // Parse optional writers from body
+      const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
       if (rawBody.length > 0) {
         const body = JSON.parse(rawBody.toString()) as Record<string, unknown>;
         if (Array.isArray(body.writers)) {
-          writers = (body.writers as Array<Record<string, string>>).map((w) => ({
-            id: w.id ?? 'unknown',
-            name: w.name ?? 'unknown',
-            email: w.email ?? 'noreply@openknowledge.local',
-          }));
+          writers = (body.writers as Array<Record<string, string>>).map((w) => {
+            const id = w.id ?? 'unknown';
+            if (!SAFE_ID_RE.test(id)) {
+              throw new Error(`Invalid writer id: ${id}`);
+            }
+            return {
+              id,
+              name: w.name ?? 'unknown',
+              email: w.email ?? 'noreply@openknowledge.local',
+            };
+          });
         }
       }
 

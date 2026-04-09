@@ -155,7 +155,10 @@ export async function startHeadWatcher(
   function handleGitEvent(): void {
     if (!inBatch) {
       inBatch = true;
-      oldHead = readHeadSha(gitDir);
+      // oldHead already holds the correct pre-batch value (initialized at
+      // watcher start, updated after each batch ends). Re-reading here would
+      // capture the post-change value because @parcel/watcher fires after
+      // .git/HEAD has already been written.
       onBatchBegin();
 
       // Start timeout cap
