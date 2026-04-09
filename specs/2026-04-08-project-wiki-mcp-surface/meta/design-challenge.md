@@ -1,5 +1,7 @@
 # Design Challenge Findings
 
+> **Historical artifact.** These findings were written against the pre-simplification spec that included code-index and PR ingestion. Both have since been removed from scope. H2 (code-index unsustainable at scale) contributed directly to the decision to remove code-index. See `_changelog.md` for the scope evolution.
+
 **Artifact:** specs/2026-04-08-project-wiki-mcp-surface/SPEC.md
 **Challenge date:** 2026-04-08
 **Total findings:** 5 (2 high, 2 medium, 1 low)

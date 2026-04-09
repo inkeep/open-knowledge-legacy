@@ -1,5 +1,7 @@
 # Audit Findings
 
+> **Historical artifact.** These findings were written against the pre-simplification spec that included code-index (per-file codebase annotations) and PR ingestion. Both have since been removed from scope. The challenger's H2 finding (code-index unsustainable at scale) contributed directly to that decision. See `_changelog.md` for the scope evolution.
+
 **Artifact:** specs/2026-04-08-project-wiki-mcp-surface/SPEC.md
 **Audit date:** 2026-04-08
 **Total findings:** 8 (2 high, 3 medium, 3 low)

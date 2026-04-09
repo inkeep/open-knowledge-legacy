@@ -6,7 +6,7 @@
 **Baseline commit:** bfee3dc
 **Links:**
 - Parent project: [PROJECT.md](../../PROJECT.md), [STORIES.md](../../STORIES.md)
-- Research: 48 reports in `../../reports/` (see PROJECT.md §Evidence)
+- Research: Informed by 48 reports in the `reports/` git submodule ([inkeep/nick-reports](https://github.com/inkeep/nick-reports)). See PROJECT.md §Evidence for the full report index.
 - Related specs: [bidirectional-observer-sync](../2026-04-07-bidirectional-observer-sync/), [agent-markdown-writes](../2026-04-07-agent-markdown-writes/)
 
 ---
@@ -15,7 +15,7 @@
 
 **Situation:** Development teams using AI coding agents (Claude Code, Cursor, Codex) accumulate project knowledge — architecture decisions, process docs, research findings. This knowledge is what makes agents effective: an agent with accurate project context produces dramatically better output. Today this knowledge lives in scattered specs, markdown files, CLAUDE.md, Notion pages, or developers' heads.
 
-**Complication:** This knowledge goes stale almost immediately. Specs are written, code evolves, and the specs no longer reflect reality. External research gets done but lives in disconnected reports. The result: agents work with outdated context, produce wrong suggestions, and developers lose trust in agent output. The cost compounds — every stale article makes the next agent interaction worse. Today's workarounds are manual (someone remembers to update docs) or nonexistent (docs just rot). Deep Wiki (Devin's auto-generated codebase documentation) generates a static snapshot but doesn't stay current. CLAUDE.md helps but is limited to a single flat file with no structure.
+**Complication:** This knowledge goes stale almost immediately. Specs are written, code evolves, and the specs no longer reflect reality. External research gets done but lives in disconnected reports. The result: agents work with outdated context, produce wrong suggestions, and developers lose trust in agent output. The cost compounds — every stale article makes the next agent interaction worse. Today's workarounds are manual (someone remembers to update docs) or nonexistent (docs just rot). Deep Wiki (Cognition's auto-generated codebase documentation for their Devin AI agent) generates a static snapshot but doesn't stay current. CLAUDE.md helps but is limited to a single flat file with no structure.
 
 **Resolution:** A project wiki that lives in `.openknowledge/` inside any git repo. Maintained by both agents and humans. Content has a clear lifecycle: raw external sources (`external-sources/`) are ingested, analyzed into research findings (`research/`), and promoted into canonical knowledge articles (`articles/`) as understanding solidifies. A thin MCP server auto-generates catalog files (INDEX.md) for navigation and serves conventions to agents on connect. Skills (`/init-wiki`, `/ingest`, `/research`, `/consolidate`) help create and maintain content at each stage. The knowledge compounds: each agent session builds on the last one's understanding. The wiki is plain markdown, navigable by any agent even without the MCP server, and committed to git alongside the code.
 
@@ -32,12 +32,12 @@
 - **[NEVER]** NG2: Code-index / file-by-file codebase mirror — the agent reads source code directly when it needs implementation details
 - **[NOT NOW]** NG3: Wiki-links and backlinks (Bucket 7) — Revisit if: wiki grows beyond ~50 articles
 - **[NOT NOW]** NG4: Permission model / draft branches — Revisit if: team size grows
-- **[NOT NOW]** NG5: CRDT real-time sync — editor team handles this separately. MCP doesn't support streaming text output; agent writes complete chunks, not character-by-character.
+- **[NOT NOW]** NG5: CRDT as a hard dependency — MCP server works without Hocuspocus via disk fallback. When Hocuspocus is available, writes route through DirectConnection automatically (D1). MCP doesn't support streaming text output; agent writes complete chunks, not character-by-character.
 - **[NOT NOW]** NG6: Vector/semantic search — catalog + grep sufficient at P0 scale
-- **[NOT NOW]** NG9: File attribution / per-author tracking — can use native file ops without collaboration server; file watcher detects changes regardless of source. Layer in later.
-- **[NOT NOW]** NG10: Auto-commit versioning — no auto-commit every 30 seconds. Focus on functional indexing over git history management. GitHub Actions for index consistency across team (D17) is the team sync mechanism.
-- **[NOT NOW]** NG7: PR ingestion — `/ingest` for PRs is a future extension; v0 focuses on external source ingestion and manual article maintenance
-- **[NOT UNLESS]** NG8: Publishing engine (docs site from wiki) — Only if: demand emerges
+- **[NOT NOW]** NG7: File attribution / per-author tracking — can use native file ops without collaboration server; file watcher detects changes regardless of source. Layer in later.
+- **[NOT NOW]** NG8: Auto-commit versioning — no auto-commit every 30 seconds. Focus on functional indexing over git history management. GitHub Actions for index consistency across team (D17) is the team sync mechanism.
+- **[NOT NOW]** NG9: PR ingestion — `/ingest` for PRs is a future extension; v0 focuses on external source ingestion and manual article maintenance
+- **[NOT UNLESS]** NG10: Publishing engine (docs site from wiki) — Only if: demand emerges
 
 ## 4) Personas / consumers
 
@@ -100,7 +100,7 @@
 | Priority | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|
 | Must | Thin MCP server: file watcher + catalog generator + instructions + init tool | MCP server starts via `.mcp.json` (stdio), watches `.openknowledge/` for file changes, regenerates catalogs automatically | @modelcontextprotocol/sdk + @parcel/watcher |
-| Must | Agent uses native tools (Read, Write, Edit, Grep) for file operations | MCP server does NOT proxy file reads/writes; agent uses its built-in tools directly | Simplifies architecture |
+| Must | Agent uses native tools (Read, Write, Edit, Grep) for file reads and searches | MCP server does NOT proxy reads. Writes use adaptive path: DirectConnection when Hocuspocus running, native file tools when not (D1). | Reads always native; writes adapt |
 | Must | `init` MCP tool scaffolds `.openknowledge/` structure | Calling init creates the directory structure, AGENTS.md, config.yaml, and starter catalogs | |
 | Must | Catalog files (`INDEX.md`) auto-generate per folder inside `.openknowledge/` | After any file write, the parent folder's INDEX.md updates with title/description/tags from all children | File watcher triggers regeneration |
 | Must | Full catalog rebuild on server startup | Catches changes made while server was off (human edits, editor writes) | Milliseconds at P0 scale |
@@ -181,6 +181,8 @@ external_sources_path: ./external-sources
 research_path: ./research
 ```
 
+> **Note:** When `articles_path` points outside `.openknowledge/` (e.g., `../docs`), ensure that directory isn't also managed by the editor's Hocuspocus persistence pipeline. Two systems watching the same directory with different source-of-truth models creates conflicts. The default (`./articles`) avoids this.
+
 ### System architecture
 
 ```
@@ -188,12 +190,12 @@ research_path: ./research
 │                   AI Agent                           │
 │          (Claude Code / Cursor / Codex)              │
 │                                                      │
-│  Native tools: Read, Write, Edit, Grep, Glob, Bash  │
+│  Native tools: Read, Edit, Grep, Glob, Bash          │
 │  Skills: /init-wiki, /ingest, /consolidate, /research│
 └──────────┬────────────────────────┬──────────────────┘
            │                        │
-           │ reads/writes files     │ MCP connection
-           │ directly               │ (stdio via .mcp.json)
+           │ reads files            │ MCP connection
+           │ natively               │ (stdio via .mcp.json)
            ▼                        ▼
 ┌──────────────────┐    ┌──────────────────────────────┐
 │  .openknowledge/ │    │  MCP Server                   │
@@ -204,32 +206,94 @@ research_path: ./research
 │  research/       │    │  3. @parcel/watcher on        │
 │  INDEX.md files  │    │     .openknowledge/           │
 │                  │    │  4. catalog regenerator        │
+│                  │    │  5. adaptive write path:       │
+│                  │    │     DirectConnection if        │
+│                  │    │     Hocuspocus available,      │
+│                  │    │     disk write if not          │
 └──────────────────┘    └──────────────────────────────┘
 ```
 
 > **Note:** STORIES.md T6.1-T6.2 define `npx openknowledge` as the main editor server command (Bucket 6 — Andrew). The `serve` subcommand is a placeholder — coordinate with Bucket 6 to resolve namespace.
 
+### Coexistence & convergence with the editor stack
+
+**Adaptive write path:** The MCP server detects whether Hocuspocus is running and routes writes accordingly:
+
+```
+Agent writes an article
+  → Is Hocuspocus running?
+    → Yes: DirectConnection → Y.Doc → persists to disk → watcher → catalogs
+           (instant in editor, origin-tagged, per-origin undo works)
+    → No:  native file write → disk → watcher → catalogs
+           (works without editor, anonymous — no attribution)
+```
+
+Both paths produce the same outcome: a file on disk and updated catalogs. The difference is latency and attribution:
+
+| | Disk write (no editor) | DirectConnection (editor running) |
+|---|---|---|
+| Editor sees change | Via disk bridge (2-10s delay) | Instant |
+| Attribution ("agent wrote this") | Anonymous | Origin-tagged |
+| Per-origin undo | No | Yes |
+| Works without editor | Yes | No |
+
+**Disk writes are anonymous.** The filesystem doesn't carry identity. When the editor isn't running, there's no attribution — git blame is the only record of who wrote what. This is acceptable for P0 (90% agent-generated content, review via git history).
+
+**When both systems run simultaneously:**
+- Agent writes via DirectConnection → CRDT → persists to disk → MCP watcher catches it → catalogs regenerate. Instant in editor with full attribution.
+- Human edits in the editor → CRDT persists to disk → MCP watcher catches it → catalogs regenerate.
+- If agent falls back to disk write (DirectConnection unavailable) → disk bridge syncs into CRDT with small delay. Anonymous in the CRDT.
+
+**Detection mechanism:** MCP server checks for Hocuspocus on startup (attempt connection). If available, use DirectConnection for writes. If not, fall back to disk. Re-check periodically or on connection failure.
+
+**What's long-term vs what evolves:**
+- **Long-term:** Catalog generator, INDEX.md format, skill definitions, directory structure, content lifecycle.
+- **Evolves:** Write path adapts based on what's available. Disk-first is the fallback, CRDT is the upgrade. No architecture rewrite needed — migration is additive.
+
+### Relationship to STORIES.md Bucket 2
+
+This spec **supersedes** the following STORIES.md Bucket 2 tasks:
+
+| STORIES.md Task | Status in this spec | Rationale |
+|---|---|---|
+| T2.1 — MCP server with filesystem-compatible tool signatures | **Superseded.** Thin server with `init` only; agent uses native tools. | Research showed just-bash/10+ tools overkill; agent already has file tools |
+| T2.2 — Knowledge-specific tools (update_frontmatter, create_draft, etc.) | **Deferred.** No custom tools for v0. | No drafts/permissions for P0 (D3); frontmatter edited via native tools |
+| T2.3 — Additive enrichment in tool responses | **Deferred.** No enriched reads for v0. | Agent reads files directly; enrichment adds complexity without clear value |
+| T2.4 — Wire MCP writes through Hocuspocus DirectConnection | **Adaptive.** DirectConnection used when Hocuspocus is available; disk fallback when not (D1). | See Coexistence section — adaptive write path |
+| T2.5 — Catalog file generator | **In scope.** Same goal, different trigger (file watcher vs onStoreDocument). | |
+| T2.6 — Catalog naming | **Resolved.** INDEX.md (D10). | |
+| T2.7 — Folder metadata handling | **Deferred.** meta.yaml not in v0 scope. | |
+| T2.8 — MCP instructions + AGENTS.md | **In scope.** | |
+| T2.9 — just-bash evaluation | **Resolved.** Rejected (D2). | |
+| T2.10 — Permission store integration | **Deferred.** No permissions for P0 (D3). | |
+
+Tasks not listed (T2.5, T2.6, T2.8) remain valid and are covered by this spec. STORIES.md should be updated to reflect this supersession.
+
 ### Data flow: agent writes an article
 
 ```
-1. Agent calls Write(".openknowledge/articles/auth/sso-migration.md", content)
-   └─ Agent's native tool, direct filesystem write
+1. Agent writes ".openknowledge/articles/auth/sso-migration.md"
+   └─ Adaptive path (D1):
+      If Hocuspocus running → DirectConnection → Y.Doc → persists to disk
+      If not → native Write tool → direct filesystem write
 
-2. @parcel/watcher detects new file
+2. File lands on disk (either path)
+
+3. @parcel/watcher detects new/changed file
    └─ MCP server's file watcher fires
 
-3. Catalog regenerator reads all .md files in articles/auth/
+4. Catalog regenerator reads all .md files in articles/auth/
    └─ Pulls frontmatter (title, description, tags) from each
    └─ Skips INDEX.md files (they're output, not input)
 
-4. Writes articles/auth/INDEX.md
+5. Writes articles/auth/INDEX.md
    └─ Lists all articles in auth/ with their metadata
    └─ Content-hash check prevents re-triggering the watcher
 
-5. Propagates up: regenerates articles/INDEX.md
+6. Propagates up: regenerates articles/INDEX.md
    └─ Lists all topic folders with their metadata + child counts
 
-6. Propagates up: regenerates root INDEX.md
+7. Propagates up: regenerates root INDEX.md
    └─ Links to articles/, research/, external-sources/
 ```
 
@@ -404,8 +468,8 @@ Phase 6 (extensions): /consolidate, status tool, GitHub Actions
 
 | ID | Decision | Type (P/T/X) | Resolution | 1-way door? | Rationale | Evidence / links |
 |---|---|---|---|---|---|---|
-| D1 | Agent writes directly to files, no CRDT | T | LOCKED | No | P0 simplicity; CRDT integration is editor team's concern | Conversation with Tim |
-| D2 | Thin MCP server (file watcher + catalog gen + instructions + init), NOT filesystem proxy | T | LOCKED | No | Agent uses native tools for file ops; MCP server handles side effects only | Research confirmed |
+| D1 | Adaptive write path: DirectConnection when Hocuspocus is running, disk when not | T | LOCKED | No | Best of both — instant + attributed when editor is open, independent when it's not. Disk writes are anonymous (no attribution). | Conversation with Tim |
+| D2 | Thin MCP server (file watcher + catalog gen + instructions + init + adaptive write path), NOT a full filesystem proxy | T | LOCKED | No | Agent uses native tools for reads/searches. Writes use adaptive path (D1). MCP server handles side effects (catalogs, instructions) and write routing. | Research confirmed |
 | D3 | No drafts/permissions for P0 | P | LOCKED | No | Agent writes directly; review via git history | Conversation with Tim |
 | D4 | `init` as MCP tool + `/init-wiki` skill for population | P | DIRECTED | No | MCP tool scaffolds structure; skill orchestrates content generation | Conversation with Tim |
 | D5 | `.mcp.json` in repo for Claude Code auto-config | T | LOCKED | No | Portable across team; committed to git | Claude Code docs |
@@ -461,6 +525,7 @@ All resolved. No open questions remaining.
 - **Requirements:** CLAUDE.md additions, AGENTS.md template
 - **Acceptance criteria:** Agent without MCP can orient and navigate the wiki by reading files alone
 - **Owner:** Tim
+- **Contingency (A5):** If agents don't reliably follow CLAUDE.md maintenance hints, wiki freshness depends entirely on explicit skill invocations (/init-wiki, /ingest, /research). This is acceptable for P0 — skills are the primary content creation mechanism. CLAUDE.md becomes supplementary, not load-bearing.
 
 ### Phase 4: /ingest skill
 - **Goal:** External sources (URLs, PDFs) captured as raw reference material
@@ -508,5 +573,5 @@ All resolved. No open questions remaining.
 
 - **SCOPE:** `.openknowledge/` directory structure, MCP server, skill files (`/init-wiki`, `/ingest`), `.mcp.json`, CLAUDE.md additions, AGENTS.md template, `config.yaml`
 - **EXCLUDE:** Editor code (TipTap, y-prosemirror — Bucket 1), CRDT/Hocuspocus layer, persistence pipeline (Bucket 4), presence UX (Bucket 3), permission model (Bucket 5), wiki-links/backlinks (Bucket 7)
-- **STOP_IF:** Implementation requires changes to the CRDT layer or Hocuspocus server; MCP server needs to proxy file reads/writes instead of using native tools
+- **STOP_IF:** Implementation requires changes to the CRDT layer or Hocuspocus server; MCP server needs to proxy file reads (writes use adaptive path, reads stay native)
 - **ASK_FIRST:** Changes to `.mcp.json` schema that affect other team members; INDEX.md format changes after initial deployment (1-way door); any new MCP tool beyond `init`
