@@ -238,6 +238,45 @@ test.describe('QA-006: T56 — Rapid external saves (disk bridge)', () => {
   });
 });
 
+test.describe('QA-007: U1.2 — Insert component via slash menu and edit props', () => {
+  test('insert Callout via slash command, change type in panel, source reflects update', async ({
+    page,
+  }) => {
+    await openEditor(page);
+    await resetDoc(page);
+    await openEditor(page);
+
+    await typeInWysiwyg(page, '/callout');
+    await page.waitForTimeout(1000);
+    await expect(page.locator('[data-slash-menu]')).toBeVisible();
+    await page.keyboard.press('Enter');
+
+    const calloutBlock = page.locator('[data-jsx-component-name="Callout"]').first();
+    await expect(calloutBlock).toContainText('WARNING');
+
+    await calloutBlock.click();
+    await page.waitForSelector('[data-component-prop-panel]', {
+      state: 'visible',
+      timeout: 10_000,
+    });
+    await page.getByLabel('Type').selectOption('error');
+
+    await expect(calloutBlock).toContainText('ERROR');
+
+    await toggleToSource(page);
+
+    const fullText = await page.evaluate(() => {
+      const provider = (globalThis as Record<string, unknown>).__hocuspocusProvider as {
+        document?: { getText: (name: string) => { toString: () => string } };
+      };
+      if (!provider?.document) return '';
+      return provider.document.getText('source').toString();
+    });
+
+    expect(fullText).toContain('<Callout type="error">');
+  });
+});
+
 test.describe('QA-007: T54 — Delete .md file externally while editor open', () => {
   test('no crash, editor retains content', async ({ page }) => {
     await openEditor(page);

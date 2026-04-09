@@ -224,6 +224,24 @@ describe('Content fidelity through observer cycle', () => {
     cleanup();
   });
 
+  test('unsupported jsx-component source round-trip does not duplicate fenced content', async () => {
+    const { doc, fragment, ytext, cleanup } = createObservedDoc();
+
+    const jsxMd = '```jsx-component\n<Button variant="primary">Ship it</Button>\n```\n';
+    doc.transact(() => {
+      ytext.insert(0, jsxMd);
+    }, 'user-edit');
+
+    await wait();
+    expect(ytext.toString()).toBe(jsxMd);
+
+    applyMarkdown(doc, fragment, jsxMd);
+    await wait();
+
+    expect(ytext.toString()).toBe(jsxMd);
+    cleanup();
+  });
+
   test('T62: GFM table survives observer cycle', async () => {
     const { doc, fragment, ytext, cleanup } = createObservedDoc();
 

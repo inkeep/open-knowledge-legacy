@@ -37,7 +37,7 @@ TipTap v3 with ProseMirror provides the WYSIWYG editing surface. Key extensions:
 - **Frontmatter** -- regex strip before parse, re-prepend after serialize (~25 LOC)
 - **Image** (`@tiptap/extension-image`) -- built-in markdown support in TipTap v3
 - **Task lists** (`TaskList` + `TaskItem`) -- native markdown round-trip in v3
-- **JsxComponent** -- custom void node extension for embedding React components as fenced code blocks with `jsx-component` info string
+- **JsxComponent** -- custom void node extension for embedding React components as fenced code blocks with `jsx-component` info string, slash insertion, and inline primitive-prop editing
 
 Markdown round-trip fidelity: zero semantic loss after ~80 LOC of fixes. Convergence confirmed (cycle 2 byte-identical to cycle 1).
 
@@ -89,4 +89,4 @@ JSX components embedded in markdown as fenced code blocks:
 ```
 ````
 
-The `JsxComponent` extension intercepts `code` tokens with `lang === 'jsx-component'` at priority 60 (above codeBlock's 50). Known components get visual preview via `ReactNodeViewRenderer`. The raw JSX string survives the markdown round-trip unchanged.
+The `JsxComponent` extension intercepts `code` tokens with `lang === 'jsx-component'` at priority 60 (above codeBlock's 50). Known built-ins (`Callout`, `Tabs`, `CodeGroup`, `Steps`, `Accordion`, `Card`, `Embed`) are inserted from a slash menu in WYSIWYG mode, rendered through a registry-backed `ReactNodeViewRenderer`, and expose an inline prop panel for supported primitive props. Prop edits rewrite the stored JSX string in place, and the updated fenced block remains visible in source mode through the existing observer sync path.

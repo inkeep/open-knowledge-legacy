@@ -14,6 +14,8 @@ bun run dev        # Starts Vite dev server + embedded Hocuspocus on http://loca
 
 Open `http://localhost:5173` in a browser. The editor loads `content/test-fixture.md` via Hocuspocus and renders it in TipTap. Open a second tab to see real-time collaboration.
 
+The WYSIWYG editor now supports slash insertion for built-in component blocks. Type `/callout`, `/tabs`, `/codegroup`, `/steps`, `/accordion`, `/card`, or `/embed` to insert a starter block, then click the block to edit its supported primitive props inline.
+
 ## Architecture
 
 ```
@@ -42,7 +44,7 @@ Browser (React 19 + Vite 6)
 - Agent markdown write path (`POST /api/agent-write-md`): accepts markdown text, serializes current Y.Doc to markdown, splices in the agent content, parses the combined result, and applies via `updateYFragment()` -- unifies agent writes with the toggle-back path
 - Source mode receives live agent writes: Y.XmlFragment observer detects changes and injects updated markdown into CodeMirror in real-time
 - Yjs v14 dual-view was investigated (V7) and found not viable -- v14 beta lacks the unified YType needed
-- Void nodes (JSX components) use `atom: true` TipTap nodes with `ReactNodeViewRenderer`, round-tripping as fenced code blocks with `jsx-component` info string
+- Void nodes (JSX components) use `atom: true` TipTap nodes with `ReactNodeViewRenderer`, round-tripping as fenced code blocks with `jsx-component` info string, slash insertion, and registry-backed inline prop editing
 - Git persistence uses plumbing commands (`write-tree`, `commit-tree`, `update-ref`) to write to `refs/wip/main` without checkout
 
 ## File Structure
@@ -62,7 +64,9 @@ init_spike/
       extensions/
         frontmatter.ts           # YAML frontmatter strip/prepend for round-trip
         jsx-component.ts         # TipTap void node extension (atom, priority 60)
-        JsxComponentView.tsx     # React node view renderer for JSX components
+        JsxComponentView.tsx     # Registry-backed React node view + inline prop panel
+        jsx-component-registry.tsx # Built-in component registry, previews, parse/serialize helpers
+        slash-command.ts         # Slash query detection for component insertion
     server/
       hocuspocus-plugin.ts       # Vite plugin: Hocuspocus + DirectConnection APIs
       persistence.ts             # CRDT -> markdown -> git pipeline

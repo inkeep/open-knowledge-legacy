@@ -99,13 +99,15 @@ Agent write flow:
 - `vite.config.ts` — Vite + Hocuspocus plugin
 
 **Editors:**
-- `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider singleton, CollaborationCursor, awareness state init, flash plugin
+- `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider singleton, slash-menu insertion, dynamic collab URL, CollaborationCursor, awareness state init, flash plugin
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next CRDT binding + awareness + flash
 - `src/editor/observers.ts` — Bidirectional observer module (Observer A + B with origin guards, debounce, error handling)
 - `src/editor/three-way-merge.ts` — Three-way merge utility (kept for future disk bridge use)
 - `src/editor/extensions/frontmatter.ts` — Frontmatter strip/prepend
 - `src/editor/extensions/jsx-component.ts` — Void node extension with dynamic backtick fencing (priority 60)
-- `src/editor/extensions/JsxComponentView.tsx` — React node view renderer
+- `src/editor/extensions/JsxComponentView.tsx` — Registry-backed React node view renderer + inline prop panel
+- `src/editor/extensions/jsx-component-registry.tsx` — Built-in component registry, preview renderers, parse/serialize helpers
+- `src/editor/extensions/slash-command.ts` — Slash query matching for component insertion
 
 **Presence & awareness:**
 - `src/presence/identity.ts` — Identity system (useIdentity hook, getIdentity, AwarenessState types, random name/color generation)

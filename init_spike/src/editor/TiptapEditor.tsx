@@ -4,11 +4,16 @@ import Collaboration from '@tiptap/extension-collaboration';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { prependFrontmatter } from './extensions/frontmatter';
+import {
+  type BuiltInComponentMeta,
+  getSlashComponentItems,
+} from './extensions/jsx-component-registry';
 import { sharedExtensions } from './extensions/shared';
+import { getSlashCommandMatch } from './extensions/slash-command';
 import { markUserTyping, setupObservers } from './observers';
 import {
   evictStaleEntries,
@@ -57,11 +62,20 @@ const editorSchema = getSchema(sharedExtensions);
 let singletonProvider: HocuspocusProvider | null = null;
 let observerCleanup: (() => void) | null = null;
 
+function getCollabUrl(): string {
+  if (typeof window === 'undefined') {
+    return 'ws://localhost:5173/collab';
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/collab`;
+}
+
 function getProvider(): HocuspocusProvider {
   if (!singletonProvider) {
     console.log('[TiptapEditor] Creating provider singleton');
     singletonProvider = new HocuspocusProvider({
-      url: 'ws://localhost:5173/collab',
+      url: getCollabUrl(),
       name: DOC_NAME,
     });
 
@@ -121,6 +135,14 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
   lastAgentId: null,
 };
 
+interface SlashMenuState {
+  query: string;
+  from: number;
+  to: number;
+  items: BuiltInComponentMeta[];
+  selectedIndex: number;
+}
+
 export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
   const frontmatterRef = useRef<string>('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
@@ -128,8 +150,10 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
   // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
   const wrapperRef = useRef<HTMLDivElement>(null);
   const flashStateRef = useRef<AgentFlashState>(INITIAL_FLASH_STATE);
+  const slashMenuRef = useRef<SlashMenuState | null>(null);
   const provider = getProvider();
   const identity = useIdentity();
+  const [slashMenuState, setSlashMenuState] = useState<SlashMenuState | null>(null);
 
   const mdManager = useMemo(() => new MarkdownManager({ extensions: sharedExtensions }), []);
 
@@ -162,6 +186,136 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       }),
     ],
   });
+
+  useEffect(() => {
+    slashMenuRef.current = slashMenuState;
+  }, [slashMenuState]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const syncSlashMenu = () => {
+      const { state } = editor;
+      if (!state.selection.empty) {
+        setSlashMenuState(null);
+        return;
+      }
+
+      const { $from } = state.selection;
+      if (!$from.parent.isTextblock) {
+        setSlashMenuState(null);
+        return;
+      }
+
+      const textBeforeCursor = $from.parent.textBetween(0, $from.parentOffset, undefined, '\ufffc');
+      const match = getSlashCommandMatch(textBeforeCursor, state.selection.from);
+      if (!match) {
+        setSlashMenuState(null);
+        return;
+      }
+
+      const items = getSlashComponentItems(match.query);
+      setSlashMenuState((current) => ({
+        query: match.query,
+        from: match.from,
+        to: match.to,
+        items,
+        selectedIndex:
+          current && current.query === match.query && current.items.length > 0
+            ? Math.min(current.selectedIndex, Math.max(items.length - 1, 0))
+            : 0,
+      }));
+    };
+
+    editor.on('selectionUpdate', syncSlashMenu);
+    editor.on('update', syncSlashMenu);
+    return () => {
+      editor.off('selectionUpdate', syncSlashMenu);
+      editor.off('update', syncSlashMenu);
+    };
+  }, [editor]);
+
+  useEffect(() => {
+    if (!editor) return;
+
+    const insertSelectedComponent = (component: BuiltInComponentMeta) => {
+      const currentSlashMenu = slashMenuRef.current;
+      if (!currentSlashMenu) {
+        return;
+      }
+
+      editor
+        .chain()
+        .focus()
+        .deleteRange({ from: currentSlashMenu.from, to: currentSlashMenu.to })
+        .insertJsxComponent(component.defaultTemplate())
+        .run();
+
+      setSlashMenuState(null);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const currentSlashMenu = slashMenuRef.current;
+      if (!currentSlashMenu) {
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        setSlashMenuState(null);
+        return;
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (currentSlashMenu.items.length === 0) return;
+        setSlashMenuState((current) =>
+          current
+            ? {
+                ...current,
+                selectedIndex: (current.selectedIndex + 1) % current.items.length,
+              }
+            : current,
+        );
+        return;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        event.stopPropagation();
+        if (currentSlashMenu.items.length === 0) return;
+        setSlashMenuState((current) =>
+          current
+            ? {
+                ...current,
+                selectedIndex:
+                  (current.selectedIndex - 1 + current.items.length) % current.items.length,
+              }
+            : current,
+        );
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        const selectedComponent = currentSlashMenu.items[currentSlashMenu.selectedIndex];
+        if (!selectedComponent) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        insertSelectedComponent(selectedComponent);
+      }
+    };
+
+    const dom = editor.view.dom;
+    dom.addEventListener('keydown', onKeyDown, true);
+    return () => {
+      dom.removeEventListener('keydown', onKeyDown, true);
+    };
+  }, [editor]);
 
   // Mark user typing on the editor DOM. Observer B uses this timestamp to defer
   // its tree-replacement sync while the user is actively editing, preventing concurrent
@@ -394,7 +548,97 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
       data-agent-flash-count="0"
       data-agent-flash-position="append"
       data-agent-flash-agent-id=""
+      style={{ position: 'relative' }}
     >
+      {slashMenuState ? (
+        <div
+          data-slash-menu=""
+          role="listbox"
+          aria-label="Insert component"
+          style={{
+            position: 'absolute',
+            top: '12px',
+            left: '12px',
+            zIndex: 20,
+            width: '300px',
+            borderRadius: '12px',
+            border: '1px solid #d4d4d8',
+            background: '#ffffff',
+            boxShadow: '0 20px 45px rgba(15, 23, 42, 0.12)',
+            overflow: 'hidden',
+          }}
+        >
+          <div
+            style={{
+              padding: '10px 12px',
+              borderBottom: '1px solid #e4e4e7',
+              background: '#fafafa',
+              fontSize: '12px',
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+              color: '#52525b',
+            }}
+          >
+            Insert component
+          </div>
+          <div style={{ maxHeight: '320px', overflowY: 'auto', padding: '6px' }}>
+            {slashMenuState.items.length > 0 ? (
+              slashMenuState.items.map((component, index) => {
+                const isSelected = index === slashMenuState.selectedIndex;
+                return (
+                  <button
+                    key={component.name}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    data-slash-item={component.name}
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      editor?.chain().focus().run();
+                      editor
+                        ?.chain()
+                        .focus()
+                        .deleteRange({ from: slashMenuState.from, to: slashMenuState.to })
+                        .insertJsxComponent(component.defaultTemplate())
+                        .run();
+                      setSlashMenuState(null);
+                    }}
+                    style={{
+                      width: '100%',
+                      border: 'none',
+                      borderRadius: '10px',
+                      background: isSelected ? '#18181b' : 'transparent',
+                      color: isSelected ? '#ffffff' : '#18181b',
+                      padding: '10px 12px',
+                      textAlign: 'left',
+                      display: 'grid',
+                      gap: '4px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <span style={{ fontSize: '13px', fontWeight: 700 }}>
+                      {component.displayName}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: '12px',
+                        color: isSelected ? 'rgba(255, 255, 255, 0.82)' : '#71717a',
+                      }}
+                    >
+                      {component.description}
+                    </span>
+                  </button>
+                );
+              })
+            ) : (
+              <div style={{ padding: '12px', fontSize: '13px', color: '#71717a' }}>
+                No built-in components match <strong>/{slashMenuState.query}</strong>.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
       <EditorContent editor={editor} />
     </div>
   );

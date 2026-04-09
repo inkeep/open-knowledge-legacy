@@ -297,6 +297,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
             metaMap.set('frontmatter', frontmatter);
           }, ORIGIN_TEXT_TO_TREE);
         }
+        lastSyncedXmlMd = md;
         return;
       }
 
@@ -310,6 +311,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const metaMap = doc.getMap('metadata');
         metaMap.set('frontmatter', frontmatter);
       }, ORIGIN_TEXT_TO_TREE);
+      lastSyncedXmlMd = md;
     } catch (err) {
       // Parse error — log but don't crash. XmlFragment keeps last valid state.
       console.error('[Observer B] Failed to sync text→tree:', err);
