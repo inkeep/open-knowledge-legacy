@@ -39,14 +39,13 @@ export interface PinoLoggerConfig {
  * stream, which works in both Node.js and Bun without worker threads.
  */
 export class PinoLogger {
+  private name: string;
   private transportConfigs: TransportSingleOptions[] = [];
   private pinoInstance: PinoLoggerInstance;
   private options: LoggerOptions;
 
-  constructor(
-    private name: string,
-    config: PinoLoggerConfig = {},
-  ) {
+  constructor(name: string, config: PinoLoggerConfig = {}) {
+    this.name = name;
     this.options = {
       name: this.name,
       level: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'test' ? 'silent' : 'info'),
