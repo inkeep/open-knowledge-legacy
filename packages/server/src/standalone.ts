@@ -22,7 +22,12 @@ import {
   setBatchInProgress,
 } from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
-import { commitUpstreamImport, type ShadowHandle } from './shadow-repo.ts';
+import {
+  commitUpstreamImport,
+  initShadowRepo,
+  type ShadowHandle,
+  shadowGit,
+} from './shadow-repo.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
@@ -54,6 +59,8 @@ export interface ServerInstance {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   destroy: () => Promise<void>;
+  /** Promise that resolves when async init (shadow repo, watchers) is complete. */
+  ready: Promise<void>;
 }
 
 export function createServer(options: ServerOptions): ServerInstance {
@@ -297,6 +304,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let watcher: AsyncSubscription | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
+  let resolvedShadow: ShadowHandle | undefined = shadowRepo;
 
   async function destroy(): Promise<void> {
     if (headWatcher) {
@@ -312,62 +320,88 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus.closeConnections();
   }
 
-  // Start file watcher asynchronously
-  startWatcher(contentDir, onDiskEvent)
-    .then((sub) => {
-      watcher = sub;
-    })
-    .catch((err) => {
-      console.error('[server] Disk bridge watcher failed to start:', err);
-    });
+  /** Async initialization: shadow repo, file watcher, HEAD watcher. */
+  async function initAsync(): Promise<void> {
+    // Auto-initialize shadow repo if not provided
+    if (!resolvedShadow) {
+      try {
+        resolvedShadow = await initShadowRepo(projectDir);
+        console.log(`[server] Shadow repo initialized at ${resolvedShadow.gitDir}`);
+      } catch (e) {
+        console.error('[server] Shadow repo init failed:', e);
+      }
+    }
 
-  // Start HEAD watcher (only if project .git/ exists)
-  startHeadWatcher(
-    projectDir,
-    // onBatchBegin
-    () => {
-      console.log('[batch] begin');
-      // Flush pending L1 writes before entering batch mode
-      hocuspocus.flushPendingStores();
-      persistence.flushPendingGitCommit();
-      setBatchInProgress(true);
-    },
-    // onBatchEnd
-    async (info) => {
-      setBatchInProgress(false);
-
-      const bufferedCount = eventBuffer.length;
-      await drainEventBuffer();
-
-      console.log(
-        `[batch] end (${bufferedCount} docs reconciled, headMoved=${info.headMoved}${info.timeout ? ', timeout' : ''})`,
-      );
-
-      // Record upstream import if HEAD moved and content files were affected
-      if (info.headMoved && info.newHead && shadowRepo && bufferedCount > 0) {
-        const contentRootForShadow = contentRoot ?? 'content';
+    // Verify shadow repo integrity — reinit if corrupted
+    if (resolvedShadow) {
+      try {
+        const sg = shadowGit(resolvedShadow);
+        await sg.raw('rev-parse', '--git-dir');
+      } catch {
+        console.warn('[server] Shadow repo appears corrupted — reinitializing');
         try {
-          const sha = await commitUpstreamImport(
-            shadowRepo,
-            contentRootForShadow,
-            info.oldHead,
-            info.newHead,
-          );
-          console.log(
-            `[shadow] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
-          );
+          resolvedShadow = await initShadowRepo(projectDir);
         } catch (e) {
-          console.error('[shadow] upstream-import failed:', e);
+          console.error('[server] Shadow repo reinit failed:', e);
+          resolvedShadow = undefined;
         }
       }
-    },
-  )
-    .then((handle) => {
-      headWatcher = handle;
-    })
-    .catch((err) => {
-      console.error('[server] HEAD watcher failed to start:', err);
-    });
+    }
 
-  return { hocuspocus, sessionManager, destroy };
+    // Start file watcher
+    try {
+      watcher = await startWatcher(contentDir, onDiskEvent);
+    } catch (err) {
+      console.error('[server] Disk bridge watcher failed to start:', err);
+    }
+
+    // Start HEAD watcher (only if project .git/ exists)
+    try {
+      headWatcher = await startHeadWatcher(
+        projectDir,
+        // onBatchBegin
+        () => {
+          console.log('[batch] begin');
+          hocuspocus.flushPendingStores();
+          persistence.flushPendingGitCommit();
+          setBatchInProgress(true);
+        },
+        // onBatchEnd
+        async (info) => {
+          setBatchInProgress(false);
+
+          const bufferedCount = eventBuffer.length;
+          await drainEventBuffer();
+
+          console.log(
+            `[batch] end (${bufferedCount} docs reconciled, headMoved=${info.headMoved}${info.timeout ? ', timeout' : ''})`,
+          );
+
+          // Record upstream import if HEAD moved and content files were affected
+          if (info.headMoved && info.newHead && resolvedShadow && bufferedCount > 0) {
+            const contentRootForShadow = contentRoot ?? 'content';
+            try {
+              const sha = await commitUpstreamImport(
+                resolvedShadow,
+                contentRootForShadow,
+                info.oldHead,
+                info.newHead,
+              );
+              console.log(
+                `[shadow] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
+              );
+            } catch (e) {
+              console.error('[shadow] upstream-import failed:', e);
+            }
+          }
+        },
+      );
+    } catch (err) {
+      console.error('[server] HEAD watcher failed to start:', err);
+    }
+  }
+
+  const ready = initAsync();
+
+  return { hocuspocus, sessionManager, destroy, ready };
 }
