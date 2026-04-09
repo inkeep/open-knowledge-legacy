@@ -28,7 +28,13 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.10",
     "@changesets/cli": "^2.29.7",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.41.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0"
+  },
+  "overrides": {
+    "@codemirror/state": "$@codemirror/state",
+    "@codemirror/view": "$@codemirror/view"
   }
 }
