@@ -5,6 +5,7 @@
  * the standalone Server and the Vite dev plugin.
  */
 
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
@@ -518,6 +519,100 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getMetrics());
   }
 
+  /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
+  const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+  async function handleRescueList(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    if (!shadowRepo) {
+      json(res, 200, []);
+      return;
+    }
+
+    const rescueDir = resolve(shadowRepo.gitDir, 'rescue');
+    if (!existsSync(rescueDir)) {
+      json(res, 200, []);
+      return;
+    }
+
+    const now = Date.now();
+    const entries: { docName: string; timestamp: string; size: number }[] = [];
+
+    try {
+      const files = readdirSync(rescueDir).filter((f) => f.endsWith('.md'));
+      for (const file of files) {
+        const filePath = resolve(rescueDir, file);
+        const stat = statSync(filePath);
+        const age = now - stat.mtimeMs;
+
+        if (age > RESCUE_MAX_AGE_MS) {
+          // Clean up expired rescue buffers
+          try {
+            unlinkSync(filePath);
+          } catch {
+            // ignore cleanup failure
+          }
+          continue;
+        }
+
+        entries.push({
+          docName: file.replace(/\.md$/, ''),
+          timestamp: stat.mtime.toISOString(),
+          size: stat.size,
+        });
+      }
+    } catch (e) {
+      console.error('[rescue] Failed to list rescue buffers:', e);
+    }
+
+    json(res, 200, entries);
+  }
+
+  async function handleRescueGet(
+    req: IncomingMessage,
+    res: ServerResponse,
+    docName: string,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    if (!shadowRepo) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+
+    const filePath = resolve(shadowRepo.gitDir, 'rescue', `${docName}.md`);
+    if (!existsSync(filePath)) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+
+    // Check expiry
+    const stat = statSync(filePath);
+    if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
+      try {
+        unlinkSync(filePath);
+      } catch {
+        // ignore
+      }
+      res.writeHead(404);
+      res.end('Not found — rescue buffer expired');
+      return;
+    }
+
+    const content = readFileSync(filePath, 'utf-8');
+    res.writeHead(200, { 'Content-Type': 'text/markdown' });
+    res.end(content);
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/agent-write': handleAgentWrite,
@@ -528,6 +623,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-redo': handleAgentRedo,
     '/api/save-version': handleSaveVersion,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
+    '/api/rescue': handleRescueList,
   };
 
   if (enableTestRoutes) {
@@ -540,9 +636,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = request.url?.split('?')[0];
       if (!url) return;
 
+      // Static routes
       const handler = routes[url];
       if (handler) {
         await handler(request, response);
+        return;
+      }
+
+      // Dynamic routes: /api/rescue/:docName
+      if (url.startsWith('/api/rescue/')) {
+        const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
+        if (docName) {
+          await handleRescueGet(request, response, docName);
+        }
       }
     },
   };
