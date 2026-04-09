@@ -24,12 +24,14 @@ const SIDEBAR_WIDTH_MOBILE = '18rem';
 const SIDEBAR_WIDTH_ICON = '3rem';
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b';
 
+type OpenHandler = React.Dispatch<React.SetStateAction<boolean>>;
+
 type SidebarContextProps = {
   state: 'expanded' | 'collapsed';
   open: boolean;
-  setOpen: (open: boolean) => void;
+  setOpen: OpenHandler;
   openMobile: boolean;
-  setOpenMobile: (open: boolean) => void;
+  setOpenMobile: OpenHandler;
   isMobile: boolean;
   toggleSidebar: () => void;
 };
@@ -65,7 +67,7 @@ function SidebarProvider({
   // We use openProp and setOpenProp for control from outside the component.
   const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
-  function setOpen(value: boolean | ((value: boolean) => boolean)) {
+  const setOpen: OpenHandler = (value) => {
     const openState = typeof value === 'function' ? value(open) : value;
     if (setOpenProp) {
       setOpenProp(openState);
@@ -76,7 +78,7 @@ function SidebarProvider({
     // This sets the cookie to keep the sidebar state.
     // biome-ignore lint/suspicious/noDocumentCookie: shadcn sidebar pattern
     document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
-  }
+  };
 
   // Helper to toggle the sidebar.
   function toggleSidebar() {
