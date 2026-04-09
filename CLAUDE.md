@@ -56,7 +56,7 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 
 - `src/extensions/shared.ts` — sharedExtensions array (THE schema source of truth)
 - `src/extensions/frontmatter.ts` — strip/prepend frontmatter for markdown round-trip
-- `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (schema + markdown, no React NodeView)
+- `src/extensions/jsx-component.ts` — Legacy JsxComponent extension (single-attribute void node; still exported for backwards compat, but `shared.ts` uses the factory instead)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
@@ -162,6 +162,11 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
 - `src/editor/observers.ts` — Bidirectional observer sync
+- `src/editor/extensions/JsxComponentView.tsx` — React NodeView for registered components (prop panel + inline children)
+- `src/editor/extensions/JsxComponentVoidView.tsx` — React NodeView for unregistered fallback (raw JSX display)
+- `src/editor/components/componentMap.ts` — Runtime lookup: component name → React component (fumadocs, docskit, shadcn)
+- `src/editor/components/PropPanel.tsx` — Auto-generated prop controls from ComponentMeta
+- `src/editor/components/SlashCommandMenu.tsx` — Slash command menu for component insertion
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
