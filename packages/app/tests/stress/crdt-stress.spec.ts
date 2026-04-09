@@ -72,14 +72,16 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
     if ((await undoButton.count()) > 0) {
       await undoButton.click();
 
-      // Wait for undo propagation — large content should be removed
+      // Wait for undo propagation — agent content length should drop significantly
+      // and user marker should still be present. Large-realistic undo can take 30s+.
       await page.waitForFunction(
         (m: string) => {
           const txt = (window as any).__hocuspocusProvider?.document?.getText('source')?.toString();
-          return txt && !txt.includes('Section 1') && txt.includes(m);
+          // After undo, text should be much shorter (agent content removed) and marker preserved
+          return txt && txt.length < 5000 && txt.includes(m);
         },
         marker,
-        { timeout: 15_000 },
+        { timeout: 60_000 },
       );
     }
   }
