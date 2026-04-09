@@ -26,7 +26,7 @@ bun run build                        # Build all packages via turbo (cli, app, d
 
 ```bash
 bun run check                        # Full gate: typecheck (turbo) + lint (biome) + test (turbo)
-bun run check:fast                   # Same as check (no integration tests yet)
+bun run check:fast                   # Typecheck + lint only (skips tests)
 bun run typecheck                    # Typecheck all packages via turbo
 bun run lint                         # Biome check (lint + format + imports) across workspace
 bun run format                       # Biome check --write (auto-fix lint + format + imports)
