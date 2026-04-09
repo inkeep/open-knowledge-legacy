@@ -90,7 +90,7 @@ Without explicit stress tests, latent bugs land in production. The demo works; t
 | Priority | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|
 | Must | FR1: Synthetic markdown generator | Generates reproducible markdown at any requested line count with realistic structure (headings, paragraphs, lists, code blocks). Stable across runs given same seed. | Used by observer + API stress tests. |
-| Must | FR2: Observer unit stress suite | Runs 7 scenarios (S1-S5, S8, S9) across up to 4 scale tiers. See §9 scenario matrix for the exact test-case count (23 cases as of current spec). Asserts two-tier convergence (bridge invariant + applyUpdate-restore semantics via S9). Reports timing per test. | `packages/app/tests/stress/observers.stress.test.ts` (moved — see M5 fix) |
+| Must | FR2: Observer unit stress suite | Runs 9 scenarios (S1-S5, S4b, S5b, S8, S9) across up to 4 scale tiers. **34 test cases total** — see §9 Layer A breakdown for the per-scenario/per-tier matrix. Asserts the two-tier convergence defined in D13: (1) bridge invariant (normalized toString equality between Y.Text and serialized XmlFragment), (2) content preservation via `.toContain()` for user keystrokes. Reports timing per test. | `packages/app/tests/stress/observers.stress.test.ts` (moved — see M5 fix) |
 | Must | FR3: API-level stress script (HTTP + server-side CRDT only) | Runs against dev server, exercises `/api/agent-write-md` + `/api/agent-undo` + `/api/agent-undo-status` + `/api/test-reset`. **Does NOT assert the bridge invariant** (that is Layer A's job). Focus: HTTP contract at scale + server-side UndoManager behavior. Opens a **fresh HocuspocusProvider per scenario** (destroy + reconnect each time) for isolation. Reads **Y.Text only** via `provider.document.getText('source').toString()`. See H3 reframing. | `packages/app/tests/stress/stress-api.ts` |
 | Must | FR4: Playwright E2E at large-realistic | One E2E test: load browser, inject large-realistic markdown via agent API, type in WYSIWYG concurrently, click undo, verify final DOM + Y.Doc state. Multi-turn (3 turns) per D10. Uses **stock `@playwright/test` APIs with `page.waitForFunction` for deterministic condition-based waits** — no helper dependencies. See H1 reframing. | `packages/app/tests/stress/crdt-stress.spec.ts` (moved — see M5 fix) |
 | Must | FR4a: Randomized fuzz harness (Layer D) | Seeded-PRNG mutator sequence driving the bridge. Mutators target applyUserDelta + observer interactions + server-side UndoManager. Scale ladder 10/50/200/500 iterations. Failure attribution via seed + replay mode + per-op log + Y.Doc snapshot dump. **Not the Yjs `applyRandomTests` pattern** (see C2 reframing) — this is a local mutator-ordering loop against the single-doc bridge, justified on its own merits. | `packages/app/tests/stress/observers.fuzz.test.ts` (moved; per D15, D16) |
@@ -196,7 +196,7 @@ Wait — that last point is interesting. **Agent undo is now hard to test at the
 
 - **Gap 2 bug (fixed in our `e3ff705` commit, now on the rebased branch):** `applyUserDelta` used `diffLines` which produced spurious `removed: X` + `added: X + Y` pairs for unterminated final lines. Fix: pad with `\n` + trim overlapping prefix between paired removed/added blocks. **Still not on main** — this is the WIP fix carried forward from the pre-rebase worktree. Needs to land as its own PR before the stress suite can be relied upon.
 - **Observer A baseline staleness (converged with main's disk-bridge early-exit):** `lastSyncedXmlMd` was not updated when Observer B propagated external content to XmlFragment. Observer A would then re-propagate that content as a "user delta" on its next run. Our fix (Observer B updates `lastSyncedXmlMd` after propagation + Observer A early-exits when `currentText === md`) **converged** with main's commit `b289cc6` (disk bridge feedback loop fix) which added the same `currentText === md` early-exit for a different reason. Both are now in the rebased code.
-- **captureTimeout divergence:** Spec Q11 decided "use default 500ms" but code uses `0ms`. Documented in code comment at `packages/server/src/agent-sessions.ts:72`. Revisit when streaming agent writes land.
+- **captureTimeout divergence:** Spec Q11 decided "use default 500ms" but code uses `0ms`. Documented in code comment at `packages/server/src/agent-sessions.ts:65-80` (JSDoc rationale + the actual `captureTimeout: 0` line). Revisit when streaming agent writes land.
 - **`/api/test-reset` debouncer race (D18):** `handleTestReset` in `packages/server/src/api-extension.ts:273` does NOT call `debouncer.executeNow('onStoreDocument-test-doc')` before `unloadDocument`. Any agent write within 2s of a test-reset call leaves the server's Y.Doc loaded (see `evidence/test-reset-isolation.md`). **Still on main.** D18 patch is a pre-req to Layer B/C reliability.
 
 ### Where the bugs live (informs scenario design)
@@ -241,11 +241,12 @@ E2E tests:
 - Each test case parameterized by `(scenario, tier)`.
 - Asserts strict convergence + content preservation after all operations settle.
 
-**Layer B: API-level stress script** (`packages/app/tests/stress/stress-api.ts`)
+**Layer B: HTTP + server-side CRDT stress script** (`packages/app/tests/stress/stress-api.ts`) — _reframed per H3 audit + post-rebase drift audit; see detailed section below and D9 for scope_
 - Standalone script (not a bun test) that expects the dev server running.
 - Runs each scenario via HTTP (`/api/agent-write-md`, `/api/agent-undo`, `/api/agent-undo-status`, `/api/test-reset`).
-- Reads final state via a new `/api/dump-ydoc` endpoint OR via the existing agent-undo-status + content-read path (TBD during iterate).
-- Asserts strict convergence.
+- Opens a **fresh `HocuspocusProvider` per scenario** (Bun native WebSocket; Node 22+ native or polyfill required). Reads state via `provider.document.getText('source').toString()` — **Y.Text only**.
+- **Does NOT assert the bridge invariant.** Layer A is the bridge-invariant test layer. Layer B asserts HTTP contract + server-side `UndoManager` at scale (the "genuinely uncharted territory" from §8 "Where the bugs live").
+- Assertions are **containment-based**: "after N agent writes, Y.Text contains expected content," "after undo, Y.Text does not contain agent content," "after N writes, `/api/agent-undo-status` reports `canUndo: true` with N entries."
 - Reports timing per scenario.
 
 **Layer C: Playwright E2E at large-realistic scale** (`packages/app/tests/stress/crdt-stress.spec.ts`)
