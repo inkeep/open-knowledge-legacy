@@ -70,6 +70,9 @@ function collectPropAttributes(
   return attrs;
 }
 
+/** Track which components have already had unknown-attribute warnings logged (once per session). */
+const _warnedComponents = new Set<string>();
+
 /** Set of attribute names that are internal carriers, not serialized as JSX props. */
 const INTERNAL_ATTRS = new Set([
   'componentName',
@@ -212,6 +215,17 @@ export function createJsxComponentExtensions(
             knownProps[key] = value;
           } else {
             unknownProps[key] = value;
+          }
+        }
+
+        // Dev warning for collision policy (§3.8) — log once per component name
+        if (Object.keys(unknownProps).length > 0) {
+          const unknownKeys = Object.keys(unknownProps);
+          if (!_warnedComponents.has(componentName)) {
+            _warnedComponents.add(componentName);
+            console.warn(
+              `[JsxComponent] Unknown attributes on <${componentName}>: ${unknownKeys.join(', ')}. Attributes preserved but not rendered. See §3.8.`,
+            );
           }
         }
 

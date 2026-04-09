@@ -626,3 +626,91 @@ content a
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// RT06 — Unregistered component fallback (§3.8)
+// ---------------------------------------------------------------------------
+
+describe('RT06: Unregistered component fallback', () => {
+  test('unregistered component name → jsxComponentVoid node', () => {
+    const jsx = '<CustomThingy foo="bar">body</CustomThingy>\n';
+    const json = parse(jsx);
+    const nodes = getJsxNodes(json);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0].type).toBe('jsxComponentVoid');
+    expect(nodes[0].attrs?.content).toBe('<CustomThingy foo="bar">body</CustomThingy>');
+  });
+
+  test('unregistered component round-trips byte-identically', () => {
+    const jsx = '<CustomThingy foo="bar" count={42}>body text here</CustomThingy>\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('unregistered self-closing round-trips', () => {
+    const jsx = '<UnknownWidget data={someVar} />\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RT08 — Collision: registered name with unknown attributes (§3.8)
+// ---------------------------------------------------------------------------
+
+describe('RT08: Collision preserve-and-render policy', () => {
+  /** Get attrs of the first jsxComponentEditable node */
+  function getFirstEditableAttrs(json: JSONContent): Record<string, unknown> | undefined {
+    let found: Record<string, unknown> | undefined;
+    function walk(node: JSONContent) {
+      if (node.type === 'jsxComponentEditable' && !found) found = node.attrs;
+      if (node.content) node.content.forEach(walk);
+    }
+    walk(json);
+    return found;
+  }
+
+  test('Card with agents-docs shape: unknown color and external preserved', () => {
+    // agents-docs Card has color + external props that fumadocs Card doesn't
+    const jsx =
+      '<Card color="#F05032" external href="/github" icon="brand/GitHub" title="GitHub" />\n';
+    const json = parse(jsx);
+    const attrs = getFirstEditableAttrs(json);
+
+    // Node created as typed Card built-in
+    expect(attrs?.componentName).toBe('Card');
+    // Known props stored as regular attributes
+    expect(attrs?.title).toBe('GitHub');
+    expect(attrs?.href).toBe('/github');
+    expect(attrs?.external).toBe(true);
+    // Unknown attrs stored in _unknownAttrs (preserved through round-trip)
+    expect(attrs?._unknownAttrs).toBeDefined();
+    const unknown = JSON.parse(attrs?._unknownAttrs as string);
+    expect(unknown.icon).toBe('brand/GitHub');
+    expect(unknown.color).toBe('#F05032');
+  });
+
+  test('collision round-trip is byte-identical', () => {
+    const jsx =
+      '<Card color="#F05032" external href="/github" icon="brand/GitHub" title="GitHub" />\n';
+    expect(serialize(parse(jsx))).toBe(jsx);
+  });
+
+  test('dev warning is logged for unknown attributes', () => {
+    // The warning was already logged by earlier tests in this suite for Card.
+    // Verify the mechanism works by checking the console output captured above
+    // (the "[JsxComponent] Unknown attributes on <Card>: color, icon" line).
+    // Since _warnedComponents is module-level, we verify by parsing a FRESH
+    // component name not seen in earlier tests.
+    const origWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (msg: string) => warnings.push(msg);
+    try {
+      // Use Banner (registered) with a fabricated unknown attr
+      parse('<Banner color="red">Text</Banner>\n');
+      const bannerWarnings = warnings.filter((w) => w.includes('Banner') && w.includes('Unknown'));
+      expect(bannerWarnings.length).toBeGreaterThanOrEqual(1);
+      expect(bannerWarnings[0]).toContain('color');
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});
