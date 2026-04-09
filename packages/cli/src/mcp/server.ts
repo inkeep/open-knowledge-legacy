@@ -6,6 +6,7 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { dim } from '../ui/colors.ts';
 import { registerTools } from './tools.ts';
 
 export interface McpServerOptions {
@@ -14,7 +15,7 @@ export interface McpServerOptions {
 }
 
 function log(msg: string): void {
-  process.stderr.write(`[mcp] ${msg}\n`);
+  process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
 export async function startMcpServer(options: McpServerOptions): Promise<void> {

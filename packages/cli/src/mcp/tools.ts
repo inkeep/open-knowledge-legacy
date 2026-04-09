@@ -13,9 +13,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { dim } from '../ui/colors.ts';
 
 function log(msg: string): void {
-  process.stderr.write(`[mcp] ${msg}\n`);
+  process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
 async function httpPost(
