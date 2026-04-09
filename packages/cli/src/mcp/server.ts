@@ -6,7 +6,7 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { dim } from '../ui/colors.ts';
+import { accent, dim, error, info } from '../ui/colors.ts';
 import { registerTools } from './tools.ts';
 
 export interface McpServerOptions {
@@ -28,7 +28,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch {
     process.stderr.write(
-      `Server not running at ${serverUrl}. Start it with: open-knowledge start\n`,
+      `${error('Error:')} Server not running at ${info(serverUrl)}. Start it with: ${accent('open-knowledge start')}\n`,
     );
     process.exit(1);
   }

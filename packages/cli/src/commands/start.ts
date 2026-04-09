@@ -5,13 +5,15 @@
 import { existsSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { resolve } from 'node:path';
-import { createServer } from '@inkeep/open-knowledge-server';
+import { createServer, getLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import sirv from 'sirv';
 import { WebSocketServer } from 'ws';
 import type { Config } from '../config/schema';
 import { renderBanner } from '../ui/banner.ts';
 import { dim, error, info } from '../ui/colors.ts';
+
+const log = getLogger('start');
 
 export function startCommand(getConfig: () => Config): Command {
   const cmd = new Command('start')
@@ -72,7 +74,7 @@ export function startCommand(getConfig: () => Config): Command {
         : null;
 
       if (assetDir) {
-        console.log(`${dim('[start]')} Serving static assets from ${info(assetDir)}`);
+        log.info({ assetDir }, 'Serving static assets');
       }
 
       // Create HTTP server and wire up Hocuspocus
@@ -117,7 +119,7 @@ export function startCommand(getConfig: () => Config): Command {
               clientConnection.handleClose({ code, reason: reason.toString() });
             });
             ws.on('error', (err: Error) => {
-              console.error('[collab] WebSocket error:', err);
+              log.error({ err }, 'WebSocket error');
               ws.terminate();
             });
           });
@@ -144,7 +146,7 @@ export function startCommand(getConfig: () => Config): Command {
         const { execFile } = await import('node:child_process');
         const url = `http://${config.server.host}:${config.server.port}`;
         execFile('open', [url], (err) => {
-          if (err) console.error(`Failed to open browser: ${err.message}`);
+          if (err) console.error(`${error('Failed to open browser:')} ${err.message}`);
         });
       }
     });

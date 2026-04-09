@@ -156,8 +156,7 @@ describe('--no-color argv detection', () => {
         if (process.argv.includes('--no-color')) {
           process.env.NO_COLOR = '1';
           delete process.env.FORCE_COLOR;
-        }
-        if (process.argv.includes('--color')) {
+        } else if (process.argv.includes('--color')) {
           process.env.FORCE_COLOR = '1';
           delete process.env.NO_COLOR;
         }
@@ -173,5 +172,39 @@ describe('--no-color argv detection', () => {
     const output = result.stdout.toString();
     expect(output).not.toMatch(ANSI_RE);
     expect(output).toContain('enabled=false');
+  });
+
+  test('--no-color wins when both --no-color and --color are present', async () => {
+    const result = Bun.spawnSync({
+      cmd: [
+        'bun',
+        '-e',
+        `
+        process.argv.push('--no-color', '--color');
+
+        // Same detection as cli.ts — --no-color always wins
+        if (process.argv.includes('--no-color')) {
+          process.env.NO_COLOR = '1';
+          delete process.env.FORCE_COLOR;
+        } else if (process.argv.includes('--color')) {
+          process.env.FORCE_COLOR = '1';
+          delete process.env.NO_COLOR;
+        }
+
+        const { error, isColorEnabled } = require('./src/ui/colors.ts');
+        console.log(error('ERR'));
+        console.log('enabled=' + isColorEnabled());
+        console.log('NO_COLOR=' + process.env.NO_COLOR);
+        console.log('FORCE_COLOR=' + (process.env.FORCE_COLOR ?? 'undefined'));
+        `,
+      ],
+      cwd: import.meta.dir.replace('/src/ui', ''),
+      env: { ...process.env, NO_COLOR: undefined, FORCE_COLOR: undefined },
+    });
+    const output = result.stdout.toString();
+    expect(output).not.toMatch(ANSI_RE);
+    expect(output).toContain('enabled=false');
+    expect(output).toContain('NO_COLOR=1');
+    expect(output).toContain('FORCE_COLOR=undefined');
   });
 });

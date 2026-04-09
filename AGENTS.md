@@ -133,7 +133,7 @@ Hierarchical YAML in `.open-knowledge/` directories:
 - `src/ui/colors.ts` — Semantic color helpers wrapping picocolors (error, warning, success, info, dim, accent)
 - `src/ui/banner.ts` — Vite-style boxed startup banner (cli-boxes + picocolors)
 - Respects `NO_COLOR`, `FORCE_COLOR` env vars and `--no-color`/`--color` CLI flags per no-color.org
-- Color detection happens at top of `cli.ts` before any imports (picocolors reads env at module evaluation time)
+- Color helpers import picocolors directly; `cli.ts` propagates `--no-color`/`--color` to env vars for other libraries in the dependency tree
 
 ### Key files
 
