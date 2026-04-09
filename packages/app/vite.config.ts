@@ -1,4 +1,5 @@
-import react from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig } from 'vite';
 import { hocuspocusPlugin } from './src/server/hocuspocus-plugin';
@@ -14,10 +15,9 @@ const reactCompilerConfig: PluginOptions = {
 
 export default defineConfig({
   plugins: [
-    react({
-      babel: {
-        plugins: [['babel-plugin-react-compiler', reactCompilerConfig]],
-      },
+    react(),
+    babel({
+      presets: [reactCompilerPreset(reactCompilerConfig)],
     }),
     hocuspocusPlugin(),
   ],
