@@ -13,13 +13,16 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { type AsyncSubscription, type DiskEvent, startWatcher } from './file-watcher.ts';
+import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import {
   createPersistenceExtension,
+  isBatchInProgress,
   type PersistenceOptions,
   reconciledBase,
+  setBatchInProgress,
 } from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
-import type { ShadowHandle } from './shadow-repo.ts';
+import { commitUpstreamImport, type ShadowHandle } from './shadow-repo.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
@@ -99,8 +102,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     enableTestRoutes,
   });
   hocuspocus.configuration.extensions.push(apiExtension);
-
-  let watcher: AsyncSubscription | null = null;
 
   /** Serialize current Y.Doc to markdown for reconciliation. */
   function serializeDoc(docName: string): string | null {
@@ -268,7 +269,37 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
   }
 
+  // ─── Batch buffering ──────────────────────────────────────────────────────
+
+  const eventBuffer: DiskEvent[] = [];
+
+  /** Wrapper that buffers events during batch operations. */
+  async function onDiskEvent(event: DiskEvent): Promise<void> {
+    if (isBatchInProgress()) {
+      eventBuffer.push(event);
+      return;
+    }
+    await handleDiskEvent(event);
+  }
+
+  /** Drain buffered events after batch ends. */
+  async function drainEventBuffer(): Promise<void> {
+    const events = eventBuffer.splice(0, eventBuffer.length);
+    for (const event of events) {
+      await handleDiskEvent(event);
+    }
+  }
+
+  // ─── Lifecycle ─────────────────────────────────────────────────────────────
+
+  let watcher: AsyncSubscription | null = null;
+  let headWatcher: HeadWatcherHandle | null = null;
+
   async function destroy(): Promise<void> {
+    if (headWatcher) {
+      await headWatcher.unsubscribe();
+      headWatcher = null;
+    }
     if (watcher) {
       await watcher.unsubscribe();
       watcher = null;
@@ -279,12 +310,60 @@ export function createServer(options: ServerOptions): ServerInstance {
   }
 
   // Start file watcher asynchronously
-  startWatcher(contentDir, handleDiskEvent)
+  startWatcher(contentDir, onDiskEvent)
     .then((sub) => {
       watcher = sub;
     })
     .catch((err) => {
       console.error('[server] Disk bridge watcher failed to start:', err);
+    });
+
+  // Start HEAD watcher (only if project .git/ exists)
+  startHeadWatcher(
+    projectDir,
+    // onBatchBegin
+    () => {
+      console.log('[batch] begin');
+      // Flush pending L1 writes before entering batch mode
+      hocuspocus.flushPendingStores();
+      persistence.flushPendingGitCommit();
+      setBatchInProgress(true);
+    },
+    // onBatchEnd
+    async (info) => {
+      setBatchInProgress(false);
+
+      const bufferedCount = eventBuffer.length;
+      await drainEventBuffer();
+
+      console.log(
+        `[batch] end (${bufferedCount} docs reconciled, headMoved=${info.headMoved}${info.timeout ? ', timeout' : ''})`,
+      );
+
+      // Record upstream import if HEAD moved and content files were affected
+      if (info.headMoved && info.newHead && shadowRepo && bufferedCount > 0) {
+        const contentRootForShadow = contentRoot ?? 'content';
+        try {
+          const sha = await commitUpstreamImport(
+            shadowRepo,
+            contentRootForShadow,
+            info.oldHead,
+            info.newHead,
+          );
+          console.log(
+            `[shadow] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
+          );
+        } catch (e) {
+          console.error('[shadow] upstream-import failed:', e);
+        }
+      }
+    },
+  )
+    .then((handle) => {
+      headWatcher = handle;
+    })
+    .catch((err) => {
+      console.error('[server] HEAD watcher failed to start:', err);
     });
 
   return { hocuspocus, sessionManager, destroy };
