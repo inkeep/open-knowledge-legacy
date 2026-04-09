@@ -13,6 +13,7 @@ tmp/
 .next/
 .source/
 .idea/
+.bun/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
