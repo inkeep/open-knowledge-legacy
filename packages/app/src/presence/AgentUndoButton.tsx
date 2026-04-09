@@ -27,7 +27,7 @@ function useAgentUndo(): AgentUndoState {
 
     const scheduleNext = () => {
       if (!active) return;
-      timer = setTimeout(poll, currentDelayMs);
+      timer = window.setTimeout(poll, currentDelayMs);
     };
 
     const poll = async () => {
