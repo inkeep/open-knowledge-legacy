@@ -25,12 +25,12 @@ bun run build                        # Build all packages via turbo (cli, app, d
 ### Quality gates
 
 ```bash
-bun run check                        # Full gate: typecheck + lint + test (all 5 packages via turbo)
+bun run check                        # Full gate: typecheck (turbo) + lint (biome) + test (turbo)
 bun run check:fast                   # Same as check (no integration tests yet)
 bun run typecheck                    # Typecheck all packages via turbo
-bun run lint                         # Biome lint across all packages
-bun run format                       # Biome format across all packages
-bun run test                         # Run tests in all packages via turbo
+bun run lint                         # Biome check (lint + format + imports) across workspace
+bun run format                       # Biome check --write (auto-fix lint + format + imports)
+bun run test                         # Run tests across workspace via turbo
 ```
 
 ### Agent simulator (requires dev server running)
@@ -159,10 +159,12 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 
 ## Research references
 
+See `reports/CATALOGUE.md` for the full index. Key reports:
+
 - `reports/npm-global-cli-packaging/` — CLI packaging research (7 dimensions)
-- `reports/source-toggle-architecture/` — source toggle options
-- `reports/peritext-on-yjs-feasibility/` — Yjs v14 delta protocol
-- `reports/markdown-roundtrip-fidelity-tiptap/` — round-trip fix recipes
+- `reports/auto-persistence-version-history-patterns/` — Auto-persistence and version history
+- `reports/bun-module-resolution-extensions/` — Bun module resolution extensions
+- `reports/onboarding-multiproject-ux/` — Onboarding multiproject UX
 
 ## Changesets
 
