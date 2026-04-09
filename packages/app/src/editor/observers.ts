@@ -128,8 +128,18 @@ function applyUserDelta(ytext: Y.Text, oldXmlMd: string, newXmlMd: string): void
   const currentText = ytext.toString();
   const currentLines = currentText.split('\n');
 
-  // Compute line-level diff of the user's change: oldXmlMd → newXmlMd
-  const changes = diffLines(oldXmlMd, newXmlMd);
+  // Pad both sides with a trailing newline so diffLines aligns cleanly at line
+  // boundaries. Without padding, an unterminated final line in `old` ("foo" with no
+  // \n) aliases into a spurious "removed foo" + "added foo\n..." pair, which then
+  // causes the added block to re-insert content we intended to leave alone.
+  const oldPadded = oldXmlMd.endsWith('\n') ? oldXmlMd : `${oldXmlMd}\n`;
+  const newPadded = newXmlMd.endsWith('\n') ? newXmlMd : `${newXmlMd}\n`;
+
+  // Compute line-level diff of the user's change: oldXmlMd → newXmlMd.
+  // With both inputs newline-terminated (padded above), diffLines treats each line as
+  // an atomic token — removed+added pairs never share prefix lines, so no overlap
+  // trimming is needed.
+  const changes = diffLines(oldPadded, newPadded);
 
   // Walk the diff and apply each change to currentLines by matching context.
   // This preserves any lines in currentText that aren't part of oldXmlMd → newXmlMd
@@ -234,10 +244,20 @@ export function setupObservers(deps: ObserverDeps): () => void {
 
       const currentText = ytext.toString();
 
-      // If Y.Text already matches the serialized XmlFragment (e.g., the file
-      // watcher updated both XmlFragment and Y.Text in one transaction), skip
-      // the write — there's nothing to sync and writing would trigger
-      // persistence → disk → watcher feedback.
+      // If Y.Text already matches the serialized XmlFragment, skip the write.
+      // This guard covers two independent cases (both fixes converged on the
+      // same check):
+      //
+      // 1. **Disk-bridge feedback loop** — the file watcher updated both
+      //    XmlFragment and Y.Text in one transaction; nothing left to sync
+      //    and writing would trigger persistence → disk → watcher feedback.
+      //
+      // 2. **Observer B external-write propagation** — Observer B just wrote
+      //    agent/peer/undo content to XmlFragment. Y.Text and XmlFragment are
+      //    now consistent; we must update lastSyncedXmlMd here so Observer A's
+      //    next user-delta diff starts from the right baseline. Without this,
+      //    Observer A would re-propagate the external content as a "user delta"
+      //    on its next firing, duplicating it in Y.Text.
       if (currentText === md) {
         lastSyncedXmlMd = md;
         return;
@@ -310,6 +330,11 @@ export function setupObservers(deps: ObserverDeps): () => void {
             metaMap.set('frontmatter', frontmatter);
           }, ORIGIN_TEXT_TO_TREE);
         }
+        // Refresh Observer A's baseline: XmlFragment and Y.Text are in sync.
+        // Observer A's callback returns early for ORIGIN_TEXT_TO_TREE events (line 325),
+        // so it never runs its sync work for Observer B's writes — this explicit update
+        // prevents the baseline from going stale between Observer B cycles.
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, currentBody);
         return;
       }
 
@@ -323,6 +348,26 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const metaMap = doc.getMap('metadata');
         metaMap.set('frontmatter', frontmatter);
       }, ORIGIN_TEXT_TO_TREE);
+
+      // After updateYFragment, re-serialize XmlFragment to capture the post-sync state
+      // (updateYFragment may normalize the tree differently from the input body). This
+      // becomes Observer A's new baseline so its next delta diff starts from reality —
+      // otherwise Observer A would see the new content as a "user delta" and re-propagate
+      // it back into Y.Text (duplication / undo reversal bug).
+      try {
+        const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const postBody = mdManager.serialize(postJson);
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, postBody);
+      } catch (err) {
+        // Serialization failure is non-fatal — use the input body as a best-effort
+        // baseline so Observer A's next delta diff starts from a reasonable state.
+        // The convergence guard (currentText === md) will correct any remaining drift.
+        console.warn(
+          '[Observer B] Post-sync re-serialization failed — using input body as baseline:',
+          err instanceof Error ? err.message : String(err),
+        );
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+      }
     } catch (err) {
       // Parse error — log but don't crash. XmlFragment keeps last valid state.
       console.error('[Observer B] Failed to sync text→tree:', err);
