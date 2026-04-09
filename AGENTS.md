@@ -56,11 +56,13 @@ bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes
 `bun.lock` is a binary-ish file that cannot be merged textually. When rebasing or merging produces a conflict in `bun.lock`, do **not** attempt to hand-edit it. Instead:
 
 ```bash
-git checkout main -- bun.lock   # accept the target branch's lockfile
-bun install                     # regenerate with your branch's dependency changes
+git checkout <base-branch> -- bun.lock   # accept the base branch's lockfile
+bun install                              # regenerate with your branch's dependency changes
 git add bun.lock
-git rebase --continue           # (or git merge --continue)
+git rebase --continue                    # (or git merge --continue)
 ```
+
+Where `<base-branch>` is whichever branch you're rebasing onto or merging from (e.g. `main`, `feat/init-spike`).
 
 Bun does not yet auto-resolve lockfile conflicts (tracked in [oven-sh/bun#17717](https://github.com/oven-sh/bun/issues/17717)), so this manual step is required.
 
