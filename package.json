@@ -18,6 +18,7 @@
     "format": "biome check --write .",
     "check:fast": "bun run typecheck && bun run lint",
     "check": "bun run typecheck && bun run lint && bun run test",
+    "postinstall": "bun run build-registry",
     "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true",
     "changeset": "changeset",
     "version": "changeset version",
@@ -28,6 +29,12 @@
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md}": [
       "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true"
+    ],
+    "packages/core/src/registry/built-ins.ts": [
+      "bun run drift-check"
+    ],
+    "bun.lock": [
+      "bun run drift-check"
     ]
   },
   "devDependencies": {
