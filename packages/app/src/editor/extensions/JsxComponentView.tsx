@@ -66,7 +66,6 @@ class ComponentErrorBoundary extends Component<
  * to deselect the node → selected becomes false → panel unmounts mid-interaction.
  * This is the ProseMirror-documented pattern for clickable controls in node views.
  */
-// biome-ignore lint/a11y/noStaticElementInteractions: ProseMirror node view event isolation — see comment above
 function PropPanelWrapper(props: {
   meta: import('@inkeep/open-knowledge-core').ComponentMeta;
   currentProps: Record<string, unknown>;

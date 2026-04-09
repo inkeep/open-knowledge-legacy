@@ -115,11 +115,21 @@ for (const entry of BUILT_INS) {
     }
   }
 
+  // Component-level description: prefer upstream TSDoc from the .d.ts export
+  // (react-docgen-typescript extracts it as doc.description), fall back to the
+  // hand-maintained description in built-ins.ts. This means if fumadocs-ui
+  // adds or improves their TSDoc, we automatically pick it up on the next
+  // `bun run build-registry` — hand-maintained entries become the fallback.
+  // Truncate to first line — multi-line TSDoc is common but the slash menu
+  // and agent discovery surfaces only need a one-liner.
+  const rawDesc = doc?.description || entry.description || '';
+  const description = rawDesc.split('\n')[0].trim();
+
   manifest[entry.name] = {
     props,
     displayName: entry.displayName,
     category: entry.category,
-    ...(entry.description ? { description: entry.description } : {}),
+    ...(description ? { description } : {}),
     ...(entry.icon ? { icon: entry.icon } : {}),
     ...(entry.searchTerms ? { searchTerms: entry.searchTerms } : {}),
   };
