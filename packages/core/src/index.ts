@@ -24,8 +24,8 @@ export {
   sharedExtensions,
 } from './extensions/shared.ts';
 export type { BuiltInManifestEntry, ComponentMeta, PropDef } from './registry/index.ts';
-// Registry
-export { BUILT_INS, componentManifest } from './registry/index.ts';
+// Registry (BUILT_INS omitted — it uses node:module, only for build-registry script)
+export { componentManifest } from './registry/index.ts';
 
 // Types
 export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';
