@@ -1,6 +1,9 @@
 node_modules/
 dist/
 
+# Per-package lockfiles — only root bun.lock should exist in monorepo
+packages/*/bun.lock
+
 # init_spike: accidental tsc JS emit beside src/ (sources are .ts/.tsx; .d.ts may live under src/types/)
 init_spike/src/**/*.js
 init_spike/src/**/*.js.map
@@ -9,12 +12,15 @@ tmp/
 *.log
 .next/
 .source/
+.idea/
 
 # TypeScript incremental build cache
 *.tsbuildinfo
 
 # Local review artifacts — generated on demand, not meant to be committed
 .claude/pr-diff/
+.claude/skills/pr-context/
+.claude/worktrees/
 
 # Runtime content file — accumulates test artifacts from dev/agent-sim runs
 init_spike/content/test-doc.md
