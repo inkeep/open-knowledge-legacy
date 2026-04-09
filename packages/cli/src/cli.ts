@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 
-// Early --no-color/--color argv detection — MUST run before picocolors loads.
-// picocolors reads NO_COLOR/FORCE_COLOR at require() time. Our color helpers
-// (src/ui/colors.ts) lazy-load picocolors, so these env vars are guaranteed
-// to be set before first use. Explicit flags always win over env vars.
+// Propagate --no-color/--color argv flags to env vars for libraries in the
+// dependency tree that check NO_COLOR/FORCE_COLOR. picocolors itself checks
+// argv directly at module evaluation time, but other libraries may only
+// read env vars. --no-color always wins when both flags are present,
+// matching picocolors' own precedence and no-color.org convention.
 if (process.argv.includes('--no-color')) {
   process.env.NO_COLOR = '1';
   delete process.env.FORCE_COLOR;
-}
-if (process.argv.includes('--color')) {
+} else if (process.argv.includes('--color')) {
   process.env.FORCE_COLOR = '1';
   delete process.env.NO_COLOR;
 }
