@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join, relative, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
-import { contentHash, generateCatalog, generateRootCatalog } from './catalog.ts';
-import type { ResolvedWikiConfig } from './config.ts';
+import { contentHash, generateCatalog, generateRootCatalog, readIndexMeta } from './catalog.ts';
+import type { WikiPaths } from './paths.ts';
 
 const DEBOUNCE_QUIET_MS = 500;
 const DEBOUNCE_MAX_MS = 2000;
@@ -18,26 +18,22 @@ function writeIfChanged(filePath: string, content: string): boolean {
   return true;
 }
 
-function isIndexFile(filePath: string): boolean {
-  return basename(filePath) === 'INDEX.md';
-}
-
-export function rebuildCatalogs(openknowledgeDir: string, config: ResolvedWikiConfig): void {
+export function rebuildCatalogs(openknowledgeDir: string, paths: WikiPaths): void {
   const okDir = resolve(openknowledgeDir);
 
   const sections = [
     {
-      dir: config.articlesDir,
+      dir: paths.articlesDir,
       title: 'Knowledge Articles',
       description: 'Architecture, processes, and decisions',
     },
     {
-      dir: config.externalSourcesDir,
+      dir: paths.externalSourcesDir,
       title: 'External Sources',
       description: 'Ingested external content',
     },
     {
-      dir: config.researchDir,
+      dir: paths.researchDir,
       title: 'Research',
       description: 'Exploratory research and findings',
     },
@@ -52,13 +48,13 @@ export function rebuildCatalogs(openknowledgeDir: string, config: ResolvedWikiCo
     sections: [
       {
         label: 'Knowledge Articles',
-        relativePath: `${relative(okDir, config.articlesDir)}/INDEX.md`,
+        relativePath: `${relative(okDir, paths.articlesDir)}/INDEX.md`,
       },
       {
         label: 'External Sources',
-        relativePath: `${relative(okDir, config.externalSourcesDir)}/INDEX.md`,
+        relativePath: `${relative(okDir, paths.externalSourcesDir)}/INDEX.md`,
       },
-      { label: 'Research', relativePath: `${relative(okDir, config.researchDir)}/INDEX.md` },
+      { label: 'Research', relativePath: `${relative(okDir, paths.researchDir)}/INDEX.md` },
     ],
   });
   writeIfChanged(join(okDir, 'INDEX.md'), rootContent);
@@ -67,10 +63,28 @@ export function rebuildCatalogs(openknowledgeDir: string, config: ResolvedWikiCo
 function rebuildDirCatalog(dirPath: string, title?: string, description?: string): void {
   if (!existsSync(dirPath)) return;
 
-  const content = generateCatalog(dirPath, { title, description });
+  // Sticky metadata: for nested subfolders (where the caller didn't pass an
+  // explicit title/description), preserve whatever the existing INDEX.md
+  // already has in its frontmatter. This lets authors set folder-level
+  // metadata once, which then surfaces in the parent catalog's Subfolders list.
+  let effectiveTitle = title;
+  let effectiveDescription = description;
+  if (title === undefined || description === undefined) {
+    const existing = readIndexMeta(dirPath);
+    if (existing) {
+      if (effectiveTitle === undefined) effectiveTitle = existing.title;
+      if (effectiveDescription === undefined) effectiveDescription = existing.description;
+    }
+  }
+
+  const content = generateCatalog(dirPath, {
+    title: effectiveTitle,
+    description: effectiveDescription,
+  });
   writeIfChanged(join(dirPath, 'INDEX.md'), content);
 
-  // Rebuild subdirectory catalogs
+  // Rebuild subdirectory catalogs — no explicit title/description, so each
+  // nested call does its own sticky read from the existing INDEX.md.
   const { readdirSync } = require('node:fs') as typeof import('node:fs');
   for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
     if (entry.isDirectory()) {
@@ -81,7 +95,7 @@ function rebuildDirCatalog(dirPath: string, title?: string, description?: string
 
 export async function startCatalogWatcher(
   openknowledgeDir: string,
-  config: ResolvedWikiConfig,
+  paths: WikiPaths,
 ): Promise<{ stop: () => Promise<void> }> {
   const okDir = resolve(openknowledgeDir);
 
@@ -116,7 +130,7 @@ export async function startCatalogWatcher(
     }
 
     try {
-      rebuildCatalogs(okDir, config);
+      rebuildCatalogs(okDir, paths);
     } catch (err) {
       console.error('[wiki-watcher] Catalog rebuild failed:', err);
     }
@@ -128,7 +142,12 @@ export async function startCatalogWatcher(
       return;
     }
 
-    const hasRelevantChange = events.some((e) => e.path.endsWith('.md') && !isIndexFile(e.path));
+    // Any .md change — including INDEX.md — schedules a rebuild.
+    // Editing a sticky title/description in an INDEX.md must propagate to the
+    // parent catalog, so we can't filter INDEX.md out here. Infinite loops
+    // are prevented by writeIfChanged's content-hash dedup: after the first
+    // rebuild, a second idle pass finds no content changes and writes nothing.
+    const hasRelevantChange = events.some((e) => e.path.endsWith('.md'));
 
     if (hasRelevantChange) {
       scheduleRebuild();

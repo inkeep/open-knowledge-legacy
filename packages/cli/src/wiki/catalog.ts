@@ -12,8 +12,15 @@ export interface ArticleMeta {
 
 export interface SubfolderMeta {
   name: string;
+  title: string;
+  description: string;
   articleCount: number;
   relativePath: string;
+}
+
+export interface IndexMeta {
+  title?: string;
+  description?: string;
 }
 
 export interface CatalogOptions {
@@ -55,6 +62,24 @@ function extractArticleMeta(filePath: string, relativePath: string): ArticleMeta
   };
 }
 
+/**
+ * Read an existing INDEX.md's frontmatter and return its title/description.
+ * These fields are "sticky" — preserved across catalog regenerations — so
+ * authors can edit them to set folder-level metadata that surfaces in the
+ * parent catalog's Subfolders section.
+ */
+export function readIndexMeta(dirPath: string): IndexMeta | null {
+  const indexPath = join(dirPath, 'INDEX.md');
+  if (!existsSync(indexPath)) return null;
+  const content = readFileSync(indexPath, 'utf-8');
+  const fm = parseFrontmatter(content);
+  if (!fm) return null;
+  return {
+    title: typeof fm.title === 'string' ? fm.title : undefined,
+    description: typeof fm.description === 'string' ? fm.description : undefined,
+  };
+}
+
 function countArticles(dirPath: string): number {
   if (!existsSync(dirPath)) return 0;
   let count = 0;
@@ -83,9 +108,13 @@ export function generateCatalog(dirPath: string, options?: CatalogOptions): stri
       if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'INDEX.md') {
         articles.push(extractArticleMeta(join(resolvedDir, entry.name), entry.name));
       } else if (entry.isDirectory()) {
+        const subDir = join(resolvedDir, entry.name);
+        const subMeta = readIndexMeta(subDir);
         subfolders.push({
           name: entry.name,
-          articleCount: countArticles(join(resolvedDir, entry.name)),
+          title: subMeta?.title || entry.name,
+          description: subMeta?.description || '',
+          articleCount: countArticles(subDir),
           relativePath: `${entry.name}/INDEX.md`,
         });
       }
@@ -108,7 +137,7 @@ export function generateCatalog(dirPath: string, options?: CatalogOptions): stri
     lines.push('## Articles', '');
     for (const a of articles) {
       const tagSuffix = a.tags.length > 0 ? ` Tags: ${a.tags.join(', ')}` : '';
-      const descSuffix = a.description ? ` — ${a.description}.` : '';
+      const descSuffix = a.description ? ` — ${a.description}` : '';
       lines.push(`- **[${a.title}](${a.relativePath})**${descSuffix}${tagSuffix}`);
     }
     lines.push('');
@@ -118,7 +147,8 @@ export function generateCatalog(dirPath: string, options?: CatalogOptions): stri
     lines.push('## Subfolders', '');
     for (const sf of subfolders) {
       const countLabel = sf.articleCount === 1 ? '1 article' : `${sf.articleCount} articles`;
-      lines.push(`- **[${sf.name}](${sf.relativePath})** (${countLabel})`);
+      const descSuffix = sf.description ? ` — ${sf.description}` : '';
+      lines.push(`- **[${sf.title}](${sf.relativePath})** (${countLabel})${descSuffix}`);
     }
     lines.push('');
   }

@@ -35,6 +35,17 @@ export const ConfigSchema = z.object({
       defaultMode: z.enum(['wysiwyg', 'source']).default('wysiwyg'),
     })
     .default({ defaultMode: 'wysiwyg' }),
+  wiki: z
+    .object({
+      articles_path: z.string().default('./articles'),
+      external_sources_path: z.string().default('./external-sources'),
+      research_path: z.string().default('./research'),
+    })
+    .default({
+      articles_path: './articles',
+      external_sources_path: './external-sources',
+      research_path: './research',
+    }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

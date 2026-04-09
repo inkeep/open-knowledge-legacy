@@ -1,16 +1,8 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { stringify as stringifyYaml } from 'yaml';
 import { generateCatalog, generateRootCatalog } from './catalog.ts';
-import type { WikiConfig } from './config.ts';
 
-const DEFAULT_CONFIG: WikiConfig = {
-  articles_path: './articles',
-  external_sources_path: './external-sources',
-  research_path: './research',
-};
-
-export const AGENTS_MD_CONTENT = `# .openknowledge/ — Project Wiki
+export const AGENTS_MD_CONTENT = `# .open-knowledge/ — Project Wiki
 
 This directory contains a living knowledge base for this project, maintained by both agents and humans.
 
@@ -52,32 +44,80 @@ tags:
 - \`title\` and \`description\` are required — they appear in INDEX.md catalogs
 - \`tags\` are recommended for discoverability
 
-## MCP Server
+## Folder Descriptions
 
-This wiki can be served via MCP for automatic catalog generation:
+Every subfolder in the wiki should have a \`title\` and \`description\` in its \`INDEX.md\` frontmatter. These appear in the parent folder's catalog so readers can see what's inside a folder without opening it.
+
+**When to set them:** at the same time you create the first article in a new subfolder. If you're creating \`articles/auth/sso-migration.md\`, also create (or edit) \`articles/auth/INDEX.md\` with:
+
+\`\`\`yaml
+---
+title: Authentication
+description: How auth works in this codebase — SSO, sessions, tokens.
+---
+\`\`\`
+
+**When to re-check them:** every time you *create or edit* an article, glance at the containing folder's \`INDEX.md\` and decide whether the folder's \`title\` or \`description\` needs to be updated. If the new article expands the folder's scope (e.g., you added an RBAC article to a folder currently described as "SSO and sessions"), update the description to match. A stale folder description is worse than no description — it gives future agents a misleading map of the wiki. The check is cheap: one read, usually no edit.
+
+**What's editable in \`INDEX.md\`:** only the \`title\` and \`description\` frontmatter fields. These are **sticky** — preserved verbatim across every catalog regeneration. Everything else in an \`INDEX.md\` file is auto-generated and will be overwritten on the next rebuild:
+
+| Field / Section | Editable? |
+|---|---|
+| \`title\` (frontmatter) | ✅ sticky |
+| \`description\` (frontmatter) | ✅ sticky |
+| \`generated: true\` | ❌ auto |
+| \`schema_version: 1\` | ❌ auto |
+| \`## Articles\` body | ❌ auto |
+| \`## Subfolders\` body | ❌ auto |
+
+**When to update them:** if a folder's purpose changes, edit its \`INDEX.md\` frontmatter. The change propagates to the parent catalog on the next rebuild (which fires automatically because the watcher picks up \`INDEX.md\` edits too).
+
+**Do not put free-form prose in an \`INDEX.md\` body** — it will be clobbered. If a folder needs a longer overview than the \`description\` field supports, write a regular article (e.g., \`articles/auth/overview.md\`) and reference it from the folder description.
+
+## Scaffolding this wiki (first-time setup)
+
+This wiki directory was almost certainly scaffolded by running \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That same command:
+
+1. Creates the directory layout you're reading this from
+2. Writes \`AGENTS.md\`, \`.gitignore\`, and starter \`INDEX.md\` catalogs
+3. Registers the Open Knowledge MCP server in \`.mcp.json\` at the repo root so your MCP client (Claude Code, Cursor, Windsurf, Codex) can pick it up
+
+If you're onboarding a new project and \`.open-knowledge/\` doesn't exist yet, run \`open-knowledge init\` from a terminal. The CLI init is the *only* supported way to scaffold — the MCP server deliberately exposes no \`init\` tool because scaffolding has to happen before any MCP server is wired up.
+
+## MCP Server config
+
+Your \`.mcp.json\` at the repo root should look like this after running \`init\`:
 
 \`\`\`json
 {
   "mcpServers": {
     "openknowledge": {
       "command": "npx",
-      "args": ["open-knowledge", "mcp"]
+      "args": ["@inkeep/open-knowledge", "mcp"]
     }
   }
 }
 \`\`\`
 
-Add this to \`.mcp.json\` in the repo root for automatic agent integration.
+## Workflow Prompts (MCP)
+
+The MCP server exposes three prompts that codify the main workflows. Each MCP client surfaces them with its own UX (Claude Code shows them in the slash menu as \`mcp__openknowledge__<name>\`; Cursor, Windsurf, and other MCP clients use their equivalents), but the canonical names are:
+
+- **\`mcp__openknowledge__init-wiki\`** — Bootstrap this wiki by reading the codebase and writing initial knowledge articles grouped by topic. Run this once when setting up a new project.
+- **\`mcp__openknowledge__ingest\`** — Capture an external source (URL or local file) as raw reference material in \`external-sources/\`. Raw preservation only; no analysis.
+- **\`mcp__openknowledge__research\`** — Gather sources via \`ingest\` and write provisional findings to \`research/\`. Non-canonical until promoted to \`articles/\`.
+
+These prompts are discovered via the standard MCP \`prompts/list\` handshake — no client-specific installation step is needed. When referring to them in docs or conversation, use the canonical \`mcp__openknowledge__<name>\` form so they're unambiguous across clients.
 `;
 
-export const CLAUDE_MD_SECTION = `## .openknowledge/ — Project Wiki
+export const CLAUDE_MD_SECTION = `## .open-knowledge/ — Project Wiki
 
-This repo has a living knowledge base in \`.openknowledge/\`.
+This repo has a living knowledge base in \`.open-knowledge/\`.
 
 - Read \`INDEX.md\` at any level for navigation
 - After doing significant work, update or create relevant wiki articles
-- Knowledge articles live in \`.openknowledge/articles/\` grouped by topic
-- External sources live in \`.openknowledge/external-sources/\`
+- Knowledge articles live in \`.open-knowledge/articles/\` grouped by topic
+- External sources live in \`.open-knowledge/external-sources/\`
 `;
 
 function writeIfMissing(filePath: string, content: string): boolean {
@@ -87,7 +127,7 @@ function writeIfMissing(filePath: string, content: string): boolean {
 }
 
 export function initWiki(projectDir: string): { created: string[]; skipped: string[] } {
-  const okDir = resolve(projectDir, '.openknowledge');
+  const okDir = resolve(projectDir, '.open-knowledge');
   const created: string[] = [];
   const skipped: string[] = [];
 
@@ -101,14 +141,6 @@ export function initWiki(projectDir: string): { created: string[]; skipped: stri
 
   for (const dir of dirs) {
     mkdirSync(dir, { recursive: true });
-  }
-
-  // config.yaml
-  const configPath = join(okDir, 'config.yaml');
-  if (writeIfMissing(configPath, stringifyYaml(DEFAULT_CONFIG))) {
-    created.push('config.yaml');
-  } else {
-    skipped.push('config.yaml');
   }
 
   // AGENTS.md

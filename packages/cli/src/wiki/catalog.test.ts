@@ -38,7 +38,7 @@ describe('generateCatalog', () => {
     const result = generateCatalog(testDir, { title: 'Infrastructure' });
 
     expect(result).toContain('## Articles');
-    expect(result).toContain('**[Deploy Process](deploy.md)** — How we deploy. Tags: infra, ci');
+    expect(result).toContain('**[Deploy Process](deploy.md)** — How we deploy Tags: infra, ci');
   });
 
   it('lists multiple articles sorted by title', () => {

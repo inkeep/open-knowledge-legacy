@@ -17,6 +17,7 @@ export function mcpCommand(getConfig: () => Config): Command {
       await startMcpServer({
         projectDir: process.cwd(),
         serverUrl,
+        config,
       });
     });
 
