@@ -575,7 +575,7 @@ async function onBatchEnd(info: BatchEndInfo) {
       const events = drainBufferedFileEvents();
       for (const ev of events) await handleExternalChange(ev);
       if (info.headMoved) {
-        await commitUpstreamImport(info.oldHead, info.newHead);
+        await commitUpstreamImport(info.oldHead, info.newHead, info.newBranch!);
       }
       break;
     }
@@ -587,7 +587,8 @@ async function onBatchEnd(info: BatchEndInfo) {
       if (info.batchKind === 'cross-branch') {
         await restoreBranchWIP(info.newBranch!);
       }
-      await commitUpstreamImport(info.oldHead, info.newHead);
+      // Write upstream-import under the NEW branch scope, not the old one
+      await commitUpstreamImport(info.oldHead, info.newHead, info.newBranch!);
       break;
     }
   }
@@ -603,17 +604,19 @@ async onStoreDocument(...) {
 ### 9.6 Upstream-import commits in shadow repo
 
 ```typescript
-async function commitUpstreamImport(oldHead: string | null, newHead: string): Promise<void> {
+async function commitUpstreamImport(
+  oldHead: string | null,
+  newHead: string,
+  branch: string,
+): Promise<void> {
   const env = { GIT_INDEX_FILE: resolve(shadowDir, 'index-import') };
   const git = shadowGit();
   try {
-    // Seed index from current shadow HEAD
-    const shadowHead = await safeRevParse(`refs/wip/${lastKnownBranch}/upstream`);
+    const shadowHead = await safeRevParse(`refs/wip/${branch}/upstream`);
     if (shadowHead) {
       const headTree = (await git.raw('rev-parse', `${shadowHead}^{tree}`)).trim();
       await git.env(env).raw('read-tree', headTree);
     }
-    // Stage the current content directory (now reflects post-pull state)
     await git.env(env).raw('add', contentRoot);
     const treeSha = (await git.env(env).raw('write-tree')).trim();
     const parentSha = shadowHead;
@@ -622,7 +625,6 @@ async function commitUpstreamImport(oldHead: string | null, newHead: string): Pr
       : `upstream: initial import at ${newHead.slice(0, 8)}`;
     const args = ['commit-tree', treeSha, '-m', message];
     if (parentSha) args.push('-p', parentSha);
-    // Author = upstream, committer = openknowledge (for audit)
     const authorEnv = {
       ...env,
       GIT_AUTHOR_NAME: 'upstream',
@@ -631,7 +633,7 @@ async function commitUpstreamImport(oldHead: string | null, newHead: string): Pr
       GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
     };
     const commitSha = (await git.env(authorEnv).raw(...args)).trim();
-    await git.raw('update-ref', `refs/wip/${lastKnownBranch}/upstream`, commitSha);
+    await git.raw('update-ref', `refs/wip/${branch}/upstream`, commitSha);
   } finally {
     try { unlinkSync(resolve(shadowDir, 'index-import')); } catch {}
   }
