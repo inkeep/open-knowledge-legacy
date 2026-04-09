@@ -21,7 +21,30 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true
+      "recommended": true,
+      "suspicious": {
+        "noReactForwardRef": "error"
+      },
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "react": {
+                "importNames": ["useCallback", "useMemo", "memo"],
+                "message": "The highlighted React API is flagged.\nWe use the React Compiler, which automatically memoizes where needed.\nIn 99% of cases, manual memoization is unnecessary."
+              }
+            },
+            "patterns": [
+              {
+                "group": "react",
+                "importNamePattern": "useContext",
+                "message": "Use the `use()` hook instead."
+              }
+            ]
+          }
+        }
+      }
     }
   },
   "files": {
@@ -35,6 +58,7 @@
       "!**/tmp",
       "!**/next-env.d.ts",
       "!.claude",
+      "!.bun",
       "!specs",
       "!reports",
       "!evidence",

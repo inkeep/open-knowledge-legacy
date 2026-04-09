@@ -184,3 +184,7 @@ bun run changeset        # Create a new changeset
 bun run version          # Apply pending changesets
 bun run release          # Publish to npm
 ```
+## Code Style
+
+- React Compiler is enabled for this repo. Do not add `forwardRef`, `memo`, `useMemo`, or `useCallback`; rely on the compiler unless a maintainer explicitly requests an exception
+- Use `use()` instead of `useContext()` (React 19 pattern)
