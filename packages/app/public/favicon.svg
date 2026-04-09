@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- Background circle -->
+  <circle cx="16" cy="16" r="15" fill="#0F172A"/>
+  <circle cx="16" cy="16" r="15" stroke="#334155" stroke-width="0.5"/>
+
+  <!-- Open book shape -->
+  <path d="M16 8 L7 11 L7 23 L16 20 Z" fill="#3B82F6" opacity="0.9"/>
+  <path d="M16 8 L25 11 L25 23 L16 20 Z" fill="#60A5FA" opacity="0.9"/>
+
+  <!-- Spine highlight -->
+  <line x1="16" y1="8" x2="16" y2="20" stroke="#93C5FD" stroke-width="0.8"/>
+
+  <!-- Knowledge nodes -->
+  <circle cx="10" cy="14" r="1.2" fill="#F8FAFC"/>
+  <circle cx="22" cy="14" r="1.2" fill="#F8FAFC"/>
+  <circle cx="11" cy="18" r="1.2" fill="#F8FAFC"/>
+  <circle cx="21" cy="18" r="1.2" fill="#F8FAFC"/>
+  <circle cx="16" cy="11" r="1.4" fill="#FBBF24"/>
+
+  <!-- Connection lines (knowledge graph) -->
+  <line x1="10" y1="14" x2="16" y2="11" stroke="#F8FAFC" stroke-width="0.5" opacity="0.6"/>
+  <line x1="22" y1="14" x2="16" y2="11" stroke="#F8FAFC" stroke-width="0.5" opacity="0.6"/>
+  <line x1="11" y1="18" x2="10" y2="14" stroke="#F8FAFC" stroke-width="0.4" opacity="0.4"/>
+  <line x1="21" y1="18" x2="22" y2="14" stroke="#F8FAFC" stroke-width="0.4" opacity="0.4"/>
+  <line x1="11" y1="18" x2="16" y2="11" stroke="#F8FAFC" stroke-width="0.3" opacity="0.3"/>
+  <line x1="21" y1="18" x2="16" y2="11" stroke="#F8FAFC" stroke-width="0.3" opacity="0.3"/>
+</svg>

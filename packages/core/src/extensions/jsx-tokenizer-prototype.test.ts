@@ -121,10 +121,12 @@ const JsxBlock = Node.create({
     },
   },
 
+  // biome-ignore lint/suspicious/noExplicitAny: prototype test — untyped markdown extension API
   parseMarkdown(token: any, helpers: any) {
     return helpers.createNode('jsxBlock', { content: token.content || '' });
   },
 
+  // biome-ignore lint/suspicious/noExplicitAny: prototype test — untyped ProseMirror node
   renderMarkdown(node: any) {
     return `${node.attrs?.content || ''}\n`;
   },
@@ -308,6 +310,7 @@ Final paragraph.`;
     const pmNode = schema.nodeFromJSON(json);
 
     // Check node types
+    // biome-ignore lint/suspicious/noExplicitAny: ProseMirror Fragment internals untyped
     const nodeTypes = pmNode.content.content.map((n: any) => n.type.name);
     expect(nodeTypes).toContain('heading');
     expect(nodeTypes).toContain('paragraph');
@@ -500,6 +503,7 @@ describe('JsxBlock tokenizer — surrounding content preservation', () => {
 ## After`;
     const json = parse(md);
     const pmNode = schema.nodeFromJSON(json);
+    // biome-ignore lint/suspicious/noExplicitAny: ProseMirror Fragment internals untyped
     const types = pmNode.content.content.map((n: any) => n.type.name);
     expect(types[0]).toBe('heading');
     expect(types).toContain('jsxBlock');

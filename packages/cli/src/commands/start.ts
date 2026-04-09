@@ -22,6 +22,23 @@ export function startCommand(getConfig: () => Config): Command {
       const cwd = process.cwd();
       const contentDir = resolve(cwd, config.content.dir);
 
+      if (!existsSync(contentDir)) {
+        const configPath = resolve(cwd, '.open-knowledge', 'config.yml');
+        const hasConfig = existsSync(configPath);
+        console.error(`\n  Error: Content directory not found: ${contentDir}\n`);
+        if (!hasConfig) {
+          console.error('  No config file found. Create one at:');
+          console.error(`    ${configPath}\n`);
+          console.error('  Example .open-knowledge/config.yml:');
+          console.error('    content:');
+          console.error('      dir: ./content\n');
+        } else {
+          console.error(`  Check "content.dir" in ${configPath}`);
+          console.error(`  Or create the directory: mkdir ${config.content.dir}\n`);
+        }
+        process.exit(1);
+      }
+
       const { hocuspocus, destroy } = createServer({
         contentDir,
         projectDir: cwd,
@@ -61,6 +78,7 @@ export function startCommand(getConfig: () => Config): Command {
         // Priority 1: API routes via Hocuspocus onRequest extensions
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
+          // biome-ignore lint/suspicious/noExplicitAny: HTTP server types don't match Hocuspocus hook signature
           hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
             if (!res.writableEnded) {
               res.writeHead(500);
