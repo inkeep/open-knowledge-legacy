@@ -595,6 +595,27 @@ export function createServer(options: ServerOptions): ServerInstance {
                 );
               }
             }
+
+            // Clean up detached HEAD context if switching FROM detached TO named branch
+            if (info.oldBranch?.startsWith('detached-') && resolvedShadow) {
+              try {
+                const sg = shadowGit(resolvedShadow);
+                // List refs under the detached context
+                const refs = (
+                  await sg.raw('for-each-ref', `refs/wip/${info.oldBranch}/`, '--format=%(refname)')
+                ).trim();
+                if (refs) {
+                  for (const ref of refs.split('\n')) {
+                    if (ref) {
+                      await sg.raw('update-ref', '-d', ref);
+                    }
+                  }
+                  console.log(`[branch-switch] cleaned up detached context ${info.oldBranch}`);
+                }
+              } catch (e) {
+                console.error(`[branch-switch] detached cleanup failed:`, e);
+              }
+            }
           }
 
           // Record upstream import if HEAD moved and content files were affected
