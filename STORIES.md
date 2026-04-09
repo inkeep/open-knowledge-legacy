@@ -190,7 +190,7 @@ The full "Save Version" + timeline UI is the biggest remaining work in this buck
 
 ---
 
-## Bucket 5 — Permission & coauthoring model (cross-cutting) [Andrew/Miles]
+## Bucket 5 — Permission & coauthoring model (cross-cutting) [Andre]
 
 **This is not one of the 7 Now stories.** It is a cross-cutting concern that gates Buckets 2, 3, and 4. Driven primarily by PQ7, PQ9, CC4, TQ10, TQ14, PQ12.
 
@@ -225,7 +225,7 @@ TQ10 decision → PQ12 decision → Bucket 2 can finalize write-path routing →
 
 ---
 
-## Bucket 6 — Zero-friction onboarding & cross-agent DX [Andrew]
+## Bucket 6 — Zero-friction onboarding & cross-agent DX [Andrew / Miles]
 
 **Primary stories:** S9 (embeddable editor) + CC5 (zero-friction onboarding) + CC7 (agent DX)
 
@@ -373,7 +373,7 @@ Permission model decisions propagate downstream:
 
 ---
 
-## Scope flags 
+## Scope flags
 
 Items in the team planning doc that PROJECT.md has in Next or Later. Each needs: **promote**, **defer per PROJECT.md**, or **ship a stub**.
 
