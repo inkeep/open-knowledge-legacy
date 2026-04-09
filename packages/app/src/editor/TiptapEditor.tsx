@@ -388,7 +388,7 @@ export const TiptapEditor: FC<{
         return provider;
       },
     }),
-    [editor, mdManager, provider.document, provider],
+    [editor, provider.document, provider],
   );
 
   // Data attributes are set once on initial render; the flash useEffect updates them

@@ -11,11 +11,11 @@
  * Env vars: STRESS_FUZZ_SEED, STRESS_FUZZ_MAX_ITER, STRESS_FUZZ_VERBOSE
  */
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
 import {

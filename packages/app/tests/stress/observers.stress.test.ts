@@ -10,7 +10,7 @@
  *   2. Content preservation: .toContain() for user keystrokes / agent content
  */
 
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
@@ -44,13 +44,6 @@ function stripTrailingWhitespace(s: string): string {
     .map((l) => l.trimEnd())
     .join('\n')
     .replace(/\n+$/, '');
-}
-
-function applyMarkdown(doc: Y.Doc, fragment: Y.XmlFragment, md: string) {
-  const json = mdManager.parse(md);
-  const pmNode = schema.nodeFromJSON(json);
-  const meta = { mapping: new Map(), isOMark: new Map() };
-  updateYFragment(doc, fragment, pmNode, meta);
 }
 
 function serializeFragment(fragment: Y.XmlFragment): string {
