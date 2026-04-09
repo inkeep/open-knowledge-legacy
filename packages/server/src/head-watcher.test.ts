@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { resolveGitDir } from './head-watcher';
+import { readBranchFromHead, resolveGitDir } from './head-watcher';
 
 let tmpDir: string;
 
@@ -43,5 +43,45 @@ describe('resolveGitDir', () => {
 
     const result = resolveGitDir(projectRoot);
     expect(result).toBeNull();
+  });
+});
+
+describe('readBranchFromHead', () => {
+  test('reads branch name from symref HEAD', () => {
+    const gitDir = resolve(tmpDir, 'git');
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(resolve(gitDir, 'HEAD'), 'ref: refs/heads/main\n');
+
+    expect(readBranchFromHead(gitDir)).toBe('main');
+  });
+
+  test('reads feature branch name', () => {
+    const gitDir = resolve(tmpDir, 'git');
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(resolve(gitDir, 'HEAD'), 'ref: refs/heads/feature/my-feature\n');
+
+    expect(readBranchFromHead(gitDir)).toBe('feature/my-feature');
+  });
+
+  test('returns detached-<sha12> for raw SHA HEAD', () => {
+    const gitDir = resolve(tmpDir, 'git');
+    mkdirSync(gitDir, { recursive: true });
+    const sha = 'abc123def456789012345678901234567890abcd';
+    writeFileSync(resolve(gitDir, 'HEAD'), `${sha}\n`);
+
+    expect(readBranchFromHead(gitDir)).toBe('detached-abc123def456');
+  });
+
+  test('returns null when .git/HEAD does not exist', () => {
+    const gitDir = resolve(tmpDir, 'nonexistent');
+    expect(readBranchFromHead(gitDir)).toBeNull();
+  });
+
+  test('returns null for invalid HEAD content', () => {
+    const gitDir = resolve(tmpDir, 'git');
+    mkdirSync(gitDir, { recursive: true });
+    writeFileSync(resolve(gitDir, 'HEAD'), 'invalid\n');
+
+    expect(readBranchFromHead(gitDir)).toBeNull();
   });
 });

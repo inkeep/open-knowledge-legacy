@@ -440,7 +440,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           persistence.setBatchInProgress(false);
 
           console.log(
-            `[batch] end (${bufferedCount} docs reconciled, headMoved=${info.headMoved}${info.timeout ? ', timeout' : ''})`,
+            `[batch] end kind=${info.batchKind} headMoved=${info.headMoved} docs=${bufferedCount}${info.timeout ? ' timeout' : ''}`,
           );
 
           // Record upstream import if HEAD moved and content files were affected

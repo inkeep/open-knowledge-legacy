@@ -14,11 +14,16 @@ import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export type BatchKind = 'within-branch' | 'cross-branch' | 'detached-head';
+
 export interface BatchEndInfo {
   headMoved: boolean;
   oldHead: string | null;
   newHead: string | null;
   timeout: boolean;
+  batchKind: BatchKind;
+  oldBranch: string | null;
+  newBranch: string | null;
 }
 
 export type OnBatchBegin = () => void;
@@ -26,6 +31,8 @@ export type OnBatchEnd = (info: BatchEndInfo) => void | Promise<void>;
 
 export interface HeadWatcherHandle {
   unsubscribe: () => Promise<void>;
+  /** Current known branch name (or 'detached-<sha12>'). */
+  getLastKnownBranch: () => string | null;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -92,6 +99,28 @@ function readHeadSha(gitDir: string): string | null {
   }
 }
 
+/**
+ * Read the branch name from .git/HEAD.
+ *
+ * Returns the branch name (e.g. "main") for a symref,
+ * "detached-<sha12>" for a raw SHA, or null if unreadable.
+ */
+export function readBranchFromHead(gitDir: string): string | null {
+  try {
+    const headContent = readFileSync(resolve(gitDir, 'HEAD'), 'utf-8').trim();
+    if (headContent.startsWith('ref: refs/heads/')) {
+      return headContent.slice('ref: refs/heads/'.length);
+    }
+    // Detached HEAD — raw SHA
+    if (headContent.length >= 40) {
+      return `detached-${headContent.slice(0, 12)}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── Watcher ─────────────────────────────────────────────────────────────────
 
 /**
@@ -108,7 +137,7 @@ export async function startHeadWatcher(
   const resolvedGitDir = resolveGitDir(projectRoot);
   if (!resolvedGitDir) {
     // Standalone mode — no .git to watch
-    return { unsubscribe: async () => {} };
+    return { unsubscribe: async () => {}, getLastKnownBranch: () => null };
   }
   const gitDir: string = resolvedGitDir;
 
@@ -116,6 +145,7 @@ export async function startHeadWatcher(
   let quietTimer: ReturnType<typeof setTimeout> | null = null;
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
   let oldHead: string | null = readHeadSha(gitDir);
+  let lastKnownBranch: string | null = readBranchFromHead(gitDir);
 
   async function emitBatchEnd(timeout: boolean): Promise<void> {
     if (!inBatch) return;
@@ -132,6 +162,19 @@ export async function startHeadWatcher(
 
     const newHead = readHeadSha(gitDir);
     const headMoved = oldHead !== newHead;
+    const newBranch = readBranchFromHead(gitDir);
+
+    // Classify batch kind
+    let batchKind: BatchKind;
+    if (newBranch?.startsWith('detached-')) {
+      batchKind = 'detached-head';
+    } else if (lastKnownBranch !== newBranch) {
+      batchKind = 'cross-branch';
+    } else {
+      batchKind = 'within-branch';
+    }
+
+    const oldBranch = lastKnownBranch;
 
     // Await callback before updating oldHead to prevent races with concurrent batches
     await onBatchEnd({
@@ -139,9 +182,13 @@ export async function startHeadWatcher(
       oldHead,
       newHead,
       timeout,
+      batchKind,
+      oldBranch,
+      newBranch,
     });
 
     oldHead = newHead;
+    lastKnownBranch = newBranch;
   }
 
   function resetQuietWindow(): void {
@@ -192,7 +239,7 @@ export async function startHeadWatcher(
     });
   } catch (e) {
     console.error('[head-watcher] Failed to start watcher on', gitDir, e);
-    return { unsubscribe: async () => {} };
+    return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
   }
 
   console.log(`[head-watcher] Watching ${gitDir} for HEAD changes`);
@@ -203,5 +250,6 @@ export async function startHeadWatcher(
       if (timeoutTimer) clearTimeout(timeoutTimer);
       await subscription.unsubscribe();
     },
+    getLastKnownBranch: () => lastKnownBranch,
   };
 }
