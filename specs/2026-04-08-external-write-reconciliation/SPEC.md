@@ -792,15 +792,77 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 
 ## 16) Future work (explicitly out of scope)
 
-- **Optimistic concurrency at MCP surface** (NG6). Needed to close the "agent mid-multi-file write races a pull" case. Dedicated spec under Bucket 5.
-- **Cross-device sync of shadow repo** (NG7). Push/pull the shadow to a dedicated remote. Depends on cloud mode.
-- **Full draft UI** (NG8). Create/switch/delete/list drafts. Bucket 5 spec.
-- **Full timeline UI** (NG9). "Save Version" modal, history panel, collapsed auto-saves. Bucket 4 spec.
-- **Windows support** (NG11). Requires empirical testing of `.git/HEAD` watching on NTFS.
-- **Non-git host VCS** (NG13). Mercurial / Fossil / Pijul. Shadow repo abstraction stays the same; parent-awareness would need VCS-specific hooks.
-- **Fine-grained merge** (NG10). Sentence or word-level. Only if block-level proves insufficient in practice.
-- **Rescue buffer UI** (mentioned in FR17). Currently just an HTTP endpoint + filesystem store. A proper "recent rescues" browser UI is a nice-to-have.
-- **"Export history to parent repo" action.** Let users optionally squash-merge shadow checkpoints into the parent repo's main branch as real commits. Inverse of NG1 — opt-in, not default.
+This section is the load-bearing design memory. Items here are NOT speculative — they are the *known* extensions of the protocol that this spec is structured to support without rework. Future contributors should treat this list as architectural commitments that constrain how this spec evolves. In particular: decisions in this spec that look "over-engineered for Now" (per-writer WIP refs as N-writer general, shadow repo as a normal git repo with addable remotes, writer IDs as git-author-compatible) are LOCKED specifically because items in §16.2 require them.
+
+### 16.1 — Adjacent Now-scope specs that depend on this substrate
+
+These ship as part of the Now bundle but are owned by other workstreams. They depend on this spec's substrate (shadow repo, per-writer WIP refs, reconciliation protocol) but their UX lives in dedicated specs.
+
+- **Bucket 4 — version history timeline UI (NG9).** "Save Version" modal, timeline panel with named checkpoints prominent and auto-saves collapsed (Google Docs bar), restore-to-checkpoint action, attribution visualization (me / agent / upstream). Reads from `refs/heads/main` + per-writer WIP refs in this spec's shadow repo. **Without this spec's substrate, the timeline has no data source. Without the timeline UI, this spec's history infrastructure has no user-visible payoff.** Both must ship together in Now.
+- **Bucket 5 — draft UX (NG8).** Create / switch / delete / list / apply drafts. Reads from `refs/drafts/<name>` storage model. Draft-apply is rebase + squash-merge per the substrate. The branch lifecycle is owned here; the UX lives in Bucket 5.
+- **Bucket 3 — attribution UX.** Origin shading, per-block "who wrote this" hovers, agent activity feed. Reads from this spec's per-writer WIP refs. Attribution data is owned here; rendering lives in Bucket 3.
+- **S10 — wiki-links and backlinks.** Largely independent of this spec, except for one cross-spec dependency: when a file is renamed (this spec's `Rename` lifecycle event), the backlink graph must update referencing files. Cross-spec semantic agreement needed on whether wiki-links resolve by file basename, H1 heading, or frontmatter title.
+- **Distribution / CLI / init.** `npx openknowledge init` auto-detection (walk up from content directory looking for `.git/`, confirm with user, persist to `.openknowledge/config.json`), content root discovery for known frameworks (Fumadocs `content/docs/`, Mintlify `docs/`, Nextra, Docusaurus), `.gitignore` management. The runtime behavior (whether a host repo is detected) is consumed by this spec; the init UX lives in a dedicated CLI spec.
+- **File-path search (Cmd-P).** Fuzzy file-name search across the content directory. Tiny implementation, not its own spec — lands inside the editor spec. Worth naming because users coming from VS Code / Obsidian / Notion expect it as table-stakes.
+
+### 16.2 — Protocol extensions for Next / Later
+
+These extend this spec's protocol into new domains. The Now architecture is structured to support them without rework. Future contributors who try to simplify Now-scope decisions for "we don't need that complexity right now" should read this section first.
+
+#### Cloud forward-compatibility (Next)
+
+PROJECT.md commits to *"local-first single-player to start, with architecture that gives a clear path to collaboration, publishing, and SaaS"* (line 13) and *"the cloud product ... consumes the same MCP tools, CRDT protocol, and storage primitives as any external agent"* (line 16). The cloud target is **hybrid local-first** — OSS users start local, then upgrade to cloud cleanly without rewriting their data. This spec's architectural commitments are specifically structured for that upgrade path.
+
+- **Hybrid local-first cloud deployment.** The full upgrade flow: `npx openknowledge cloud link` adds a cloud remote to the user's local `.openknowledge/history.git` and pushes existing history; `npx openknowledge clone <workspace-url>` clones into a new machine. Cloud git becomes the canonical system of record; each user has a local clone. Users can work offline against their local copy and sync via git push/pull when reconnected. **The shadow repo concept survives the upgrade unchanged** — it's already a git repo with an addable remote. Subsumes NG7 (cross-device sync of shadow repo).
+- **Cloud Hocuspocus deployment.** Multi-tenant or per-workspace Hocuspocus running in our cloud. Same Yjs + Hocuspocus stack from PROJECT.md TQ1, just a different connection target. When users are online, browser/MCP clients connect to cloud Hocuspocus instead of (or in addition to) localhost. When offline, they fall back to local Hocuspocus or a Yjs-IndexedDB cache.
+- **Local ↔ cloud Hocuspocus reconciliation when toggling online/offline.** The hardest design question for cloud mode. When a user has been editing offline and reconnects, the cloud may have N hours of remote changes and the local has N hours of theirs. **The reconciliation protocol from this spec is the load-bearing primitive that handles it** — three-way merge against `reconciledBase`, with cloud-peer commits treated as external writers (the same way `git pull` from origin is treated today). What's *not* yet decided: does local Hocuspocus shut off when online (clients connect directly to cloud)? Proxy to cloud? Coexist with bidirectional sync? Three plausible options, decision deferred to the cloud topology spec.
+- **Multi-user presence extending to remote participants.** The presence-awareness-ux spec today scopes to local participants (me + my browser tabs + my local agents). Cloud adds remote humans on other machines via the same Yjs awareness protocol. Cursors, selections, and "who's editing" indicators just work over WebSocket-to-cloud instead of WebSocket-to-localhost.
+- **Cross-machine writer identity stability.** Local writer IDs (`human-<install-id>`) must map to cloud account IDs (`human-<cloud-user-id>`) at upgrade time. The mapping happens at `cloud link`. Historical commits are not retroactively reattributed — the new identity applies to commits made after the upgrade. **This is why writer IDs in this spec are git-author-compatible** — local IDs must be representable as git authors so the upgrade can rewrite them via standard git author mapping.
+- **Cloud authentication / authorization layer.** Cloud Hocuspocus needs auth (workspace membership, permission checks). Cloud git needs auth (push/pull credentials). Out of scope for this spec but the missing prerequisite for cloud deployment.
+- **Cross-machine attribution via git commit metadata.** When agent-authored commits are pushed to cloud and pulled by another user, attribution must survive the round trip. Per-writer WIP refs are local-only. Cross-machine attribution carrier: `Co-Authored-By: <agent-name> <agent@openknowledge.local>` trailers on commits that included agent work, written at L2 commit time. This is how the timeline UI in another user's local install can still distinguish "my teammate's edits" from "my teammate's agent's edits."
+- **Workspace management and invite flow.** Cloud workspaces, member roles, invite links. Cloud product surface, not protocol.
+
+#### History queries
+
+Items in this category extend "what users can do with the history this spec captures." The substrate (shadow repo with per-writer refs) is in scope; the query primitives and UIs are out.
+
+- **Time-based recovery ("rewind N minutes").** The "my cat jumped on the keyboard and added 200 lines of garbage" scenario. Different from per-transaction Y.js undo (too granular, will produce thousands of operations) and from named-checkpoint restore (requires the user to have created a checkpoint beforehand). Needs a query primitive: `git show refs/wip/<writer>@{N minutes ago}:<file>` and an HTTP/UI surface. **This is probably the most common real recovery action for solo IC users** — more common than checkpoint restore, more common than draft branches — and it's currently absent from the entire Now bundle.
+- **Cross-session agent undo.** Undo an agent edit from yesterday. Current per-origin undo (presence spec) is in-session only — the UndoManager dies when the doc is unloaded. Cross-session needs a "revert commits authored by writer X in time window Y..Z" primitive against the shadow repo. Substrate is per-writer WIP refs (this spec); query primitive is future work.
+- **Cross-document attribution queries.** "Every AI edit across my whole KB this week." "Show me everything Claude wrote in the auth section last month." Bucket 3 surface, requires walking the shadow log across files.
+- **Full-text search over history.** Search past versions of files, not just current. "I remember writing a good sentence about X — find it across all versions." Requires indexing shadow blob history, separate from the current-state search index.
+- **Per-block blame.** Finer-grained version of "who wrote this paragraph": which writer added each block, when, in what surrounding context. Drives a hover-to-see-attribution UX in Bucket 3.
+
+#### Migration / onboarding from prior content
+
+Items here cover users with existing content who want to adopt openknowledge.
+
+- **Onboarding from existing markdown directories with prior git history.** A user's repo has `content/docs/*.mdx` with pre-existing history in their host repo's `.git/`. Today: the shadow repo starts fresh at install time; the host repo's history stays in the host repo where it always was. Future: optionally surface pre-install history in the timeline UI by reading from the host repo (read-only), or synthesize WIP commits from host history. Probably the simpler answer is "shadow history starts at install; pre-install history is browsable via the user's normal git tools" — but worth deciding explicitly.
+- **Migration from Obsidian vaults.** Obsidian users have markdown + frontmatter + wiki-links + plugins. Importing means: scan the vault, map Obsidian's wiki-link conventions to ours, preserve frontmatter, ignore Obsidian-specific files (`.obsidian/`). Probably its own spec under a "switchers" workstream.
+- **Migration from Notion / Confluence exports.** Markdown export from these tools is lossy and shaped differently from openknowledge's expectations. An "import from Notion" workflow would parse the export and create matching pages with metadata mapping. Out of scope for this spec but worth naming.
+- **Onboarding into a host repo with existing CI / hooks.** What if the user's host repo has pre-commit hooks that run `prettier --write` or similar? Those modify files and trigger our reconciliation. Probably handled correctly (it's just another external write source) but deserves an explicit test scenario.
+
+#### Operational maturity
+
+- **Shadow repo garbage collection / archival policy.** What happens when WIP refs accumulate over months or years. Current Q6 ("`git gc --auto` on startup") is a starting point, not a real archival story. Long-running installs may need policies for: archiving WIP refs older than N days, compacting auto-save commits between checkpoints, splitting history into time-bucketed packfiles.
+- **Performance at scale.** Repos with 10K+ files, deep histories, concurrent multi-agent writes. The spec has performance NFRs but no benchmarks. Needs a perf spec with targets and measurement methodology before scaling concerns become real.
+- **Shadow repo corruption recovery and backup.** Q7 covers `git fsck` + reinit on failure. That's a recovery story, not a prevention story. Backup primitives (export shadow to tarball, restore from tarball) and partial-corruption recovery (when fsck doesn't catch the issue) are unaddressed.
+- **Streaming / lazy loading of timeline.** Long histories shouldn't load the entire shadow log into memory or render in one pass. Pagination + virtualization for the timeline UI.
+- **Shadow repo portability across machines (pre-cloud).** Can a user copy `.openknowledge/` between machines manually? Today: probably yes, but writer IDs are tied to install. Mostly subsumed by the cloud upgrade path — pre-cloud users who want this can do it manually and accept the writer-ID drift.
+
+#### UX maturation
+
+- **In-browser conflict resolution UI.** Currently this spec punts to external tools when git markers appear (resolution mode is read-only with a banner). A proper in-browser 3-way merge UI showing base/ours/theirs with click-to-accept-block would be a better experience long-term. Significant UX work, deferred but worth naming as a future improvement, not a permanent limitation.
+- **Optimistic concurrency at MCP surface (NG6).** The "agent mid-multi-file-write races a git pull" case. The fix is at the MCP surface (e.g., `write_file(path, content, expected_sha)` with 409 on mismatch), not the file layer. Dedicated spec under Bucket 5 when agent concurrency becomes a real problem.
+- **Rich notification when external changes land.** Today's spec has FR21 (brief block highlight via flash). Future work: a sidebar notification log of external changes, click-to-jump-to-changed-block, "show me all changes since this morning" type queries.
+- **"What changed since I was last here" view.** A user comes back after a week and wants to see what's new in their KB. Currently they'd have to manually browse the timeline. A dedicated "since I was last here" view is a high-leverage onboarding moment for returning users.
+- **Rescue buffer UI.** Currently rescue buffers are just an HTTP endpoint + filesystem store. A proper "recent rescues" browser UI showing all dirty-doc rescues with their timestamps and content previews would be a quality-of-life improvement.
+- **"Publish to host repo" action.** User-invoked action that takes a shadow repo checkpoint and creates a real commit in the host repo on a chosen branch, using the host's git config (`user.name`, `user.email`, signing key). Lets users who want git-native history get it without making it the default. Inverse of NG1: opt-in, scoped, user-visible. May overlap with cloud "publish" semantics.
+
+#### Cross-protocol extensions
+
+- **Non-git host VCS (NG13).** Mercurial / Fossil / Pijul / Dolt / Sapling. The shadow repo abstraction generalizes ("openknowledge owns its own versioned blob store with text-level merge"); only the parent-awareness hooks are git-specific. Each VCS would need its own equivalent of `.git/HEAD` watching, lifecycle event detection, and conflict marker conventions.
+- **Fine-grained merge granularity (NG10).** Sentence-level or word-level instead of block-level. Only worth investing in if block-level proves to produce too many false conflicts on prose-heavy content. Block-level is probably right for prose; sentence-level might be needed for code blocks inside MDX.
+- **Windows support (NG11).** Empirical testing of `.git/HEAD` watching on NTFS, file-watcher semantics, path handling. Platform port, not architectural change.
 
 ## 17) Glossary
 
