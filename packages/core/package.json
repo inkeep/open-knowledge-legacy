@@ -16,9 +16,14 @@
     "@tiptap/extension-table": "^3.22.3",
     "@tiptap/markdown": "^3.22.3",
     "@tiptap/starter-kit": "^3.22.3",
+    "acorn": "^8.16.0",
+    "acorn-jsx": "^5.3.2",
     "yjs": "^13.6.30"
   },
   "devDependencies": {
+    "@inkeep/docskit": "^0.0.9",
+    "fumadocs-ui": "^16.7.11",
+    "react-docgen-typescript": "^2.4.0",
     "typescript": "^5.9.3"
   }
 }
