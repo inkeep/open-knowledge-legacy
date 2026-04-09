@@ -1,9 +1,28 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
+import {
+  prependFrontmatter,
+  sharedExtensions,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
+import { getSchema } from '@tiptap/core';
+import { MarkdownManager } from '@tiptap/markdown';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
-import { createExternalChangeHandler } from './external-change.ts';
 import { type AsyncSubscription, type DiskEvent, startWatcher } from './file-watcher.ts';
-import { createPersistenceExtension, type PersistenceOptions } from './persistence.ts';
+import {
+  createPersistenceExtension,
+  type PersistenceOptions,
+  reconciledBase,
+} from './persistence.ts';
+import { reconcile } from './reconciliation.ts';
+import type { ShadowHandle } from './shadow-repo.ts';
+
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+const schema = getSchema(sharedExtensions);
 
 export interface ServerOptions {
   port?: number;
@@ -22,6 +41,10 @@ export interface ServerOptions {
    * state and must never be exposed in production. Enable only in tests.
    */
   enableTestRoutes?: boolean;
+  /** Shadow repo handle — passed to persistence. */
+  shadowRepo?: ShadowHandle;
+  /** Content root relative to project dir. */
+  contentRoot?: string;
 }
 
 export interface ServerInstance {
@@ -41,6 +64,8 @@ export function createServer(options: ServerOptions): ServerInstance {
     commitDebounceMs = 30_000,
     wipRef = 'refs/wip/main',
     enableTestRoutes = false,
+    shadowRepo,
+    contentRoot,
   } = options;
 
   const persistenceOpts: PersistenceOptions = {
@@ -49,6 +74,8 @@ export function createServer(options: ServerOptions): ServerInstance {
     gitEnabled,
     commitDebounceMs,
     wipRef,
+    shadowRepo,
+    contentRoot,
   };
 
   const persistence = createPersistenceExtension(persistenceOpts);
@@ -74,14 +101,171 @@ export function createServer(options: ServerOptions): ServerInstance {
   hocuspocus.configuration.extensions.push(apiExtension);
 
   let watcher: AsyncSubscription | null = null;
-  const handleExternalChange = createExternalChangeHandler(hocuspocus);
 
+  /** Serialize current Y.Doc to markdown for reconciliation. */
+  function serializeDoc(docName: string): string | null {
+    const document = hocuspocus.documents.get(docName);
+    if (!document) return null;
+    const xmlFragment = document.getXmlFragment('default');
+    const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const body = mdManager.serialize(json);
+    const metaMap = document.getMap('metadata');
+    const fm = metaMap.get('frontmatter');
+    const frontmatter = typeof fm === 'string' ? fm : '';
+    return prependFrontmatter(frontmatter, body);
+  }
+
+  /** Apply markdown content to Y.Doc with skipStoreHooks. */
+  function applyToDoc(docName: string, content: string): void {
+    const document = hocuspocus.documents.get(docName);
+    if (!document) return;
+    const { frontmatter, body } = stripFrontmatter(content);
+    const parsedJson = mdManager.parse(body);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+    const xmlFragment = document.getXmlFragment('default');
+
+    document.transact(
+      () => {
+        const meta = { mapping: new Map(), isOMark: new Map() };
+        updateYFragment(document, xmlFragment, pmNode, meta);
+        const metaMap = document.getMap('metadata');
+        metaMap.set('frontmatter', frontmatter);
+
+        const ytext = document.getText('source');
+        const currentText = ytext.toString();
+        if (currentText !== content) {
+          ytext.delete(0, currentText.length);
+          ytext.insert(0, content);
+        }
+      },
+      {
+        source: 'local',
+        skipStoreHooks: true,
+        context: { origin: 'file-watcher' },
+      } satisfies LocalTransactionOrigin,
+    );
+  }
+
+  /** Reconciliation-aware dispatch for all DiskEvent types. */
   async function handleDiskEvent(event: DiskEvent): Promise<void> {
-    if (event.kind !== 'update') {
-      console.log(`[file-watcher] Received ${event.kind} event — not yet handled`);
-      return;
+    try {
+      switch (event.kind) {
+        case 'create': {
+          console.log(`[reconcile] Create: ${event.docName}`);
+          break;
+        }
+
+        case 'update': {
+          const { docName, content: theirs } = event;
+          const document = hocuspocus.documents.get(docName);
+          if (!document) return;
+
+          const base = reconciledBase.get(docName) ?? '';
+          const ours = serializeDoc(docName) ?? base;
+
+          const result = reconcile({ docName, base, ours, theirs });
+
+          switch (result.kind) {
+            case 'noop':
+              break;
+
+            case 'clean':
+              applyToDoc(docName, result.newContent);
+              reconciledBase.set(docName, result.newContent);
+              console.log(`[reconcile] Clean apply: ${docName}`);
+              break;
+
+            case 'merged':
+              applyToDoc(docName, result.newContent);
+              reconciledBase.set(docName, result.newContent);
+              console.log(`[reconcile] Merged: ${docName} (${result.mergedBlocks} blocks)`);
+              break;
+
+            case 'conflicts': {
+              applyToDoc(docName, result.newContent);
+              reconciledBase.set(docName, result.newContent);
+              const conflictsMap = document.getMap('conflicts');
+              for (const c of result.conflicts) {
+                conflictsMap.set(String(c.blockIndex), {
+                  blockIndex: c.blockIndex,
+                  base: c.base,
+                  ours: c.ours,
+                  theirs: c.theirs,
+                  resolution: 'pending',
+                });
+              }
+              console.log(`[reconcile] Conflicts: ${docName} (${result.conflicts.length} blocks)`);
+              break;
+            }
+
+            case 'refused': {
+              const lifecycleMap = document.getMap('lifecycle');
+              lifecycleMap.set('status', 'conflict');
+              lifecycleMap.set('reason', result.reason);
+              console.log(`[reconcile] Refused: ${docName} (${result.reason})`);
+              break;
+            }
+          }
+          break;
+        }
+
+        case 'delete': {
+          const { docName } = event;
+          const document = hocuspocus.documents.get(docName);
+          if (!document) return;
+
+          const base = reconciledBase.get(docName) ?? '';
+          const ours = serializeDoc(docName) ?? '';
+          const isDirty = ours !== base;
+
+          if (isDirty && shadowRepo) {
+            const rescueDir = `${shadowRepo.gitDir}/rescue`;
+            mkdirSync(dirname(`${rescueDir}/${docName}.md`), { recursive: true });
+            writeFileSync(`${rescueDir}/${docName}.md`, ours, 'utf-8');
+            console.log(`[reconcile] Rescue buffer saved: ${docName}`);
+          }
+
+          const lifecycleMap = document.getMap('lifecycle');
+          lifecycleMap.set('status', 'deleted-upstream');
+
+          reconciledBase.delete(docName);
+          console.log(`[reconcile] Delete: ${docName} (dirty=${isDirty})`);
+          break;
+        }
+
+        case 'rename': {
+          const { oldDocName, newDocName, content } = event;
+          const document = hocuspocus.documents.get(oldDocName);
+
+          reconciledBase.delete(oldDocName);
+          reconciledBase.set(newDocName, content);
+
+          if (document) {
+            const lifecycleMap = document.getMap('lifecycle');
+            lifecycleMap.set('status', 'renamed');
+            lifecycleMap.set('newPath', newDocName);
+          }
+
+          console.log(`[reconcile] Rename: ${oldDocName} → ${newDocName}`);
+          break;
+        }
+
+        case 'conflict': {
+          const { docName } = event;
+          const document = hocuspocus.documents.get(docName);
+          if (!document) return;
+
+          const lifecycleMap = document.getMap('lifecycle');
+          lifecycleMap.set('status', 'conflict');
+          lifecycleMap.set('reason', 'conflict-markers');
+          console.log(`[reconcile] Conflict markers detected: ${docName}`);
+          break;
+        }
+      }
+    } catch (err) {
+      const docName = 'docName' in event ? event.docName : 'unknown';
+      console.error(`[reconcile] Failed to handle ${event.kind} for ${docName}:`, err);
     }
-    await handleExternalChange(event.docName, event.content);
   }
 
   async function destroy(): Promise<void> {
