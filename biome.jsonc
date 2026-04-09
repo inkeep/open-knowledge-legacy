@@ -35,7 +35,6 @@
       "!**/tmp",
       "!**/next-env.d.ts",
       "!.claude",
-      "!init_spike",
       "!specs",
       "!reports",
       "!evidence",
