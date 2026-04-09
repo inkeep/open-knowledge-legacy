@@ -52,11 +52,9 @@ await docker.build(config);
 
 ![Architecture diagram](./images/architecture.png)
 
-```jsx-component
 <Callout type="warning">
   Always run the integration tests before deploying to production.
   Skipping tests has caused two incidents this quarter.
 </Callout>
-```
 
 T51-disk-1775638362408

@@ -9,8 +9,8 @@ import StarterKit from '@tiptap/starter-kit';
 import { JsxComponent } from './jsx-component.ts';
 
 export const sharedExtensions = [
-  // JsxComponent MUST be before StarterKit so its markdown parseMarkdown handler
-  // for 'code' tokens runs before codeBlock's handler (registry uses insertion order).
+  // JsxComponent MUST be before StarterKit so its 'jsxBlock' markdownTokenizer
+  // is registered before codeBlock's handler (marked extension insertion order).
   JsxComponent,
   StarterKit.configure({ undoRedo: false }),
   Table,
