@@ -141,15 +141,19 @@ export async function classifyEvents(
   for (const event of creates) {
     try {
       createContents.set(event.path, await readFile(event.path, 'utf-8'));
-    } catch {
-      // File may have been deleted between event and read
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`[file-watcher] Failed to read ${event.path}:`, e);
+      }
     }
   }
   for (const event of updates) {
     try {
       updateContents.set(event.path, await readFile(event.path, 'utf-8'));
-    } catch {
-      // File may have been deleted between event and read
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn(`[file-watcher] Failed to read ${event.path}:`, e);
+      }
     }
   }
 

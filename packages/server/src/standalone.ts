@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
@@ -26,18 +26,13 @@ import {
   incrementRescueBuffer,
   incrementUpstreamImport,
 } from './metrics.ts';
-import {
-  createPersistenceExtension,
-  isBatchInProgress,
-  type PersistenceOptions,
-  reconciledBase,
-  setBatchInProgress,
-} from './persistence.ts';
+import { createPersistenceExtension, type PersistenceOptions } from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
 import {
   commitUpstreamImport,
   initShadowRepo,
   type ShadowHandle,
+  type ShadowRef,
   shadowGit,
 } from './shadow-repo.ts';
 
@@ -90,13 +85,16 @@ export function createServer(options: ServerOptions): ServerInstance {
     contentRoot,
   } = options;
 
+  // Mutable ref so deferred init (initAsync) propagates to persistence and API
+  const shadowRef: ShadowRef = { current: shadowRepo };
+
   const persistenceOpts: PersistenceOptions = {
     contentDir,
     projectDir,
     gitEnabled,
     commitDebounceMs,
     wipRef,
-    shadowRepo,
+    shadowRef,
     contentRoot,
   };
 
@@ -119,7 +117,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     sessionManager,
     contentDir,
     enableTestRoutes,
-    shadowRepo,
+    shadowRef,
     projectRoot: projectDir,
     contentRoot,
   });
@@ -169,6 +167,11 @@ export function createServer(options: ServerOptions): ServerInstance {
     );
   }
 
+  /** Helper to extract docName from any DiskEvent variant. */
+  function diskEventDocName(event: DiskEvent): string {
+    return event.kind === 'rename' ? event.newDocName : event.docName;
+  }
+
   /** Reconciliation-aware dispatch for all DiskEvent types. */
   async function handleDiskEvent(event: DiskEvent): Promise<void> {
     try {
@@ -183,7 +186,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           const document = hocuspocus.documents.get(docName);
           if (!document) return;
 
-          const base = reconciledBase.get(docName) ?? '';
+          const base = persistence.reconciledBase.get(docName) ?? '';
           const ours = serializeDoc(docName) ?? base;
 
           const result = reconcile({ docName, base, ours, theirs });
@@ -202,19 +205,19 @@ export function createServer(options: ServerOptions): ServerInstance {
 
             case 'clean':
               applyToDoc(docName, result.newContent);
-              reconciledBase.set(docName, result.newContent);
+              persistence.reconciledBase.set(docName, result.newContent);
               incrementReconcile();
               break;
 
             case 'merged':
               applyToDoc(docName, result.newContent);
-              reconciledBase.set(docName, result.newContent);
+              persistence.reconciledBase.set(docName, result.newContent);
               incrementReconcile();
               break;
 
             case 'conflicts': {
               applyToDoc(docName, result.newContent);
-              reconciledBase.set(docName, result.newContent);
+              persistence.reconciledBase.set(docName, result.newContent);
               incrementReconcile();
               incrementConflict();
               const conflictsMap = document.getMap('conflicts');
@@ -246,14 +249,14 @@ export function createServer(options: ServerOptions): ServerInstance {
           const document = hocuspocus.documents.get(docName);
           if (!document) return;
 
-          const base = reconciledBase.get(docName) ?? '';
+          const base = persistence.reconciledBase.get(docName) ?? '';
           const ours = serializeDoc(docName) ?? '';
           const isDirty = ours !== base;
 
-          if (isDirty && shadowRepo) {
-            const rescueDir = `${shadowRepo.gitDir}/rescue`;
-            mkdirSync(dirname(`${rescueDir}/${docName}.md`), { recursive: true });
-            writeFileSync(`${rescueDir}/${docName}.md`, ours, 'utf-8');
+          if (isDirty && shadowRef.current) {
+            const rescueDir = `${shadowRef.current.gitDir}/rescue`;
+            await mkdir(dirname(`${rescueDir}/${docName}.md`), { recursive: true });
+            await writeFile(`${rescueDir}/${docName}.md`, ours, 'utf-8');
             incrementRescueBuffer();
             console.log(`[reconcile] Rescue buffer saved: ${docName}`);
           }
@@ -261,8 +264,12 @@ export function createServer(options: ServerOptions): ServerInstance {
           const lifecycleMap = document.getMap('lifecycle');
           lifecycleMap.set('status', 'deleted-upstream');
 
-          reconciledBase.delete(docName);
+          persistence.reconciledBase.delete(docName);
           console.log(`[reconcile] Delete: ${docName} (dirty=${isDirty})`);
+
+          // Unload document to prevent re-creation on next persistence cycle
+          hocuspocus.closeConnections(docName);
+          await hocuspocus.unloadDocument(document);
           break;
         }
 
@@ -270,8 +277,8 @@ export function createServer(options: ServerOptions): ServerInstance {
           const { oldDocName, newDocName, content } = event;
           const document = hocuspocus.documents.get(oldDocName);
 
-          reconciledBase.delete(oldDocName);
-          reconciledBase.set(newDocName, content);
+          persistence.reconciledBase.delete(oldDocName);
+          persistence.reconciledBase.set(newDocName, content);
 
           if (document) {
             const lifecycleMap = document.getMap('lifecycle');
@@ -296,8 +303,10 @@ export function createServer(options: ServerOptions): ServerInstance {
         }
       }
     } catch (err) {
-      const docName = 'docName' in event ? event.docName : 'unknown';
-      console.error(`[reconcile] Failed to handle ${event.kind} for ${docName}:`, err);
+      console.error(
+        `[reconcile] Failed to handle ${event.kind} for ${diskEventDocName(event)}:`,
+        err,
+      );
     }
   }
 
@@ -307,7 +316,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   /** Wrapper that buffers events during batch operations. */
   async function onDiskEvent(event: DiskEvent): Promise<void> {
-    if (isBatchInProgress()) {
+    if (persistence.isBatchInProgress()) {
       eventBuffer.push(event);
       return;
     }
@@ -326,9 +335,12 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let watcher: AsyncSubscription | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
-  let resolvedShadow: ShadowHandle | undefined = shadowRepo;
 
   async function destroy(): Promise<void> {
+    // Flush pending git commit before stopping watchers
+    persistence.flushPendingGitCommit();
+    await persistence.awaitPendingCommit();
+
     if (headWatcher) {
       await headWatcher.unsubscribe();
       headWatcher = null;
@@ -345,27 +357,27 @@ export function createServer(options: ServerOptions): ServerInstance {
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
     // Auto-initialize shadow repo if not provided
-    if (!resolvedShadow) {
+    if (!shadowRef.current) {
       try {
-        resolvedShadow = await initShadowRepo(projectDir);
-        console.log(`[server] Shadow repo initialized at ${resolvedShadow.gitDir}`);
+        shadowRef.current = await initShadowRepo(projectDir);
+        console.log(`[server] Shadow repo initialized at ${shadowRef.current.gitDir}`);
       } catch (e) {
         console.error('[server] Shadow repo init failed:', e);
       }
     }
 
     // Verify shadow repo integrity — reinit if corrupted
-    if (resolvedShadow) {
+    if (shadowRef.current) {
       try {
-        const sg = shadowGit(resolvedShadow);
+        const sg = shadowGit(shadowRef.current);
         await sg.raw('rev-parse', '--git-dir');
       } catch {
         console.warn('[server] Shadow repo appears corrupted — reinitializing');
         try {
-          resolvedShadow = await initShadowRepo(projectDir);
+          shadowRef.current = await initShadowRepo(projectDir);
         } catch (e) {
           console.error('[server] Shadow repo reinit failed:', e);
-          resolvedShadow = undefined;
+          shadowRef.current = undefined;
         }
       }
     }
@@ -387,11 +399,11 @@ export function createServer(options: ServerOptions): ServerInstance {
           incrementBatch();
           hocuspocus.flushPendingStores();
           persistence.flushPendingGitCommit();
-          setBatchInProgress(true);
+          persistence.setBatchInProgress(true);
         },
         // onBatchEnd
         async (info) => {
-          setBatchInProgress(false);
+          persistence.setBatchInProgress(false);
 
           const bufferedCount = eventBuffer.length;
           await drainEventBuffer();
@@ -401,11 +413,11 @@ export function createServer(options: ServerOptions): ServerInstance {
           );
 
           // Record upstream import if HEAD moved and content files were affected
-          if (info.headMoved && info.newHead && resolvedShadow && bufferedCount > 0) {
+          if (info.headMoved && info.newHead && shadowRef.current && bufferedCount > 0) {
             const contentRootForShadow = contentRoot ?? 'content';
             try {
               const sha = await commitUpstreamImport(
-                resolvedShadow,
+                shadowRef.current,
                 contentRootForShadow,
                 info.oldHead,
                 info.newHead,

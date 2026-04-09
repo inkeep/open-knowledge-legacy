@@ -15,7 +15,7 @@ import {
   syncTextToFragment,
 } from './agent-sessions.ts';
 import { getMetrics } from './metrics.ts';
-import { type ShadowHandle, saveVersion, type WriterIdentity } from './shadow-repo.ts';
+import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
@@ -30,7 +30,7 @@ export interface ApiExtensionOptions {
    * local dev mode.
    */
   enableTestRoutes?: boolean;
-  shadowRepo?: ShadowHandle;
+  shadowRef?: ShadowRef;
   projectRoot?: string;
   contentRoot?: string;
 }
@@ -54,7 +54,7 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
-  const { hocuspocus, sessionManager, contentDir, enableTestRoutes = false, shadowRepo, projectRoot, contentRoot } = options;
+  const { hocuspocus, sessionManager, contentDir, enableTestRoutes = false, shadowRef, projectRoot, contentRoot } = options;
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
@@ -445,7 +445,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    if (!shadowRepo || !projectRoot) {
+    const shadow = shadowRef?.current;
+    if (!shadow || !projectRoot) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
     }
@@ -480,7 +481,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const resolvedContentRoot = contentRoot ?? 'content';
-      const result = await saveVersion(shadowRepo, projectRoot, resolvedContentRoot, writers);
+      const result = await saveVersion(shadow, projectRoot, resolvedContentRoot, writers);
 
       console.log(
         `[shadow] checkpoint ${result.checkpointRef} → project commit ${result.projectCommitSha.slice(0, 8)}`,

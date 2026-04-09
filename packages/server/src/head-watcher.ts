@@ -22,7 +22,7 @@ export interface BatchEndInfo {
 }
 
 export type OnBatchBegin = () => void;
-export type OnBatchEnd = (info: BatchEndInfo) => void;
+export type OnBatchEnd = (info: BatchEndInfo) => void | Promise<void>;
 
 export interface HeadWatcherHandle {
   unsubscribe: () => Promise<void>;
@@ -117,7 +117,7 @@ export async function startHeadWatcher(
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
   let oldHead: string | null = readHeadSha(gitDir);
 
-  function emitBatchEnd(timeout: boolean): void {
+  async function emitBatchEnd(timeout: boolean): Promise<void> {
     if (!inBatch) return;
     inBatch = false;
 
@@ -133,7 +133,8 @@ export async function startHeadWatcher(
     const newHead = readHeadSha(gitDir);
     const headMoved = oldHead !== newHead;
 
-    onBatchEnd({
+    // Await callback before updating oldHead to prevent races with concurrent batches
+    await onBatchEnd({
       headMoved,
       oldHead,
       newHead,

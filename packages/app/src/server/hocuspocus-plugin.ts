@@ -40,7 +40,7 @@ export const hocuspocus = new Hocuspocus({
     createPersistenceExtension({
       contentDir: CONTENT_DIR,
       projectDir: resolve(CONTENT_DIR, '..'),
-    }),
+    }).extension,
   ],
 });
 
@@ -120,7 +120,11 @@ export function hocuspocusPlugin(): Plugin {
           activeWatcher = null;
         }
         try {
-          activeWatcher = await startWatcher(CONTENT_DIR, handleExternalChange);
+          activeWatcher = await startWatcher(CONTENT_DIR, async (event) => {
+            if (event.kind === 'update' || event.kind === 'create') {
+              await handleExternalChange(event.docName, event.content);
+            }
+          });
           server.httpServer?.on('close', async () => {
             if (activeWatcher) {
               await activeWatcher.unsubscribe();

@@ -20,7 +20,7 @@ import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { contentHash, registerWrite } from './file-watcher.ts';
-import type { ShadowHandle, WriterIdentity } from './shadow-repo.ts';
+import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import { commitWip, shadowGit } from './shadow-repo.ts';
 
 export interface PersistenceOptions {
@@ -29,8 +29,8 @@ export interface PersistenceOptions {
   gitEnabled?: boolean;
   commitDebounceMs?: number;
   wipRef?: string;
-  /** Shadow repo handle — when set, L2 commits go to shadow instead of project .git/ */
-  shadowRepo?: ShadowHandle;
+  /** Shadow repo ref — read at commit time so deferred init propagates. */
+  shadowRef?: ShadowRef;
   /** Content root relative to project dir (e.g., 'content/docs'). Used for shadow repo staging. */
   contentRoot?: string;
 }
@@ -46,38 +46,42 @@ export function safeContentPath(documentName: string, contentDir: string): strin
   return filePath;
 }
 
-/**
- * Reconciled base: last known-good markdown for each document.
- * Updated on load, store, and reconciliation. Used as the merge base
- * for three-way reconciliation.
- */
-export const reconciledBase = new Map<string, string>();
-
-/** Batch-in-progress flag — gates L1 writes and L2 commits during coordinated git operations. */
-let batchInProgress = false;
-
-export function setBatchInProgress(value: boolean): void {
-  batchInProgress = value;
-}
-
-export function isBatchInProgress(): boolean {
-  return batchInProgress;
-}
-
 export interface PersistenceHandle {
   extension: Extension;
   flushPendingGitCommit: () => void;
+  awaitPendingCommit: () => Promise<void>;
+  /** Per-instance reconciled base — last known-good markdown for each document. */
+  reconciledBase: Map<string, string>;
+  setBatchInProgress: (value: boolean) => void;
+  isBatchInProgress: () => boolean;
 }
 
 export function createPersistenceExtension(options?: PersistenceOptions): PersistenceHandle {
   const contentDir = options?.contentDir ?? process.cwd();
   const projectDir = options?.projectDir ?? process.cwd();
-  const shadowRepo = options?.shadowRepo;
+  const shadowRef = options?.shadowRef;
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
   const frontmatterCache = new Map<string, string>();
+
+  // Per-instance reconciled base — last known-good markdown for each document.
+  // Updated on load, store, and reconciliation. Used as the merge base
+  // for three-way reconciliation.
+  const reconciledBase = new Map<string, string>();
+
+  // Per-instance batch flag — gates L1 writes and L2 commits during coordinated git operations.
+  let batchInProgress = false;
+
+  function setBatchInProgress(value: boolean): void {
+    batchInProgress = value;
+  }
+
+  function isBatchInProgress(): boolean {
+    return batchInProgress;
+  }
+
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 30_000;
   const wipRef = options?.wipRef ?? 'refs/wip/main';
@@ -96,11 +100,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   let pendingAfterCommit = false;
 
   async function commitToWipRef(): Promise<void> {
-    if (shadowRepo) {
+    // Read shadow ref at commit time (not construction time) so deferred init propagates
+    const shadow = shadowRef?.current;
+    if (shadow) {
       // L2 commits go to shadow repo
       try {
         const sha = await commitWip(
-          shadowRepo,
+          shadow,
           defaultWriter,
           contentRoot,
           `WIP auto-save ${new Date().toISOString()}`,
@@ -198,13 +204,24 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     }, commitDebounceMs);
   }
 
-  /** Flush pending L1 writes by forcing the Hocuspocus store cycle. */
+  /** Flush pending git commit immediately. Sets commitInFlight so concurrency guard works. */
   function flushPendingGitCommit(): void {
     if (gitCommitTimer) {
       clearTimeout(gitCommitTimer);
       gitCommitTimer = null;
-      commitToWipRef();
+      commitInFlight = commitToWipRef()
+        .catch((e) => {
+          console.error('[persistence] Flush commit failed:', e);
+        })
+        .finally(() => {
+          commitInFlight = null;
+        });
     }
+  }
+
+  /** Await any in-flight git commit (for graceful shutdown). */
+  async function awaitPendingCommit(): Promise<void> {
+    if (commitInFlight) await commitInFlight;
   }
 
   const extension: Extension = {
@@ -278,5 +295,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     },
   };
 
-  return { extension, flushPendingGitCommit };
+  return {
+    extension,
+    flushPendingGitCommit,
+    awaitPendingCommit,
+    reconciledBase,
+    setBatchInProgress,
+    isBatchInProgress,
+  };
 }

@@ -21,6 +21,11 @@ export interface ShadowHandle {
   workTree: string;
 }
 
+/** Mutable ref to a ShadowHandle — allows deferred initialization after construction. */
+export interface ShadowRef {
+  current: ShadowHandle | undefined;
+}
+
 export interface WriterIdentity {
   id: string;
   name: string;
@@ -29,9 +34,14 @@ export interface WriterIdentity {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const GIT_TIMEOUT_MS = 30_000;
+
 /** Create a simple-git instance pointed at the shadow bare repo. */
 export function shadowGit(shadow: ShadowHandle) {
-  return simpleGit(shadow.workTree).env({
+  return simpleGit({
+    baseDir: shadow.workTree,
+    timeout: { block: GIT_TIMEOUT_MS },
+  }).env({
     GIT_DIR: shadow.gitDir,
     GIT_WORK_TREE: shadow.workTree,
   });
@@ -64,10 +74,10 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
   if (!alreadyInit) {
     mkdirSync(shadowDir, { recursive: true });
 
-    const git = simpleGit(projectRoot);
+    const git = simpleGit({ baseDir: projectRoot, timeout: { block: GIT_TIMEOUT_MS } });
     await git.raw('init', '--bare', shadowDir);
 
-    const sg = simpleGit().env({ GIT_DIR: shadowDir });
+    const sg = simpleGit({ timeout: { block: GIT_TIMEOUT_MS } }).env({ GIT_DIR: shadowDir });
     await sg.raw('config', '--unset', 'core.bare');
     await sg.raw('config', 'core.worktree', projectRoot);
     await sg.raw('config', 'user.name', 'openknowledge');
@@ -116,8 +126,14 @@ export async function commitWip(
     try {
       const refTree = (await sg.raw('rev-parse', `${ref}^{tree}`)).trim();
       await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex }).raw('read-tree', refTree);
-    } catch {
-      // First commit on this ref — start fresh
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('unknown revision') || msg.includes('bad revision')) {
+        // Expected: first commit on this ref — start fresh
+      } else {
+        console.error(`[shadow-repo] Unexpected error seeding index for ${ref}:`, e);
+        throw e;
+      }
     }
 
     // Stage content files
@@ -136,8 +152,13 @@ export async function commitWip(
     let parentSha: string | null = null;
     try {
       parentSha = (await sg.raw('rev-parse', ref)).trim();
-    } catch {
-      // No parent — first commit
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
+        console.error(`[shadow-repo] Unexpected error resolving ${ref}:`, e);
+        throw e;
+      }
+      // Expected: no parent — first commit on this ref
     }
 
     // Create commit with writer identity
@@ -213,7 +234,7 @@ export async function saveVersion(
   contentRoot: string,
   writers: WriterIdentity[],
 ): Promise<SaveVersionResult> {
-  const projectGit = simpleGit(projectRoot);
+  const projectGit = simpleGit({ baseDir: projectRoot, timeout: { block: GIT_TIMEOUT_MS } });
   const sg = shadowGit(shadow);
   const tmpIndex = resolve(projectRoot, '.git/index-save-version');
 
@@ -224,8 +245,14 @@ export async function saveVersion(
     try {
       const headTree = (await projectGit.raw('rev-parse', 'HEAD^{tree}')).trim();
       await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('read-tree', headTree);
-    } catch {
-      // Empty repo
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('unknown revision') || msg.includes('bad revision')) {
+        // Expected: empty repo — start with empty index
+      } else {
+        console.error('[shadow-repo] Unexpected error reading HEAD tree:', e);
+        throw e;
+      }
     }
 
     // Stage current content
@@ -236,8 +263,13 @@ export async function saveVersion(
     let parentSha: string | null = null;
     try {
       parentSha = (await projectGit.raw('rev-parse', 'HEAD')).trim();
-    } catch {
-      // First commit
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
+        console.error('[shadow-repo] Unexpected error resolving HEAD:', e);
+        throw e;
+      }
+      // Expected: first commit
     }
 
     // Build commit message with co-authored-by trailers
@@ -269,8 +301,9 @@ export async function saveVersion(
         .raw(...commitArgs)
     ).trim();
 
-    // Advance HEAD
-    await projectGit.raw('update-ref', 'HEAD', projectCommitSha);
+    // Advance HEAD with CAS guard to detect concurrent commits
+    const expectedOld = parentSha ?? '0000000000000000000000000000000000000000';
+    await projectGit.raw('update-ref', 'HEAD', projectCommitSha, expectedOld);
 
     // ── Step 2: Checkpoint ref in shadow with full tree snapshot ──
 

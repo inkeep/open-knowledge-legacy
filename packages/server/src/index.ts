@@ -38,12 +38,9 @@ export {
 } from './metrics.ts';
 export {
   createPersistenceExtension,
-  isBatchInProgress,
   type PersistenceHandle,
   type PersistenceOptions,
-  reconciledBase,
   safeContentPath,
-  setBatchInProgress,
 } from './persistence.ts';
 export {
   type BlockConflict,
@@ -60,6 +57,7 @@ export {
   initShadowRepo,
   type SaveVersionResult,
   type ShadowHandle,
+  type ShadowRef,
   saveVersion,
   shadowGit,
   type WriterIdentity,
