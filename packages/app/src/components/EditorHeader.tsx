@@ -31,7 +31,7 @@ export function EditorHeader({ provider, isSourceMode, onSourceModeChange }: Edi
             aria-pressed={!isSourceMode}
             onClick={() => onSourceModeChange(false)}
           >
-            Preview
+            WYSIWYG
           </Button>
           <Button
             variant={isSourceMode ? 'default' : 'ghost'}

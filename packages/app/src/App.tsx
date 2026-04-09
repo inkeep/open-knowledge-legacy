@@ -11,12 +11,13 @@ function AppLayout() {
   const sidebarPanelRef = usePanelRef();
 
   // Drive the panel when sidebar state changes via SidebarTrigger or Cmd+B.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: ref identity is stable
   useEffect(() => {
     const panel = sidebarPanelRef.current;
     if (!panel) return;
     if (open && panel.isCollapsed()) panel.expand();
     if (!open && !panel.isCollapsed()) panel.collapse();
-  }, [open, sidebarPanelRef]);
+  }, [open]);
 
   return (
     <ResizablePanelGroup orientation="horizontal" className="h-full">
