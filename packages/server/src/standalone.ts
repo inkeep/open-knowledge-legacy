@@ -51,11 +51,13 @@ export function createServer(options: ServerOptions): ServerInstance {
     wipRef,
   };
 
+  const persistence = createPersistenceExtension(persistenceOpts);
+
   const hocuspocus = new Hocuspocus({
     quiet,
     debounce,
     maxDebounce,
-    extensions: [createPersistenceExtension(persistenceOpts)],
+    extensions: [persistence.extension],
   });
 
   const sessionManager = new AgentSessionManager(hocuspocus);

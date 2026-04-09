@@ -33,8 +33,12 @@ export {
 } from './logger.ts';
 export {
   createPersistenceExtension,
+  isBatchInProgress,
+  type PersistenceHandle,
   type PersistenceOptions,
+  reconciledBase,
   safeContentPath,
+  setBatchInProgress,
 } from './persistence.ts';
 export {
   type BlockConflict,
