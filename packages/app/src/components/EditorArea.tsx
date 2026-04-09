@@ -1,5 +1,5 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { Activity, useCallback, useRef } from 'react';
+import { Activity, useRef } from 'react';
 import { SourceEditor } from '@/editor/SourceEditor';
 import type { TiptapEditorHandle } from '@/editor/TiptapEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
@@ -12,19 +12,16 @@ interface EditorAreaProps {
 export function EditorArea({ isSourceMode, onProviderReady }: EditorAreaProps) {
   const editorRef = useRef<TiptapEditorHandle | null>(null);
 
-  const editorCallbackRef = useCallback(
-    (handle: TiptapEditorHandle | null) => {
-      editorRef.current = handle;
-      if (handle) onProviderReady(handle.getProvider());
-    },
-    [onProviderReady],
-  );
+  function editorCallbackRef(handle: TiptapEditorHandle | null) {
+    editorRef.current = handle;
+    if (handle) onProviderReady(handle.getProvider());
+  }
 
   return (
     // overflow-anchor: auto preserves scroll position when content is inserted above the
     // viewport (e.g. agent prepends). Browser default, but set explicitly to document
     // intent and guard against future overrides.
-    <div className="flex-1 overflow-y-auto" style={{ overflowAnchor: 'auto' }}>
+    <div className="flex-1 overflow-y-auto subtle-scrollbar" style={{ overflowAnchor: 'auto' }}>
       {editorRef.current && (
         <Activity mode={isSourceMode ? 'visible' : 'hidden'}>
           <SourceEditor

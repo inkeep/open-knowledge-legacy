@@ -6,7 +6,7 @@ export function App() {
   return (
     <SidebarProvider className="h-screen overflow-hidden">
       <FileSidebar />
-      <SidebarInset className="h-full overflow-hidden">
+      <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
         <EditorPane />
       </SidebarInset>
     </SidebarProvider>

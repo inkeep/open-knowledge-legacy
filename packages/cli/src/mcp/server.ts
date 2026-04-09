@@ -21,9 +21,14 @@ import { resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Config } from '../config/schema.ts';
+import { dim } from '../ui/colors.ts';
 import { resolveWikiPaths } from '../wiki/paths.ts';
 import { rebuildCatalogs, startCatalogWatcher } from '../wiki/watcher.ts';
 import { registerAllPrompts } from './prompts/index.ts';
+
+// Note: `registerTools` is no longer imported — this server exposes no tools
+// (see tools.ts for the D2-rejected / D1-deferred implementation preserved
+// as commented reference code).
 
 export interface McpServerOptions {
   projectDir: string;
@@ -31,8 +36,9 @@ export interface McpServerOptions {
   config: Config;
 }
 
+/** MCP diagnostic log — must use stderr to avoid corrupting the MCP JSON-RPC protocol on stdout */
 function log(msg: string): void {
-  process.stderr.write(`[mcp] ${msg}\n`);
+  process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
 const INSTRUCTIONS = `# Open Knowledge — Project Wiki

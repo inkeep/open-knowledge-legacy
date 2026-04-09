@@ -5,11 +5,15 @@
 import { existsSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { resolve } from 'node:path';
-import { createServer } from '@inkeep/open-knowledge-server';
+import { createServer, getLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import sirv from 'sirv';
 import { WebSocketServer } from 'ws';
-import type { Config } from '../config/schema';
+import type { Config } from '../config/schema.ts';
+import { renderBanner } from '../ui/banner.ts';
+import { dim, error, info } from '../ui/colors.ts';
+
+const log = getLogger('start');
 
 export function startCommand(getConfig: () => Config): Command {
   const cmd = new Command('start')
@@ -25,16 +29,16 @@ export function startCommand(getConfig: () => Config): Command {
       if (!existsSync(contentDir)) {
         const configPath = resolve(cwd, '.open-knowledge', 'config.yml');
         const hasConfig = existsSync(configPath);
-        console.error(`\n  Error: Content directory not found: ${contentDir}\n`);
+        console.error(`\n  ${error('Error:')} Content directory not found: ${info(contentDir)}\n`);
         if (!hasConfig) {
-          console.error('  No config file found. Create one at:');
-          console.error(`    ${configPath}\n`);
-          console.error('  Example .open-knowledge/config.yml:');
-          console.error('    content:');
-          console.error('      dir: ./content\n');
+          console.error(`  ${dim('No config file found. Create one at:')}`);
+          console.error(`    ${info(configPath)}\n`);
+          console.error(`  ${dim('Example .open-knowledge/config.yml:')}`);
+          console.error(`  ${dim('  content:')}`);
+          console.error(`  ${dim('    dir: ./content')}\n`);
         } else {
-          console.error(`  Check "content.dir" in ${configPath}`);
-          console.error(`  Or create the directory: mkdir ${config.content.dir}\n`);
+          console.error(`  ${dim('Check "content.dir" in')} ${info(configPath)}`);
+          console.error(`  ${dim('Or create the directory:')} mkdir ${config.content.dir}\n`);
         }
         process.exit(1);
       }
@@ -54,7 +58,7 @@ export function startCommand(getConfig: () => Config): Command {
 
       // Graceful shutdown
       const shutdown = async () => {
-        console.log('\nShutting down...');
+        console.log(dim('\nShutting down...'));
         await destroy();
         process.exit(0);
       };
@@ -70,7 +74,7 @@ export function startCommand(getConfig: () => Config): Command {
         : null;
 
       if (assetDir) {
-        console.log(`[start] Serving static assets from ${assetDir}`);
+        log.info({ assetDir }, 'Serving static assets');
       }
 
       // Create HTTP server and wire up Hocuspocus
@@ -115,7 +119,7 @@ export function startCommand(getConfig: () => Config): Command {
               clientConnection.handleClose({ code, reason: reason.toString() });
             });
             ws.on('error', (err: Error) => {
-              console.error('[collab] WebSocket error:', err);
+              log.error({ err }, 'WebSocket error');
               ws.terminate();
             });
           });
@@ -124,23 +128,25 @@ export function startCommand(getConfig: () => Config): Command {
 
       httpServer.listen(config.server.port, config.server.host, () => {
         const localUrl = `http://${config.server.host}:${config.server.port}`;
-        console.log();
-        console.log('  open-knowledge v0.0.1');
-        console.log();
-        console.log(`  Local:   ${localUrl}`);
-        if (config.server.host === '0.0.0.0' || config.server.host === '::') {
-          console.log(`  Network: http://0.0.0.0:${config.server.port}`);
-        }
-        console.log();
-        console.log('  Press Ctrl+C to stop');
-        console.log();
+        const networkUrl =
+          config.server.host === '0.0.0.0' || config.server.host === '::'
+            ? `http://0.0.0.0:${config.server.port}`
+            : undefined;
+        console.log(
+          renderBanner({
+            name: 'open-knowledge',
+            version: '0.0.1',
+            localUrl,
+            networkUrl,
+          }),
+        );
       });
 
       if (opts.open) {
         const { execFile } = await import('node:child_process');
         const url = `http://${config.server.host}:${config.server.port}`;
         execFile('open', [url], (err) => {
-          if (err) console.error(`Failed to open browser: ${err.message}`);
+          if (err) console.error(`${error('Failed to open browser:')} ${err.message}`);
         });
       }
     });

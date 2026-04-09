@@ -1,4 +1,18 @@
 #!/usr/bin/env node
+
+// Propagate --no-color/--color argv flags to env vars for libraries in the
+// dependency tree that check NO_COLOR/FORCE_COLOR. picocolors itself checks
+// argv directly at module evaluation time, but other libraries may only
+// read env vars. --no-color always wins when both flags are present,
+// matching picocolors' own precedence and no-color.org convention.
+if (process.argv.includes('--no-color')) {
+  process.env.NO_COLOR = '1';
+  delete process.env.FORCE_COLOR;
+} else if (process.argv.includes('--color')) {
+  process.env.FORCE_COLOR = '1';
+  delete process.env.NO_COLOR;
+}
+
 /**
  * CLI entry point for @inkeep/open-knowledge.
  *
@@ -22,6 +36,8 @@ program
   .version('0.0.1')
   .option('--cwd <path>', 'Working directory')
   .option('--log-level <level>', 'Log level', 'info')
+  .option('--no-color', 'Disable color output')
+  .option('--color', 'Force color output')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     const cwd = opts.cwd as string | undefined;

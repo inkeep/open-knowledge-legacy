@@ -16,6 +16,15 @@ export {
   writeTracker,
 } from './file-watcher.ts';
 export {
+  createTestLogger,
+  getLogger,
+  installTestLoggers,
+  type LoggerFactoryConfig,
+  loggerFactory,
+  PinoLogger,
+  type PinoLoggerConfig,
+} from './logger.ts';
+export {
   createPersistenceExtension,
   type PersistenceOptions,
   safeContentPath,
