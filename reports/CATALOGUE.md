@@ -1,14 +1,16 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-08 by `generate-catalogue.ts`
-> 3 valid reports indexed
+> Auto-generated on 2026-04-09 by `generate-catalogue.ts`
+> 5 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
 | [Auto-Persistence & Version History Implementation Patt…](auto-persistence-version-history-patterns/REPORT.md) | 2026-04-08 | 7 files | version history UX, git plumbing, … | Open Knowledge, Figma, Google Docs… |
+| [Bun Module Resolution: File Extension Requirements in …](bun-module-resolution-extensions/REPORT.md) | 2026-04-08 | 4 files | module resolution, file extensions… | Bun, TypeScript, tsdown, esbuild |
 | [Zero-Friction Onboarding & Multi-Project UX for Open K…](onboarding-multiproject-ux/REPORT.md) | 2026-04-08 | 5 files | developer onboarding, multi-projec… | Open Knowledge, Claude Code, Obsid… |
+| [Nesting a Shadow Bare Repo Inside .git/ — Safety Analy…](git-directory-nesting-shadow-repo/REPORT.md) | 2026-04-08 | 4 files | git internals, repository layout, … | Git, Open Knowledge |
 | [Packaging open-knowledge as a Global npm CLI](npm-global-cli-packaging/REPORT.md) | 2026-04-08 | 7 files | CLI packaging, npm global packages… | open-knowledge, npm, Commander.js,… |
 
 ---
@@ -24,6 +26,15 @@
 - **Subjects:** Open Knowledge, Figma, Google Docs, Notion, Replit, Lovable, Hocuspocus, Yjs, simple-git
 - **Evidence files:** 7
 
+### [Bun Module Resolution: File Extension Requirements in Import Paths](bun-module-resolution-extensions/REPORT.md)
+
+> Whether Bun requires file extensions in import paths, how extensionless resolution works, TypeScript config interactions (moduleResolution bundler, allowImportingTsExtensions, verbatimModuleSyntax), and build tool (tsdown/esbuild) implications.
+
+- **Created:** 2026-04-08
+- **Topics:** module resolution, file extensions, ESM imports
+- **Subjects:** Bun, TypeScript, tsdown, esbuild
+- **Evidence files:** 4
+
 ### [Zero-Friction Onboarding & Multi-Project UX for Open Knowledge](onboarding-multiproject-ux/REPORT.md)
 
 > How should open-knowledge implement developer onboarding (init, scaffolding), multi-project switching, and progressive agent context loading? Evidence from 20+ tools, MCP spec patterns, and cognitive load research.
@@ -32,6 +43,15 @@
 - **Topics:** developer onboarding, multi-project UX, agent context loading, CLI scaffolding
 - **Subjects:** Open Knowledge, Claude Code, Obsidian, Cursor, MCP
 - **Evidence files:** 5
+
+### [Nesting a Shadow Bare Repo Inside .git/ — Safety Analysis](git-directory-nesting-shadow-repo/REPORT.md)
+
+> Can openknowledge's shadow attribution repo live at .git/openknowledge/history.git instead of .openknowledge/history.git? Investigates git internals, maintenance commands, transport behavior, worktree interaction, and tool precedents.
+
+- **Created:** 2026-04-08
+- **Topics:** git internals, repository layout, shadow repo architecture
+- **Subjects:** Git, Open Knowledge
+- **Evidence files:** 4
 
 ### [Packaging open-knowledge as a Global npm CLI](npm-global-cli-packaging/REPORT.md)
 

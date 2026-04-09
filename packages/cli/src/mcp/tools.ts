@@ -13,9 +13,11 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { dim } from '../ui/colors.ts';
 
-function log(msg: string): void {
-  process.stderr.write(`[mcp] ${msg}\n`);
+/** MCP diagnostic log — must use stderr to avoid corrupting the MCP JSON-RPC protocol on stdout */
+function mcpLog(msg: string): void {
+  process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
 async function httpPost(
@@ -53,7 +55,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
 
   // Tool 1: read_document
   tool('read_document', { path: z.string() }, async (args: { path: string }) => {
-    log(`read_document: ${args.path}`);
+    mcpLog(`read_document: ${args.path}`);
 
     const filePath = resolve(contentDir, `${args.path}.md`);
     if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
@@ -66,7 +68,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
     'write_document',
     { path: z.string(), markdown: z.string(), mode: z.enum(['append', 'prepend', 'replace']) },
     async (args: { path: string; markdown: string; mode: string }) => {
-      log(`write_document: ${args.path} mode=${args.mode}`);
+      mcpLog(`write_document: ${args.path} mode=${args.mode}`);
       const result = await httpPost(httpUrl, '/api/agent-write-md', {
         markdown: args.markdown,
         position: args.mode,
@@ -82,7 +84,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
     'edit_document',
     { path: z.string(), find: z.string(), replace: z.string(), dry_run: z.boolean() },
     async (args: { path: string; find: string; replace: string; dry_run: boolean }) => {
-      log(`edit_document: ${args.path} (dry_run=${args.dry_run})`);
+      mcpLog(`edit_document: ${args.path} (dry_run=${args.dry_run})`);
       const filePath = resolve(contentDir, `${args.path}.md`);
       if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
       if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
@@ -106,7 +108,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
 
   // Tool 4: list_documents
   tool('list_documents', { directory: z.string() }, async (args: { directory: string }) => {
-    log(`list_documents: ${args.directory || '(root)'}`);
+    mcpLog(`list_documents: ${args.directory || '(root)'}`);
     const dirPath = resolve(contentDir, args.directory);
     if (!dirPath.startsWith(`${contentDir}/`) && dirPath !== contentDir) {
       return textResult('Error: invalid directory path', true);
@@ -131,7 +133,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
     'search_documents',
     { query: z.string(), case_sensitive: z.boolean() },
     async (args: { query: string; case_sensitive: boolean }) => {
-      log(`search_documents: "${args.query}"`);
+      mcpLog(`search_documents: "${args.query}"`);
 
       if (!existsSync(contentDir)) return textResult('Content directory not found');
       const results: Array<{ path: string; line: number; text: string }> = [];
@@ -162,7 +164,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
 
   // Tool 6: undo_agent_edit
   tool('undo_agent_edit', {}, async () => {
-    log('undo_agent_edit');
+    mcpLog('undo_agent_edit');
     const result = await httpPost(httpUrl, '/api/agent-undo');
     return textResult(
       result.ok
@@ -173,7 +175,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
 
   // Tool 7: redo_agent_edit
   tool('redo_agent_edit', {}, async () => {
-    log('redo_agent_edit');
+    mcpLog('redo_agent_edit');
     const result = await httpPost(httpUrl, '/api/agent-redo');
     return textResult(
       result.ok
@@ -187,7 +189,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
     'update_frontmatter',
     { path: z.string(), fields: z.record(z.string(), z.string()) },
     async (args: { path: string; fields: Record<string, string> }) => {
-      log(`update_frontmatter: ${args.path}`);
+      mcpLog(`update_frontmatter: ${args.path}`);
       const filePath = resolve(contentDir, `${args.path}.md`);
       if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
       if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
