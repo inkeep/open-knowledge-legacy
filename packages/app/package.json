@@ -54,6 +54,7 @@
     "yjs": "^13.6.30"
   },
   "devDependencies": {
+    "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "@hocuspocus/server": "4.0.0-rc.1",
     "@biomejs/biome": "^2.4.10",
     "@playwright/test": "^1.59.1",
