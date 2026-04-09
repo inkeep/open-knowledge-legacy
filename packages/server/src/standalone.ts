@@ -30,6 +30,7 @@ import { createPersistenceExtension, type PersistenceOptions } from './persisten
 import { reconcile } from './reconciliation.ts';
 import {
   commitUpstreamImport,
+  destroyShadowRepo,
   initShadowRepo,
   type ShadowHandle,
   type ShadowRef,
@@ -378,6 +379,10 @@ export function createServer(options: ServerOptions): ServerInstance {
     await sessionManager.closeAll();
     hocuspocus.flushPendingStores();
     hocuspocus.closeConnections();
+    // Release shadow-root writer lock
+    if (resolvedShadow) {
+      destroyShadowRepo(resolvedShadow);
+    }
   }
 
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */

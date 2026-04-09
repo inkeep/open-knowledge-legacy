@@ -13,6 +13,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import simpleGit from 'simple-git';
+import { acquireLock, releaseLock } from './shadow-lock.ts';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -100,7 +101,18 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
     }
   }
 
+  // Acquire exclusive writer lock
+  acquireLock(shadowDir, projectRoot);
+
   return { gitDir: shadowDir, workTree: projectRoot };
+}
+
+/**
+ * Release the exclusive writer lock on a shadow repo.
+ * Called during graceful shutdown.
+ */
+export function destroyShadowRepo(shadow: ShadowHandle): void {
+  releaseLock(shadow.gitDir);
 }
 
 // ─── WIP commits ─────────────────────────────────────────────────────────────
