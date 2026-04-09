@@ -128,11 +128,20 @@ Hierarchical YAML in `.open-knowledge/` directories:
 - `./.open-knowledge/config.yml` — workspace-level overrides
 - Precedence: CLI flags > ENV > workspace > user > Zod defaults
 
+### Output & color system
+
+- `src/ui/colors.ts` — Semantic color helpers wrapping picocolors (error, warning, success, info, dim, accent)
+- `src/ui/banner.ts` — Vite-style boxed startup banner (cli-boxes + picocolors)
+- Respects `NO_COLOR`, `FORCE_COLOR` env vars and `--no-color`/`--color` CLI flags per no-color.org
+- Color helpers import picocolors directly; `cli.ts` propagates `--no-color`/`--color` to env vars for other libraries in the dependency tree
+
 ### Key files
 
-- `src/cli.ts` — Commander.js entry point (shebang)
-- `src/commands/start.ts` — start command (Hocuspocus + static assets)
+- `src/cli.ts` — Commander.js entry point (shebang), early color detection
+- `src/commands/start.ts` — start command (Hocuspocus + static assets + colored output)
 - `src/commands/mcp.ts` — MCP stdio server command
+- `src/ui/colors.ts` — Color scheme + semantic helpers
+- `src/ui/banner.ts` — Startup banner rendering
 - `src/config/schema.ts` — Zod config schema with defaults
 - `src/config/loader.ts` — YAML config hierarchy loader
 

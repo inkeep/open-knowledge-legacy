@@ -6,6 +6,7 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { accent, dim, error, info } from '../ui/colors.ts';
 import { registerTools } from './tools.ts';
 
 export interface McpServerOptions {
@@ -13,8 +14,9 @@ export interface McpServerOptions {
   contentDir: string;
 }
 
-function log(msg: string): void {
-  process.stderr.write(`[mcp] ${msg}\n`);
+/** MCP diagnostic log — must use stderr to avoid corrupting the MCP JSON-RPC protocol on stdout */
+function mcpLog(msg: string): void {
+  process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
@@ -27,7 +29,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch {
     process.stderr.write(
-      `Server not running at ${serverUrl}. Start it with: open-knowledge start\n`,
+      `${error('Error:')} Server not running at ${info(serverUrl)}. Start it with: ${accent('open-knowledge start')}\n`,
     );
     process.exit(1);
   }
@@ -43,5 +45,5 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  log(`Connected to ${serverUrl}`);
+  mcpLog(`Connected to ${info(serverUrl)}`);
 }
