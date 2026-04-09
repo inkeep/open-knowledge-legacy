@@ -1,5 +1,5 @@
 import { Undo2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 interface AgentUndoState {
@@ -20,7 +20,7 @@ function useAgentUndo(): AgentUndoState {
   // Prevents thundering-herd during server outages.
   useEffect(() => {
     let active = true;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let timer: number | null = null;
     let currentDelayMs = 2000;
     const BASE_DELAY_MS = 2000;
     const MAX_DELAY_MS = 30_000;
@@ -59,7 +59,7 @@ function useAgentUndo(): AgentUndoState {
     };
   }, []);
 
-  const undo = useCallback(async () => {
+  async function undo() {
     setIsPending(true);
     try {
       const res = await fetch('/api/agent-undo', { method: 'POST' });
@@ -75,9 +75,9 @@ function useAgentUndo(): AgentUndoState {
     } finally {
       setIsPending(false);
     }
-  }, []);
+  }
 
-  const redo = useCallback(async () => {
+  async function redo() {
     setIsPending(true);
     try {
       const res = await fetch('/api/agent-redo', { method: 'POST' });
@@ -93,7 +93,7 @@ function useAgentUndo(): AgentUndoState {
     } finally {
       setIsPending(false);
     }
-  }, []);
+  }
 
   return { canUndo, canRedo, isPending, undo, redo };
 }

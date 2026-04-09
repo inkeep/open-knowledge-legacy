@@ -11,7 +11,7 @@ import Collaboration from '@tiptap/extension-collaboration';
 import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { type FC, type RefObject, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import { type FC, type RefObject, useEffect, useImperativeHandle, useRef } from 'react';
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { sharedExtensions } from './extensions/shared.ts';
@@ -121,8 +121,10 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
   lastAgentId: null,
 };
 
-export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor(_props, ref) {
-  const frontmatterRef = useRef<string>('');
+export const TiptapEditor: FC<{
+  ref?: RefObject<TiptapEditorHandle>;
+}> = ({ ref }) => {
+  const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
   // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
@@ -131,7 +133,7 @@ export const TiptapEditor = forwardRef<TiptapEditorHandle>(function TiptapEditor
   const provider = getProvider();
   const identity = useIdentity();
 
-  const mdManager = useMemo(() => new MarkdownManager({ extensions: sharedExtensions }), []);
+  const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
   const editor = useEditor({
     editorProps: {
