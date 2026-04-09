@@ -59,7 +59,6 @@
       "!**/next-env.d.ts",
       "!.claude",
       "!.bun",
-      "!init_spike",
       "!specs",
       "!reports",
       "!evidence",
