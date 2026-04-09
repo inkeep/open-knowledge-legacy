@@ -31,6 +31,7 @@
     "@hocuspocus/provider": "4.0.0-rc.1",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@parcel/watcher": "^2.5.6",
+    "cli-boxes": "^4.0.1",
     "commander": "^14.0.0",
     "picocolors": "^1.1.1",
     "simple-git": "^3.35.2",

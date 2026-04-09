@@ -106,6 +106,7 @@
         "@hocuspocus/provider": "4.0.0-rc.1",
         "@modelcontextprotocol/sdk": "^1.28.0",
         "@parcel/watcher": "^2.5.6",
+        "cli-boxes": "^4.0.1",
         "commander": "^14.0.0",
         "picocolors": "^1.1.1",
         "simple-git": "^3.35.2",
@@ -1154,6 +1155,8 @@
     "chokidar": ["chokidar@5.0.0", "", { "dependencies": { "readdirp": "^5.0.0" } }, "sha512-TQMmc3w+5AxjpL8iIiwebF73dRDF4fBIieAqGn9RGCWaEVwQ6Fb2cGe31Yns0RRIzii5goJ1Y7xbMwo1TxMplw=="],
 
     "class-variance-authority": ["class-variance-authority@0.7.1", "", { "dependencies": { "clsx": "^2.1.1" } }, "sha512-Ka+9Trutv7G8M6WT6SeiRWz792K5qEqIGEGzXKhAE6xOWAY6pPH8U+9IY3oCMv6kqTmLsv7Xh/2w2RigkePMsg=="],
+
+    "cli-boxes": ["cli-boxes@4.0.1", "", {}, "sha512-5IOn+jcCEHEraYolBPs/sT4BxYCe2nHg374OPiItB1O96KZFseS2gthU4twyYzeDcFew4DaUM/xwc5BQf08JJw=="],
 
     "cli-cursor": ["cli-cursor@5.0.0", "", { "dependencies": { "restore-cursor": "^5.0.0" } }, "sha512-aCj4O5wKyszjMmDT4tZj93kxyydN/K5zPWSCe6/0AV/AA1pqe5ZBIw0a2ZfPQV7lL5/yb5HsUreJ6UFAF1tEQw=="],
 
