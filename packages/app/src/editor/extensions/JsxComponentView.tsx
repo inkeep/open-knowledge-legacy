@@ -83,7 +83,13 @@ function PropPanelWrapper(props: {
   );
 }
 
-export function JsxComponentView({ node, updateAttributes, selected }: NodeViewProps) {
+export function JsxComponentView({
+  node,
+  updateAttributes,
+  selected,
+  editor,
+  getPos,
+}: NodeViewProps) {
   const componentName = (node.attrs.componentName as string) || '';
   const meta = componentManifest[componentName];
 
@@ -132,9 +138,30 @@ export function JsxComponentView({ node, updateAttributes, selected }: NodeViewP
         selected ? { outline: '2px solid rgba(124, 58, 237, 0.2)', borderRadius: '6px' } : undefined
       }
     >
-      <div contentEditable={false} style={{ userSelect: 'none' }}>
+      <button
+        type="button"
+        contentEditable={false}
+        aria-label={`Select ${componentName} component`}
+        style={{
+          all: 'unset',
+          display: 'block',
+          width: '100%',
+          userSelect: 'none',
+          cursor: 'pointer',
+        }}
+        // Click the toolbar → create a NodeSelection on this component.
+        // For non-atom nodes (content: 'block+'), ProseMirror doesn't auto-create
+        // NodeSelection from clicks on contentEditable=false regions — we need to
+        // do it programmatically via setNodeSelection(getPos()).
+        onClick={() => {
+          const pos = getPos();
+          if (typeof pos === 'number' && editor) {
+            editor.commands.setNodeSelection(pos);
+          }
+        }}
+      >
         <ComponentToolbar componentName={componentName} />
-      </div>
+      </button>
       <ComponentErrorBoundary componentName={componentName}>
         {RenderedComponent ? (
           <RenderedComponent {...primitiveProps}>
