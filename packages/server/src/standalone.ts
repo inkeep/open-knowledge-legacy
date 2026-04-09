@@ -44,6 +44,7 @@ import {
   initShadowRepo,
   type ParkableDoc,
   parkBranch,
+  readParkedState,
   type ShadowHandle,
   type ShadowRef,
   shadowGit,
@@ -527,6 +528,73 @@ export function createServer(options: ServerOptions): ServerInstance {
             console.log(
               `[branch-switch] loaded branch ${newBranch} (${hocuspocus.documents.size} docs)`,
             );
+
+            // Restore parked WIP if exists (three-way merge parked state against current disk)
+            if (resolvedShadow && info.batchKind === 'cross-branch') {
+              let restoredCount = 0;
+              for (const [docName] of hocuspocus.documents) {
+                try {
+                  const parked = await readParkedState(
+                    resolvedShadow,
+                    newBranch,
+                    'server',
+                    docName,
+                  );
+                  if (!parked) continue;
+                  // Skip if no in-flight edits were parked
+                  if (parked.markdown === parked.diskSnapshot) continue;
+
+                  const currentDisk = getReconciledBase(docName);
+                  if (!currentDisk) continue;
+
+                  const outcome = reconcile({
+                    docName,
+                    base: parked.diskSnapshot,
+                    ours: parked.markdown,
+                    theirs: currentDisk,
+                  });
+
+                  switch (outcome.kind) {
+                    case 'merged':
+                    case 'clean':
+                      applyToDoc(docName, outcome.newContent);
+                      reconciledBase.set(docName, outcome.newContent);
+                      restoredCount++;
+                      break;
+                    case 'conflicts': {
+                      applyToDoc(docName, outcome.newContent);
+                      reconciledBase.set(docName, outcome.newContent);
+                      const document = hocuspocus.documents.get(docName);
+                      if (document) {
+                        const conflictsMap = document.getMap('conflicts');
+                        for (const c of outcome.conflicts) {
+                          conflictsMap.set(String(c.blockIndex), {
+                            blockIndex: c.blockIndex,
+                            base: c.base,
+                            ours: c.ours,
+                            theirs: c.theirs,
+                            resolution: 'pending',
+                          });
+                        }
+                      }
+                      incrementConflict();
+                      restoredCount++;
+                      break;
+                    }
+                    case 'noop':
+                    case 'refused':
+                      break;
+                  }
+                } catch (e) {
+                  console.error(`[branch-switch] restore WIP failed for ${docName}:`, e);
+                }
+              }
+              if (restoredCount > 0) {
+                console.log(
+                  `[branch-switch] restored ${restoredCount} parked docs on ${newBranch}`,
+                );
+              }
+            }
           }
 
           // Record upstream import if HEAD moved and content files were affected
