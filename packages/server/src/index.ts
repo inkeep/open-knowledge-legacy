@@ -9,11 +9,17 @@ export { type ApiExtensionOptions, createApiExtension } from './api-extension.ts
 export { createExternalChangeHandler } from './external-change.ts';
 export {
   type AsyncSubscription,
+  classifyEvents,
   contentHash,
+  type DiskEvent,
   evictStaleTrackerEntries,
+  isSelfWrite,
+  lastKnownHash,
   pathToDocName,
   registerWrite,
+  removeLastKnownHash,
   startWatcher,
+  updateLastKnownHash,
   writeTracker,
 } from './file-watcher.ts';
 export {
@@ -30,4 +36,21 @@ export {
   type PersistenceOptions,
   safeContentPath,
 } from './persistence.ts';
+export {
+  type BlockConflict,
+  CONFLICT_MARKER_RE,
+  containsConflictMarkers,
+  type ReconcileInput,
+  type ReconcileOutcome,
+  reconcile,
+  splitMarkdownBlocks,
+} from './reconciliation.ts';
+export {
+  commitUpstreamImport,
+  commitWip,
+  initShadowRepo,
+  type ShadowHandle,
+  shadowGit,
+  type WriterIdentity,
+} from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';

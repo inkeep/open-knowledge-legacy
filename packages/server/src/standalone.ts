@@ -2,7 +2,7 @@ import { Hocuspocus } from '@hocuspocus/server';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { createExternalChangeHandler } from './external-change.ts';
-import { type AsyncSubscription, startWatcher } from './file-watcher.ts';
+import { type AsyncSubscription, type DiskEvent, startWatcher } from './file-watcher.ts';
 import { createPersistenceExtension, type PersistenceOptions } from './persistence.ts';
 
 export interface ServerOptions {
@@ -74,6 +74,14 @@ export function createServer(options: ServerOptions): ServerInstance {
   let watcher: AsyncSubscription | null = null;
   const handleExternalChange = createExternalChangeHandler(hocuspocus);
 
+  async function handleDiskEvent(event: DiskEvent): Promise<void> {
+    if (event.kind !== 'update') {
+      console.log(`[file-watcher] Received ${event.kind} event — not yet handled`);
+      return;
+    }
+    await handleExternalChange(event.docName, event.content);
+  }
+
   async function destroy(): Promise<void> {
     if (watcher) {
       await watcher.unsubscribe();
@@ -85,7 +93,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   }
 
   // Start file watcher asynchronously
-  startWatcher(contentDir, handleExternalChange)
+  startWatcher(contentDir, handleDiskEvent)
     .then((sub) => {
       watcher = sub;
     })
