@@ -139,6 +139,14 @@ export function createJsxComponentExtensions(
     name: 'jsxComponentEditable',
     group: 'block',
     content: 'block+',
+    // QA-017: isolating prevents backspace/delete from bubbling past the
+    // component boundary. Without this, deleting the last child block
+    // violates the 'block+' schema constraint and ProseMirror resolves
+    // the conflict by deleting the parent component node entirely.
+    // With isolating:true, backspace at the start of the first child is
+    // blocked at the boundary, and the component wrapper persists even
+    // when its children are emptied to a single empty paragraph.
+    isolating: true,
     priority: 60,
 
     addAttributes() {

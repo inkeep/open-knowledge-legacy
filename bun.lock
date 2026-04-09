@@ -133,6 +133,7 @@
       },
       "devDependencies": {
         "@inkeep/docskit": "^0.0.9",
+        "@tiptap/pm": "3.22.3",
         "fumadocs-ui": "^16.7.11",
         "react-docgen-typescript": "^2.4.0",
         "typescript": "^5.9.3",

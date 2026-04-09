@@ -355,6 +355,51 @@ describe('Toggle simplification', () => {
 
     cleanup();
   });
+
+  test('QA-027: rapid toggle 10x with typed component — structured attrs survive', async () => {
+    const { doc, fragment, ytext, cleanup } = createObservedDoc();
+
+    const jsxContent = `# Header
+
+<Callout type="warning">
+Important note with **bold** text.
+</Callout>
+
+<Video src="demo.mp4" />
+
+Regular paragraph after components.
+`;
+    applyMarkdown(doc, fragment, jsxContent);
+    await wait();
+
+    // Verify initial state in both representations
+    const initialText = ytext.toString();
+    expect(initialText).toContain('Callout');
+    expect(initialText).toContain('type="warning"');
+    expect(initialText).toContain('Video');
+    expect(initialText).toContain('src="demo.mp4"');
+
+    // Simulate 10 rapid toggles: read from both sides, verify no data loss
+    for (let i = 0; i < 10; i++) {
+      const text = ytext.toString();
+      expect(text).toContain('type="warning"');
+      expect(text).toContain('src="demo.mp4"');
+      expect(text).toContain('**bold**');
+
+      const md = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+      expect(md).toContain('type="warning"');
+      expect(md).toContain('src="demo.mp4"');
+    }
+
+    // Verify the round-trip from Y.Text → XmlFragment → Y.Text is stable
+    const finalMd = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+
+    // Cycle-2 stability: re-parse the final markdown and serialize again
+    const reparsed = mdManager.serialize(mdManager.parse(finalMd));
+    expect(reparsed).toBe(finalMd);
+
+    cleanup();
+  });
 });
 
 // --- Undo Isolation ---

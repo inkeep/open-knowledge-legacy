@@ -213,6 +213,35 @@ Second step content.
     expect(serialize(parse(jsx))).toBe(jsx);
   });
 
+  test('QA-018: Callout inside Steps>Step (nested different-name, 3-level deep)', () => {
+    // This exercises the exact QA-018 scenario: a registered component
+    // nested inside another registered component's children.
+    const jsx = `<Steps>
+<Step>
+<Callout type="warning">
+Nested callout inside a step. Both should be jsxComponentEditable.
+</Callout>
+</Step>
+</Steps>\n`;
+    const json = parse(jsx);
+    const nodes = getJsxNodes(json);
+
+    // Should produce 3 nested jsxComponentEditable nodes: Steps, Step, Callout
+    const editableNodes = nodes.filter((n) => n.type === 'jsxComponentEditable');
+    expect(editableNodes.length).toBeGreaterThanOrEqual(3);
+
+    // Verify the componentName attrs are correct
+    const names = editableNodes.map((n) => n.attrs?.componentName);
+    expect(names).toContain('Steps');
+    expect(names).toContain('Step');
+    expect(names).toContain('Callout');
+
+    // Round-trip — cycle 2 must be stable
+    const rt1 = serialize(json);
+    const rt2 = serialize(parse(rt1));
+    expect(rt2).toBe(rt1);
+  });
+
   test('Callout inside Callout (nested same-name)', () => {
     // Layer 3: children parsed through ProseMirror → normalized to flush-left canonical format
     const jsx = `<Callout>
@@ -223,6 +252,38 @@ Second step content.
     // Cycle-2 must be stable
     const cycle2 = serialize(parse(result));
     expect(cycle2).toBe(result);
+  });
+
+  test('QA-028: Accordions with nested Accordion children (valid container pattern)', () => {
+    const jsx = `<Accordions>
+<Accordion title="Section A">
+First section content with **bold** text.
+</Accordion>
+<Accordion title="Section B">
+Second section content.
+</Accordion>
+</Accordions>\n`;
+    const json = parse(jsx);
+    const nodes = getJsxNodes(json);
+
+    // Should produce 3 jsxComponentEditable nodes: Accordions, Accordion (A), Accordion (B)
+    const editableNodes = nodes.filter((n) => n.type === 'jsxComponentEditable');
+    expect(editableNodes.length).toBeGreaterThanOrEqual(3);
+
+    const names = editableNodes.map((n) => n.attrs?.componentName);
+    expect(names).toContain('Accordions');
+    expect(names.filter((n) => n === 'Accordion').length).toBe(2);
+
+    // Verify title prop on Accordion nodes
+    const accordions = editableNodes.filter((n) => n.attrs?.componentName === 'Accordion');
+    const titles = accordions.map((n) => n.attrs?.title);
+    expect(titles).toContain('Section A');
+    expect(titles).toContain('Section B');
+
+    // Cycle-2 stability
+    const rt1 = serialize(json);
+    const rt2 = serialize(parse(rt1));
+    expect(rt2).toBe(rt1);
   });
 
   test('multiple attributes', () => {
