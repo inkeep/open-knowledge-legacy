@@ -100,7 +100,7 @@
 | Priority | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|
 | Must | Thin MCP server: file watcher + catalog generator + instructions + init tool | MCP server starts via `.mcp.json` (stdio), watches `.openknowledge/` for file changes, regenerates catalogs automatically | @modelcontextprotocol/sdk + @parcel/watcher |
-| Must | Agent uses native tools (Read, Write, Edit, Grep) for file reads and searches | MCP server does NOT proxy reads. Writes use adaptive path: DirectConnection when Hocuspocus running, native file tools when not (D1). | Reads always native; writes adapt |
+| Must | Agent uses native tools (Read, Write, Edit, Grep) for file reads and searches. Writes route through the MCP server's adaptive write path (D1): DirectConnection when Hocuspocus is running, disk write when not. | MCP server does NOT proxy reads. MCP server exposes the adaptive write path as a P0 capability — agent writes call through MCP, which routes to DirectConnection or disk. | Reads always native; writes via MCP adaptive path (P0) |
 | Must | `init` MCP tool scaffolds `.openknowledge/` structure | Calling init creates the directory structure, AGENTS.md, config.yaml, and starter catalogs | |
 | Must | Catalog files (`INDEX.md`) auto-generate per folder inside `.openknowledge/` | After any file write, the parent folder's INDEX.md updates with title/description/tags from all children | File watcher triggers regeneration |
 | Must | Full catalog rebuild on server startup | Catches changes made while server was off (human edits, editor writes) | Milliseconds at P0 scale |
@@ -199,7 +199,7 @@ research_path: ./research
            ▼                        ▼
 ┌──────────────────┐    ┌──────────────────────────────┐
 │  .openknowledge/ │    │  MCP Server                   │
-│  (files on disk) │◄───│  (npx openknowledge serve)    │
+│  (files on disk) │◄───│  (npx open-knowledge mcp)     │
 │                  │    │                               │
 │  articles/       │    │  1. instructions on connect   │
 │  external-sources│    │  2. init tool (scaffold)      │
@@ -213,7 +213,7 @@ research_path: ./research
 └──────────────────┘    └──────────────────────────────┘
 ```
 
-> **Note:** STORIES.md T6.1-T6.2 define `npx openknowledge` as the main editor server command (Bucket 6 — Andrew). The `serve` subcommand is a placeholder — coordinate with Bucket 6 to resolve namespace.
+> **Note:** The CLI package name is `open-knowledge` (hyphenated). `open-knowledge mcp` starts the stdio MCP server; `open-knowledge start` (or just `open-knowledge`) starts the editor server (Bucket 6).
 
 ### Coexistence & convergence with the editor stack
 
@@ -267,7 +267,7 @@ This spec **supersedes** the following STORIES.md Bucket 2 tasks:
 | T2.9 — just-bash evaluation | **Resolved.** Rejected (D2). | |
 | T2.10 — Permission store integration | **Deferred.** No permissions for P0 (D3). | |
 
-Tasks not listed (T2.5, T2.6, T2.8) remain valid and are covered by this spec. STORIES.md should be updated to reflect this supersession.
+STORIES.md should be updated to reflect this supersession.
 
 ### Data flow: agent writes an article
 
@@ -419,7 +419,7 @@ This repo has a living knowledge base in `.openknowledge/`.
   "mcpServers": {
     "openknowledge": {
       "command": "npx",
-      "args": ["openknowledge", "serve"]
+      "args": ["open-knowledge", "mcp"]
     }
   }
 }
