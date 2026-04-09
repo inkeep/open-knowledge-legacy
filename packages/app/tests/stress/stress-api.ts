@@ -20,7 +20,8 @@ import * as Y from 'yjs';
 import { generateMarkdown } from './synthetic';
 
 const BASE = process.env.STRESS_BASE_URL ?? 'http://localhost:5173';
-const WS_URL = BASE.replace('http', 'ws');
+// Hocuspocus WebSocket server is mounted at /collab in hocuspocus-plugin.ts
+const WS_URL = `${BASE.replace('http', 'ws')}/collab`;
 
 // ---------- scale tiers ----------
 
