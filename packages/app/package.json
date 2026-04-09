@@ -9,10 +9,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "test": "bun test --path-ignore-patterns 'tests/e2e'",
+    "test": "bun test",
     "check:fast": "tsc --noEmit && biome check .",
-    "check": "tsc --noEmit && biome check . && bun test && vite build",
-    "test:e2e": "npx playwright test"
+    "check": "tsc --noEmit && biome check . && bun test && vite build"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",
