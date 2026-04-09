@@ -18,7 +18,8 @@
     "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "changeset publish"
+    "release": "changeset publish",
+    "build-registry": "bun run --cwd packages/core build-registry"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md}": [
