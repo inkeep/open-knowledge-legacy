@@ -64,7 +64,7 @@ function useAgentUndo(): AgentUndoState {
     try {
       const res = await fetch('/api/agent-undo', { method: 'POST' });
       if (res.ok) {
-        const data = (await res.json()) as { ok: boolean; canUndo: boolean; canRedo: boolean };
+        const data: { ok: boolean; canUndo: boolean; canRedo: boolean } = await res.json();
         setCanUndo(data.canUndo);
         setCanRedo(data.canRedo);
       } else {
@@ -82,7 +82,7 @@ function useAgentUndo(): AgentUndoState {
     try {
       const res = await fetch('/api/agent-redo', { method: 'POST' });
       if (res.ok) {
-        const data = (await res.json()) as { ok: boolean; canUndo: boolean; canRedo: boolean };
+        const data: { ok: boolean; canUndo: boolean; canRedo: boolean } = await res.json();
         setCanUndo(data.canUndo);
         setCanRedo(data.canRedo);
       } else {
