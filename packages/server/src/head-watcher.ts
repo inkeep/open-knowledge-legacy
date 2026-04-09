@@ -148,7 +148,7 @@ export async function startHeadWatcher(
     if (quietTimer) clearTimeout(quietTimer);
     quietTimer = setTimeout(() => {
       quietTimer = null;
-      emitBatchEnd(false);
+      emitBatchEnd(false).catch((e) => console.error('[head-watcher] batch end failed:', e));
     }, QUIET_WINDOW_MS);
   }
 
@@ -161,7 +161,9 @@ export async function startHeadWatcher(
       // Start timeout cap
       timeoutTimer = setTimeout(() => {
         timeoutTimer = null;
-        emitBatchEnd(true);
+        emitBatchEnd(true).catch((e) =>
+          console.error('[head-watcher] batch end (timeout) failed:', e),
+        );
       }, BATCH_TIMEOUT_MS);
     }
 
