@@ -2,6 +2,7 @@
  * Small header bar above a component node — shows name badge and gear icon to open prop panel.
  */
 import { Settings } from 'lucide-react';
+import { useState } from 'react';
 
 interface ComponentToolbarProps {
   componentName: string;
@@ -9,6 +10,12 @@ interface ComponentToolbarProps {
 }
 
 export function ComponentToolbar({ componentName, onOpenProps }: ComponentToolbarProps) {
+  // Hover state tracked in React to survive re-renders. Directly mutating
+  // e.currentTarget.style would lose the hover visual whenever the parent
+  // component re-renders (node.attrs change → React writes the base style
+  // prop back over our mutation).
+  const [hoverGear, setHoverGear] = useState(false);
+
   return (
     <div
       style={{
@@ -45,17 +52,12 @@ export function ComponentToolbar({ componentName, onOpenProps }: ComponentToolba
           padding: '2px',
           display: 'flex',
           alignItems: 'center',
-          color: '#999',
+          color: hoverGear ? '#666' : '#999',
+          backgroundColor: hoverGear ? '#f0f0f0' : 'transparent',
           borderRadius: '3px',
         }}
-        onMouseEnter={(e) => {
-          e.currentTarget.style.color = '#666';
-          e.currentTarget.style.backgroundColor = '#f0f0f0';
-        }}
-        onMouseLeave={(e) => {
-          e.currentTarget.style.color = '#999';
-          e.currentTarget.style.backgroundColor = 'transparent';
-        }}
+        onMouseEnter={() => setHoverGear(true)}
+        onMouseLeave={() => setHoverGear(false)}
         aria-label={`Edit ${componentName} props`}
       >
         <Settings size={14} />

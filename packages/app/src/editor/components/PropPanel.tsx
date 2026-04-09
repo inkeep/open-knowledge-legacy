@@ -9,7 +9,7 @@
 
 import type { ComponentMeta, PropDef } from '@inkeep/open-knowledge-core';
 import { Popover, Select, Switch } from 'radix-ui';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { markUserTyping } from '@/editor/observers';
 
 interface PropPanelProps {
@@ -183,6 +183,31 @@ function BooleanControl({
   );
 }
 
+function EnumSelectItem({ value }: { value: string }) {
+  // Focus highlight tracked via React state so it survives re-renders.
+  // Directly mutating currentTarget.style in onFocus/onBlur would be lost
+  // when the parent PropPanel re-renders (parent writes the base style
+  // prop back over the mutation).
+  const [focused, setFocused] = useState(false);
+  return (
+    <Select.Item
+      value={value}
+      style={{
+        padding: '6px 8px',
+        fontSize: '13px',
+        borderRadius: '3px',
+        cursor: 'pointer',
+        outline: 'none',
+        backgroundColor: focused ? '#f3f0ff' : 'transparent',
+      }}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+    >
+      <Select.ItemText>{value}</Select.ItemText>
+    </Select.Item>
+  );
+}
+
 function EnumControl({
   value,
   enumValues,
@@ -233,25 +258,7 @@ function EnumControl({
         >
           <Select.Viewport style={{ padding: '4px' }}>
             {enumValues.map((v) => (
-              <Select.Item
-                key={v}
-                value={v}
-                style={{
-                  padding: '6px 8px',
-                  fontSize: '13px',
-                  borderRadius: '3px',
-                  cursor: 'pointer',
-                  outline: 'none',
-                }}
-                onFocus={(e) => {
-                  e.currentTarget.style.backgroundColor = '#f3f0ff';
-                }}
-                onBlur={(e) => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-              >
-                <Select.ItemText>{v}</Select.ItemText>
-              </Select.Item>
+              <EnumSelectItem key={v} value={v} />
             ))}
           </Select.Viewport>
         </Select.Content>

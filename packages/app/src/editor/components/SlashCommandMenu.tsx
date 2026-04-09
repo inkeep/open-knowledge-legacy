@@ -35,30 +35,34 @@ export const SlashCommandMenu = forwardRef<SlashCommandMenuRef, SlashCommandMenu
       setSelectedIndex(0);
     }, [items]);
 
-    useImperativeHandle(ref, () => ({
-      onKeyDown: (event: KeyboardEvent) => {
-        // Guard: with items.length === 0, modulo-by-zero produces NaN and
-        // corrupts selectedIndex. The render-time early-return doesn't
-        // prevent the handler from being called while the "No results"
-        // state is showing (ref is still exposed).
-        if (items.length === 0) return false;
-        if (event.key === 'ArrowUp') {
-          setSelectedIndex((prev) => (prev + items.length - 1) % items.length);
-          return true;
-        }
-        if (event.key === 'ArrowDown') {
-          setSelectedIndex((prev) => (prev + 1) % items.length);
-          return true;
-        }
-        if (event.key === 'Enter') {
-          if (items[selectedIndex]) {
-            command(items[selectedIndex]);
+    useImperativeHandle(
+      ref,
+      () => ({
+        onKeyDown: (event: KeyboardEvent) => {
+          // Guard: with items.length === 0, modulo-by-zero produces NaN and
+          // corrupts selectedIndex. The render-time early-return doesn't
+          // prevent the handler from being called while the "No results"
+          // state is showing (ref is still exposed).
+          if (items.length === 0) return false;
+          if (event.key === 'ArrowUp') {
+            setSelectedIndex((prev) => (prev + items.length - 1) % items.length);
+            return true;
           }
-          return true;
-        }
-        return false;
-      },
-    }));
+          if (event.key === 'ArrowDown') {
+            setSelectedIndex((prev) => (prev + 1) % items.length);
+            return true;
+          }
+          if (event.key === 'Enter') {
+            if (items[selectedIndex]) {
+              command(items[selectedIndex]);
+            }
+            return true;
+          }
+          return false;
+        },
+      }),
+      [items, selectedIndex, command],
+    );
 
     if (items.length === 0) {
       return (

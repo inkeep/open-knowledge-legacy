@@ -18,7 +18,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
-import { chainCommands, deleteSelection, joinBackward } from '@tiptap/pm/commands';
+import { chainCommands, deleteSelection, joinBackward, joinForward } from '@tiptap/pm/commands';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import { type Command, EditorState, TextSelection } from '@tiptap/pm/state';
 import { sharedExtensions } from '../extensions/shared.ts';
@@ -187,6 +187,52 @@ describe('QA-017: jsxComponentEditable isolating boundary', () => {
 
     // The original doc still has exactly 1 jsxComponentEditable
     expect(countNodes(docWithEmpty, 'jsxComponentEditable')).toBe(1);
+  });
+
+  test('joinForward (Delete key) at end of last child is blocked by isolating boundary', () => {
+    // Symmetrical test: Delete key at end of the last block inside a
+    // jsxComponentEditable should NOT join content from the following sibling
+    // into the component. Without isolating, joinForward would pull the next
+    // sibling's content up, effectively absorbing it into the component.
+    const doc = schema.nodeFromJSON({
+      type: 'doc',
+      content: [
+        {
+          type: 'jsxComponentEditable',
+          attrs: { componentName: 'Callout', type: 'warning' },
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Inside' }],
+            },
+          ],
+        },
+        {
+          type: 'paragraph',
+          content: [{ type: 'text', text: 'After' }],
+        },
+      ],
+    });
+
+    // Find the end position of the "Inside" paragraph (inside the component)
+    let insideParaEnd = -1;
+    doc.descendants((node, pos) => {
+      if (node.type.name === 'paragraph' && node.textContent === 'Inside' && insideParaEnd === -1) {
+        insideParaEnd = pos + node.nodeSize - 1; // just before closing
+      }
+    });
+    expect(insideParaEnd).toBeGreaterThan(0);
+
+    const state = EditorState.create({
+      schema,
+      doc,
+      selection: TextSelection.create(doc, insideParaEnd),
+    });
+
+    const result = applyCommand(state, joinForward);
+
+    // joinForward must be blocked — cannot cross the isolating boundary outward
+    expect(result).toBeNull();
   });
 
   test('deleteSelection that spans into the component from outside respects the boundary', () => {
