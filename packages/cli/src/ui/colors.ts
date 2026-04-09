@@ -49,6 +49,12 @@ export const accent = (s: string): string => pc().bold(s);
 /** Whether color output is currently supported/enabled */
 export const isColorEnabled = (): boolean => pc().isColorSupported;
 
+/** Wrap text in an OSC 8 clickable hyperlink (supported by most modern terminals) */
+export function link(text: string, url: string): string {
+  if (!pc().isColorSupported) return text;
+  return `\u001B]8;;${url}\u0007${text}\u001B]8;;\u0007`;
+}
+
 /**
  * Reset cached picocolors instance — forces re-evaluation on next use.
  * Exported for testing only.

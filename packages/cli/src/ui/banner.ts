@@ -5,7 +5,7 @@
  * via the lazy color helpers, so NO_COLOR is respected automatically.
  */
 import cliBoxes from 'cli-boxes';
-import { accent, dim, info } from './colors.ts';
+import { accent, dim, info, link } from './colors.ts';
 
 const box = cliBoxes.round;
 
@@ -31,19 +31,19 @@ export function renderBanner(opts: BannerOptions): string {
   // Blank separator
   lines.push({ plain: '', colored: '' });
 
-  // Local URL
+  // Local URL (clickable via OSC 8 hyperlink)
   const localLabel = 'Local:   ';
   lines.push({
     plain: `${localLabel}${opts.localUrl}`,
-    colored: `${localLabel}${info(opts.localUrl)}`,
+    colored: `${localLabel}${link(info(opts.localUrl), opts.localUrl)}`,
   });
 
-  // Network URL (optional)
+  // Network URL (optional, clickable)
   if (opts.networkUrl) {
     const netLabel = 'Network: ';
     lines.push({
       plain: `${netLabel}${opts.networkUrl}`,
-      colored: `${netLabel}${info(opts.networkUrl)}`,
+      colored: `${netLabel}${link(info(opts.networkUrl), opts.networkUrl)}`,
     });
   }
 
