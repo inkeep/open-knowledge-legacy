@@ -8,6 +8,9 @@ import {
   commitUpstreamImport,
   commitWip,
   initShadowRepo,
+  type ParkableDoc,
+  parkBranch,
+  readParkedState,
   type ShadowHandle,
   shadowGit,
   type WriterIdentity,
@@ -275,6 +278,91 @@ describe('commitUpstreamImport', () => {
     const sg = shadowGit(shadow);
     const authorName = (await sg.raw('log', '-1', '--format=%an', sha)).trim();
     expect(authorName).toBe('upstream');
+  });
+});
+
+describe('parkBranch', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('creates park commit with Y.Doc state and disk snapshot', async () => {
+    const docs: ParkableDoc[] = [
+      {
+        docName: 'intro',
+        markdown: '# Hello World\n\nEdited content\n',
+        diskSnapshot: '# Hello\n',
+      },
+    ];
+
+    const sha = await parkBranch(shadow, 'main', 'session1', docs);
+    expect(sha).toHaveLength(40);
+
+    // Verify commit message starts with park:
+    const sg = shadowGit(shadow);
+    const msg = (await sg.raw('log', '-1', '--format=%s', sha!)).trim();
+    expect(msg.startsWith('park:')).toBe(true);
+
+    // Verify ref
+    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/human-session1')).trim();
+    expect(refSha).toBe(sha);
+
+    // Verify Y.Doc state blob
+    const content = (await sg.raw('show', `${sha}:intro`)).trim();
+    expect(content).toBe('# Hello World\n\nEdited content');
+
+    // Verify disk snapshot blob
+    const base = (await sg.raw('show', `${sha}:.park-base/intro`)).trim();
+    expect(base).toBe('# Hello');
+  });
+
+  test('returns null for empty documents', async () => {
+    const sha = await parkBranch(shadow, 'main', 'session1', []);
+    expect(sha).toBeNull();
+  });
+
+  test('readParkedState retrieves parked content', async () => {
+    const docs: ParkableDoc[] = [
+      { docName: 'guide', markdown: '# Guide v2\n', diskSnapshot: '# Guide v1\n' },
+    ];
+    await parkBranch(shadow, 'feature', 'sess1', docs);
+
+    const state = await readParkedState(shadow, 'feature', 'sess1', 'guide');
+    expect(state).not.toBeNull();
+    expect(state!.markdown).toBe('# Guide v2');
+    expect(state!.diskSnapshot).toBe('# Guide v1');
+  });
+
+  test('readParkedState returns null when no park exists', async () => {
+    const state = await readParkedState(shadow, 'main', 'none', 'intro');
+    expect(state).toBeNull();
+  });
+
+  test('parks multiple documents', async () => {
+    const docs: ParkableDoc[] = [
+      { docName: 'intro', markdown: '# Intro\n', diskSnapshot: '# Intro old\n' },
+      { docName: 'guide', markdown: '# Guide\n', diskSnapshot: '# Guide old\n' },
+    ];
+
+    const sha = await parkBranch(shadow, 'main', 'sess1', docs);
+    expect(sha).toHaveLength(40);
+
+    const sg = shadowGit(shadow);
+    const introContent = (await sg.raw('show', `${sha}:intro`)).trim();
+    const guideContent = (await sg.raw('show', `${sha}:guide`)).trim();
+    expect(introContent).toBe('# Intro');
+    expect(guideContent).toBe('# Guide');
   });
 });
 

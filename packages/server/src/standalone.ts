@@ -26,12 +26,23 @@ import {
   incrementRescueBuffer,
   incrementUpstreamImport,
 } from './metrics.ts';
-import { createPersistenceExtension, type PersistenceOptions } from './persistence.ts';
+import {
+  createPersistenceExtension,
+  getActiveBranch,
+  getReconciledBase,
+  isBatchInProgress,
+  type PersistenceOptions,
+  reconciledBase,
+  setBatchInProgress,
+  switchReconciledBaseScope,
+} from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
 import {
   commitUpstreamImport,
   destroyShadowRepo,
   initShadowRepo,
+  type ParkableDoc,
+  parkBranch,
   type ShadowHandle,
   type ShadowRef,
   shadowGit,
@@ -424,13 +435,38 @@ export function createServer(options: ServerOptions): ServerInstance {
     try {
       headWatcher = await startHeadWatcher(
         projectDir,
-        // onBatchBegin
-        () => {
+        // onBatchBegin — park current branch context before git modifies working tree
+        async () => {
           console.log('[batch] begin');
           incrementBatch();
           hocuspocus.flushPendingStores();
           persistence.flushPendingGitCommit();
-          persistence.setBatchInProgress(true);
+
+          // Park current branch's Y.Doc state to shadow refs
+          if (resolvedShadow) {
+            const currentBranch = getActiveBranch();
+            const docs: ParkableDoc[] = [];
+            for (const [docName] of hocuspocus.documents) {
+              const markdown = serializeDoc(docName);
+              if (markdown === null) continue;
+              const diskSnapshot = getReconciledBase(docName) ?? markdown;
+              docs.push({ docName, markdown, diskSnapshot });
+            }
+            if (docs.length > 0) {
+              try {
+                const sha = await parkBranch(resolvedShadow, currentBranch, 'server', docs);
+                if (sha) {
+                  console.log(
+                    `[shadow] parked ${docs.length} docs on ${currentBranch} → ${sha.slice(0, 8)}`,
+                  );
+                }
+              } catch (e) {
+                console.error('[shadow] park failed:', e);
+              }
+            }
+          }
+
+          setBatchInProgress(true);
         },
         // onBatchEnd
         async (info) => {

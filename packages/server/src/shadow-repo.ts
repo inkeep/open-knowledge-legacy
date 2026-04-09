@@ -233,6 +233,137 @@ export async function commitUpstreamImport(
   return commitWip(shadow, UPSTREAM_WRITER, contentRoot, message, branch);
 }
 
+// ─── Park / Load / Restore ──────────────────────────────────────────────────
+
+/** A document's serialized state for parking. */
+export interface ParkableDoc {
+  docName: string;
+  /** Current Y.Doc serialized to markdown (from memory). */
+  markdown: string;
+  /** Last known disk content (reconciledBase) — used as merge base for restore. */
+  diskSnapshot: string;
+}
+
+/**
+ * Park the current branch context by committing Y.Doc in-memory state
+ * to the shadow repo. Each document's state and its disk snapshot are
+ * stored so that `restoreBranchWIP` can three-way merge later.
+ *
+ * Park commits use message prefix "park:" for identification.
+ */
+export async function parkBranch(
+  shadow: ShadowHandle,
+  branch: string,
+  sessionId: string,
+  documents: ParkableDoc[],
+): Promise<string | null> {
+  if (documents.length === 0) return null;
+
+  const sg = shadowGit(shadow);
+  const tmpIndex = resolve(shadow.gitDir, `index-park-${branch.replace(/\//g, '-')}`);
+  const ref = `refs/wip/${branch}/human-${sessionId}`;
+
+  const tmpBlobFile = resolve(shadow.gitDir, 'tmp-park-blob');
+  try {
+    // Build a tree with both Y.Doc state and disk snapshots
+    for (const doc of documents) {
+      // Store Y.Doc state at the doc's path
+      writeFileSync(tmpBlobFile, doc.markdown, 'utf-8');
+      const blobSha = (
+        await sg
+          .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
+          .raw('hash-object', '-w', tmpBlobFile)
+      ).trim();
+      await sg
+        .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
+        .raw('update-index', '--add', '--cacheinfo', `100644,${blobSha},${doc.docName}`);
+
+      // Store disk snapshot at .park-base/<docName>
+      writeFileSync(tmpBlobFile, doc.diskSnapshot, 'utf-8');
+      const baseSha = (
+        await sg
+          .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
+          .raw('hash-object', '-w', tmpBlobFile)
+      ).trim();
+      await sg
+        .env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex })
+        .raw('update-index', '--add', '--cacheinfo', `100644,${baseSha},.park-base/${doc.docName}`);
+    }
+
+    const treeSha = (
+      await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex }).raw('write-tree')
+    ).trim();
+
+    // Find parent
+    let parentSha: string | null = null;
+    try {
+      parentSha = (await sg.raw('rev-parse', ref)).trim();
+    } catch {
+      // No prior WIP on this branch for this session
+    }
+
+    const args = [
+      'commit-tree',
+      treeSha,
+      '-m',
+      `park: branch context at ${new Date().toISOString()}`,
+    ];
+    if (parentSha) args.push('-p', parentSha);
+
+    const commitSha = (
+      await sg
+        .env({
+          GIT_DIR: shadow.gitDir,
+          GIT_AUTHOR_NAME: 'openknowledge',
+          GIT_AUTHOR_EMAIL: 'noreply@openknowledge.local',
+          GIT_COMMITTER_NAME: 'openknowledge',
+          GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
+        })
+        .raw(...args)
+    ).trim();
+
+    await sg.raw('update-ref', ref, commitSha);
+    return commitSha;
+  } finally {
+    try {
+      rmSync(tmpIndex);
+    } catch {
+      // ignore cleanup failure
+    }
+    try {
+      rmSync(tmpBlobFile);
+    } catch {
+      // ignore cleanup failure
+    }
+  }
+}
+
+/**
+ * Read parked Y.Doc state and disk snapshot from a park commit.
+ * Returns null if the ref doesn't exist or the latest commit isn't a park.
+ */
+export async function readParkedState(
+  shadow: ShadowHandle,
+  branch: string,
+  sessionId: string,
+  docName: string,
+): Promise<{ markdown: string; diskSnapshot: string } | null> {
+  const sg = shadowGit(shadow);
+  const ref = `refs/wip/${branch}/human-${sessionId}`;
+
+  try {
+    const refSha = (await sg.raw('rev-parse', ref)).trim();
+    const msg = (await sg.raw('log', '-1', '--format=%s', refSha)).trim();
+    if (!msg.startsWith('park:')) return null;
+
+    const markdown = (await sg.raw('show', `${refSha}:${docName}`)).trim();
+    const diskSnapshot = (await sg.raw('show', `${refSha}:.park-base/${docName}`)).trim();
+    return { markdown, diskSnapshot };
+  } catch {
+    return null;
+  }
+}
+
 // ─── Save Version ────────────────────────────────────────────────────────────
 
 export interface SaveVersionResult {
