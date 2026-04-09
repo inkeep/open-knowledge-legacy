@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
@@ -33,6 +33,7 @@ import {
   isBatchInProgress,
   type PersistenceOptions,
   reconciledBase,
+  safeContentPath,
   setBatchInProgress,
   switchReconciledBaseScope,
 } from './persistence.ts';
@@ -468,10 +469,10 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           setBatchInProgress(true);
         },
-        // onBatchEnd
+        // onBatchEnd — dispatch on BatchKind
         async (info) => {
           const bufferedCount = eventBuffer.length;
-          await drainEventBuffer();
+          const newBranch = info.newBranch ?? 'main';
 
           persistence.setBatchInProgress(false);
 
@@ -479,8 +480,57 @@ export function createServer(options: ServerOptions): ServerInstance {
             `[batch] end kind=${info.batchKind} headMoved=${info.headMoved} docs=${bufferedCount}${info.timeout ? ' timeout' : ''}`,
           );
 
+          if (info.batchKind === 'within-branch') {
+            // Pull, merge, rebase on same branch — reconcile buffered events
+            await drainEventBuffer();
+          } else {
+            // Cross-branch or detached-head — discard buffered events (wrong branch state)
+            eventBuffer.splice(0, eventBuffer.length);
+
+            // Switch reconciledBase scope to target branch
+            switchReconciledBaseScope(newBranch);
+
+            // Reset all open Y.Docs from the target branch's disk content
+            for (const [docName, document] of hocuspocus.documents) {
+              try {
+                const filePath = safeContentPath(docName, contentDir);
+                if (!existsSync(filePath)) {
+                  // File doesn't exist on target branch — tombstone
+                  const base = getReconciledBase(docName) ?? '';
+                  const ours = serializeDoc(docName) ?? '';
+                  const isDirty = ours !== base;
+
+                  if (isDirty && resolvedShadow) {
+                    const rescueDir = `${resolvedShadow.gitDir}/rescue`;
+                    mkdirSync(dirname(`${rescueDir}/${docName}.md`), { recursive: true });
+                    writeFileSync(`${rescueDir}/${docName}.md`, ours, 'utf-8');
+                    incrementRescueBuffer();
+                    console.log(`[reconcile] Rescue buffer saved on branch switch: ${docName}`);
+                  }
+
+                  const lifecycleMap = document.getMap('lifecycle');
+                  lifecycleMap.set('status', 'deleted-upstream');
+                  console.log(`[branch-switch] tombstone: ${docName} (not on ${newBranch})`);
+                  continue;
+                }
+
+                // Reset Y.Doc from disk
+                const diskContent = readFileSync(filePath, 'utf-8');
+                applyToDoc(docName, diskContent);
+                reconciledBase.set(docName, diskContent);
+                console.log(`[branch-switch] reset: ${docName}`);
+              } catch (e) {
+                console.error(`[branch-switch] failed to reset ${docName}:`, e);
+              }
+            }
+
+            console.log(
+              `[branch-switch] loaded branch ${newBranch} (${hocuspocus.documents.size} docs)`,
+            );
+          }
+
           // Record upstream import if HEAD moved and content files were affected
-          if (info.headMoved && info.newHead && shadowRef.current && bufferedCount > 0) {
+          if (info.headMoved && info.newHead && resolvedShadow) {
             const contentRootForShadow = contentRoot ?? 'content';
             try {
               const sha = await commitUpstreamImport(
@@ -488,7 +538,7 @@ export function createServer(options: ServerOptions): ServerInstance {
                 contentRootForShadow,
                 info.oldHead,
                 info.newHead,
-                info.newBranch ?? 'main',
+                newBranch,
               );
               incrementUpstreamImport();
               console.log(
