@@ -10,11 +10,14 @@ interface EditorAreaProps {
 }
 
 export function EditorArea({ isSourceMode, onProviderReady }: EditorAreaProps) {
+  'use no memo' // todo remove this and fix react compiler warning
   const editorRef = useRef<TiptapEditorHandle | null>(null);
 
   function editorCallbackRef(handle: TiptapEditorHandle | null) {
     editorRef.current = handle;
-    if (handle) onProviderReady(handle.getProvider());
+    if (handle) {
+      onProviderReady(handle.getProvider());
+    }
   }
 
   return (

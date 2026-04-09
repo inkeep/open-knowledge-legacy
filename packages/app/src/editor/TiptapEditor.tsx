@@ -121,6 +121,8 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
   lastAgentId: null,
 };
 
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+
 export const TiptapEditor: FC<{
   ref?: Ref<TiptapEditorHandle>;
 }> = ({ ref }) => {
@@ -132,8 +134,6 @@ export const TiptapEditor: FC<{
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const provider = getProvider();
   const identity = useIdentity();
-
-  const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
   const editor = useEditor({
     editorProps: {
@@ -375,16 +375,16 @@ export const TiptapEditor: FC<{
   useImperativeHandle(
     ref,
     () => ({
-      getMarkdown(): string {
+      getMarkdown() {
         if (!editor) return '';
         const json = editor.getJSON();
         const body = mdManager.serialize(json);
         return prependFrontmatter(frontmatterRef.current, body);
       },
-      getYText(): Y.Text {
+      getYText() {
         return provider.document.getText('source');
       },
-      getProvider(): HocuspocusProvider {
+      getProvider() {
         return provider;
       },
     }),
