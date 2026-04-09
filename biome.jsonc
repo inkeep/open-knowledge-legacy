@@ -63,7 +63,8 @@
       "!reports",
       "!evidence",
       "!meta",
-      "!docs/bun.lock"
+      "!docs/bun.lock",
+      "!worktrees"
     ]
   }
 }
