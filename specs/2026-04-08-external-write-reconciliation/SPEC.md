@@ -2,7 +2,7 @@
 
 **Status:** Draft → Finalizing
 **Owner(s):** Nick Gomez, Andrew Mikofalvy
-**Last updated:** 2026-04-08 (design revision: shadow as attribution journal)
+**Last updated:** 2026-04-09 (amendment: branch-scoped shadow contexts — park/load/restore on branch switch)
 **Baseline commit:** fa3dd17 (main)
 **Links:**
 - PROJECT.md: §CC1 (Yjs + git complementary), §CC2 (three-layer auto-persistence), §CC4 (editing contexts = branches), §CC6 (everything branchable), §CC7 (portability)
@@ -52,6 +52,7 @@ Architecturally, this formalizes PROJECT.md's §CC1 claim that "Yjs handles with
 - **G7** Every observable Y.Doc state is explainable from three per-document quantities: `reconciledBase`, `diskContent`, and `ydocUnsavedDelta`. Local reasoning about correctness is possible without global system knowledge.
 - **G8** The architecture works identically in standalone mode (no project repo) and integrated mode (project repo present). In integrated mode, the shadow lives at `.git/openknowledge/`; in standalone mode, at `.openknowledge/` in the project root (since there's no `.git/` to nest inside).
 - **G9** Concurrent mutation of a single shadow root is prevented. Different repositories may run simultaneously, but only one active writer instance may own a given shadow store in Now.
+- **G10** Branch switches in the project repo are **context-preserving**, not data-merging. In-progress edits on the old branch are parked in branch-scoped shadow refs and restored when the user switches back. No edits from one branch bleed into another. The shadow repo's WIP refs, checkpoints, and `reconciledBase` state are all scoped to the active project branch.
 
 ## 3) Non-goals
 
@@ -109,14 +110,33 @@ Architecturally, this formalizes PROJECT.md's §CC1 claim that "Yjs handles with
 
 ### P1: Fumadocs user runs `git checkout` to switch branches
 
-1. User is editing `intro.mdx`, 4 seconds of unsaved Y.Doc state, open in browser.
-2. User runs `git checkout feature-xyz` in terminal. Git changes working-tree files (potentially many).
-3. HEAD watcher sees HEAD move. `BatchBegin` dispatches. Pending L1 writes flush to the current-branch tree first.
-4. **Decision point (see §9.6):** does openknowledge follow the branch switch, or hold the user on their prior branch? We default to **follow**: the editor's view of the world tracks what `cat` would show. Drafts live in the shadow repo; branch switches in the project repo are treated as "external world changed."
-5. Git completes the checkout. `BatchEnd` dispatches. Every open Y.Doc reconciles against the new disk content. Non-overlapping in-flight edits survive. Overlapping edits surface as conflicts. Files that existed only on the old branch are tombstoned (see P4 journey).
-6. Shadow repo commits an `upstream-import` labeled "project checkout to branch `feature-xyz`" for attribution clarity.
+1. User is editing `intro.mdx` on `main`, 4 seconds of unsaved Y.Doc state, open in browser. `lastKnownBranch = main`.
+2. User runs `git checkout feature-xyz` in terminal. Git creates `index.lock`.
+3. HEAD watcher detects `index.lock` → `BatchBegin` dispatches. Openknowledge immediately **parks** the current branch context:
+   - Commits current Y.Doc state (from memory, not disk) to `refs/wip/main/human-<id>` in the shadow repo.
+   - Suspends all L1/L2 writes.
+4. Git completes the checkout: updates working-tree files, moves HEAD to `feature-xyz`, releases `index.lock`.
+5. HEAD watcher: 100ms of quiet → `BatchEnd` dispatches. Openknowledge detects a **cross-branch switch** (`lastKnownBranch = main`, new HEAD resolves to `feature-xyz`):
+   - Switches `reconciledBase` to the `feature-xyz` scope (creates a fresh scope if this is the first visit to this branch).
+   - Resets all open Y.Docs from the new branch's disk content via `onLoadDocument`-style hydration.
+   - If `refs/wip/feature-xyz/human-<id>` exists from a prior visit, **restores the parked WIP** by running three-way merge: `base = parked-at disk snapshot`, `ours = parked Y.Doc state`, `theirs = current disk`. Non-overlapping edits merge; overlapping edits surface as conflicts.
+   - Files that existed only on `main` are tombstoned with rescue buffers if dirty. Files new on `feature-xyz` are available for lazy hydration on open.
+   - Updates `lastKnownBranch = feature-xyz`.
+6. Shadow repo commits an `upstream-import` on the `feature-xyz` branch scope, labeled "project checkout to branch `feature-xyz`" for attribution clarity.
+7. User sees the `feature-xyz` content in the editor. If they'd previously been editing on `feature-xyz`, their in-progress edits from that prior session are restored.
 
-**Open question (see §11 Q3):** follow-branch-switch vs hold-user is a defensible choice either way. Default is follow; a settings toggle may surface this later.
+**Aha moment:** "I switched branches and my draft paragraphs on `main` weren't lost — they were parked. When I switch back, they'll be right where I left them."
+
+### P1: Fumadocs user switches back to `main` after working on `feature-xyz`
+
+1. User has been editing on `feature-xyz`. They run `git checkout main`.
+2. `index.lock` → `BatchBegin`. Openknowledge parks `feature-xyz` context to `refs/wip/feature-xyz/human-<id>`.
+3. Git completes checkout. `BatchEnd` fires. Cross-branch switch detected (`feature-xyz` → `main`).
+4. `reconciledBase` switches to `main` scope. Y.Docs reset from `main` disk content.
+5. `refs/wip/main/human-<id>` exists from the earlier park → restore via three-way merge against current `main` disk state.
+6. User sees their `main` edits exactly as they left them (unless `main` content changed while they were on `feature-xyz`, in which case three-way merge applies).
+
+**Aha moment:** "My work on `main` was waiting for me — and it even merged with upstream changes that landed while I was on the feature branch."
 
 ### P4: External editor user saves a file via VS Code while openknowledge is editing it
 
@@ -137,7 +157,7 @@ Architecturally, this formalizes PROJECT.md's §CC1 claim that "Yjs handles with
 ### P2: Standalone-KB user — no project repo (reconciliation degenerates gracefully)
 
 1. User runs `npx openknowledge init` in an empty directory. No project `.git`. Openknowledge creates `.openknowledge/` in the project root as the shadow bare repo (fallback location when no `.git/` exists).
-2. They edit files via the browser. L1 persistence writes `.md` files. L2 persistence commits to `refs/wip/main` in the shadow.
+2. They edit files via the browser. L1 persistence writes `.md` files. L2 persistence commits to `refs/wip/main/human-<id>` in the shadow (standalone mode has a single implicit `main` branch context).
 3. External writers (vim, another editor) trigger the same reconciliation protocol. `.git/HEAD` watcher is absent (no project repo), so reconciliation processes events individually rather than batched — a graceful degradation.
 4. User never sees the shadow in their editor (it's inside `.openknowledge/` which can be `.gitignore`d), never touches git.
 
@@ -152,8 +172,10 @@ Architecturally, this formalizes PROJECT.md's §CC1 claim that "Yjs handles with
 | Any | Delete | Tombstone Y.Doc, rescue buffer if dirty | Banner: "File deleted upstream" |
 | Any | Rename (detected as pair) | Migrate Y.Doc to new name | Tab URL updates, no interruption |
 | Any | File contains conflict markers | Enter resolution mode | Read-only banner, three-way diff panel |
-| Any | `.git/HEAD` moves (BatchBegin) | Suspend L1/L2 writes, flush pending | No visible change until BatchEnd |
-| Any | BatchEnd after HEAD moved | Reconcile all affected docs, emit upstream-import commit | Editor re-engages, attribution clean in shadow |
+| Any | `.git/HEAD` moves (BatchBegin) | Suspend L1/L2 writes, park current branch context to shadow | No visible change until BatchEnd |
+| Any | BatchEnd, within-branch (pull/merge) | Reconcile all affected docs, emit upstream-import commit | Editor re-engages, attribution clean in shadow |
+| Any | BatchEnd, cross-branch (checkout) | Park old branch → reset Y.Docs from new branch disk → restore parked WIP if exists | Editor shows target branch content; prior branch edits preserved in shadow |
+| Any | BatchEnd, detached HEAD | Park old branch → reset Y.Docs from detached commit's disk state | Editor shows detached content; detached context GC'd on next branch checkout |
 
 ## 6) Requirements
 
@@ -162,8 +184,8 @@ Architecturally, this formalizes PROJECT.md's §CC1 claim that "Yjs handles with
 | Priority | ID | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|---|
 | Must | FR1 | Shadow bare repo at `.git/openknowledge/` | `npx openknowledge init` creates `.git/openknowledge/` as a bare repo with `core.worktree` pointing at the project root. In standalone mode (no project `.git/`), falls back to `.openknowledge/` in the project root. | No `.gitignore` modification needed in integrated mode — shadow is inside `.git/` and invisible to git transport |
-| Must | FR2 | All WIP refs live in the shadow repo | `simpleGit` in `persistence.ts` is parameterized over `gitDir`. Default is `.git/openknowledge/`. `refs/wip/<writer-id>` is written via `--git-dir=<shadow> --work-tree=<project-root>`. | Per-writer refs replace the single `refs/wip/main` ref |
-| Must | FR3 | Per-document `reconciledBase` map | `Map<string, string>` keyed by document name, value is the last-known byte-identical string between Y.Doc and disk. Updated on `onLoadDocument`, on successful `onStoreDocument`, and on every successful reconciliation. | Resides in `persistence.ts` or a new `reconciliation.ts` module |
+| Must | FR2 | All WIP refs live in the shadow repo, scoped by project branch | `simpleGit` in `persistence.ts` is parameterized over `gitDir`. Default is `.git/openknowledge/`. `refs/wip/<project-branch>/<writer-id>` is written via `--git-dir=<shadow> --work-tree=<project-root>`. | Per-writer, per-branch refs replace the single `refs/wip/main` ref |
+| Must | FR3 | Per-document, per-branch `reconciledBase` map | `Map<branch, Map<docName, string>>` keyed by project branch name then document name. Value is the last-known byte-identical string between Y.Doc and disk. Updated on `onLoadDocument`, on successful `onStoreDocument`, and on every successful reconciliation. On branch switch, the active scope switches to the target branch's map. | Resides in `persistence.ts` or a new `reconciliation.ts` module |
 | Must | FR4 | Three-way merge is the only sync primitive for disk → Y.Doc | `handleExternalChange` calls `reconcile(base, ours, theirs)`. When `ours === base` (clean), degenerates to `updateYFragment(theirs)`. When both differ, calls `threeWayMerge` from `three-way-merge.ts` with block-level granularity. | Block granularity is paragraph/heading/code-fence per the existing module |
 | Must | FR5 | Overlapping conflicts surface via `Y.Map('conflicts')` | When `threeWayMerge` reports `conflicts.length > 0`, each conflict is written to `Y.Map('conflicts')` with `{ blockIndex, base, ours, theirs, resolution: 'pending' }`. Clients observe this map and render a conflict badge inline. | Mirrors `Y.Map('activity')` pattern from the presence spec |
 | Must | FR6 | `DiskEvent` taxonomy replaces raw watcher events | `file-watcher.ts` emits `DiskEvent` unions: `Create`, `Update`, `Delete`, `Rename`, `Conflict`, `BatchBegin`, `BatchEnd`. Rename pairs are detected by hash-matching delete+create within 200ms. | `BatchBegin/End` come from the HEAD watcher, not parcel-watcher |
@@ -173,12 +195,19 @@ Architecturally, this formalizes PROJECT.md's §CC1 claim that "Yjs handles with
 | Must | FR10 | `.git/HEAD` watcher on the project repo | A second `@parcel/watcher` subscription on the project's `.git/` directory, filtered to `HEAD`, `ORIG_HEAD`, `MERGE_HEAD`, `index.lock`. Emits `BatchBegin` on any movement and `BatchEnd` after a 100ms quiet window. | Only active when a project `.git` exists |
 | Must | FR11 | L1 + L2 writes suspended during `BatchBegin..BatchEnd` | `onStoreDocument` and `scheduleGitCommit` short-circuit while `batchInProgress === true`. Pending writes are flushed *before* `BatchBegin` is fully dispatched (to preserve user state from the last quiet window). | Prevents mid-pull race condition |
 | Must | FR12 | Upstream-import commits in shadow repo | After a `BatchEnd` where HEAD actually moved, the shadow repo commits the new content tree with author `upstream <noreply@openknowledge.local>`, parented on the previous shadow HEAD, message `upstream: import from <old-sha>..<new-sha>`. | Only fires if the batch involved HEAD movement, not just file-watcher bursts |
-| Must | FR13 | Per-writer WIP refs | Each identity (human session, agent, upstream) writes to `refs/wip/<writer-id>` in the shadow repo. Commits are written with author/committer matching the writer identity. | Writer IDs: `human-<hash>`, `agent-<agent-id>`, `upstream` |
+| Must | FR13 | Per-writer, per-branch WIP refs | Each identity (human session, agent, upstream) writes to `refs/wip/<project-branch>/<writer-id>` in the shadow repo. Commits are written with author/committer matching the writer identity. The active project branch is resolved from `.git/HEAD` and cached as `lastKnownBranch`. | Writer IDs: `human-<hash>`, `agent-<agent-id>`, `upstream`. Branch from `lastKnownBranch` cache. |
 | Must | FR21 | Save Version creates real project repo commits | User-triggered "Save Version" collects per-writer deltas from shadow WIP refs, creates a commit on the project repo's current branch via `commit-tree` plumbing (temporary `GIT_INDEX_FILE` to avoid touching user's staging area). Default: single commit with `Co-authored-by:` trailers for each writer. | Does NOT use the user's working index; project `git log` shows the Save Version commit |
-| Must | FR22 | Shadow checkpoint refs with full tree snapshots | On Save Version, write `refs/checkpoints/<project-commit-sha>` in the shadow pointing at current shadow HEAD. The checkpoint commit stores the full content tree (not just the SHA) so the shadow is self-contained and survives project-repo rewrites (rebase, force-push). | Enables attribution queries between any two checkpoints regardless of project-repo state |
+| Must | FR22 | Shadow checkpoint refs with full tree snapshots | On Save Version, write `refs/checkpoints/<lastKnownBranch>/<project-commit-sha>` in the shadow pointing at current shadow HEAD. The checkpoint commit stores the full content tree (not just the SHA) so the shadow is self-contained and survives project-repo rewrites (rebase, force-push). Branch-scoped to match the WIP ref namespace. | Enables attribution queries between any two checkpoints regardless of project-repo state |
 | Must | FR23 | WIP ref reset after checkpoint | After a Save Version, per-writer WIP refs are reset so subsequent WIP commits track only post-checkpoint deltas. Shadow state between checkpoints is queryable via the checkpoint refs. | Prevents unbounded WIP growth in shadow |
 | Must | FR24 | Exclusive shadow-root writer lock | Before enabling reconciliation, persistence, upstream-import commits, checkpoint writes, or any mutation of `refs/wip/*`, `refs/checkpoints/*`, or `refs/drafts/*`, openknowledge acquires an exclusive lock at `<shadowDir>/lock`. The lock is scoped to the shadow root, not globally to the machine. Different repositories may run concurrently; only one active writer instance may mutate a given shadow root at a time. | Prevents concurrent worktrees/processes from mixing attribution and checkpoint state in one shadow store |
 | Should | FR25 | Stale shadow-lock recovery | If `<shadowDir>/lock` already exists at startup, openknowledge validates whether the recorded owner is still live. If the owner is alive, startup fails before any writer behavior begins. If the owner is dead or the lock is clearly stale, openknowledge may replace it after logging a warning. Lock metadata records at least `pid`, `hostname`, `startedAt`, and `worktreeRoot`. | Conservative failure is preferred when liveness cannot be determined safely |
+| Must | FR26 | Branch context tracking | Openknowledge caches the active project branch name (`lastKnownBranch`) by parsing `.git/HEAD` on startup and updating on every `BatchEnd`. Detached HEAD (`.git/HEAD` contains a raw SHA, not a `ref:` symref) is tracked as `detached-<sha>`. | Required for distinguishing within-branch vs cross-branch HEAD movements |
+| Must | FR27 | Park-on-branch-switch | On `BatchBegin` when a `git checkout` is detected (or preemptively on every `BatchBegin`), commit current Y.Doc in-memory state to `refs/wip/<lastKnownBranch>/<writer-id>` in the shadow repo. This captures the user's in-flight edits before git modifies the working tree. The park commit also records a metadata blob with the disk snapshot hash at park time (used as merge base for WIP restoration). | Park from Y.Doc memory, not from disk — disk may already reflect the new branch by the time HEAD watcher fires |
+| Must | FR28 | Load-on-branch-switch | On `BatchEnd` where a cross-branch switch is detected (`lastKnownBranch !== newBranch`), reset all open Y.Docs from the target branch's disk content via `onLoadDocument`-style hydration. Switch `reconciledBase` to the target branch's scope. Tombstone Y.Docs for files that don't exist on the target branch (with rescue buffer if dirty). Create placeholder entries for files new on the target branch (hydrated lazily on open). | Y.Docs must not carry state from the old branch into the new branch |
+| Should | FR29 | Restore-parked-WIP on branch switch | On `BatchEnd` after a cross-branch switch, if `refs/wip/<newBranch>/<writer-id>` exists from a prior visit, restore the parked WIP via three-way merge: `base = disk snapshot at park time`, `ours = parked Y.Doc state`, `theirs = current disk content`. Non-overlapping edits merge cleanly; overlapping edits surface as conflicts via `Y.Map('conflicts')`. | Enables round-trip branch switching without losing in-progress work |
+| Must | FR30 | Detached HEAD fallback context | When `.git/HEAD` contains a raw SHA (detached HEAD), use `detached-<sha>` as the branch context name for WIP refs and `reconciledBase` scoping. Detached contexts are GC'd on the next checkout to a named branch — their shadow refs are deleted unless the user has dirty state (in which case, a rescue buffer is created). | Prevents unbounded accumulation of orphaned detached contexts |
+| Must | FR31 | Shadow branch cleanup on project branch deletion | When a project branch is deleted (detectable via reflog or periodic scan of `refs/wip/*` against project repo branches), the corresponding shadow branch's WIP refs are scheduled for deletion after a 24h grace period. Checkpoint refs are retained (they reference project-repo commit SHAs that may still be reachable). | Prevents unbounded shadow ref growth from stale branches |
+| Should | FR32 | Shadow branch rename on project branch rename | When a project branch is renamed (`git branch -m old new`), migrate shadow refs from `refs/wip/old/*` to `refs/wip/new/*` and update `reconciledBase` scope key. Detectable via `.git/HEAD` change where the old branch disappears and a new branch appears with the same HEAD SHA. | Prevents orphaned shadow refs after branch renames |
 | Must | FR14 | Shadow location resolution at init | `npx openknowledge init` resolves the shadow location: if project `.git/` exists, creates `.git/openknowledge/` (no `.gitignore` needed); if no project `.git/`, creates `.openknowledge/` and adds `.openknowledge/` to `.gitignore` if one exists. | Integrated mode needs no working-tree modifications |
 | Must | FR15 | Reconciliation works in standalone mode | Absence of a project `.git/` is a graceful degradation. HEAD watcher is skipped. File-watcher events process individually without `BatchBegin/End` wrapping. All other invariants (base tracking, three-way merge, lifecycle events) apply identically. | Standalone users get the same protocol minus project-repo awareness |
 | Must | FR16 | Parameterize content root | `CONTENT_DIR` in `persistence.ts` (currently hardcoded to `../../content` at line 25) becomes a config option resolved at init. Fumadocs users point at `content/docs/`; Mintlify at `docs/`; standalone users at whatever they pick. | Enables integrated mode at all |
@@ -202,7 +231,7 @@ Architecturally, this formalizes PROJECT.md's §CC1 claim that "Yjs handles with
 
 - **M1: Zero silent data loss on `git pull`.** A Playwright E2E test that starts with in-flight edits, runs `git pull` against a controlled remote with non-overlapping changes, and asserts that every user keystroke is preserved in the Y.Doc. Target: 100% pass over 100 runs.
 - **M2: Project repo contains only Save Version commits after a session.** Fresh project repo → install openknowledge → edit for 10 minutes → Save Version → uninstall (rm -rf `.git/openknowledge/`) → `git status && git log --all && ls .git/refs`. Assert: no WIP refs in project ref namespace, no auto-save objects in project object store, no config changes. Only the user-triggered Save Version commit(s). No `.gitignore` modification needed.
-- **M3: Attribution faithfulness in shadow repo.** A 3-writer scenario (human, agent, upstream pull) produces a shadow history where `git log refs/wip/<writer>` for each writer shows only their own changes. Upstream imports are not misattributed. Measured via test scenario.
+- **M3: Attribution faithfulness in shadow repo.** A 3-writer scenario (human, agent, upstream pull) produces a shadow history where `git log refs/wip/<branch>/<writer>` for each writer shows only their own changes, scoped to the correct project branch. Upstream imports are not misattributed. Cross-branch edits do not bleed. Measured via test scenario.
 - **M4: Reconciliation latency.** p95 time from `BatchEnd` dispatch to Y.Doc update visible in browser. Target: < 300ms for 10 affected docs.
 - **M5: Conflict resolution round-trip.** Simulated conflict → resolution mode banner → external resolution → editor re-engages. Measured: did the user lose any state? Target: 0 state loss across 20 test scenarios.
 - **Instrumentation:** `console.log('[reconcile] ...', { docName, basehash, ourshash, theirshash, conflicts, outcome })` for every reconciliation pass. `[batch] begin ...` / `[batch] end ... (N docs reconciled)` for batch boundaries. Counters exposed via `GET /api/metrics/reconciliation`.
@@ -233,11 +262,12 @@ Every code path named in §6's Must requirements either doesn't exist or does th
 │   .git/                       ← PROJECT repo                            │
 │     openknowledge/            ← SHADOW (bare repo, nested inside .git/  │
 │       HEAD, config, objects/    invisible to git transport/clone/push)  │
-│       refs/wip/human-<id>     ← per-writer WIP attribution             │
-│       refs/wip/agent-<id>                                               │
-│       refs/wip/upstream                                                 │
-│       refs/checkpoints/<sha>  ← bookmarks linking to project commits    │
-│       refs/drafts/<name>                                                │
+│       refs/wip/<branch>/      ← branch-scoped WIP attribution          │
+│         human-<id>                                                      │
+│         agent-<id>                                                      │
+│         upstream                                                        │
+│       refs/checkpoints/<branch>/<sha> ← branch-scoped checkpoints      │
+│       refs/drafts/<name>      ← user-created drafts (within a branch)  │
 │       rescue/<docName>.md     ← dirty-doc rescue buffers                │
 │       ok-config.json          ← runtime config (content root, etc.)     │
 │   content/docs/*.mdx          ← the actual knowledge files             │
@@ -253,8 +283,9 @@ Every code path named in §6's Must requirements either doesn't exist or does th
 │   DiskEvent taxonomy:                                                  │
 │     Create | Update | Delete | Rename | Conflict | BatchBegin/End     │
 │                                                                        │
-│   Per-doc state:                                                       │
-│     reconciledBase: Map<docName, string>                               │
+│   Per-doc, per-branch state:                                           │
+│     reconciledBase: Map<branch, Map<docName, string>>                  │
+│     lastKnownBranch: string                                            │
 │                                                                        │
 │   Primitives:                                                          │
 │     reconcile(base, ours, theirs) → result | conflict                  │
@@ -262,6 +293,9 @@ Every code path named in §6's Must requirements either doesn't exist or does th
 │     rename(oldName, newName) → migrate Y.Doc                           │
 │     enterResolutionMode(docName, base, ours, theirs)                   │
 │     applyUpstreamImport(shadowRepo, newTreeSha)                        │
+│     parkBranch(branch) → commit Y.Docs to shadow refs                  │
+│     loadBranch(branch) → reset Y.Docs from disk                        │
+│     restoreBranchWIP(branch) → 3-way merge parked WIP                  │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
                  │                              ▲
@@ -279,8 +313,10 @@ Every code path named in §6's Must requirements either doesn't exist or does th
                  ▲
                  │ HEAD watcher (new)
                  │ watches project's .git/HEAD, MERGE_HEAD, index.lock
+                 │ tracks lastKnownBranch for cross-branch detection
                  │
                  └─── emits BatchBegin/BatchEnd
+                      BatchEnd includes: withinBranch | crossBranch | detachedHead
 ```
 
 ### 9.2 Shadow repo layout and parameterization
@@ -435,6 +471,17 @@ function applyMarkdownToYDoc(document: Y.Doc, markdown: string): void {
 Create `packages/server/src/head-watcher.ts`:
 
 ```typescript
+export type BatchKind = 'within-branch' | 'cross-branch' | 'detached-head';
+
+export interface BatchEndInfo {
+  headMoved: boolean;
+  oldHead: string | null;
+  newHead: string | null;
+  batchKind: BatchKind;
+  oldBranch: string | null;
+  newBranch: string | null;
+}
+
 export async function startHeadWatcher(
   parentGitDir: string,
   onBatchBegin: (reason: BatchReason) => void,
@@ -442,13 +489,25 @@ export async function startHeadWatcher(
 ): Promise<AsyncSubscription> {
   let batchInProgress = false;
   let lastHeadSha: string | null = null;
+  let lastKnownBranch: string | null = null;
   let quietTimer: ReturnType<typeof setTimeout> | null = null;
 
   const resolveHead = () => {
     try { return readFileSync(resolve(parentGitDir, 'HEAD'), 'utf-8').trim(); }
     catch { return null; }
   };
+
+  const resolveBranch = (headContent: string | null): string | null => {
+    if (!headContent) return null;
+    if (headContent.startsWith('ref: refs/heads/')) {
+      return headContent.slice('ref: refs/heads/'.length);
+    }
+    // Detached HEAD — raw SHA
+    return `detached-${headContent.slice(0, 12)}`;
+  };
+
   lastHeadSha = resolveHead();
+  lastKnownBranch = resolveBranch(lastHeadSha);
 
   return subscribe(parentGitDir, (err, events) => {
     if (err) return;
@@ -459,13 +518,32 @@ export async function startHeadWatcher(
           batchInProgress = true;
           onBatchBegin({ trigger: base });
         }
-        // Debounced BatchEnd after 100ms of quiet
         if (quietTimer) clearTimeout(quietTimer);
         quietTimer = setTimeout(() => {
           const newHead = resolveHead();
+          const newBranch = resolveBranch(newHead);
           const headMoved = newHead !== null && newHead !== lastHeadSha;
-          onBatchEnd({ headMoved, oldHead: lastHeadSha, newHead });
+
+          let batchKind: BatchKind;
+          if (newBranch?.startsWith('detached-')) {
+            batchKind = 'detached-head';
+          } else if (lastKnownBranch !== newBranch) {
+            batchKind = 'cross-branch';
+          } else {
+            batchKind = 'within-branch';
+          }
+
+          onBatchEnd({
+            headMoved,
+            oldHead: lastHeadSha,
+            newHead,
+            batchKind,
+            oldBranch: lastKnownBranch,
+            newBranch,
+          });
+
           lastHeadSha = newHead;
+          lastKnownBranch = newBranch;
           batchInProgress = false;
         }, 100);
       }
@@ -488,14 +566,30 @@ async function onBatchBegin() {
   batchInProgress = true;
 }
 
-async function onBatchEnd({ headMoved, oldHead, newHead }: BatchEndInfo) {
+async function onBatchEnd(info: BatchEndInfo) {
   batchInProgress = false;
-  // Reconcile all affected docs in one atomic pass
-  const events = drainBufferedFileEvents();
-  for (const ev of events) await handleExternalChange(ev);
-  // If HEAD actually moved, emit upstream-import commit
-  if (headMoved) {
-    await commitUpstreamImport(oldHead, newHead);
+
+  switch (info.batchKind) {
+    case 'within-branch': {
+      // Pull, merge, rebase on the same branch — reconcile as before
+      const events = drainBufferedFileEvents();
+      for (const ev of events) await handleExternalChange(ev);
+      if (info.headMoved) {
+        await commitUpstreamImport(info.oldHead, info.newHead);
+      }
+      break;
+    }
+    case 'cross-branch':
+    case 'detached-head': {
+      // Branch switch — park, load, optionally restore
+      drainBufferedFileEvents(); // discard — we're loading fresh state
+      await loadBranch(info.newBranch!);
+      if (info.batchKind === 'cross-branch') {
+        await restoreBranchWIP(info.newBranch!);
+      }
+      await commitUpstreamImport(info.oldHead, info.newHead);
+      break;
+    }
   }
 }
 
@@ -514,7 +608,7 @@ async function commitUpstreamImport(oldHead: string | null, newHead: string): Pr
   const git = shadowGit();
   try {
     // Seed index from current shadow HEAD
-    const shadowHead = await safeRevParse('refs/wip/upstream');
+    const shadowHead = await safeRevParse(`refs/wip/${lastKnownBranch}/upstream`);
     if (shadowHead) {
       const headTree = (await git.raw('rev-parse', `${shadowHead}^{tree}`)).trim();
       await git.env(env).raw('read-tree', headTree);
@@ -537,33 +631,140 @@ async function commitUpstreamImport(oldHead: string | null, newHead: string): Pr
       GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
     };
     const commitSha = (await git.env(authorEnv).raw(...args)).trim();
-    await git.raw('update-ref', 'refs/wip/upstream', commitSha);
+    await git.raw('update-ref', `refs/wip/${lastKnownBranch}/upstream`, commitSha);
   } finally {
     try { unlinkSync(resolve(shadowDir, 'index-import')); } catch {}
   }
 }
 ```
 
-### 9.7 Per-writer WIP refs
+### 9.7 Shadow branch runtime (park / load / restore)
+
+Branch switches are the one case where reconciliation is the **wrong** primitive. Reconciling old-branch Y.Doc state against new-branch disk state would bleed edits across branches. Instead, branch switches follow a **park → load → restore** sequence:
+
+```typescript
+async function parkBranch(branch: string): Promise<void> {
+  const git = shadowGit();
+  const env = { GIT_INDEX_FILE: resolve(shadowDir, `index-park-${branch}`) };
+
+  try {
+    for (const [docName, document] of hocuspocus.documents) {
+      const markdown = serializeYDocToMarkdown(document);
+      const diskSnapshot = reconciledBase.get(branch)?.get(docName) ?? markdown;
+
+      // Write Y.Doc state + disk snapshot into a park commit
+      // The disk snapshot serves as merge base for future WIP restoration
+      const blobSha = (await git.env(env).raw('hash-object', '-w', '--stdin', { input: markdown })).trim();
+      const baseSha = (await git.env(env).raw('hash-object', '-w', '--stdin', { input: diskSnapshot })).trim();
+      await git.env(env).raw('update-index', '--add', '--cacheinfo', `100644,${blobSha},${docName}`);
+      await git.env(env).raw('update-index', '--add', '--cacheinfo', `100644,${baseSha},.park-base/${docName}`);
+    }
+
+    const treeSha = (await git.env(env).raw('write-tree')).trim();
+    const parentSha = await safeRevParse(`refs/wip/${branch}/human-${sessionId}`);
+    const args = ['commit-tree', treeSha, '-m', `park: branch context at ${new Date().toISOString()}`];
+    if (parentSha) args.push('-p', parentSha);
+    const commitSha = (await git.raw(...args)).trim();
+    await git.raw('update-ref', `refs/wip/${branch}/human-${sessionId}`, commitSha);
+  } finally {
+    try { unlinkSync(resolve(shadowDir, `index-park-${branch}`)); } catch {}
+  }
+}
+
+async function loadBranch(branch: string): Promise<void> {
+  // Switch reconciledBase scope
+  if (!reconciledBase.has(branch)) {
+    reconciledBase.set(branch, new Map());
+  }
+
+  for (const [docName, document] of hocuspocus.documents) {
+    const filePath = docNameToPath(docName, contentRoot);
+    if (!existsSync(filePath)) {
+      // File doesn't exist on new branch — tombstone
+      await tombstoneDoc(docName, document);
+      continue;
+    }
+    const content = readFileSync(filePath, 'utf-8');
+    applyMarkdownToYDoc(document, content);
+    reconciledBase.get(branch)!.set(docName, content);
+  }
+}
+
+async function restoreBranchWIP(branch: string): Promise<void> {
+  const git = shadowGit();
+  const parkRef = await safeRevParse(`refs/wip/${branch}/human-${sessionId}`);
+  if (!parkRef) return; // No prior WIP for this branch
+
+  const parkCommit = await git.raw('log', '-1', '--format=%s', parkRef);
+  if (!parkCommit.trim().startsWith('park:')) return; // Latest commit isn't a park
+
+  for (const [docName, document] of hocuspocus.documents) {
+    try {
+      // Read parked Y.Doc state
+      const parkedContent = (await git.raw('show', `${parkRef}:${docName}`)).trim();
+      // Read parked disk snapshot (merge base)
+      const parkedBase = (await git.raw('show', `${parkRef}:.park-base/${docName}`)).trim();
+      const currentDisk = reconciledBase.get(branch)?.get(docName);
+      if (!currentDisk || !parkedContent) continue;
+
+      if (parkedContent === parkedBase) continue; // No in-flight edits were parked
+
+      // Three-way merge: base=parked disk snapshot, ours=parked Y.Doc, theirs=current disk
+      const outcome = reconcile({
+        docName,
+        base: parkedBase,
+        ours: parkedContent,
+        theirs: currentDisk,
+      });
+
+      switch (outcome.kind) {
+        case 'merged':
+          applyMarkdownToYDoc(document, outcome.newContent);
+          reconciledBase.get(branch)!.set(docName, outcome.newContent);
+          break;
+        case 'conflicts':
+          applyMarkdownToYDoc(document, outcome.newContent);
+          publishConflicts(document, outcome.conflicts);
+          reconciledBase.get(branch)!.set(docName, outcome.newContent);
+          break;
+        case 'noop':
+        case 'clean':
+        case 'refused':
+          break; // Current disk state is fine as-is
+      }
+    } catch {
+      // Parked file may not exist in this commit — skip silently
+    }
+  }
+}
+```
+
+**Detached HEAD cleanup:** When a `cross-branch` batch transitions *from* a `detached-<sha>` context to a named branch, the detached context's shadow refs (`refs/wip/detached-<sha>/*`) are scheduled for deletion. If any Y.Docs were dirty at park time, rescue buffers are created before deletion.
+
+**Branch deletion GC:** A periodic scan (on startup + every 24h) compares `refs/wip/*` branch prefixes against the project repo's branch list (`git branch --list`). Shadow branches with no corresponding project branch and no activity in the last 24h have their WIP refs deleted. Checkpoint refs (`refs/checkpoints/<branch>/*`) are retained because they reference durable project-repo commit SHAs.
+
+**Branch rename detection:** When `BatchEnd` detects a cross-branch switch where the old branch no longer exists in the project repo and the new branch has the same HEAD SHA, it's treated as a rename. Shadow refs are migrated: `refs/wip/<old>/*` → `refs/wip/<new>/*`.
+
+### 9.8 Per-writer WIP refs
 
 Writer identity is derived from the transaction origin that caused the L1 write:
 - User edits via browser client → writer = `human-<session-hash>` (where session hash is the stable identity from `presence/identity.ts`)
 - Agent writes via DirectConnection → writer = `agent-<agent-id>` (from the DC session)
 - File-watcher imports → writer = `upstream` (handled by `commitUpstreamImport`)
 
-`onStoreDocument` inspects the document's last `transaction.origin` (or a side-channel map of writer identity per doc, if origin is ambiguous) and routes the L2 commit to `refs/wip/<writer-id>` instead of a single `refs/wip/main`. The shadow repo grows a small number of refs over time (one per active writer), which is fine.
+`onStoreDocument` inspects the document's last `transaction.origin` (or a side-channel map of writer identity per doc, if origin is ambiguous) and routes the L2 commit to `refs/wip/<lastKnownBranch>/<writer-id>`. The active project branch is resolved from the HEAD watcher's `lastKnownBranch` cache. The shadow repo grows a small number of refs over time (one per active writer per visited branch), which is fine — inactive branches are GC'd per FR31.
 
 **Checkpoint / Save Version** is a two-repo operation:
 
 1. **Project repo commit.** Collect all per-writer deltas since the last checkpoint. Create a real commit on the project repo's current branch with the merged content. Default: single commit with `Co-authored-by:` trailers for each writer. Power-user option: one commit per writer in temporal order. The commit is created via `commit-tree` plumbing + `update-ref` to avoid touching the user's staging area (uses a temporary `GIT_INDEX_FILE`).
 
-2. **Shadow checkpoint bookmark.** Write `refs/checkpoints/<project-commit-sha>` in the shadow pointing at the current shadow HEAD state. The checkpoint commit stores the **full content tree snapshot** (not just the SHA), so the shadow is self-contained and survives project-repo history rewrites (rebase, force-push). If the project repo later rewrites the commit (e.g., `git rebase`), the shadow's checkpoint ref becomes an annotation on a rewritten SHA but the tree snapshot remains valid for attribution queries.
+2. **Shadow checkpoint bookmark.** Write `refs/checkpoints/<lastKnownBranch>/<project-commit-sha>` in the shadow pointing at the current shadow HEAD state. The checkpoint commit stores the **full content tree snapshot** (not just the SHA), so the shadow is self-contained and survives project-repo history rewrites (rebase, force-push). If the project repo later rewrites the commit (e.g., `git rebase`), the shadow's checkpoint ref becomes an annotation on a rewritten SHA but the tree snapshot remains valid for attribution queries.
 
 3. **WIP ref reset.** After checkpointing, per-writer WIP refs are reset (or fast-forwarded) so subsequent WIP commits track only post-checkpoint deltas.
 
 Upstream-import commits are *not* included in the Save Version commit — they represent content that already entered the project repo via `git pull` and are already part of the project's history.
 
-### 9.8 Lifecycle event module
+### 9.9 Lifecycle event module
 
 Extend `file-watcher.ts`:
 
@@ -616,7 +817,7 @@ function handleParcelEvent(event: ParcelEvent): DiskEvent[] {
 }
 ```
 
-### 9.9 Affected routes / pages / files
+### 9.10 Affected routes / pages / files
 
 | File | Change |
 |---|---|
@@ -624,14 +825,15 @@ function handleParcelEvent(event: ParcelEvent): DiskEvent[] {
 | `packages/server/src/file-watcher.ts` | Emit `DiskEvent` taxonomy. Remove "ignore delete" branch. Add rename detection. |
 | `packages/app/src/server/hocuspocus-plugin.ts:418-449` | Replace `handleExternalChange` with the reconciliation-aware version. Wire `Y.Map('conflicts')` and `Y.Map('lifecycle')`. |
 | `packages/server/src/reconciliation.ts` | **New**. `reconcile()` primitive, conflict-marker detection, rescue buffer management. |
-| `packages/server/src/head-watcher.ts` | **New**. Project `.git/HEAD` subscription, `BatchBegin`/`BatchEnd` dispatch. |
-| `packages/server/src/shadow-repo.ts` | **New**. `initShadowRepo`, `commitUpstreamImport`, per-writer ref management. |
+| `packages/server/src/head-watcher.ts` | **New**. Project `.git/HEAD` subscription, `BatchBegin`/`BatchEnd` dispatch, branch detection (`lastKnownBranch`), `BatchKind` classification. |
+| `packages/server/src/shadow-repo.ts` | **New**. `initShadowRepo`, `commitUpstreamImport`, per-writer ref management, `parkBranch`, `loadBranch`, `restoreBranchWIP`. |
+| `packages/server/src/shadow-branch-gc.ts` | **New**. Periodic scan for orphaned shadow branch refs. Detached HEAD cleanup. Branch rename migration. |
 | `packages/app/src/editor/three-way-merge.ts` | Add markdown-level `blockLevelThreeWayMerge(base, ours, theirs)` entry point alongside existing Y.XmlFragment one. |
 | `packages/app/src/App.tsx` (or new component) | Conflict banner UI reading from `Y.Map('conflicts')`; lifecycle banner reading from `Y.Map('lifecycle')`. |
 | `<shadow-parent>/openknowledge/config.json` | **New**. Runtime config for content root + writer identity. |
 | `bin/init.ts` | **New (or extension of existing init)**. Creates shadow repo, writes `.gitignore`, writes config. |
 
-### 9.10 Data flow — happy-path `git pull`
+### 9.11 Data flow — happy-path `git pull`
 
 ```
 User terminal: git pull origin main
@@ -658,14 +860,58 @@ persistence.ts: batchInProgress = false
   - for each: handleUpdate → reconcile() → three-way merge
     - clean docs: apply theirs
     - dirty docs: 3-way merge, surface conflicts if any
-  - commitUpstreamImport(oldHead, newHead) writes refs/wip/upstream
+  - commitUpstreamImport(oldHead, newHead) writes refs/wip/<branch>/upstream
     ↓
 Browser clients observe Y.Doc updates via HocuspocusProvider
     ↓
 (If any conflicts) Y.Map('conflicts') observer fires → conflict banner UI
 ```
 
-### 9.11 Alternatives considered (cut)
+### 9.12 Data flow — `git checkout` (cross-branch switch)
+
+```
+User terminal: git checkout feature-xyz
+    ↓
+.git/index.lock appears
+    ↓
+head-watcher detects index.lock → emits BatchBegin
+    ↓
+persistence.ts: batchInProgress = true
+  - parkBranch(lastKnownBranch):
+    - for each open Y.Doc: serialize to markdown from memory
+    - commit Y.Doc state + disk snapshot to refs/wip/<branch>/human-<id>
+  - suspend L1/L2 writes
+    ↓
+Git checkout completes → working tree files updated to feature-xyz
+  - .git/index.lock disappears
+  - .git/HEAD moves to feature-xyz ref
+    ↓
+parcel-watcher fires N Update events for content files
+  - Buffered while batchInProgress is true
+    ↓
+head-watcher: 100ms of quiet → BatchEnd
+  - resolves newBranch = "feature-xyz"
+  - lastKnownBranch = "main" ≠ "feature-xyz" → batchKind = cross-branch
+    ↓
+onBatchEnd (cross-branch):
+  - drainBufferedFileEvents() — discarded (loading fresh state)
+  - loadBranch("feature-xyz"):
+    - switch reconciledBase to feature-xyz scope
+    - reset all Y.Docs from new branch disk content
+    - tombstone docs that don't exist on feature-xyz
+  - restoreBranchWIP("feature-xyz"):
+    - if refs/wip/feature-xyz/human-<id> exists with a park commit:
+      - for each doc: 3-way merge (parked-base, parked-ydoc, current-disk)
+      - auto-merge non-overlapping; surface conflicts if overlapping
+  - commitUpstreamImport(oldHead, newHead) on feature-xyz scope
+  - lastKnownBranch = "feature-xyz"
+    ↓
+Browser clients observe Y.Doc resets via HocuspocusProvider
+  - Content shows feature-xyz state (+ restored WIP if any)
+  - No old-branch edits bleed through
+```
+
+### 9.13 Alternatives considered (cut)
 
 See `evidence/design-reasoning.md` for the full four-candidate comparison. Summary:
 
@@ -688,8 +934,8 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 | D8 | Renames detected via delete+create pair with matching content hash | T | DIRECTED | No | @parcel/watcher reports renames as independent delete+create on macOS. Hash-matching within 200ms pairs them reliably. | parcel-watcher semantics | Pairing window is 200ms (configurable); false positives possible if two unrelated files share content |
 | D9 | `.git/HEAD` + `MERGE_HEAD` + `index.lock` watcher for batch detection | T | DIRECTED | No | Batches multi-file changes as one reconciliation pass. Required for upstream-import attribution to cover the entire pull atomically. | Git's operational model — HEAD moves only on commit completion | HEAD watcher only active when project `.git` exists; standalone mode skips it |
 | D10 | `BatchBegin` flushes pending L1 writes; `batchInProgress` gates further writes | T | LOCKED | Yes | Without pre-batch flush, the last 2s of user edits can be clobbered by the incoming pull. Without `batchInProgress`, a save mid-pull interleaves states and breaks git merge. | Race analysis in conversation turn 5 | L1 quiet period extends L1 debounce window implicitly; no user-visible effect on normal editing |
-| D11 | Upstream-import commits authored by `upstream`, not the user | T | LOCKED | Yes | Without this, shadow repo blame attributes upstream's diff to whoever saved next. Breaks Bucket 3 attribution. | Shadow repo race analysis | Adds a `refs/wip/upstream` ref; checkpoint bookmarks via `refs/checkpoints/<sha>` |
-| D12 | Per-writer WIP refs (`refs/wip/<writer-id>`) replace single `refs/wip/main` | T | DIRECTED | No | Supports multi-writer attribution natively via git primitives. Checkpoint squash-merges all writer refs with co-authored-by trailers. | Bucket 3 requirement for per-op attribution | Small number of refs (typically 1 human + N agents + 1 upstream); shadow `git gc` is our concern, not the user's |
+| D11 | Upstream-import commits authored by `upstream`, not the user | T | LOCKED | Yes | Without this, shadow repo blame attributes upstream's diff to whoever saved next. Breaks Bucket 3 attribution. | Shadow repo race analysis | Adds a `refs/wip/<branch>/upstream` ref per branch; checkpoint bookmarks via `refs/checkpoints/<branch>/<sha>` |
+| D12 | Per-writer, per-branch WIP refs (`refs/wip/<branch>/<writer-id>`) replace single `refs/wip/main` | T | DIRECTED | No | Supports multi-writer attribution natively via git primitives, scoped per project branch to prevent cross-branch contamination (D28). Checkpoint squash-merges all writer refs for the active branch with co-authored-by trailers. | Bucket 3 requirement for per-op attribution | Small number of refs per branch (typically 1 human + N agents + 1 upstream); inactive branches GC'd per FR31 |
 | D13 | Standalone mode is the same protocol minus project-repo-awareness | T | DIRECTED | No | One code path, two deployments. Standalone loses `BatchBegin/End` batching but keeps every other invariant. | G8 | Tests cover both modes; no feature flags distinguish them |
 | D14 | `reconciledBase` is in-memory only, rebuilt from disk on restart | T | DIRECTED | No | Persisting it adds complexity for no benefit — on restart, `onLoadDocument` reads fresh content which becomes the new base. | G7 local reasoning invariant | Edge case: if the Hocuspocus process crashes mid-reconciliation, the base is lost for active docs; next hydration uses current disk as base (safe) |
 | D15 | Content root is parameterized via `<shadow-parent>/openknowledge/config.json` | T | DIRECTED | No | Hardcoded `../../content` in the spike works only for standalone. Integrated mode needs `content/docs` (Fumadocs), `docs` (Mintlify), or user-chosen paths. | `persistence.ts:25` | `bin/init.ts` sets this at init time; can be edited by hand later |
@@ -697,14 +943,19 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 | D17 | Block-level merge module reused, not rewritten | T | DIRECTED | No | `three-way-merge.ts` already implements the hard part. Adding a markdown-level entry point is ~50 lines. | `three-way-merge.ts:1-80` | Two callers (source-toggle + disk-bridge) share the same merge logic |
 | D18 | L1 atomic write remains temp+rename; L2 isolated via `GIT_INDEX_FILE` (unchanged) | T | LOCKED | No | Already validated in TQ20. No reason to change. | `persistence.ts:197-216` | Shadow repo's L2 uses `<shadowDir>/index-wip` instead of `.git/index-wip` |
 | D19 | Shadow lives inside `.git/openknowledge/` — no `.gitignore` modification needed in integrated mode | P | LOCKED | Yes | Nesting inside `.git/` eliminates the `.gitignore` requirement entirely. Shadow is invisible to `git clone`, `git push --mirror`, `git status`. Established pattern: git-lfs (`.git/lfs/`), git-annex (`.git/annex/`), Cursor (`.git/cursor/`). In standalone mode, `.openknowledge/` in project root with optional `.gitignore`. | `reports/git-directory-nesting-shadow-repo/` | Better for worktrees (shared via main `.git/`); zero working-tree footprint |
-| D20 | Follow-branch-switch semantics on `git checkout` (default) | P | DIRECTED | No | Editor's view tracks `cat`. Alternative — pin user to prior branch — is surprising and breaks mental model. | See §5 P1 branch-switch journey | Settings toggle may surface later; default is follow |
-| D21 | All HEAD movements (checkout, reset, merge) go through the same reconciliation path | P | DIRECTED | No | Three-way merge is correct for all cases: non-overlapping edits survive, overlapping edits surface as conflicts. No need to distinguish `reset --hard` from `checkout` — both move HEAD and change the working tree. Simpler than the original "enter resolution mode on reset" approach. | Q4 analysis — distinction adds complexity without benefit | One code path for all HEAD movements |
+| D20 | Follow-branch-switch semantics on `git checkout` via **park + load**, not reconcile | P | LOCKED | No | Editor's view tracks `cat`. In-flight edits are parked in branch-scoped shadow refs, not merged into the new branch's content. The park + load sequence prevents cross-branch edit contamination while preserving the user's draft work for later restoration. | See §5 P1 branch-switch journey, §9.7 shadow branch runtime | Default is follow with park/restore; settings toggle may surface later |
+| D21 | HEAD movements dispatch on `BatchKind`: within-branch reconciles, cross-branch parks + loads | P | LOCKED | No | Within-branch movements (pull, merge, rebase) reconcile via three-way merge as before. Cross-branch movements (checkout, switch) use the park → load → restore sequence to prevent edit contamination. The HEAD watcher classifies each `BatchEnd` as `within-branch`, `cross-branch`, or `detached-head` by comparing `lastKnownBranch` to the resolved new branch. | §9.5 `BatchKind` classification; reconcile and park+load are fundamentally different operations | Two code paths at `BatchEnd` dispatch, unified by `BatchKind` enum |
 | D22 | Rescue buffers live in `<shadow-parent>/openknowledge/rescue/<docName>.md` with 24h retention | P | DIRECTED | No | Filesystem is the simplest durable store; 24h matches VS Code's "recent closed" window. | — | `GET /api/rescue` lists; manual cleanup after 24h |
 | D23 | Upstream-import commits do NOT replay individual upstream commits; they're a single tree snapshot | T | DIRECTED | No | Preserves shadow repo simplicity; upstream's actual commit history lives in the project repo for browsing via normal `git log`. Shadow history is "how openknowledge saw the world change," not a mirror of upstream. | Simplicity principle | Shadow repo is not a mirror; two-repo mental model |
 | D24 | Save Version creates real commits on the project repo | P | LOCKED | Yes | The project repo holds durable history; the shadow is an ephemeral attribution journal. Save Version is the graduation point where WIP becomes real project history. Default: single commit with co-authored-by trailers. Power-user option: per-writer commits in temporal order. | Conversation design session 2026-04-08 | `commit-tree` plumbing + temporary `GIT_INDEX_FILE` avoids touching user's staging area; project `git log` shows meaningful save points |
 | D25 | Checkpoint refs in shadow store full content tree snapshots (Option 1) | T | LOCKED | No | Shadow must be self-contained and survive project-repo history rewrites (rebase, force-push). Storing only the project SHA would break the shadow↔project mapping when SHAs change. Full tree snapshot means the shadow's attribution queries work regardless of project-repo state. | Conversation design session 2026-04-08 — evaluated 3 options: (1) full tree, (2) re-anchor on pull, (3) don't care | Shadow is portable — could survive migration to a different project repo clone |
 | D26 | Shadow corruption is graceful degradation, not catastrophic | T | LOCKED | No | Since Save Version commits live in the project repo, losing the shadow loses fine-grained who-wrote-what detail but NOT the content. `rm -rf .openknowledge && openknowledge init` recovers a working state. This significantly de-risks the shadow repo compared to the original spec where shadow was the sole history layer. | D24 makes the project repo the durable history | Q7 (corruption recovery) drops from medium impact to low impact |
 | D27 | One active writer per shadow root in Now | T | LOCKED | Yes | The primary multi-worktree hazard in Now is concurrent mutation of the same shadow root, which would mix WIP attribution, checkpoint state, and reconciliation history across checked-out worlds. A repo-local writer lock preserves correctness without requiring full multi-worktree design in v1. | Conversation analysis during spec review | Different repositories may run concurrently; multiple writer instances for the same shadow root are rejected until worktree-aware namespacing is added |
+| D28 | WIP refs, checkpoints, and `reconciledBase` are branch-scoped | T | LOCKED | No | Without branch scoping, the shadow's WIP history conflates edits across project branches. Attribution for "what did I write on `main`?" becomes a puzzle of parsing upstream-import commit messages. Branch scoping gives each project branch its own clean attribution timeline. | Analysis of branch-switch UX during spec review | `refs/wip/<branch>/<writer-id>`, `refs/checkpoints/<branch>/<sha>`, `reconciledBase: Map<branch, Map<docName, string>>` |
+| D29 | Branch switch is park + load, not reconcile | T | LOCKED | Yes | Reconciling old-branch Y.Doc state against new-branch disk content would merge edits across branches — directly contradicting the user's intent to switch contexts. The park → load → restore sequence preserves each branch's editing context independently. Additionally, L1 continuous writes keep the working tree dirty, which would cause `git checkout` to refuse unless we avoid writing old-branch state to disk at the wrong time. | Branch-switch race analysis; L1 dirty working tree blocks `git checkout` | Parking commits from Y.Doc memory (not disk); `BatchKind` classification in HEAD watcher; `loadBranch` resets Y.Docs rather than reconciling |
+| D30 | Detached HEAD gets a `detached-<sha>` context, GC'd on next named-branch checkout | T | DIRECTED | No | Detached HEAD is uncommon but must not crash. A fallback context name prevents null-branch errors. Aggressive GC (cleanup on next named-branch checkout, with rescue buffers for dirty state) prevents unbounded accumulation of orphaned contexts. | Edge case analysis | Detached contexts are ephemeral; if the user commits on detached HEAD and creates a branch, the context migrates to the new branch name |
+| D31 | Shadow branch lifecycle mirrors project branch lifecycle | T | DIRECTED | No | Branch deletion in the project repo should clean up shadow WIP refs (with 24h grace period). Branch rename should migrate shadow refs. Without lifecycle mirroring, the shadow accumulates orphaned refs from deleted/renamed branches. | Shadow ref growth analysis | Periodic scan on startup + 24h interval; checkpoint refs retained (reference durable project commits); rename detection via HEAD SHA matching |
+| D32 | Shadow branches are 1:1 with project branches; drafts are a separate namespace | P | DIRECTED | No | Shadow branches are *automatic* — every project branch gets implicit branch-scoped WIP state. Drafts (`refs/drafts/<name>`) are *user-created* named editing contexts within a branch. The two compose: a draft lives within a shadow branch context. This avoids conflating "I switched git branches" with "I created an alternative version of this content." | Conversation analysis distinguishing shadow branches from drafts | Shadow branches use the reconciliation + park/load machinery; drafts use the Bucket 5 UX for create/apply/delete |
 
 ## 11) Open questions
 
@@ -712,7 +963,7 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 |---|---|---|---|---|---|---|
 | Q1 | What exactly triggers `reconciledBase` initialization for a document that was never loaded before an external event? | T | P0 | No | When a closed doc receives an `Update` event, set `reconciledBase[docName] = content` as a side effect (so the next `onLoadDocument` starts with a consistent base). Documented in §9.4. | Decided |
 | Q2 | What's the conflict-marker regex, exactly? Git's markers can vary under custom merge drivers or diff3 style. | T | P0 | No | `^(<{7} \|={7}$\|>{7} \|\|{7} )/m`. Tested against all three git conflict styles: `merge` (default), `diff3`, and `zdiff3` (git 2.35+). The `\|\|\|\|\|\|\|` marker appears in diff3/zdiff3 styles as the base-version separator. All four markers are line-start anchored. | Decided — regex covers all styles |
-| Q3 | On `git checkout` with in-flight edits that conflict with the target branch, do we follow or pause? | P | P1 | No | D20: default follow. Reconciliation runs three-way merge; overlapping edits surface as conflicts. Alternative: "pause on branch switch" as a settings toggle. | Decided (default) |
+| Q3 | On `git checkout` with in-flight edits that conflict with the target branch, do we follow or pause? | P | P1 | No | D20 + D29: default follow via park + load. In-flight edits are parked to the old branch's shadow refs (not merged into the new branch). On switch-back, parked WIP is restored via three-way merge; overlapping edits surface as conflicts. This supersedes the original "reconcile on branch switch" approach. | Decided — park + load, not reconcile |
 | Q4 | How does `git reset --hard <far-commit>` get detected vs a normal checkout? | T | P1 | No | **Closed — distinction unnecessary.** Both move HEAD and change the working tree. Three-way merge handles both correctly: non-overlapping in-flight edits survive (good for checkout, harmless for reset); overlapping edits surface as conflicts (user resolves). No need to detect reset specifically. D21 simplified accordingly. | Decided — treat both as "HEAD moved, reconcile" |
 | Q5 | What author identity does a human's WIP commits use — the editor's own identity, or the project repo's `user.name`/`user.email`? | T | P1 | No | For attribution clarity, use the openknowledge presence identity (`ok-user-name` from localStorage). Can be overridden via `<shadow>/config.json` to match project git config if the user prefers. | Decided — openknowledge identity with override |
 | Q6 | Shadow repo `git gc` — who runs it, when? | T | P2 | No | Cron-style cleanup inside openknowledge server on startup if the shadow repo hasn't been gc'd in 7 days. `git gc --auto` in the shadow. Never touches the project repo. | Decided — startup check |
@@ -721,8 +972,8 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 | Q9 | What if the user has uncommitted staged changes in the project repo when openknowledge starts up? | P | P1 | No | **Closed.** `reconciledBase` initializes from current disk state via `onLoadDocument` (reads the file as it exists on disk). Staged changes are irrelevant — disk content is what matters, and disk reflects whatever the user has written (staged or not). No special handling needed. | Decided — reconciledBase from disk state, no git-index awareness |
 | Q10 | What happens when a second openknowledge writer instance starts against the same shadow root? | T | P0 | No | **Closed.** The second instance fails startup unless the existing lock is proven stale. Lock metadata records owner `pid`, `hostname`, `startedAt`, and `worktreeRoot`; stale locks may be replaced conservatively. | Decided — exclusive shadow-root writer lock |
 | Q11 | Multi-writer concurrent writes to the same block — what does attribution look like? | T | P2 | No | If human and agent both edit the same paragraph within one L2 debounce window, the shadow commit is authored by whoever's WIP ref advances first. Second writer's delta attributed to them in their own WIP ref. Checkpoint merges via co-authored-by trailers. | Decided — per-writer refs handle it |
-| Q12 | Is `refs/heads/main` in the shadow repo meaningful? | T | P2 | No | **Closed — removed.** With Save Version creating real project repo commits (D24) and checkpoint refs bookmarking shadow state (D25), `refs/heads/main` in the shadow is vestigial. The shadow's ref namespace is: `refs/wip/*` (per-writer WIP), `refs/checkpoints/*` (Save Version bookmarks), `refs/drafts/*` (future). No `refs/heads/main` needed. | Decided — removed from shadow |
-| Q13 | How are drafts represented in the shadow repo, and what happens when upstream pulls land on a draft? | T | P0 | No | Drafts are `refs/drafts/<name>` branched from the latest `refs/checkpoints/*` at creation. On upstream-import, drafts are rebased onto the new checkpoint. If rebase fails, draft enters resolution mode. Full draft model is a follow-up spec under Bucket 5. | Partial — storage model decided, UX deferred |
+| Q12 | Is `refs/heads/main` in the shadow repo meaningful? | T | P2 | No | **Closed — removed.** With Save Version creating real project repo commits (D24) and checkpoint refs bookmarking shadow state (D25), `refs/heads/main` in the shadow is vestigial. The shadow's ref namespace is: `refs/wip/<branch>/*` (per-writer, per-branch WIP), `refs/checkpoints/<branch>/*` (Save Version bookmarks), `refs/drafts/*` (user-created drafts). No `refs/heads/main` needed. | Decided — removed from shadow |
+| Q13 | How are drafts represented in the shadow repo, and what happens when upstream pulls land on a draft? | T | P0 | No | Drafts are `refs/drafts/<name>` branched from the latest `refs/checkpoints/<branch>/*` at creation. Drafts live *within* a shadow branch context — they are user-created named editing alternatives, distinct from shadow branches which are automatic 1:1 mirrors of project branches (D32). On upstream-import, drafts are rebased onto the new checkpoint. If rebase fails, draft enters resolution mode. Full draft model is a follow-up spec under Bucket 5. | Partial — storage model decided, relationship to shadow branches clarified (D32), UX deferred |
 | Q14 | Does the shadow repo need any kind of garbage-collection limit for deep histories (months/years of WIP)? | T | P2 | No | `git gc --auto` with standard thresholds. If history gets unwieldy, we can add a "archive WIPs older than N days" pass. Not an MVP concern. | Deferred |
 | Q15 | What about files openknowledge does NOT care about (non-markdown, outside content root) that change during a pull? | T | P1 | No | File-watcher is scoped to `contentRoot` via `safeContentPath`. Non-content files trigger zero openknowledge behavior. HEAD watcher still fires (it's on `.git/HEAD`), so `BatchBegin/End` still wrap the pull, but there are no content-file events to reconcile. Upstream-import commit reflects only the content-root subtree. | Decided |
 | Q16 | How does this interact with `Y.Map('activity')` from the presence spec? | T | P0 | No | Reconciliation transactions use origin `'reconciliation'`, not `'agent-write'`. They don't write to `Y.Map('activity')` — the presence spec's flash plugin ignores them. Upstream imports optionally write to `Y.Map('lifecycle')` for a "Synced with upstream" indicator (FR19). | Decided |
@@ -731,6 +982,10 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 | Q19 | Does the `BatchEnd` upstream-import commit happen even when no content files changed in the pull (e.g., upstream only changed `package.json`)? | T | P2 | No | No — `commitUpstreamImport` checks whether the content tree actually differs from the previous shadow HEAD tree. If identical, skip the commit. | Decided |
 | Q20 | How is the shadow repo presented in the Bucket 4 timeline UI? | P | P1 | No | Timeline reads from `refs/checkpoints/*` + `refs/wip/*`, renders Save Versions prominently and auto-saves collapsed. Upstream-import commits appear as a distinct "Synced with upstream" entry type. Full UX is in the Bucket 4 timeline spec (separate). | Deferred to Bucket 4 spec |
 | Q21 | Is the content hash in `writeTracker` the right thing to match against for self-write detection when the reconciliation path does its own writes? | T | P0 | No | Yes — reconciliation writes go through `onStoreDocument` which calls `registerWrite(filePath, contentHash(markdown))` as today. The reconciled content is what ends up in both Y.Doc and disk, so the hash matches on the next parcel event and self-write detection still works. | Decided |
+| Q22 | WIP restoration staleness — how old is too old to auto-restore? | P | P1 | No | For now, always restore if parked WIP exists. The three-way merge against current disk content handles divergence safely. If the merge produces excessive conflicts (e.g., the branch was rebased significantly since the WIP was parked), the user sees conflict badges and can dismiss them. A staleness policy (e.g., "don't auto-restore WIP older than 7 days") could be added later if user testing shows it's needed. | Decided — always restore, let merge handle staleness |
+| Q23 | What if the user creates a brand-new branch (`git checkout -b new-feature`) — is there any shadow state to load? | T | P1 | No | No — the new branch starts with the same disk content as the branch it was created from. `loadBranch` creates a fresh `reconciledBase` scope, hydrates Y.Docs from disk (which haven't changed), and there's no parked WIP to restore. The park step still runs for the old branch (capturing any in-flight edits), which is correct. | Decided — new branch starts with clean slate |
+| Q24 | How does `git checkout` interact with L1's dirty working tree? | T | P0 | No | L1 continuously writes Y.Doc state to disk, keeping content files "dirty" from git's perspective. `git checkout` will refuse if dirty files differ on the target branch. The park step in `BatchBegin` fires on `index.lock` — which appears *before* git checks the working tree. However, `index.lock` appears after git has already validated the checkout is safe. If git refuses the checkout, `index.lock` never appears and the HEAD watcher never fires — so no park occurs, which is correct (the user stays on the current branch). If git succeeds (files are identical on both branches, or git auto-merges), the park + load proceeds normally. **Edge case:** if `git checkout --force` is used, dirty state is overwritten by git before our watcher fires — the park step may capture stale state. This is acceptable: `--force` is an explicit "discard my changes" signal. | Decided — git's own dirty-tree check is the gatekeeper; no special handling needed |
+| Q25 | Should `reconciledBase` branch scopes be persisted to the shadow repo for crash recovery? | T | P2 | No | In-memory only, consistent with D14. On restart, `onLoadDocument` reads current disk content (which reflects whichever branch is checked out) and initializes a fresh `reconciledBase` scope. Parked WIP in shadow refs survives the crash and is available for restoration on the next branch switch. | Decided — in-memory, same as D14 |
 
 ## 12) Rollout plan
 
@@ -753,10 +1008,22 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 - Test matrix: standalone vs integrated vs inside git submodule.
 
 **Phase 4 — project-repo-awareness (2–3 days):**
-- `head-watcher.ts` with `BatchBegin/End` dispatch (FR10).
+- `head-watcher.ts` with `BatchBegin/End` dispatch, `BatchKind` classification, `lastKnownBranch` tracking (FR10, FR26).
 - Buffer-and-drain for file events during batches.
-- Upstream-import commits fully wired (FR12).
-- Test matrix: pull ff / pull merge / pull rebase / checkout / reset --hard / stash pop.
+- Upstream-import commits fully wired with branch-scoped refs (FR12).
+- Test matrix: pull ff / pull merge / pull rebase / reset --hard / stash pop (within-branch cases).
+
+**Phase 4b — shadow branch runtime (3–4 days):**
+- `parkBranch`, `loadBranch`, `restoreBranchWIP` in `shadow-repo.ts` (FR27, FR28, FR29).
+- Branch-scoped `reconciledBase` migration (FR3 update).
+- Detached HEAD fallback context (FR30).
+- Test matrix: checkout to named branch / checkout to detached HEAD / checkout -b new branch / switch back to parked branch / switch back after upstream changes landed.
+
+**Phase 4c — shadow branch lifecycle (1–2 days):**
+- Branch deletion GC scan in `shadow-branch-gc.ts` (FR31).
+- Branch rename detection and ref migration (FR32).
+- Detached HEAD context cleanup.
+- Test matrix: delete branch with parked WIP / rename branch / detached HEAD GC.
 
 **Phase 5 — lifecycle events (2–3 days):**
 - `DiskEvent` taxonomy in `file-watcher.ts` (FR6).
@@ -770,7 +1037,7 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 - Instrumentation + `GET /api/metrics/reconciliation`.
 - Toggle default to `strict` mode; `legacy` becomes the rollback switch.
 
-**Total estimate: ~13–20 days of focused work**, excluding open questions that need empirical validation. This is a substantial piece of work, comparable to the presence/awareness spec, and it's foundational — Bucket 3, 4, 5, and integrated-mode distribution all rest on it.
+**Total estimate: ~17–26 days of focused work**, excluding open questions that need empirical validation. Phase 4b–4c (shadow branch runtime + lifecycle) adds ~4–6 days over the original estimate. This is a substantial piece of work, comparable to the presence/awareness spec, and it's foundational — Bucket 3, 4, 5, and integrated-mode distribution all rest on it.
 
 ## 13) Risk register
 
@@ -785,6 +1052,10 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 | User has two openknowledge writer instances attached to the same shadow root (for example, two worktrees of one repo) | Medium | High | First instance wins; second instance detects the shadow repo is already being written by another process (via `.git/openknowledge/lock`) and refuses to start with a clear error. |
 | The block-level merge module is insufficient for MDX (JSX components inside markdown) | Medium | Medium | Test against real Fumadocs content. If block detection breaks on JSX, either (a) treat JSX void nodes as opaque blocks that merge whole, or (b) extend the block splitter. See M1 test suite. |
 | `git gc` on project repo evicts blobs we cached but are still referenced only by the shadow's index | None (new arch) | — | Not applicable — shadow has its own object database. |
+| Park commit captures stale Y.Doc state when `git checkout --force` overwrites disk before watcher fires | Low | Medium | `--force` is an explicit "discard changes" signal. If the park captures stale state, the restored WIP on switch-back may conflict with the force-checkout's result — user resolves via conflict UI. Acceptable tradeoff. |
+| Shadow branch ref accumulation from frequent branch switching in a repo with many short-lived branches | Medium | Low | Periodic GC scan (startup + 24h) deletes orphaned shadow branches. Detached HEAD contexts are GC'd immediately on next named-branch checkout. `git gc --auto` in shadow handles object-level compaction. |
+| Branch rename detection produces false positives (two unrelated branches with same HEAD SHA) | Low | Low | Rename detection requires: old branch disappears, new branch appears, same HEAD SHA, within a single `BatchEnd` window. False positives would migrate shadow refs to the wrong name — recoverable by re-parking on the correct branch. |
+| `restoreBranchWIP` produces excessive conflicts after a long absence from a branch that received many upstream changes | Medium | Low | Three-way merge handles this correctly (conflicts surface via `Y.Map('conflicts')`). If false-conflict rate is high, a staleness policy can suppress auto-restore for old WIPs. See Q22. |
 
 ## 14) Testing strategy
 
@@ -805,13 +1076,26 @@ See `evidence/design-reasoning.md` for the full four-candidate comparison. Summa
 - Integrated mode with a fresh Fumadocs repo works.
 - Shadow `git fsck` detects corruption; reinit recovers.
 
+**Integration tests** — `shadow-branch.test.ts`:
+- Park commits contain correct Y.Doc state and disk snapshot per document.
+- `loadBranch` resets Y.Docs from target branch disk content and switches `reconciledBase` scope.
+- `restoreBranchWIP` three-way merges parked state against current disk.
+- Round-trip: park `main` → load `feature` → park `feature` → load `main` → restore `main` WIP. Assert original edits survived.
+- Detached HEAD gets `detached-<sha>` context; GC'd on next named-branch checkout.
+- Branch deletion triggers shadow ref cleanup after 24h grace period.
+- Branch rename migrates shadow refs.
+- New branch (`checkout -b`) starts with clean slate — no parked WIP, fresh `reconciledBase`.
+- `reconciledBase` scopes are independent — edits on `main` don't pollute `feature`'s base map.
+
 **E2E tests** — `reconciliation.e2e.spec.ts` (Playwright):
 - **Happy-path pull:** type in browser, `exec('git pull')` with fixture remote, assert browser content = merged content.
 - **Race pull:** type mid-save-debounce, fire pull, assert zero keystrokes lost.
 - **Conflict pull:** both sides change same paragraph, fire pull, assert resolution mode banner appears.
 - **Delete pull:** upstream removes file, assert tombstone banner.
 - **Rename pull:** upstream renames file, assert Y.Doc migrates.
-- **Checkout:** branch switch via `exec('git checkout')`, assert reconcile.
+- **Branch switch (park + load):** type in browser on `main`, `exec('git checkout feature')`, assert editor shows `feature` content with zero `main` edits bleeding through.
+- **Branch switch round-trip:** type on `main`, switch to `feature`, switch back to `main`, assert original edits restored via WIP restoration.
+- **Branch switch with upstream changes:** type on `main`, switch to `feature`, run `git pull` on `feature` (via another terminal), switch back to `main` after upstream changes land on `main`, assert WIP restoration merges with upstream changes.
 - **Zero-trace test:** fresh project repo → install → edit → uninstall → `git status && git log --all && diff <before> <after>`. Assert no changes.
 - **Multi-writer attribution:** human + agent + upstream in one session, assert shadow log has clean per-writer history.
 
@@ -864,7 +1148,7 @@ PROJECT.md commits to *"local-first single-player to start, with architecture th
 
 Items in this category extend "what users can do with the history this spec captures." The substrate (shadow repo with per-writer refs) is in scope; the query primitives and UIs are out.
 
-- **Time-based recovery ("rewind N minutes").** The "my cat jumped on the keyboard and added 200 lines of garbage" scenario. Different from per-transaction Y.js undo (too granular, will produce thousands of operations) and from named-checkpoint restore (requires the user to have created a checkpoint beforehand). Needs a query primitive: `git show refs/wip/<writer>@{N minutes ago}:<file>` and an HTTP/UI surface. **This is probably the most common real recovery action for solo IC users** — more common than checkpoint restore, more common than draft branches — and it's currently absent from the entire Now bundle.
+- **Time-based recovery ("rewind N minutes").** The "my cat jumped on the keyboard and added 200 lines of garbage" scenario. Different from per-transaction Y.js undo (too granular, will produce thousands of operations) and from named-checkpoint restore (requires the user to have created a checkpoint beforehand). Needs a query primitive: `git show refs/wip/<branch>/<writer>@{N minutes ago}:<file>` and an HTTP/UI surface. **This is probably the most common real recovery action for solo IC users** — more common than checkpoint restore, more common than draft branches — and it's currently absent from the entire Now bundle.
 - **Cross-session agent undo.** Undo an agent edit from yesterday. Current per-origin undo (presence spec) is in-session only — the UndoManager dies when the doc is unloaded. Cross-session needs a "revert commits authored by writer X in time window Y..Z" primitive against the shadow repo. Substrate is per-writer WIP refs (this spec); query primitive is future work.
 - **Cross-document attribution queries.** "Every AI edit across my whole KB this week." "Show me everything Claude wrote in the auth section last month." Bucket 3 surface, requires walking the shadow log across files.
 - **Full-text search over history.** Search past versions of files, not just current. "I remember writing a good sentence about X — find it across all versions." Requires indexing shadow blob history, separate from the current-state search index.
@@ -906,15 +1190,19 @@ Items here cover users with existing content who want to adopt openknowledge.
 - **Project repo** — the user's existing git repository (Fumadocs, Mintlify, any MDX repo). Openknowledge is a guest in this repo. The only traces openknowledge leaves are user-triggered Save Version commits and the `.git/openknowledge/` directory (invisible to git transport).
 - **Shadow repo** — bare git repo at `.git/openknowledge/` (integrated mode) or `.openknowledge/` (standalone mode), with work-tree pointing at the project root. The bare repo files (`HEAD`, `config`, `objects/`, `refs/`) live directly in this directory alongside openknowledge-specific files (`rescue/`, `ok-config.json`). An **attribution journal** holding fine-grained per-writer WIP refs between Save Versions. Ephemeral — losing it loses attribution detail but not content (that's in the project repo). Nested inside `.git/` so it requires no `.gitignore` entry and is repo-local; in Now, concurrent writer instances against the same shadow repo are prevented by the shadow-root lock.
 - **Attribution journal** — the shadow repo's role. Tracks who wrote what at a finer granularity than the project repo's commit history. Readable by Bucket 3 origin-shading UI and Bucket 4 timeline.
-- **Reconciled base** — per-document snapshot of the byte-identical state between Y.Doc and disk at the last sync point. The "base" input to three-way merge.
+- **Shadow branch** — an automatic, branch-scoped editing context in the shadow repo that mirrors a project repo branch 1:1. Each project branch gets its own set of WIP refs (`refs/wip/<branch>/*`), checkpoint refs (`refs/checkpoints/<branch>/*`), and `reconciledBase` scope. On branch switch, the current shadow branch's state is parked and the target branch's state is loaded. Distinct from drafts, which are user-created named editing alternatives within a shadow branch.
+- **Park (branch context)** — the operation of committing current Y.Doc in-memory state to a shadow branch's WIP refs before a cross-branch switch. The park commit includes both the Y.Doc state and a disk snapshot (used as merge base for future WIP restoration). Parking captures state from memory, not disk, because git may have already modified the working tree by the time the HEAD watcher fires.
+- **Reconciled base** — per-document, per-branch snapshot of the byte-identical state between Y.Doc and disk at the last sync point. The "base" input to three-way merge. Scoped by shadow branch — each project branch has its own `reconciledBase` map.
 - **In-flight edits** — user changes present in the Y.Doc but not yet flushed to disk (within the 2–10s L1 debounce window).
 - **External writer** — any writer other than our L1 save path: git operations, external editors, agents with filesystem tools, LSP fixers, shell scripts.
 - **Lifecycle event** — a typed `DiskEvent`: Create, Update, Delete, Rename, Conflict, or BatchBegin/End.
-- **BatchBegin / BatchEnd** — atomic-event markers emitted by the HEAD watcher around coordinated operations (git pull, checkout, merge, rebase). File-watcher events inside a batch are buffered and applied together at BatchEnd.
+- **BatchBegin / BatchEnd** — atomic-event markers emitted by the HEAD watcher around coordinated operations (git pull, checkout, merge, rebase). File-watcher events inside a batch are buffered and applied together at BatchEnd. Each `BatchEnd` is classified as `within-branch` (pull/merge), `cross-branch` (checkout), or `detached-head` — determining whether reconciliation or park+load semantics apply.
 - **Upstream-import commit** — a commit in the shadow repo authored by `upstream`, representing the set of content changes that entered the working tree via a project git operation. Not a mirror of upstream's commit history; a single tree snapshot.
 - **Resolution mode** — a read-only Y.Doc state entered when a file contains git conflict markers or when reconciliation cannot proceed safely. User resolves externally; openknowledge re-engages on next clean state.
-- **Per-writer WIP refs** — `refs/wip/<writer-id>` in the shadow repo. One ref per active writer (human, agent, upstream). Attribution-faithful by construction.
+- **Per-writer WIP refs** — `refs/wip/<branch>/<writer-id>` in the shadow repo. One ref per active writer per visited branch. Attribution-faithful by construction. Branch-scoped to prevent cross-branch edit contamination.
 - **Shadow-root writer lock** — exclusive lock stored at `<shadowDir>/lock` that grants one runtime instance authority to mutate shadow refs and perform reconciliation-side writes. Prevents concurrent mutation of a single shadow store by multiple worktrees or processes.
 - **Rescue buffer** — the in-memory Y.Doc state of a tombstoned-but-dirty document, persisted to `<shadow-parent>/openknowledge/rescue/<docName>.md` for 24h so the user can recover unsaved work.
-- **Save Version** — user-triggered checkpoint that creates a real commit on the project repo's current branch (with co-authored-by trailers) and writes a `refs/checkpoints/<sha>` bookmark in the shadow. The graduation point where WIP becomes durable project history.
-- **Checkpoint ref** — `refs/checkpoints/<project-commit-sha>` in the shadow repo. Stores a full content tree snapshot so the shadow remains self-contained even if the project repo rewrites history (rebase, force-push).
+- **Save Version** — user-triggered checkpoint that creates a real commit on the project repo's current branch (with co-authored-by trailers) and writes a `refs/checkpoints/<branch>/<sha>` bookmark in the shadow. The graduation point where WIP becomes durable project history.
+- **Checkpoint ref** — `refs/checkpoints/<branch>/<project-commit-sha>` in the shadow repo. Branch-scoped. Stores a full content tree snapshot so the shadow remains self-contained even if the project repo rewrites history (rebase, force-push).
+- **BatchKind** — classification of a `BatchEnd` event: `within-branch` (same branch, HEAD moved due to pull/merge/rebase — reconcile), `cross-branch` (different branch detected — park + load + restore), or `detached-head` (HEAD is a raw SHA — park + load, no restore, GC on next named checkout).
+- **lastKnownBranch** — cached project branch name, resolved from `.git/HEAD` on startup and updated on every `BatchEnd`. Used to classify `BatchKind` by comparing old branch to new branch. For detached HEAD, stores `detached-<sha>`.
