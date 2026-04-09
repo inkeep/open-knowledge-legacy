@@ -16,7 +16,7 @@ export function EditorHeader({ provider, isSourceMode, onSourceModeChange }: Edi
     <header className="flex h-10 shrink-0 items-center gap-2 border-b">
       <div className="flex items-center gap-1 px-3">
         <SidebarTrigger className="-ml-1" />
-        <Separator orientation="vertical" className="mr-1 h-4 self-center" />
+        <Separator orientation="vertical" className="mr-1 h-4 data-vertical:self-center" />
         <span className="font-mono text-sm text-muted-foreground">untitled.md</span>
       </div>
       <div className="ml-auto flex items-center gap-2 px-3">
