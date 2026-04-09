@@ -174,5 +174,70 @@ Three of five initial recommendations **changed meaningfully** under deeper anal
 
 Spec is now audit-resolved and ready for finalization after main drift check.
 
+---
+
+## 2026-04-08 — Rebased onto origin/main (baseline shift 9380859 → 3f4d7b1)
+
+User directed "rebase and adapt" after drift check revealed **13 commits on main since baseline**, three of which affect the spec's factual substrate in major ways.
+
+### Three layers of drift
+
+**Layer 1 — Monorepo restructure (commit `8971f7c`, PR #10)**
+
+`init_spike/` → `packages/{core, server, cli, app}/`. Every file path in the spec was stale.
+
+Path translation applied throughout SPEC.md + evidence files:
+- `init_spike/src/editor/observers.ts` → `packages/app/src/editor/observers.ts`
+- `init_spike/src/editor/observers.test.ts` → `packages/app/src/editor/observers.test.ts`
+- `init_spike/src/server/hocuspocus-plugin.ts` → SPLIT across:
+  - `packages/server/src/api-extension.ts` (HTTP endpoints + `handleTestReset`)
+  - `packages/server/src/agent-sessions.ts` (UndoManager + `syncTextToFragment`)
+  - `packages/app/src/server/hocuspocus-plugin.ts` (Vite plugin shim)
+- `init_spike/src/editor/extensions/` → `packages/core/src/extensions/`
+- `init_spike/tests/e2e/` → dropped entirely by the monorepo restructure (the 24 Playwright tests that existed pre-monorepo are gone)
+- `init_spike/tests/stress/` → `packages/app/tests/stress/` (new dir — ours)
+- `init_spike/package.json` → `packages/app/package.json`
+
+**Layer 2 — Observer semantic changes (`9f215ef` + `99ea308`)**
+
+Both observers now skip remote transactions via `transaction.local` guard. Observer A + Observer B only process LOCAL changes. Server-side `syncTextToFragment()` (`packages/server/src/agent-sessions.ts:39`) pairs Y.Text + XmlFragment updates in one transaction. Clients receive pre-synced updates from agent writes; observers never run for remote agent writes.
+
+Spec updates:
+- §8 architecture recap rewritten to reflect `transaction.local` guards + `syncTextToFragment` server-side pairing
+- Layer A (direct local mutation in same process) still exercises observers normally
+- Layer B (remote HocuspocusProvider client) sees observers skip remote updates — reinforcing the Option E reframing from the audit (Layer B asserts Y.Text content + HTTP contract + server UndoManager, not bridge invariant)
+
+**Layer 3 — Disk bridge feedback loop fix (`b289cc6`)**
+
+Main added an Observer A early-exit (`if (currentText === md) { lastSyncedXmlMd = md; return; }`) to fix a disk bridge feedback loop. **Our fix converged on the same check** for a different reason (Observer B external-write propagation leaving `lastSyncedXmlMd` stale). Rebase merged both into a single guard with a combined comment covering both cases — one rare case of a conflict resolving to a strictly better final state than either input.
+
+### Our rebased commits (two, on top of `3f4d7b1`)
+
+- `e3ff705` — `fix: applyUserDelta diffLines alignment + observer baseline staleness` — our WIP fixes carried forward: padded diffLines (gap 2 fix), converged `currentText === md` early-exit, `lastSyncedXmlMd` update after Observer B propagation, captureTimeout comment at `packages/server/src/agent-sessions.ts:72`, "agent undo during active user typing" regression test in `observers.test.ts`.
+- `f93d7f9` — `spec: adapt stress testing spec to post-monorepo main (3f4d7b1)` — the spec update work from this session.
+
+### Critical findings post-rebase
+
+1. **Gap 2 fix is NOT on main.** Main still has the unpatched `applyUserDelta`. Our `e3ff705` carries it forward on the stress branch. Spec flags this as a standalone production bug fix that could ship independently (see §16 ASK_FIRST).
+2. **D18 (force-flush test-reset) is still needed.** Verified post-rebase: `packages/server/src/api-extension.ts:273` does NOT call `debouncer.executeNow`. The M2 race condition is still present on main.
+3. **No Playwright infrastructure post-monorepo.** `@playwright/test` is still in `packages/app/package.json` devDeps and the `test:e2e` script exists, but NO `playwright.config.ts` and NO test files. Our Layer C will be the first Playwright test in the new structure. Scope expanded to include creating `packages/app/playwright.config.ts`.
+4. **Observers test suite still passes (26/26) after merge** — the gap 2 regression test landed cleanly, the `transaction.local` guards didn't break anything, the convergent `currentText === md` early-exit works for both reasons.
+
+### New test files on main referenced in spec §8
+
+- `packages/app/src/editor/observer-sync.test.ts` — NEW on main, covers cross-tab `transaction.local` guard behavior
+- `packages/app/src/server/agent-flow.test.ts` — NEW on main, covers server-side agent write + `syncTextToFragment`
+
+### Revised scope totals (unchanged — the drift was about paths + semantics, not scope)
+
+- 22 locked decisions (D1-D22, D12 superseded)
+- 13 functional requirements
+- 10 core scenarios
+- 4 test layers (A, B, C, D)
+- Baseline commit: `3f4d7b1` (was `9380859`)
+
+**Outstanding:** Re-run audit against the rebased spec to catch regressions introduced by the path + semantic updates.
+
+
 
 

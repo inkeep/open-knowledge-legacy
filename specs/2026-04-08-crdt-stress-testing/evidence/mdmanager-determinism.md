@@ -1,10 +1,10 @@
 ---
 topic: mdManager.serialize determinism
 sources:
-  - init_spike/src/editor/extensions/shared.ts
-  - init_spike/src/editor/observers.ts
+  - packages/app/src/editor/extensions/shared.ts (post-monorepo; pre-monorepo was init_spike/src/editor/extensions/shared.ts)
+  - packages/app/src/editor/observers.ts
 verified_at: 2026-04-08
-verified_by: runtime test
+verified_by: runtime test (pre-rebase) + path-confirmed post-rebase
 ---
 
 # `mdManager.serialize` behavior under repeated runs

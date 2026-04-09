@@ -1,10 +1,11 @@
 ---
 topic: /api/test-reset cleanup semantics
 sources:
-  - init_spike/src/server/hocuspocus-plugin.ts (L119-144, L398-420)
+  - packages/server/src/api-extension.ts:273 (handleTestReset, post-monorepo)
+  - packages/server/src/agent-sessions.ts:~100 (closeAll — extracted from pre-monorepo closeAllAgentSessions)
   - ~/.claude/oss-repos/hocuspocus/packages/server/src/Hocuspocus.ts (L545-588 — unloadDocument / shouldUnloadDocument)
-verified_at: 2026-04-08
-verified_by: code read + audit M2 correction
+verified_at: 2026-04-08 (post-monorepo rebase)
+verified_by: code read + audit M2 correction + post-rebase verification
 ---
 
 # What `/api/test-reset` actually cleans up
