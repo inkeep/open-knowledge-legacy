@@ -26,8 +26,12 @@ export interface BatchEndInfo {
   newBranch: string | null;
 }
 
-export type OnBatchBegin = () => void;
-export type OnBatchEnd = (info: BatchEndInfo) => void | Promise<void>;
+export interface BatchBeginInfo {
+  trigger: string;
+}
+
+export type OnBatchBegin = (info: BatchBeginInfo) => void;
+export type OnBatchEnd = (info: BatchEndInfo) => void;
 
 export interface HeadWatcherHandle {
   unsubscribe: () => Promise<void>;
@@ -199,14 +203,11 @@ export async function startHeadWatcher(
     }, QUIET_WINDOW_MS);
   }
 
-  function handleGitEvent(): void {
+  function handleGitEvent(trigger: string): void {
     if (!inBatch) {
       inBatch = true;
-      // oldHead already holds the correct pre-batch value (initialized at
-      // watcher start, updated after each batch ends). Re-reading here would
-      // capture the post-change value because @parcel/watcher fires after
-      // .git/HEAD has already been written.
-      onBatchBegin();
+      oldHead = readHeadSha(gitDir);
+      onBatchBegin({ trigger });
 
       // Start timeout cap
       timeoutTimer = setTimeout(() => {
@@ -232,7 +233,7 @@ export async function startHeadWatcher(
         // Extract filename from path (last segment)
         const fileName = event.path.split('/').pop() ?? '';
         if (WATCHED_FILES.has(fileName)) {
-          handleGitEvent();
+          handleGitEvent(fileName);
           break; // One event per batch is enough to trigger
         }
       }

@@ -21,7 +21,9 @@ import {
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import {
   incrementBatch,
+  incrementBranchSwitch,
   incrementConflict,
+  incrementPark,
   incrementReconcile,
   incrementRescueBuffer,
   incrementUpstreamImport,
@@ -206,9 +208,9 @@ export function createServer(options: ServerOptions): ServerInstance {
           const result = reconcile({ docName, base, ours, theirs });
 
           // Structured log with content hashes
-          const baseH = contentHash(base).slice(0, 8);
-          const oursH = contentHash(ours).slice(0, 8);
-          const theirsH = contentHash(theirs).slice(0, 8);
+          const baseH = contentHash(base).slice(0, 6);
+          const oursH = contentHash(ours).slice(0, 6);
+          const theirsH = contentHash(theirs).slice(0, 6);
           console.log(
             `[reconcile] ${docName} base=${baseH} ours=${oursH} theirs=${theirsH} result=${result.kind}`,
           );
@@ -438,8 +440,8 @@ export function createServer(options: ServerOptions): ServerInstance {
       headWatcher = await startHeadWatcher(
         projectDir,
         // onBatchBegin — park current branch context before git modifies working tree
-        async () => {
-          console.log('[batch] begin');
+        async ({ trigger }) => {
+          console.log(`[batch] begin trigger=${trigger}`);
           incrementBatch();
           hocuspocus.flushPendingStores();
           persistence.flushPendingGitCommit();
@@ -458,6 +460,7 @@ export function createServer(options: ServerOptions): ServerInstance {
               try {
                 const sha = await parkBranch(resolvedShadow, currentBranch, 'server', docs);
                 if (sha) {
+                  incrementPark();
                   console.log(
                     `[shadow] parked ${docs.length} docs on ${currentBranch} → ${sha.slice(0, 8)}`,
                   );
@@ -486,6 +489,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             await drainEventBuffer();
           } else {
             // Cross-branch or detached-head — discard buffered events (wrong branch state)
+            incrementBranchSwitch();
             eventBuffer.splice(0, eventBuffer.length);
 
             // Switch reconciledBase scope to target branch
