@@ -27,12 +27,18 @@ function resolveDts(packageName: string, relativePath: string): string {
   return path.join(pkgDir, relativePath);
 }
 
+/** Directory of this source file — works in Bun (import.meta.dir), Node 22+ (import.meta.dirname), and Vite (URL fallback). */
+const __ownDir: string =
+  import.meta.dir ??
+  (import.meta.dirname as string | undefined) ??
+  path.dirname(new URL(import.meta.url).pathname);
+
 /**
  * Resolves a file relative to the monorepo app package.
  * Shadcn-installed components live at packages/app/src/components/ui/.
  */
 function resolveAppComponent(relativePath: string): string {
-  return path.resolve(import.meta.dir, '../../../app/src/components/ui', relativePath);
+  return path.resolve(__ownDir, '../../../app/src/components/ui', relativePath);
 }
 
 export const BUILT_INS: BuiltInManifestEntry[] = [
