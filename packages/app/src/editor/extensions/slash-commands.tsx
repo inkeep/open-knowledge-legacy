@@ -27,7 +27,8 @@ function getDefaultProps(item: SlashCommandItem): Record<string, unknown> {
     if (prop.type === 'reactnode') continue;
     if (prop.defaultValue !== undefined) {
       defaults[prop.name] = prop.defaultValue;
-    } else if (prop.type === 'enum' && prop.enumValues && prop.enumValues.length > 0) {
+    } else if (prop.type === 'enum' && prop.enumValues.length > 0) {
+      // PropDef discriminated union: when type === 'enum', enumValues is typed as string[]
       defaults[prop.name] = prop.enumValues[0];
     } else if (prop.type === 'boolean') {
       defaults[prop.name] = false;

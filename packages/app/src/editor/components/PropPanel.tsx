@@ -83,9 +83,15 @@ function PropControl({ prop, value, onChange }: PropControlProps) {
     onChange(prop.name, newValue);
   };
 
+  // Accessible label id — shared across the visible <span> label and the
+  // form control's aria-labelledby, so screen readers announce the prop
+  // name when focus enters the control.
+  const labelId = `prop-label-${prop.name}`;
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
       <span
+        id={labelId}
         style={{
           fontSize: '11px',
           fontWeight: 600,
@@ -96,18 +102,23 @@ function PropControl({ prop, value, onChange }: PropControlProps) {
         {prop.name}
         {prop.required && <span style={{ color: '#ef4444', marginLeft: '2px' }}>*</span>}
       </span>
-      {prop.type === 'string' && <StringControl value={value as string} onChange={handleChange} />}
+      {prop.type === 'string' && (
+        <StringControl value={value as string} onChange={handleChange} ariaLabelledBy={labelId} />
+      )}
       {prop.type === 'boolean' && (
-        <BooleanControl value={value as boolean} onChange={handleChange} />
+        <BooleanControl value={value as boolean} onChange={handleChange} ariaLabelledBy={labelId} />
       )}
       {prop.type === 'enum' && (
         <EnumControl
           value={value as string}
-          enumValues={prop.enumValues || []}
+          enumValues={prop.enumValues}
           onChange={handleChange}
+          ariaLabelledBy={labelId}
         />
       )}
-      {prop.type === 'number' && <NumberControl value={value as number} onChange={handleChange} />}
+      {prop.type === 'number' && (
+        <NumberControl value={value as number} onChange={handleChange} ariaLabelledBy={labelId} />
+      )}
       {prop.description && (
         <span style={{ fontSize: '10px', color: '#999' }}>{prop.description.split('\n')[0]}</span>
       )}
@@ -118,9 +129,11 @@ function PropControl({ prop, value, onChange }: PropControlProps) {
 function StringControl({
   value,
   onChange,
+  ariaLabelledBy,
 }: {
   value: string | undefined;
   onChange: (v: string) => void;
+  ariaLabelledBy: string;
 }) {
   return (
     <input
@@ -128,6 +141,7 @@ function StringControl({
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={() => markUserTyping()}
+      aria-labelledby={ariaLabelledBy}
       style={{
         border: '1px solid #d0d0d0',
         borderRadius: '4px',
@@ -144,9 +158,11 @@ function StringControl({
 function BooleanControl({
   value,
   onChange,
+  ariaLabelledBy,
 }: {
   value: boolean | undefined;
   onChange: (v: boolean) => void;
+  ariaLabelledBy: string;
 }) {
   return (
     <Switch.Root
@@ -155,6 +171,7 @@ function BooleanControl({
         markUserTyping();
         onChange(checked);
       }}
+      aria-labelledby={ariaLabelledBy}
       style={{
         width: '36px',
         height: '20px',
@@ -210,10 +227,12 @@ function EnumControl({
   value,
   enumValues,
   onChange,
+  ariaLabelledBy,
 }: {
   value: string | undefined;
   enumValues: string[];
   onChange: (v: string) => void;
+  ariaLabelledBy: string;
 }) {
   return (
     <Select.Root
@@ -224,6 +243,7 @@ function EnumControl({
       }}
     >
       <Select.Trigger
+        aria-labelledby={ariaLabelledBy}
         style={{
           display: 'flex',
           alignItems: 'center',
@@ -268,9 +288,11 @@ function EnumControl({
 function NumberControl({
   value,
   onChange,
+  ariaLabelledBy,
 }: {
   value: number | undefined;
   onChange: (v: number | undefined) => void;
+  ariaLabelledBy: string;
 }) {
   return (
     <input
@@ -286,6 +308,7 @@ function NumberControl({
         if (!Number.isNaN(n)) onChange(n);
       }}
       onKeyDown={() => markUserTyping()}
+      aria-labelledby={ariaLabelledBy}
       style={{
         border: '1px solid #d0d0d0',
         borderRadius: '4px',
