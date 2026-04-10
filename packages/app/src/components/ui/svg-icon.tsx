@@ -26,7 +26,7 @@ export const SvgIcon: FC<IconComponentProps> = ({
 }) => (
   <svg
     role="img"
-    aria-label="SVG Icon"
+    aria-hidden="true"
     {...defaultAttributes}
     className={className}
     height={size}

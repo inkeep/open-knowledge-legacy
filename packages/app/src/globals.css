@@ -350,7 +350,9 @@
   display: grid;
   place-content: center;
   margin: 0;
-  transition: background-color 150ms, border-color 150ms;
+  transition:
+    background-color 150ms,
+    border-color 150ms;
 }
 
 .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
@@ -373,13 +375,13 @@
   outline-offset: 2px;
 }
 
+.ProseMirror ul[data-type="taskList"] li > div {
+  flex: 1;
+}
+
 .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
   text-decoration: line-through;
   color: var(--color-gray-400);
-}
-
-.ProseMirror ul[data-type="taskList"] li > div {
-  flex: 1;
 }
 
 /* Blockquote */
@@ -403,14 +405,6 @@
   line-height: 1.6;
 }
 
-.ProseMirror pre code {
-  background: none;
-  padding: 0;
-  border-radius: 0;
-  font-size: inherit;
-  color: inherit;
-}
-
 /* Inline code */
 .ProseMirror code {
   background: var(--color-gray-100);
@@ -418,6 +412,14 @@
   padding: 0.15em 0.35em;
   font-family: var(--font-mono);
   font-size: 0.875em;
+}
+
+.ProseMirror pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
 }
 
 /* Links */

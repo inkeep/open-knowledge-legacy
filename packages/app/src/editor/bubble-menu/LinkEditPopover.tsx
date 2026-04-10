@@ -35,6 +35,8 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
   function applyLink() {
     if (url.trim()) {
       editor.chain().focus().setLink({ href: url.trim() }).run();
+    } else if (isLinkActive) {
+      editor.chain().focus().unsetLink().run();
     }
     setShowInput(false);
   }
@@ -67,11 +69,13 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={handleKeyDown}
+            aria-label="Link URL"
             className="h-5 w-44 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
           />
           <Button
             variant="ghost"
             size="icon-xs"
+            aria-label="Apply link"
             onClick={() => {
               applyLink();
             }}
@@ -84,6 +88,7 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
             <Button
               variant="ghost"
               size="icon-xs"
+              aria-label="Open link in new tab"
               onMouseDown={(e) => {
                 e.preventDefault();
                 window.open(currentUrl, '_blank', 'noopener,noreferrer');
@@ -94,6 +99,7 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
             <Button
               variant="ghost"
               size="icon-xs"
+              aria-label="Remove link"
               onMouseDown={(e) => {
                 e.preventDefault();
                 removeLink();
@@ -113,6 +119,7 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
         <Button
           variant="ghost"
           size="icon-xs"
+          aria-label="Insert link"
           className={isLinkActive ? 'bg-accent text-primary' : ''}
           onMouseDown={(e) => {
             e.preventDefault();
