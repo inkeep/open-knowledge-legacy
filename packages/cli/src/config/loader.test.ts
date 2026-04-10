@@ -65,17 +65,4 @@ describe('loadConfig', () => {
     const { config } = loadConfig(testDir);
     expect(config.server.port).toBe(3000);
   });
-
-  test('arrays are replaced, not concatenated', () => {
-    const configDir = resolve(testDir, '.open-knowledge');
-    mkdirSync(configDir, { recursive: true });
-    writeFileSync(
-      resolve(configDir, 'config.yml'),
-      'content:\n  exclude:\n    - "*.tmp"\n    - "*.bak"\n',
-      'utf-8',
-    );
-
-    const { config } = loadConfig(testDir);
-    expect(config.content.exclude).toEqual(['*.tmp', '*.bak']);
-  });
 });

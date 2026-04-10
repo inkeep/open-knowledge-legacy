@@ -131,7 +131,6 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 # root (the directory containing .open-knowledge/), NOT to this file.
 # content:
 #   dir: ./content
-#   exclude: []          # glob patterns, e.g. ["*.tmp", "drafts/**"]
 
 
 # --- Persistence -----------------------------------------------------------

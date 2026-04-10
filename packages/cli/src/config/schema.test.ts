@@ -5,7 +5,6 @@ describe('ConfigSchema', () => {
   test('empty object returns all defaults', () => {
     const config = ConfigSchema.parse({});
     expect(config.content.dir).toBe('./content');
-    expect(config.content.exclude).toEqual([]);
     expect(config.server.port).toBe(3000);
     expect(config.server.host).toBe('localhost');
     expect(config.persistence.debounceMs).toBe(2000);
