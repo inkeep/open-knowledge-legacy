@@ -14,6 +14,7 @@ import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, type Ref, useEffect, useImperativeHandle, useRef } from 'react';
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
+import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import { sharedExtensions } from './extensions/shared.ts';
 import { markUserTyping, setupObservers } from './observers';
 
@@ -122,6 +123,8 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
   lastAgentId: null,
 };
 
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+
 export const TiptapEditor: FC<{
   ref?: Ref<TiptapEditorHandle>;
 }> = ({ ref }) => {
@@ -133,8 +136,6 @@ export const TiptapEditor: FC<{
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const provider = getProvider();
   const identity = useIdentity();
-
-  const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
   const editor = useEditor({
     editorProps: {
@@ -376,20 +377,20 @@ export const TiptapEditor: FC<{
   useImperativeHandle(
     ref,
     () => ({
-      getMarkdown(): string {
+      getMarkdown() {
         if (!editor) return '';
         const json = editor.getJSON();
         const body = mdManager.serialize(json);
         return prependFrontmatter(frontmatterRef.current, body);
       },
-      getYText(): Y.Text {
+      getYText() {
         return provider.document.getText('source');
       },
-      getProvider(): HocuspocusProvider {
+      getProvider() {
         return provider;
       },
     }),
-    [editor, mdManager, provider.document, provider],
+    [editor, provider.document, provider],
   );
 
   // Data attributes are set once on initial render; the flash useEffect updates them
@@ -403,6 +404,7 @@ export const TiptapEditor: FC<{
       data-agent-flash-position="append"
       data-agent-flash-agent-id=""
     >
+      {editor && <BubbleMenuBar editor={editor} />}
       <EditorContent editor={editor} className="h-full" />
     </div>
   );

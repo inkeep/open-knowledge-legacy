@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
+import { MarkdownManager } from '@tiptap/markdown';
 // App-side extensions — includes the same schema plus view-layer overrides only
 import { sharedExtensions as appExtensions } from '../../../app/src/editor/extensions/shared.ts';
 import { sharedExtensions as coreExtensions } from './shared.ts';
+
+const mdManager = new MarkdownManager({ extensions: coreExtensions });
 
 /**
  * Schema-parity drift test (§3.3 invariant, OS09).
@@ -76,5 +79,35 @@ describe('Schema parity: core vs app (OS09)', () => {
       expect(appSpec).toBeDefined();
       expect(JSON.stringify(appSpec.attrs)).toBe(JSON.stringify(coreSpec.attrs));
     }
+  });
+});
+
+describe('Link extension round-trip', () => {
+  test('inline link parses and serializes correctly', () => {
+    const original = 'Check out [this link](https://example.com) for more.';
+    const parsed = mdManager.parse(original);
+    const serialized = mdManager.serialize(parsed);
+    expect(serialized.trim()).toBe(original);
+  });
+
+  test('link with title parses and serializes correctly', () => {
+    const original = '[Example](https://example.com "My title")';
+    const parsed = mdManager.parse(original);
+    const serialized = mdManager.serialize(parsed);
+    expect(serialized.trim()).toBe(original);
+  });
+
+  test('multiple links in a paragraph round-trip correctly', () => {
+    const original = 'See [foo](https://foo.com) and [bar](https://bar.com).';
+    const parsed = mdManager.parse(original);
+    const serialized = mdManager.serialize(parsed);
+    expect(serialized.trim()).toBe(original);
+  });
+
+  test('link href is preserved after round-trip', () => {
+    const original = '[click here](https://example.com/path?q=1&r=2)';
+    const parsed = mdManager.parse(original);
+    const serialized = mdManager.serialize(parsed);
+    expect(serialized.trim()).toBe(original);
   });
 });

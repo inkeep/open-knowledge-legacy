@@ -7,6 +7,7 @@
  * None of the 9 sites need to import the factory directly (R12).
  */
 import Image from '@tiptap/extension-image';
+import Link from '@tiptap/extension-link';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
@@ -31,6 +32,13 @@ export const sharedExtensions = [
   TableHeader,
   TableCell,
   Image,
+  Link.configure({
+    openOnClick: false,
+    HTMLAttributes: {
+      target: '_blank',
+      rel: 'noopener noreferrer',
+    },
+  }),
   TaskList,
   TaskItem,
 ];

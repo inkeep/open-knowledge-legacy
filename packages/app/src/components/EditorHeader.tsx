@@ -4,6 +4,8 @@ import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { AgentUndoButton } from '@/presence/AgentUndoButton';
 import { PresenceBar } from '@/presence/PresenceBar';
+import { Markdown } from './icons/markdown';
+import { Textbox } from './icons/textbox';
 
 interface EditorHeaderProps {
   provider: HocuspocusProvider | null;
@@ -27,19 +29,21 @@ export function EditorHeader({ provider, isSourceMode, onSourceModeChange }: Edi
         >
           <Button
             variant={!isSourceMode ? 'default' : 'ghost'}
-            size="xs"
+            size="sm"
             aria-pressed={!isSourceMode}
             onClick={() => onSourceModeChange(false)}
           >
-            WYSIWYG
+            <Textbox className="size-6" />
+            Visual editor
           </Button>
           <Button
             variant={isSourceMode ? 'default' : 'ghost'}
-            size="xs"
+            size="sm"
             aria-pressed={isSourceMode}
             onClick={() => onSourceModeChange(true)}
           >
-            Source
+            <Markdown className="size-6" />
+            Markdown
           </Button>
         </fieldset>
         <AgentUndoButton />
