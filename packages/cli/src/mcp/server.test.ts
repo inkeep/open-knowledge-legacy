@@ -41,7 +41,7 @@ describe('registerAllPrompts', () => {
 
     registerAllPrompts(mockPrompt);
 
-    for (const { name, handler } of handlers) {
+    for (const { handler } of handlers) {
       // Each handler takes an args object — pass a dummy source/url
       const result = handler({ source: 'https://example.com', url_or_path: 'https://example.com' });
       expect(result).toHaveProperty('messages');
