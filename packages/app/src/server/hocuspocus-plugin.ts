@@ -52,16 +52,15 @@ export const hocuspocus = new Hocuspocus({
 
 const sessionManager = new AgentSessionManager(hocuspocus);
 
-// Add API extension for HTTP endpoints
-hocuspocus.configure({
-  extensions: [
-    createApiExtension({
-      hocuspocus,
-      sessionManager,
-      contentDir: CONTENT_DIR,
-    }),
-  ],
-});
+// Add API extension — push directly rather than using hocuspocus.configure()
+// which replaces the extensions array via spread, losing the persistence extension.
+hocuspocus.configuration.extensions.push(
+  createApiExtension({
+    hocuspocus,
+    sessionManager,
+    contentDir: CONTENT_DIR,
+  }),
+);
 
 export function hocuspocusPlugin(): Plugin {
   return {

@@ -60,13 +60,15 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const sessionManager = new AgentSessionManager(hocuspocus);
 
-  // Add API extension
+  // Add API extension — push directly onto the extensions array rather than
+  // calling hocuspocus.configure({ extensions: [...] }), which uses spread
+  // and would REPLACE the existing persistence extension.
   const apiExtension = createApiExtension({
     hocuspocus,
     sessionManager,
     contentDir,
   });
-  hocuspocus.configure({ extensions: [apiExtension] });
+  hocuspocus.configuration.extensions.push(apiExtension);
 
   let watcher: AsyncSubscription | null = null;
 

@@ -14,7 +14,7 @@
  *   - Content-based polling with timeout for disk assertions (D4)
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -57,7 +57,9 @@ export interface TestServer {
 }
 
 export async function createTestServer(): Promise<TestServer> {
-  const contentDir = mkdtempSync(join(tmpdir(), 'ok-test-'));
+  // realpathSync resolves macOS /var → /private/var symlink so that
+  // @parcel/watcher event paths match the contentDir used by pathToDocName.
+  const contentDir = realpathSync(mkdtempSync(join(tmpdir(), 'ok-test-')));
   // Ensure test-doc.md exists (persistence expects it for initial load)
   writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
 
