@@ -108,7 +108,7 @@
 | Must | `.mcp.json` in repo configures Claude Code automatically | Team members get MCP server on clone + trust approval | Committed to git |
 | Must | AGENTS.md documents wiki conventions | Any agent can navigate the wiki by reading files, even without MCP | |
 | Must | MCP `instructions` field guides agent behavior on connect | Agent knows to read catalog first, then search, then read specific files | |
-| Must | `.open-knowledge/config.yml` `wiki:` section supports configurable article paths | Wiki articles can live in `.open-knowledge/articles/`, an existing `docs/` folder, or the repo root (repo-as-wiki mode) | Merged into the CLI server config schema this session (was separate `config.yaml`). See D16 update. |
+| Must | `.open-knowledge/config.yml` `wiki:` section supports user-defined roots with `include`/`exclude` globs | Wiki roots are configurable — default articles/, external-sources/, research/ can be reshaped freely. Each root is a browsable subtree with its own `INDEX.md`. | Merged into CLI config schema (was separate `config.yaml`). Evolved from fixed paths to `roots` array. See D16. |
 | Should | `mcp__openknowledge__init-wiki` MCP prompt bootstraps wiki from empty state | Agent reads codebase + existing docs, writes knowledge articles grouped by topic, sets sticky folder descriptions on each new subfolder. Claude Code surfaces the prompt as `mcp__openknowledge__init-wiki` in the slash menu; other MCP clients use their equivalent prompt UX. | Shipped as an MCP prompt, not a SKILL.md file (pivoted this session — MCP prompts are cross-client via the protocol). |
 | Should | `mcp__openknowledge__ingest` MCP prompt fetches external sources into `external-sources/` | Given a URL or file, fetches raw content and saves it as reference material with frontmatter. | Raw preservation — no analysis, just capture. Pivoted to MCP prompt. |
 | Should | `mcp__openknowledge__research` MCP prompt analyzes sources and writes findings to `research/` | Uses `mcp__openknowledge__ingest` (or the same fetch workflow manually) to gather sources, then writes structured provisional findings to `research/`. | Non-canonical. Pivoted to MCP prompt. |
@@ -149,7 +149,7 @@ myproject/
   .open-knowledge/
     INDEX.md                    # root catalog — links to all sections
     AGENTS.md                   # conventions for any agent (works without MCP)
-    config.yaml                 # settings (article paths, etc.)
+    config.yml                  # settings (wiki roots, persistence, etc.)
     articles/                   # knowledge articles grouped by topic
       infrastructure/
         deploy-process.md
@@ -166,22 +166,22 @@ myproject/
     cache/                      # gitignored derived data
 ```
 
-### config.yaml
+### config.yml (`wiki:` section)
 
 ```yaml
-# Where wiki articles live
-articles_path: ./articles       # default: articles/ inside .open-knowledge/
-# articles_path: ../docs        # or point to an existing docs/ folder
-# articles_path: .              # or treat the whole repo as a wiki
-
-# Where external sources land
-external_sources_path: ./external-sources
-
-# Where research goes
-research_path: ./research
+wiki:
+  roots:
+    - path: ./articles
+      label: Knowledge Articles
+    - path: ./external-sources
+      label: External Sources
+    - path: ./research
+      label: Research
+  include: ["**/*.md"]          # glob patterns for wiki membership
+  exclude: []                   # glob patterns to exclude
 ```
 
-> **Note:** When `articles_path` points outside `.open-knowledge/` (e.g., `../docs`), ensure that directory isn't also managed by the editor's Hocuspocus persistence pipeline. Two systems watching the same directory with different source-of-truth models creates conflicts. The default (`./articles`) avoids this.
+> **Note:** `roots` is user-configurable — teams can add custom roots (e.g., `eng-research/`, `RFCs/`) beyond the default three. Each root gets its own `INDEX.md` catalog. When a root `path` points outside `.open-knowledge/` (e.g., `../docs`), ensure that directory isn't also managed by the editor's Hocuspocus persistence pipeline. Two systems watching the same directory with different source-of-truth models creates conflicts. The default paths avoid this.
 
 ### System architecture
 
@@ -373,7 +373,7 @@ STORIES.md should be updated to reflect this supersession.
 - Then start the file watcher for live changes going forward.
 
 **File watcher behavior:**
-- Watches `.open-knowledge/` recursively (respects `config.yaml` for article paths)
+- Watches `.open-knowledge/` recursively (respects `config.yml` wiki roots)
 - On any `.md` file create/update/delete (excluding `INDEX.md` files):
   1. Read all sibling `.md` files' frontmatter
   2. Regenerate the parent folder's `INDEX.md`
@@ -501,7 +501,7 @@ Phase 6 (extensions): /consolidate, status tool, GitHub Actions
 | D13 | MCP server tools: **none**. Scaffolding is a CLI subcommand (`open-knowledge init`, D4). `rebuild_catalogs` and `status` extensions remain deferred. `instructions` is a server capability. | T | DIRECTED | No | **Updated 2026-04-09**: previously said `init` was the core tool. Moved out of the MCP server. The server's only surfaces are now: `instructions`, file watcher/catalog regen, and the three workflow prompts. | Updated this session. |
 | D14 | Content lifecycle: external-sources (raw) → research (analysis) → articles (canonical) | P | LOCKED | No | `/ingest` captures raw, `/research` analyzes, `/consolidate` promotes. Knowledge matures through stages. | Conversation with Tim |
 | D15 | stdio transport; full catalog rebuild on startup | T | LOCKED | No | Server lives/dies with agent session; startup rebuild catches offline changes | Conversation with Tim |
-| D16 | `.open-knowledge/config.yml` `wiki:` section supports configurable article paths (repo-as-wiki, existing docs/, internal folder) | P | DIRECTED | No | **Updated 2026-04-09**: wiki config merged into the main CLI config schema. Previously a separate `config.yaml` file at `.open-knowledge/config.yaml`. Now the same `config.yml` file that holds CLI server config (port, host, etc.) carries a `wiki: { articles_path, external_sources_path, research_path }` section. Single source of truth per D2's thin-server principle. `resolveWikiPaths(config, okDir)` in `packages/cli/src/wiki/paths.ts` replaces the old `loadWikiConfig`. | Original: meeting notes. Updated: this session. |
+| D16 | `.open-knowledge/config.yml` `wiki:` section supports user-defined roots with `include`/`exclude` globs | P | DIRECTED | No | **Updated 2026-04-10**: wiki config now uses `wiki: { roots: [{ path, label }], include, exclude }` — user-defined roots replace the fixed `articles_path`/`external_sources_path`/`research_path` keys. Each root is a browsable subtree with its own `INDEX.md`. `init` seeds a default convention (articles/, external-sources/, research/); users reshape freely by editing config. `resolveWikiPaths(config, okDir)` in `packages/cli/src/wiki/paths.ts` maps roots to absolute dirs. | Original: meeting notes. Updated: this session. |
 | D17 | GitHub Actions for index consistency across team (future) | T | DIRECTED | No | Ensures catalogs are correct even when MCP server hasn't run | Meeting notes |
 | D18 | Content is ~90% agent-generated; focus on agent writing, human guiding | P | DIRECTED | No | Agent writes research findings incrementally; human provides direction | Meeting notes |
 | D19 | `/ingest` is raw capture only — no analysis | P | LOCKED | No | Separation of concerns: `/ingest` fetches, `/research` analyzes. Raw sources preserved as reference. | Conversation with Tim |
@@ -590,7 +590,7 @@ All resolved. No open questions remaining.
 
 ## 16) Agent constraints
 
-- **SCOPE:** `.open-knowledge/` directory structure, MCP server, skill files (`/init-wiki`, `/ingest`), `.mcp.json`, CLAUDE.md additions, AGENTS.md template, `config.yaml`
+- **SCOPE:** `.open-knowledge/` directory structure, MCP server, MCP prompts (`init-wiki`, `ingest`, `research`), CLI `init` subcommand, `.mcp.json`, CLAUDE.md additions, AGENTS.md template, `config.yml`
 - **EXCLUDE:** Editor code (TipTap, y-prosemirror — Bucket 1), CRDT/Hocuspocus layer, persistence pipeline (Bucket 4), presence UX (Bucket 3), permission model (Bucket 5), wiki-links/backlinks (Bucket 7)
 - **STOP_IF:** Implementation requires changes to the CRDT layer or Hocuspocus server; MCP server needs to proxy file reads (writes use adaptive path, reads stay native)
 - **ASK_FIRST:** Changes to `.mcp.json` schema that affect other team members; INDEX.md format changes after initial deployment (1-way door); any new MCP tool beyond `init`
