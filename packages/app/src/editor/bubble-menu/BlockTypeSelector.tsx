@@ -1,4 +1,5 @@
 import type { Editor } from '@tiptap/react';
+import { useEditorState } from '@tiptap/react';
 import {
   ChevronDown,
   Code2,
@@ -97,12 +98,17 @@ const blockTypes: BlockType[] = [
   },
 ];
 
-function getCurrentBlockType(editor: Editor): BlockType {
-  return blockTypes.find((bt) => bt.isActive(editor)) ?? blockTypes[0];
-}
-
 export function BlockTypeSelector({ editor }: { editor: Editor }) {
-  const current = getCurrentBlockType(editor);
+  const { current, activeStates } = useEditorState({
+    editor,
+    selector: (ctx) => {
+      const activeStates = Object.fromEntries(
+        blockTypes.map((bt) => [bt.name, bt.isActive(ctx.editor)]),
+      );
+      const current = blockTypes.find((bt) => activeStates[bt.name]) ?? blockTypes[0];
+      return { current, activeStates };
+    },
+  });
   const CurrentIcon = current.icon;
 
   return (
@@ -117,7 +123,7 @@ export function BlockTypeSelector({ editor }: { editor: Editor }) {
       <DropdownMenuContent align="start" sideOffset={8} portal={false} className="w-44">
         {blockTypes.map((bt) => {
           const Icon = bt.icon;
-          const active = bt.isActive(editor);
+          const active = activeStates[bt.name];
           return (
             <DropdownMenuItem
               key={bt.name}

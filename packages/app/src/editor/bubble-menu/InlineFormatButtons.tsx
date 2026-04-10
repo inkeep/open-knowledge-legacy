@@ -1,5 +1,6 @@
 import type { Editor } from '@tiptap/react';
-import { Bold, Code, Italic, Strikethrough } from 'lucide-react';
+import { useEditorState } from '@tiptap/react';
+import { Bold, Code, Italic, Strikethrough, Underline } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -19,6 +20,13 @@ const formatActions = [
     shortcut: '⌘I',
   },
   {
+    name: 'underline',
+    icon: Underline,
+    command: (editor: Editor) => editor.chain().focus().toggleUnderline().run(),
+    isActive: (editor: Editor) => editor.isActive('underline'),
+    shortcut: '⌘U',
+  },
+  {
     name: 'strikethrough',
     icon: Strikethrough,
     command: (editor: Editor) => editor.chain().focus().toggleStrike().run(),
@@ -35,11 +43,17 @@ const formatActions = [
 ] as const;
 
 export function InlineFormatButtons({ editor }: { editor: Editor }) {
+  const activeStates = useEditorState({
+    editor,
+    selector: (ctx) =>
+      Object.fromEntries(formatActions.map((action) => [action.name, action.isActive(ctx.editor)])),
+  });
+
   return (
     <div className="flex items-center gap-0.5">
       {formatActions.map((action) => {
         const Icon = action.icon;
-        const active = action.isActive(editor);
+        const active = activeStates[action.name];
         return (
           <Tooltip key={action.name}>
             <TooltipTrigger asChild>

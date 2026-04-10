@@ -4,6 +4,7 @@
  * app-only extensions (slash command menu, etc.).
  */
 import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
+import Placeholder from '@tiptap/extension-placeholder';
 import { JsxComponent } from './jsx-component';
 import { SlashCommand } from './slash-command';
 
@@ -11,4 +12,8 @@ import { SlashCommand } from './slash-command';
 export const sharedExtensions = [
   ...coreExtensions.map((ext) => (ext.name === 'jsxComponent' ? JsxComponent : ext)),
   SlashCommand,
+  Placeholder.configure({
+    placeholder: "Type '/' for commands",
+    showOnlyCurrent: true,
+  }),
 ];
