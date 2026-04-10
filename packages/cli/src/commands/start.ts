@@ -51,9 +51,6 @@ export function startCommand(getConfig: () => Config): Command {
         quiet: false,
         debounce: config.persistence.debounceMs,
         maxDebounce: config.persistence.maxDebounceMs,
-        gitEnabled: config.git.enabled,
-        commitDebounceMs: config.git.commitDebounceMs,
-        wipRef: config.git.wipRef,
       });
 
       // Graceful shutdown

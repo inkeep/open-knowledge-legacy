@@ -25,9 +25,6 @@ import { contentHash, registerWrite } from './file-watcher.ts';
 export interface PersistenceOptions {
   contentDir: string;
   projectDir: string;
-  gitEnabled?: boolean;
-  commitDebounceMs?: number;
-  wipRef?: string;
 }
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
@@ -48,9 +45,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Extens
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
   const frontmatterCache = new Map<string, string>();
-  const gitEnabled = options?.gitEnabled ?? true;
-  const commitDebounceMs = options?.commitDebounceMs ?? 30_000;
-  const wipRef = options?.wipRef ?? 'refs/wip/main';
+  const gitEnabled = true;
+  const commitDebounceMs = 30_000;
+  const wipRef = 'refs/wip/main';
 
   const git = simpleGit(projectDir, { timeout: { block: 30_000 } });
 

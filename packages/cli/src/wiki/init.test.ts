@@ -75,10 +75,7 @@ describe('initWiki', () => {
     const configYml = readFileSync(join(okDir, 'config.yml'), 'utf-8');
     expect(configYml).toContain('Open Knowledge — workspace configuration');
     expect(configYml).toContain('# content:');
-    expect(configYml).toContain('# server:');
-    expect(configYml).toContain('# git:');
     expect(configYml).toContain('# persistence:');
-    expect(configYml).toContain('# editor:');
     expect(configYml).toContain('# wiki:');
     // No uncommented top-level keys — every non-empty, non-comment line
     // would mean we accidentally shipped an active override.

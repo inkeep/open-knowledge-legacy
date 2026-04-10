@@ -131,23 +131,7 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 # root (the directory containing .open-knowledge/), NOT to this file.
 # content:
 #   dir: ./content
-#   exclude: []
-
-
-# --- Server ----------------------------------------------------------------
-# Hocuspocus collaboration server + static React app.
-# server:
-#   port: 3000
-#   host: localhost
-
-
-# --- Git -------------------------------------------------------------------
-# Auto-commit edits to a working ref so every save is reversible.
-# git:
-#   enabled: true
-#   autosave: true
-#   commitDebounceMs: 30000
-#   wipRef: refs/wip/main
+#   exclude: []          # glob patterns, e.g. ["*.tmp", "drafts/**"]
 
 
 # --- Persistence -----------------------------------------------------------
@@ -155,12 +139,6 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 # persistence:
 #   debounceMs: 2000
 #   maxDebounceMs: 10000
-
-
-# --- Editor ----------------------------------------------------------------
-# Default mode for the React editor app.
-# editor:
-#   defaultMode: wysiwyg   # one of: wysiwyg, source
 
 
 # --- Wiki ------------------------------------------------------------------

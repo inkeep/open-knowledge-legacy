@@ -17,9 +17,6 @@ export interface ServerOptions {
   quiet?: boolean;
   debounce?: number;
   maxDebounce?: number;
-  gitEnabled?: boolean;
-  commitDebounceMs?: number;
-  wipRef?: string;
 }
 
 export interface ServerInstance {
@@ -38,17 +35,11 @@ export function createServer(options: ServerOptions): ServerInstance {
     quiet = true,
     debounce = 2000,
     maxDebounce = 10000,
-    gitEnabled = true,
-    commitDebounceMs = 30_000,
-    wipRef = 'refs/wip/main',
   } = options;
 
   const persistenceOpts: PersistenceOptions = {
     contentDir,
     projectDir,
-    gitEnabled,
-    commitDebounceMs,
-    wipRef,
   };
 
   const hocuspocus = new Hocuspocus({

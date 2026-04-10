@@ -8,13 +8,8 @@ describe('ConfigSchema', () => {
     expect(config.content.exclude).toEqual([]);
     expect(config.server.port).toBe(3000);
     expect(config.server.host).toBe('localhost');
-    expect(config.git.enabled).toBe(true);
-    expect(config.git.autosave).toBe(true);
-    expect(config.git.commitDebounceMs).toBe(30000);
-    expect(config.git.wipRef).toBe('refs/wip/main');
     expect(config.persistence.debounceMs).toBe(2000);
     expect(config.persistence.maxDebounceMs).toBe(10000);
-    expect(config.editor.defaultMode).toBe('wysiwyg');
   });
 
   test('partial override preserves other defaults', () => {
@@ -41,19 +36,5 @@ describe('ConfigSchema', () => {
       server: { port: 99999 },
     });
     expect(result.success).toBe(false);
-  });
-
-  test('invalid editor mode produces error', () => {
-    const result = ConfigSchema.safeParse({
-      editor: { defaultMode: 'invalid' },
-    });
-    expect(result.success).toBe(false);
-  });
-
-  test('accepts valid editor mode source', () => {
-    const config = ConfigSchema.parse({
-      editor: { defaultMode: 'source' },
-    });
-    expect(config.editor.defaultMode).toBe('source');
   });
 });
