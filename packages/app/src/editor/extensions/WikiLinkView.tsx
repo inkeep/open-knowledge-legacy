@@ -1,6 +1,7 @@
 import { getWikiLinkText, renderWikiLink } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
+import { usePageList } from '../../components/PageListContext';
 import { cn } from '../../lib/utils';
 
 function normalizeNullableString(value: unknown): string | null {
@@ -15,17 +16,23 @@ export function WikiLinkView({ node }: NodeViewProps) {
   const anchor = normalizeNullableString(node.attrs.anchor);
   const label = getWikiLinkText({ target, alias, anchor });
   const source = renderWikiLink({ target, alias, anchor });
+  const { pages } = usePageList();
+  const resolved = pages.size > 0 && pages.has(target);
 
   return (
     <NodeViewWrapper
       as="span"
       className={cn(
-        'mx-0.5 inline-flex max-w-full select-none items-center rounded-md border border-sky-200 bg-sky-50 px-2 py-0.5 align-baseline text-[0.85em] font-medium text-sky-900',
+        'mx-0.5 inline-flex max-w-full select-none items-center rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
+        resolved
+          ? 'border-sky-200 bg-sky-50 text-sky-900'
+          : 'border-red-300 bg-red-50 text-red-700',
       )}
       contentEditable={false}
       data-target={target}
       data-alias={alias ?? ''}
       data-anchor={anchor ?? ''}
+      data-resolved={resolved ? 'true' : 'false'}
       title={source}
     >
       <span className="truncate">{label}</span>
