@@ -47,8 +47,8 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
 
   // Wait for Observer A to sync to Y.Text
   await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
     () =>
+      // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
       (window as any).__hocuspocusProvider?.document
         ?.getText('source')
         ?.toString()
@@ -75,8 +75,8 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
 
   // Wait for Y.Text to have the content
   await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
     () =>
+      // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
       (window as any).__hocuspocusProvider?.document
         ?.getText('source')
         ?.toString()
@@ -106,8 +106,8 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
 
   // Wait for sync
   await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
     () =>
+      // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
       (window as any).__hocuspocusProvider?.document
         ?.getText('source')
         ?.toString()
@@ -125,8 +125,8 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
 
   // Wait for Y.Text to have both edits
   await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
     () => {
+      // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
       const txt = (window as any).__hocuspocusProvider?.document?.getText('source')?.toString();
       return txt?.includes('WYSIWYG edit') && txt?.includes('Source edit');
     },
@@ -158,8 +158,8 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
 
   // Wait for user content to sync
   await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
     () =>
+      // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
       (window as any).__hocuspocusProvider?.document
         ?.getText('source')
         ?.toString()
@@ -177,8 +177,8 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
 
   // Wait for agent content to propagate
   await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
     () =>
+      // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
       (window as any).__hocuspocusProvider?.document
         ?.getText('source')
         ?.toString()

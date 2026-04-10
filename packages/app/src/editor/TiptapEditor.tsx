@@ -18,6 +18,7 @@ import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import { sharedExtensions } from './extensions/shared.ts';
 import { markUserTyping, setupObservers } from './observers';
+import { TableControlsMenu } from './table-controls/TableControlsMenu';
 
 const DOC_NAME = 'test-doc';
 
@@ -406,6 +407,7 @@ export const TiptapEditor: FC<{
       data-agent-flash-agent-id=""
     >
       {editor && <BubbleMenuBar editor={editor} />}
+      {editor && <TableControlsMenu editor={editor} />}
       <EditorContent editor={editor} className="h-full" />
     </div>
   );

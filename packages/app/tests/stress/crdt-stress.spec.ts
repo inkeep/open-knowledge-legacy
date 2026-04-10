@@ -81,8 +81,8 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
 
     // Wait for Observer A to sync user typing to Y.Text
     await page.waitForFunction(
-      // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
       (m: string) =>
+        // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
         (window as any).__hocuspocusProvider?.document?.getText('source')?.toString()?.includes(m),
       marker,
       { timeout: 10_000 },

@@ -48,6 +48,7 @@ export function startCommand(getConfig: () => Config): Command {
       const { hocuspocus, destroy } = createServer({
         contentDir,
         projectDir: cwd,
+        contentRoot: config.content.dir,
         port: config.server.port,
         host: config.server.host,
         quiet: false,
@@ -64,9 +65,14 @@ export function startCommand(getConfig: () => Config): Command {
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
 
-      // Static asset serving — locate built React app
-      // Convention: ../app/dist/ relative to CLI package, or search common locations
-      const assetPaths = [resolve(cwd, 'packages/app/dist'), resolve(cwd, 'dist')];
+      // Static asset serving — locate built React app relative to CLI package.
+      // The app is always a sibling package in the open-knowledge monorepo,
+      // never in the user's cwd (which is their project repo).
+      const cliDir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
+      const assetPaths = [
+        resolve(cliDir, '../../app/dist'), // from src: packages/cli/src → packages/app/dist
+        resolve(cliDir, '../../../app/dist'), // from dist: packages/cli/dist → packages/app/dist
+      ];
       const assetDir = assetPaths.find((p) => existsSync(p));
       const staticHandler = assetDir
         ? sirv(assetDir, { single: true, gzip: true, immutable: true })

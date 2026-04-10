@@ -14,7 +14,9 @@ export const sharedExtensions = [
   // for 'code' tokens runs before codeBlock's handler (registry uses insertion order).
   JsxComponent,
   StarterKit.configure({ undoRedo: false }),
-  Table,
+  Table.configure({
+    resizable: true,
+  }),
   TableRow,
   TableHeader,
   TableCell,
