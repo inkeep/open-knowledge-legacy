@@ -1,33 +1,33 @@
 import { Undo2 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useTransition } from 'react';
 import { Button } from '@/components/ui/button';
 
 interface AgentUndoState {
   canUndo: boolean;
   canRedo: boolean;
   isPending: boolean;
-  undo: () => Promise<void>;
-  redo: () => Promise<void>;
+  undo: () => void;
+  redo: () => void;
 }
 
 function useAgentUndo(): AgentUndoState {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
-  const [isPending, setIsPending] = useState(false);
+  const [isPending, startPending] = useTransition();
 
   // Poll status with exponential backoff on failures.
   // Base interval 2s. Failures double up to a 30s cap; resets on next success.
   // Prevents thundering-herd during server outages.
   useEffect(() => {
     let active = true;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let timer: number | null = null;
     let currentDelayMs = 2000;
     const BASE_DELAY_MS = 2000;
     const MAX_DELAY_MS = 30_000;
 
     const scheduleNext = () => {
       if (!active) return;
-      timer = setTimeout(poll, currentDelayMs);
+      timer = window.setTimeout(poll, currentDelayMs);
     };
 
     const poll = async () => {
@@ -59,41 +59,39 @@ function useAgentUndo(): AgentUndoState {
     };
   }, []);
 
-  const undo = useCallback(async () => {
-    setIsPending(true);
-    try {
-      const res = await fetch('/api/agent-undo', { method: 'POST' });
-      if (res.ok) {
-        const data = (await res.json()) as { ok: boolean; canUndo: boolean; canRedo: boolean };
-        setCanUndo(data.canUndo);
-        setCanRedo(data.canRedo);
-      } else {
-        console.warn('[agent-undo] Undo request returned non-ok:', res.status);
+  function undo() {
+    startPending(async () => {
+      try {
+        const res = await fetch('/api/agent-undo', { method: 'POST' });
+        if (res.ok) {
+          const data: { ok: boolean; canUndo: boolean; canRedo: boolean } = await res.json();
+          setCanUndo(data.canUndo);
+          setCanRedo(data.canRedo);
+        } else {
+          console.warn('[agent-undo] Undo request returned non-ok:', res.status);
+        }
+      } catch (e) {
+        console.warn('[agent-undo] Undo request failed:', e);
       }
-    } catch (e) {
-      console.warn('[agent-undo] Undo request failed:', e);
-    } finally {
-      setIsPending(false);
-    }
-  }, []);
+    });
+  }
 
-  const redo = useCallback(async () => {
-    setIsPending(true);
-    try {
-      const res = await fetch('/api/agent-redo', { method: 'POST' });
-      if (res.ok) {
-        const data = (await res.json()) as { ok: boolean; canUndo: boolean; canRedo: boolean };
-        setCanUndo(data.canUndo);
-        setCanRedo(data.canRedo);
-      } else {
-        console.warn('[agent-undo] Redo request returned non-ok:', res.status);
+  function redo() {
+    startPending(async () => {
+      try {
+        const res = await fetch('/api/agent-redo', { method: 'POST' });
+        if (res.ok) {
+          const data: { ok: boolean; canUndo: boolean; canRedo: boolean } = await res.json();
+          setCanUndo(data.canUndo);
+          setCanRedo(data.canRedo);
+        } else {
+          console.warn('[agent-undo] Redo request returned non-ok:', res.status);
+        }
+      } catch (e) {
+        console.warn('[agent-undo] Redo request failed:', e);
       }
-    } catch (e) {
-      console.warn('[agent-undo] Redo request failed:', e);
-    } finally {
-      setIsPending(false);
-    }
-  }, []);
+    });
+  }
 
   return { canUndo, canRedo, isPending, undo, redo };
 }

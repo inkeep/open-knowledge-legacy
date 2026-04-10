@@ -1,14 +1,28 @@
-import path from 'node:path';
-import react from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
+import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig } from 'vite';
 import { hocuspocusPlugin } from './src/server/hocuspocus-plugin';
 
+const reactCompilerConfig: PluginOptions = {
+  // Fail the build on any compiler diagnostic
+  panicThreshold: 'all_errors',
+  environment: {
+    validateNoDerivedComputationsInEffects: true,
+    validateNoImpureFunctionsInRender: true,
+  },
+};
+
 export default defineConfig({
-  plugins: [react(), hocuspocusPlugin()],
+  plugins: [
+    react(),
+    babel({
+      presets: [reactCompilerPreset(reactCompilerConfig)],
+    }),
+    hocuspocusPlugin(),
+  ],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
+    tsconfigPaths: true,
   },
   server: {
     watch: {

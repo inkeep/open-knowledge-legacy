@@ -14,8 +14,12 @@
 import type { MarkdownManager } from '@tiptap/markdown';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
-import { diffArrays, diffLines } from 'diff';
+// diffArrays retained from jsdiff — operates on small block arrays where
+// pathological performance is unlikely. diffLinesFast (diff-match-patch)
+// is used for string-level diffs where worst-case matters.
+import { diffArrays } from 'diff';
 import type * as Y from 'yjs';
+import { diffLinesFast as diffLines } from './diff-lines-fast';
 
 export interface ThreeWayMergeResult {
   /** Whether the merge was applied selectively (true) or fell back to whole-doc (false) */
