@@ -4,6 +4,7 @@ import {
   Heading1,
   Heading2,
   Heading3,
+  ImageIcon,
   List,
   ListOrdered,
   ListTodo,
@@ -11,6 +12,7 @@ import {
   Quote,
   Table2,
 } from 'lucide-react';
+import { uploadAndInsert } from '../image-upload';
 
 export interface SlashCommandItem {
   name: string;
@@ -104,6 +106,26 @@ export const slashCommandItems: SlashCommandItem[] = [
     category: 'insert',
     command: (editor) => editor.chain().focus().setHorizontalRule().run(),
     aliases: ['hr', 'divider', 'rule'],
+  },
+  {
+    name: 'image',
+    label: 'Image',
+    icon: ImageIcon,
+    category: 'insert',
+    aliases: ['img', 'photo'],
+    command: (editor: Editor) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = () => {
+        const file = input.files?.[0];
+        if (file) {
+          const pos = editor.state.selection.from;
+          uploadAndInsert(file, editor, pos);
+        }
+      };
+      input.click();
+    },
   },
 ];
 
