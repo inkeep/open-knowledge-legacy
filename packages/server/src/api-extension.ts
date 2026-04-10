@@ -26,9 +26,12 @@ import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
   type HeadingEntry,
+  stripFrontmatter,
   toWikiLinkSlug,
 } from '@inkeep/open-knowledge-core';
+import { updateYFragment } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
+import { createPatch } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import {
   AGENT_WRITE_ORIGIN,
@@ -39,9 +42,22 @@ import {
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
+import { mdManager, schema } from './md-manager.ts';
 import { getMetrics } from './metrics.ts';
-import { deleteReconciledBase, isWithinContentDir, safeContentPath } from './persistence.ts';
-import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
+import { deleteReconciledBase, isWithinContentDir, safeContentPath, setReconciledBase } from './persistence.ts';
+import { type ShadowRef, saveVersion, shadowGit, type WriterIdentity } from './shadow-repo.ts';
+import { getDocumentHistory } from './timeline-query.ts';
+
+const ROLLBACK_ORIGIN = 'rollback-apply';
+
+/** Validates a docName is safe for use as a shadow git path component. */
+function safeDocPath(docName: string, contentRoot: string): { path: string } | { error: string } {
+  if (!docName || docName.includes('..') || docName.includes('/') || docName.includes('\0')) {
+    return { error: 'Invalid document name' };
+  }
+  const normalized = contentRoot.replace(/^\.\//, '');
+  return { path: `${normalized}/${docName}.md` };
+}
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -1235,6 +1251,295 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ── GET /api/history ─────────────────────────────────────────────────────
+  async function handleHistory(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const docName = url.searchParams.get('docName') ?? '';
+    const branch = url.searchParams.get('branch') ?? 'main';
+    const limit = Math.min(200, Number(url.searchParams.get('limit') ?? '50'));
+    const offset = Number(url.searchParams.get('offset') ?? '0');
+    const type = url.searchParams.get('type') ?? undefined;
+    const author = url.searchParams.get('author') ?? undefined;
+    const excludeAuthor = url.searchParams.get('excludeAuthor') ?? undefined;
+
+    const t0 = Date.now();
+    try {
+      const result = await getDocumentHistory(shadow, {
+        docName,
+        branch,
+        limit,
+        offset,
+        type,
+        author,
+        excludeAuthor,
+      });
+
+      const duration = Date.now() - t0;
+      console.log(
+        `[timeline] query docName=${docName} entries=${result.entries.length} duration=${duration}ms`,
+      );
+
+      json(res, 200, result);
+    } catch (e) {
+      console.error('[history]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  // ── GET /api/history/:sha ─────────────────────────────────────────────────
+  async function handleHistoryVersion(
+    req: IncomingMessage,
+    res: ServerResponse,
+    sha: string,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const docName = url.searchParams.get('docName') ?? '';
+
+    const resolvedContentRoot = contentRoot ?? 'content';
+    const pathResult = safeDocPath(docName, resolvedContentRoot);
+    if ('error' in pathResult) {
+      json(res, 400, { error: pathResult.error });
+      return;
+    }
+    const docPath = pathResult.path;
+    const sg = shadowGit(shadow);
+
+    // Validate SHA format
+    if (!/^[0-9a-f]{40}$/i.test(sha)) {
+      json(res, 400, { error: 'Invalid commit SHA' });
+      return;
+    }
+
+    try {
+      // Verify file exists at this commit
+      try {
+        await sg.raw('cat-file', '-e', `${sha}:${docPath}`);
+      } catch {
+        json(res, 404, { error: 'Document did not exist at this version' });
+        return;
+      }
+
+      const content = await sg.raw('show', `${sha}:${docPath}`);
+
+      // Resolve commit metadata
+      const logLine = (await sg.raw('log', '-1', '--format=%aI%x00%an', sha)).trim();
+      const [timestamp = '', author = ''] = logLine.split('\x00');
+
+      json(res, 200, { sha, content, timestamp, author });
+    } catch (e) {
+      console.error('[history-version]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { error: message });
+    }
+  }
+
+  // ── GET /api/diff ─────────────────────────────────────────────────────────
+  async function handleDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const docName = url.searchParams.get('docName') ?? '';
+    const from = url.searchParams.get('from') ?? '';
+    const to = url.searchParams.get('to') ?? '';
+
+    if (!to || !/^[0-9a-f]{40}$/i.test(to)) {
+      json(res, 400, { error: "'to' must be a valid 40-char commit SHA" });
+      return;
+    }
+
+    const resolvedContentRoot = contentRoot ?? 'content';
+    const pathResult = safeDocPath(docName, resolvedContentRoot);
+    if ('error' in pathResult) {
+      json(res, 400, { error: pathResult.error });
+      return;
+    }
+    const docPath = pathResult.path;
+    const sg = shadowGit(shadow);
+
+    try {
+      // Get "to" content
+      let toContent: string;
+      try {
+        toContent = await sg.raw('show', `${to}:${docPath}`);
+      } catch {
+        json(res, 404, { error: 'Document did not exist at the target version' });
+        return;
+      }
+
+      // Get "from" content — either a commit SHA or current Y.Doc text
+      let fromContent: string;
+      if (from && /^[0-9a-f]{40}$/i.test(from)) {
+        try {
+          fromContent = await sg.raw('show', `${from}:${docPath}`);
+        } catch {
+          json(res, 404, { error: 'Document did not exist at the source version' });
+          return;
+        }
+      } else {
+        // from omitted — use current Y.Doc content
+        const dc = await sessionManager.getSession(docName);
+        fromContent = dc.document.getText('source').toString();
+      }
+
+      const patch = createPatch(docName, fromContent, toContent);
+
+      // Count additions and deletions from the unified diff
+      let additions = 0;
+      let deletions = 0;
+      for (const line of patch.split('\n')) {
+        if (line.startsWith('+') && !line.startsWith('+++')) additions++;
+        else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
+      }
+
+      json(res, 200, { diff: patch, additions, deletions });
+    } catch (e) {
+      console.error('[diff]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { error: message });
+    }
+  }
+
+  // ── POST /api/rollback ────────────────────────────────────────────────────
+  async function handleRollback(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    let rawBody: Buffer;
+    try {
+      rawBody = await readBody(req);
+    } catch {
+      json(res, 413, { ok: false, error: 'Payload too large' });
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = rawBody.length > 0 ? JSON.parse(rawBody.toString()) : {};
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON' });
+      return;
+    }
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+      return;
+    }
+
+    const { docName: rawDocName, commitSha: rawSha } = body as Record<string, unknown>;
+    const docName = typeof rawDocName === 'string' ? rawDocName : '';
+    const commitSha = typeof rawSha === 'string' ? rawSha : '';
+
+    if (!docName) {
+      json(res, 400, { ok: false, error: 'docName required' });
+      return;
+    }
+    if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
+      json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
+      return;
+    }
+
+    const resolvedContentRoot = contentRoot ?? 'content';
+    const pathResult = safeDocPath(docName, resolvedContentRoot);
+    if ('error' in pathResult) {
+      json(res, 400, { ok: false, error: pathResult.error });
+      return;
+    }
+    const docPath = pathResult.path;
+    const sg = shadowGit(shadow);
+
+    const t0 = Date.now();
+    try {
+      // Verify file exists at this commit
+      try {
+        await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
+      } catch {
+        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
+        return;
+      }
+
+      const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
+      const timestamp = new Date().toISOString();
+
+      // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
+      const document = hocuspocus.documents.get(docName);
+      if (document) {
+        const { body: mdBody } = stripFrontmatter(markdown);
+        const parsedJson = mdManager.parse(mdBody);
+        const pmNode = schema.nodeFromJSON(parsedJson);
+        const xmlFragment = document.getXmlFragment('default');
+
+        document.transact(() => {
+          const meta = { mapping: new Map(), isOMark: new Map() };
+          updateYFragment(document, xmlFragment, pmNode, meta);
+
+          const ytext = document.getText('source');
+          const currentText = ytext.toString();
+          if (currentText !== markdown) {
+            ytext.delete(0, currentText.length);
+            ytext.insert(0, markdown);
+          }
+        }, ROLLBACK_ORIGIN);
+
+        setReconciledBase(docName, markdown);
+      }
+
+      const duration = Date.now() - t0;
+      console.log(
+        `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
+      );
+
+      json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
+    } catch (e) {
+      console.error('[rollback]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   async function handleMetricsReconciliation(
     req: IncomingMessage,
     res: ServerResponse,
@@ -1782,6 +2087,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-redo': handleAgentRedo,
     '/api/save-version': handleSaveVersion,
+    '/api/history': handleHistory,
+    '/api/diff': handleDiff,
+    '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/rescue': handleRescueList,
   };
@@ -1803,11 +2111,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Dynamic routes: /api/rescue/:docName
+      // Dynamic routes
       if (url.startsWith('/api/rescue/')) {
         const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
         if (docName) {
           await handleRescueGet(request, response, docName);
+        }
+        return;
+      }
+
+      if (url.startsWith('/api/history/')) {
+        const sha = decodeURIComponent(url.slice('/api/history/'.length));
+        if (sha) {
+          await handleHistoryVersion(request, response, sha);
         }
       }
     },
