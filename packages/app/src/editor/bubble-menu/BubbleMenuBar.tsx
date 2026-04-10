@@ -1,3 +1,4 @@
+import { isNodeSelection } from '@tiptap/core';
 import type { Editor } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
 import { Separator } from '@/components/ui/separator';
@@ -9,6 +10,13 @@ import { LinkEditPopover } from './LinkEditPopover';
 function shouldShowBubbleMenu({ editor }: { editor: Editor }): boolean {
   // Don't show if selection is empty
   if (editor.state.selection.empty) return false;
+
+  // Don't show for node selections (component blocks, images, etc.).
+  // BubbleMenu is a text-formatting toolbar — bold/italic/link controls don't
+  // apply to block-level nodes. Without this, clicking a typed component's
+  // toolbar (which creates a NodeSelection via setNodeSelection) would show
+  // the bubble menu floating near the component with irrelevant controls.
+  if (isNodeSelection(editor.state.selection)) return false;
 
   // Don't show inside code blocks
   if (editor.isActive('codeBlock')) return false;
