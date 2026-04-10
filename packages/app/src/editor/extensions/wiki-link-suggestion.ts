@@ -4,6 +4,7 @@ import type { EditorView } from '@tiptap/pm/view';
 import { ReactRenderer } from '@tiptap/react';
 import fuzzysort from 'fuzzysort';
 import { WikiLinkSuggestionMenu } from '../wiki-link-suggestion/WikiLinkSuggestionMenu';
+import { buildUnresolvedWikiLinkAttrs } from './wiki-link-helpers';
 
 export const wikiLinkSuggestionKey = new PluginKey('wikiLinkSuggestion');
 
@@ -11,6 +12,19 @@ export interface PageItem {
   docName: string;
   title: string;
 }
+
+export type WikiLinkSuggestionItem =
+  | {
+      kind: 'page';
+      docName: string;
+      title: string;
+    }
+  | {
+      kind: 'create';
+      docName: string;
+      title: string;
+      actionLabel: string;
+    };
 
 interface WikiLinkSuggestionState {
   active: boolean;
@@ -34,6 +48,25 @@ export function filterPages(pages: PageItem[], query: string): PageItem[] {
   return results.map((r) => r.obj).slice(0, MAX_ITEMS);
 }
 
+export function buildSuggestionItems(pages: PageItem[], query: string): WikiLinkSuggestionItem[] {
+  const filtered = filterPages(pages, query);
+  if (filtered.length > 0) {
+    return filtered.map((item) => ({ kind: 'page', ...item }));
+  }
+
+  const attrs = buildUnresolvedWikiLinkAttrs(query);
+  if (!attrs) return [];
+
+  return [
+    {
+      kind: 'create',
+      docName: attrs.target,
+      title: query.trim(),
+      actionLabel: `Insert unresolved link "${query.trim()}"`,
+    },
+  ];
+}
+
 async function fetchPages(): Promise<PageItem[]> {
   const r = await fetch('/api/pages');
   const data = (await r.json()) as { pages?: Array<{ docName: string; title: string }> };
@@ -46,7 +79,75 @@ async function fetchPages(): Promise<PageItem[]> {
 export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
   // Mutable state shared between handleKeyDown and view
   let cachedPages: PageItem[] = [];
-  let currentFiltered: PageItem[] = [];
+  let currentFiltered: WikiLinkSuggestionItem[] = [];
+
+  function insertWikiLink(
+    view: EditorView,
+    state: WikiLinkSuggestionState,
+    item?: WikiLinkSuggestionItem,
+  ): boolean {
+    if (!state.range) return false;
+
+    const attrs =
+      item?.kind === 'page'
+        ? { target: item.docName, alias: null, anchor: null }
+        : item?.kind === 'create'
+          ? buildUnresolvedWikiLinkAttrs(item.title)
+          : buildUnresolvedWikiLinkAttrs(state.query);
+    if (!attrs) return false;
+
+    view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { close: true }));
+    editor
+      .chain()
+      .focus()
+      .deleteRange(state.range)
+      .insertContent({ type: 'wikiLink', attrs })
+      .run();
+    return true;
+  }
+
+  function handleSuggestionKeyDown(view: EditorView, event: KeyboardEvent): boolean {
+    const state = wikiLinkSuggestionKey.getState(view.state) as WikiLinkSuggestionState | undefined;
+    if (!state?.active) return false;
+
+    const count = currentFiltered.length;
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      if (count === 0) return true;
+      const next = (state.selectedIndex + 1) % count;
+      view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { setIndex: next }));
+      return true;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (count === 0) return true;
+      const next = (state.selectedIndex - 1 + count) % count;
+      view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { setIndex: next }));
+      return true;
+    }
+
+    if (
+      event.key === 'Enter' ||
+      event.key === 'Return' ||
+      event.key === 'Tab' ||
+      event.code === 'NumpadEnter'
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      const item = currentFiltered[state.selectedIndex];
+      return insertWikiLink(view, state, item);
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { close: true }));
+      return true;
+    }
+
+    return false;
+  }
 
   return new Plugin({
     key: wikiLinkSuggestionKey,
@@ -101,55 +202,14 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
 
     props: {
       handleKeyDown(view: EditorView, event: KeyboardEvent): boolean {
-        const state = wikiLinkSuggestionKey.getState(view.state) as
-          | WikiLinkSuggestionState
-          | undefined;
-        if (!state?.active) return false;
+        return handleSuggestionKeyDown(view, event);
+      },
 
-        const count = currentFiltered.length;
-
-        if (event.key === 'ArrowDown') {
-          event.preventDefault();
-          if (count === 0) return true;
-          const next = (state.selectedIndex + 1) % count;
-          view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { setIndex: next }));
-          return true;
-        }
-
-        if (event.key === 'ArrowUp') {
-          event.preventDefault();
-          if (count === 0) return true;
-          const next = (state.selectedIndex - 1 + count) % count;
-          view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { setIndex: next }));
-          return true;
-        }
-
-        if (event.key === 'Enter' || event.key === 'Tab') {
-          event.preventDefault();
-          const item = currentFiltered[state.selectedIndex];
-          if (item && state.range) {
-            const range = state.range;
-            view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { close: true }));
-            editor
-              .chain()
-              .focus()
-              .deleteRange(range)
-              .insertContent({
-                type: 'wikiLink',
-                attrs: { target: item.docName, alias: null, anchor: null },
-              })
-              .run();
-          }
-          return true;
-        }
-
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { close: true }));
-          return true;
-        }
-
-        return false;
+      handleDOMEvents: {
+        keydown(view: EditorView, event: Event): boolean {
+          if (!(event instanceof KeyboardEvent)) return false;
+          return handleSuggestionKeyDown(view, event);
+        },
       },
     },
 
@@ -190,25 +250,13 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
           }
 
           // Re-filter with latest query
-          currentFiltered = filterPages(cachedPages, state.query);
+          currentFiltered = buildSuggestionItems(cachedPages, state.query);
 
-          const onSelect = (item: PageItem) => {
+          const onSelect = (item: WikiLinkSuggestionItem) => {
             const s = wikiLinkSuggestionKey.getState(view.state) as
               | WikiLinkSuggestionState
               | undefined;
-            if (s?.range) {
-              const range = s.range;
-              view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { close: true }));
-              editor
-                .chain()
-                .focus()
-                .deleteRange(range)
-                .insertContent({
-                  type: 'wikiLink',
-                  attrs: { target: item.docName, alias: null, anchor: null },
-                })
-                .run();
-            }
+            if (s) insertWikiLink(view, s, item);
           };
 
           if (!renderer) {
@@ -234,7 +282,7 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
             fetchPages()
               .then((pages) => {
                 cachedPages = pages;
-                currentFiltered = filterPages(cachedPages, state.query);
+                currentFiltered = buildSuggestionItems(cachedPages, state.query);
                 renderer?.updateProps({
                   items: currentFiltered,
                   query: state.query,

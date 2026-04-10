@@ -2,20 +2,14 @@ import { Dialog } from 'radix-ui';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-
-function toSlug(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+import { toWikiLinkSlug } from '@/editor/extensions/wiki-link-helpers';
 
 function getSuggestedPath(target: string): string {
   const match = window.location.hash.match(/^#doc=(.+)$/);
   const currentDoc = match ? decodeURIComponent(match[1]) : 'test-doc';
   const lastSlash = currentDoc.lastIndexOf('/');
   const dir = lastSlash > 0 ? currentDoc.slice(0, lastSlash + 1) : '';
-  return `${dir}${toSlug(target)}.md`;
+  return `${dir}${toWikiLinkSlug(target)}.md`;
 }
 
 interface CreatePageDialogProps {

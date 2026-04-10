@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { CreatePageDialog } from '../../components/CreatePageDialog';
 import { usePageList } from '../../components/PageListContext';
 import { cn } from '../../lib/utils';
+import { isResolvedWikiLinkTarget } from './wiki-link-helpers';
 
 function normalizeNullableString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -12,14 +13,14 @@ function normalizeNullableString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function WikiLinkView({ node }: NodeViewProps) {
+export function WikiLinkView({ node, updateAttributes }: NodeViewProps) {
   const target = String(node.attrs.target ?? '');
   const alias = normalizeNullableString(node.attrs.alias);
   const anchor = normalizeNullableString(node.attrs.anchor);
   const label = getWikiLinkText({ target, alias, anchor });
   const source = renderWikiLink({ target, alias, anchor });
   const { pages, refetch } = usePageList();
-  const resolved = pages.size > 0 && pages.has(target);
+  const resolved = pages.size > 0 && isResolvedWikiLinkTarget(target, pages);
   const [dialogOpen, setDialogOpen] = useState(false);
 
   function handleClick() {
@@ -27,6 +28,12 @@ export function WikiLinkView({ node }: NodeViewProps) {
   }
 
   function handleCreated(docName: string) {
+    if (docName !== target) {
+      updateAttributes({
+        target: docName,
+        alias: alias ?? label,
+      });
+    }
     refetch();
     window.location.hash = `#doc=${encodeURIComponent(docName)}`;
   }

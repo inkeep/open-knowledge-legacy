@@ -1,17 +1,17 @@
 import { useEffect, useRef } from 'react';
-import type { PageItem } from '../extensions/wiki-link-suggestion';
+import type { WikiLinkSuggestionItem } from '../extensions/wiki-link-suggestion';
 
 interface WikiLinkSuggestionMenuProps {
-  items: PageItem[];
+  items: WikiLinkSuggestionItem[];
   query: string;
   selectedIndex: number;
-  onSelect: (item: PageItem) => void;
+  onSelect: (item: WikiLinkSuggestionItem) => void;
   loading?: boolean;
 }
 
 export function WikiLinkSuggestionMenu({
   items,
-  query: _query,
+  query,
   selectedIndex,
   onSelect,
   loading = false,
@@ -46,7 +46,7 @@ export function WikiLinkSuggestionMenu({
         ref={containerRef}
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
       >
-        No pages found
+        {query.trim() ? `No pages found for "${query.trim()}"` : 'No pages found'}
       </div>
     );
   }
@@ -75,9 +75,14 @@ export function WikiLinkSuggestionMenu({
               onSelect(item);
             }}
           >
-            <span className="truncate font-medium">{item.title}</span>
-            {item.title !== item.docName && (
+            <span className="truncate font-medium">
+              {item.kind === 'create' ? item.actionLabel : item.title}
+            </span>
+            {item.kind === 'page' && item.title !== item.docName && (
               <span className="truncate text-xs text-muted-foreground">{item.docName}</span>
+            )}
+            {item.kind === 'create' && (
+              <span className="truncate text-xs text-muted-foreground">{item.docName}.md</span>
             )}
           </button>
         );
