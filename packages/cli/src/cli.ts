@@ -20,6 +20,7 @@ if (process.argv.includes('--no-color')) {
  * Config loaded via preAction hook: CLI > ENV > workspace > user > Zod defaults.
  */
 import { Command } from 'commander';
+import { initCommand } from './commands/init.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { startCommand } from './commands/start.ts';
 import { type Config, loadConfig } from './index.ts';
@@ -70,5 +71,8 @@ program.addCommand(start, { isDefault: true });
 // MCP command
 const mcp = mcpCommand(() => resolvedConfig);
 program.addCommand(mcp);
+
+// init command — stateless terminal setup, no config needed
+program.addCommand(initCommand());
 
 await program.parseAsync();
