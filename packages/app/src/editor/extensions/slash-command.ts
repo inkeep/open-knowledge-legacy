@@ -2,8 +2,8 @@ import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import { ReactRenderer } from '@tiptap/react';
+import { filterItems, type SlashCommandItem, slashCommandItems } from '../slash-command/items';
 import { SlashCommandMenu } from '../slash-command/SlashCommandMenu';
-import { type SlashCommandItem, filterItems, slashCommandItems } from '../slash-command/items';
 
 const slashCommandKey = new PluginKey('slashCommand');
 
@@ -52,12 +52,7 @@ export const SlashCommand = Extension.create({
             if (!selection.empty) return INITIAL_STATE;
 
             // Get the text of the current block from block start to cursor
-            const textBefore = $from.parent.textBetween(
-              0,
-              $from.parentOffset,
-              undefined,
-              '\ufffc',
-            );
+            const textBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, '\ufffc');
 
             // Check for "/" trigger: must be at start of text or after whitespace
             const match = textBefore.match(/(?:^|\s)\/([a-z0-9-]*)$/i);
@@ -161,16 +156,12 @@ export const SlashCommand = Extension.create({
 
           return {
             update(view: EditorView) {
-              const state = slashCommandKey.getState(view.state) as
-                | SlashCommandState
-                | undefined;
+              const state = slashCommandKey.getState(view.state) as SlashCommandState | undefined;
 
               if (!state?.active) {
                 if (renderer) destroy();
                 return;
               }
-
-              const filtered = filterItems(slashCommandItems, state.query);
 
               const onSelect = (item: SlashCommandItem) => {
                 if (state.range) {

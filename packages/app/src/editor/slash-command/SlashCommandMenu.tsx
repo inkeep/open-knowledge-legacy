@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { type SlashCommandItem, filterItems } from './items';
+import { filterItems, type SlashCommandItem } from './items';
 
 interface SlashCommandMenuProps {
   items: SlashCommandItem[];
@@ -21,7 +21,8 @@ export function SlashCommandMenu({ items, query, selectedIndex, onSelect }: Slas
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const selected = container.querySelector('[data-selected="true"]');
+    const options = container.querySelectorAll('[role="option"]');
+    const selected = options.item(selectedIndex);
     if (selected) {
       selected.scrollIntoView({ block: 'nearest' });
     }
@@ -58,13 +59,13 @@ export function SlashCommandMenu({ items, query, selectedIndex, onSelect }: Slas
       ref={containerRef}
       role="listbox"
       aria-label="Slash commands"
-      className="w-56 max-h-80 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
+      className="w-56 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
     >
       {categories.map((cat) => (
-        <div key={cat.key} role="group" aria-label={categoryLabels[cat.key] ?? cat.key}>
-          <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+        <fieldset key={cat.key} className="border-0 p-0 m-0 min-w-0">
+          <legend className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
             {categoryLabels[cat.key] ?? cat.key}
-          </div>
+          </legend>
           {cat.items.map((item) => {
             const idx = indexMap.get(item) ?? 0;
             const isSelected = idx === selectedIndex;
@@ -87,14 +88,11 @@ export function SlashCommandMenu({ items, query, selectedIndex, onSelect }: Slas
                 <Icon className="size-4 shrink-0 text-muted-foreground" />
                 <div className="flex flex-col min-w-0">
                   <span className="truncate">{item.label}</span>
-                  <span className="text-xs text-muted-foreground truncate">
-                    {item.description}
-                  </span>
                 </div>
               </button>
             );
           })}
-        </div>
+        </fieldset>
       ))}
     </div>
   );

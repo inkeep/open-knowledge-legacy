@@ -15,7 +15,6 @@ import {
 export interface SlashCommandItem {
   name: string;
   label: string;
-  description: string;
   icon: React.ComponentType<{ className?: string }>;
   category: 'basic' | 'insert';
   command: (editor: Editor) => void;
@@ -27,7 +26,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'heading1',
     label: 'Heading 1',
-    description: 'Large section heading',
     icon: Heading1,
     category: 'basic',
     command: (editor) => editor.chain().focus().toggleHeading({ level: 1 }).run(),
@@ -36,7 +34,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'heading2',
     label: 'Heading 2',
-    description: 'Medium section heading',
     icon: Heading2,
     category: 'basic',
     command: (editor) => editor.chain().focus().toggleHeading({ level: 2 }).run(),
@@ -45,7 +42,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'heading3',
     label: 'Heading 3',
-    description: 'Small section heading',
     icon: Heading3,
     category: 'basic',
     command: (editor) => editor.chain().focus().toggleHeading({ level: 3 }).run(),
@@ -54,7 +50,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'bulletList',
     label: 'Bullet List',
-    description: 'Unordered list',
     icon: List,
     category: 'basic',
     command: (editor) => editor.chain().focus().toggleBulletList().run(),
@@ -63,7 +58,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'orderedList',
     label: 'Ordered List',
-    description: 'Numbered list',
     icon: ListOrdered,
     category: 'basic',
     command: (editor) => editor.chain().focus().toggleOrderedList().run(),
@@ -72,7 +66,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'taskList',
     label: 'Task List',
-    description: 'Checklist with tasks',
     icon: ListTodo,
     category: 'basic',
     command: (editor) => editor.chain().focus().toggleTaskList().run(),
@@ -81,7 +74,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'blockquote',
     label: 'Quote',
-    description: 'Quoted text block',
     icon: Quote,
     category: 'basic',
     command: (editor) => editor.chain().focus().toggleBlockquote().run(),
@@ -90,7 +82,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'codeBlock',
     label: 'Code Block',
-    description: 'Fenced code block',
     icon: Code2,
     category: 'basic',
     command: (editor) => editor.chain().focus().toggleCodeBlock().run(),
@@ -100,7 +91,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'table',
     label: 'Table',
-    description: 'Insert a table',
     icon: Table2,
     category: 'insert',
     command: (editor) =>
@@ -110,7 +100,6 @@ export const slashCommandItems: SlashCommandItem[] = [
   {
     name: 'separator',
     label: 'Separator',
-    description: 'Horizontal divider',
     icon: Minus,
     category: 'insert',
     command: (editor) => editor.chain().focus().setHorizontalRule().run(),
