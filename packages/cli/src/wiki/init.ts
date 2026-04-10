@@ -1,0 +1,254 @@
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
+import { ConfigSchema } from '../config/schema.ts';
+import {
+  AGENTS_FILENAME,
+  CACHE_DIR,
+  CATALOG_FILENAME,
+  CONFIG_FILENAME,
+  WIKI_DIR,
+} from '../constants.ts';
+import { generateCatalog, generateRootCatalog } from './catalog.ts';
+
+export const AGENTS_MD_CONTENT = `# .open-knowledge/ — Project Wiki
+
+This directory contains a living knowledge base for this project, maintained by both agents and humans.
+
+## Structure
+
+- \`articles/\` — Canonical knowledge articles grouped by topic
+- \`external-sources/\` — Ingested external content (raw reference material)
+- \`research/\` — Exploratory research and provisional findings
+- \`cache/\` — Derived data (gitignored)
+
+## Navigation
+
+1. **Start with INDEX.md** — Every directory has an auto-generated \`INDEX.md\` catalog listing all articles and subfolders
+2. **Search with grep** — Use grep/ripgrep to find specific topics across all wiki content
+3. **Read specific files** — Once you find the right article, read it for full context
+
+## Content Lifecycle
+
+1. **External sources** (\`external-sources/\`) — Raw content fetched from URLs, PDFs, or other documents. No analysis, just preservation.
+2. **Research** (\`research/\`) — Analysis and synthesis of sources. Provisional findings, trade-offs, open questions.
+3. **Articles** (\`articles/\`) — Canonical knowledge. Architecture decisions, processes, how things work. The source of truth.
+
+Knowledge matures through stages: external sources → research → articles.
+
+## Frontmatter Conventions
+
+Every \`.md\` file should have YAML frontmatter:
+
+\`\`\`yaml
+---
+title: Article Title (required)
+description: Brief summary for catalog listings (required)
+tags:
+  - relevant
+  - tags
+---
+\`\`\`
+
+- \`title\` and \`description\` are required — they appear in INDEX.md catalogs
+- \`tags\` are recommended for discoverability
+
+## Folder Descriptions
+
+Every subfolder in the wiki should have a \`title\` and \`description\` in its \`INDEX.md\` frontmatter. These appear in the parent folder's catalog so readers can see what's inside a folder without opening it.
+
+**When to set them:** at the same time you create the first article in a new subfolder. If you're creating \`articles/auth/sso-migration.md\`, also create (or edit) \`articles/auth/INDEX.md\` with:
+
+\`\`\`yaml
+---
+title: Authentication
+description: How auth works in this codebase — SSO, sessions, tokens.
+---
+\`\`\`
+
+**When to re-check them:** every time you *create or edit* an article, glance at the containing folder's \`INDEX.md\` and decide whether the folder's \`title\` or \`description\` needs to be updated. If the new article expands the folder's scope (e.g., you added an RBAC article to a folder currently described as "SSO and sessions"), update the description to match. A stale folder description is worse than no description — it gives future agents a misleading map of the wiki. The check is cheap: one read, usually no edit.
+
+**What's editable in \`INDEX.md\`:** only the \`title\` and \`description\` frontmatter fields. These are **sticky** — preserved verbatim across every catalog regeneration. Everything else in an \`INDEX.md\` file is auto-generated and will be overwritten on the next rebuild:
+
+| Field / Section | Editable? |
+|---|---|
+| \`title\` (frontmatter) | ✅ sticky |
+| \`description\` (frontmatter) | ✅ sticky |
+| \`generated: true\` | ❌ auto |
+| \`schema_version: 1\` | ❌ auto |
+| \`## Articles\` body | ❌ auto |
+| \`## Subfolders\` body | ❌ auto |
+
+**When to update them:** if a folder's purpose changes, edit its \`INDEX.md\` frontmatter. The change propagates to the parent catalog on the next rebuild (which fires automatically because the watcher picks up \`INDEX.md\` edits too).
+
+**Do not put free-form prose in an \`INDEX.md\` body** — it will be clobbered. If a folder needs a longer overview than the \`description\` field supports, write a regular article (e.g., \`articles/auth/overview.md\`) and reference it from the folder description.
+
+## Scaffolding this wiki (first-time setup)
+
+This wiki directory was almost certainly scaffolded by running \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That same command:
+
+1. Creates the directory layout you're reading this from
+2. Writes \`AGENTS.md\`, \`.gitignore\`, and starter \`INDEX.md\` catalogs
+3. Registers the Open Knowledge MCP server in \`.mcp.json\` at the repo root so your MCP client (Claude Code, Cursor, Windsurf, Codex) can pick it up
+
+If you're onboarding a new project and \`.open-knowledge/\` doesn't exist yet, run \`open-knowledge init\` from a terminal. The CLI init is the *only* supported way to scaffold — the MCP server deliberately exposes no \`init\` tool because scaffolding has to happen before any MCP server is wired up.
+
+## MCP Server config
+
+Your \`.mcp.json\` at the repo root should look like this after running \`init\`:
+
+\`\`\`json
+{
+  "mcpServers": {
+    "open-knowledge": {
+      "command": "npx",
+      "args": ["@inkeep/open-knowledge", "mcp"]
+    }
+  }
+}
+\`\`\`
+
+## Workflow Tools (MCP)
+
+The MCP server exposes three tools that codify the main workflows. Each tool returns instructional text that guides the agent through the workflow — all real work (reads, edits, fetches) happens via the agent's native tools. The tools are:
+
+- **\`init-wiki\`** — Bootstrap this wiki by reading the codebase and writing initial knowledge articles grouped by topic. Use when setting up a wiki for the first time or onboarding to a new codebase.
+- **\`ingest\`** — Capture an external source (URL or local file) as raw reference material in \`external-sources/\`. Use when the user shares a URL or document to preserve. Raw preservation only; no analysis.
+- **\`research\`** — Gather sources via \`ingest\` and write provisional findings to \`research/\`. Use when researching a topic, comparing alternatives, or exploring a decision space. Non-canonical until promoted to \`articles/\`.
+
+These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Cursor, Windsurf, Codex, etc.).
+`;
+
+export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
+#
+# This file overrides built-in defaults for this workspace. Every key below
+# is commented out and shows its current default value. Uncomment any key
+# to override it.
+#
+# Precedence (lowest -> highest):
+#   Built-in defaults
+#     -> ~/.open-knowledge/config.yml         (user defaults)
+#     -> ./.open-knowledge/config.yml         (this file)
+#
+# Schema reference: packages/cli/src/config/schema.ts
+
+
+# --- Content ---------------------------------------------------------------
+# Where editable markdown content lives. Path is relative to the workspace
+# root (the directory containing .open-knowledge/), NOT to this file.
+# content:
+#   dir: ./content
+
+
+# --- Persistence -----------------------------------------------------------
+# How aggressively CRDT updates are flushed to disk.
+# persistence:
+#   debounceMs: 2000
+#   maxDebounceMs: 10000
+
+
+# --- Wiki ------------------------------------------------------------------
+# Browsable roots inside .open-knowledge/. Each root is a subtree with its
+# own INDEX.md catalog. Customize to match your team's knowledge taxonomy.
+# Paths are relative to this directory.
+#
+# The default roots (articles, external-sources, research) are a starting
+# convention seeded by \`open-knowledge init\`. Reshape freely — e.g.:
+#
+#   wiki:
+#     roots:
+#       - path: ./eng-research
+#         label: Engineering Research
+#       - path: ./product-research
+#         label: Product Research
+#       - path: ./design-decisions
+#         label: Design Decisions
+#
+# wiki:
+#   roots:
+#     - path: ./articles
+#       label: Knowledge Articles
+#     - path: ./external-sources
+#       label: External Sources
+#     - path: ./research
+#       label: Research
+#   include:
+#     - "**/*.md"
+#   exclude: []
+`;
+
+export const CLAUDE_MD_SECTION = `## .open-knowledge/ — Project Wiki
+
+This repo has a living knowledge base in \`.open-knowledge/\`.
+
+- Read \`INDEX.md\` at any level for navigation
+- After doing significant work, update or create relevant wiki articles
+- Knowledge articles live in \`.open-knowledge/articles/\` grouped by topic
+- External sources live in \`.open-knowledge/external-sources/\`
+`;
+
+function writeIfMissing(filePath: string, content: string): boolean {
+  if (existsSync(filePath)) return false;
+  writeFileSync(filePath, content, 'utf-8');
+  return true;
+}
+
+/** Static files scaffolded into the wiki directory. */
+const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
+  { name: AGENTS_FILENAME, content: AGENTS_MD_CONTENT },
+  { name: '.gitignore', content: `${CACHE_DIR}/\n` },
+  { name: CONFIG_FILENAME, content: CONFIG_YML_CONTENT },
+];
+
+export function initWiki(projectDir: string): { created: string[]; skipped: string[] } {
+  const okDir = resolve(projectDir, WIKI_DIR);
+  const created: string[] = [];
+  const skipped: string[] = [];
+
+  // Wiki roots from the schema defaults — init seeds this convention.
+  // Custom roots are configured in config.yml after scaffolding.
+  const roots = ConfigSchema.parse({}).wiki.roots;
+
+  // Create directories: wiki root, cache, and one per root
+  mkdirSync(okDir, { recursive: true });
+  mkdirSync(join(okDir, CACHE_DIR), { recursive: true });
+  for (const root of roots) {
+    mkdirSync(resolve(okDir, root.path), { recursive: true });
+  }
+
+  // Write scaffold files (skip if already exist)
+  for (const file of SCAFFOLD_FILES) {
+    if (writeIfMissing(join(okDir, file.name), file.content)) {
+      created.push(file.name);
+    } else {
+      skipped.push(file.name);
+    }
+  }
+
+  // Section catalogs — one per root
+  for (const root of roots) {
+    const rootDir = resolve(okDir, root.path);
+    const indexPath = join(rootDir, CATALOG_FILENAME);
+    const content = generateCatalog(rootDir, { title: root.label });
+    if (writeIfMissing(indexPath, content)) {
+      created.push(`${root.label}/${CATALOG_FILENAME}`);
+    } else {
+      skipped.push(`${root.label}/${CATALOG_FILENAME}`);
+    }
+  }
+
+  // Root catalog
+  const rootIndexPath = join(okDir, CATALOG_FILENAME);
+  const rootContent = generateRootCatalog(okDir, {
+    sections: roots.map((root) => ({
+      label: root.label,
+      relativePath: `${relative(okDir, resolve(okDir, root.path))}/${CATALOG_FILENAME}`,
+    })),
+  });
+  if (writeIfMissing(rootIndexPath, rootContent)) {
+    created.push(CATALOG_FILENAME);
+  } else {
+    skipped.push(CATALOG_FILENAME);
+  }
+
+  return { created, skipped };
+}
