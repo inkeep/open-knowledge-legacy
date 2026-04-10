@@ -14,8 +14,9 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { relative } from 'node:path';
+import { join, relative } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import { containsConflictMarkers } from './reconciliation.ts';
 
@@ -127,7 +128,14 @@ export async function classifyEvents(
         deletes.push(event);
         break;
       case 'create':
-        creates.push(event);
+        // Editors like VS Code do atomic saves (write tmp → rename over original).
+        // @parcel/watcher reports this as 'create' even though the file existed.
+        // If we already have a hash for this path, it's an update, not a create.
+        if (lastKnownHash.has(event.path)) {
+          updates.push(event);
+        } else {
+          creates.push(event);
+        }
         break;
       case 'update':
         updates.push(event);
@@ -277,10 +285,35 @@ export function isSelfWrite(filePath: string, hash: string): boolean {
  *
  * Returns the @parcel/watcher subscription (call .unsubscribe() to stop).
  */
+/** Seed lastKnownHash with existing .md files so first edits classify as 'update' not 'create'. */
+function seedLastKnownHashes(dir: string): void {
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        seedLastKnownHashes(fullPath);
+      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        try {
+          const content = readFileSync(fullPath, 'utf-8');
+          lastKnownHash.set(fullPath, contentHash(content));
+        } catch {
+          // skip unreadable files
+        }
+      }
+    }
+  } catch {
+    // dir doesn't exist or isn't readable — fine, no seeding
+  }
+}
+
 export async function startWatcher(
   contentDir: string,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
 ): Promise<AsyncSubscription> {
+  // Seed hashes for existing files so edits are classified as 'update' not 'create'
+  seedLastKnownHashes(contentDir);
+
   // Run TTL eviction periodically
   const evictionInterval = setInterval(evictStaleTrackerEntries, WRITE_TRACKER_TTL_MS);
 
@@ -303,7 +336,10 @@ export async function startWatcher(
       // Self-write check for events that carry content
       if (event.kind !== 'delete' && event.kind !== 'rename') {
         const hash = contentHash(event.content);
-        if (isSelfWrite(event.path, hash)) continue;
+        if (isSelfWrite(event.path, hash)) {
+          console.log(`[file-watcher] Skipped self-write: ${event.kind} ${event.path}`);
+          continue;
+        }
       }
       if (event.kind === 'rename') {
         // Check if the content matches a self-write on the new path
@@ -311,6 +347,9 @@ export async function startWatcher(
         if (isSelfWrite(event.newPath, hash)) continue;
       }
 
+      console.log(
+        `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+      );
       await onDiskEvent(event);
     }
   });
