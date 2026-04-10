@@ -73,3 +73,48 @@ The open-knowledge `init` command scaffolds `.open-knowledge/AGENTS.md` inside u
 **Stay with @parcel/watcher.** It's already battle-tested in this codebase (also used in `packages/server/src/file-watcher.ts` for CRDT disk sync), provides native batch event delivery that pairs well with the debounce logic, and is the same watcher Vite uses internally. If Bun native-addon friction becomes a real problem, chokidar v4 (pure JS, zero native deps) is the fallback.
 
 **The watcher belongs in `packages/cli`**, not server. The catalog watcher is a CLI/MCP concern — it watches wiki directories and regenerates INDEX.md catalogs. The server's `file-watcher.ts` watches the `content/` directory for CRDT sync (different purpose, different directory, different behavior). Both share `@parcel/watcher` as a dependency but their logic shouldn't be coupled.
+
+---
+
+## Q3: Non-TypeScript options for file change detection
+
+**Date:** 2026-04-10
+**Status:** Answered
+
+### Context
+
+The catalog rebuild logic should stay TypeScript. But the *detection* layer (watching for .md changes) doesn't have to be an embedded Node.js dependency. Can we decouple "detect changes" from "rebuild catalogs"?
+
+### Options investigated
+
+| Approach | Latency | Cross-platform | Catches all mutations | Complexity |
+|---|---|---|---|---|
+| **`fswatch`** (OS-native CLI) | Sub-second | macOS + Linux + BSD | Yes (all disk writes) | Low — pipe to `bun run rebuild` |
+| **`watchman`** (Facebook daemon) | Sub-second | macOS + Linux + Windows | Yes | Medium — requires daemon install |
+| **`inotifywait`** (Linux) | Sub-second | Linux only | Yes | Low, but macOS deal-breaker |
+| **Git hooks** (`post-commit` etc.) | Instant on git ops | Yes | No — misses non-git edits | Low |
+| **CI/GitHub Actions** | 30s–2min | N/A (remote) | Git-mediated only | Low |
+| **Cron/launchd polling** | 30–60s | Yes | Yes | Low — `find -newer` skips no-ops |
+| **Editor hooks** (VS Code, MCP) | Instant | Editor-specific | Only that editor's saves | High coupling |
+
+### Key insight: detection and rebuild are fully separable
+
+The rebuild is a standalone script: `bun run rebuild-catalog.ts`. The detector just needs to spawn it on change. They communicate via process invocation — no shared runtime needed.
+
+```
+[detector: fswatch/git-hook/cron] --spawns--> bun run rebuild-catalog.ts
+```
+
+This means @parcel/watcher is not architecturally required — it's one option for the detection layer.
+
+### Recommended layered approach
+
+1. **Primary (local dev):** Keep @parcel/watcher for now — it's embedded in the MCP server process and provides sub-second response. But the rebuild logic should be extractable as a standalone CLI command (e.g., `open-knowledge rebuild-catalogs`) so external detectors can trigger it.
+2. **Supplementary:** `post-commit` / `post-merge` git hooks — catches git-mediated changes, works without MCP server running.
+3. **Backstop:** CI action on push — guarantees catalog consistency across the team even if no one ran the watcher locally.
+
+### What this means for the codebase
+
+- Extract `rebuildCatalogs()` into a standalone CLI subcommand so it's invocable from any trigger (git hook, cron, CI, fswatch pipe)
+- Keep @parcel/watcher as the default real-time mechanism in the MCP server
+- The detection layer becomes pluggable without changing the rebuild logic
