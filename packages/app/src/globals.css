@@ -267,6 +267,7 @@
   outline: none;
   min-height: 200px;
   line-height: 1.7;
+  @apply text-gray-800 dark:text-white/80;
 }
 
 .ProseMirror p {
@@ -283,12 +284,15 @@
 
 .ProseMirror h1 {
   font-size: 1.5em;
+  @apply tracking-tighter;
 }
 .ProseMirror h2 {
   font-size: 1.25em;
+  @apply tracking-tight;
 }
 .ProseMirror h3 {
   font-size: 1.1em;
+  @apply tracking-tight;
 }
 
 /* Lists */
@@ -377,6 +381,14 @@
 
 .ProseMirror ul[data-type="taskList"] li > div {
   flex: 1;
+}
+
+.ProseMirror ul[data-type="taskList"] li > div p {
+  margin-bottom: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  margin-bottom: 0.1em;
 }
 
 .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
@@ -508,8 +520,8 @@
   cursor: col-resize;
 }
 
-.ProseMirror p.is-editor-empty:first-child::before {
-  content: "Start writing...";
+.ProseMirror p.is-empty::before {
+  content: attr(data-placeholder);
   color: var(--color-muted-foreground);
   pointer-events: none;
   float: left;
