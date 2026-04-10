@@ -60,17 +60,29 @@ export interface TiptapEditorHandle {
 const editorSchema = getSchema(sharedExtensions);
 
 // Singleton provider outside React lifecycle — survives StrictMode double-mount.
-// Provider is created once and persists for the app lifetime.
+// Provider is reused for the active doc and recreated only when docName changes.
 let singletonProvider: HocuspocusProvider | null = null;
+let singletonProviderDocName: string | null = null;
 let observerCleanup: (() => void) | null = null;
 
 function getProvider(docName: string): HocuspocusProvider {
+  if (singletonProvider && singletonProviderDocName !== docName) {
+    if (observerCleanup) {
+      observerCleanup();
+      observerCleanup = null;
+    }
+    singletonProvider.destroy();
+    singletonProvider = null;
+    singletonProviderDocName = null;
+  }
+
   if (!singletonProvider) {
     console.log('[TiptapEditor] Creating provider singleton');
     singletonProvider = new HocuspocusProvider({
       url: `ws://${window.location.host}/collab`,
       name: docName,
     });
+    singletonProviderDocName = docName;
 
     // Set up bidirectional observers once after first sync
     const provider = singletonProvider;
@@ -141,20 +153,6 @@ export const TiptapEditor: FC<{
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const provider = getProvider(getCurrentDocName());
   const identity = useIdentity();
-
-  // Destroy the singleton on unmount so the next mount with a different docName starts fresh.
-  useEffect(() => {
-    return () => {
-      if (observerCleanup) {
-        observerCleanup();
-        observerCleanup = null;
-      }
-      if (singletonProvider) {
-        singletonProvider.destroy();
-        singletonProvider = null;
-      }
-    };
-  }, []);
 
   const editor = useEditor({
     editorProps: {
