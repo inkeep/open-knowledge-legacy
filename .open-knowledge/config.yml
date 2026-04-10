@@ -1,0 +1,56 @@
+# Open Knowledge — workspace configuration
+#
+# This file overrides built-in defaults for this workspace. Every key below
+# is commented out and shows its current default value. Uncomment any key
+# to override it.
+#
+# Precedence (lowest -> highest):
+#   Built-in defaults
+#     -> ~/.open-knowledge/config.yml         (user defaults)
+#     -> ./.open-knowledge/config.yml         (this file)
+#
+# Schema reference: packages/cli/src/config/schema.ts
+
+
+# --- Content ---------------------------------------------------------------
+# Where editable markdown content lives. Path is relative to the workspace
+# root (the directory containing .open-knowledge/), NOT to this file.
+# content:
+#   dir: ./content
+
+
+# --- Persistence -----------------------------------------------------------
+# How aggressively CRDT updates are flushed to disk.
+# persistence:
+#   debounceMs: 2000
+#   maxDebounceMs: 10000
+
+
+# --- Wiki ------------------------------------------------------------------
+# Browsable roots inside .open-knowledge/. Each root is a subtree with its
+# own INDEX.md catalog. Customize to match your team's knowledge taxonomy.
+# Paths are relative to this directory.
+#
+# The default roots (articles, external-sources, research) are a starting
+# convention seeded by `open-knowledge init`. Reshape freely — e.g.:
+#
+#   wiki:
+#     roots:
+#       - path: ./eng-research
+#         label: Engineering Research
+#       - path: ./product-research
+#         label: Product Research
+#       - path: ./design-decisions
+#         label: Design Decisions
+#
+# wiki:
+#   roots:
+#     - path: ./articles
+#       label: Knowledge Articles
+#     - path: ./external-sources
+#       label: External Sources
+#     - path: ./research
+#       label: Research
+#   include:
+#     - "**/*.md"
+#   exclude: []

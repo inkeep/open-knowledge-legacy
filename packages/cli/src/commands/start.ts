@@ -2,18 +2,8 @@
  * `open-knowledge start` command — launches standalone Hocuspocus server
  * with optional static React app serving.
  */
-import { existsSync, mkdirSync } from 'node:fs';
-import { createServer as createHttpServer } from 'node:http';
-import { resolve } from 'node:path';
-import { createServer, getLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import sirv from 'sirv';
-import { WebSocketServer } from 'ws';
 import type { Config } from '../config/schema.ts';
-import { renderBanner } from '../ui/banner.ts';
-import { dim, error, info } from '../ui/colors.ts';
-
-const log = getLogger('start');
 
 export function startCommand(getConfig: () => Config): Command {
   const cmd = new Command('start')
@@ -22,12 +12,24 @@ export function startCommand(getConfig: () => Config): Command {
     .option('-H, --host <host>', 'Server host', undefined)
     .option('--open', 'Open browser after start')
     .action(async (opts) => {
+      // Lazy imports — avoids loading TipTap/Hocuspocus for other commands
+      const { existsSync, mkdirSync } = await import('node:fs');
+      const { createServer: createHttpServer } = await import('node:http');
+      const { resolve } = await import('node:path');
+      const { createServer, getLogger } = await import('@inkeep/open-knowledge-server');
+      const { default: sirv } = await import('sirv');
+      const { WebSocketServer } = await import('ws');
+      const { CONFIG_FILENAME, WIKI_DIR } = await import('../constants.ts');
+      const { renderBanner } = await import('../ui/banner.ts');
+      const { dim, error, info } = await import('../ui/colors.ts');
+
+      const log = getLogger('start');
       const config = getConfig();
       const cwd = process.cwd();
       const contentDir = resolve(cwd, config.content.dir);
 
       if (!existsSync(contentDir)) {
-        const configPath = resolve(cwd, '.open-knowledge', 'config.yml');
+        const configPath = resolve(cwd, WIKI_DIR, CONFIG_FILENAME);
         const hasConfig = existsSync(configPath);
         console.error(`\n  ${error('Error:')} Content directory not found: ${info(contentDir)}\n`);
         if (!hasConfig) {
@@ -54,9 +56,6 @@ export function startCommand(getConfig: () => Config): Command {
         quiet: false,
         debounce: config.persistence.debounceMs,
         maxDebounce: config.persistence.maxDebounceMs,
-        gitEnabled: config.git.enabled,
-        commitDebounceMs: config.git.commitDebounceMs,
-        wipRef: config.git.wipRef,
       });
 
       // Graceful shutdown
