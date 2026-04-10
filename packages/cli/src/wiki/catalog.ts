@@ -5,16 +5,18 @@ import { z } from 'zod';
 import { parseFrontmatter, serializeFrontmatter } from '../utils/frontmatter.ts';
 import { CATALOG_FILENAME } from './constants.ts';
 
-const ArticleFrontmatter = z.object({
+const ArticleFrontmatterSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
   tags: z.array(z.string()).default([]),
 });
 
-const IndexFrontmatter = z.object({
+export const IndexMetaSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
 });
+
+export type IndexMeta = z.infer<typeof IndexMetaSchema>;
 
 export interface ArticleMeta {
   title: string;
@@ -31,11 +33,6 @@ export interface SubfolderMeta {
   relativePath: string;
 }
 
-export interface IndexMeta {
-  title?: string;
-  description?: string;
-}
-
 export interface CatalogOptions {
   title?: string;
   description?: string;
@@ -48,7 +45,7 @@ interface RootSection {
 
 function extractArticleMeta(filePath: string, relativePath: string): ArticleMeta {
   const content = readFileSync(filePath, 'utf-8');
-  const fm = parseFrontmatter(content, ArticleFrontmatter);
+  const fm = parseFrontmatter(content, ArticleFrontmatterSchema);
   const fileName = basename(filePath, '.md');
 
   return {
@@ -69,7 +66,7 @@ export function readIndexMeta(dirPath: string): IndexMeta | null {
   const indexPath = join(dirPath, CATALOG_FILENAME);
   if (!existsSync(indexPath)) return null;
   const content = readFileSync(indexPath, 'utf-8');
-  return parseFrontmatter(content, IndexFrontmatter);
+  return parseFrontmatter(content, IndexMetaSchema);
 }
 
 function countArticles(dirPath: string): number {
