@@ -103,6 +103,7 @@ export function startCommand(getConfig: () => Config): Command {
 
         // Priority 2: Uploaded images
         if (url?.startsWith('/uploads/')) {
+          res.setHeader('X-Content-Type-Options', 'nosniff');
           uploadsHandler(req, res);
           return;
         }

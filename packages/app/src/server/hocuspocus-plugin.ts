@@ -101,7 +101,11 @@ export function hocuspocusPlugin(): Plugin {
       });
 
       // Serve uploaded images
-      server.middlewares.use('/uploads', sirv(join(CONTENT_DIR, 'uploads'), { dev: true }));
+      const uploadsServe = sirv(join(CONTENT_DIR, 'uploads'), { dev: true });
+      server.middlewares.use('/uploads', (req, res, next) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        uploadsServe(req, res, next);
+      });
 
       // Wire up API endpoints via Vite middleware
       server.middlewares.use(async (req, res, next) => {

@@ -18,6 +18,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import busboy from 'busboy';
+import { fileTypeFromBuffer } from 'file-type';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
@@ -29,13 +30,7 @@ import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_MIME_TYPES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-  'image/svg+xml',
-]);
+const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
 function sanitizeFilename(name: string): string {
   // Strip any path separators first
@@ -757,10 +752,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const { filename, mimeType, buffer } = uploadResult;
+    const { filename, buffer } = uploadResult;
 
-    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
-      json(res, 400, { ok: false, error: `Unsupported MIME type: ${mimeType}` });
+    // Magic bytes check — ignore the client-supplied mimeType entirely
+    const detected = await fileTypeFromBuffer(buffer);
+    if (!detected || !ALLOWED_MIME_TYPES.has(detected.mime)) {
+      json(res, 400, {
+        ok: false,
+        error: `Unsupported file type${detected ? `: ${detected.mime}` : ''}`,
+      });
       return;
     }
 
