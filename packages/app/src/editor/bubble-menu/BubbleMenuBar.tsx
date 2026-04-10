@@ -29,13 +29,11 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
       updateDelay={100}
       className="flex items-center gap-0.5 rounded-lg border bg-background p-1 shadow-md"
     >
-      <TooltipProvider>
-        <BlockTypeSelector editor={editor} />
-        <Separator orientation="vertical" className="mx-0.5 h-5 data-vertical:self-center" />
-        <InlineFormatButtons editor={editor} />
-        <Separator orientation="vertical" className="mx-0.5 h-5 data-vertical:self-center" />
-        <LinkEditPopover editor={editor} />
-      </TooltipProvider>
+      <BlockTypeSelector editor={editor} />
+      <Separator orientation="vertical" className="mx-0.5 h-5 data-vertical:self-center" />
+      <InlineFormatButtons editor={editor} />
+      <Separator orientation="vertical" className="mx-0.5 h-5 data-vertical:self-center" />
+      <LinkEditPopover editor={editor} />
     </BubbleMenu>
   );
 }

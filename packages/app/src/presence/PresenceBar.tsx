@@ -124,15 +124,13 @@ export function PresenceBar({ provider }: { provider: HocuspocusProvider | null 
   const syncStatus = useSyncStatus(provider);
 
   return (
-    <TooltipProvider>
-      <div data-slot="presence-bar" className="flex items-center gap-2 px-1 py-1.5">
-        <SyncIndicator status={syncStatus} />
-        <div className="flex items-center -space-x-1.5">
-          {participants.map((p) => (
-            <PresenceAvatar key={p.clientId} user={p.user} mode={p.mode} />
-          ))}
-        </div>
+    <div data-slot="presence-bar" className="flex items-center gap-2 px-1 py-1.5">
+      <SyncIndicator status={syncStatus} />
+      <div className="flex items-center -space-x-1.5">
+        {participants.map((p) => (
+          <PresenceAvatar key={p.clientId} user={p.user} mode={p.mode} />
+        ))}
       </div>
-    </TooltipProvider>
+    </div>
   );
 }
