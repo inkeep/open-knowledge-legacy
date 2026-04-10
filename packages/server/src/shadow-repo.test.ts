@@ -464,4 +464,60 @@ describe('saveVersion', () => {
     }
     expect(wipExists).toBe(false);
   });
+
+  test('multi-parent checkpoint preserves all writer chains', async () => {
+    // Both writers make WIP commits
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Human edit\n');
+    const humanWipSha = await commitWip(shadow, human, 'content/docs', 'WIP: human edit');
+
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Agent edit\n');
+    const agentWipSha = await commitWip(shadow, agent, 'content/docs', 'WIP: agent edit');
+
+    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human, agent]);
+
+    const sg = shadowGit(shadow);
+
+    // Checkpoint commit should list both WIP SHAs as parents
+    const parentLine = (await sg.raw('log', '-1', '--format=%P', result.checkpointRef)).trim();
+    const parents = parentLine.split(' ').filter(Boolean);
+    expect(parents).toContain(humanWipSha);
+    expect(parents).toContain(agentWipSha);
+    expect(parents.length).toBe(2);
+
+    // --full-history from the checkpoint reaches both writer commits
+    const authorEmails = (
+      await sg.raw(
+        'log',
+        '--full-history',
+        '--author-date-order',
+        '--format=%ae',
+        result.checkpointRef,
+      )
+    )
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+
+    expect(authorEmails).toContain(human.email);
+    expect(authorEmails).toContain(agent.email);
+  });
+
+  test('checkpoint falls back to latest checkpoint when no WIP activity', async () => {
+    // First save version (creates first checkpoint)
+    writeFileSync(resolve(contentDir, 'intro.md'), '# v1\n');
+    await commitWip(shadow, human, 'content/docs', 'WIP: v1');
+    const result1 = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+
+    const sg = shadowGit(shadow);
+    const checkpoint1Sha = (await sg.raw('rev-parse', result1.checkpointRef)).trim();
+
+    // Second save version with NO WIP activity since last checkpoint
+    writeFileSync(resolve(contentDir, 'intro.md'), '# v2 (direct write, no WIP commit)\n');
+    const result2 = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+
+    // The second checkpoint should parent on the first checkpoint commit
+    const parentLine = (await sg.raw('log', '-1', '--format=%P', result2.checkpointRef)).trim();
+    const parents = parentLine.split(' ').filter(Boolean);
+    expect(parents).toContain(checkpoint1Sha);
+  });
 });

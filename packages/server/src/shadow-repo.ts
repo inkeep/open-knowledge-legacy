@@ -476,14 +476,37 @@ export async function saveVersion(
         await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: shadowTmpIndex }).raw('write-tree')
       ).trim();
 
-      // Find latest shadow WIP to parent on (branch-scoped)
-      let shadowParent: string | null = null;
-      for (const w of writers) {
+      // Collect ALL writer WIP refs + upstream ref as checkpoint parents
+      // (preserves all per-writer chains across the checkpoint boundary)
+      const shadowParentShas: string[] = [];
+      for (const w of [...writers, { id: 'upstream' }]) {
         try {
-          shadowParent = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
-          break;
+          const sha = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
+          shadowParentShas.push(sha);
         } catch {
-          // try next writer
+          // ref doesn't exist for this writer — skip
+        }
+      }
+      // Deduplicate (upstream may alias a writer ref in edge cases)
+      const uniqueParents = [...new Set(shadowParentShas)];
+
+      // Fallback: no WIP activity since last checkpoint — parent on the latest checkpoint
+      if (uniqueParents.length === 0) {
+        try {
+          const refs = (
+            await sg.raw(
+              'for-each-ref',
+              '--sort=-creatordate',
+              '--format=%(objectname)',
+              `refs/checkpoints/${branch}/`,
+            )
+          )
+            .trim()
+            .split('\n')
+            .filter(Boolean);
+          if (refs[0]) uniqueParents.push(refs[0]);
+        } catch {
+          // no prior checkpoints — this is the first one, parentless is fine
         }
       }
 
@@ -493,7 +516,9 @@ export async function saveVersion(
         '-m',
         `checkpoint: Save Version → project commit ${projectCommitSha.slice(0, 8)}`,
       ];
-      if (shadowParent) checkpointArgs.push('-p', shadowParent);
+      for (const p of uniqueParents) {
+        checkpointArgs.push('-p', p);
+      }
 
       const checkpointSha = (
         await sg
