@@ -1,4 +1,5 @@
-import react from '@vitejs/plugin-react';
+import babel from '@rolldown/plugin-babel';
+import react, { reactCompilerPreset } from '@vitejs/plugin-react';
 import type { PluginOptions } from 'babel-plugin-react-compiler';
 import { defineConfig } from 'vite';
 import { hocuspocusPlugin } from './src/server/hocuspocus-plugin';
@@ -12,12 +13,13 @@ const reactCompilerConfig: PluginOptions = {
   },
 };
 
+const vitePort = process.env.VITE_PORT ? Number.parseInt(process.env.VITE_PORT, 10) : undefined;
+
 export default defineConfig({
   plugins: [
-    react({
-      babel: {
-        plugins: [['babel-plugin-react-compiler', reactCompilerConfig]],
-      },
+    react(),
+    babel({
+      presets: [reactCompilerPreset(reactCompilerConfig)],
     }),
     hocuspocusPlugin(),
   ],
@@ -25,6 +27,8 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   server: {
+    port: vitePort ?? 5173,
+    strictPort: vitePort !== undefined,
     watch: {
       // Exclude the content/ directory from Vite's HMR watcher.
       // Markdown files here are managed by the Hocuspocus file watcher + persistence

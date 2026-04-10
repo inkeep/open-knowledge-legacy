@@ -72,22 +72,22 @@ describe('getIdentity', () => {
 
   test('persists name to localStorage', () => {
     const identity = getIdentity();
-    expect(localStorage.getItem('ok-user-name')).toBe(identity.name);
+    expect(localStorage.getItem('ok-user-name-v2')).toBe(identity.name);
   });
 
   test('persists color to localStorage', () => {
     const identity = getIdentity();
-    expect(localStorage.getItem('ok-user-color')).toBe(identity.color);
+    expect(localStorage.getItem('ok-user-color-v2')).toBe(identity.color);
   });
 
   test('reads persisted name from localStorage', () => {
-    localStorage.setItem('ok-user-name', 'Test User');
+    localStorage.setItem('ok-user-name-v2', 'Test User');
     const identity = getIdentity();
     expect(identity.name).toBe('Test User');
   });
 
   test('reads persisted color from localStorage', () => {
-    localStorage.setItem('ok-user-color', '#FF0000');
+    localStorage.setItem('ok-user-color-v2', '#FF0000');
     const identity = getIdentity();
     expect(identity.color).toBe('#FF0000');
   });

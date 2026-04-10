@@ -117,13 +117,12 @@ export function AgentUndoButton() {
 
   return (
     <Button
-      variant="outline"
+      variant="ghost"
       size="sm"
       disabled={!canUndo || isPending}
       onClick={undo}
       data-undo-state={undoState}
       data-undo-just-enabled={justEnabled ? 'true' : 'false'}
-      className="border-agent/50 text-agent hover:bg-agent/10 disabled:opacity-40"
     >
       <Undo2 className="size-3.5" />
       <span>Undo Agent Edit</span>

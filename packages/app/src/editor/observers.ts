@@ -44,9 +44,10 @@ export const ORIGIN_TEXT_TO_TREE = 'sync-from-text';
 const DEBOUNCE_MS = 50;
 
 /**
- * Window during which one side's recent activity blocks the other side's sync.
- * - If the user typed within TYPING_DEFER_MS, Observer B waits.
- * - If Y.Text was written by a non-local source within TYPING_DEFER_MS, Observer A waits.
+ * Window during which user typing activity defers Observer B's sync.
+ * - Observer B: defers while user typed within TYPING_DEFER_MS (300ms).
+ * - Observer A: coalesces rapid keystrokes within DEBOUNCE_MS (50ms, much shorter).
+ * - Observer A skips entirely for remote (non-local) transactions.
  * Tuned to be long enough to cover fast-typing bursts and network round-trips, short
  * enough that source mode catches up quickly when the user pauses.
  */
@@ -329,8 +330,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const body = mdManager.serialize(json);
         const frontmatter = getFrontmatter(doc);
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-      } catch {
+      } catch (err) {
         // Non-critical — baseline will catch up on next local sync
+        console.debug('[Observer A] Baseline refresh failed on remote change:', err);
       }
       return;
     }

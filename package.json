@@ -15,7 +15,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "lint": "biome check .",
-    "format": "biome check --write .",
+    "format": "biome check --write --unsafe .",
     "check:fast": "bun run typecheck && bun run lint",
     "check": "bun run typecheck && bun run lint && bun run test",
     "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true",
