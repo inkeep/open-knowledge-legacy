@@ -117,4 +117,42 @@ This means @parcel/watcher is not architecturally required — it's one option f
 
 - Extract `rebuildCatalogs()` into a standalone CLI subcommand so it's invocable from any trigger (git hook, cron, CI, fswatch pipe)
 - Keep @parcel/watcher as the default real-time mechanism in the MCP server
+
+---
+
+## Q4: How would the watcher service be configured?
+
+**Date:** 2026-04-10
+**Status:** Answered
+
+### Context
+
+If the detection layer is pluggable (Q3), how does a user configure it? Is there a config surface, or does it just work?
+
+### Options evaluated
+
+| Approach | Config needed | Covers offline edits | Real-time | Verdict |
+|---|---|---|---|---|
+| MCP-embedded watcher (current) | None | On next startup (full rebuild) | Yes | **Keep as primary** |
+| `open-knowledge watch` CLI | Manual start | While running | Yes | **Skip** — duplicates MCP watcher |
+| Git hooks (`post-commit`) | Auto-installed by `init` | Git ops only | No (on commit) | **Safety net** |
+| CI/GitHub Actions | Manual setup | Git ops only | No (on push) | **Defer** — document, don't scaffold |
+| Config-driven `watch:` section | Edit config.yml | Depends on layers | Depends | **Over-engineering** |
+| launchd/systemd | Manual setup | While running | Yes | **No** — no precedent for wiki tools |
+
+### Answer: zero config
+
+**Users configure nothing.** Two layers cover all cases:
+
+1. **MCP server auto-watcher (primary):** Starts on MCP connect, watches `.open-knowledge/` with @parcel/watcher. Sub-second catalog rebuilds. Active while the agent session is open. Full rebuild on startup catches any changes made while offline.
+
+2. **Git hook safety net:** `open-knowledge init` silently installs a `post-commit` hook that runs `open-knowledge rebuild-catalogs`. Catches the case where someone commits without the MCP server running.
+
+**Git hook coexistence:** `init` should detect existing hook managers (husky, lefthook, simple-git-hooks) and integrate rather than overwrite. Fall back to `.git/hooks/post-commit` directly if no manager is present.
+
+**What we skip:**
+- No standalone `open-knowledge watch` command — duplicates the MCP-embedded watcher with no added value
+- No `watch:` config section — the two layers cover all mutation paths without user decisions
+- No CI auto-scaffold — document it, add `open-knowledge setup-ci` later if there's demand
+- No system daemon — the MCP server already serves this role
 - The detection layer becomes pluggable without changing the rebuild logic
