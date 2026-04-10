@@ -17,7 +17,7 @@ export const sharedExtensions = [
   ...coreExtensions.map((ext) => (ext.name === 'jsxComponent' ? JsxComponent : ext)),
   SlashCommand,
   FileHandler.configure({
-    allowedMimeTypes: [...ALLOWED_IMAGE_MIME_TYPES, 'image/svg+xml'],
+    allowedMimeTypes: [...ALLOWED_IMAGE_MIME_TYPES],
     onDrop(editor, files, pos) {
       for (const file of files) {
         uploadAndInsert(file, editor, pos);
