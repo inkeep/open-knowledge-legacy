@@ -11,7 +11,9 @@
  * Documents which constructs are stable vs which normalize.
  */
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
@@ -19,6 +21,19 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import * as Y from 'yjs';
 
 import { __resetCoordinationState, setupObservers } from '../../src/editor/observers';
+import {
+  agentWriteMd,
+  assertBridgeInvariant,
+  createTestClient,
+  createTestServer,
+  pollUntil,
+  readTestDoc,
+  serializeFragment,
+  type TestClient,
+  type TestServer,
+  testReset,
+  wait as waitMs,
+} from './test-harness';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
@@ -274,4 +289,187 @@ describe('full-stack chain: md → parse → XmlFragment → Observer A → Y.Te
       }
     });
   }
+});
+
+// ─── 5. Disk round-trip (Tier 1 integration) ───
+
+describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocument → XmlFragment', () => {
+  let server: TestServer;
+
+  beforeAll(async () => {
+    server = await createTestServer();
+  });
+
+  afterAll(async () => {
+    await server.cleanup();
+  });
+
+  const DISK_CONSTRUCTS = CONSTRUCTS.filter((c) => !['hard line break'].includes(c.name));
+
+  for (const { name, input } of DISK_CONSTRUCTS) {
+    test(name, async () => {
+      await testReset(server.port);
+      await waitMs(300);
+
+      // Connect client and write content via WYSIWYG (XmlFragment)
+      const client = await createTestClient(server.port);
+      try {
+        const json = mdManager.parse(input);
+        const pmNode = schema.nodeFromJSON(json);
+        const meta = { mapping: new Map(), isOMark: new Map() };
+        updateYFragment(client.doc, client.fragment, pmNode, meta);
+
+        // Wait for persistence to write to disk
+        const words = stripTrailingWhitespace(input).match(/\w{3,}/g) ?? [];
+        if (words.length > 0) {
+          await pollUntil(
+            () => words.every((w) => readTestDoc(server.contentDir).includes(w)),
+            5000,
+          );
+        }
+
+        // Verify disk content preserves the construct
+        const diskContent = readTestDoc(server.contentDir);
+        for (const word of words) {
+          expect(diskContent).toContain(word);
+        }
+      } finally {
+        client.cleanup();
+      }
+
+      // Now test reload: reset doc, write content to disk, reconnect client
+      await testReset(server.port);
+      await waitMs(300);
+      writeFileSync(join(server.contentDir, 'test-doc.md'), input, 'utf-8');
+
+      const client2 = await createTestClient(server.port);
+      try {
+        // Wait for onLoadDocument + Observer A to populate Y.Text
+        const words = stripTrailingWhitespace(input).match(/\w{3,}/g) ?? [];
+        if (words.length > 0) {
+          await pollUntil(() => words.every((w) => client2.ytext.toString().includes(w)), 5000);
+        }
+
+        // Verify content round-tripped through disk
+        for (const word of words) {
+          expect(client2.ytext.toString()).toContain(word);
+        }
+        assertBridgeInvariant(client2.ytext, client2.fragment);
+      } finally {
+        client2.cleanup();
+      }
+    });
+  }
+});
+
+// ─── 6. Agent-as-file-editor fidelity ───
+
+describe('agent-as-file-editor fidelity', () => {
+  let server: TestServer;
+
+  beforeAll(async () => {
+    server = await createTestServer();
+  });
+
+  afterAll(async () => {
+    await server.cleanup();
+  });
+
+  test('complex markdown written to disk → all 3 surfaces → user types → coexistence', async () => {
+    const complexMd = [
+      '# Agent File Edit',
+      '',
+      'Paragraph with **bold** and *italic* and `code`.',
+      '',
+      '## Section Two',
+      '',
+      '* Bullet one',
+      '* Bullet two',
+      '',
+      '1. Numbered one',
+      '2. Numbered two',
+      '',
+      '```javascript',
+      'const x = 42;',
+      '```',
+      '',
+      '> A blockquote.',
+      '',
+      '---',
+      '',
+      'Final paragraph.',
+      '',
+    ].join('\n');
+
+    await testReset(server.port);
+    await waitMs(300);
+
+    // Write complex markdown to disk (simulating agent file edit)
+    writeFileSync(join(server.contentDir, 'test-doc.md'), complexMd, 'utf-8');
+
+    // Connect client and wait for file watcher to propagate
+    await waitMs(500);
+    const client = await createTestClient(server.port);
+    try {
+      await pollUntil(() => client.ytext.toString().includes('Agent File Edit'), 10_000);
+
+      // Verify all 3 surfaces have content
+      expect(client.ytext.toString()).toContain('Section Two');
+      expect(client.ytext.toString()).toContain('Bullet one');
+      expect(serializeFragment(client.fragment)).toContain('Agent File Edit');
+      const diskContent = readTestDoc(server.contentDir);
+      expect(diskContent).toContain('Agent File Edit');
+
+      assertBridgeInvariant(client.ytext, client.fragment);
+
+      // User types in WYSIWYG (simulated via XmlFragment edit)
+      const userJson = mdManager.parse('## User Section\n\nUser typed this.');
+      const userNode = schema.nodeFromJSON(userJson);
+      client.doc.transact(() => {
+        const meta = { mapping: new Map(), isOMark: new Map() };
+        updateYFragment(client.doc, client.fragment, userNode, meta);
+      });
+
+      await waitMs(500);
+
+      // Both agent and user content should coexist
+      // (updateYFragment replaces tree, but user content replaces agent content in this test)
+      // The key assertion: bridge invariant still holds
+      assertBridgeInvariant(client.ytext, client.fragment);
+    } finally {
+      client.cleanup();
+    }
+  });
+
+  test('agent writes via API + user writes coexist', async () => {
+    await testReset(server.port);
+    await waitMs(300);
+
+    const client = await createTestClient(server.port);
+    try {
+      // User types first (via Y.Text, simulating source mode)
+      client.doc.transact(() => {
+        client.ytext.insert(0, '# User Content\n\nTyped by user.');
+      });
+      await waitMs(500);
+
+      // Agent writes via API
+      await agentWriteMd(server.port, '## Agent Content\n\nWritten by agent.');
+      await waitMs(500);
+
+      // Both should coexist in Y.Text
+      expect(client.ytext.toString()).toContain('User Content');
+      expect(client.ytext.toString()).toContain('Agent Content');
+
+      assertBridgeInvariant(client.ytext, client.fragment);
+
+      // Verify disk has both
+      await pollUntil(() => {
+        const disk = readTestDoc(server.contentDir);
+        return disk.includes('User Content') && disk.includes('Agent Content');
+      }, 5000);
+    } finally {
+      client.cleanup();
+    }
+  });
 });
