@@ -4,7 +4,6 @@ import {
   Heading1,
   Heading2,
   Heading3,
-  ImageIcon,
   List,
   ListOrdered,
   ListTodo,
@@ -116,20 +115,6 @@ export const slashCommandItems: SlashCommandItem[] = [
     category: 'insert',
     command: (editor) => editor.chain().focus().setHorizontalRule().run(),
     aliases: ['hr', 'divider', 'rule'],
-  },
-  {
-    name: 'image',
-    label: 'Image',
-    description: 'Insert an image from URL',
-    icon: ImageIcon,
-    category: 'insert',
-    command: (editor) => {
-      const url = window.prompt('Image URL');
-      if (url) {
-        editor.chain().focus().setImage({ src: url }).run();
-      }
-    },
-    aliases: ['img', 'picture'],
   },
 ];
 
