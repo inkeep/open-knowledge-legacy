@@ -1,4 +1,5 @@
 import { Clock } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
@@ -17,7 +18,10 @@ interface EditorHeaderProps {
   onSourceModeChange: (value: boolean) => void;
   onTimelineToggle: () => void;
   previewEntry: TimelineEntry | null;
+  restoring: boolean;
+  restoreError: string | null;
   onExitPreview: () => void;
+  onRestore: () => void;
 }
 
 export function EditorHeader({
@@ -25,12 +29,27 @@ export function EditorHeader({
   onSourceModeChange,
   onTimelineToggle,
   previewEntry,
+  restoring,
+  restoreError,
   onExitPreview,
+  onRestore,
 }: EditorHeaderProps) {
   const { activeDocName } = useDocumentContext();
 
   const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
   const isPreviewMode = previewEntry !== null && previewEntry.sha !== '';
+  const [confirmingRestore, setConfirmingRestore] = useState(false);
+
+  // Reset confirmation state when the previewed entry changes.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: previewEntry is a prop; re-run on identity change is intentional
+  useEffect(() => {
+    setConfirmingRestore(false);
+  }, [previewEntry]);
+
+  function handleConfirmRestore() {
+    setConfirmingRestore(false);
+    onRestore();
+  }
 
   return (
     <header className="flex h-12 shrink-0 items-center border-b">
@@ -66,14 +85,40 @@ export function EditorHeader({
         </ToggleGroup>
       )}
 
-      {/* Preview mode: version label + exit */}
-      {isPreviewMode && previewEntry && (
+      {/* Preview mode: version label + controls */}
+      {isPreviewMode && previewEntry && !confirmingRestore && (
         <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs text-muted-foreground">
-            Viewing: {formatRelativeTime(previewEntry.timestamp)} — {displayAuthor(previewEntry)}
+          <span
+            className={`text-xs ${restoreError ? 'text-destructive' : 'text-muted-foreground'}`}
+          >
+            {restoreError ||
+              `Viewing: ${formatRelativeTime(previewEntry.timestamp)} — ${displayAuthor(previewEntry)}`}
           </span>
+          <Button variant="ghost" size="xs" onClick={() => setConfirmingRestore(true)}>
+            Restore
+          </Button>
           <Button variant="ghost" size="xs" onClick={onExitPreview}>
             Exit preview
+          </Button>
+        </div>
+      )}
+
+      {/* Restore confirmation */}
+      {isPreviewMode && previewEntry && confirmingRestore && (
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-xs text-muted-foreground">
+            Replace current content with this version?
+          </span>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setConfirmingRestore(false)}
+            disabled={restoring}
+          >
+            Cancel
+          </Button>
+          <Button variant="default" size="xs" onClick={handleConfirmRestore} disabled={restoring}>
+            {restoring ? 'Restoring…' : 'Restore'}
           </Button>
         </div>
       )}

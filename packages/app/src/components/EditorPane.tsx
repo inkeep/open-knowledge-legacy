@@ -10,6 +10,8 @@ export function EditorPane() {
   const [isSourceMode, setIsSourceMode] = useState(false);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
@@ -17,11 +19,39 @@ export function EditorPane() {
     } else {
       setPreviewEntry(entry);
     }
+    setRestoreError(null);
   }
 
   function handleExitPreview() {
     setPreviewEntry(null);
+    setRestoreError(null);
   }
+
+  async function handleRestore() {
+    if (!previewEntry?.sha) return;
+    setRestoring(true);
+    try {
+      const res = await fetch('/api/rollback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docName: activeDocName, commitSha: previewEntry.sha }),
+      });
+      if (res.ok) {
+        setPreviewEntry(null);
+        setRestoreError(null);
+      } else {
+        setRestoreError('Restore failed — document unchanged');
+        setTimeout(() => setRestoreError(null), 4000);
+      }
+    } catch {
+      setRestoreError('Restore failed — document unchanged');
+      setTimeout(() => setRestoreError(null), 4000);
+    }
+    setRestoring(false);
+  }
+
+  // Read activeDocName inside the provider tree
+  const { activeDocName } = useDocumentContext();
 
   return (
     <PageListProvider>
@@ -30,43 +60,23 @@ export function EditorPane() {
         onSourceModeChange={setIsSourceMode}
         onTimelineToggle={() => setTimelineOpen((o) => !o)}
         previewEntry={previewEntry}
+        restoring={restoring}
+        restoreError={restoreError}
         onExitPreview={handleExitPreview}
+        onRestore={handleRestore}
       />
       <EditorArea
         isSourceMode={isSourceMode}
         previewEntry={previewEntry}
         onNoDiff={handleExitPreview}
       />
-      <TimelineDocName
+      <TimelinePanel
         open={timelineOpen}
         onOpenChange={setTimelineOpen}
+        docName={activeDocName ?? ''}
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
       />
     </PageListProvider>
-  );
-}
-
-/** Reads activeDocName from context and passes to TimelinePanel. */
-function TimelineDocName({
-  open,
-  onOpenChange,
-  onEntrySelect,
-  selectedSha,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onEntrySelect: (entry: TimelineEntry) => void;
-  selectedSha?: string;
-}) {
-  const { activeDocName } = useDocumentContext();
-  return (
-    <TimelinePanel
-      open={open}
-      onOpenChange={onOpenChange}
-      docName={activeDocName ?? ''}
-      onEntrySelect={onEntrySelect}
-      selectedSha={selectedSha}
-    />
   );
 }
