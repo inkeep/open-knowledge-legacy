@@ -99,17 +99,17 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
     // !includes('Section 1') fail because mixed-origin line fragments persist.
     // Length-based check is robust: after undo, most agent content is removed.
     await page.waitForFunction(
-      (m: string) => {
+      ([m, fixtureLen]: [string, number]) => {
         // biome-ignore lint/suspicious/noExplicitAny: accessing Hocuspocus provider from window
         const txt = (window as any).__hocuspocusProvider?.document?.getText('source')?.toString();
-        // After undo: agent content (10K+ chars) should be substantially reduced.
+        // After undo: agent content should be substantially reduced.
         // Mixed-origin fragments (Observer A's diffLines creates sync-from-tree
-        // items at line granularity that survive um.undo()) can leave significant
-        // residue. Known architectural limitation — char-level diff is Future Work.
+        // items at line granularity that survive um.undo()) can leave residue.
+        // Known architectural limitation — char-level diff is Future Work.
         // Assert: text shrank to < 30% of original fixture + user marker preserved.
-        return txt && txt.length < 3000 && txt.includes(m);
+        return txt && txt.length < fixtureLen * 0.3 && txt.includes(m);
       },
-      marker,
+      [marker, FIXTURE.length] as [string, number],
       { timeout: 60_000 },
     );
 
