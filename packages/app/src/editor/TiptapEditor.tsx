@@ -16,6 +16,7 @@ import { type FC, type Ref, useEffect, useImperativeHandle, useRef } from 'react
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
+import { TableControlsMenu } from './table-controls/TableControlsMenu';
 import { sharedExtensions } from './extensions/shared.ts';
 import { markUserTyping, setupObservers } from './observers';
 
@@ -406,6 +407,7 @@ export const TiptapEditor: FC<{
       data-agent-flash-agent-id=""
     >
       {editor && <BubbleMenuBar editor={editor} />}
+      {editor && <TableControlsMenu editor={editor} />}
       <EditorContent editor={editor} className="h-full" />
     </div>
   );
