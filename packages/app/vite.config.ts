@@ -12,6 +12,8 @@ const reactCompilerConfig: PluginOptions = {
   },
 };
 
+const vitePort = process.env.VITE_PORT ? Number.parseInt(process.env.VITE_PORT, 10) : undefined;
+
 export default defineConfig({
   plugins: [
     react({
@@ -25,6 +27,8 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   server: {
+    port: vitePort ?? 5173,
+    strictPort: vitePort !== undefined,
     watch: {
       // Exclude the content/ directory from Vite's HMR watcher.
       // Markdown files here are managed by the Hocuspocus file watcher + persistence
