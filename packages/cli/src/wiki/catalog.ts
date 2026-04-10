@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { parseFrontmatter, serializeFrontmatter } from './frontmatter.ts';
+import { parseFrontmatter, serializeFrontmatter } from '../utils/frontmatter.ts';
 
 export interface ArticleMeta {
   title: string;

@@ -1,5 +1,5 @@
 /**
- * Frontmatter parsing utilities for wiki .md files.
+ * YAML frontmatter parsing and serialization for markdown files.
  *
  * Follows the Jekyll frontmatter convention (2008) — the de facto standard
  * used by Hugo, gray-matter, Astro, Next.js, and most static site generators.
@@ -8,11 +8,11 @@
  * Convention:
  *   - Opening `---` must be the first line of the file (byte position 0)
  *   - Closing `---` on its own line terminates the block
- *   - Content between delimiters is parsed as YAML (1.2 via the `yaml` package)
+ *   - Content between delimiters is parsed as YAML 1.2 (via the `yaml` package)
  *   - Empty frontmatter (`---\n---`) is valid (parses to null)
  *
- * All frontmatter access in the wiki package should go through these
- * functions — no raw regex matching elsewhere.
+ * All frontmatter parsing should go through these functions — no raw regex
+ * matching elsewhere.
  */
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
