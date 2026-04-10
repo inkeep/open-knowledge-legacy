@@ -246,7 +246,11 @@ describe('undo / redo', () => {
 
     await agentUndo(server.port);
     await wait(500);
+    // Explicit check on both surfaces for localized failure diagnosis.
+    // assertBridgeInvariant covers this transitively, but direct assertions
+    // produce clearer error messages when undo leaves stale content.
     expect(client.ytext.toString()).not.toContain('Undo Target');
+    expect(serializeFragment(client.fragment)).not.toContain('Undo Target');
     assertBridgeInvariant(client.ytext, client.fragment);
   });
 
@@ -257,7 +261,9 @@ describe('undo / redo', () => {
 
     await agentUndo(server.port);
     await wait(500);
+    // Explicit check on both surfaces (see above).
     expect(serializeFragment(client.fragment)).not.toContain('Undo Fragment');
+    expect(client.ytext.toString()).not.toContain('Undo Fragment');
     assertBridgeInvariant(client.ytext, client.fragment);
   });
 
