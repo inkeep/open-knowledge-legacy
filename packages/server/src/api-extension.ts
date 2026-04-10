@@ -5,9 +5,16 @@
  * the standalone Server and the Vite dev plugin.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_WRITE_ORIGIN,
@@ -468,7 +475,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const doc = hocuspocus.documents.get('test-doc');
       if (doc) await hocuspocus.unloadDocument(doc);
-      const { writeFileSync } = await import('node:fs');
       writeFileSync(resolve(contentDir, 'test-doc.md'), '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
@@ -658,6 +664,63 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     res.end(content);
   }
 
+  async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+      const { path: filePath } = body as Record<string, unknown>;
+      if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
+        json(res, 400, { ok: false, error: 'path is required' });
+        return;
+      }
+      if (!filePath.endsWith('.md')) {
+        json(res, 400, { ok: false, error: 'path must end with .md' });
+        return;
+      }
+      if (filePath.includes('..') || filePath.startsWith('/')) {
+        json(res, 400, { ok: false, error: 'path must not contain .. or start with /' });
+        return;
+      }
+      const resolvedContentDir = resolve(contentDir);
+      const fullPath = resolve(resolvedContentDir, filePath);
+      if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
+        json(res, 400, { ok: false, error: 'path must not escape content directory' });
+        return;
+      }
+      if (existsSync(fullPath)) {
+        json(res, 409, { ok: false, error: 'File already exists' });
+        return;
+      }
+      writeFileSync(fullPath, '', 'utf-8');
+      const docName = basename(filePath, '.md');
+      json(res, 200, { ok: true, docName });
+    } catch (e) {
+      console.error('[create-page]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -692,6 +755,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/pages': handlePages,
+    '/api/create-page': handleCreatePage,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
