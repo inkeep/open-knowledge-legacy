@@ -217,7 +217,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     case 'skipped-flag':
       lines.push('MCP config not written — .mcp.json unchanged');
       lines.push(
-        '  To use wiki workflow prompts, add the openknowledge server to .mcp.json manually',
+        '  To use wiki workflow tools, add the openknowledge server to .mcp.json manually',
       );
       break;
     case 'failed':
@@ -239,7 +239,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   lines.push('Next steps:');
   lines.push('  1. Open your editor with Claude Code / Cursor / Windsurf');
   lines.push('  2. Approve the MCP server when prompted');
-  lines.push('  3. The wiki is ready — use the three workflow prompts:');
+  lines.push('  3. The wiki is ready — use the three workflow tools:');
   lines.push('     - mcp__openknowledge__init-wiki  — bootstrap articles from the codebase');
   lines.push('     - mcp__openknowledge__ingest     — capture an external source');
   lines.push('     - mcp__openknowledge__research   — gather sources and write findings');

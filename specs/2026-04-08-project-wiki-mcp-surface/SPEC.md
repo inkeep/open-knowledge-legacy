@@ -109,10 +109,10 @@
 | Must | AGENTS.md documents wiki conventions | Any agent can navigate the wiki by reading files, even without MCP | |
 | Must | MCP `instructions` field guides agent behavior on connect | Agent knows to read catalog first, then search, then read specific files | |
 | Must | `.open-knowledge/config.yml` `wiki:` section supports user-defined roots with `include`/`exclude` globs | Wiki roots are configurable — default articles/, external-sources/, research/ can be reshaped freely. Each root is a browsable subtree with its own `INDEX.md`. | Merged into CLI config schema (was separate `config.yaml`). Evolved from fixed paths to `roots` array. See D16. |
-| Should | `mcp__openknowledge__init-wiki` MCP prompt bootstraps wiki from empty state | Agent reads codebase + existing docs, writes knowledge articles grouped by topic, sets sticky folder descriptions on each new subfolder. Claude Code surfaces the prompt as `mcp__openknowledge__init-wiki` in the slash menu; other MCP clients use their equivalent prompt UX. | Shipped as an MCP prompt, not a SKILL.md file (pivoted this session — MCP prompts are cross-client via the protocol). |
-| Should | `mcp__openknowledge__ingest` MCP prompt fetches external sources into `external-sources/` | Given a URL or file, fetches raw content and saves it as reference material with frontmatter. | Raw preservation — no analysis, just capture. Pivoted to MCP prompt. |
-| Should | `mcp__openknowledge__research` MCP prompt analyzes sources and writes findings to `research/` | Uses `mcp__openknowledge__ingest` (or the same fetch workflow manually) to gather sources, then writes structured provisional findings to `research/`. | Non-canonical. Pivoted to MCP prompt. |
-| Could | `consolidate` MCP prompt promotes research into canonical articles | Reads research articles + external sources on a topic, writes a definitive article in `articles/`. | Research → article promotion. Not built; still deferred per §15. |
+| Should | `init-wiki` MCP tool bootstraps wiki from empty state | Agent reads codebase + existing docs, writes knowledge articles grouped by topic, sets sticky folder descriptions on each new subfolder. Discoverable via `tools/list`; description includes structured Use when / Triggers on guidance. | Shipped as an MCP tool with structured skill-style description. |
+| Should | `ingest` MCP tool fetches external sources into `external-sources/` | Given a URL or file, fetches raw content and saves it as reference material with frontmatter. | Raw preservation — no analysis, just capture. Shipped as MCP tool. |
+| Should | `research` MCP tool analyzes sources and writes findings to `research/` | Uses `ingest` (or the same fetch workflow manually) to gather sources, then writes structured provisional findings to `research/`. | Non-canonical. Shipped as MCP tool. |
+| Could | `consolidate` MCP tool promotes research into canonical articles | Reads research articles + external sources on a topic, writes a definitive article in `articles/`. | Research → article promotion. Not built; still deferred per §15. |
 | Could | `rebuild_catalogs` MCP tool for manual trigger | Force-regenerate all INDEX.md files | Extension |
 | Could | `status` MCP tool shows wiki health | Reports stale articles, orphans, coverage gaps | Extension |
 
@@ -192,7 +192,7 @@ wiki:
 │              (Claude Code / Cursor / Codex)                  │
 │                                                              │
 │  Native tools: Read, Edit, Write, Grep, Glob, Bash           │
-│  Workflow prompts (via MCP `prompts/list`):                  │
+│  Workflow tools (via MCP `tools/list`):                      │
 │    mcp__openknowledge__init-wiki                             │
 │    mcp__openknowledge__ingest                                │
 │    mcp__openknowledge__research                              │
@@ -211,7 +211,7 @@ wiki:
 │  INDEX.md files  │    │  3. catalog regenerator        │
 │                  │    │     (incl. sticky folder       │
 │                  │    │      descriptions)             │
-│                  │    │  4. workflow prompts           │
+│                  │    │  4. workflow tools             │
 │                  │    │     (init-wiki, ingest,        │
 │                  │    │      research)                 │
 │                  │    │  NO TOOLS — scaffolding        │
@@ -503,7 +503,7 @@ Phase 6 (extensions): /consolidate, status tool, GitHub Actions
 | D1 | Adaptive write path: DirectConnection when Hocuspocus is running, disk when not | T | **DEFERRED** (was LOCKED) | No | **Reverted 2026-04-09**: not built in any user story (US-005 shipped the MCP server without the write tool). For P0, disk-first via native tools is functionally equivalent per NG5 ("MCP server works without Hocuspocus via disk fallback"). Adaptive routing becomes valuable when the editor runs alongside the MCP server — deferred until editor integration becomes priority. **Trigger to revisit:** Phase 2 (editor S1) ships AND users/agents report write conflicts or stale-editor friction that disk-first can't handle. See §15 Future Work. | Original: Conversation with Tim. Reverted: this session's session-changelog entry. |
 | D2 | Thin MCP server (file watcher + catalog gen + instructions + workflow tools), NOT a full filesystem proxy | T | LOCKED | No | **Updated 2026-04-10**: MCP server exposes three workflow tools (`init-wiki`, `ingest`, `research`) via MCP `tools/list` (pivoted from `prompts/list`). Each tool has a structured description with **Use when** and **Triggers on** sections mirroring the skill description pattern, defined once per tool file and imported into both tool registration and INSTRUCTIONS. Agent uses native tools for all file operations. | Research confirmed. |
 | D3 | No drafts/permissions for P0 | P | LOCKED | No | Agent writes directly; review via git history | Conversation with Tim |
-| D4 | Scaffolding is a CLI subcommand (`open-knowledge init`); `mcp__openknowledge__init-wiki` MCP prompt handles population | P | DIRECTED | No | **Updated 2026-04-09**: previously "`init` as MCP tool + `/init-wiki` skill". Both halves pivoted this session. Scaffolding moved from MCP tool to CLI because the tool created a chicken-and-egg problem for first-time setup (users couldn't invoke an MCP tool before MCP was wired up). Skills moved to MCP prompts because prompts are cross-client via the protocol (work in Claude Code, Cursor, Windsurf, etc. without client-specific file copying). | Original: conversation with Tim. Updated: this session. |
+| D4 | Scaffolding is a CLI subcommand (`open-knowledge init`); `init-wiki` MCP tool handles population | P | DIRECTED | No | **Updated 2026-04-10**: previously "`init` as MCP tool + `/init-wiki` skill". Scaffolding moved from MCP tool to CLI because the tool created a chicken-and-egg problem for first-time setup. Skills → MCP prompts → MCP tools (final pivot 2026-04-10 for better agent discoverability via `tools/list`). | Original: conversation with Tim. Updated: this session. |
 | D5 | `.mcp.json` in repo for Claude Code auto-config | T | LOCKED | No | Portable across team; committed to git | Claude Code docs |
 | D6 | Catalogs consolidated in `.open-knowledge/`, not scattered through repo | P | LOCKED | Yes | Users don't want index files polluting their codebase | Conversation with Tim |
 | D7 | Knowledge articles only — no code-index / file-by-file codebase mirror | P | LOCKED | No | Agent reads source code directly; wiki captures understanding (why, how things connect, processes) not file descriptions | Conversation with Tim |
@@ -587,7 +587,7 @@ All resolved. No open questions remaining.
 ## 15) Future Work
 
 ### Explored
-- **Adaptive write path (D1 deferred from LOCKED, 2026-04-09)** — An MCP write tool that routes agent writes to Hocuspocus DirectConnection (when the editor is running) or disk (when not). Originally a Must requirement per D1 and D2, deferred because: (a) the disk-only subset is functionally equivalent for P0 per NG5; (b) native Write + the file watcher already achieve the same end state when the editor isn't running; (c) the three MCP prompts introduced in US-007..US-009 (now shipped as MCP prompts) instruct the agent to use its native tools directly. **Trigger to revisit:** Phase 2 editor work (S1, S2, S3) ships AND users report write conflicts, stale-editor friction, or missing origin attribution. When revisited, the work is: (1) add a `write_article` MCP tool with adaptive routing to `packages/cli/src/mcp/tools/write.ts`, (2) wire it to detect Hocuspocus via HTTP ping and fall back to atomic temp+rename on disk, (3) update all three prompt bodies to instruct agents to call the tool instead of native Write for wiki files. Estimated ~100 LOC + tests.
+- **Adaptive write path (D1 deferred from LOCKED, 2026-04-09)** — An MCP write tool that routes agent writes to Hocuspocus DirectConnection (when the editor is running) or disk (when not). Originally a Must requirement per D1 and D2, deferred because: (a) the disk-only subset is functionally equivalent for P0 per NG5; (b) native Write + the file watcher already achieve the same end state when the editor isn't running; (c) the three MCP tools instruct the agent to use its native tools directly. **Trigger to revisit:** Phase 2 editor work (S1, S2, S3) ships AND users report write conflicts, stale-editor friction, or missing origin attribution. When revisited, the work is: (1) add a `write_article` MCP tool with adaptive routing to `packages/cli/src/mcp/tools/write.ts`, (2) wire it to detect Hocuspocus via HTTP ping and fall back to atomic temp+rename on disk, (3) update all three tool bodies to instruct agents to call the write tool instead of native Write for wiki files. Estimated ~100 LOC + tests.
 - **Wiki-links and backlinks (Bucket 7)** — Deferred. Trigger: wiki grows beyond ~50 articles.
 - **PR ingestion** — `/ingest` reads PR diffs and updates wiki articles automatically. Trigger: manual wiki maintenance proves the workflow and teams want automation.
 - **GitHub Actions for index consistency** — CI step ensures catalogs are correct across team. Trigger: team adoption.
@@ -604,7 +604,7 @@ All resolved. No open questions remaining.
 
 ## 16) Agent constraints
 
-- **SCOPE:** `.open-knowledge/` directory structure, MCP server, MCP prompts (`init-wiki`, `ingest`, `research`), CLI `init` subcommand, `.mcp.json`, CLAUDE.md additions, AGENTS.md template, `config.yml`
+- **SCOPE:** `.open-knowledge/` directory structure, MCP server, MCP tools (`init-wiki`, `ingest`, `research`), CLI `init` subcommand, `.mcp.json`, CLAUDE.md additions, AGENTS.md template, `config.yml`
 - **EXCLUDE:** Editor code (TipTap, y-prosemirror — Bucket 1), CRDT/Hocuspocus layer, persistence pipeline (Bucket 4), presence UX (Bucket 3), permission model (Bucket 5), wiki-links/backlinks (Bucket 7)
 - **STOP_IF:** Implementation requires changes to the CRDT layer or Hocuspocus server; MCP server needs to proxy file reads (writes use adaptive path, reads stay native)
 - **ASK_FIRST:** Changes to `.mcp.json` schema that affect other team members; INDEX.md format changes after initial deployment (1-way door); any new MCP tool beyond `init`

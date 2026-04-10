@@ -107,15 +107,15 @@ Your \`.mcp.json\` at the repo root should look like this after running \`init\`
 }
 \`\`\`
 
-## Workflow Prompts (MCP)
+## Workflow Tools (MCP)
 
-The MCP server exposes three prompts that codify the main workflows. Each MCP client surfaces them with its own UX (Claude Code shows them in the slash menu as \`mcp__openknowledge__<name>\`; Cursor, Windsurf, and other MCP clients use their equivalents), but the canonical names are:
+The MCP server exposes three tools that codify the main workflows. Each tool returns instructional text that guides the agent through the workflow — all real work (reads, edits, fetches) happens via the agent's native tools. The tools are:
 
-- **\`mcp__openknowledge__init-wiki\`** — Bootstrap this wiki by reading the codebase and writing initial knowledge articles grouped by topic. Run this once when setting up a new project.
-- **\`mcp__openknowledge__ingest\`** — Capture an external source (URL or local file) as raw reference material in \`external-sources/\`. Raw preservation only; no analysis.
-- **\`mcp__openknowledge__research\`** — Gather sources via \`ingest\` and write provisional findings to \`research/\`. Non-canonical until promoted to \`articles/\`.
+- **\`init-wiki\`** — Bootstrap this wiki by reading the codebase and writing initial knowledge articles grouped by topic. Use when setting up a wiki for the first time or onboarding to a new codebase.
+- **\`ingest\`** — Capture an external source (URL or local file) as raw reference material in \`external-sources/\`. Use when the user shares a URL or document to preserve. Raw preservation only; no analysis.
+- **\`research\`** — Gather sources via \`ingest\` and write provisional findings to \`research/\`. Use when researching a topic, comparing alternatives, or exploring a decision space. Non-canonical until promoted to \`articles/\`.
 
-These prompts are discovered via the standard MCP \`prompts/list\` handshake — no client-specific installation step is needed. When referring to them in docs or conversation, use the canonical \`mcp__openknowledge__<name>\` form so they're unambiguous across clients.
+These tools are discovered via the standard MCP \`tools/list\` handshake and work in any MCP client (Claude Code, Cursor, Windsurf, Codex, etc.).
 `;
 
 export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
