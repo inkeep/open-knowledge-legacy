@@ -16,7 +16,7 @@
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { output, ZodSchema } from 'zod';
+import type { output, ZodType } from 'zod';
 
 /** Force TS to fully resolve a type in tooltips instead of showing aliases. */
 type Resolve<T> = { [K in keyof T]: T[K] } & {};
@@ -40,7 +40,7 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
  *
  * Without a schema, returns `Record<string, unknown> | null`.
  */
-export function parseFrontmatter<S extends ZodSchema = ZodSchema<Record<string, unknown>>>(
+export function parseFrontmatter<S extends ZodType = ZodType<Record<string, unknown>>>(
   content: string,
   schema?: S,
 ): Resolve<output<S>> | null {
