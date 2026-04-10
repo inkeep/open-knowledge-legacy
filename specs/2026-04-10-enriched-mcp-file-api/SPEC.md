@@ -18,7 +18,7 @@
 
 Meanwhile, writes bypass the collaboration server entirely. Agent edits via native `Write` are anonymous (no authorship), have no undo, and if the editor is open, changes appear with a 2-10 second delay via the disk bridge.
 
-**Resolution:** Four new MCP tools (`read_file`, `list_files`, `search`, `write_file`) that operate on content files across all configured wiki roots and enrich responses with metadata from `.open-knowledge/`. Metadata is fully separated from content — stored as `.yml` sidecar files in a shadow directory tree (`.open-knowledge/metadata/`) that mirrors the structure of each wiki root. Content files are pure content with no frontmatter required. The `write_file` tool accepts content and metadata as separate parameters, writing content to the `.md` and metadata to the `.yml`. Writes route through Hocuspocus when available for CRDT sync, authorship, and undo — falling back to disk when not.
+**Resolution:** Seven new MCP tools (`read_file`, `list_files`, `search`, `write_file`, `edit_file`, `undo`, `redo`) that operate on content files across all configured wiki roots and enrich responses with metadata from `.open-knowledge/`. Metadata is fully separated from content — stored as `.yml` sidecar files in a shadow directory tree (`.open-knowledge/metadata/`) that mirrors the structure of each wiki root. Content files are pure content with no frontmatter required. The `write_file` tool accepts content and metadata as separate parameters, writing content to the `.md` and metadata to the `.yml`. Writes route through Hocuspocus when available for CRDT sync, authorship, and undo — falling back to disk when not.
 
 ## 2) Goals
 
@@ -374,8 +374,13 @@ Root: Knowledge Articles
 Mode: hocuspocus (CRDT sync, undo available)
 ```
 
+**Matching behavior:**
+- Zero matches → error ("find text not found in document")
+- Exactly one match → replace it
+- Multiple matches → error ("find text matches N locations — provide more context to uniquely identify the target")
+
 **Implementation:**
-1. Validate path within wiki roots
+1. Validate path within wiki roots, resolve to docName
 2. Hocuspocus available → POST `/api/agent-patch` with `{ docName, find, replace }`
 3. Not available → read file, find-and-replace in memory, atomic disk write
 4. If `metadata` provided → merge into `.yml` sidecar
@@ -385,12 +390,14 @@ Mode: hocuspocus (CRDT sync, undo available)
 
 **Input:**
 ```typescript
-{}  // no parameters
+{
+  path?: string;  // optional — target specific document. Defaults to last-written document.
+}
 ```
 
 **Output (success):**
 ```
-Undo performed.
+Undo performed on articles/auth/sso.md.
 canUndo: true
 canRedo: true
 ```
@@ -401,20 +408,23 @@ Undo unavailable — Hocuspocus is not running. Writes made via disk fallback ca
 ```
 
 **Implementation:**
-1. POST to `/api/agent-undo`
-2. If Hocuspocus unavailable, return clear error
-3. Return `canUndo`/`canRedo` status
+1. Resolve path to docName (see Path resolution below). If omitted, use last-written docName.
+2. POST to `/api/agent-undo` with `{ docName }`
+3. If Hocuspocus unavailable, return clear error
+4. Return affected document path + `canUndo`/`canRedo` status
 
 ### Tool 7: `redo`
 
 **Input:**
 ```typescript
-{}  // no parameters
+{
+  path?: string;  // optional — target specific document. Defaults to last-written document.
+}
 ```
 
 **Output (success):**
 ```
-Redo performed.
+Redo performed on articles/auth/sso.md.
 canUndo: true
 canRedo: false
 ```
@@ -425,9 +435,56 @@ Redo unavailable — Hocuspocus is not running.
 ```
 
 **Implementation:**
-1. POST to `/api/agent-redo`
-2. If Hocuspocus unavailable, return clear error
-3. Return `canUndo`/`canRedo` status
+1. Resolve path to docName (see Path resolution below). If omitted, use last-written docName.
+2. POST to `/api/agent-redo` with `{ docName }`
+3. If Hocuspocus unavailable, return clear error
+4. Return affected document path + `canUndo`/`canRedo` status
+
+### Path resolution model
+
+All tool inputs accept paths that are **relative to the project root** (the directory containing `.open-knowledge/`). The tool layer resolves them against `wiki.roots` entries.
+
+**Resolution algorithm:**
+1. If path is absolute, use as-is
+2. If path is relative, resolve against project root
+3. Walk `wiki.roots` entries — find the root whose resolved directory is a prefix of the resolved path
+4. Error if path falls outside all configured roots
+
+**Examples** (given `wiki.roots` config: `./articles` resolves to `.open-knowledge/articles/`, `../docs` resolves to `../docs/`):
+
+| Tool input path | Matches root | Resolved absolute path |
+|---|---|---|
+| `articles/auth/sso.md` | `./articles` | `<project>/.open-knowledge/articles/auth/sso.md` |
+| `../docs/api-guide.md` | `../docs` | `<project>/../docs/api-guide.md` |
+| `/absolute/path/file.md` | (checked) | `/absolute/path/file.md` |
+| `src/index.ts` | (none) | Error: outside all wiki roots |
+
+### Path-to-docName mapping for Hocuspocus
+
+When routing writes through Hocuspocus, the tool must map filesystem paths to `docName` identifiers used by the Hocuspocus API.
+
+**Convention:** `docName` is the path relative to the wiki root that owns the file, without the `.md` extension.
+
+| Filesystem path | Wiki root | docName |
+|---|---|---|
+| `.open-knowledge/articles/auth/sso.md` | `./articles` | `articles/auth/sso` |
+| `../docs/api-guide.md` | `../docs` | `docs/api-guide` |
+
+**Changes required in persistence layer (D23):**
+- `safeContentPath()` in `persistence.ts` currently resolves `docName` relative to a single `contentDir`. Must be extended to accept a root-resolution map (wiki root → absolute directory) and resolve `docName` against the correct root.
+- The MCP server passes the wiki roots configuration to the Hocuspocus server (via config or at connection time) so persistence knows how to resolve multi-root docNames to filesystem paths.
+
+### Tool parameter mappings to HTTP API
+
+The MCP tool parameter names differ from the Hocuspocus HTTP API parameter names:
+
+| Tool parameter | HTTP API parameter | Used by |
+|---|---|---|
+| `content` | `markdown` | `write_file` → `/api/agent-write-md` |
+| `mode` | `position` | `write_file` → `/api/agent-write-md` |
+| `path` | `docName` | All tools → `/api/agent-*` (after path-to-docName mapping) |
+| `find` | `find` | `edit_file` → `/api/agent-patch` (no mapping needed) |
+| `replace` | `replace` | `edit_file` → `/api/agent-patch` (no mapping needed) |
 
 ### Adaptive write path
 
@@ -504,7 +561,7 @@ On startup (initial scan):
 │  MCP Server              │   │  Hocuspocus Server            │
 │  (open-knowledge mcp)    │   │  (open-knowledge start)       │
 │                          │   │                               │
-│  • File API tools (5)    │   │  • DirectConnection           │
+│  • File API tools (7)    │   │  • DirectConnection           │
 │  • Workflow tools (3)    │   │  • Origin tagging             │
 │  • Metadata watcher      │   │  • Per-agent UndoManager      │
 │  • Catalog builder       │   │  • Persistence → disk → git   │
@@ -541,7 +598,7 @@ On startup (initial scan):
 | D1 | Revive read tools as enriched MCP tools (reverses D2-rejected from prior spec) | DIRECTED | Prior spec rejected reads because "agents have native tools." This spec: native tools return raw data; enriched tools attach metadata and history. The enrichment is the value. |
 | D2 | Writes route through Hocuspocus when available, disk fallback | DIRECTED | Gets CRDT sync, authorship, undo for free. Disk fallback ensures tools work without editor. |
 | D3 | MCP server does NOT spawn Hocuspocus — expects external start | DIRECTED | Reduces complexity. Users run `open-knowledge start` separately or get disk-only mode. |
-| D4 | Five file API tools + three existing workflow tools = eight total MCP tools | DIRECTED | Complete surface: read, list, search, write, edit + init-wiki, ingest, research. |
+| D4 | Seven file API tools + three existing workflow tools = ten total MCP tools | DIRECTED | Complete surface: read, list, search, write, edit, undo, redo + init-wiki, ingest, research. |
 | D5 | All metadata lives in `.open-knowledge/metadata/` as `.yml` sidecars — no frontmatter in content files | LOCKED | Core architectural invariant. Content is pure content. External files are never modified. `.yml` is the single source of truth for metadata. Eliminates frontmatter round-trip complexity. |
 | D6 | Metadata tree mirrors wiki root directory structure | LOCKED | `.open-knowledge/metadata/` shadows each root. Every `.md` has a `.yml`; every directory has a `_catalog.yml`. Structure is derived from roots config. |
 | D7 | `write_file` accepts content and metadata as separate parameters | LOCKED | Agent passes content + metadata in one call. Tool writes content → `.md`, metadata → `.yml`. For external files, metadata-only writes annotate without modifying content. |

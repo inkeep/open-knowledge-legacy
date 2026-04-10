@@ -1,6 +1,6 @@
 # Audit Findings
 
-**Artifact:** /Users/timothycardona/inkeep/open-knowledge/specs/2026-04-10-enriched-mcp-file-api/SPEC.md
+**Artifact:** specs/2026-04-10-enriched-mcp-file-api/SPEC.md
 **Audit date:** 2026-04-10
 **Total findings:** 7 (2 high, 3 medium, 2 low)
 
