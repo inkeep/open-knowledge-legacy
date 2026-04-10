@@ -16,7 +16,10 @@
  */
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
-import type { z } from 'zod';
+import type { output, ZodSchema } from 'zod';
+
+/** Force TS to fully resolve a type in tooltips instead of showing aliases. */
+type Resolve<T> = { [K in keyof T]: T[K] } & {};
 
 // Matches Jekyll-style frontmatter: `---` at file start, YAML content, `---` closing.
 // Handles both Unix (\n) and Windows (\r\n) line endings.
@@ -37,10 +40,10 @@ const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
  *
  * Without a schema, returns `Record<string, unknown> | null`.
  */
-export function parseFrontmatter<S extends z.ZodSchema = z.ZodSchema<Record<string, unknown>>>(
+export function parseFrontmatter<S extends ZodSchema = ZodSchema<Record<string, unknown>>>(
   content: string,
   schema?: S,
-): z.output<S> | null {
+): Resolve<output<S>> | null {
   const match = content.match(FRONTMATTER_RE);
   if (!match) return null;
   try {
