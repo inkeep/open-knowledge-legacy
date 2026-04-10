@@ -13,7 +13,7 @@ export const sharedExtensions = [
   // JsxComponent MUST be before StarterKit so its markdown parseMarkdown handler
   // for 'code' tokens runs before codeBlock's handler (registry uses insertion order).
   JsxComponent,
-  StarterKit.configure({ undoRedo: false }),
+  StarterKit.configure({ undoRedo: false, link: false }),
   Table.configure({
     resizable: true,
   }),
