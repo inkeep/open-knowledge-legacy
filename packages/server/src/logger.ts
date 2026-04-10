@@ -76,8 +76,9 @@ export class PinoLogger {
         ignore: 'pid,hostname',
       });
       return pino(this.options, prettyStream);
-    } catch {
+    } catch (err) {
       // Fall back to standard JSON output if pino-pretty fails
+      console.warn('[PinoLogger] pino-pretty failed, falling back to JSON:', err);
       return pino(this.options);
     }
   }

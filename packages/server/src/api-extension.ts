@@ -21,6 +21,13 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /**
+   * When true, register test-only routes (currently `/api/test-reset`).
+   * Defaults to `false` — these routes allow any client to destroy document
+   * state and must never be exposed in production. Enable only in tests and
+   * local dev mode.
+   */
+  enableTestRoutes?: boolean;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -42,7 +49,7 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
-  const { hocuspocus, sessionManager, contentDir } = options;
+  const { hocuspocus, sessionManager, contentDir, enableTestRoutes = false } = options;
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
@@ -59,8 +66,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 413, { ok: false, error: 'Payload too large' });
         return;
       }
-      const body =
-        rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
+      let body: Record<string, unknown>;
+      try {
+        body =
+          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
       const docName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
       const dc = await sessionManager.getSession(docName);
@@ -294,6 +307,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         canRedo: um?.canRedo() ?? false,
       });
     } catch (e) {
+      console.error('[agent-undo-status]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -310,11 +324,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         const raw = await readBody(req);
         if (raw.length > 0) {
-          const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-          if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+          try {
+            const body = JSON.parse(raw.toString()) as Record<string, unknown>;
+            if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+          } catch {
+            console.warn('[agent-undo] Invalid JSON body — using default docName');
+          }
         }
       } catch {
-        // No body or invalid JSON — use default docName
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
       }
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
@@ -323,7 +342,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       um.undo();
-      syncTextToFragment(dc.document);
+      try {
+        syncTextToFragment(dc.document);
+      } catch (syncErr) {
+        // Compensate: restore pre-undo state so bridge invariant holds.
+        um.redo();
+        throw syncErr;
+      }
       console.log('[agent-undo] Undo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
@@ -344,11 +369,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         const raw = await readBody(req);
         if (raw.length > 0) {
-          const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-          if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+          try {
+            const body = JSON.parse(raw.toString()) as Record<string, unknown>;
+            if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+          } catch {
+            console.warn('[agent-redo] Invalid JSON body — using default docName');
+          }
         }
       } catch {
-        // No body or invalid JSON — use default docName
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
       }
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
@@ -357,7 +387,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       um.redo();
-      syncTextToFragment(dc.document);
+      try {
+        syncTextToFragment(dc.document);
+      } catch (syncErr) {
+        // Compensate: restore pre-redo state so bridge invariant holds.
+        um.undo();
+        throw syncErr;
+      }
       console.log('[agent-redo] Redo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
@@ -391,6 +427,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       writeFileSync(resolve(contentDir, 'test-doc.md'), '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
+      console.error('[test-reset]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -404,8 +441,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-undo-status': handleAgentUndoStatus,
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-redo': handleAgentRedo,
-    '/api/test-reset': handleTestReset,
   };
+
+  if (enableTestRoutes) {
+    routes['/api/test-reset'] = handleTestReset;
+  }
 
   return {
     priority: 100, // Higher priority — API routes run before static file serving
