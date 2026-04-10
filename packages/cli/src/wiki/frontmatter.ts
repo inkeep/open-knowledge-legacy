@@ -1,8 +1,8 @@
 /**
  * Frontmatter parsing utilities for wiki .md files.
  *
- * Uses core's stripFrontmatter for raw extraction, then parses the YAML
- * content into a typed record. All frontmatter access in the wiki package
+ * Extracts YAML frontmatter from markdown and parses it into a typed record
+ * using the `yaml` package. All frontmatter access in the wiki package
  * should go through these functions — no raw regex matching elsewhere.
  */
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
