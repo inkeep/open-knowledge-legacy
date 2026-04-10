@@ -20,7 +20,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { Command } from 'commander';
-import { WIKI_DIR } from '../wiki/constants.ts';
+import { WIKI_DIR } from '../constants.ts';
 import { initWiki } from '../wiki/init.ts';
 
 const MCP_SERVER_NAME = 'openknowledge';

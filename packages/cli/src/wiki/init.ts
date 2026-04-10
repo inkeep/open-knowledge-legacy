@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { ConfigSchema } from '../config/schema.ts';
-import { generateCatalog, generateRootCatalog } from './catalog.ts';
 import {
   AGENTS_FILENAME,
   CACHE_DIR,
   CATALOG_FILENAME,
   CONFIG_FILENAME,
   WIKI_DIR,
-} from './constants.ts';
+} from '../constants.ts';
+import { generateCatalog, generateRootCatalog } from './catalog.ts';
 
 export const AGENTS_MD_CONTENT = `# .open-knowledge/ — Project Wiki
 

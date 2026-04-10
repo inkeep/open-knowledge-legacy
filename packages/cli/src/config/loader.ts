@@ -13,7 +13,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { CONFIG_FILENAME, WIKI_DIR } from '../wiki/constants.ts';
+import { CONFIG_FILENAME, WIKI_DIR } from '../constants.ts';
 import { type Config, ConfigSchema } from './schema.ts';
 
 export interface LoadConfigResult {

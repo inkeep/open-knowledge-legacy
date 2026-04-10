@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
+import { CATALOG_FILENAME } from '../constants.ts';
 import { contentHash, generateCatalog, generateRootCatalog, readIndexMeta } from './catalog.ts';
-import { CATALOG_FILENAME } from './constants.ts';
 import type { WikiPaths } from './paths.ts';
 
 const DEBOUNCE_QUIET_MS = 500;

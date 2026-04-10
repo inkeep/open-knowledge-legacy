@@ -10,9 +10,9 @@ import { Command } from 'commander';
 import sirv from 'sirv';
 import { WebSocketServer } from 'ws';
 import type { Config } from '../config/schema.ts';
+import { CONFIG_FILENAME, WIKI_DIR } from '../constants.ts';
 import { renderBanner } from '../ui/banner.ts';
 import { dim, error, info } from '../ui/colors.ts';
-import { CONFIG_FILENAME, WIKI_DIR } from '../wiki/constants.ts';
 
 const log = getLogger('start');
 
