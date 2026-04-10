@@ -228,7 +228,7 @@ Y.Doc
 
 ### Observer B (Y.Text → XmlFragment)
 
-- File: `packages/app/src/editor/observers.ts:300+`
+- File: `packages/app/src/editor/observers.ts:342`
 - Origin: `'sync-from-text'`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Deferred while user is typing in WYSIWYG (TYPING_DEFER_MS=300ms)
