@@ -1,7 +1,6 @@
 /**
  * `open-knowledge mcp` command — starts stdio MCP server.
  *
- * Works standalone (disk-only) or with optional Hocuspocus for live sync.
  * All diagnostic logging goes to stderr.
  */
 import { Command } from 'commander';

@@ -125,8 +125,8 @@ describe('runInit', () => {
     });
   });
 
-  it('does not touch .mcp.json when --skip-mcp is passed', () => {
-    const result = runInit({ cwd: testDir, skipMcp: true });
+  it('does not touch .mcp.json when --no-mcp is passed', () => {
+    const result = runInit({ cwd: testDir, mcp: false });
 
     expect(result.mcpAction).toBe('skipped-flag');
     expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);

@@ -67,7 +67,7 @@ export function register(prompt: PromptRegister): void {
   prompt(
     'ingest',
     'Fetch an external source (URL or local file) and save raw content to .open-knowledge/external-sources/',
-    { url_or_path: z.string().describe('URL, file path, or identifier of the source') },
-    (args: { url_or_path: string }) => userMessage(buildBody(args.url_or_path)),
+    { source: z.string().describe('URL, file path, or identifier of the source to ingest') },
+    (args: { source: string }) => userMessage(buildBody(args.source)),
   );
 }

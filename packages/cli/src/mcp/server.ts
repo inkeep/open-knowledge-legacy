@@ -95,7 +95,8 @@ async function detectHocuspocus(serverUrl: string): Promise<boolean> {
       signal: AbortSignal.timeout(2000),
     });
     return res.ok;
-  } catch {
+  } catch (err) {
+    log(`Hocuspocus check failed: ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
 }

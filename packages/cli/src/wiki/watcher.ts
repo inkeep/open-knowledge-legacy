@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import { CATALOG_FILENAME } from '../constants.ts';
@@ -61,7 +61,6 @@ function rebuildDirCatalog(dirPath: string, title?: string, description?: string
 
   // Rebuild subdirectory catalogs — no explicit title/description, so each
   // nested call does its own sticky read from the existing INDEX.md.
-  const { readdirSync } = require('node:fs') as typeof import('node:fs');
   for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
     if (entry.isDirectory()) {
       rebuildDirCatalog(join(dirPath, entry.name));

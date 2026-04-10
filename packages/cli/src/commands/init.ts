@@ -40,7 +40,7 @@ interface McpConfigShape {
 
 export interface InitCommandOptions {
   cwd?: string;
-  skipMcp?: boolean;
+  mcp?: boolean;
   force?: boolean;
 }
 
@@ -97,10 +97,21 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   const mcpPath = join(cwd, '.mcp.json');
 
   // 1. Scaffold .open-knowledge/
-  const wikiResult = initWiki(cwd);
+  let wikiResult: ReturnType<typeof initWiki>;
+  try {
+    wikiResult = initWiki(cwd);
+  } catch (err) {
+    return {
+      wikiCreated: [],
+      wikiSkipped: [],
+      mcpAction: 'failed',
+      mcpPath,
+      mcpError: `Wiki scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
 
-  // 2. Wire MCP config (unless --skip-mcp)
-  if (options.skipMcp) {
+  // 2. Wire MCP config (unless --no-mcp)
+  if (options.mcp === false) {
     return {
       wikiCreated: wikiResult.created,
       wikiSkipped: wikiResult.skipped,
@@ -204,7 +215,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('  (use --force to overwrite)');
       break;
     case 'skipped-flag':
-      lines.push('MCP config write skipped (--skip-mcp)');
+      lines.push('MCP config write skipped (--no-mcp)');
       break;
     case 'failed':
       lines.push(`Warning: MCP config write failed — ${result.mcpError}`);
@@ -238,13 +249,14 @@ export function initCommand(): Command {
     .description(
       'Scaffold .open-knowledge/ in the current directory and register the MCP server in .mcp.json',
     )
-    .option('--skip-mcp', 'Scaffold the wiki directory but do not touch .mcp.json')
+    .option('--mcp', 'Register the MCP server in .mcp.json (default: true)', true)
+    .option('--no-mcp', 'Scaffold the wiki directory but do not touch .mcp.json')
     .option('--force', 'Overwrite an existing openknowledge MCP entry (default: skip)')
-    .action((opts: { skipMcp?: boolean; force?: boolean }) => {
+    .action((opts: { mcp?: boolean; force?: boolean }) => {
       const cwd = process.cwd();
       const result = runInit({
         cwd,
-        skipMcp: opts.skipMcp,
+        mcp: opts.mcp,
         force: opts.force,
       });
       process.stdout.write(`${formatInitResult(result, cwd)}\n`);
