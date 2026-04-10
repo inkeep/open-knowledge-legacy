@@ -184,7 +184,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
       enableTestRoutes,
       shadowRef,
-      projectRoot: projectDir,
+      flushGitCommit: () => persistence.flushPendingGitCommit(),
       contentRoot,
       backlinkIndex,
     });

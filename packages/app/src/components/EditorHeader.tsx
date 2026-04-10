@@ -1,4 +1,4 @@
-import { Clock } from 'lucide-react';
+import { Clock, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -17,6 +17,8 @@ interface EditorHeaderProps {
   isSourceMode: boolean;
   onSourceModeChange: (value: boolean) => void;
   onTimelineToggle: () => void;
+  onSaveVersion: () => void;
+  saving: boolean;
   previewEntry: TimelineEntry | null;
   restoring: boolean;
   restoreError: string | null;
@@ -28,6 +30,8 @@ export function EditorHeader({
   isSourceMode,
   onSourceModeChange,
   onTimelineToggle,
+  onSaveVersion,
+  saving,
   previewEntry,
   restoring,
   restoreError,
@@ -40,7 +44,6 @@ export function EditorHeader({
   const isPreviewMode = previewEntry !== null && previewEntry.sha !== '';
   const [confirmingRestore, setConfirmingRestore] = useState(false);
 
-  // Reset confirmation state when the previewed entry changes.
   // biome-ignore lint/correctness/useExhaustiveDependencies: previewEntry is a prop; re-run on identity change is intentional
   useEffect(() => {
     setConfirmingRestore(false);
@@ -59,7 +62,6 @@ export function EditorHeader({
         <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
       </div>
 
-      {/* Normal editing mode: Visual/Markdown toggle */}
       {!isPreviewMode && (
         <ToggleGroup
           type="single"
@@ -85,7 +87,6 @@ export function EditorHeader({
         </ToggleGroup>
       )}
 
-      {/* Preview mode: version label + controls */}
       {isPreviewMode && previewEntry && !confirmingRestore && (
         <div className="flex items-center gap-2 shrink-0">
           <span
@@ -103,7 +104,6 @@ export function EditorHeader({
         </div>
       )}
 
-      {/* Restore confirmation */}
       {isPreviewMode && previewEntry && confirmingRestore && (
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-muted-foreground">
@@ -124,6 +124,19 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
+        {!isPreviewMode && (
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label="Save Version"
+            onClick={onSaveVersion}
+            disabled={saving}
+            className="gap-1.5 text-xs text-muted-foreground"
+          >
+            <Save className="size-3.5" />
+            {saving ? 'Saving…' : 'Save Version'}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="icon-sm"

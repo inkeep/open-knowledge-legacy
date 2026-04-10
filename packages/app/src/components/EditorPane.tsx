@@ -12,6 +12,9 @@ export function EditorPane() {
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const { activeDocName } = useDocumentContext();
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
@@ -27,8 +30,25 @@ export function EditorPane() {
     setRestoreError(null);
   }
 
+  async function handleSaveVersion() {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/save-version', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        console.error('[save-version] failed:', await res.text());
+      }
+    } catch (e) {
+      console.error('[save-version] failed:', e);
+    }
+    setSaving(false);
+  }
+
   async function handleRestore() {
-    if (!previewEntry?.sha) return;
+    if (!previewEntry?.sha || !activeDocName) return;
     setRestoring(true);
     try {
       const res = await fetch('/api/rollback', {
@@ -50,15 +70,14 @@ export function EditorPane() {
     setRestoring(false);
   }
 
-  // Read activeDocName inside the provider tree
-  const { activeDocName } = useDocumentContext();
-
   return (
     <PageListProvider>
       <EditorHeader
         isSourceMode={isSourceMode}
         onSourceModeChange={setIsSourceMode}
         onTimelineToggle={() => setTimelineOpen((o) => !o)}
+        onSaveVersion={handleSaveVersion}
+        saving={saving}
         previewEntry={previewEntry}
         restoring={restoring}
         restoreError={restoreError}

@@ -302,6 +302,8 @@ export interface ApiExtensionOptions {
    */
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
+  /** Force-flush the L2 git commit debounce (e.g. after rollback). */
+  flushGitCommit?: () => Promise<void>;
   projectRoot?: string;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
@@ -443,6 +445,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getAliasMap,
     enableTestRoutes = false,
     shadowRef,
+    flushGitCommit,
     projectRoot,
     contentRoot,
     backlinkIndex,
@@ -1553,6 +1556,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }, ROLLBACK_ORIGIN);
 
       setReconciledBase(docName, markdown);
+
+      // Force-flush L2 git commit so the restored version appears in the
+      // timeline immediately, rather than waiting for the 30s debounce.
+      if (flushGitCommit) {
+        flushGitCommit().catch((e) => {
+          console.warn('[rollback] flush git commit failed:', e);
+        });
+      }
 
       const duration = Date.now() - t0;
       console.log(

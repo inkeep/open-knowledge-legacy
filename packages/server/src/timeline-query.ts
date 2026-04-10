@@ -170,19 +170,19 @@ export async function getDocumentHistory(
 
     // ── Full DAG walk ───────────────────────────────────────────────────────
 
-    // Collect all starting refs to walk from:
-    // - All checkpoint refs for this branch
-    // - All WIP refs for this branch (including upstream)
+    // Collect refs separately: checkpoints are queried via --no-walk (always
+    // included as user-triggered landmarks), WIP/upstream walk the full DAG.
+    const checkpointShas: string[] = [];
     const startRefs: string[] = [];
 
     try {
-      const checkpointRefs = (
-        await sg.raw('for-each-ref', '--format=%(refname)', `refs/checkpoints/${branch}/`)
+      const cpRefs = (
+        await sg.raw('for-each-ref', '--format=%(objectname)', `refs/checkpoints/${branch}/`)
       )
         .trim()
         .split('\n')
-        .filter(Boolean);
-      startRefs.push(...checkpointRefs);
+        .filter((s) => s.length === 40);
+      checkpointShas.push(...cpRefs);
     } catch {
       // no checkpoints
     }
@@ -197,19 +197,45 @@ export async function getDocumentHistory(
       // no WIP refs
     }
 
-    if (startRefs.length === 0) return EMPTY;
+    if (startRefs.length === 0 && checkpointShas.length === 0) return EMPTY;
 
-    // Walk all refs with full history, merge by author date
-    const raw = await sg.raw(
-      'log',
-      '--full-history',
-      '--author-date-order',
-      `--format=${GIT_LOG_FORMAT}`,
-      ...startRefs,
-      ...(docPath ? ['--', docPath] : []),
-    );
+    // 1) Checkpoints: always included regardless of file changes.
+    //    Use --no-walk to resolve commit details without ancestry traversal.
+    let checkpointEntries: TimelineEntry[] = [];
+    if (checkpointShas.length > 0) {
+      const cpRaw = await sg.raw(
+        'log',
+        '--no-walk',
+        '--author-date-order',
+        `--format=${GIT_LOG_FORMAT}`,
+        ...checkpointShas,
+      );
+      checkpointEntries = parseGitLogOutput(cpRaw).map((e) => ({
+        ...e,
+        type: 'checkpoint' as const,
+      }));
+    }
 
-    const allEntries = parseGitLogOutput(raw);
+    // 2) WIP + upstream: walk ancestry from all refs (including checkpoints
+    //    so their WIP ancestry is reachable).
+    const allStartRefs = [...startRefs];
+    for (const sha of checkpointShas) allStartRefs.push(sha);
+
+    let wipEntries: TimelineEntry[] = [];
+    if (allStartRefs.length > 0) {
+      const raw = await sg.raw(
+        'log',
+        '--full-history',
+        '--author-date-order',
+        `--format=${GIT_LOG_FORMAT}`,
+        ...allStartRefs,
+        ...(docPath ? ['--', docPath] : []),
+      );
+      wipEntries = parseGitLogOutput(raw);
+    }
+
+    // Merge checkpoint + WIP entries
+    const allEntries = [...checkpointEntries, ...wipEntries];
 
     // Deduplicate by SHA (multiple refs may reach same commits)
     const seen = new Set<string>();
