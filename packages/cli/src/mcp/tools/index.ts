@@ -6,7 +6,7 @@
  * Each individual tool file owns its own name, description, argument schema,
  * and handler body — this module just wires them into the McpServer instance.
  *
- * To add a new tool: create `packages/cli/src/mcp/prompts/<name>.ts` with a
+ * To add a new tool: create `packages/cli/src/mcp/tools/<name>.ts` with a
  * `register(server)` export, then import and call it from here.
  */
 import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';

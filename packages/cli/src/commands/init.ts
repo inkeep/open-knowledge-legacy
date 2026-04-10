@@ -4,8 +4,8 @@
  * Does two things:
  *   1. Scaffolds `.open-knowledge/` in the current directory via initWiki()
  *      (same logic the MCP server's init flow used to call — now factored out).
- *   2. Writes an MCP server entry for `openknowledge` into `./.mcp.json`,
- *      preserving any existing entries. Idempotent: skips if an `openknowledge`
+ *   2. Writes an MCP server entry for `open-knowledge` into `./.mcp.json`,
+ *      preserving any existing entries. Idempotent: skips if an `open-knowledge`
  *      entry is already present, unless `--force` is passed.
  *
  * Why this is a CLI subcommand instead of an MCP tool:
@@ -23,7 +23,7 @@ import { Command } from 'commander';
 import { WIKI_DIR } from '../constants.ts';
 import { initWiki } from '../wiki/init.ts';
 
-const MCP_SERVER_NAME = 'openknowledge';
+const MCP_SERVER_NAME = 'open-knowledge';
 const MCP_SERVER_COMMAND = 'npx';
 const MCP_SERVER_ARGS = ['@inkeep/open-knowledge', 'mcp'];
 
@@ -55,8 +55,8 @@ export interface InitCommandResult {
 /**
  * Read an existing .mcp.json file (if any) and return its parsed shape.
  * Returns an empty shape if the file doesn't exist or is empty.
- * Throws if the file exists but contains invalid JSON — that's a real error
- * the user should see, not something to silently paper over.
+ * Throws on invalid JSON or if the file exists but can't be read (permissions).
+ * Callers are expected to catch and surface these errors.
  */
 function readMcpConfig(path: string): McpConfigShape {
   if (!existsSync(path)) return {};
@@ -204,11 +204,11 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   switch (result.mcpAction) {
     case 'written':
       lines.push(`MCP server registered in ${result.mcpPath}`);
-      lines.push(`  openknowledge → ${MCP_SERVER_COMMAND} ${MCP_SERVER_ARGS.join(' ')}`);
+      lines.push(`  open-knowledge → ${MCP_SERVER_COMMAND} ${MCP_SERVER_ARGS.join(' ')}`);
       break;
     case 'overwritten':
       lines.push(`MCP server entry overwritten in ${result.mcpPath} (--force)`);
-      lines.push(`  openknowledge → ${MCP_SERVER_COMMAND} ${MCP_SERVER_ARGS.join(' ')}`);
+      lines.push(`  open-knowledge → ${MCP_SERVER_COMMAND} ${MCP_SERVER_ARGS.join(' ')}`);
       break;
     case 'skipped-existing':
       lines.push(`MCP server already configured in ${result.mcpPath} — skipped`);
@@ -217,7 +217,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
     case 'skipped-flag':
       lines.push('MCP config not written — .mcp.json unchanged');
       lines.push(
-        '  To use wiki workflow tools, add the openknowledge server to .mcp.json manually',
+        '  To use wiki workflow tools, add the open-knowledge server to .mcp.json manually',
       );
       break;
     case 'failed':
@@ -240,9 +240,9 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   lines.push('  1. Open your editor with Claude Code / Cursor / Windsurf');
   lines.push('  2. Approve the MCP server when prompted');
   lines.push('  3. The wiki is ready — use the three workflow tools:');
-  lines.push('     - mcp__openknowledge__init-wiki  — bootstrap articles from the codebase');
-  lines.push('     - mcp__openknowledge__ingest     — capture an external source');
-  lines.push('     - mcp__openknowledge__research   — gather sources and write findings');
+  lines.push('     - mcp__open-knowledge__init-wiki  — bootstrap articles from the codebase');
+  lines.push('     - mcp__open-knowledge__ingest     — capture an external source');
+  lines.push('     - mcp__open-knowledge__research   — gather sources and write findings');
 
   return lines.join('\n');
 }
@@ -254,7 +254,7 @@ export function initCommand(): Command {
     )
     .option('--mcp', 'Register the MCP server in .mcp.json (default: true)', true)
     .option('--no-mcp', 'Scaffold the wiki directory but do not touch .mcp.json')
-    .option('--force', 'Overwrite an existing openknowledge MCP entry (default: skip)')
+    .option('--force', 'Overwrite an existing open-knowledge MCP entry (default: skip)')
     .action((opts: { mcp?: boolean; force?: boolean }) => {
       const cwd = process.cwd();
       const result = runInit({

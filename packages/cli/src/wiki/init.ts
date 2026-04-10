@@ -99,7 +99,7 @@ Your \`.mcp.json\` at the repo root should look like this after running \`init\`
 \`\`\`json
 {
   "mcpServers": {
-    "openknowledge": {
+    "open-knowledge": {
       "command": "npx",
       "args": ["@inkeep/open-knowledge", "mcp"]
     }

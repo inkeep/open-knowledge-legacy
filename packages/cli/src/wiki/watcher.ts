@@ -10,9 +10,13 @@ const DEBOUNCE_MAX_MS = 2000;
 
 function writeIfChanged(filePath: string, content: string): boolean {
   if (existsSync(filePath)) {
-    const existing = readFileSync(filePath, 'utf-8');
-    if (contentHash(existing) === contentHash(content)) {
-      return false;
+    try {
+      const existing = readFileSync(filePath, 'utf-8');
+      if (contentHash(existing) === contentHash(content)) {
+        return false;
+      }
+    } catch {
+      // File unreadable (permissions, race) — fall through and overwrite
     }
   }
   writeFileSync(filePath, content, 'utf-8');
@@ -61,7 +65,16 @@ function rebuildDirCatalog(dirPath: string, title?: string, description?: string
 
   // Rebuild subdirectory catalogs — no explicit title/description, so each
   // nested call does its own sticky read from the existing INDEX.md.
-  for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = readdirSync(dirPath, { withFileTypes: true });
+  } catch (err) {
+    console.warn(
+      `[wiki-watcher] Cannot read directory ${dirPath}: ${err instanceof Error ? err.message : err}`,
+    );
+    return;
+  }
+  for (const entry of entries) {
     if (entry.isDirectory()) {
       rebuildDirCatalog(join(dirPath, entry.name));
     }

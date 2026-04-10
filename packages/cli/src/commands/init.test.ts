@@ -36,13 +36,13 @@ describe('runInit', () => {
 
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
     expect(config.mcpServers).toBeDefined();
-    expect(config.mcpServers.openknowledge).toEqual({
+    expect(config.mcpServers['open-knowledge']).toEqual({
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
     });
   });
 
-  it('preserves other mcpServers entries when adding openknowledge', () => {
+  it('preserves other mcpServers entries when adding open-knowledge', () => {
     // Pre-existing .mcp.json with a different server
     writeFileSync(
       join(testDir, '.mcp.json'),
@@ -68,17 +68,17 @@ describe('runInit', () => {
       command: 'node',
       args: ['./other.js'],
     });
-    expect(config.mcpServers.openknowledge).toBeDefined();
+    expect(config.mcpServers['open-knowledge']).toBeDefined();
   });
 
-  it('skips existing openknowledge entry by default', () => {
+  it('skips existing open-knowledge entry by default', () => {
     // Pre-existing entry with a different command (e.g., dev path)
     writeFileSync(
       join(testDir, '.mcp.json'),
       JSON.stringify(
         {
           mcpServers: {
-            openknowledge: {
+            'open-knowledge': {
               command: 'node',
               args: ['./packages/cli/dist/cli.mjs', 'mcp'],
             },
@@ -94,17 +94,20 @@ describe('runInit', () => {
 
     // Dev-path entry should be preserved
     const config = JSON.parse(readFileSync(join(testDir, '.mcp.json'), 'utf-8'));
-    expect(config.mcpServers.openknowledge.command).toBe('node');
-    expect(config.mcpServers.openknowledge.args).toEqual(['./packages/cli/dist/cli.mjs', 'mcp']);
+    expect(config.mcpServers['open-knowledge'].command).toBe('node');
+    expect(config.mcpServers['open-knowledge'].args).toEqual([
+      './packages/cli/dist/cli.mjs',
+      'mcp',
+    ]);
   });
 
-  it('overwrites existing openknowledge entry with --force', () => {
+  it('overwrites existing open-knowledge entry with --force', () => {
     writeFileSync(
       join(testDir, '.mcp.json'),
       JSON.stringify(
         {
           mcpServers: {
-            openknowledge: {
+            'open-knowledge': {
               command: 'node',
               args: ['./old/path.js'],
             },
@@ -119,7 +122,7 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('overwritten');
 
     const config = JSON.parse(readFileSync(join(testDir, '.mcp.json'), 'utf-8'));
-    expect(config.mcpServers.openknowledge).toEqual({
+    expect(config.mcpServers['open-knowledge']).toEqual({
       command: 'npx',
       args: ['@inkeep/open-knowledge', 'mcp'],
     });

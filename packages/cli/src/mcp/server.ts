@@ -5,7 +5,7 @@
  *   - Instructions on connect (the INSTRUCTIONS constant below)
  *   - Catalog auto-generation via file watcher on `.open-knowledge/`
  *   - Three workflow tools (init-wiki, ingest, research) registered from
- *     packages/cli/src/mcp/prompts/ — each returns instructional text the agent follows
+ *     packages/cli/src/mcp/tools/ — each returns instructional text the agent follows
  *
  * Scaffolding (`.open-knowledge/` directory creation plus `.mcp.json` wiring) is a
  * terminal-side operation handled by the CLI `init` subcommand.
@@ -140,7 +140,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   }
 
   // MCP workflow tools — cross-client workflow surface. Each tool's full body
-  // lives in packages/cli/src/mcp/prompts/<name>.ts. Each tool returns
+  // lives in packages/cli/src/mcp/tools/<name>.ts. Each tool returns
   // instructional text the agent follows; all real work (reads, edits, fetches)
   // happens via the agent's native tools, not through the MCP server.
   registerAllTools(server);

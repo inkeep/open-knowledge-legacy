@@ -87,8 +87,14 @@ export function readIndexMeta(dirPath: string): IndexMeta | null {
 
 function countArticles(dirPath: string): number {
   if (!existsSync(dirPath)) return 0;
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = readdirSync(dirPath, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
   let count = 0;
-  for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+  for (const entry of entries) {
     if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== CATALOG_FILENAME) {
       count++;
     } else if (entry.isDirectory()) {
@@ -108,7 +114,15 @@ export function generateCatalog(dirPath: string, options?: CatalogOptions): stri
   const subfolders: SubfolderMeta[] = [];
 
   if (existsSync(resolvedDir)) {
-    const entries = readdirSync(resolvedDir, { withFileTypes: true });
+    let entries: import('node:fs').Dirent[];
+    try {
+      entries = readdirSync(resolvedDir, { withFileTypes: true });
+    } catch (err) {
+      console.warn(
+        `[catalog] Cannot read directory ${resolvedDir}: ${err instanceof Error ? err.message : err}`,
+      );
+      entries = [];
+    }
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== CATALOG_FILENAME) {
         const meta = extractArticleMeta(join(resolvedDir, entry.name), entry.name);
