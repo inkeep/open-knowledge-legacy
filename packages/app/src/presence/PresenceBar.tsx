@@ -40,6 +40,8 @@ function PresenceAvatar({ user, mode }: { user: Participant['user']; mode: Parti
           <div
             data-presence-badge="agent"
             data-presence-mode={mode}
+            role="img"
+            aria-label={user.name}
             className="inline-flex size-7 shrink-0 cursor-default items-center justify-center rounded-full bg-agent ring-2 ring-background"
           >
             <ClaudeIcon width={16} height={16} className="text-white" />
@@ -64,6 +66,8 @@ function PresenceAvatar({ user, mode }: { user: Participant['user']; mode: Parti
         <div
           data-presence-badge="human"
           data-presence-mode={mode}
+          role="img"
+          aria-label={user.name}
           className="inline-flex size-7 shrink-0 cursor-default items-center justify-center rounded-full ring-2 ring-background"
           style={{ backgroundColor: user.color }}
         >
