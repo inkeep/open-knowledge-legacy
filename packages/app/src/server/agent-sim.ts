@@ -13,17 +13,21 @@
  *   bun run src/server/agent-sim.ts --markdown --rapid 5
  *   bun run src/server/agent-sim.ts --patch            # targeted patch sequence
  *   bun run src/server/agent-sim.ts --patch --doc my-doc --interval 1000 --port 5173
+ *   bun run src/server/agent-sim.ts --file             # disk-edit sequence (bypasses CRDT)
+ *   bun run src/server/agent-sim.ts --file --content-dir ./content --doc my-doc --interval 1000
  *
  * Requires the Vite dev server to be running (bun run dev).
  */
 
-export {};
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const args = process.argv.slice(2);
 
 // --- Flag parsing ---
 const useMarkdown = args.includes('--markdown');
 const usePatch = args.includes('--patch');
+const useFile = args.includes('--file');
 const rapidIndex = args.indexOf('--rapid');
 const count = rapidIndex >= 0 ? Number.parseInt(args[rapidIndex + 1] || '5', 10) : 1;
 
@@ -37,11 +41,26 @@ const intervalIndex = args.indexOf('--interval');
 const intervalMs =
   intervalIndex >= 0 ? Number.parseInt(args[intervalIndex + 1] || '2000', 10) : 2000;
 
+// Default content dir: packages/app/content/ — 3 levels up from src/server/
+const DEFAULT_CONTENT_DIR = resolve(
+  import.meta.dirname ?? new URL('.', import.meta.url).pathname,
+  '../../../content',
+);
+const contentDirIndex = args.indexOf('--content-dir');
+const contentDir =
+  contentDirIndex >= 0
+    ? resolve(args[contentDirIndex + 1] ?? DEFAULT_CONTENT_DIR)
+    : DEFAULT_CONTENT_DIR;
+
 const BASE_URL = `http://localhost:${port}`;
 
 // --- Mutual exclusivity check ---
 if (usePatch && (useMarkdown || rapidIndex >= 0)) {
   console.error('Error: --patch is mutually exclusive with --markdown and --rapid.');
+  process.exit(1);
+}
+if (useFile && (usePatch || useMarkdown || rapidIndex >= 0)) {
+  console.error('Error: --file is mutually exclusive with --patch, --markdown, and --rapid.');
   process.exit(1);
 }
 
@@ -220,10 +239,86 @@ async function runPatchMode() {
   console.log('\nPatch sequence complete.');
 }
 
+// --- File mode ---
+
+async function runFileMode() {
+  const filePath = resolve(contentDir, `${docName}.md`);
+
+  console.log(`\n--- Agent Simulator (v4) — file mode ---`);
+  console.log(`WARNING: This mode bypasses the CRDT entirely.`);
+  console.log(`  Edits go: disk write -> file watcher -> Y.Text (not directly to Y.Text).`);
+  console.log(`  The stale-read window between disk write and CRDT sync is intentionally visible.`);
+  console.log(`Doc:         ${docName}`);
+  console.log(`File:        ${filePath}`);
+  console.log(`Port:        ${port}`);
+  console.log(`Interval:    ${intervalMs}ms between edits\n`);
+
+  // Step 1: Read file from disk
+  let content: string;
+  try {
+    content = readFileSync(filePath, 'utf8');
+  } catch {
+    content = '';
+  }
+
+  // Step 2: Seed via HTTP API if empty or missing patch targets
+  const hasRecognizableSections =
+    content.includes('Status: pending') ||
+    content.includes('Status: in progress') ||
+    content.includes('No notes yet.') ||
+    content.includes('TBD');
+
+  if (content.trim().length === 0 || !hasRecognizableSections) {
+    console.log('File empty or missing patch targets — seeding directly to disk...');
+    writeFileSync(filePath, PATCH_TEMPLATE, 'utf8');
+    content = PATCH_TEMPLATE;
+    console.log('  Seeded file with template.');
+    // Give file watcher time to sync the seed into Y.Text before edits begin
+    console.log(`  Waiting 1500ms for file watcher sync...\n`);
+    await new Promise((r) => setTimeout(r, 1500));
+  } else {
+    console.log('File already contains patch targets — skipping seed.\n');
+  }
+
+  // Step 3: Run edit sequence directly on disk
+  for (let i = 0; i < PATCH_SEQUENCE.length; i++) {
+    const { find, replace } = PATCH_SEQUENCE[i];
+    console.log(`  [file-edit ${i + 1}/${PATCH_SEQUENCE.length}]`);
+    console.log(`    find:    "${find}"`);
+    console.log(`    replace: "${replace}"`);
+
+    // Re-read file before each edit to pick up any in-flight CRDT changes
+    try {
+      content = readFileSync(filePath, 'utf8');
+    } catch {
+      // keep last known content
+    }
+
+    if (content.includes(find)) {
+      const updated = content.replace(find, replace);
+      writeFileSync(filePath, updated, 'utf8');
+      content = updated;
+      console.log(`    OK — found and applied (wrote to disk)`);
+    } else {
+      console.log(`    not found in file (may be in-flight in CRDT)`);
+    }
+
+    if (i < PATCH_SEQUENCE.length - 1) {
+      console.log(`    waiting ${intervalMs}ms...`);
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+
+  console.log('\nFile edit sequence complete.');
+  console.log('The file watcher will propagate changes to Y.Text asynchronously.');
+}
+
 // --- Main ---
 
 if (usePatch) {
   await runPatchMode();
+} else if (useFile) {
+  await runFileMode();
 } else {
   console.log(`\n--- Agent Simulator (v4) ---`);
   console.log(`Mode: ${useMarkdown ? 'markdown' : 'raw'}`);
