@@ -12,6 +12,7 @@ import { WebSocketServer } from 'ws';
 import type { Config } from '../config/schema.ts';
 import { renderBanner } from '../ui/banner.ts';
 import { dim, error, info } from '../ui/colors.ts';
+import { CONFIG_FILENAME, WIKI_DIR } from '../wiki/constants.ts';
 
 const log = getLogger('start');
 
@@ -27,7 +28,7 @@ export function startCommand(getConfig: () => Config): Command {
       const contentDir = resolve(cwd, config.content.dir);
 
       if (!existsSync(contentDir)) {
-        const configPath = resolve(cwd, '.open-knowledge', 'config.yml');
+        const configPath = resolve(cwd, WIKI_DIR, CONFIG_FILENAME);
         const hasConfig = existsSync(configPath);
         console.error(`\n  ${error('Error:')} Content directory not found: ${info(contentDir)}\n`);
         if (!hasConfig) {

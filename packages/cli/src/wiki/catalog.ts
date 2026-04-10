@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { parseFrontmatter, serializeFrontmatter } from '../utils/frontmatter.ts';
+import { CATALOG_FILENAME } from './constants.ts';
 
 export interface ArticleMeta {
   title: string;
@@ -53,7 +54,7 @@ function extractArticleMeta(filePath: string, relativePath: string): ArticleMeta
  * parent catalog's Subfolders section.
  */
 export function readIndexMeta(dirPath: string): IndexMeta | null {
-  const indexPath = join(dirPath, 'INDEX.md');
+  const indexPath = join(dirPath, CATALOG_FILENAME);
   if (!existsSync(indexPath)) return null;
   const content = readFileSync(indexPath, 'utf-8');
   const fm = parseFrontmatter(content);
@@ -68,7 +69,7 @@ function countArticles(dirPath: string): number {
   if (!existsSync(dirPath)) return 0;
   let count = 0;
   for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
-    if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'INDEX.md') {
+    if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== CATALOG_FILENAME) {
       count++;
     } else if (entry.isDirectory()) {
       count += countArticles(join(dirPath, entry.name));
@@ -89,7 +90,7 @@ export function generateCatalog(dirPath: string, options?: CatalogOptions): stri
   if (existsSync(resolvedDir)) {
     const entries = readdirSync(resolvedDir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'INDEX.md') {
+      if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== CATALOG_FILENAME) {
         articles.push(extractArticleMeta(join(resolvedDir, entry.name), entry.name));
       } else if (entry.isDirectory()) {
         const subDir = join(resolvedDir, entry.name);

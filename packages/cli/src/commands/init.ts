@@ -20,6 +20,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { Command } from 'commander';
+import { WIKI_DIR } from '../wiki/constants.ts';
 import { initWiki } from '../wiki/init.ts';
 
 const MCP_SERVER_NAME = 'openknowledge';
@@ -175,7 +176,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   const lines: string[] = [];
 
   // Wiki scaffolding summary
-  const okDir = join(cwd, '.open-knowledge');
+  const okDir = join(cwd, WIKI_DIR);
   if (result.wikiCreated.length > 0) {
     lines.push(`Wiki scaffolded at ${okDir}/`);
     lines.push(`  Created: ${result.wikiCreated.join(', ')}`);

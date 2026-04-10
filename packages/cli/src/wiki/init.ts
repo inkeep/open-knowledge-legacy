@@ -2,6 +2,13 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { ConfigSchema } from '../config/schema.ts';
 import { generateCatalog, generateRootCatalog } from './catalog.ts';
+import {
+  AGENTS_FILENAME,
+  CACHE_DIR,
+  CATALOG_FILENAME,
+  CONFIG_FILENAME,
+  WIKI_DIR,
+} from './constants.ts';
 
 export const AGENTS_MD_CONTENT = `# .open-knowledge/ — Project Wiki
 
@@ -186,7 +193,7 @@ function writeIfMissing(filePath: string, content: string): boolean {
 }
 
 export function initWiki(projectDir: string): { created: string[]; skipped: string[] } {
-  const okDir = resolve(projectDir, '.open-knowledge');
+  const okDir = resolve(projectDir, WIKI_DIR);
   const created: string[] = [];
   const skipped: string[] = [];
 
@@ -196,22 +203,22 @@ export function initWiki(projectDir: string): { created: string[]; skipped: stri
 
   // Create base dirs + root dirs + cache
   mkdirSync(okDir, { recursive: true });
-  mkdirSync(join(okDir, 'cache'), { recursive: true });
+  mkdirSync(join(okDir, CACHE_DIR), { recursive: true });
   for (const root of roots) {
     mkdirSync(resolve(okDir, root.path), { recursive: true });
   }
 
   // AGENTS.md
-  const agentsPath = join(okDir, 'AGENTS.md');
+  const agentsPath = join(okDir, AGENTS_FILENAME);
   if (writeIfMissing(agentsPath, AGENTS_MD_CONTENT)) {
-    created.push('AGENTS.md');
+    created.push(AGENTS_FILENAME);
   } else {
-    skipped.push('AGENTS.md');
+    skipped.push(AGENTS_FILENAME);
   }
 
   // .gitignore for cache/
   const gitignorePath = join(okDir, '.gitignore');
-  if (writeIfMissing(gitignorePath, 'cache/\n')) {
+  if (writeIfMissing(gitignorePath, `${CACHE_DIR}/\n`)) {
     created.push('.gitignore');
   } else {
     skipped.push('.gitignore');
@@ -221,17 +228,17 @@ export function initWiki(projectDir: string): { created: string[]; skipped: stri
   // The loader treats an empty/all-comments YAML as no-op, so this file is
   // safe to ship as-is — uncommenting a key is the only way it changes
   // runtime behavior.
-  const configPath = join(okDir, 'config.yml');
+  const configPath = join(okDir, CONFIG_FILENAME);
   if (writeIfMissing(configPath, CONFIG_YML_CONTENT)) {
-    created.push('config.yml');
+    created.push(CONFIG_FILENAME);
   } else {
-    skipped.push('config.yml');
+    skipped.push(CONFIG_FILENAME);
   }
 
   // Section catalogs — one per root
   for (const root of roots) {
     const rootDir = resolve(okDir, root.path);
-    const indexPath = join(rootDir, 'INDEX.md');
+    const indexPath = join(rootDir, CATALOG_FILENAME);
     const content = generateCatalog(rootDir, {
       title: root.label,
     });
@@ -242,18 +249,18 @@ export function initWiki(projectDir: string): { created: string[]; skipped: stri
     }
   }
 
-  // Root INDEX.md
-  const rootIndexPath = join(okDir, 'INDEX.md');
+  // Root catalog
+  const rootIndexPath = join(okDir, CATALOG_FILENAME);
   const rootContent = generateRootCatalog(okDir, {
     sections: roots.map((root) => ({
       label: root.label,
-      relativePath: `${relative(okDir, resolve(okDir, root.path))}/INDEX.md`,
+      relativePath: `${relative(okDir, resolve(okDir, root.path))}/${CATALOG_FILENAME}`,
     })),
   });
   if (writeIfMissing(rootIndexPath, rootContent)) {
-    created.push('INDEX.md');
+    created.push(CATALOG_FILENAME);
   } else {
-    skipped.push('INDEX.md');
+    skipped.push(CATALOG_FILENAME);
   }
 
   return { created, skipped };

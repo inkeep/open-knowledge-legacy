@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { z } from 'zod';
 import { parseFrontmatter, serializeFrontmatter } from './frontmatter.ts';
 
 describe('parseFrontmatter', () => {
@@ -48,6 +49,36 @@ describe('parseFrontmatter', () => {
     const content = '---\ntitle: EOF\n---';
     const result = parseFrontmatter(content);
     expect(result).toEqual({ title: 'EOF' });
+  });
+
+  test('validates and types with Zod schema', () => {
+    const ArticleSchema = z.object({
+      title: z.string(),
+      description: z.string(),
+      tags: z.array(z.string()).default([]),
+    });
+    const content = '---\ntitle: Auth\ndescription: How auth works\ntags:\n  - auth\n---\n\nBody.';
+    const result = parseFrontmatter(content, ArticleSchema);
+    expect(result).toEqual({ title: 'Auth', description: 'How auth works', tags: ['auth'] });
+  });
+
+  test('returns null when Zod schema validation fails', () => {
+    const StrictSchema = z.object({
+      title: z.string(),
+      count: z.number(),
+    });
+    const content = '---\ntitle: Test\ncount: not-a-number\n---\n\nBody.';
+    expect(parseFrontmatter(content, StrictSchema)).toBeNull();
+  });
+
+  test('Zod schema applies defaults for missing fields', () => {
+    const WithDefaults = z.object({
+      title: z.string(),
+      status: z.string().default('draft'),
+    });
+    const content = '---\ntitle: Test\n---\n\nBody.';
+    const result = parseFrontmatter(content, WithDefaults);
+    expect(result).toEqual({ title: 'Test', status: 'draft' });
   });
 });
 

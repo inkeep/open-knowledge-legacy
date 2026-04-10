@@ -22,6 +22,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { Config } from '../config/schema.ts';
 import { dim } from '../ui/colors.ts';
+import { WIKI_DIR } from '../wiki/constants.ts';
 import { resolveWikiPaths } from '../wiki/paths.ts';
 import { rebuildCatalogs, startCatalogWatcher } from '../wiki/watcher.ts';
 import { registerAllPrompts } from './prompts/index.ts';
@@ -128,7 +129,7 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   // Shared catalog state — populated by the startup block when `.open-knowledge/`
   // already exists. If the user scaffolds the wiki via `open-knowledge init` while
   // this server is running, they need to reconnect so startup runs again.
-  const okDir = resolve(projectDir, '.open-knowledge');
+  const okDir = resolve(projectDir, WIKI_DIR);
   let watcherHandle: { stop: () => Promise<void> } | null = null;
 
   async function ensureCatalogs(): Promise<void> {

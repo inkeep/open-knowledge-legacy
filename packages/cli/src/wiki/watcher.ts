@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import { contentHash, generateCatalog, generateRootCatalog, readIndexMeta } from './catalog.ts';
+import { CATALOG_FILENAME } from './constants.ts';
 import type { WikiPaths } from './paths.ts';
 
 const DEBOUNCE_QUIET_MS = 500;
@@ -32,7 +33,7 @@ export function rebuildCatalogs(openknowledgeDir: string, paths: WikiPaths): voi
       relativePath: `${relative(okDir, root.dir)}/INDEX.md`,
     })),
   });
-  writeIfChanged(join(okDir, 'INDEX.md'), rootContent);
+  writeIfChanged(join(okDir, CATALOG_FILENAME), rootContent);
 }
 
 function rebuildDirCatalog(dirPath: string, title?: string, description?: string): void {
@@ -56,7 +57,7 @@ function rebuildDirCatalog(dirPath: string, title?: string, description?: string
     title: effectiveTitle,
     description: effectiveDescription,
   });
-  writeIfChanged(join(dirPath, 'INDEX.md'), content);
+  writeIfChanged(join(dirPath, CATALOG_FILENAME), content);
 
   // Rebuild subdirectory catalogs — no explicit title/description, so each
   // nested call does its own sticky read from the existing INDEX.md.
