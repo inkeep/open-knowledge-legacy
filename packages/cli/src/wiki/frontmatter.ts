@@ -1,13 +1,25 @@
 /**
  * Frontmatter parsing utilities for wiki .md files.
  *
- * Extracts YAML frontmatter from markdown and parses it into a typed record
- * using the `yaml` package. All frontmatter access in the wiki package
- * should go through these functions — no raw regex matching elsewhere.
+ * Follows the Jekyll frontmatter convention (2008) — the de facto standard
+ * used by Hugo, gray-matter, Astro, Next.js, and most static site generators.
+ * There is no formal spec (not part of CommonMark or GFM).
+ *
+ * Convention:
+ *   - Opening `---` must be the first line of the file (byte position 0)
+ *   - Closing `---` on its own line terminates the block
+ *   - Content between delimiters is parsed as YAML (1.2 via the `yaml` package)
+ *   - Empty frontmatter (`---\n---`) is valid (parses to null)
+ *
+ * All frontmatter access in the wiki package should go through these
+ * functions — no raw regex matching elsewhere.
  */
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
-const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
+// Matches Jekyll-style frontmatter: `---` at file start, YAML content, `---` closing.
+// Handles both Unix (\n) and Windows (\r\n) line endings.
+// Empty frontmatter (`---\n---`) is matched via the optional content group.
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 
 /**
  * Parse YAML frontmatter from a markdown string into a key-value record.

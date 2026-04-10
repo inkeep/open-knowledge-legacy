@@ -37,6 +37,18 @@ describe('parseFrontmatter', () => {
     const content = '---\njust a string\n---\n\nBody.';
     expect(parseFrontmatter(content)).toBeNull();
   });
+
+  test('handles Windows line endings (\\r\\n)', () => {
+    const content = '---\r\ntitle: Windows\r\n---\r\n\r\nBody.';
+    const result = parseFrontmatter(content);
+    expect(result).toEqual({ title: 'Windows' });
+  });
+
+  test('handles frontmatter at end of file (no trailing content)', () => {
+    const content = '---\ntitle: EOF\n---';
+    const result = parseFrontmatter(content);
+    expect(result).toEqual({ title: 'EOF' });
+  });
 });
 
 describe('serializeFrontmatter', () => {
