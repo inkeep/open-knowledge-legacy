@@ -27,6 +27,7 @@ export type { Identity } from './types/identity.ts';
 
 // Utils
 export {
+  deriveIconColor,
   generateRandomColor,
   generateRandomName,
   getIdentity,
