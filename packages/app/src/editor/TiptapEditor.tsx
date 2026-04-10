@@ -16,9 +16,9 @@ import { type FC, type Ref, useEffect, useImperativeHandle, useRef } from 'react
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
-import { TableControlsMenu } from './table-controls/TableControlsMenu';
 import { sharedExtensions } from './extensions/shared.ts';
 import { markUserTyping, setupObservers } from './observers';
+import { TableControlsMenu } from './table-controls/TableControlsMenu';
 
 const DOC_NAME = 'test-doc';
 
