@@ -22,7 +22,7 @@ import { WIKI_DIR } from '../constants.ts';
 import { dim } from '../ui/colors.ts';
 import { resolveWikiPaths } from '../wiki/paths.ts';
 import { rebuildCatalogs, startCatalogWatcher } from '../wiki/watcher.ts';
-import { registerAllTools, TOOL_DESCRIPTIONS } from './prompts/index.ts';
+import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
 export interface McpServerOptions {
   projectDir: string;
@@ -158,11 +158,19 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
 
   // Cleanup on exit
   process.on('SIGINT', async () => {
-    if (watcherHandle) await watcherHandle.stop();
+    try {
+      if (watcherHandle) await watcherHandle.stop();
+    } catch (err) {
+      log(`Warning: watcher cleanup failed: ${err instanceof Error ? err.message : err}`);
+    }
     process.exit(0);
   });
   process.on('SIGTERM', async () => {
-    if (watcherHandle) await watcherHandle.stop();
+    try {
+      if (watcherHandle) await watcherHandle.stop();
+    } catch (err) {
+      log(`Warning: watcher cleanup failed: ${err instanceof Error ? err.message : err}`);
+    }
     process.exit(0);
   });
 }

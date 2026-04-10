@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { registerAllTools } from './prompts/index.ts';
+import { registerAllTools } from './tools/index.ts';
 
 describe('MCP server module', () => {
   it('server module exports startMcpServer without requiring Hocuspocus', async () => {
@@ -33,7 +33,7 @@ describe('registerAllTools', () => {
   it('each tool returns instructional text content', () => {
     // We test the tool handlers indirectly by importing each module
     // and verifying the textResult helper produces the expected shape
-    const { textResult } = require('./prompts/shared.ts');
+    const { textResult } = require('./tools/shared.ts');
     const result = textResult('test instructions');
     expect(result).toEqual({
       content: [{ type: 'text', text: 'test instructions' }],

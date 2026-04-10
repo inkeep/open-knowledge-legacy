@@ -54,7 +54,7 @@ export interface InitCommandResult {
 
 /**
  * Read an existing .mcp.json file (if any) and return its parsed shape.
- * Returns an empty shape if the file doesn't exist or is unreadable.
+ * Returns an empty shape if the file doesn't exist or is empty.
  * Throws if the file exists but contains invalid JSON — that's a real error
  * the user should see, not something to silently paper over.
  */
