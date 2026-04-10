@@ -108,10 +108,10 @@
 | Must | FR2 | Version content API endpoint | `GET /api/history/:sha?docName=<name>` returns the full markdown content of the document at the given commit via `git show <sha>:<docName>.md`. Returns 404 `{ error: "Document did not exist at this version" }` if the file is not in the tree at that commit (validated via `git cat-file -e` before `git show`). | Used for preview panel and restore |
 | Must | FR3 | Diff API endpoint | `GET /api/diff?docName=<name>&from=<sha>&to=<sha>` returns a unified diff between two versions of the document. If `from` is omitted, diffs against current Y.Doc content. | Uses `diff` library (already in deps) for markdown-level diff |
 | Must | FR4 | Rollback API endpoint | `POST /api/rollback` with body `{ docName, commitSha }`. Validates file exists at commit via `git cat-file -e` (404 if not). Reads historical markdown from shadow → applies to Y.Doc via `updateYFragment` transact with string origin `'rollback-apply'` (no `skipStoreHooks` — L1 persistence fires normally, `registerWrite` in file-watcher prevents re-detection loop) → updates `reconciledBase`. Returns `{ ok, restoredFrom, timestamp }`. | Append-only: creates a new CRDT transaction, does NOT rewrite history. All connected clients see the change via CRDT sync. Rollback transaction propagates to clients as a remote update — client-side observers A/B skip remote transactions, so no feedback loops. |
-| Must | FR5 | Timeline panel UI (right-side Sheet) | Collapsible right-side panel triggered by clock icon in EditorHeader. Shows chronological list of timeline entries. Checkpoints are always visible; WIP entries between checkpoints are collapsed behind "Show N auto-saves" expander. Current (pre-checkpoint) WIP entries expanded by default. | Uses existing Sheet component with `side="right"` |
+| Must | FR5 | Timeline panel UI (right-side Sheet) | Collapsible right-side panel (~350px) triggered by clock icon in EditorHeader. Shows chronological list of timeline entries. Checkpoints are always visible; WIP entries between checkpoints are collapsed behind "Show N auto-saves" expander. Current (pre-checkpoint) WIP entries expanded by default. Panel is a navigation list only — no content preview in the panel itself. | Uses existing Sheet component with `side="right"` |
 | Must | FR6 | Per-writer attribution coloring | Timeline entries have colored indicators: blue for human, orange for agent, gray for upstream. Author name displayed next to indicator. | Colors from existing design tokens: `--color-azure-blue`, `--color-agent`, muted for upstream |
-| Must | FR7 | Version preview | Clicking a timeline entry shows the historical markdown content in the panel. Optionally shows a diff against current content. | Fetches content via FR2 |
-| Must | FR8 | Restore action with confirmation | "Restore this version" button in preview view. Clicking shows confirmation: "This will replace the current document content. A new version will be created." Confirming calls FR4. | Preview-first flow prevents accidental restores |
+| Must | FR7 | Version preview in editor area | Clicking a timeline entry switches the main editor to a **read-only preview mode** showing the historical markdown content in the full editor area (not the panel). A "Show diff" toggle switches between raw historical content and a unified diff against current. The TipTap/CodeMirror live editor is replaced by a read-only CodeMirror instance. The Visual/Markdown toggle is hidden during preview. "Exit preview" or clicking "Now" in the panel returns to live editing. | Fetches content via FR2. Editor area state: `'editing' | 'preview' | 'diff'`. |
+| Must | FR8 | Restore action with confirmation | "Restore" button in the editor header during preview mode. Clicking shows confirmation: "Replace current content with this version?" → [Cancel] [Restore]. Confirming calls FR4, exits preview mode, and returns to live editing with restored content. | Preview-first flow prevents accidental restores. Restore button only visible during preview mode. |
 | Should | FR9 | Relative timestamps | Timeline entries show relative timestamps ("2 min ago", "yesterday") with full ISO timestamp on hover. | Needs date formatting utility (add `date-fns` or use native `Intl.RelativeTimeFormat`) |
 | Should | FR10 | Change summary on entries | WIP entries show a brief summary: "N blocks changed" or "content added/removed". Derived from diffing adjacent commits at query time or stored in commit message. | May impact query performance; evaluate during implementation |
 | Should | FR11 | Keyboard shortcut | `Ctrl+Shift+H` (or similar) toggles the timeline panel. | Register in editor keymap |
@@ -349,14 +349,14 @@ Ghost variant, `icon-sm` size, tooltip: "Document timeline (Ctrl+Shift+H)".
 
 #### Timeline panel (Sheet, right side)
 
-**Width:** ~350px default (list view), expanding to ~520px when diff preview is active.
+**Width:** ~350px fixed. The panel is purely a navigation list — diffs display in the main editor area.
 
 **Panel structure:**
 ```
 ┌──────────────────────────┐
 │ Timeline            [✕]  │
 ├──────────────────────────┤
-│ ● Now                    │  ← current state
+│ ● Now                    │  ← current state (click to exit preview)
 │ ○ 2 min ago — Miles      │  ← WIP (expanded, pre-checkpoint)
 │ ○ 5 min ago — Claude     │
 │ ○ 8 min ago — Miles      │
@@ -375,29 +375,35 @@ Ghost variant, `icon-sm` size, tooltip: "Document timeline (Ctrl+Shift+H)".
 └──────────────────────────┘
 ```
 
-**Entry interactions:**
-- Click entry → panel transitions to preview view:
+**Entry interactions — diff in main editor area:**
+
+Clicking a timeline entry puts the main editor into a **read-only preview/diff mode**. The diff renders in the full editor area, not the narrow panel.
 
 ```
-┌──────────────────────────────┐
-│ ← Back    Version Preview    │
-├──────────────────────────────┤
-│ 5 min ago — Claude (agent)   │
-│                              │
-│ ┌──────────────────────────┐ │
-│ │ ## Authentication         │ │  ← markdown content
-│ │                          │ │     (or diff view)
-│ │ OAuth2 integration...    │ │
-│ │                          │ │
-│ └──────────────────────────┘ │
-│                              │
-│ [Show diff] [Restore ↩]     │
-│                              │
-└──────────────────────────────┘
+┌──────────────────────────┐ ┌──────────────────────────────────────────────┐
+│ Timeline            [✕]  │ │ EditorHeader                                 │
+├──────────────────────────┤ │  Viewing: 5 min ago — Claude                  │
+│ ● Now                    │ │  [Exit preview]  [Show diff ↔]  [Restore ↩]  │
+│ ○ 2 min ago — Miles      │ ├──────────────────────────────────────────────┤
+│ ○ 5 min ago — Claude  ◄──┤ │                                              │
+│ ○ 8 min ago — Miles      │ │  ## Authentication                           │
+│                          │ │                                              │
+│ ◆ Save Version — 15m ago │ │  OAuth2 integration with PKCE flow...        │
+│   "Updated auth docs"    │ │                                              │
+│   Miles, Claude           │ │  (read-only historical content               │
+│                          │ │   or unified diff vs. current)               │
+│ ▸ Show 6 auto-saves      │ │                                              │
+└──────────────────────────┘ └──────────────────────────────────────────────┘
 ```
 
-- "Show diff" toggles between raw content and unified diff vs. current
-- "Restore" button → confirmation inline: "Replace current content with this version?" → [Cancel] [Restore]
+**Editor preview mode behavior:**
+- The editor area switches to **read-only** and displays either the historical markdown content or a diff against the current version
+- "Show diff" toggles between raw historical content and unified diff view (additions in green, deletions in red)
+- "Restore" button → confirmation: "Replace current content with this version?" → [Cancel] [Restore]
+- "Exit preview" (or clicking "Now" in the panel) returns to live editing
+- Clicking a different entry in the panel updates the preview without exiting the mode
+- The TipTap/CodeMirror editor is replaced by a read-only CodeMirror instance showing markdown content or diff (not the live Y.Doc)
+- The Visual/Markdown mode toggle is hidden during preview mode
 
 **Attribution colors:**
 - Human: `azure-500` (#3784ff) dot + name
@@ -445,6 +451,7 @@ This ensures `git log <checkpoint> --full-history` includes all writer chains.
 | D11 | Multi-parent checkpoint commits preserve all writer chains | T | LOCKED | No | ~10 line change. Experimentally verified with octopus merges. Prevents losing agent/upstream WIP history after Save Version. Per-commit attribution fully preserved — each WIP commit retains its original author. | evidence/multi-parent-checkpoint.md | Change saveVersion() loop from break-on-first to collect-all |
 | D12 | History API supports type/author/excludeAuthor filtering | P | LOCKED | No | Enables checkpoints-only view, per-writer filtering, and hiding upstream noise. `type=checkpoint` has a fast path (skip DAG walk). | User request | New query params on GET /api/history |
 | D13 | Standalone-mode checkpoints in scope | T | LOCKED | No | No architectural reason to block checkpoints in standalone — `saveVersion()` just skips the project commit step and creates a shadow-only checkpoint. ~20 lines of conditional logic. Standalone users get full two-tier timeline. | Code trace: steps 2+3 of saveVersion() only need shadow repo | FR17 added. API guard `!projectRoot` removed for save-version. |
+| D14 | Diff/preview displays in the main editor area, not the timeline panel | P | LOCKED | No | The panel is narrow (~350px) — not enough space for meaningful diff reading. The editor area has full width and the user is already focused there. Matches VS Code timeline pattern. | User direction, UX analysis | Panel is navigation-only. Editor enters read-only preview/diff mode on entry click. Header shows preview controls (exit, toggle diff, restore). |
 
 ## 11) Open questions
 
