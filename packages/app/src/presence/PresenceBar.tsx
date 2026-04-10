@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import type { FC } from 'react';
 import { ClaudeIcon } from '@/components/icons/claude';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { type Participant, usePresence } from './use-presence';
 import { type SyncStatus, useSyncStatus } from './use-sync-status';
 
