@@ -1,0 +1,5 @@
+{
+  "env": {
+    "CLAUDE_REPORTS_DIR": "./reports"
+  }
+}
