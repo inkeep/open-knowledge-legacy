@@ -29,12 +29,13 @@ function createSkeletonWidget(): HTMLElement {
   return el;
 }
 
-function createErrorWidget(onDismiss: () => void): HTMLElement {
-  const el = document.createElement('div');
+function createErrorWidget(onDismiss: () => void, message = 'Upload failed'): HTMLElement {
+  const el = document.createElement('button');
+  el.type = 'button';
   el.className =
-    'image-upload-error flex items-center gap-2 p-3 rounded-md border border-destructive/50 bg-destructive/10 text-destructive text-sm my-2 cursor-pointer';
+    'image-upload-error w-full text-left flex items-center gap-2 p-3 rounded-md border border-destructive/50 bg-destructive/10 text-destructive text-sm my-2 cursor-pointer';
   el.setAttribute('data-upload-widget', 'error');
-  el.textContent = '⚠ Upload failed — click to dismiss';
+  el.textContent = `⚠ ${message} — click to dismiss`;
   el.addEventListener('click', onDismiss);
   return el;
 }
@@ -162,8 +163,15 @@ export async function uploadAndInsert(
   }
 
   if (!res.ok) {
-    console.error('[uploadAndInsert] Server error:', res.status, res.statusText);
-    showError(editor, uploadId);
+    let errorMessage = `Upload failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body.error) errorMessage = body.error;
+    } catch {
+      /* use default */
+    }
+    console.error('[uploadAndInsert] Server error:', errorMessage);
+    showError(editor, uploadId, errorMessage);
     return;
   }
 
@@ -203,12 +211,12 @@ export async function uploadAndInsert(
 // Internal helper
 // ---------------------------------------------------------------------------
 
-function showError(editor: Editor, uploadId: string): void {
+function showError(editor: Editor, uploadId: string, message?: string): void {
   const errorWidget = createErrorWidget(() => {
     editor.view.dispatch(
       editor.state.tr.setMeta(uploadPluginKey, { type: 'remove', id: uploadId }),
     );
-  });
+  }, message);
 
   editor.view.dispatch(
     editor.state.tr.setMeta(uploadPluginKey, {
