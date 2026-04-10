@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import { toast } from 'sonner';
 
 // ---------------------------------------------------------------------------
 // Plugin key
@@ -31,25 +32,13 @@ function createSkeletonWidget(): HTMLElement {
   return el;
 }
 
-function createErrorWidget(onDismiss: () => void, message = 'Upload failed'): HTMLElement {
-  const el = document.createElement('button');
-  el.type = 'button';
-  el.className =
-    'image-upload-error w-full text-left flex items-center gap-2 p-3 rounded-md border border-destructive/50 bg-destructive/10 text-destructive text-sm my-2 cursor-pointer';
-  el.setAttribute('data-upload-widget', 'error');
-  el.textContent = `⚠ ${message} — click to dismiss`;
-  el.addEventListener('click', onDismiss);
-  return el;
-}
-
 // ---------------------------------------------------------------------------
 // Upload decoration plugin
 // ---------------------------------------------------------------------------
 
 type UploadMeta =
   | { type: 'add'; id: string; pos: number; widget: HTMLElement }
-  | { type: 'remove'; id: string }
-  | { type: 'replace'; id: string; widget: HTMLElement };
+  | { type: 'remove'; id: string };
 
 export const uploadDecorationPlugin = new Plugin<UploadPluginState>({
   key: uploadPluginKey,
@@ -93,29 +82,6 @@ export const uploadDecorationPlugin = new Plugin<UploadPluginState>({
         const newUploads = new Map(mappedUploads);
         newUploads.delete(meta.id);
         return { decorations: newDecorations, uploads: newUploads };
-      }
-
-      if (meta.type === 'replace') {
-        // Remove old decoration
-        const toRemove = mappedDecorations.find(
-          undefined,
-          undefined,
-          (spec) => spec.id === meta.id,
-        );
-        const pos = mappedUploads.get(meta.id);
-        const withRemoved = mappedDecorations.remove(toRemove);
-
-        // Add new decoration at the same position (if we still know it)
-        if (pos !== undefined) {
-          const deco = Decoration.widget(pos, meta.widget, {
-            id: meta.id,
-            stopEvent: () => true,
-          });
-          return { decorations: withRemoved.add(tr.doc, [deco]), uploads: mappedUploads };
-        }
-        const newUploads = new Map(mappedUploads);
-        newUploads.delete(meta.id);
-        return { decorations: withRemoved, uploads: newUploads };
       }
 
       return { decorations: mappedDecorations, uploads: mappedUploads };
@@ -214,17 +180,6 @@ export async function uploadAndInsert(
 // ---------------------------------------------------------------------------
 
 function showError(editor: Editor, uploadId: string, message?: string): void {
-  const errorWidget = createErrorWidget(() => {
-    editor.view.dispatch(
-      editor.state.tr.setMeta(uploadPluginKey, { type: 'remove', id: uploadId }),
-    );
-  }, message);
-
-  editor.view.dispatch(
-    editor.state.tr.setMeta(uploadPluginKey, {
-      type: 'replace',
-      id: uploadId,
-      widget: errorWidget,
-    }),
-  );
+  editor.view.dispatch(editor.state.tr.setMeta(uploadPluginKey, { type: 'remove', id: uploadId }));
+  toast.error(message ?? 'Upload failed');
 }

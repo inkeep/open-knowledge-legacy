@@ -1,3 +1,5 @@
+import { Toaster } from 'sonner';
+
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
@@ -9,6 +11,7 @@ export function App() {
       <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
         <EditorPane />
       </SidebarInset>
+      <Toaster richColors position="bottom-right" />
     </SidebarProvider>
   );
 }
