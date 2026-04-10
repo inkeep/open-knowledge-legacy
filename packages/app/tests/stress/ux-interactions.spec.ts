@@ -86,6 +86,12 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   // Switch back to WYSIWYG
   await page.getByRole('button', { name: 'WYSIWYG' }).click();
 
+  // Wait for ProseMirror to render the synced content
+  await page.waitForFunction(
+    () => document.querySelector('.ProseMirror')?.textContent?.includes('Source Heading'),
+    { timeout: 10_000 },
+  );
+
   // Verify ProseMirror renders the content
   const pmContent = await page.locator('.ProseMirror').textContent();
   expect(pmContent).toContain('Source Heading');
@@ -128,6 +134,15 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
 
   // Switch back to WYSIWYG
   await page.getByRole('button', { name: 'WYSIWYG' }).click();
+
+  // Wait for ProseMirror to render both edits
+  await page.waitForFunction(
+    () => {
+      const content = document.querySelector('.ProseMirror')?.textContent ?? '';
+      return content.includes('WYSIWYG edit') && content.includes('Source edit');
+    },
+    { timeout: 10_000 },
+  );
 
   // Both edits should be present
   const pmContent = await page.locator('.ProseMirror').textContent();
