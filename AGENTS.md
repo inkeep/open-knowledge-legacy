@@ -106,9 +106,11 @@ Hocuspocus Server
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/document` | Read live Y.Text state (bypasses persistence debounce) |
 | POST | `/api/agent-write` | Agent write via Y.Text |
-| POST | `/api/agent-write-md` | Agent markdown write via Y.Text |
-| POST | `/api/agent-undo` | Undo last agent edit |
+| POST | `/api/agent-write-md` | Agent markdown write via Y.Text (append/prepend/replace) |
+| POST | `/api/agent-patch` | Targeted find/replace on live Y.Text — only matched span mutated |
+| POST | `/api/agent-undo` | Undo last agent edit (agent-write origin only) |
 | POST | `/api/agent-redo` | Redo last undone agent edit |
 | GET | `/api/agent-undo-status` | Check canUndo/canRedo |
 | POST | `/api/test-reset` | Reset document (E2E test isolation) |
@@ -192,6 +194,205 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
+## CRDT Bridge Architecture
+
+The editor uses a **dual-representation** CRDT model: Y.XmlFragment (WYSIWYG via TipTap) and Y.Text (source mode via CodeMirror), connected by bidirectional observers.
+
+```
+Y.Doc
+├── Y.XmlFragment('default')  ← TipTap binds here (tree structure)
+├── Y.Text('source')          ← CodeMirror binds here (flat string)
+│
+│  Observer A: XmlFragment → Y.Text  (origin: 'sync-from-tree')
+│  Observer B: Y.Text → XmlFragment  (origin: 'sync-from-text')
+│
+├── Y.Map('metadata')         ← frontmatter cache
+└── Y.Map('activity')         ← agent write attribution
+```
+
+### Two invariants
+
+1. **Bridge invariant:** `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` — must hold after every propagation path settles.
+2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See `observers.ts:244`)
+
+### Propagation matrix (4 write surfaces x 3 read targets)
+
+| Write Surface | → Y.Text | → XmlFragment | → Disk |
+|---|---|---|---|
+| W1: WYSIWYG (XmlFragment) | Observer A | (direct) | Persistence debounce |
+| W2: Source (Y.Text) | (direct) | Observer B | Persistence debounce |
+| W3: Agent API | CRDT sync (WebSocket) | syncTextToFragment on server | Persistence debounce |
+| W4: Disk (file watcher) | handleExternalChange | handleExternalChange | (direct) |
+| Undo/Redo | UndoManager + syncTextToFragment | syncTextToFragment | Persistence debounce |
+
+### transaction.local semantics
+
+- **Local transactions** (`transaction.local === true`): Mutations on the same Y.Doc instance. Observers fire for everything.
+- **Remote transactions** (`transaction.local === false`): Arrive via HocuspocusProvider WebSocket sync. Observers SKIP these (origin guards prevent double-sync).
+- **Critical:** Layer A unit tests use `transaction.local=true` — NOT the same code path as production.
+
+### Observer A (XmlFragment → Y.Text)
+
+- File: `packages/app/src/editor/observers.ts:247`
+- Origin: `'sync-from-tree'`
+- Uses `diffLines` to compute incremental delta between `lastSyncedXmlMd` and current XmlFragment markdown
+- Debounced (DEBOUNCE_MS=50ms) to coalesce rapid keystrokes
+- Skips entirely for remote (non-local) transactions; refreshes `lastSyncedXmlMd` baseline only
+- Updates `lastSyncedXmlMd` after every successful sync
+
+### Observer B (Y.Text → XmlFragment)
+
+- File: `packages/app/src/editor/observers.ts:342`
+- Origin: `'sync-from-text'`
+- Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
+- Deferred while user is typing in WYSIWYG (TYPING_DEFER_MS=300ms)
+- Early-exits if XmlFragment already serializes to the same markdown as Y.Text
+
+### syncTextToFragment
+
+- File: `packages/server/src/agent-sessions.ts`
+- Called after every `um.undo()`, `um.redo()`, and agent write
+- Parses Y.Text → ProseMirror JSON → `updateYFragment()` on the server doc
+- **STOP:** Never write to Y.Text without calling `syncTextToFragment` afterward
+
+### Origin-guard truth table
+
+| Transaction Origin | Observer A (tree→text) | Observer B (text→tree) |
+|---|---|---|
+| `'sync-from-tree'` | — (self) | SKIP |
+| `'sync-from-text'` | SKIP | — (self) |
+| `'agent-write'` | Skip (remote; refresh baseline) | Sync normally |
+| `'file-watcher'` | Sync normally | Sync normally |
+| `undefined` (WebSocket) | Sync normally | Sync normally |
+
+## Testing
+
+### Test layers
+
+| Layer | Type | Location | Command |
+|---|---|---|---|
+| A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.test.ts` | `bun run test` |
+| B | HTTP + server-side CRDT | `packages/app/tests/stress/stress-api.ts` | `bun run tests/stress/stress-api.ts` (needs dev server) |
+| C | Playwright E2E | `packages/app/tests/stress/crdt-stress.spec.ts`, `tests/stress/ux-interactions.spec.ts` | `bunx playwright test` |
+| D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |
+| Integration | Tier 1 bridge matrix | `packages/app/tests/integration/bridge-matrix.test.ts` | `bun run test` |
+
+### Tier 1 integration harness
+
+File: `packages/app/tests/integration/test-harness.ts`
+
+- `createTestServer()` → spins up real Hocuspocus with HTTP/WebSocket on OS-assigned random port
+- `createTestClient(port)` → connects HocuspocusProvider + wires `setupObservers()`
+- `getFreePort()` → kernel-allocated port (Hocuspocus `Server.listen(0)` fails due to falsy guard)
+- Server uses `debounce: 200` (not production 2s) for fast disk tests
+
+### Writing a new integration test
+
+```typescript
+import { createTestServer, createTestClient, agentWriteMd, assertBridgeInvariant, wait } from './test-harness';
+
+let server: TestServer;
+beforeAll(async () => { server = await createTestServer(); });
+afterAll(async () => { await server.cleanup(); });
+
+test('my propagation test', async () => {
+  await testReset(server.port);
+  await wait(300);
+  const client = await createTestClient(server.port);
+  try {
+    // Write via one surface, verify another
+    await agentWriteMd(server.port, '# Test');
+    await wait(500);
+    expect(client.ytext.toString()).toContain('Test');
+    assertBridgeInvariant(client.ytext, client.fragment);
+  } finally {
+    client.cleanup();
+  }
+});
+```
+
+### Fuzz replay
+
+```bash
+STRESS_FUZZ_SEED=42 bun test packages/app/tests/stress/observers.fuzz.test.ts
+```
+
+Fuzz tests write snapshots to `/tmp/fuzz-*` on failure for deterministic reproduction.
+
+## Concurrent Development
+
+### VITE_PORT for custom port
+
+```bash
+VITE_PORT=9999 bun run dev        # Dev server on port 9999 (strict: fails if taken)
+bun run dev                        # Default port 5173 (not strict)
+```
+
+### Port isolation for tests
+
+- **Tier 1 integration tests:** `getFreePort()` allocates kernel-assigned random ports. Zero coordination needed.
+- **Playwright tests:** `VITE_PORT` env var passed via `playwright.config.ts` webServer command. Set `VITE_PORT=<random>` for concurrent runs.
+- `reuseExistingServer: false` in playwright.config.ts prevents stale server contamination.
+
+### Detecting stale dev servers
+
+```bash
+ps aux | grep vite                 # Find running Vite processes
+lsof -i :5173                     # Check what's using default port
+```
+
+### Worktree isolation
+
+Each worktree has its own content directory. The test harness creates a fresh `tmpDir` per test run — no shared state between worktrees.
+
+## Known Pitfalls
+
+### STOP rules
+
+- **STOP:** Never write raw markdown to Y.Text without calling `syncTextToFragment()` afterward. The XmlFragment will be stale, breaking the bridge invariant.
+- **STOP:** Always call `syncTextToFragment()` after `um.undo()` / `um.redo()`. Without it, Y.Text reverts but XmlFragment stays stale.
+- **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
+
+### WARN rules
+
+- **WARN:** Markdown round-trip is not always stable. E.g., `## H\nP` normalizes to `## H\n\nP` (paragraph after heading gets a blank line). Test with `serialize(parse(md)) !== md` to find constructs that normalize.
+- **WARN:** Observer A's `lastSyncedXmlMd` must be refreshed on ALL XmlFragment changes, not just user edits. A stale baseline produces incorrect diffs that destroy content.
+- **WARN:** Layer A tests use `transaction.local=true`. This does NOT exercise the same code path as production where WebSocket updates arrive with `transaction.local=false`.
+- **WARN:** `hocuspocus.configure({ extensions: [...] })` REPLACES the extensions array (object spread). Use `hocuspocus.configuration.extensions.push()` to add extensions without losing existing ones.
+
+## Debug Tooling
+
+### Observer instrumentation
+
+Add logging to `observers.ts` to trace sync behavior:
+```typescript
+// In Observer A callback:
+console.log('[Observer A]', { ytextLen: ytext.toString().length, fragLen: serializeFragment(fragment).length, lastSyncedLen: lastSyncedXmlMd.length });
+```
+
+### Round-trip stability check
+
+```typescript
+const roundTripped = mdManager.serialize(mdManager.parse(md));
+if (roundTripped !== md) console.warn('Non-canonical markdown:', { original: md.length, roundTripped: roundTripped.length });
+```
+
+### Bridge invariant check
+
+```typescript
+const textNorm = stripTrailingWhitespace(ytext.toString());
+const fragNorm = stripTrailingWhitespace(serializeFragment(fragment));
+console.assert(textNorm === fragNorm, 'Bridge invariant violated');
+```
+
+### Fuzz replay for deterministic reproduction
+
+```bash
+STRESS_FUZZ_SEED=<seed-from-failure> bun test packages/app/tests/stress/observers.fuzz.test.ts
+```
+
+Check `/tmp/fuzz-*` for the snapshot of the failing state.
+
 ## Research references
 
 See `reports/CATALOGUE.md` for the full index. Key reports:
@@ -200,6 +401,7 @@ See `reports/CATALOGUE.md` for the full index. Key reports:
 - `reports/auto-persistence-version-history-patterns/` — Auto-persistence and version history
 - `reports/bun-module-resolution-extensions/` — Bun module resolution extensions
 - `reports/onboarding-multiproject-ux/` — Onboarding multiproject UX
+- `reports/crdt-observer-bridge-latency-analysis/` — CRDT observer bridge latency analysis
 
 ## Changesets
 

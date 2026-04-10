@@ -1,11 +1,7 @@
-import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
-import { sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
-import { updateYFragment } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
+import { createExternalChangeHandler } from './external-change.ts';
 import { type AsyncSubscription, startWatcher } from './file-watcher.ts';
 import { createPersistenceExtension, type PersistenceOptions } from './persistence.ts';
 
@@ -20,6 +16,12 @@ export interface ServerOptions {
   gitEnabled?: boolean;
   commitDebounceMs?: number;
   wipRef?: string;
+  /**
+   * When true, register test-only routes (currently `/api/test-reset`).
+   * Defaults to `false` — these routes allow any client to destroy document
+   * state and must never be exposed in production. Enable only in tests.
+   */
+  enableTestRoutes?: boolean;
 }
 
 export interface ServerInstance {
@@ -27,9 +29,6 @@ export interface ServerInstance {
   sessionManager: AgentSessionManager;
   destroy: () => Promise<void>;
 }
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
 
 export function createServer(options: ServerOptions): ServerInstance {
   const {
@@ -41,6 +40,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     gitEnabled = true,
     commitDebounceMs = 30_000,
     wipRef = 'refs/wip/main',
+    enableTestRoutes = false,
   } = options;
 
   const persistenceOpts: PersistenceOptions = {
@@ -60,51 +60,19 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const sessionManager = new AgentSessionManager(hocuspocus);
 
-  // Add API extension
+  // Add API extension — push directly onto the extensions array rather than
+  // calling hocuspocus.configure({ extensions: [...] }), which uses spread
+  // and would REPLACE the existing persistence extension.
   const apiExtension = createApiExtension({
     hocuspocus,
     sessionManager,
     contentDir,
+    enableTestRoutes,
   });
-  hocuspocus.configure({ extensions: [apiExtension] });
+  hocuspocus.configuration.extensions.push(apiExtension);
 
   let watcher: AsyncSubscription | null = null;
-
-  async function handleExternalChange(docName: string, content: string): Promise<void> {
-    try {
-      const document = hocuspocus.documents.get(docName);
-      if (!document) return;
-      const { frontmatter, body } = stripFrontmatter(content);
-      const parsedJson = mdManager.parse(body);
-      const pmNode = schema.nodeFromJSON(parsedJson);
-      const xmlFragment = document.getXmlFragment('default');
-
-      document.transact(
-        () => {
-          const meta = { mapping: new Map(), isOMark: new Map() };
-          updateYFragment(document, xmlFragment, pmNode, meta);
-          const metaMap = document.getMap('metadata');
-          metaMap.set('frontmatter', frontmatter);
-
-          const ytext = document.getText('source');
-          const currentText = ytext.toString();
-          if (currentText !== content) {
-            ytext.delete(0, currentText.length);
-            ytext.insert(0, content);
-          }
-        },
-        {
-          source: 'local',
-          skipStoreHooks: true,
-          context: { origin: 'file-watcher' },
-        } satisfies LocalTransactionOrigin,
-      );
-
-      console.log(`[file-watcher] Applied external change: ${docName}`);
-    } catch (err) {
-      console.error(`[file-watcher] Failed to apply external change for ${docName}:`, err);
-    }
-  }
+  const handleExternalChange = createExternalChangeHandler(hocuspocus);
 
   async function destroy(): Promise<void> {
     if (watcher) {

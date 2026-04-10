@@ -1,5 +1,6 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
+  deriveIconColor,
   evictStaleEntries,
   FLASH_DEBOUNCE_MS,
   FLASH_DURATION_MS,
@@ -37,6 +38,7 @@ function renderCursor(user: Record<string, string>): HTMLElement {
   const label = document.createElement('div');
   label.classList.add('collaboration-cursor__label');
   label.style.backgroundColor = user.color;
+  label.style.color = deriveIconColor(user.color);
   label.textContent = user.name;
   cursor.append(label);
 

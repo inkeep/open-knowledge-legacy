@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const port = process.env.VITE_PORT || '5173';
+const baseURL = `http://localhost:${port}`;
+
 export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
@@ -7,7 +10,7 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL,
     trace: 'on-first-retry',
   },
   projects: [
@@ -26,8 +29,8 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'bun run dev',
-    url: 'http://localhost:5173',
+    command: `VITE_PORT=${port} bun run dev`,
+    url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000,
   },
