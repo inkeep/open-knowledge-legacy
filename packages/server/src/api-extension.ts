@@ -179,6 +179,101 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleDocumentRead(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') || 'test-doc';
+      const dc = await sessionManager.getSession(docName);
+      const content = dc.document.getText('source').toString();
+      json(res, 200, { ok: true, docName, content });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleAgentPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+      const { find, replace, docName: rawDocName } = body as Record<string, unknown>;
+      if (typeof find !== 'string' || find.length === 0) {
+        json(res, 400, { ok: false, error: 'find field required' });
+        return;
+      }
+      if (typeof replace !== 'string') {
+        json(res, 400, { ok: false, error: 'replace field required' });
+        return;
+      }
+      const docName =
+        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc';
+      const dc = await sessionManager.getSession(docName);
+      const timestamp = new Date().toISOString();
+
+      let notFound = false;
+      dc.document.awareness.setLocalStateField('mode', 'editing');
+      try {
+        dc.document.transact(() => {
+          const ytext = dc.document.getText('source');
+          const currentText = ytext.toString();
+          const pos = currentText.indexOf(find);
+          if (pos === -1) {
+            notFound = true;
+            return;
+          }
+          ytext.delete(pos, find.length);
+          ytext.insert(pos, replace);
+          syncTextToFragment(dc.document);
+          const activityMap = dc.document.getMap('activity');
+          activityMap.set(DEFAULT_AGENT_ID, {
+            agentId: DEFAULT_AGENT_ID,
+            timestamp: Date.now(),
+            type: 'insert',
+            description: `Patched: ${find.slice(0, 50)}`,
+          });
+        }, AGENT_WRITE_ORIGIN);
+      } finally {
+        dc.document.awareness.setLocalStateField('mode', 'idle');
+      }
+
+      if (notFound) {
+        json(res, 404, { ok: false, error: 'Text not found in document' });
+        return;
+      }
+      json(res, 200, { ok: true, timestamp });
+    } catch (e) {
+      console.error('[agent-patch]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   async function handleAgentUndoStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -302,8 +397,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
+    '/api/document': handleDocumentRead,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
+    '/api/agent-patch': handleAgentPatch,
     '/api/agent-undo-status': handleAgentUndoStatus,
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-redo': handleAgentRedo,

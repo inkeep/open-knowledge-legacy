@@ -95,9 +95,11 @@ Hocuspocus Server
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/document` | Read live Y.Text state (bypasses persistence debounce) |
 | POST | `/api/agent-write` | Agent write via Y.Text |
-| POST | `/api/agent-write-md` | Agent markdown write via Y.Text |
-| POST | `/api/agent-undo` | Undo last agent edit |
+| POST | `/api/agent-write-md` | Agent markdown write via Y.Text (append/prepend/replace) |
+| POST | `/api/agent-patch` | Targeted find/replace on live Y.Text — only matched span mutated |
+| POST | `/api/agent-undo` | Undo last agent edit (agent-write origin only) |
 | POST | `/api/agent-redo` | Redo last undone agent edit |
 | GET | `/api/agent-undo-status` | Check canUndo/canRedo |
 | POST | `/api/test-reset` | Reset document (E2E test isolation) |
