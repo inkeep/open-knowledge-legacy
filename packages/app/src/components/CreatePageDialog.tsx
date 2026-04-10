@@ -48,6 +48,7 @@ export function CreatePageDialog({ open, target, onOpenChange, onCreated }: Crea
         body: JSON.stringify({ path }),
       });
       const data = (await res.json()) as { ok: boolean; docName?: string; error?: string };
+      setBusy(false);
       if (!data.ok) {
         setError(data.error ?? 'Failed to create page');
         return;
@@ -55,9 +56,8 @@ export function CreatePageDialog({ open, target, onOpenChange, onCreated }: Crea
       onCreated(data.docName ?? path.replace(/\.md$/, ''));
       onOpenChange(false);
     } catch {
-      setError('Network error — please try again');
-    } finally {
       setBusy(false);
+      setError('Network error — please try again');
     }
   }
 
