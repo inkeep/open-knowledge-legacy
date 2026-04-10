@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/react';
-import { Bold, Code, Italic, Strikethrough } from 'lucide-react';
+import { Bold, Code, Italic, Strikethrough, Underline } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -17,6 +17,13 @@ const formatActions = [
     command: (editor: Editor) => editor.chain().focus().toggleItalic().run(),
     isActive: (editor: Editor) => editor.isActive('italic'),
     shortcut: '⌘I',
+  },
+  {
+    name: 'underline',
+    icon: Underline,
+    command: (editor: Editor) => editor.chain().focus().toggleUnderline().run(),
+    isActive: (editor: Editor) => editor.isActive('underline'),
+    shortcut: '⌘U',
   },
   {
     name: 'strikethrough',
