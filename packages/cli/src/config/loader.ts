@@ -2,7 +2,9 @@
  * Hierarchical YAML config loader.
  *
  * Priority (lowest → highest):
- *   Zod defaults → ~/.open-knowledge/config.yml → ./.open-knowledge/config.yml → ENV → CLI flags
+ *   Zod defaults → ~/.open-knowledge/config.yml → ./.open-knowledge/config.yml
+ *
+ * ENV and CLI flag overrides are applied in cli.ts after loading.
  *
  * Deep merge: workspace leaf values override user leaf values.
  * Arrays are replaced, not concatenated.

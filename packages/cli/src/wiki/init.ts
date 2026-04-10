@@ -120,8 +120,6 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #   Built-in defaults
 #     -> ~/.open-knowledge/config.yml         (user defaults)
 #     -> ./.open-knowledge/config.yml         (this file)
-#     -> ENV vars
-#     -> CLI flags
 #
 # Schema reference: packages/cli/src/config/schema.ts
 
