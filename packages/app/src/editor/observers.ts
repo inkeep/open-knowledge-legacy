@@ -27,8 +27,9 @@
  *
  *   Fix: Observer A now tracks the last XmlFragment state it synced (lastSyncedXmlMd)
  *   and applies only the user's delta (lastSyncedXmlMd → currentXmlMd), preserving
- *   any other content in Y.Text. Observer B defers while the user is typing to give
- *   Observer A time to sync the user's delta first.
+ *   any other content in Y.Text. Observer B defers while the user is typing, and also
+ *   waits briefly after a peer tree-only update so the corresponding remote Y.Text
+ *   transaction can merge before updateYFragment rebuilds the tree.
  */
 
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
@@ -46,31 +47,39 @@ const DEBOUNCE_MS = 50;
 /**
  * Window during which user typing activity defers Observer B's sync.
  * - Observer B: defers while user typed within TYPING_DEFER_MS (300ms).
- * - Observer A: coalesces rapid keystrokes within DEBOUNCE_MS (50ms, much shorter).
- * - Observer A skips entirely for remote (non-local) transactions.
+ * - Observer A relies only on its normal debounce window (DEBOUNCE_MS = 50ms).
  * Tuned to be long enough to cover fast-typing bursts and network round-trips, short
  * enough that source mode catches up quickly when the user pauses.
  */
 const TYPING_DEFER_MS = 300;
+const REMOTE_TREE_SYNC_GRACE_MS = 150;
 
 // ─────────────────────────────────────────────────────────────
-// Module-level coordination state
+// Per-document coordination state
 // ─────────────────────────────────────────────────────────────
 
-/** Timestamp of the last local user typing event (set by markUserTyping). */
-let lastUserTypedAt = 0;
+interface TypingState {
+  lastUserTypedAt: number;
+  lastRemoteTreeOnlyAt: number;
+}
+
+const typingStateByDoc = new WeakMap<Y.Doc, TypingState>();
+
+function getTypingState(doc: Y.Doc): TypingState {
+  let state = typingStateByDoc.get(doc);
+  if (!state) {
+    state = { lastUserTypedAt: 0, lastRemoteTreeOnlyAt: 0 };
+    typingStateByDoc.set(doc, state);
+  }
+  return state;
+}
 
 /**
  * Mark that the local user just typed. Call this from the editor's DOM event handlers
  * (keydown, paste, drop, etc.). Observer B uses this to defer its tree replacement.
  */
-export function markUserTyping(): void {
-  lastUserTypedAt = Date.now();
-}
-
-/** Test helper: reset coordination state (call before each test case). */
-export function __resetCoordinationState(): void {
-  lastUserTypedAt = 0;
+export function markUserTyping(doc: Y.Doc): void {
+  getTypingState(doc).lastUserTypedAt = Date.now();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -257,19 +266,10 @@ export function setupObservers(deps: ObserverDeps): () => void {
    * (e.g., an agent write awaiting Observer B's propagation), that content is
    * preserved — it's not part of the user's delta so Observer A doesn't touch it.
    *
-   * Defers briefly while the user is typing to coalesce rapid keystrokes into one
-   * serialization pass.
+   * Debounced to coalesce rapid tree mutations into one serialization pass.
    */
   const runObserverASync = (): void => {
     debounceA = null;
-
-    // Coalesce rapid typing — if the user is still actively typing, wait a bit.
-    // (Much shorter than TYPING_DEFER_MS because we now sync incrementally.)
-    const elapsedSinceTyping = Date.now() - lastUserTypedAt;
-    if (elapsedSinceTyping < DEBOUNCE_MS) {
-      debounceA = setTimeout(runObserverASync, DEBOUNCE_MS - elapsedSinceTyping);
-      return;
-    }
 
     try {
       const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
@@ -320,12 +320,18 @@ export function setupObservers(deps: ObserverDeps): () => void {
     if (transaction.origin === ORIGIN_TEXT_TO_TREE) return;
     if (!transaction.local) {
       // Remote XmlFragment change (server agent write, peer, cross-tab).
-      // Don't schedule sync — ytext was updated in the same remote transaction
-      // and re-syncing would create a cross-tab amplification loop.
-      // BUT we must refresh lastSyncedXmlMd so the next local user edit
-      // computes a correct delta. Without this, Observer A uses a stale baseline
-      // and re-inserts the entire remote content, duplicating Y.Text.
+      // Server-side writes update Y.Text + XmlFragment together, but peer WYSIWYG edits
+      // arrive as tree-only changes first and rely on the remote client's Observer A to
+      // sync Y.Text later in a second transaction. Record whether this transaction
+      // touched Y.Text so Observer B can briefly wait for that follow-up text sync
+      // before rebuilding the tree from a stale local source buffer.
       try {
+        const state = getTypingState(doc);
+        const changedParentTypes = (
+          transaction as Y.Transaction & { changedParentTypes?: Map<unknown, unknown> }
+        ).changedParentTypes;
+        state.lastRemoteTreeOnlyAt = changedParentTypes?.has(ytext) ? 0 : Date.now();
+
         const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
         const body = mdManager.serialize(json);
         const frontmatter = getFrontmatter(doc);
@@ -355,12 +361,23 @@ export function setupObservers(deps: ObserverDeps): () => void {
    */
   const runObserverBSync = (): void => {
     debounceB = null;
+    const { lastRemoteTreeOnlyAt, lastUserTypedAt } = getTypingState(doc);
     const elapsedSinceTyping = Date.now() - lastUserTypedAt;
     if (elapsedSinceTyping < TYPING_DEFER_MS) {
       // User is still typing. Defer.
       const waitMs = TYPING_DEFER_MS - elapsedSinceTyping;
       debounceB = setTimeout(runObserverBSync, waitMs);
       return;
+    }
+    if (lastRemoteTreeOnlyAt > 0) {
+      const elapsedSinceRemoteTree = Date.now() - lastRemoteTreeOnlyAt;
+      if (elapsedSinceRemoteTree < REMOTE_TREE_SYNC_GRACE_MS) {
+        debounceB = setTimeout(
+          runObserverBSync,
+          REMOTE_TREE_SYNC_GRACE_MS - elapsedSinceRemoteTree,
+        );
+        return;
+      }
     }
 
     try {
@@ -438,7 +455,10 @@ export function setupObservers(deps: ObserverDeps): () => void {
     // via sync — no local Observer B processing needed. For server-side writes
     // (agent), the server now updates both Y.Text and XmlFragment in the same
     // transaction, so clients receive paired changes that are already in sync.
-    if (!transaction.local) return;
+    if (!transaction.local) {
+      getTypingState(doc).lastRemoteTreeOnlyAt = 0;
+      return;
+    }
     if (debounceB) clearTimeout(debounceB);
     debounceB = setTimeout(runObserverBSync, DEBOUNCE_MS);
   };

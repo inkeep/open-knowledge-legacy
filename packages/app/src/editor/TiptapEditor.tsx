@@ -16,9 +16,9 @@ import { type FC, type Ref, useEffect, useImperativeHandle, useRef } from 'react
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
-import { TableControlsMenu } from './table-controls/TableControlsMenu';
 import { sharedExtensions } from './extensions/shared.ts';
 import { markUserTyping, setupObservers } from './observers';
+import { TableControlsMenu } from './table-controls/TableControlsMenu';
 
 const DOC_NAME = 'test-doc';
 
@@ -180,7 +180,7 @@ export const TiptapEditor: FC<{
   useEffect(() => {
     if (!editor) return;
     const dom = editor.view.dom;
-    const mark = () => markUserTyping();
+    const mark = () => markUserTyping(provider.document);
     dom.addEventListener('keydown', mark);
     dom.addEventListener('paste', mark);
     dom.addEventListener('drop', mark);
@@ -191,7 +191,7 @@ export const TiptapEditor: FC<{
       dom.removeEventListener('drop', mark);
       dom.removeEventListener('cut', mark);
     };
-  }, [editor]);
+  }, [editor, provider.document]);
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.

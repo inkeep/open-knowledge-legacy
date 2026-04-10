@@ -29,7 +29,7 @@ import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
-import { __resetCoordinationState, setupObservers } from '../../src/editor/observers';
+import { setupObservers } from '../../src/editor/observers';
 
 // ─── Shared instances (created once, reused across all tests) ───
 
@@ -41,7 +41,7 @@ export const schema = getSchema(sharedExtensions);
 export async function getFreePort(): Promise<number> {
   return new Promise((resolve) => {
     const s = createNetServer();
-    s.listen(0, () => {
+    s.listen(0, '127.0.0.1', () => {
       const port = (s.address() as AddressInfo).port;
       s.close(() => resolve(port));
     });
@@ -114,7 +114,7 @@ export async function createTestServer(): Promise<TestServer> {
   });
 
   await new Promise<void>((resolve) => {
-    httpServer.listen(port, () => resolve());
+    httpServer.listen(port, '127.0.0.1', () => resolve());
   });
 
   return {
@@ -140,8 +140,6 @@ export interface TestClient {
 }
 
 export async function createTestClient(port: number): Promise<TestClient> {
-  __resetCoordinationState();
-
   const doc = new Y.Doc();
   const ytext = doc.getText('source');
   const fragment = doc.getXmlFragment('default');

@@ -1,11 +1,11 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from './extensions/shared';
 import {
-  __resetCoordinationState,
+  markUserTyping,
   ORIGIN_TEXT_TO_TREE,
   ORIGIN_TREE_TO_TEXT,
   setupObservers,
@@ -13,12 +13,6 @@ import {
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-// Reset module-level coordination state between tests so the typing-defer and
-// other-write-defer windows don't leak between unrelated test cases.
-beforeEach(() => {
-  __resetCoordinationState();
-});
 
 /** Helper: wait for debounce + microtask to settle. Must exceed TYPING_DEFER_MS (300ms)
  *  for tests that trigger the defer path (e.g., Y.Text writes from non-local origin). */
@@ -672,18 +666,16 @@ describe('Concurrent edit race conditions (regression)', () => {
     const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
     await wait();
 
-    const { markUserTyping } = await import('./observers');
-
     // Agent writes to Y.Text (would normally trigger Observer B → updateYFragment)
     doc.transact(() => {
       ytext.insert(ytext.length, '\n\nAgent content');
     }, 'agent-write');
 
     // User is "typing" — keep the defer window fresh
-    const typingInterval = setInterval(() => markUserTyping(), 20);
+    const typingInterval = setInterval(() => markUserTyping(doc), 20);
 
     // Meanwhile, the user's typing has mutated XmlFragment (simulated)
-    markUserTyping();
+    markUserTyping(doc);
     const para = new Y.XmlElement('paragraph');
     const text = new Y.XmlText();
     text.applyDelta([{ insert: 'USER TYPED' }]);
@@ -785,8 +777,6 @@ describe('Concurrent edit race conditions (regression)', () => {
     const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
     await wait();
 
-    const { markUserTyping } = await import('./observers');
-
     // Server-side UndoManager (mirrors hocuspocus-plugin.ts setup)
     const undoManager = new Y.UndoManager(ytext, {
       trackedOrigins: new Set(['agent-write']),
@@ -811,8 +801,8 @@ describe('Concurrent edit race conditions (regression)', () => {
     }
 
     // Step 2: user begins typing — keep the typing window fresh
-    const typingInterval = setInterval(() => markUserTyping(), 20);
-    markUserTyping();
+    const typingInterval = setInterval(() => markUserTyping(doc), 20);
+    markUserTyping(doc);
 
     // Mutate XmlFragment to simulate user typing a new paragraph in WYSIWYG
     const userPara = new Y.XmlElement('paragraph');
@@ -862,7 +852,6 @@ describe('Remote write baseline staleness (regression)', () => {
 
     const clientFragment = clientDoc.getXmlFragment('default');
     const clientYtext = clientDoc.getText('source');
-    __resetCoordinationState();
     const cleanup = setupObservers({
       doc: clientDoc,
       xmlFragment: clientFragment,
@@ -909,5 +898,48 @@ describe('Remote write baseline staleness (regression)', () => {
     expect(afterText.split('Paragraph content here.').length - 1).toBe(1);
 
     cleanup();
+  });
+
+  test('typing state is isolated per Y.Doc', async () => {
+    const docA = new Y.Doc();
+    const fragmentA = docA.getXmlFragment('default');
+    const ytextA = docA.getText('source');
+    const cleanupA = setupObservers({
+      doc: docA,
+      xmlFragment: fragmentA,
+      ytext: ytextA,
+      mdManager,
+      schema,
+    });
+
+    const docB = new Y.Doc();
+    const fragmentB = docB.getXmlFragment('default');
+    const ytextB = docB.getText('source');
+    const cleanupB = setupObservers({
+      doc: docB,
+      xmlFragment: fragmentB,
+      ytext: ytextB,
+      mdManager,
+      schema,
+    });
+
+    try {
+      // Mark typing only on docA. If typing state were still global, docB's Observer B
+      // would be incorrectly deferred for ~300ms.
+      markUserTyping(docA);
+
+      docB.transact(() => {
+        ytextB.insert(0, '# Doc B heading\n\nBody from doc B.\n');
+      }, 'user-edit');
+
+      await wait(150);
+
+      const mdB = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragmentB));
+      expect(mdB).toContain('Doc B heading');
+      expect(mdB).toContain('Body from doc B.');
+    } finally {
+      cleanupA();
+      cleanupB();
+    }
   });
 });
