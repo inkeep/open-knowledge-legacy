@@ -103,8 +103,14 @@ export function startCommand(getConfig: () => Config): Command {
       });
 
       const wss = new WebSocketServer({ noServer: true });
+      wss.on('error', (err) => {
+        log.error({ err }, 'WebSocketServer error');
+      });
       httpServer.on('upgrade', (req, socket, head) => {
         if (req.url?.startsWith('/collab')) {
+          socket.on('error', (err: Error) => {
+            log.error({ err }, 'Upgrade socket error');
+          });
           wss.handleUpgrade(req, socket, head, (ws) => {
             const clientConnection = hocuspocus.handleConnection(
               ws as unknown as WebSocket,

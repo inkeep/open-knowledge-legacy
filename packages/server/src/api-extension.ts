@@ -59,8 +59,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 413, { ok: false, error: 'Payload too large' });
         return;
       }
-      const body =
-        rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
+      let body: Record<string, unknown>;
+      try {
+        body =
+          rawBody.length > 0 ? (JSON.parse(rawBody.toString()) as Record<string, unknown>) : {};
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
       const docName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
       const dc = await sessionManager.getSession(docName);
@@ -199,6 +205,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         canRedo: um?.canRedo() ?? false,
       });
     } catch (e) {
+      console.error('[agent-undo-status]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -215,11 +222,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         const raw = await readBody(req);
         if (raw.length > 0) {
-          const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-          if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+          try {
+            const body = JSON.parse(raw.toString()) as Record<string, unknown>;
+            if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+          } catch {
+            // Invalid JSON — use default docName
+          }
         }
       } catch {
-        // No body or invalid JSON — use default docName
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
       }
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
@@ -249,11 +261,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         const raw = await readBody(req);
         if (raw.length > 0) {
-          const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-          if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+          try {
+            const body = JSON.parse(raw.toString()) as Record<string, unknown>;
+            if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+          } catch {
+            // Invalid JSON — use default docName
+          }
         }
       } catch {
-        // No body or invalid JSON — use default docName
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
       }
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
@@ -296,6 +313,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       writeFileSync(resolve(contentDir, 'test-doc.md'), '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
+      console.error('[test-reset]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }

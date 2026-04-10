@@ -329,8 +329,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const body = mdManager.serialize(json);
         const frontmatter = getFrontmatter(doc);
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-      } catch {
+      } catch (err) {
         // Non-critical — baseline will catch up on next local sync
+        console.debug('[Observer A] Baseline refresh failed on remote change:', err);
       }
       return;
     }
