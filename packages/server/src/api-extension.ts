@@ -798,7 +798,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[upload] error ${sanitized} ${buffer.length} ${message}`);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Failed to save file' });
     }
   }
 

@@ -1,3 +1,4 @@
+import { ALLOWED_IMAGE_MIME_TYPES } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/react';
 import {
   Code2,
@@ -116,7 +117,7 @@ export const slashCommandItems: SlashCommandItem[] = [
     command: (editor) => {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'image/*';
+      input.accept = ALLOWED_IMAGE_MIME_TYPES.join(',');
       input.onchange = () => {
         const file = input.files?.[0];
         if (file) {
