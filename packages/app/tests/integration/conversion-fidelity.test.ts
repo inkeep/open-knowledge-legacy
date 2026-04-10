@@ -11,7 +11,7 @@
  * Documents which constructs are stable vs which normalize.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { sharedExtensions } from '@inkeep/open-knowledge-core';
@@ -29,7 +29,6 @@ import {
   pollUntil,
   readTestDoc,
   serializeFragment,
-  type TestClient,
   type TestServer,
   testReset,
   wait as waitMs,
