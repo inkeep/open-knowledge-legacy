@@ -71,7 +71,7 @@ export const slashCommandItems: SlashCommandItem[] = [
   },
   {
     name: 'taskList',
-    label: 'To-do List',
+    label: 'Task List',
     description: 'Checklist with tasks',
     icon: ListTodo,
     category: 'basic',
@@ -80,7 +80,7 @@ export const slashCommandItems: SlashCommandItem[] = [
   },
   {
     name: 'blockquote',
-    label: 'Blockquote',
+    label: 'Quote',
     description: 'Quoted text block',
     icon: Quote,
     category: 'basic',

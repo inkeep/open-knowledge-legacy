@@ -56,10 +56,12 @@ export function SlashCommandMenu({ items, query, selectedIndex, onSelect }: Slas
   return (
     <div
       ref={containerRef}
+      role="listbox"
+      aria-label="Slash commands"
       className="w-56 max-h-80 overflow-y-auto rounded-lg border bg-popover p-1 shadow-md"
     >
       {categories.map((cat) => (
-        <div key={cat.key}>
+        <div key={cat.key} role="group" aria-label={categoryLabels[cat.key] ?? cat.key}>
           <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
             {categoryLabels[cat.key] ?? cat.key}
           </div>
@@ -71,6 +73,8 @@ export function SlashCommandMenu({ items, query, selectedIndex, onSelect }: Slas
               <button
                 key={item.name}
                 type="button"
+                role="option"
+                aria-selected={isSelected}
                 data-selected={isSelected}
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left ${
                   isSelected ? 'bg-accent text-accent-foreground' : ''

@@ -113,7 +113,7 @@ export const SlashCommand = Extension.create({
               return true;
             }
 
-            if (event.key === 'Enter') {
+            if (event.key === 'Enter' || event.key === 'Tab') {
               event.preventDefault();
               const item = filtered[state.selectedIndex];
               if (item && state.range) {
