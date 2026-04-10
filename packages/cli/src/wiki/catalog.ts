@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import { parseFrontmatter, serializeFrontmatter } from './frontmatter.ts';
 
 export interface ArticleMeta {
   title: string;
@@ -31,22 +31,6 @@ export interface CatalogOptions {
 interface RootSection {
   label: string;
   relativePath: string;
-}
-
-const FRONTMATTER_RE = /^---\n([\s\S]*?)\n---\n?/;
-
-function parseFrontmatter(content: string): Record<string, unknown> | null {
-  const match = content.match(FRONTMATTER_RE);
-  if (!match) return null;
-  try {
-    const parsed = parseYaml(match[1]);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // gracefully handle invalid YAML
-  }
-  return null;
 }
 
 function extractArticleMeta(filePath: string, relativePath: string): ArticleMeta {
@@ -124,14 +108,14 @@ export function generateCatalog(dirPath: string, options?: CatalogOptions): stri
   articles.sort((a, b) => a.title.localeCompare(b.title));
   subfolders.sort((a, b) => a.name.localeCompare(b.name));
 
-  const frontmatter = stringifyYaml({
+  const fm = serializeFrontmatter({
     title,
     description,
     generated: true,
     schema_version: 1,
-  }).trim();
+  });
 
-  const lines: string[] = [`---`, frontmatter, `---`, ''];
+  const lines: string[] = [fm, ''];
 
   if (articles.length > 0) {
     lines.push('## Articles', '');
@@ -164,14 +148,14 @@ export interface RootCatalogOptions {
 export function generateRootCatalog(openknowledgeDir: string, options: RootCatalogOptions): string {
   const projectName = options.projectName || 'Project Wiki';
 
-  const frontmatter = stringifyYaml({
+  const fm = serializeFrontmatter({
     title: projectName,
-    description: `Living knowledge base`,
+    description: 'Living knowledge base',
     generated: true,
     schema_version: 1,
-  }).trim();
+  });
 
-  const lines: string[] = [`---`, frontmatter, `---`, ''];
+  const lines: string[] = [fm, ''];
 
   lines.push('## Sections', '');
   for (const section of options.sections) {
