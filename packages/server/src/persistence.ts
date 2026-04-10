@@ -284,7 +284,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   }
 
   const extension: Extension = {
-    async onLoadDocument({ document, documentName }) {
+    async onLoadDocument({ document, documentName, context }) {
+      console.log(
+        `[persistence] onLoadDocument called for ${documentName} (connections: ${document.getConnectionsCount?.() ?? '?'})`,
+      );
       const filePath = safeContentPath(documentName, contentDir);
       if (!existsSync(filePath)) return;
 
@@ -300,6 +303,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const json = mdManager.parse(body);
       if (json) {
         const xmlFragment = document.getXmlFragment('default');
+        console.log(
+          `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
+        );
         if (xmlFragment.length === 0) {
           const pmNode = schema.nodeFromJSON(json);
           updateYFragment(document, xmlFragment, pmNode, {
@@ -308,6 +314,16 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           });
           console.log(
             `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
+          );
+          // Watch for unexpected mutations
+          xmlFragment.observeDeep(() => {
+            console.log(
+              `[persistence] MUTATION on ${documentName}: fragment.length=${xmlFragment.length}`,
+            );
+          });
+        } else {
+          console.log(
+            `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
           );
         }
       }
@@ -328,6 +344,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const frontmatter =
         typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
       const markdown = prependFrontmatter(frontmatter, body);
+
+      // Debug: detect duplication before writing
+      const currentBase = getReconciledBase(documentName);
+      if (currentBase && markdown.length > currentBase.length * 1.5) {
+        console.warn(
+          `[persistence] WARNING: serialized content is ${markdown.length} bytes vs base ${currentBase.length} bytes for ${documentName} — possible duplication`,
+        );
+        console.warn(
+          `[persistence] Fragment children: ${document.getXmlFragment('default').length}`,
+        );
+      }
 
       const filePath = safeContentPath(documentName, contentDir);
       const tmpPath = `${filePath}.tmp`;

@@ -317,42 +317,48 @@ export async function startWatcher(
   // Run TTL eviction periodically
   const evictionInterval = setInterval(evictStaleTrackerEntries, WRITE_TRACKER_TTL_MS);
 
-  const subscription = await subscribe(contentDir, async (err, events) => {
-    if (err) {
-      console.error('[file-watcher]', err);
-      return;
-    }
-
-    // Filter to .md and classify
-    const mdEvents = events.filter((e) => e.path.endsWith('.md'));
-    if (mdEvents.length === 0) return;
-
-    const diskEvents = await classifyEvents(
-      mdEvents.map((e) => ({ type: e.type, path: e.path })),
-      contentDir,
-    );
-
-    for (const event of diskEvents) {
-      // Self-write check for events that carry content
-      if (event.kind !== 'delete' && event.kind !== 'rename') {
-        const hash = contentHash(event.content);
-        if (isSelfWrite(event.path, hash)) {
-          console.log(`[file-watcher] Skipped self-write: ${event.kind} ${event.path}`);
-          continue;
-        }
-      }
-      if (event.kind === 'rename') {
-        // Check if the content matches a self-write on the new path
-        const hash = contentHash(event.content);
-        if (isSelfWrite(event.newPath, hash)) continue;
+  let subscription: AsyncSubscription;
+  try {
+    subscription = await subscribe(contentDir, async (err, events) => {
+      if (err) {
+        console.error('[file-watcher]', err);
+        return;
       }
 
-      console.log(
-        `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+      // Filter to .md and classify
+      const mdEvents = events.filter((e) => e.path.endsWith('.md'));
+      if (mdEvents.length === 0) return;
+
+      const diskEvents = await classifyEvents(
+        mdEvents.map((e) => ({ type: e.type, path: e.path })),
+        contentDir,
       );
-      await onDiskEvent(event);
-    }
-  });
+
+      for (const event of diskEvents) {
+        // Self-write check for events that carry content
+        if (event.kind !== 'delete' && event.kind !== 'rename') {
+          const hash = contentHash(event.content);
+          if (isSelfWrite(event.path, hash)) {
+            console.log(`[file-watcher] Skipped self-write: ${event.kind} ${event.path}`);
+            continue;
+          }
+        }
+        if (event.kind === 'rename') {
+          // Check if the content matches a self-write on the new path
+          const hash = contentHash(event.content);
+          if (isSelfWrite(event.newPath, hash)) continue;
+        }
+
+        console.log(
+          `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+        );
+        await onDiskEvent(event);
+      }
+    });
+  } catch (e) {
+    clearInterval(evictionInterval);
+    throw e;
+  }
 
   // Wrap unsubscribe to also clear the eviction interval
   const originalUnsubscribe = subscription.unsubscribe.bind(subscription);

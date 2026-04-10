@@ -148,8 +148,8 @@ export async function startHeadWatcher(
   let inBatch = false;
   let quietTimer: ReturnType<typeof setTimeout> | null = null;
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
-  let oldHead: string | null = readHeadSha(gitDir);
-  let lastKnownBranch: string | null = readBranchFromHead(gitDir);
+  let oldHead: string | null = null;
+  let lastKnownBranch: string | null = null;
 
   async function emitBatchEnd(timeout: boolean): Promise<void> {
     // Wait for onBatchBegin to finish before proceeding
@@ -259,10 +259,18 @@ export async function startHeadWatcher(
     return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
   }
 
+  // Read initial state AFTER subscription is active to avoid missing
+  // events that occur between the read and subscribe() completing.
+  oldHead = readHeadSha(gitDir);
+  lastKnownBranch = readBranchFromHead(gitDir);
+
   console.log(`[head-watcher] Watching ${gitDir} for HEAD changes`);
 
   return {
     unsubscribe: async () => {
+      if (inBatch) {
+        await emitBatchEnd(false);
+      }
       if (quietTimer) clearTimeout(quietTimer);
       if (timeoutTimer) clearTimeout(timeoutTimer);
       await subscription.unsubscribe();

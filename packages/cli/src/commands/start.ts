@@ -46,6 +46,7 @@ export function startCommand(getConfig: () => Config): Command {
       const { hocuspocus, destroy } = createServer({
         contentDir,
         projectDir: cwd,
+        contentRoot: config.content.dir,
         port: config.server.port,
         host: config.server.host,
         quiet: false,

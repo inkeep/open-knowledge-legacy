@@ -231,51 +231,50 @@ export function createServer(options: ServerOptions): ServerInstance {
             case 'clean':
               try {
                 applyToDoc(docName, result.newContent);
+                setReconciledBase(docName, result.newContent);
+                incrementReconcile();
               } catch (e) {
                 console.error(
                   `[reconcile] Failed to apply clean content to Y.Doc for ${docName}:`,
                   e,
                 );
               }
-              // Always update base to track disk state — prevents cascading merge errors
-              setReconciledBase(docName, result.newContent);
-              incrementReconcile();
               break;
 
             case 'merged':
               try {
                 applyToDoc(docName, result.newContent);
+                setReconciledBase(docName, result.newContent);
+                incrementReconcile();
               } catch (e) {
                 console.error(
                   `[reconcile] Failed to apply merged content to Y.Doc for ${docName}:`,
                   e,
                 );
               }
-              setReconciledBase(docName, result.newContent);
-              incrementReconcile();
               break;
 
             case 'conflicts': {
               try {
                 applyToDoc(docName, result.newContent);
+                setReconciledBase(docName, result.newContent);
+                incrementReconcile();
+                incrementConflict();
+                const conflictsMap = document.getMap('conflicts');
+                for (const c of result.conflicts) {
+                  conflictsMap.set(String(c.blockIndex), {
+                    blockIndex: c.blockIndex,
+                    base: c.base,
+                    ours: c.ours,
+                    theirs: c.theirs,
+                    resolution: 'pending',
+                  });
+                }
               } catch (e) {
                 console.error(
                   `[reconcile] Failed to apply conflict content to Y.Doc for ${docName}:`,
                   e,
                 );
-              }
-              setReconciledBase(docName, result.newContent);
-              incrementReconcile();
-              incrementConflict();
-              const conflictsMap = document.getMap('conflicts');
-              for (const c of result.conflicts) {
-                conflictsMap.set(String(c.blockIndex), {
-                  blockIndex: c.blockIndex,
-                  base: c.base,
-                  ours: c.ours,
-                  theirs: c.theirs,
-                  resolution: 'pending',
-                });
               }
               break;
             }
@@ -641,8 +640,12 @@ export function createServer(options: ServerOptions): ServerInstance {
             }
           }
 
-          // Record upstream import if HEAD moved and content files were affected
-          if (info.headMoved && info.newHead && shadowRef.current) {
+          // Record upstream import if HEAD moved AND content files were affected.
+          // A user's own `git commit` moves HEAD but doesn't change the working tree
+          // (files were already written by the user/editor). Only `git pull`, `git merge`,
+          // `git rebase`, or `git checkout` produce buffered file-watcher events, so
+          // bufferedCount > 0 distinguishes "upstream brought changes" from "user committed".
+          if (info.headMoved && info.newHead && shadowRef.current && bufferedCount > 0) {
             const contentRootForShadow = contentRoot ?? 'content';
             try {
               const sha = await commitUpstreamImport(
