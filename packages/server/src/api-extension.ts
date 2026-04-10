@@ -1282,15 +1282,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const t0 = Date.now();
     try {
-      const result = await getDocumentHistory(shadow, {
-        docName,
-        branch,
-        limit,
-        offset,
-        type,
-        author,
-        excludeAuthor,
-      });
+      const resolvedContentRoot = contentRoot ?? 'content';
+      const result = await getDocumentHistory(
+        shadow,
+        {
+          docName,
+          branch,
+          limit,
+          offset,
+          type,
+          author,
+          excludeAuthor,
+        },
+        resolvedContentRoot,
+      );
 
       const duration = Date.now() - t0;
       console.log(

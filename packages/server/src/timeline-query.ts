@@ -103,6 +103,7 @@ function matchesAuthor(entry: TimelineEntry, authors: string[]): boolean {
 export async function getDocumentHistory(
   shadow: ShadowHandle,
   query: HistoryQuery,
+  contentRoot = 'content',
 ): Promise<HistoryResult> {
   // Graceful degradation: if the shadow workTree doesn't exist, return empty
   if (!existsSync(shadow.workTree) || !existsSync(shadow.gitDir)) {
@@ -116,6 +117,12 @@ export async function getDocumentHistory(
   const typeFilter = toArray(query.type);
   const authorFilter = toArray(query.author);
   const excludeAuthorFilter = toArray(query.excludeAuthor);
+
+  // Build file pathspec so git log only returns commits touching this document.
+  // Normalize contentRoot: strip leading './' — git rejects relative path syntax
+  // ("./foo") when operating against a bare repo (cat-file, log --).
+  const normalizedRoot = contentRoot.replace(/^\.\//, '');
+  const docPath = query.docName ? `${normalizedRoot}/${query.docName}.md` : undefined;
 
   try {
     const sg = shadowGit(shadow);
@@ -145,6 +152,7 @@ export async function getDocumentHistory(
         '--author-date-order',
         `--format=${GIT_LOG_FORMAT}`,
         ...refShas,
+        ...(docPath ? ['--', docPath] : []),
       );
 
       const allEntries = parseGitLogOutput(raw).map((e) => ({ ...e, type: 'checkpoint' as const }));
@@ -198,6 +206,7 @@ export async function getDocumentHistory(
       '--author-date-order',
       `--format=${GIT_LOG_FORMAT}`,
       ...startRefs,
+      ...(docPath ? ['--', docPath] : []),
     );
 
     const allEntries = parseGitLogOutput(raw);
