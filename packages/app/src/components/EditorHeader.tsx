@@ -1,3 +1,5 @@
+import { Clock } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
@@ -11,9 +13,10 @@ import { ThemeToggle } from './ThemeToggle';
 interface EditorHeaderProps {
   isSourceMode: boolean;
   onSourceModeChange: (value: boolean) => void;
+  onTimelineToggle: () => void;
 }
 
-export function EditorHeader({ isSourceMode, onSourceModeChange }: EditorHeaderProps) {
+export function EditorHeader({ isSourceMode, onSourceModeChange, onTimelineToggle }: EditorHeaderProps) {
   const { activeDocName } = useDocumentContext();
 
   const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
@@ -48,6 +51,14 @@ export function EditorHeader({ isSourceMode, onSourceModeChange }: EditorHeaderP
         </ToggleGroupItem>
       </ToggleGroup>
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label="Open timeline"
+          onClick={onTimelineToggle}
+        >
+          <Clock className="size-4" />
+        </Button>
         <PresenceBar />
         <AgentUndoButton />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
