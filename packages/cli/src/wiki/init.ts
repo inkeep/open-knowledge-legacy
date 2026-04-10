@@ -192,60 +192,47 @@ function writeIfMissing(filePath: string, content: string): boolean {
   return true;
 }
 
+/** Static files scaffolded into the wiki directory. */
+const SCAFFOLD_FILES: Array<{ name: string; content: string }> = [
+  { name: AGENTS_FILENAME, content: AGENTS_MD_CONTENT },
+  { name: '.gitignore', content: `${CACHE_DIR}/\n` },
+  { name: CONFIG_FILENAME, content: CONFIG_YML_CONTENT },
+];
+
 export function initWiki(projectDir: string): { created: string[]; skipped: string[] } {
   const okDir = resolve(projectDir, WIKI_DIR);
   const created: string[] = [];
   const skipped: string[] = [];
 
-  // Default roots from the schema — init seeds this convention
-  const defaults = ConfigSchema.parse({});
-  const roots = defaults.wiki.roots;
+  // Wiki roots from the schema defaults — init seeds this convention.
+  // Custom roots are configured in config.yml after scaffolding.
+  const roots = ConfigSchema.parse({}).wiki.roots;
 
-  // Create base dirs + root dirs + cache
+  // Create directories: wiki root, cache, and one per root
   mkdirSync(okDir, { recursive: true });
   mkdirSync(join(okDir, CACHE_DIR), { recursive: true });
   for (const root of roots) {
     mkdirSync(resolve(okDir, root.path), { recursive: true });
   }
 
-  // AGENTS.md
-  const agentsPath = join(okDir, AGENTS_FILENAME);
-  if (writeIfMissing(agentsPath, AGENTS_MD_CONTENT)) {
-    created.push(AGENTS_FILENAME);
-  } else {
-    skipped.push(AGENTS_FILENAME);
-  }
-
-  // .gitignore for cache/
-  const gitignorePath = join(okDir, '.gitignore');
-  if (writeIfMissing(gitignorePath, `${CACHE_DIR}/\n`)) {
-    created.push('.gitignore');
-  } else {
-    skipped.push('.gitignore');
-  }
-
-  // config.yml — fully-commented starter so every key is discoverable.
-  // The loader treats an empty/all-comments YAML as no-op, so this file is
-  // safe to ship as-is — uncommenting a key is the only way it changes
-  // runtime behavior.
-  const configPath = join(okDir, CONFIG_FILENAME);
-  if (writeIfMissing(configPath, CONFIG_YML_CONTENT)) {
-    created.push(CONFIG_FILENAME);
-  } else {
-    skipped.push(CONFIG_FILENAME);
+  // Write scaffold files (skip if already exist)
+  for (const file of SCAFFOLD_FILES) {
+    if (writeIfMissing(join(okDir, file.name), file.content)) {
+      created.push(file.name);
+    } else {
+      skipped.push(file.name);
+    }
   }
 
   // Section catalogs — one per root
   for (const root of roots) {
     const rootDir = resolve(okDir, root.path);
     const indexPath = join(rootDir, CATALOG_FILENAME);
-    const content = generateCatalog(rootDir, {
-      title: root.label,
-    });
+    const content = generateCatalog(rootDir, { title: root.label });
     if (writeIfMissing(indexPath, content)) {
-      created.push(`${root.label}/INDEX.md`);
+      created.push(`${root.label}/${CATALOG_FILENAME}`);
     } else {
-      skipped.push(`${root.label}/INDEX.md`);
+      skipped.push(`${root.label}/${CATALOG_FILENAME}`);
     }
   }
 

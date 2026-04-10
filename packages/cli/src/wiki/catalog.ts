@@ -43,8 +43,16 @@ interface RootSection {
   relativePath: string;
 }
 
-function extractArticleMeta(filePath: string, relativePath: string): ArticleMeta {
-  const content = readFileSync(filePath, 'utf-8');
+function extractArticleMeta(filePath: string, relativePath: string): ArticleMeta | null {
+  let content: string;
+  try {
+    content = readFileSync(filePath, 'utf-8');
+  } catch (err) {
+    console.warn(
+      `[catalog] Skipping unreadable file ${filePath}: ${err instanceof Error ? err.message : err}`,
+    );
+    return null;
+  }
   const fm = parseFrontmatter(content, ArticleFrontmatterSchema);
   const fileName = basename(filePath, '.md');
 
@@ -65,7 +73,15 @@ function extractArticleMeta(filePath: string, relativePath: string): ArticleMeta
 export function readIndexMeta(dirPath: string): IndexMeta | null {
   const indexPath = join(dirPath, CATALOG_FILENAME);
   if (!existsSync(indexPath)) return null;
-  const content = readFileSync(indexPath, 'utf-8');
+  let content: string;
+  try {
+    content = readFileSync(indexPath, 'utf-8');
+  } catch (err) {
+    console.warn(
+      `[catalog] Failed to read ${indexPath}: ${err instanceof Error ? err.message : err}`,
+    );
+    return null;
+  }
   return parseFrontmatter(content, IndexMetaSchema);
 }
 
@@ -95,7 +111,8 @@ export function generateCatalog(dirPath: string, options?: CatalogOptions): stri
     const entries = readdirSync(resolvedDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile() && entry.name.endsWith('.md') && entry.name !== CATALOG_FILENAME) {
-        articles.push(extractArticleMeta(join(resolvedDir, entry.name), entry.name));
+        const meta = extractArticleMeta(join(resolvedDir, entry.name), entry.name);
+        if (meta) articles.push(meta);
       } else if (entry.isDirectory()) {
         const subDir = join(resolvedDir, entry.name);
         const subMeta = readIndexMeta(subDir);

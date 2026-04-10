@@ -53,7 +53,7 @@ export function parseFrontmatter<S extends ZodSchema = ZodSchema<Record<string, 
         const result = schema.safeParse(parsed);
         return result.success ? result.data : null;
       }
-      return parsed as T;
+      return parsed as Resolve<output<S>>;
     }
   } catch {
     // gracefully handle invalid YAML

@@ -215,7 +215,10 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('  (use --force to overwrite)');
       break;
     case 'skipped-flag':
-      lines.push('MCP config write skipped (--no-mcp)');
+      lines.push('MCP config not written — .mcp.json unchanged');
+      lines.push(
+        '  To use wiki workflow prompts, add the openknowledge server to .mcp.json manually',
+      );
       break;
     case 'failed':
       lines.push(`Warning: MCP config write failed — ${result.mcpError}`);

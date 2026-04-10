@@ -94,19 +94,9 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   // =============================================================================
 
   // Tool 1: read_document
-<<<<<<< HEAD
-  tool('read_document', { path: z.string() }, async (args: { path: string }) => {
-    mcpLog(`read_document: ${args.path}`);
-    const filePath = resolve(contentDir, `${args.path}.md`);
-    if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
-    if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
-    return textResult(readFileSync(filePath, 'utf-8'));
-  });
-
-=======
   tool(
     'read_document',
-    'Read the current live content of a document. Returns the Y.Text state from the CRDT layer — always up to date, even if unsaved changes are in flight. Path is the document name without .md extension.',
+    'Read the current live content of a document. Returns the Y.Text state from the CRDT layer.',
     { path: z.string() },
     async (args: { path: string }) => {
       mcpLog(`read_document: ${args.path}`);
@@ -122,7 +112,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   // Tool 2: write_document
   tool(
     'write_document',
-    "Write markdown to a document via the CRDT. 'append' and 'prepend' insert at the current live Y.Text position — safe for concurrent use. 'replace' overwrites the entire document; use only when a full rewrite is intended.",
+    "Write markdown to a document via the CRDT. 'append' and 'prepend' insert at the current live Y.Text position.",
     { path: z.string(), markdown: z.string(), mode: z.enum(['append', 'prepend', 'replace']) },
     async (args: { path: string; markdown: string; mode: string }) => {
       mcpLog(`write_document: ${args.path} mode=${args.mode}`);
@@ -139,7 +129,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   // Tool 3: edit_document
   tool(
     'edit_document',
-    'Targeted find-and-replace on live document content. Only the matched character span is mutated — content before and after the match is untouched, even if concurrent writes are in flight. The find string must match exactly (including whitespace). Use dry_run: true to preview the change before applying.',
+    'Targeted find-and-replace on live document content.',
     { path: z.string(), find: z.string(), replace: z.string(), dry_run: z.boolean() },
     async (args: { path: string; find: string; replace: string; dry_run: boolean }) => {
       mcpLog(`edit_document: ${args.path} (dry_run=${args.dry_run})`);
@@ -167,11 +157,10 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
     },
   );
 
->>>>>>> main
   // Tool 4: list_documents
   tool(
     'list_documents',
-    'List all markdown documents in the content directory. Returns path (without .md), size in bytes, and last-modified timestamp for each file. Pass an empty string for directory to list from the root.',
+    'List all markdown documents in the content directory.',
     { directory: z.string() },
     async (args: { directory: string }) => {
       mcpLog(`list_documents: ${args.directory || '(root)'}`);
@@ -198,7 +187,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   // Tool 5: search_documents
   tool(
     'search_documents',
-    'Full-text search across all documents. Returns matching lines with document path and line number. Reads from disk so results may lag up to a few seconds behind in-flight CRDT changes — use read_document if you need live content.',
+    'Full-text search across all documents.',
     { query: z.string(), case_sensitive: z.boolean() },
     async (args: { query: string; case_sensitive: boolean }) => {
       mcpLog(`search_documents: "${args.query}"`);
@@ -229,72 +218,10 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
     },
   );
 
-<<<<<<< HEAD
-  // =============================================================================
-  // D1-deferred adaptive write path — revive when editor integration is priority
-  // =============================================================================
-
-  // Tool 2: write_document — routes through Hocuspocus DirectConnection via
-  // POST /api/agent-write-md. Instant propagation to the editor + origin
-  // tagging + per-origin undo. See SPEC.md §15 for the work plan.
-  tool(
-    'write_document',
-    { path: z.string(), markdown: z.string(), mode: z.enum(['append', 'prepend', 'replace']) },
-    async (args: { path: string; markdown: string; mode: string }) => {
-      mcpLog(`write_document: ${args.path} mode=${args.mode}`);
-      const result = await httpPost(httpUrl, '/api/agent-write-md', {
-        markdown: args.markdown,
-        position: args.mode,
-        docName: args.path,
-      });
-      if (!result.ok) return textResult(`Error: ${result.error}`, true);
-      return textResult(`Written successfully (${args.mode})`);
-    },
-  );
-
-  // Tool 3: edit_document — find/replace with dry-run support. Also goes
-  // through agent-write-md so the edit is origin-tagged.
-  tool(
-    'edit_document',
-    { path: z.string(), find: z.string(), replace: z.string(), dry_run: z.boolean() },
-    async (args: { path: string; find: string; replace: string; dry_run: boolean }) => {
-      mcpLog(`edit_document: ${args.path} (dry_run=${args.dry_run})`);
-      const filePath = resolve(contentDir, `${args.path}.md`);
-      if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
-      if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
-      const content = readFileSync(filePath, 'utf-8');
-      if (!content.includes(args.find)) return textResult('Find text not found in document', true);
-      const newContent = content.replace(args.find, args.replace);
-      if (args.dry_run) {
-        return textResult(
-          `Preview (dry run):\n--- Before ---\n${content}\n--- After ---\n${newContent}`,
-        );
-      }
-      const result = await httpPost(httpUrl, '/api/agent-write-md', {
-        markdown: newContent,
-        position: 'replace',
-        docName: args.path,
-      });
-      if (!result.ok) return textResult(`Error: ${result.error}`, true);
-      return textResult('Edit applied successfully');
-    },
-  );
-
-  // Tool 6: undo_agent_edit — per-origin undo via Hocuspocus UndoManager
-  tool('undo_agent_edit', {}, async () => {
-    mcpLog('undo_agent_edit');
-    const result = await httpPost(httpUrl, '/api/agent-undo');
-    return textResult(
-      result.ok
-        ? `Undo performed. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`
-        : `Cannot undo. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`,
-    );
-  });
-=======
   // Tool 6: undo_agent_edit
   tool(
     'undo_agent_edit',
-    'Undo the last agent write. Only agent edits (origin: agent-write) are reversed — human edits in the editor are not affected. Returns the new canUndo/canRedo state.',
+    'Undo the last agent write. Only agent edits (origin: agent-write) are reversed.',
     {},
     async () => {
       mcpLog('undo_agent_edit');
@@ -306,12 +233,11 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
       );
     },
   );
->>>>>>> main
 
   // Tool 7: redo_agent_edit
   tool(
     'redo_agent_edit',
-    'Redo the last undone agent write. Only applies to edits previously reversed by undo_agent_edit. Returns the new canUndo/canRedo state.',
+    'Redo the last undone agent write.',
     {},
     async () => {
       mcpLog('redo_agent_edit');
@@ -327,7 +253,7 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   // Tool 8: update_frontmatter — merge fields into existing frontmatter
   tool(
     'update_frontmatter',
-    'Merge fields into the document YAML frontmatter without touching the body. Reads live Y.Text, patches only the frontmatter block in a single CRDT transaction. If no frontmatter exists, prepends it. Existing fields not mentioned in fields are preserved.',
+    'Merge fields into the document YAML frontmatter without touching the body.',
     { path: z.string(), fields: z.record(z.string(), z.string()) },
     async (args: { path: string; fields: Record<string, string> }) => {
       mcpLog(`update_frontmatter: ${args.path}`);

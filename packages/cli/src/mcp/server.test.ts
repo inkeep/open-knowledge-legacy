@@ -43,7 +43,7 @@ describe('registerAllPrompts', () => {
 
     for (const { handler } of handlers) {
       // Each handler takes an args object — pass a dummy source/url
-      const result = handler({ source: 'https://example.com', url_or_path: 'https://example.com' });
+      const result = handler({ source: 'https://example.com', topic: 'test topic' });
       expect(result).toHaveProperty('messages');
       const messages = (result as { messages: unknown[] }).messages;
       expect(Array.isArray(messages)).toBe(true);

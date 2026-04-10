@@ -8,8 +8,6 @@
 #   Built-in defaults
 #     -> ~/.open-knowledge/config.yml         (user defaults)
 #     -> ./.open-knowledge/config.yml         (this file)
-#     -> ENV vars
-#     -> CLI flags
 #
 # Schema reference: packages/cli/src/config/schema.ts
 
@@ -19,23 +17,6 @@
 # root (the directory containing .open-knowledge/), NOT to this file.
 # content:
 #   dir: ./content
-#   exclude: []
-
-
-# --- Server ----------------------------------------------------------------
-# Hocuspocus collaboration server + static React app.
-# server:
-#   port: 3000
-#   host: localhost
-
-
-# --- Git -------------------------------------------------------------------
-# Auto-commit edits to a working ref so every save is reversible.
-# git:
-#   enabled: true
-#   autosave: true
-#   commitDebounceMs: 30000
-#   wipRef: refs/wip/main
 
 
 # --- Persistence -----------------------------------------------------------
@@ -45,17 +26,31 @@
 #   maxDebounceMs: 10000
 
 
-# --- Editor ----------------------------------------------------------------
-# Default mode for the React editor app.
-# editor:
-#   defaultMode: wysiwyg   # one of: wysiwyg, source
-
-
 # --- Wiki ------------------------------------------------------------------
-# Subdirectory layout inside .open-knowledge/. Paths are relative to this
-# directory. Usually leave these alone — the init command and the MCP server
-# both assume the defaults.
+# Browsable roots inside .open-knowledge/. Each root is a subtree with its
+# own INDEX.md catalog. Customize to match your team's knowledge taxonomy.
+# Paths are relative to this directory.
+#
+# The default roots (articles, external-sources, research) are a starting
+# convention seeded by `open-knowledge init`. Reshape freely — e.g.:
+#
+#   wiki:
+#     roots:
+#       - path: ./eng-research
+#         label: Engineering Research
+#       - path: ./product-research
+#         label: Product Research
+#       - path: ./design-decisions
+#         label: Design Decisions
+#
 # wiki:
-#   articles_path: ./articles
-#   external_sources_path: ./external-sources
-#   research_path: ./research
+#   roots:
+#     - path: ./articles
+#       label: Knowledge Articles
+#     - path: ./external-sources
+#       label: External Sources
+#     - path: ./research
+#       label: Research
+#   include:
+#     - "**/*.md"
+#   exclude: []
