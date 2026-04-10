@@ -6,9 +6,14 @@
 import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
 import { JsxComponent } from './jsx-component';
 import { SlashCommand } from './slash-command';
+import { WikiLink } from './wiki-link';
 
-// Replace core's JsxComponent (no NodeView) with app's (has ReactNodeViewRenderer)
+// Replace core extensions that have app-side NodeViews.
 export const sharedExtensions = [
-  ...coreExtensions.map((ext) => (ext.name === 'jsxComponent' ? JsxComponent : ext)),
+  ...coreExtensions.map((ext) => {
+    if (ext.name === 'jsxComponent') return JsxComponent;
+    if (ext.name === 'wikiLink') return WikiLink;
+    return ext;
+  }),
   SlashCommand,
 ];

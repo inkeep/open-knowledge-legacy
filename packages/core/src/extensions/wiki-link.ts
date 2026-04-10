@@ -1,0 +1,150 @@
+import { Node } from '@tiptap/core';
+
+export interface WikiLinkAttrs {
+  target: string;
+  alias: string | null;
+  anchor: string | null;
+  resolved: boolean;
+}
+
+interface WikiLinkToken {
+  type: 'wikilink';
+  raw: string;
+  target: string;
+  alias: string | null;
+  anchor: string | null;
+}
+
+const WIKI_LINK_PATTERN = /^\[\[([^[\]|#]+?)(?:#([^\]|]+?))?(?:\|([^\]]+?))?\]\]/;
+
+function normalizeNullableString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function parseWikiLink(src: string): WikiLinkToken | null {
+  const match = src.match(WIKI_LINK_PATTERN);
+  if (!match) return null;
+
+  const target = match[1]?.trim() ?? '';
+  if (!target) return null;
+
+  return {
+    type: 'wikilink',
+    raw: match[0],
+    target,
+    anchor: normalizeNullableString(match[2]),
+    alias: normalizeNullableString(match[3]),
+  };
+}
+
+export function getWikiLinkText(attrs: Pick<WikiLinkAttrs, 'target' | 'alias' | 'anchor'>): string {
+  if (attrs.alias) return attrs.alias;
+  return attrs.anchor ? `${attrs.target}#${attrs.anchor}` : attrs.target;
+}
+
+export function renderWikiLink(attrs: Pick<WikiLinkAttrs, 'target' | 'alias' | 'anchor'>): string {
+  let rendered = `[[${attrs.target}`;
+
+  if (attrs.anchor) {
+    rendered += `#${attrs.anchor}`;
+  }
+
+  if (attrs.alias) {
+    rendered += `|${attrs.alias}`;
+  }
+
+  return `${rendered}]]`;
+}
+
+export const WikiLink = Node.create({
+  name: 'wikiLink',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  priority: 60,
+
+  addAttributes() {
+    return {
+      target: {
+        default: '',
+      },
+      alias: {
+        default: null,
+      },
+      anchor: {
+        default: null,
+      },
+      resolved: {
+        default: false,
+      },
+    };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: 'span[data-wiki-link]',
+        getAttrs: (node) => {
+          if (typeof node === 'string') return false;
+
+          return {
+            target: node.getAttribute('data-target') || '',
+            alias: normalizeNullableString(node.getAttribute('data-alias')),
+            anchor: normalizeNullableString(node.getAttribute('data-anchor')),
+            resolved: node.getAttribute('data-resolved') === 'true',
+          };
+        },
+      },
+    ];
+  },
+
+  renderHTML({ node, HTMLAttributes }) {
+    const target = String(node.attrs.target ?? '');
+    const alias = normalizeNullableString(node.attrs.alias);
+    const anchor = normalizeNullableString(node.attrs.anchor);
+    const resolved = node.attrs.resolved === true;
+
+    return [
+      'span',
+      {
+        ...HTMLAttributes,
+        'data-wiki-link': '',
+        'data-target': target,
+        'data-alias': alias ?? '',
+        'data-anchor': anchor ?? '',
+        'data-resolved': resolved ? 'true' : 'false',
+      },
+      getWikiLinkText({ target, alias, anchor }),
+    ];
+  },
+
+  markdownTokenName: 'wikilink',
+
+  markdownTokenizer: {
+    name: 'wikilink',
+    level: 'inline',
+    start: '[[',
+    tokenize(src) {
+      return parseWikiLink(src) ?? undefined;
+    },
+  },
+
+  parseMarkdown(token, helpers) {
+    return helpers.createNode('wikiLink', {
+      target: typeof token.target === 'string' ? token.target : '',
+      alias: normalizeNullableString(token.alias),
+      anchor: normalizeNullableString(token.anchor),
+      resolved: false,
+    });
+  },
+
+  renderMarkdown(node) {
+    return renderWikiLink({
+      target: String(node.attrs?.target ?? ''),
+      alias: normalizeNullableString(node.attrs?.alias),
+      anchor: normalizeNullableString(node.attrs?.anchor),
+    });
+  },
+});
