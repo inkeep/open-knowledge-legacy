@@ -44,3 +44,32 @@ The open-knowledge `init` command scaffolds `.open-knowledge/AGENTS.md` inside u
 - For **all agents**: it's the first thing an agent reads when exploring `.open-knowledge/` — serves as a README for the wiki's structure and conventions
 
 **For the open-knowledge repo itself**: having `.open-knowledge/` is fine for dogfooding. It's a separate concern from the scaffolded user-facing wiki.
+
+---
+
+## Q2: Should watcher.ts live in the CLI package? What about existing file watcher utils?
+
+**Date:** 2026-04-10
+**Status:** Answered
+
+### Context
+
+`packages/cli/src/wiki/watcher.ts` uses `@parcel/watcher` to watch `.open-knowledge/` for .md changes and regenerate INDEX.md catalogs. Questions: (1) is @parcel/watcher the right choice vs alternatives? (2) should the watcher live in cli or server?
+
+### File watcher comparison
+
+| Library | Type | Dependencies | Bun compat | Notes |
+|---|---|---|---|---|
+| **@parcel/watcher** (current) | Native C++ (NAPI) | ~2MB native binary | Needs `trustedDependencies` | Batch events, no duplicates, best macOS FSEvents. Used by Vite. |
+| **chokidar v4** | Pure JS (`fs.watch`) | Zero native deps | No friction | ~40M downloads/wk. Good fallback if native builds cause issues. |
+| **nodemon** | CLI process restarter | N/A | N/A | Not embeddable — irrelevant. |
+| **fs.watch** (built-in) | Node.js API | None | Yes | `recursive: true` broken on Linux. Duplicate events. Too low-level. |
+| **Bun-native** | N/A | N/A | N/A | No dedicated watcher API exists. `Bun.FileSystemRouter` is HTTP routing. |
+| **watchpack** | Wraps chokidar | chokidar + extras | Yes | webpack's watcher. Adds complexity for no benefit here. |
+| **nsfw** | Native C++ | ~2MB native binary | Same friction as @parcel | Less maintained than @parcel/watcher. |
+
+### Answer
+
+**Stay with @parcel/watcher.** It's already battle-tested in this codebase (also used in `packages/server/src/file-watcher.ts` for CRDT disk sync), provides native batch event delivery that pairs well with the debounce logic, and is the same watcher Vite uses internally. If Bun native-addon friction becomes a real problem, chokidar v4 (pure JS, zero native deps) is the fallback.
+
+**The watcher belongs in `packages/cli`**, not server. The catalog watcher is a CLI/MCP concern — it watches wiki directories and regenerates INDEX.md catalogs. The server's `file-watcher.ts` watches the `content/` directory for CRDT sync (different purpose, different directory, different behavior). Both share `@parcel/watcher` as a dependency but their logic shouldn't be coupled.
