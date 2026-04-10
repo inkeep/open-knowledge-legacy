@@ -284,7 +284,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   }
 
   const extension: Extension = {
-    async onLoadDocument({ document, documentName, context }) {
+    async onLoadDocument({ document, documentName, context: _context }) {
       console.log(
         `[persistence] onLoadDocument called for ${documentName} (connections: ${document.getConnectionsCount?.() ?? '?'})`,
       );

@@ -308,10 +308,11 @@ describe('parkBranch', () => {
 
     const sha = await parkBranch(shadow, 'main', 'session1', docs);
     expect(sha).toHaveLength(40);
+    if (!sha) throw new Error('parkBranch returned null');
 
     // Verify commit message starts with park:
     const sg = shadowGit(shadow);
-    const msg = (await sg.raw('log', '-1', '--format=%s', sha!)).trim();
+    const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
     expect(msg.startsWith('park:')).toBe(true);
 
     // Verify ref
