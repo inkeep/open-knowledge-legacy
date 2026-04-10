@@ -17,6 +17,7 @@ import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import { sharedExtensions } from './extensions/shared.ts';
+import { uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping, setupObservers } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
 
@@ -149,6 +150,12 @@ export const TiptapEditor: FC<{
       ...sharedExtensions,
       Collaboration.configure({
         document: provider.document,
+      }),
+      Extension.create({
+        name: 'imageUploadDecorations',
+        addProseMirrorPlugins() {
+          return [uploadDecorationPlugin];
+        },
       }),
       // Use yCursorPlugin from @tiptap/y-tiptap directly (same module as Collaboration v3)
       // to avoid ySyncPluginKey mismatch with y-prosemirror's yCursorPlugin
