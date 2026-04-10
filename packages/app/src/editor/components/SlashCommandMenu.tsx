@@ -73,31 +73,39 @@ export function SlashCommandMenu({ items, command, ref }: SlashCommandMenuProps)
     );
   }
 
-  // Group items by category
-  const groups = new Map<string, SlashCommandItem[]>();
+  // Group items by category, precomputing flat indices so we don't mutate
+  // a captured variable inside a render lambda (React Compiler can't handle
+  // UpdateExpression on variables captured within lambdas).
+  const groups: Array<{
+    category: string;
+    items: Array<{ item: SlashCommandItem; flatIdx: number }>;
+  }> = [];
+  const categoryMap = new Map<string, Array<{ item: SlashCommandItem; flatIdx: number }>>();
+  let idx = 0;
   for (const item of items) {
     const cat = item.meta.category;
-    const list = groups.get(cat) || [];
-    list.push(item);
-    groups.set(cat, list);
+    let list = categoryMap.get(cat);
+    if (!list) {
+      list = [];
+      categoryMap.set(cat, list);
+      groups.push({ category: cat, items: list });
+    }
+    list.push({ item, flatIdx: idx++ });
   }
-
-  let flatIndex = 0;
 
   return (
     <div style={menuStyle}>
-      {Array.from(groups.entries()).map(([category, groupItems]) => (
+      {groups.map(({ category, items: groupItems }) => (
         <div key={category}>
           <div style={categoryLabelStyle}>{CATEGORY_LABELS[category] || category}</div>
-          {groupItems.map((item) => {
-            const idx = flatIndex++;
-            const isSelected = idx === selectedIndex;
+          {groupItems.map(({ item, flatIdx }) => {
+            const isSelected = flatIdx === selectedIndex;
             return (
               <button
                 type="button"
                 key={item.name}
                 onClick={() => command(item)}
-                onMouseEnter={() => setSelectedIndex(idx)}
+                onMouseEnter={() => setSelectedIndex(flatIdx)}
                 style={{
                   ...itemStyle,
                   backgroundColor: isSelected ? '#f3f0ff' : 'transparent',
