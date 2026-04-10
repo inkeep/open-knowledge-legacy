@@ -100,6 +100,3 @@ packages/
 docs/      — Documentation site (Fumadocs)
 ```
 
-## License
-
-See [LICENSE](LICENSE).
