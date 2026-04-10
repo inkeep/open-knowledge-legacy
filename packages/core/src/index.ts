@@ -6,6 +6,7 @@ export {
   FLASH_DURATION_MS,
   hasNewEntries,
 } from './constants/activity.ts';
+export { ALLOWED_IMAGE_MIME_TYPES } from './constants/upload.ts';
 
 // Extensions
 export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';

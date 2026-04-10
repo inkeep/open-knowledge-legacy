@@ -3,7 +3,10 @@
  * JsxComponent for the React-enabled version with NodeView, and adds
  * app-only extensions (slash command menu, etc.).
  */
-import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
+import {
+  ALLOWED_IMAGE_MIME_TYPES,
+  sharedExtensions as coreExtensions,
+} from '@inkeep/open-knowledge-core';
 import FileHandler from '@tiptap/extension-file-handler';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { JsxComponent } from './jsx-component';
@@ -14,7 +17,7 @@ export const sharedExtensions = [
   ...coreExtensions.map((ext) => (ext.name === 'jsxComponent' ? JsxComponent : ext)),
   SlashCommand,
   FileHandler.configure({
-    allowedMimeTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'],
+    allowedMimeTypes: [...ALLOWED_IMAGE_MIME_TYPES, 'image/svg+xml'],
     onDrop(editor, files, pos) {
       for (const file of files) {
         uploadAndInsert(file, editor, pos);

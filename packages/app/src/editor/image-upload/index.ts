@@ -26,6 +26,8 @@ function createSkeletonWidget(): HTMLElement {
   el.className =
     'image-upload-skeleton w-full h-40 rounded-md bg-muted animate-pulse motion-reduce:animate-none my-2';
   el.setAttribute('data-upload-widget', 'loading');
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-label', 'Uploading image...');
   return el;
 }
 

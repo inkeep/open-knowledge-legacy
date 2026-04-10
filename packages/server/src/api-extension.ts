@@ -6,17 +6,20 @@
  */
 
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   statSync,
   unlinkSync,
-  writeFileSync,
+  writeSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { extname, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import { ALLOWED_IMAGE_MIME_TYPES } from '@inkeep/open-knowledge-core';
 import busboy from 'busboy';
 import { fileTypeFromBuffer } from 'file-type';
 import {
@@ -30,7 +33,7 @@ import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
-const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
 
 function sanitizeFilename(name: string): string {
   // Strip any path separators first
@@ -43,16 +46,29 @@ function sanitizeFilename(name: string): string {
   return safeStem + safeExt;
 }
 
-function resolveUploadPath(uploadsDir: string, sanitized: string): string {
+function writeUploadAtomic(uploadsDir: string, sanitized: string, buffer: Buffer): string {
   const ext = extname(sanitized);
   const stem = sanitized.slice(0, sanitized.length - ext.length);
-  let candidate = resolve(uploadsDir, sanitized);
-  let n = 1;
-  while (existsSync(candidate)) {
-    candidate = resolve(uploadsDir, `${stem}-${n}${ext}`);
-    n++;
+
+  // Try the base name first, then suffix with incrementing number
+  const candidates = [sanitized, ...Array.from({ length: 99 }, (_, i) => `${stem}-${i + 1}${ext}`)];
+
+  for (const name of candidates) {
+    const destPath = resolve(uploadsDir, name);
+    try {
+      const fd = openSync(destPath, 'wx');
+      try {
+        writeSync(fd, buffer);
+      } finally {
+        closeSync(fd);
+      }
+      return name;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw err;
+    }
   }
-  return candidate;
+  throw new Error(`Could not find available filename after 100 attempts`);
 }
 
 interface UploadResult {
@@ -107,6 +123,11 @@ function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadR
         if (exceeded) {
           settled = true;
           reject(new Error('Payload too large'));
+          return;
+        }
+        if (!mimeType && chunks.length === 0) {
+          settled = true;
+          reject(new Error('No file received'));
           return;
         }
         settled = true;
@@ -746,6 +767,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const message = e instanceof Error ? e.message : String(e);
       if (message === 'Payload too large') {
         json(res, 413, { ok: false, error: 'Payload too large' });
+      } else if (message === 'No file received') {
+        json(res, 400, { ok: false, error: 'No file received' });
       } else {
         json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
       }
@@ -767,16 +790,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const sanitized = sanitizeFilename(filename);
     const uploadsDir = resolve(contentDir, 'uploads');
     mkdirSync(uploadsDir, { recursive: true });
-    const destPath = resolveUploadPath(uploadsDir, sanitized);
-    const destFilename = destPath.slice(uploadsDir.length + 1); // just the filename portion
 
     try {
-      writeFileSync(destPath, buffer);
+      const destFilename = writeUploadAtomic(uploadsDir, sanitized, buffer);
       console.log(`[upload] ok ${destFilename} ${buffer.length}`);
       json(res, 200, { ok: true, src: `uploads/${destFilename}` });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      console.error(`[upload] error ${destFilename} ${buffer.length} ${message}`);
+      console.error(`[upload] error ${sanitized} ${buffer.length} ${message}`);
       json(res, 500, { ok: false, error: message });
     }
   }

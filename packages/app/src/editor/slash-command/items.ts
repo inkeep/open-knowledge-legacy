@@ -113,7 +113,7 @@ export const slashCommandItems: SlashCommandItem[] = [
     icon: ImageIcon,
     category: 'insert',
     aliases: ['img', 'photo'],
-    command: (editor: Editor) => {
+    command: (editor) => {
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = 'image/*';
