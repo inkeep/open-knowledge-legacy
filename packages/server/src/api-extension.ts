@@ -54,6 +54,37 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+/**
+ * Extract a human-readable title from a markdown file's content.
+ *
+ * Priority:
+ *  1. `title:` field in YAML frontmatter (between leading `---` delimiters)
+ *  2. First `# heading` line in the file
+ *  3. filename (without extension, as provided by the caller)
+ */
+export function extractPageTitle(content: string, filename: string): string {
+  // 1. Frontmatter title — only if the file starts with ---
+  if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
+    const closingIdx = content.indexOf('\n---', 3);
+    if (closingIdx !== -1) {
+      const frontmatter = content.slice(0, closingIdx + 4);
+      const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
+      if (titleMatch) {
+        return titleMatch[1].trim();
+      }
+    }
+  }
+
+  // 2. First # heading
+  const headingMatch = content.match(/^# (.+)$/m);
+  if (headingMatch) {
+    return headingMatch[1].trim();
+  }
+
+  // 3. Filename fallback
+  return filename;
+}
+
 export function createApiExtension(options: ApiExtensionOptions): Extension {
   const {
     hocuspocus,
@@ -627,8 +658,40 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     res.end(content);
   }
 
+  async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      if (!existsSync(contentDir)) {
+        json(res, 200, { pages: [] });
+        return;
+      }
+      const files = readdirSync(contentDir).filter((f) => f.endsWith('.md'));
+      const pages = files.map((file) => {
+        const docName = file.slice(0, -3); // strip .md
+        let title = docName;
+        try {
+          const content = readFileSync(resolve(contentDir, file), 'utf-8');
+          title = extractPageTitle(content, docName);
+        } catch {
+          // unreadable file — fall back to docName
+        }
+        return { docName, title };
+      });
+      json(res, 200, { pages });
+    } catch (e) {
+      console.error('[pages]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
+    '/api/pages': handlePages,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
