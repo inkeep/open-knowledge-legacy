@@ -5,6 +5,7 @@
  * the standalone Server and the Vite dev plugin.
  */
 
+import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
@@ -14,6 +15,8 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import { getMetrics } from './metrics.ts';
+import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
@@ -28,6 +31,9 @@ export interface ApiExtensionOptions {
    * local dev mode.
    */
   enableTestRoutes?: boolean;
+  shadowRef?: ShadowRef;
+  projectRoot?: string;
+  contentRoot?: string;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -49,7 +55,15 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
-  const { hocuspocus, sessionManager, contentDir, enableTestRoutes = false } = options;
+  const {
+    hocuspocus,
+    sessionManager,
+    contentDir,
+    enableTestRoutes = false,
+    shadowRef,
+    projectRoot,
+    contentRoot,
+  } = options;
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
@@ -433,6 +447,186 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleSaveVersion(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow || !projectRoot) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+
+      // Parse optional writers from body
+      const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
+      let writers: WriterIdentity[] = [];
+      if (rawBody.length > 0) {
+        const body = JSON.parse(rawBody.toString()) as Record<string, unknown>;
+        if (Array.isArray(body.writers)) {
+          writers = (body.writers as Array<Record<string, string>>).map((w) => {
+            const id = w.id ?? 'unknown';
+            if (!SAFE_ID_RE.test(id)) {
+              throw new Error(`Invalid writer id: ${id}`);
+            }
+            return {
+              id,
+              name: w.name ?? 'unknown',
+              email: w.email ?? 'noreply@openknowledge.local',
+            };
+          });
+        }
+      }
+
+      // Default writer if none provided
+      if (writers.length === 0) {
+        writers = [
+          { id: 'server', name: 'openknowledge-server', email: 'noreply@openknowledge.local' },
+        ];
+      }
+
+      const resolvedContentRoot = contentRoot ?? 'content';
+      const result = await saveVersion(shadow, projectRoot, resolvedContentRoot, writers);
+
+      console.log(
+        `[shadow] checkpoint ${result.checkpointRef} → project commit ${result.projectCommitSha.slice(0, 8)}`,
+      );
+
+      json(res, 200, {
+        ok: true,
+        projectCommitSha: result.projectCommitSha,
+        checkpointRef: result.checkpointRef,
+      });
+    } catch (e) {
+      console.error('[save-version]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleMetricsReconciliation(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    json(res, 200, getMetrics());
+  }
+
+  /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
+  const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+  async function handleRescueList(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    if (!shadowRef?.current) {
+      json(res, 200, []);
+      return;
+    }
+
+    const rescueDir = resolve(shadowRef.current.gitDir, 'rescue');
+    if (!existsSync(rescueDir)) {
+      json(res, 200, []);
+      return;
+    }
+
+    const now = Date.now();
+    const entries: { docName: string; timestamp: string; size: number }[] = [];
+
+    try {
+      const files = readdirSync(rescueDir).filter((f) => f.endsWith('.md'));
+      for (const file of files) {
+        const filePath = resolve(rescueDir, file);
+        const stat = statSync(filePath);
+        const age = now - stat.mtimeMs;
+
+        if (age > RESCUE_MAX_AGE_MS) {
+          // Clean up expired rescue buffers
+          try {
+            unlinkSync(filePath);
+          } catch {
+            // ignore cleanup failure
+          }
+          continue;
+        }
+
+        entries.push({
+          docName: file.replace(/\.md$/, ''),
+          timestamp: stat.mtime.toISOString(),
+          size: stat.size,
+        });
+      }
+    } catch (e) {
+      console.error('[rescue] Failed to list rescue buffers:', e);
+    }
+
+    json(res, 200, entries);
+  }
+
+  async function handleRescueGet(
+    req: IncomingMessage,
+    res: ServerResponse,
+    docName: string,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    if (!shadowRef?.current) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+
+    const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
+    const filePath = resolve(rescueBase, `${docName}.md`);
+    if (!filePath.startsWith(`${rescueBase}/`)) {
+      res.writeHead(400);
+      res.end('Invalid document name');
+      return;
+    }
+    if (!existsSync(filePath)) {
+      res.writeHead(404);
+      res.end('Not found');
+      return;
+    }
+
+    // Check expiry
+    const stat = statSync(filePath);
+    if (Date.now() - stat.mtimeMs > RESCUE_MAX_AGE_MS) {
+      try {
+        unlinkSync(filePath);
+      } catch {
+        // ignore
+      }
+      res.writeHead(404);
+      res.end('Not found — rescue buffer expired');
+      return;
+    }
+
+    const content = readFileSync(filePath, 'utf-8');
+    res.writeHead(200, { 'Content-Type': 'text/markdown' });
+    res.end(content);
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/agent-write': handleAgentWrite,
@@ -441,6 +635,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-undo-status': handleAgentUndoStatus,
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-redo': handleAgentRedo,
+    '/api/save-version': handleSaveVersion,
+    '/api/metrics/reconciliation': handleMetricsReconciliation,
+    '/api/rescue': handleRescueList,
   };
 
   if (enableTestRoutes) {
@@ -453,9 +650,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = request.url?.split('?')[0];
       if (!url) return;
 
+      // Static routes
       const handler = routes[url];
       if (handler) {
         await handler(request, response);
+        return;
+      }
+
+      // Dynamic routes: /api/rescue/:docName
+      if (url.startsWith('/api/rescue/')) {
+        const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
+        if (docName) {
+          await handleRescueGet(request, response, docName);
+        }
       }
     },
   };

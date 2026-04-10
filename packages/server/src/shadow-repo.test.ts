@@ -1,0 +1,467 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import simpleGit from 'simple-git';
+import {
+  commitUpstreamImport,
+  commitWip,
+  initShadowRepo,
+  type ParkableDoc,
+  parkBranch,
+  readParkedState,
+  type ShadowHandle,
+  shadowGit,
+  type WriterIdentity,
+} from './shadow-repo';
+
+let tmpDir: string;
+
+beforeEach(async () => {
+  tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-shadow-test-'));
+});
+
+afterEach(async () => {
+  await rm(tmpDir, { recursive: true, force: true });
+});
+
+describe('initShadowRepo', () => {
+  test('creates shadow at .git/openknowledge/ when project .git/ exists', async () => {
+    const projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+
+    // Init a real git repo
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    const shadow = await initShadowRepo(projectRoot);
+
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.git/openknowledge'));
+    expect(shadow.workTree).toBe(projectRoot);
+    expect(existsSync(resolve(shadow.gitDir, 'HEAD'))).toBe(true);
+
+    // Verify config
+    const sg = simpleGit().env({ GIT_DIR: shadow.gitDir });
+    const worktree = (await sg.raw('config', 'core.worktree')).trim();
+    expect(worktree).toBe(projectRoot);
+
+    const userName = (await sg.raw('config', 'user.name')).trim();
+    expect(userName).toBe('openknowledge');
+  });
+
+  test('does not modify .gitignore in integrated mode', async () => {
+    const projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    await initShadowRepo(projectRoot);
+
+    expect(existsSync(resolve(projectRoot, '.gitignore'))).toBe(false);
+  });
+
+  test('creates shadow at .openknowledge/ when no project .git/ exists (standalone)', async () => {
+    const projectRoot = resolve(tmpDir, 'standalone');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const shadow = await initShadowRepo(projectRoot);
+
+    expect(shadow.gitDir).toBe(resolve(projectRoot, '.openknowledge'));
+    expect(existsSync(resolve(shadow.gitDir, 'HEAD'))).toBe(true);
+
+    // Verify .gitignore was created with .openknowledge/
+    const gitignore = readFileSync(resolve(projectRoot, '.gitignore'), 'utf-8');
+    expect(gitignore).toContain('.openknowledge/');
+  });
+
+  test('is idempotent — second call does not error', async () => {
+    const projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    const shadow1 = await initShadowRepo(projectRoot);
+    const shadow2 = await initShadowRepo(projectRoot);
+
+    expect(shadow1.gitDir).toBe(shadow2.gitDir);
+    expect(existsSync(resolve(shadow2.gitDir, 'HEAD'))).toBe(true);
+  });
+});
+
+describe('commitWip', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+  let contentDir: string;
+
+  const writer: WriterIdentity = {
+    id: 'human-nick',
+    name: 'Nick Gomez',
+    email: 'nick@example.com',
+  };
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    contentDir = resolve(projectRoot, 'content/docs');
+    mkdirSync(contentDir, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('creates commit on refs/wip/<branch>/<writer-id>', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+
+    const sha = await commitWip(shadow, writer, 'content/docs', 'WIP: intro');
+
+    expect(sha).toHaveLength(40);
+
+    // Verify ref exists (default branch = 'main')
+    const sg = shadowGit(shadow);
+    const refSha = (await sg.raw('rev-parse', `refs/wip/main/${writer.id}`)).trim();
+    expect(refSha).toBe(sha);
+
+    // Verify commit message
+    const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
+    expect(msg).toBe('WIP: intro');
+  });
+
+  test('commit is authored by the writer', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+
+    const sha = await commitWip(shadow, writer, 'content/docs', 'WIP: check author');
+
+    const sg = shadowGit(shadow);
+    const authorName = (await sg.raw('log', '-1', '--format=%an', sha)).trim();
+    const authorEmail = (await sg.raw('log', '-1', '--format=%ae', sha)).trim();
+    expect(authorName).toBe(writer.name);
+    expect(authorEmail).toBe(writer.email);
+
+    // Committer is always openknowledge
+    const committerName = (await sg.raw('log', '-1', '--format=%cn', sha)).trim();
+    expect(committerName).toBe('openknowledge');
+  });
+
+  test('second commit parents the first', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+    const sha1 = await commitWip(shadow, writer, 'content/docs', 'WIP: first');
+
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello World\n');
+    const sha2 = await commitWip(shadow, writer, 'content/docs', 'WIP: second');
+
+    expect(sha2).not.toBe(sha1);
+
+    const sg = shadowGit(shadow);
+    const parent = (await sg.raw('log', '-1', '--format=%P', sha2)).trim();
+    expect(parent).toBe(sha1);
+  });
+
+  test('different writers get independent refs', async () => {
+    const agent: WriterIdentity = {
+      id: 'agent-cursor',
+      name: 'cursor-agent',
+      email: 'cursor@openknowledge.local',
+    };
+
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello from human\n');
+    const humanSha = await commitWip(shadow, writer, 'content/docs', 'WIP: human edit');
+
+    writeFileSync(resolve(contentDir, 'guide.md'), '# Agent guide\n');
+    const agentSha = await commitWip(shadow, agent, 'content/docs', 'WIP: agent edit');
+
+    const sg = shadowGit(shadow);
+    const humanRef = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+    const agentRef = (await sg.raw('rev-parse', 'refs/wip/main/agent-cursor')).trim();
+
+    expect(humanRef).toBe(humanSha);
+    expect(agentRef).toBe(agentSha);
+  });
+
+  test('branch-scoped WIP refs are isolated', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Main content\n');
+    const mainSha = await commitWip(shadow, writer, 'content/docs', 'WIP: main edit', 'main');
+
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Feature content\n');
+    const featureSha = await commitWip(
+      shadow,
+      writer,
+      'content/docs',
+      'WIP: feature edit',
+      'feature/xyz',
+    );
+
+    const sg = shadowGit(shadow);
+    const mainRef = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+    const featureRef = (await sg.raw('rev-parse', 'refs/wip/feature/xyz/human-nick')).trim();
+
+    expect(mainRef).toBe(mainSha);
+    expect(featureRef).toBe(featureSha);
+    expect(mainRef).not.toBe(featureRef);
+  });
+});
+
+describe('commitUpstreamImport', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+  let contentDir: string;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    contentDir = resolve(projectRoot, 'content/docs');
+    mkdirSync(contentDir, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('creates commit on refs/wip/<branch>/upstream', async () => {
+    writeFileSync(resolve(contentDir, 'api.md'), '# API Reference\n');
+
+    const sha = await commitUpstreamImport(shadow, 'content/docs', 'aabbccdd', '11223344');
+
+    expect(sha).toHaveLength(40);
+
+    // Default branch = 'main'
+    const sg = shadowGit(shadow);
+    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/upstream')).trim();
+    expect(refSha).toBe(sha);
+  });
+
+  test('commit message includes old..new head range', async () => {
+    writeFileSync(resolve(contentDir, 'api.md'), '# API\n');
+
+    const sha = await commitUpstreamImport(
+      shadow,
+      'content/docs',
+      'aabbccddeeff0011',
+      '1122334455667788',
+    );
+
+    const sg = shadowGit(shadow);
+    const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
+    expect(msg).toBe('upstream: import from aabbccdd..11223344');
+  });
+
+  test('commit message handles null oldHead (initial import)', async () => {
+    writeFileSync(resolve(contentDir, 'api.md'), '# API\n');
+
+    const sha = await commitUpstreamImport(shadow, 'content/docs', null, '1122334455667788');
+
+    const sg = shadowGit(shadow);
+    const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
+    expect(msg).toBe('upstream: initial import at 11223344');
+  });
+
+  test('upstream commit is authored by upstream writer', async () => {
+    writeFileSync(resolve(contentDir, 'api.md'), '# API\n');
+
+    const sha = await commitUpstreamImport(shadow, 'content/docs', null, 'deadbeef');
+
+    const sg = shadowGit(shadow);
+    const authorName = (await sg.raw('log', '-1', '--format=%an', sha)).trim();
+    expect(authorName).toBe('upstream');
+  });
+});
+
+describe('parkBranch', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('creates park commit with Y.Doc state and disk snapshot', async () => {
+    const docs: ParkableDoc[] = [
+      {
+        docName: 'intro',
+        markdown: '# Hello World\n\nEdited content\n',
+        diskSnapshot: '# Hello\n',
+      },
+    ];
+
+    const sha = await parkBranch(shadow, 'main', 'session1', docs);
+    expect(sha).toHaveLength(40);
+    if (!sha) throw new Error('parkBranch returned null');
+
+    // Verify commit message starts with park:
+    const sg = shadowGit(shadow);
+    const msg = (await sg.raw('log', '-1', '--format=%s', sha)).trim();
+    expect(msg.startsWith('park:')).toBe(true);
+
+    // Verify ref
+    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/human-session1')).trim();
+    expect(refSha).toBe(sha);
+
+    // Verify Y.Doc state blob
+    const content = (await sg.raw('show', `${sha}:intro`)).trim();
+    expect(content).toBe('# Hello World\n\nEdited content');
+
+    // Verify disk snapshot blob
+    const base = (await sg.raw('show', `${sha}:.park-base/intro`)).trim();
+    expect(base).toBe('# Hello');
+  });
+
+  test('returns null for empty documents', async () => {
+    const sha = await parkBranch(shadow, 'main', 'session1', []);
+    expect(sha).toBeNull();
+  });
+
+  test('readParkedState retrieves parked content', async () => {
+    const docs: ParkableDoc[] = [
+      { docName: 'guide', markdown: '# Guide v2\n', diskSnapshot: '# Guide v1\n' },
+    ];
+    await parkBranch(shadow, 'feature', 'sess1', docs);
+
+    const state = await readParkedState(shadow, 'feature', 'sess1', 'guide');
+    expect(state).not.toBeNull();
+    expect(state?.markdown).toBe('# Guide v2');
+    expect(state?.diskSnapshot).toBe('# Guide v1');
+  });
+
+  test('readParkedState returns null when no park exists', async () => {
+    const state = await readParkedState(shadow, 'main', 'none', 'intro');
+    expect(state).toBeNull();
+  });
+
+  test('parks multiple documents', async () => {
+    const docs: ParkableDoc[] = [
+      { docName: 'intro', markdown: '# Intro\n', diskSnapshot: '# Intro old\n' },
+      { docName: 'guide', markdown: '# Guide\n', diskSnapshot: '# Guide old\n' },
+    ];
+
+    const sha = await parkBranch(shadow, 'main', 'sess1', docs);
+    expect(sha).toHaveLength(40);
+
+    const sg = shadowGit(shadow);
+    const introContent = (await sg.raw('show', `${sha}:intro`)).trim();
+    const guideContent = (await sg.raw('show', `${sha}:guide`)).trim();
+    expect(introContent).toBe('# Intro');
+    expect(guideContent).toBe('# Guide');
+  });
+});
+
+describe('saveVersion', () => {
+  const { saveVersion } = require('./shadow-repo') as typeof import('./shadow-repo');
+
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+  let contentDir: string;
+
+  const human: WriterIdentity = {
+    id: 'human-nick',
+    name: 'Nick Gomez',
+    email: 'nick@example.com',
+  };
+
+  const agent: WriterIdentity = {
+    id: 'agent-cursor',
+    name: 'cursor-agent',
+    email: 'cursor@openknowledge.local',
+  };
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    contentDir = resolve(projectRoot, 'content/docs');
+    mkdirSync(contentDir, { recursive: true });
+
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+
+    // Initial commit so HEAD exists
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Hello\n');
+    await git.add('.');
+    await git.commit('Initial commit');
+
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('creates a commit on the project repo', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Updated\n');
+    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+
+    expect(result.projectCommitSha).toHaveLength(40);
+
+    const git = simpleGit(projectRoot);
+    const msg = (await git.raw('log', '-1', '--format=%s', result.projectCommitSha)).trim();
+    expect(msg).toBe('Save Version: content update');
+  });
+
+  test('project commit has co-authored-by trailers', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Co-authored\n');
+    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human, agent]);
+
+    const git = simpleGit(projectRoot);
+    const body = (await git.raw('log', '-1', '--format=%B', result.projectCommitSha)).trim();
+    expect(body).toContain('Co-authored-by: cursor-agent <cursor@openknowledge.local>');
+
+    // Primary author is the human
+    const author = (await git.raw('log', '-1', '--format=%an', result.projectCommitSha)).trim();
+    expect(author).toBe('Nick Gomez');
+  });
+
+  test('creates checkpoint ref in shadow', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Checkpoint\n');
+    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+
+    expect(result.checkpointRef).toBe(`refs/checkpoints/main/${result.projectCommitSha}`);
+
+    const sg = shadowGit(shadow);
+    const checkpointSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
+    expect(checkpointSha).toHaveLength(40);
+
+    // Checkpoint tree contains the content
+    const tree = (await sg.raw('ls-tree', '-r', '--name-only', result.checkpointRef)).trim();
+    expect(tree).toContain('content/docs/intro.md');
+  });
+
+  test('resets WIP refs after save', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# WIP content\n');
+    await commitWip(shadow, human, 'content/docs', 'WIP: edit');
+
+    // Verify WIP ref exists
+    const sg = shadowGit(shadow);
+    const wipBefore = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+    expect(wipBefore).toHaveLength(40);
+
+    await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+
+    // WIP ref should be deleted (branch-scoped)
+    let wipExists = true;
+    try {
+      await sg.raw('rev-parse', 'refs/wip/main/human-nick');
+    } catch {
+      wipExists = false;
+    }
+    expect(wipExists).toBe(false);
+  });
+});

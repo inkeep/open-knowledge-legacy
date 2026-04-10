@@ -1,9 +1,17 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import {
+  classifyEvents,
   contentHash,
   evictStaleTrackerEntries,
+  isSelfWrite,
+  lastKnownHash,
   pathToDocName,
   registerWrite,
+  updateLastKnownHash,
   writeTracker,
 } from './file-watcher';
 
@@ -125,5 +133,160 @@ describe('contentHash', () => {
 
   test('different content produces different hashes', () => {
     expect(contentHash('hello')).not.toBe(contentHash('world'));
+  });
+});
+
+describe('isSelfWrite', () => {
+  beforeEach(() => {
+    writeTracker.clear();
+  });
+
+  test('returns true and consumes entry for matching hash', () => {
+    const path = '/content/test.md';
+    const hash = contentHash('hello');
+    registerWrite(path, hash);
+
+    expect(isSelfWrite(path, hash)).toBe(true);
+    expect(writeTracker.has(path)).toBe(false);
+  });
+
+  test('returns false for non-matching hash', () => {
+    const path = '/content/test.md';
+    registerWrite(path, contentHash('hello'));
+
+    expect(isSelfWrite(path, contentHash('world'))).toBe(false);
+    expect(writeTracker.has(path)).toBe(true);
+  });
+});
+
+// ─── classifyEvents ──────────────────────────────────────────────────────────
+
+describe('classifyEvents', () => {
+  let tmpDir: string;
+  let contentDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-watcher-test-'));
+    contentDir = resolve(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    lastKnownHash.clear();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('emits update event for modified file', async () => {
+    const filePath = resolve(contentDir, 'doc.md');
+    writeFileSync(filePath, '# Updated\n');
+
+    const events = await classifyEvents([{ type: 'update', path: filePath }], contentDir);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('update');
+    if (events[0].kind === 'update') {
+      expect(events[0].docName).toBe('doc');
+      expect(events[0].content).toBe('# Updated\n');
+    }
+  });
+
+  test('emits create event for new file', async () => {
+    const filePath = resolve(contentDir, 'new.md');
+    writeFileSync(filePath, '# New\n');
+
+    const events = await classifyEvents([{ type: 'create', path: filePath }], contentDir);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('create');
+  });
+
+  test('emits delete event for removed file', async () => {
+    const filePath = resolve(contentDir, 'gone.md');
+
+    const events = await classifyEvents([{ type: 'delete', path: filePath }], contentDir);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('delete');
+    if (events[0].kind === 'delete') {
+      expect(events[0].docName).toBe('gone');
+    }
+  });
+
+  test('emits rename for delete+create with matching content hash', async () => {
+    const oldPath = resolve(contentDir, 'old-name.md');
+    const newPath = resolve(contentDir, 'new-name.md');
+    const content = '# Same Content\n';
+
+    // Pre-seed the last known hash for the old path
+    updateLastKnownHash(oldPath, contentHash(content));
+
+    // Write the new file
+    writeFileSync(newPath, content);
+
+    const events = await classifyEvents(
+      [
+        { type: 'delete', path: oldPath },
+        { type: 'create', path: newPath },
+      ],
+      contentDir,
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('rename');
+    if (events[0].kind === 'rename') {
+      expect(events[0].oldDocName).toBe('old-name');
+      expect(events[0].newDocName).toBe('new-name');
+      expect(events[0].content).toBe(content);
+    }
+  });
+
+  test('emits separate delete+create when content hashes differ', async () => {
+    const oldPath = resolve(contentDir, 'old.md');
+    const newPath = resolve(contentDir, 'new.md');
+
+    // Pre-seed with different content
+    updateLastKnownHash(oldPath, contentHash('old content'));
+    writeFileSync(newPath, 'different content');
+
+    const events = await classifyEvents(
+      [
+        { type: 'delete', path: oldPath },
+        { type: 'create', path: newPath },
+      ],
+      contentDir,
+    );
+
+    expect(events).toHaveLength(2);
+    expect(events.some((e) => e.kind === 'delete')).toBe(true);
+    expect(events.some((e) => e.kind === 'create')).toBe(true);
+  });
+
+  test('emits conflict event when file contains conflict markers', async () => {
+    const filePath = resolve(contentDir, 'conflicted.md');
+    writeFileSync(filePath, '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n');
+
+    const events = await classifyEvents([{ type: 'update', path: filePath }], contentDir);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('conflict');
+  });
+
+  test('emits conflict event for create with conflict markers', async () => {
+    const filePath = resolve(contentDir, 'new-conflicted.md');
+    writeFileSync(filePath, '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n');
+
+    const events = await classifyEvents([{ type: 'create', path: filePath }], contentDir);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('conflict');
+  });
+
+  test('ignores non-.md files', async () => {
+    const filePath = resolve(contentDir, 'readme.txt');
+    writeFileSync(filePath, 'hello');
+
+    const events = await classifyEvents([{ type: 'update', path: filePath }], contentDir);
+
+    expect(events).toHaveLength(0);
   });
 });
