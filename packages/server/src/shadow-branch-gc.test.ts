@@ -5,13 +5,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import simpleGit from 'simple-git';
 import { gcShadowBranches } from './shadow-branch-gc';
-import {
-  commitWip,
-  initShadowRepo,
-  type ShadowHandle,
-  shadowGit,
-  type WriterIdentity,
-} from './shadow-repo';
+import { commitWip, initShadowRepo, shadowGit, type WriterIdentity } from './shadow-repo';
 
 let tmpDir: string;
 
@@ -154,7 +148,7 @@ describe('gcShadowBranches', () => {
     const shadow = await initShadowRepo(projectRoot);
 
     // Create WIP on 'old-name' branch
-    const wipSha = await commitWip(shadow, writer, 'content', 'WIP on old-name', 'old-name');
+    const _wipSha = await commitWip(shadow, writer, 'content', 'WIP on old-name', 'old-name');
 
     // Simulate branch rename: create 'new-name' branch with same HEAD as the WIP commit
     // In a real scenario, the WIP commit's SHA would match the project branch's HEAD

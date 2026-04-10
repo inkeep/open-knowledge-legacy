@@ -340,8 +340,8 @@ describe('parkBranch', () => {
 
     const state = await readParkedState(shadow, 'feature', 'sess1', 'guide');
     expect(state).not.toBeNull();
-    expect(state!.markdown).toBe('# Guide v2');
-    expect(state!.diskSnapshot).toBe('# Guide v1');
+    expect(state?.markdown).toBe('# Guide v2');
+    expect(state?.diskSnapshot).toBe('# Guide v1');
   });
 
   test('readParkedState returns null when no park exists', async () => {

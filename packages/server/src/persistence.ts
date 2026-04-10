@@ -142,11 +142,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   // Per-instance batch flag — gates L1 writes and L2 commits during coordinated git operations.
   let batchInProgress = false;
 
-  function setBatchInProgress(value: boolean): void {
+  function _setBatchInProgress(value: boolean): void {
     batchInProgress = value;
   }
 
-  function isBatchInProgress(): boolean {
+  function _isBatchInProgress(): boolean {
     return batchInProgress;
   }
 
@@ -291,7 +291,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   }
 
   /** Await any in-flight git commit (for graceful shutdown). */
-  async function awaitPendingCommit(): Promise<void> {
+  async function _awaitPendingCommit(): Promise<void> {
     if (commitInFlight) await commitInFlight;
   }
 

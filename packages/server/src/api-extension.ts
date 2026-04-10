@@ -55,7 +55,15 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
-  const { hocuspocus, sessionManager, contentDir, enableTestRoutes = false, shadowRef, projectRoot, contentRoot } = options;
+  const {
+    hocuspocus,
+    sessionManager,
+    contentDir,
+    enableTestRoutes = false,
+    shadowRef,
+    projectRoot,
+    contentRoot,
+  } = options;
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
