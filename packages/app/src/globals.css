@@ -449,6 +449,11 @@
   margin: 0.5em 0;
 }
 
+.ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid var(--color-azure-blue);
+  outline-offset: 2px;
+}
+
 /* Tables */
 .ProseMirror .tableWrapper {
   overflow-x: auto;
