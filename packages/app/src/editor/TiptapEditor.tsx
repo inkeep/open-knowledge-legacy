@@ -20,7 +20,10 @@ import { sharedExtensions } from './extensions/shared.ts';
 import { markUserTyping, setupObservers } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
 
-const DOC_NAME = 'test-doc';
+function getCurrentDocName(): string {
+  const match = window.location.hash.match(/^#doc=(.+)$/);
+  return match ? decodeURIComponent(match[1]) : 'test-doc';
+}
 
 /** Custom cursor renderer — agents don't get cursors (NG1: no fake cursor animation). */
 function renderCursor(user: Record<string, string>): HTMLElement {
@@ -61,12 +64,12 @@ const editorSchema = getSchema(sharedExtensions);
 let singletonProvider: HocuspocusProvider | null = null;
 let observerCleanup: (() => void) | null = null;
 
-function getProvider(): HocuspocusProvider {
+function getProvider(docName: string): HocuspocusProvider {
   if (!singletonProvider) {
     console.log('[TiptapEditor] Creating provider singleton');
     singletonProvider = new HocuspocusProvider({
       url: `ws://${window.location.host}/collab`,
-      name: DOC_NAME,
+      name: docName,
     });
 
     // Set up bidirectional observers once after first sync
@@ -136,8 +139,22 @@ export const TiptapEditor: FC<{
   // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
-  const provider = getProvider();
+  const provider = getProvider(getCurrentDocName());
   const identity = useIdentity();
+
+  // Destroy the singleton on unmount so the next mount with a different docName starts fresh.
+  useEffect(() => {
+    return () => {
+      if (observerCleanup) {
+        observerCleanup();
+        observerCleanup = null;
+      }
+      if (singletonProvider) {
+        singletonProvider.destroy();
+        singletonProvider = null;
+      }
+    };
+  }, []);
 
   const editor = useEditor({
     editorProps: {
