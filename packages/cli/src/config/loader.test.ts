@@ -45,10 +45,15 @@ describe('loadConfig', () => {
     expect(config.persistence.debounceMs).toBe(2000);
     expect(config.persistence.maxDebounceMs).toBe(10000);
 
-    // wiki
-    expect(config.wiki.articles_path).toBe('./articles');
-    expect(config.wiki.external_sources_path).toBe('./external-sources');
-    expect(config.wiki.research_path).toBe('./research');
+    // wiki roots
+    expect(config.wiki.roots).toHaveLength(3);
+    expect(config.wiki.roots[0]).toEqual({ path: './articles', label: 'Knowledge Articles' });
+    expect(config.wiki.roots[1]).toEqual({ path: './external-sources', label: 'External Sources' });
+    expect(config.wiki.roots[2]).toEqual({ path: './research', label: 'Research' });
+
+    // wiki globs
+    expect(config.wiki.include).toEqual(['**/*.md']);
+    expect(config.wiki.exclude).toEqual([]);
   });
 
   test('empty YAML file → all defaults resolve', () => {
@@ -58,7 +63,7 @@ describe('loadConfig', () => {
     expect(config.server.port).toBe(3000);
     expect(config.content.dir).toBe('./content');
     expect(config.persistence.debounceMs).toBe(2000);
-    expect(config.wiki.articles_path).toBe('./articles');
+    expect(config.wiki.roots).toHaveLength(3);
   });
 
   test('comments-only YAML (scaffolded config) → all defaults resolve', () => {
@@ -93,7 +98,7 @@ describe('loadConfig', () => {
     // other sections untouched
     expect(config.content.dir).toBe('./content');
     expect(config.persistence.debounceMs).toBe(2000);
-    expect(config.wiki.articles_path).toBe('./articles');
+    expect(config.wiki.roots).toHaveLength(3);
   });
 
   test('workspace config overrides multiple sections at once', () => {
@@ -105,8 +110,6 @@ server:
   host: 0.0.0.0
 persistence:
   debounceMs: 5000
-wiki:
-  articles_path: ./kb
 `);
     const { config } = loadConfig(testDir);
 
@@ -116,10 +119,46 @@ wiki:
     expect(config.persistence.debounceMs).toBe(5000);
     // sibling default preserved within section
     expect(config.persistence.maxDebounceMs).toBe(10000);
-    expect(config.wiki.articles_path).toBe('./kb');
-    // sibling wiki defaults preserved
-    expect(config.wiki.external_sources_path).toBe('./external-sources');
-    expect(config.wiki.research_path).toBe('./research');
+  });
+
+  test('custom wiki roots replace defaults entirely', () => {
+    writeWorkspaceConfig(`
+wiki:
+  roots:
+    - path: ./eng-research
+      label: Engineering Research
+    - path: ./product-research
+      label: Product Research
+`);
+    const { config } = loadConfig(testDir);
+
+    expect(config.wiki.roots).toHaveLength(2);
+    expect(config.wiki.roots[0]).toEqual({
+      path: './eng-research',
+      label: 'Engineering Research',
+    });
+    expect(config.wiki.roots[1]).toEqual({
+      path: './product-research',
+      label: 'Product Research',
+    });
+    // globs still default
+    expect(config.wiki.include).toEqual(['**/*.md']);
+    expect(config.wiki.exclude).toEqual([]);
+  });
+
+  test('custom include/exclude globs', () => {
+    writeWorkspaceConfig(`
+wiki:
+  include:
+    - "**/*.md"
+    - "**/*.mdx"
+  exclude:
+    - "**/drafts/**"
+`);
+    const { config } = loadConfig(testDir);
+
+    expect(config.wiki.include).toEqual(['**/*.md', '**/*.mdx']);
+    expect(config.wiki.exclude).toEqual(['**/drafts/**']);
   });
 
   test('partial section override preserves sibling defaults within that section', () => {
@@ -145,6 +184,11 @@ wiki:
 
   test('negative persistence value throws', () => {
     writeWorkspaceConfig('persistence:\n  debounceMs: -1\n');
+    expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
+  });
+
+  test('empty roots array throws', () => {
+    writeWorkspaceConfig('wiki:\n  roots: []\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 

@@ -1,5 +1,16 @@
 import { z } from 'zod';
 
+const WikiRootSchema = z.object({
+  path: z.string(),
+  label: z.string(),
+});
+
+const DEFAULT_ROOTS = [
+  { path: './articles', label: 'Knowledge Articles' },
+  { path: './external-sources', label: 'External Sources' },
+  { path: './research', label: 'Research' },
+];
+
 export const ConfigSchema = z.object({
   content: z
     .object({
@@ -23,15 +34,16 @@ export const ConfigSchema = z.object({
     .default({ debounceMs: 2000, maxDebounceMs: 10000 }),
   wiki: z
     .object({
-      articles_path: z.string().default('./articles'),
-      external_sources_path: z.string().default('./external-sources'),
-      research_path: z.string().default('./research'),
+      roots: z.array(WikiRootSchema).min(1).default(DEFAULT_ROOTS),
+      include: z.array(z.string()).default(['**/*.md']),
+      exclude: z.array(z.string()).default([]),
     })
     .default({
-      articles_path: './articles',
-      external_sources_path: './external-sources',
-      research_path: './research',
+      roots: DEFAULT_ROOTS,
+      include: ['**/*.md'],
+      exclude: [],
     }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
+export type WikiRoot = z.infer<typeof WikiRootSchema>;

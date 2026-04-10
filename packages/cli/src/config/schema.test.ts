@@ -9,6 +9,9 @@ describe('ConfigSchema', () => {
     expect(config.server.host).toBe('localhost');
     expect(config.persistence.debounceMs).toBe(2000);
     expect(config.persistence.maxDebounceMs).toBe(10000);
+    expect(config.wiki.roots).toHaveLength(3);
+    expect(config.wiki.include).toEqual(['**/*.md']);
+    expect(config.wiki.exclude).toEqual([]);
   });
 
   test('partial override preserves other defaults', () => {
@@ -33,6 +36,30 @@ describe('ConfigSchema', () => {
   test('port out of range produces error', () => {
     const result = ConfigSchema.safeParse({
       server: { port: 99999 },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('custom roots override defaults', () => {
+    const config = ConfigSchema.parse({
+      wiki: {
+        roots: [{ path: './custom', label: 'Custom' }],
+      },
+    });
+    expect(config.wiki.roots).toHaveLength(1);
+    expect(config.wiki.roots[0]).toEqual({ path: './custom', label: 'Custom' });
+  });
+
+  test('empty roots array produces error', () => {
+    const result = ConfigSchema.safeParse({
+      wiki: { roots: [] },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('root missing label produces error', () => {
+    const result = ConfigSchema.safeParse({
+      wiki: { roots: [{ path: './articles' }] },
     });
     expect(result.success).toBe(false);
   });

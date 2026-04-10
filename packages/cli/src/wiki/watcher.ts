@@ -21,41 +21,16 @@ function writeIfChanged(filePath: string, content: string): boolean {
 export function rebuildCatalogs(openknowledgeDir: string, paths: WikiPaths): void {
   const okDir = resolve(openknowledgeDir);
 
-  const sections = [
-    {
-      dir: paths.articlesDir,
-      title: 'Knowledge Articles',
-      description: 'Architecture, processes, and decisions',
-    },
-    {
-      dir: paths.externalSourcesDir,
-      title: 'External Sources',
-      description: 'Ingested external content',
-    },
-    {
-      dir: paths.researchDir,
-      title: 'Research',
-      description: 'Exploratory research and findings',
-    },
-  ];
-
-  for (const section of sections) {
-    rebuildDirCatalog(section.dir, section.title, section.description);
+  for (const root of paths.roots) {
+    rebuildDirCatalog(root.dir, root.label);
   }
 
   // Root INDEX.md
   const rootContent = generateRootCatalog(okDir, {
-    sections: [
-      {
-        label: 'Knowledge Articles',
-        relativePath: `${relative(okDir, paths.articlesDir)}/INDEX.md`,
-      },
-      {
-        label: 'External Sources',
-        relativePath: `${relative(okDir, paths.externalSourcesDir)}/INDEX.md`,
-      },
-      { label: 'Research', relativePath: `${relative(okDir, paths.researchDir)}/INDEX.md` },
-    ],
+    sections: paths.roots.map((root) => ({
+      label: root.label,
+      relativePath: `${relative(okDir, root.dir)}/INDEX.md`,
+    })),
   });
   writeIfChanged(join(okDir, 'INDEX.md'), rootContent);
 }

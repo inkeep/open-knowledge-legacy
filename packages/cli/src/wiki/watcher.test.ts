@@ -20,9 +20,11 @@ describe('rebuildCatalogs', () => {
     mkdirSync(join(okDir, 'external-sources'), { recursive: true });
     mkdirSync(join(okDir, 'research'), { recursive: true });
     paths = {
-      articlesDir: join(okDir, 'articles'),
-      externalSourcesDir: join(okDir, 'external-sources'),
-      researchDir: join(okDir, 'research'),
+      roots: [
+        { dir: join(okDir, 'articles'), label: 'Knowledge Articles' },
+        { dir: join(okDir, 'external-sources'), label: 'External Sources' },
+        { dir: join(okDir, 'research'), label: 'Research' },
+      ],
     };
   });
 

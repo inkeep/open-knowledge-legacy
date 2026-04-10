@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
+import { ConfigSchema } from '../config/schema.ts';
 import { generateCatalog, generateRootCatalog } from './catalog.ts';
 
 export const AGENTS_MD_CONTENT = `# .open-knowledge/ — Project Wiki
@@ -139,13 +140,33 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 
 
 # --- Wiki ------------------------------------------------------------------
-# Subdirectory layout inside .open-knowledge/. Paths are relative to this
-# directory. Usually leave these alone — the init command and the MCP server
-# both assume the defaults.
+# Browsable roots inside .open-knowledge/. Each root is a subtree with its
+# own INDEX.md catalog. Customize to match your team's knowledge taxonomy.
+# Paths are relative to this directory.
+#
+# The default roots (articles, external-sources, research) are a starting
+# convention seeded by \`open-knowledge init\`. Reshape freely — e.g.:
+#
+#   wiki:
+#     roots:
+#       - path: ./eng-research
+#         label: Engineering Research
+#       - path: ./product-research
+#         label: Product Research
+#       - path: ./design-decisions
+#         label: Design Decisions
+#
 # wiki:
-#   articles_path: ./articles
-#   external_sources_path: ./external-sources
-#   research_path: ./research
+#   roots:
+#     - path: ./articles
+#       label: Knowledge Articles
+#     - path: ./external-sources
+#       label: External Sources
+#     - path: ./research
+#       label: Research
+#   include:
+#     - "**/*.md"
+#   exclude: []
 `;
 
 export const CLAUDE_MD_SECTION = `## .open-knowledge/ — Project Wiki
@@ -169,16 +190,15 @@ export function initWiki(projectDir: string): { created: string[]; skipped: stri
   const created: string[] = [];
   const skipped: string[] = [];
 
-  const dirs = [
-    okDir,
-    join(okDir, 'articles'),
-    join(okDir, 'external-sources'),
-    join(okDir, 'research'),
-    join(okDir, 'cache'),
-  ];
+  // Default roots from the schema — init seeds this convention
+  const defaults = ConfigSchema.parse({});
+  const roots = defaults.wiki.roots;
 
-  for (const dir of dirs) {
-    mkdirSync(dir, { recursive: true });
+  // Create base dirs + root dirs + cache
+  mkdirSync(okDir, { recursive: true });
+  mkdirSync(join(okDir, 'cache'), { recursive: true });
+  for (const root of roots) {
+    mkdirSync(resolve(okDir, root.path), { recursive: true });
   }
 
   // AGENTS.md
@@ -208,46 +228,27 @@ export function initWiki(projectDir: string): { created: string[]; skipped: stri
     skipped.push('config.yml');
   }
 
-  // Section catalogs
-  const sectionDirs = [
-    {
-      path: join(okDir, 'articles'),
-      title: 'Knowledge Articles',
-      description: 'Architecture, processes, and decisions',
-    },
-    {
-      path: join(okDir, 'external-sources'),
-      title: 'External Sources',
-      description: 'Ingested external content',
-    },
-    {
-      path: join(okDir, 'research'),
-      title: 'Research',
-      description: 'Exploratory research and findings',
-    },
-  ];
-
-  for (const section of sectionDirs) {
-    const indexPath = join(section.path, 'INDEX.md');
-    const content = generateCatalog(section.path, {
-      title: section.title,
-      description: section.description,
+  // Section catalogs — one per root
+  for (const root of roots) {
+    const rootDir = resolve(okDir, root.path);
+    const indexPath = join(rootDir, 'INDEX.md');
+    const content = generateCatalog(rootDir, {
+      title: root.label,
     });
     if (writeIfMissing(indexPath, content)) {
-      created.push(`${section.title}/INDEX.md`);
+      created.push(`${root.label}/INDEX.md`);
     } else {
-      skipped.push(`${section.title}/INDEX.md`);
+      skipped.push(`${root.label}/INDEX.md`);
     }
   }
 
   // Root INDEX.md
   const rootIndexPath = join(okDir, 'INDEX.md');
   const rootContent = generateRootCatalog(okDir, {
-    sections: [
-      { label: 'Knowledge Articles', relativePath: 'articles/INDEX.md' },
-      { label: 'External Sources', relativePath: 'external-sources/INDEX.md' },
-      { label: 'Research', relativePath: 'research/INDEX.md' },
-    ],
+    sections: roots.map((root) => ({
+      label: root.label,
+      relativePath: `${relative(okDir, resolve(okDir, root.path))}/INDEX.md`,
+    })),
   });
   if (writeIfMissing(rootIndexPath, rootContent)) {
     created.push('INDEX.md');

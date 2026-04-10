@@ -77,6 +77,7 @@ describe('initWiki', () => {
     expect(configYml).toContain('# content:');
     expect(configYml).toContain('# persistence:');
     expect(configYml).toContain('# wiki:');
+    expect(configYml).toContain('roots:');
     // No uncommented top-level keys — every non-empty, non-comment line
     // would mean we accidentally shipped an active override.
     const activeLines = configYml
