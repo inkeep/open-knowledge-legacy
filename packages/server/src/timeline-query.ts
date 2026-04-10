@@ -230,8 +230,8 @@ export async function getDocumentHistory(
     const total = filtered.length;
     const page = filtered.slice(offset, offset + limit);
     return { entries: page, total, hasMore: offset + limit < total };
-  } catch {
-    // Shadow repo missing or corrupt — return empty result, do not throw
+  } catch (e) {
+    console.warn('[timeline] getDocumentHistory failed, returning empty result:', e);
     return EMPTY;
   }
 }

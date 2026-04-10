@@ -359,8 +359,7 @@ export function TimelinePanel({
                 // wip-group
                 return (
                   <WipGroup
-                    // biome-ignore lint/suspicious/noArrayIndexKey: stable positional groups
-                    key={idx}
+                    key={group.entries[0]?.sha ?? `wip-${idx}`}
                     entries={group.entries}
                     defaultExpanded={group.isPreCheckpoint}
                     selectedSha={selectedSha}

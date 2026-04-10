@@ -1268,6 +1268,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const docName = url.searchParams.get('docName') ?? '';
     const branch = url.searchParams.get('branch') ?? 'main';
+
+    if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
+      json(res, 400, { error: 'Invalid branch name' });
+      return;
+    }
+
     const limit = Math.min(200, Number(url.searchParams.get('limit') ?? '50'));
     const offset = Number(url.searchParams.get('offset') ?? '0');
     const type = url.searchParams.get('type') ?? undefined;
@@ -1516,26 +1522,32 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
       const document = hocuspocus.documents.get(docName);
-      if (document) {
-        const { body: mdBody } = stripFrontmatter(markdown);
-        const parsedJson = mdManager.parse(mdBody);
-        const pmNode = schema.nodeFromJSON(parsedJson);
-        const xmlFragment = document.getXmlFragment('default');
-
-        document.transact(() => {
-          const meta = { mapping: new Map(), isOMark: new Map() };
-          updateYFragment(document, xmlFragment, pmNode, meta);
-
-          const ytext = document.getText('source');
-          const currentText = ytext.toString();
-          if (currentText !== markdown) {
-            ytext.delete(0, currentText.length);
-            ytext.insert(0, markdown);
-          }
-        }, ROLLBACK_ORIGIN);
-
-        setReconciledBase(docName, markdown);
+      if (!document) {
+        json(res, 409, {
+          ok: false,
+          error: 'Document is not currently open — open it in the editor first',
+        });
+        return;
       }
+
+      const { body: mdBody } = stripFrontmatter(markdown);
+      const parsedJson = mdManager.parse(mdBody);
+      const pmNode = schema.nodeFromJSON(parsedJson);
+      const xmlFragment = document.getXmlFragment('default');
+
+      document.transact(() => {
+        const meta = { mapping: new Map(), isOMark: new Map() };
+        updateYFragment(document, xmlFragment, pmNode, meta);
+
+        const ytext = document.getText('source');
+        const currentText = ytext.toString();
+        if (currentText !== markdown) {
+          ytext.delete(0, currentText.length);
+          ytext.insert(0, markdown);
+        }
+      }, ROLLBACK_ORIGIN);
+
+      setReconciledBase(docName, markdown);
 
       const duration = Date.now() - t0;
       console.log(
@@ -2135,6 +2147,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         if (sha) {
           await handleHistoryVersion(request, response, sha);
         }
+        return;
       }
     },
   };
