@@ -226,7 +226,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
             if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
           } catch {
-            // Invalid JSON — use default docName
+            console.warn('[agent-undo] Invalid JSON body — using default docName');
           }
         }
       } catch {
@@ -240,7 +240,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       um.undo();
-      syncTextToFragment(dc.document);
+      try {
+        syncTextToFragment(dc.document);
+      } catch (syncErr) {
+        // Compensate: restore pre-undo state so bridge invariant holds.
+        um.redo();
+        throw syncErr;
+      }
       console.log('[agent-undo] Undo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
@@ -265,7 +271,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
             if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
           } catch {
-            // Invalid JSON — use default docName
+            console.warn('[agent-redo] Invalid JSON body — using default docName');
           }
         }
       } catch {
@@ -279,7 +285,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       um.redo();
-      syncTextToFragment(dc.document);
+      try {
+        syncTextToFragment(dc.document);
+      } catch (syncErr) {
+        // Compensate: restore pre-redo state so bridge invariant holds.
+        um.undo();
+        throw syncErr;
+      }
       console.log('[agent-redo] Redo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {

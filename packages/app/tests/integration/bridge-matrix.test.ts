@@ -12,9 +12,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { sharedExtensions } from '@inkeep/open-knowledge-core';
-import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment } from '@tiptap/y-tiptap';
 
 import {
@@ -24,17 +21,16 @@ import {
   assertBridgeInvariant,
   createTestClient,
   createTestServer,
+  mdManager,
   pollUntil,
   readTestDoc,
+  schema,
   serializeFragment,
   type TestClient,
   type TestServer,
   testReset,
   wait,
 } from './test-harness';
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
 
 /** Simulate WYSIWYG edit: parse markdown and apply to XmlFragment via updateYFragment */
 function applyMarkdownToFragment(client: TestClient, md: string): void {

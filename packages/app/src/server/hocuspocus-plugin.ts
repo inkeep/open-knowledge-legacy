@@ -7,18 +7,15 @@
  */
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Hocuspocus, type LocalTransactionOrigin } from '@hocuspocus/server';
-import { sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
   type AsyncSubscription,
   createApiExtension,
+  createExternalChangeHandler,
   createPersistenceExtension,
   startWatcher,
 } from '@inkeep/open-knowledge-server';
-import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
-import { updateYFragment } from '@tiptap/y-tiptap';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 
@@ -34,9 +31,6 @@ const CONTENT_DIR = resolve(
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -114,41 +108,7 @@ export function hocuspocusPlugin(): Plugin {
       });
 
       // --- Disk bridge: watch content directory for external .md changes ---
-      async function handleExternalChange(docName: string, content: string): Promise<void> {
-        try {
-          const document = hocuspocus.documents.get(docName);
-          if (!document) return;
-          const { frontmatter, body } = stripFrontmatter(content);
-          const parsedJson = mdManager.parse(body);
-          const pmNode = schema.nodeFromJSON(parsedJson);
-          const xmlFragment = document.getXmlFragment('default');
-
-          document.transact(
-            () => {
-              const meta = { mapping: new Map(), isOMark: new Map() };
-              updateYFragment(document, xmlFragment, pmNode, meta);
-              const metaMap = document.getMap('metadata');
-              metaMap.set('frontmatter', frontmatter);
-
-              const ytext = document.getText('source');
-              const currentText = ytext.toString();
-              if (currentText !== content) {
-                ytext.delete(0, currentText.length);
-                ytext.insert(0, content);
-              }
-            },
-            {
-              source: 'local',
-              skipStoreHooks: true,
-              context: { origin: 'file-watcher' },
-            } satisfies LocalTransactionOrigin,
-          );
-
-          console.log(`[file-watcher] Applied external change: ${docName}`);
-        } catch (err) {
-          console.error(`[file-watcher] Failed to apply external change for ${docName}:`, err);
-        }
-      }
+      const handleExternalChange = createExternalChangeHandler(hocuspocus);
 
       (async () => {
         if (activeWatcher) {

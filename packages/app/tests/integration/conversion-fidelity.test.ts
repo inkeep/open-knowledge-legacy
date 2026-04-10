@@ -14,9 +14,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { sharedExtensions } from '@inkeep/open-knowledge-core';
-import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 
@@ -26,16 +23,15 @@ import {
   assertBridgeInvariant,
   createTestClient,
   createTestServer,
+  mdManager,
   pollUntil,
   readTestDoc,
+  schema,
   serializeFragment,
   type TestServer,
   testReset,
   wait as waitMs,
 } from './test-harness';
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
 
 // ─── Helpers ───
 

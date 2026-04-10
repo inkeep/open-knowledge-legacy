@@ -223,7 +223,8 @@ Y.Doc
 - File: `packages/app/src/editor/observers.ts:247`
 - Origin: `'sync-from-tree'`
 - Uses `diffLines` to compute incremental delta between `lastSyncedXmlMd` and current XmlFragment markdown
-- Debounced (50ms) + deferred when Y.Text has recent non-local writes (TYPING_DEFER_MS=300ms)
+- Debounced (DEBOUNCE_MS=50ms) to coalesce rapid keystrokes
+- Skips entirely for remote (non-local) transactions; refreshes `lastSyncedXmlMd` baseline only
 - Updates `lastSyncedXmlMd` after every successful sync
 
 ### Observer B (Y.Text → XmlFragment)
@@ -247,7 +248,7 @@ Y.Doc
 |---|---|---|
 | `'sync-from-tree'` | — (self) | SKIP |
 | `'sync-from-text'` | SKIP | — (self) |
-| `'agent-write'` | Defer (TYPING_DEFER_MS) | Sync normally |
+| `'agent-write'` | Skip (remote; refresh baseline) | Sync normally |
 | `'file-watcher'` | Sync normally | Sync normally |
 | `undefined` (WebSocket) | Sync normally | Sync normally |
 
