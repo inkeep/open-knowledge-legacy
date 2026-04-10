@@ -10,7 +10,7 @@ import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
 function buildBody(source: string): string {
-  return `Capture this external source into the project wiki as raw reference material. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` prompt later.
+  return `Capture this external source into the project wiki as raw reference material. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
 
 Source: ${source}
 
