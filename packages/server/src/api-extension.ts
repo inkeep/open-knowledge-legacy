@@ -1169,7 +1169,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const shadow = shadowRef?.current;
-    if (!shadow || !projectRoot) {
+    if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
     }
@@ -1217,11 +1217,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const resolvedContentRoot = contentRoot ?? 'content';
-      const result = await saveVersion(shadow, projectRoot, resolvedContentRoot, writers);
+      const result = await saveVersion(shadow, projectRoot ?? null, resolvedContentRoot, writers);
 
-      console.log(
-        `[shadow] checkpoint ${result.checkpointRef} → project commit ${result.projectCommitSha.slice(0, 8)}`,
-      );
+      const projectRef = result.projectCommitSha
+        ? `→ project commit ${result.projectCommitSha.slice(0, 8)}`
+        : '(standalone)';
+      console.log(`[shadow] checkpoint ${result.checkpointRef} ${projectRef}`);
 
       json(res, 200, {
         ok: true,

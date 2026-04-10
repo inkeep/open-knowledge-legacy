@@ -368,200 +368,213 @@ export async function readParkedState(
 // ─── Save Version ────────────────────────────────────────────────────────────
 
 export interface SaveVersionResult {
-  projectCommitSha: string;
+  /** SHA of the project repo commit created by Save Version, or null in standalone mode. */
+  projectCommitSha: string | null;
   checkpointRef: string;
 }
 
 /**
  * Save Version — the graduation point:
- * 1. Create a real commit on the project repo (via commit-tree plumbing, never touches staging area)
+ * 1. (Integrated mode only) Create a real commit on the project repo via commit-tree plumbing
  * 2. Write a checkpoint ref in the shadow with full tree snapshot
  * 3. Reset per-writer WIP refs so subsequent WIP tracks only post-checkpoint deltas
  *
+ * Standalone mode: when projectRoot is null, step 1 is skipped and the checkpoint ref
+ * is named after the shadow commit's own SHA instead of the project commit SHA.
+ *
+ * @param projectRoot - Project root path (integrated mode) or null (standalone mode).
  * @param branch - Project branch name for ref scoping. Defaults to 'main'.
  */
 export async function saveVersion(
   shadow: ShadowHandle,
-  projectRoot: string,
+  projectRoot: string | null,
   contentRoot: string,
   writers: WriterIdentity[],
   branch = 'main',
 ): Promise<SaveVersionResult> {
-  const projectGit = simpleGit({ baseDir: projectRoot, timeout: { block: GIT_TIMEOUT_MS } });
   const sg = shadowGit(shadow);
-  const tmpIndex = resolve(projectRoot, '.git/index-save-version');
 
-  try {
-    // ── Step 1: Create project repo commit ──
+  // ── Step 1: Create project repo commit (integrated mode only) ──
+  let projectCommitSha: string | null = null;
 
-    // Seed from current HEAD
+  if (projectRoot) {
+    const projectGit = simpleGit({ baseDir: projectRoot, timeout: { block: GIT_TIMEOUT_MS } });
+    const tmpIndex = resolve(projectRoot, '.git/index-save-version');
+
     try {
-      const headTree = (await projectGit.raw('rev-parse', 'HEAD^{tree}')).trim();
-      await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('read-tree', headTree);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('unknown revision') || msg.includes('bad revision')) {
-        // Expected: empty repo — start with empty index
-      } else {
-        console.error('[shadow-repo] Unexpected error reading HEAD tree:', e);
-        throw e;
-      }
-    }
-
-    // Stage current content
-    await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('add', contentRoot);
-    const treeSha = (await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('write-tree')).trim();
-
-    // Find parent
-    let parentSha: string | null = null;
-    try {
-      parentSha = (await projectGit.raw('rev-parse', 'HEAD')).trim();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
-        console.error('[shadow-repo] Unexpected error resolving HEAD:', e);
-        throw e;
-      }
-      // Expected: first commit
-    }
-
-    // Build commit message with co-authored-by trailers
-    const primaryWriter = writers[0] ?? {
-      name: 'openknowledge',
-      email: 'noreply@openknowledge.local',
-    };
-    const coAuthors = writers
-      .slice(1)
-      .map((w) => `Co-authored-by: ${w.name} <${w.email}>`)
-      .join('\n');
-
-    const message = coAuthors
-      ? `Save Version: content update\n\n${coAuthors}`
-      : 'Save Version: content update';
-
-    const commitArgs = ['commit-tree', treeSha, '-m', message];
-    if (parentSha) commitArgs.push('-p', parentSha);
-
-    const projectCommitSha = (
-      await projectGit
-        .env({
-          GIT_INDEX_FILE: tmpIndex,
-          GIT_AUTHOR_NAME: primaryWriter.name,
-          GIT_AUTHOR_EMAIL: primaryWriter.email,
-          GIT_COMMITTER_NAME: primaryWriter.name,
-          GIT_COMMITTER_EMAIL: primaryWriter.email,
-        })
-        .raw(...commitArgs)
-    ).trim();
-
-    // Advance HEAD atomically — fail if HEAD was concurrently modified
-    if (parentSha) {
-      await projectGit.raw('update-ref', 'HEAD', projectCommitSha, parentSha);
-    } else {
-      await projectGit.raw('update-ref', 'HEAD', projectCommitSha);
-    }
-
-    // ── Step 2: Checkpoint ref in shadow with full tree snapshot ──
-
-    const shadowTmpIndex = resolve(shadow.gitDir, 'index-checkpoint');
-    try {
-      await sg
-        .env({
-          GIT_DIR: shadow.gitDir,
-          GIT_WORK_TREE: shadow.workTree,
-          GIT_INDEX_FILE: shadowTmpIndex,
-        })
-        .raw('add', contentRoot);
-      const shadowTreeSha = (
-        await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: shadowTmpIndex }).raw('write-tree')
-      ).trim();
-
-      // Collect ALL writer WIP refs + upstream ref as checkpoint parents
-      // (preserves all per-writer chains across the checkpoint boundary)
-      const shadowParentShas: string[] = [];
-      for (const w of [...writers, { id: 'upstream' }]) {
-        try {
-          const sha = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
-          shadowParentShas.push(sha);
-        } catch {
-          // ref doesn't exist for this writer — skip
-        }
-      }
-      // Deduplicate (upstream may alias a writer ref in edge cases)
-      const uniqueParents = [...new Set(shadowParentShas)];
-
-      // Fallback: no WIP activity since last checkpoint — parent on the latest checkpoint
-      if (uniqueParents.length === 0) {
-        try {
-          const refs = (
-            await sg.raw(
-              'for-each-ref',
-              '--sort=-creatordate',
-              '--format=%(objectname)',
-              `refs/checkpoints/${branch}/`,
-            )
-          )
-            .trim()
-            .split('\n')
-            .filter(Boolean);
-          if (refs[0]) uniqueParents.push(refs[0]);
-        } catch {
-          // no prior checkpoints — this is the first one, parentless is fine
-        }
-      }
-
-      const checkpointArgs = [
-        'commit-tree',
-        shadowTreeSha,
-        '-m',
-        `checkpoint: Save Version → project commit ${projectCommitSha.slice(0, 8)}`,
-      ];
-      for (const p of uniqueParents) {
-        checkpointArgs.push('-p', p);
-      }
-
-      const checkpointSha = (
-        await sg
-          .env({
-            GIT_DIR: shadow.gitDir,
-            GIT_AUTHOR_NAME: 'openknowledge',
-            GIT_AUTHOR_EMAIL: 'noreply@openknowledge.local',
-            GIT_COMMITTER_NAME: 'openknowledge',
-            GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
-          })
-          .raw(...checkpointArgs)
-      ).trim();
-
-      const checkpointRef = `refs/checkpoints/${branch}/${projectCommitSha}`;
-      await sg.raw('update-ref', checkpointRef, checkpointSha);
-
-      // ── Step 3: Reset WIP refs (branch-scoped) ──
-      // Delete per-writer WIP refs so subsequent WIP tracks only post-checkpoint deltas
-      for (const w of writers) {
-        try {
-          await sg.raw('update-ref', '-d', `refs/wip/${branch}/${w.id}`);
-        } catch {
-          // ref may not exist
-        }
-      }
-      // Also reset upstream WIP for this branch
+      // Seed from current HEAD
       try {
-        await sg.raw('update-ref', '-d', `refs/wip/${branch}/upstream`);
-      } catch {
-        // may not exist
+        const headTree = (await projectGit.raw('rev-parse', 'HEAD^{tree}')).trim();
+        await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('read-tree', headTree);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.includes('unknown revision') || msg.includes('bad revision')) {
+          // Expected: empty repo — start with empty index
+        } else {
+          console.error('[shadow-repo] Unexpected error reading HEAD tree:', e);
+          throw e;
+        }
       }
 
-      return { projectCommitSha, checkpointRef };
+      // Stage current content
+      await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('add', contentRoot);
+      const treeSha = (await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('write-tree')).trim();
+
+      // Find parent
+      let parentSha: string | null = null;
+      try {
+        parentSha = (await projectGit.raw('rev-parse', 'HEAD')).trim();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes('unknown revision') && !msg.includes('bad revision')) {
+          console.error('[shadow-repo] Unexpected error resolving HEAD:', e);
+          throw e;
+        }
+        // Expected: first commit
+      }
+
+      // Build commit message with co-authored-by trailers
+      const primaryWriter = writers[0] ?? {
+        name: 'openknowledge',
+        email: 'noreply@openknowledge.local',
+      };
+      const coAuthors = writers
+        .slice(1)
+        .map((w) => `Co-authored-by: ${w.name} <${w.email}>`)
+        .join('\n');
+
+      const message = coAuthors
+        ? `Save Version: content update\n\n${coAuthors}`
+        : 'Save Version: content update';
+
+      const commitArgs = ['commit-tree', treeSha, '-m', message];
+      if (parentSha) commitArgs.push('-p', parentSha);
+
+      projectCommitSha = (
+        await projectGit
+          .env({
+            GIT_INDEX_FILE: tmpIndex,
+            GIT_AUTHOR_NAME: primaryWriter.name,
+            GIT_AUTHOR_EMAIL: primaryWriter.email,
+            GIT_COMMITTER_NAME: primaryWriter.name,
+            GIT_COMMITTER_EMAIL: primaryWriter.email,
+          })
+          .raw(...commitArgs)
+      ).trim();
+
+      // Advance HEAD atomically — fail if HEAD was concurrently modified
+      if (parentSha) {
+        await projectGit.raw('update-ref', 'HEAD', projectCommitSha, parentSha);
+      } else {
+        await projectGit.raw('update-ref', 'HEAD', projectCommitSha);
+      }
     } finally {
       try {
-        rmSync(shadowTmpIndex);
+        rmSync(tmpIndex);
       } catch {
         // ignore
       }
     }
+  }
+
+  // ── Step 2: Checkpoint ref in shadow with full tree snapshot ──
+
+  const shadowTmpIndex = resolve(shadow.gitDir, 'index-checkpoint');
+  try {
+    await sg
+      .env({
+        GIT_DIR: shadow.gitDir,
+        GIT_WORK_TREE: shadow.workTree,
+        GIT_INDEX_FILE: shadowTmpIndex,
+      })
+      .raw('add', contentRoot);
+    const shadowTreeSha = (
+      await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: shadowTmpIndex }).raw('write-tree')
+    ).trim();
+
+    // Collect ALL writer WIP refs + upstream ref as checkpoint parents
+    // (preserves all per-writer chains across the checkpoint boundary)
+    const shadowParentShas: string[] = [];
+    for (const w of [...writers, { id: 'upstream' }]) {
+      try {
+        const sha = (await sg.raw('rev-parse', `refs/wip/${branch}/${w.id}`)).trim();
+        shadowParentShas.push(sha);
+      } catch {
+        // ref doesn't exist for this writer — skip
+      }
+    }
+    // Deduplicate (upstream may alias a writer ref in edge cases)
+    const uniqueParents = [...new Set(shadowParentShas)];
+
+    // Fallback: no WIP activity since last checkpoint — parent on the latest checkpoint
+    if (uniqueParents.length === 0) {
+      try {
+        const refs = (
+          await sg.raw(
+            'for-each-ref',
+            '--sort=-creatordate',
+            '--format=%(objectname)',
+            `refs/checkpoints/${branch}/`,
+          )
+        )
+          .trim()
+          .split('\n')
+          .filter(Boolean);
+        if (refs[0]) uniqueParents.push(refs[0]);
+      } catch {
+        // no prior checkpoints — this is the first one, parentless is fine
+      }
+    }
+
+    const checkpointLabel = projectCommitSha
+      ? `checkpoint: Save Version → project commit ${projectCommitSha.slice(0, 8)}`
+      : 'checkpoint: Save Version (standalone)';
+
+    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', checkpointLabel];
+    for (const p of uniqueParents) {
+      checkpointArgs.push('-p', p);
+    }
+
+    const checkpointSha = (
+      await sg
+        .env({
+          GIT_DIR: shadow.gitDir,
+          GIT_AUTHOR_NAME: 'openknowledge',
+          GIT_AUTHOR_EMAIL: 'noreply@openknowledge.local',
+          GIT_COMMITTER_NAME: 'openknowledge',
+          GIT_COMMITTER_EMAIL: 'noreply@openknowledge.local',
+        })
+        .raw(...checkpointArgs)
+    ).trim();
+
+    // Integrated: ref named after project commit SHA
+    // Standalone: ref named after the shadow commit's own SHA
+    const checkpointRef = projectCommitSha
+      ? `refs/checkpoints/${branch}/${projectCommitSha}`
+      : `refs/checkpoints/${branch}/${checkpointSha}`;
+
+    await sg.raw('update-ref', checkpointRef, checkpointSha);
+
+    // ── Step 3: Reset WIP refs (branch-scoped) ──
+    // Delete per-writer WIP refs so subsequent WIP tracks only post-checkpoint deltas
+    for (const w of writers) {
+      try {
+        await sg.raw('update-ref', '-d', `refs/wip/${branch}/${w.id}`);
+      } catch {
+        // ref may not exist
+      }
+    }
+    // Also reset upstream WIP for this branch
+    try {
+      await sg.raw('update-ref', '-d', `refs/wip/${branch}/upstream`);
+    } catch {
+      // may not exist
+    }
+
+    return { projectCommitSha, checkpointRef };
   } finally {
     try {
-      rmSync(tmpIndex);
+      rmSync(shadowTmpIndex);
     } catch {
       // ignore
     }
