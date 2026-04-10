@@ -1411,22 +1411,32 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           return;
         }
       } else {
-        // from omitted — use current Y.Doc content
-        const dc = await sessionManager.getSession(docName);
-        fromContent = dc.document.getText('source').toString();
+        // from omitted — read current Y.Doc content directly (avoids creating an agent session)
+        const doc = hocuspocus.documents.get(docName);
+        if (!doc) {
+          json(res, 409, { error: 'Document is not currently open — open it in the editor first' });
+          return;
+        }
+        fromContent = doc.getText('source').toString();
       }
 
-      const patch = createPatch(docName, fromContent, toContent);
+      const changes = diffLines(fromContent, toContent);
 
-      // Count additions and deletions from the unified diff
+      // Build full-file line array: every line annotated as added/removed/unchanged
+      const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
       let additions = 0;
       let deletions = 0;
-      for (const line of patch.split('\n')) {
-        if (line.startsWith('+') && !line.startsWith('+++')) additions++;
-        else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
+      for (const change of changes) {
+        const changeLines = change.value.replace(/\n$/, '').split('\n');
+        const type = change.added ? 'added' : change.removed ? 'removed' : 'unchanged';
+        for (const text of changeLines) {
+          lines.push({ type, text });
+        }
+        if (change.added) additions += changeLines.length;
+        if (change.removed) deletions += changeLines.length;
       }
 
-      json(res, 200, { diff: patch, additions, deletions });
+      json(res, 200, { lines, additions, deletions });
     } catch (e) {
       console.error('[diff]', e);
       const message = e instanceof Error ? e.message : String(e);

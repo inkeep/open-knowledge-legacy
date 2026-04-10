@@ -14,9 +14,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type EntryType = 'checkpoint' | 'wip' | 'upstream';
+export type EntryType = 'checkpoint' | 'wip' | 'upstream';
 
-interface TimelineEntry {
+export interface TimelineEntry {
   sha: string;
   timestamp: string;
   author: string;
@@ -35,7 +35,7 @@ interface TimelinePanelProps {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatRelativeTime(isoString: string): string {
+export function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -54,6 +54,13 @@ function formatRelativeTime(isoString: string): string {
   const days = Math.floor(diffSec / 86400);
   if (days < 7) return `${days} days ago`;
   return date.toLocaleDateString();
+}
+
+/** Map internal author names to user-friendly display names. */
+export function displayAuthor(entry: TimelineEntry): string {
+  if (entry.type === 'upstream') return 'Upstream sync';
+  if (entry.author === 'openknowledge-server' || entry.author === 'server') return 'Auto-save';
+  return entry.author;
 }
 
 /** Dot color by entry type / author heuristic. */
