@@ -1,5 +1,4 @@
-import type { ReactNode } from 'react';
-import { createContext, use, useEffect, useRef, useState } from 'react';
+import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 
 interface PageListContextValue {
   /** Set of known docNames (filename without .md extension). */
@@ -24,17 +23,19 @@ async function loadPages(): Promise<Set<string>> {
 
 export function PageListProvider({ children }: { children: ReactNode }) {
   const [pages, setPages] = useState<Set<string>>(new Set());
-  const fetchRef = useRef(() => {
+
+  function refetch() {
     loadPages()
       .then(setPages)
       .catch(() => {});
-  });
+  }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch captures only stable setPages
   useEffect(() => {
-    fetchRef.current();
+    refetch();
   }, []);
 
-  return <PageListContext value={{ pages, refetch: fetchRef.current }}>{children}</PageListContext>;
+  return <PageListContext value={{ pages, refetch }}>{children}</PageListContext>;
 }
 
 export function usePageList(): PageListContextValue {
