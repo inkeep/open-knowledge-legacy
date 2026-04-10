@@ -6,7 +6,7 @@
  * `bun run dev` starts everything in a single process.
  */
 import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
@@ -16,6 +16,7 @@ import {
   createPersistenceExtension,
   startWatcher,
 } from '@inkeep/open-knowledge-server';
+import sirv from 'sirv';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 
@@ -31,6 +32,7 @@ const CONTENT_DIR = resolve(
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
+mkdirSync(join(CONTENT_DIR, 'uploads'), { recursive: true });
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -97,6 +99,9 @@ export function hocuspocusPlugin(): Plugin {
           });
         }
       });
+
+      // Serve uploaded images
+      server.middlewares.use('/uploads', sirv(join(CONTENT_DIR, 'uploads'), { dev: true }));
 
       // Wire up API endpoints via Vite middleware
       server.middlewares.use(async (req, res, next) => {

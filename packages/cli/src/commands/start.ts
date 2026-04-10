@@ -2,7 +2,7 @@
  * `open-knowledge start` command — launches standalone Hocuspocus server
  * with optional static React app serving.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { createServer as createHttpServer } from 'node:http';
 import { resolve } from 'node:path';
 import { createServer, getLogger } from '@inkeep/open-knowledge-server';
@@ -43,6 +43,8 @@ export function startCommand(getConfig: () => Config): Command {
         process.exit(1);
       }
 
+      mkdirSync(resolve(contentDir, 'uploads'), { recursive: true });
+
       const { hocuspocus, destroy } = createServer({
         contentDir,
         projectDir: cwd,
@@ -79,6 +81,8 @@ export function startCommand(getConfig: () => Config): Command {
         ? sirv(assetDir, { single: true, gzip: true, immutable: true })
         : null;
 
+      const uploadsHandler = sirv(resolve(contentDir, 'uploads'), { dev: false });
+
       if (assetDir) {
         log.info({ assetDir }, 'Serving static assets');
       }
@@ -98,7 +102,13 @@ export function startCommand(getConfig: () => Config): Command {
           return;
         }
 
-        // Priority 2: Static file serving (SPA fallback)
+        // Priority 2: Uploaded images
+        if (url?.startsWith('/uploads/')) {
+          uploadsHandler(req, res);
+          return;
+        }
+
+        // Priority 3: Static file serving (SPA fallback)
         if (staticHandler) {
           staticHandler(req, res);
           return;

@@ -5,10 +5,19 @@
  * the standalone Server and the Vite dev plugin.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resolve } from 'node:path';
+import { extname, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import busboy from 'busboy';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
@@ -19,6 +28,107 @@ import { getMetrics } from './metrics.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+]);
+
+function sanitizeFilename(name: string): string {
+  // Strip any path separators first
+  const base = name.replace(/[/\\]/g, '');
+  const ext = extname(base);
+  const stem = base.slice(0, base.length - ext.length);
+  // Keep only safe characters in stem and extension
+  const safeStem = stem.replace(/[^a-zA-Z0-9_\-.]/g, '_') || 'upload';
+  const safeExt = ext.replace(/[^a-zA-Z0-9_.]/g, '');
+  return safeStem + safeExt;
+}
+
+function resolveUploadPath(uploadsDir: string, sanitized: string): string {
+  const ext = extname(sanitized);
+  const stem = sanitized.slice(0, sanitized.length - ext.length);
+  let candidate = resolve(uploadsDir, sanitized);
+  let n = 1;
+  while (existsSync(candidate)) {
+    candidate = resolve(uploadsDir, `${stem}-${n}${ext}`);
+    n++;
+  }
+  return candidate;
+}
+
+interface UploadResult {
+  filename: string;
+  mimeType: string;
+  buffer: Buffer;
+}
+
+function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadResult> {
+  return new Promise((resolve, reject) => {
+    let bb: ReturnType<typeof busboy>;
+    try {
+      bb = busboy({ headers: req.headers, limits: { fileSize: maxBytes, files: 1 } });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    let settled = false;
+    let filename = 'upload';
+    let mimeType = '';
+    const chunks: Buffer[] = [];
+    let exceeded = false;
+
+    bb.on('file', (_fieldname, file, info) => {
+      filename = info.filename || 'upload';
+      mimeType = info.mimeType || '';
+
+      file.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+
+      file.on('limit', () => {
+        exceeded = true;
+        req.unpipe(bb);
+        if (!settled) {
+          settled = true;
+          reject(new Error('Payload too large'));
+        }
+      });
+
+      file.on('error', (err) => {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      });
+    });
+
+    bb.on('finish', () => {
+      if (!settled) {
+        if (exceeded) {
+          settled = true;
+          reject(new Error('Payload too large'));
+          return;
+        }
+        settled = true;
+        resolve({ filename, mimeType, buffer: Buffer.concat(chunks) });
+      }
+    });
+
+    bb.on('error', (err) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+
+    req.pipe(bb);
+  });
+}
 
 export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
@@ -627,9 +737,54 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     res.end(content);
   }
 
+  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    let uploadResult: UploadResult | undefined;
+    try {
+      uploadResult = await readUploadBody(req, MAX_UPLOAD_BYTES);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message === 'Payload too large') {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+      } else {
+        json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
+      }
+      return;
+    }
+
+    const { filename, mimeType, buffer } = uploadResult;
+
+    if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+      json(res, 400, { ok: false, error: `Unsupported MIME type: ${mimeType}` });
+      return;
+    }
+
+    const sanitized = sanitizeFilename(filename);
+    const uploadsDir = resolve(contentDir, 'uploads');
+    mkdirSync(uploadsDir, { recursive: true });
+    const destPath = resolveUploadPath(uploadsDir, sanitized);
+    const destFilename = destPath.slice(uploadsDir.length + 1); // just the filename portion
+
+    try {
+      writeFileSync(destPath, buffer);
+      console.log(`[upload] ok ${destFilename} ${buffer.length}`);
+      json(res, 200, { ok: true, src: `uploads/${destFilename}` });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[upload] error ${destFilename} ${buffer.length} ${message}`);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/agent-write': handleAgentWrite,
+    '/api/upload-image': handleUploadImage,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
     '/api/agent-undo-status': handleAgentUndoStatus,
