@@ -72,6 +72,7 @@ function refreshMetadata(documentName: string, doc: Y.Doc): void {
       fileMode: state.fileMode,
       syncConflict: state.conflictMessage,
       filePath: state.filePath,
+      canonicalRevision: String(state.docRev),
     });
   }, 'server-metadata');
 }
@@ -84,6 +85,7 @@ function markConflict(documentName: string, doc: Y.Doc, message: string): void {
       fileMode: state.fileMode,
       syncConflict: message,
       filePath: state.filePath,
+      canonicalRevision: String(state.docRev),
     });
   }, 'server-metadata');
 }
@@ -98,6 +100,7 @@ function importDiskFile(documentName: string, document: Y.Doc, raw: string): voi
         rawSource: raw,
         syncConflict: '',
         filePath: state.filePath,
+        canonicalRevision: String(state.docRev),
       });
     }, 'server-metadata');
     state.diskRawHash = sha1(raw);
@@ -105,6 +108,7 @@ function importDiskFile(documentName: string, document: Y.Doc, raw: string): voi
     return;
   }
 
+  state.docRev += 1;
   const xmlFragment = document.getXmlFragment('default');
   state.conflictMessage = '';
   document.transact(() => {
@@ -114,11 +118,11 @@ function importDiskFile(documentName: string, document: Y.Doc, raw: string): voi
       rawSource: '',
       syncConflict: '',
       filePath: state.filePath,
+      canonicalRevision: String(state.docRev),
     });
   }, SERVER_ORIGIN_DISK_IMPORT);
   state.diskRawHash = sha1(raw);
   state.lastWrittenRawHash = '';
-  state.docRev += 1;
   state.savedDocRev = state.docRev;
 }
 
@@ -177,11 +181,12 @@ export const hocuspocus = new Hocuspocus({
         console.log(`[hocuspocus] Loaded ${documentName} from ${state.filePath}`);
       },
 
-      async onChange({ documentName, transactionOrigin }) {
+      async onChange({ document, documentName, transactionOrigin }) {
         if (transactionOrigin === 'server-metadata') return;
 
         const state = getSyncState(documentName);
         if (transactionOrigin !== SERVER_ORIGIN_DISK_IMPORT) state.docRev += 1;
+        refreshMetadata(documentName, document);
       },
 
       async onStoreDocument({ document, documentName }) {
