@@ -64,9 +64,11 @@ describe('smoke', () => {
   });
 
   test('server starts, client connects, basic round-trip works', async () => {
+    await testReset(server.port);
+    await wait(300);
     client = await createTestClient(server.port);
     await agentWriteMd(server.port, '# Hello World');
-    await wait(500);
+    await pollUntil(() => client.ytext.toString().includes('Hello World'), 5000);
     expect(client.ytext.toString()).toContain('Hello World');
     assertBridgeInvariant(client.ytext, client.fragment);
   });
