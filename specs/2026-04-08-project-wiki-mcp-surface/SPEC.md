@@ -489,6 +489,8 @@ Phase 6 (extensions): /consolidate, status tool, GitHub Actions
 | D19 | `/ingest` is raw capture only — no analysis | P | LOCKED | No | Separation of concerns: `/ingest` fetches, `/research` analyzes. Raw sources preserved as reference. | Conversation with Tim |
 | D20 | `/research` calls `/ingest` to gather sources before analyzing | T | DIRECTED | No | Skills compose: `/research` uses `/ingest` for capture, then does its own analysis | Conversation with Tim |
 | D21 | Spec conversations and exploratory work go to `research/`, promote to `articles/` when decisions solidify | P | DIRECTED | No | Research is provisional; articles are canonical. Same lifecycle. | Conversation with Tim |
+| D22 | Hand-rolled frontmatter parsing using `yaml` package — no `front-matter` or `gray-matter` library | T | LOCKED | No | All frontmatter libraries depend on `js-yaml`, which would duplicate the `yaml` package already in the tree. Parse + serialize is ~30 lines. | [evidence/frontmatter-library-comparison.md](evidence/frontmatter-library-comparison.md) |
+| D23 | Standardize on `yaml` (Eemeli Aro) over `js-yaml` for all YAML parsing | T | LOCKED | No | Built-in TS types, YAML 1.2 spec, comment round-tripping, actively maintained. Already in dependency tree. | [evidence/js-yaml-vs-yaml-comparison.md](evidence/js-yaml-vs-yaml-comparison.md) |
 
 ## 11) Open questions
 
