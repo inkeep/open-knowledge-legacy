@@ -33,7 +33,8 @@ async function getYText(page: import('@playwright/test').Page): Promise<string> 
 
 test.beforeEach(async ({ page }) => {
   // Reset server state and navigate
-  await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
   await page.goto(BASE);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');

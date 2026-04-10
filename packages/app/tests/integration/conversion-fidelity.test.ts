@@ -28,24 +28,13 @@ import {
   readTestDoc,
   schema,
   serializeFragment,
+  stripTrailingWhitespace,
   type TestServer,
   testReset,
-  wait as waitMs,
+  wait,
 } from './test-harness';
 
 // ─── Helpers ───
-
-function wait(ms = 400): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function stripTrailingWhitespace(s: string): string {
-  return s
-    .split('\n')
-    .map((l) => l.trimEnd())
-    .join('\n')
-    .replace(/\n+$/, '');
-}
 
 /** Markdown round-trip: serialize(parse(md)) */
 function mdRoundTrip(md: string): string {
@@ -304,7 +293,7 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
   for (const { name, input } of DISK_CONSTRUCTS) {
     test(name, async () => {
       await testReset(server.port);
-      await waitMs(300);
+      await wait(300);
 
       // Connect client and write content via WYSIWYG (XmlFragment)
       const client = await createTestClient(server.port);
@@ -334,7 +323,7 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
 
       // Now test reload: reset doc, write content to disk, reconnect client
       await testReset(server.port);
-      await waitMs(300);
+      await wait(300);
       writeFileSync(join(server.contentDir, 'test-doc.md'), input, 'utf-8');
 
       const client2 = await createTestClient(server.port);
@@ -397,13 +386,13 @@ describe('agent-as-file-editor fidelity', () => {
     ].join('\n');
 
     await testReset(server.port);
-    await waitMs(300);
+    await wait(300);
 
     // Write complex markdown to disk (simulating agent file edit)
     writeFileSync(join(server.contentDir, 'test-doc.md'), complexMd, 'utf-8');
 
     // Connect client and wait for file watcher to propagate
-    await waitMs(500);
+    await wait(500);
     const client = await createTestClient(server.port);
     try {
       await pollUntil(() => client.ytext.toString().includes('Agent File Edit'), 10_000);
@@ -425,7 +414,7 @@ describe('agent-as-file-editor fidelity', () => {
         updateYFragment(client.doc, client.fragment, userNode, meta);
       });
 
-      await waitMs(500);
+      await wait(500);
 
       // Both agent and user content should coexist
       // (updateYFragment replaces tree, but user content replaces agent content in this test)
@@ -438,7 +427,7 @@ describe('agent-as-file-editor fidelity', () => {
 
   test('agent writes via API + user writes coexist', async () => {
     await testReset(server.port);
-    await waitMs(300);
+    await wait(300);
 
     const client = await createTestClient(server.port);
     try {
@@ -446,11 +435,11 @@ describe('agent-as-file-editor fidelity', () => {
       client.doc.transact(() => {
         client.ytext.insert(0, '# User Content\n\nTyped by user.');
       });
-      await waitMs(500);
+      await wait(500);
 
       // Agent writes via API
       await agentWriteMd(server.port, '## Agent Content\n\nWritten by agent.');
-      await waitMs(500);
+      await wait(500);
 
       // Both should coexist in Y.Text
       expect(client.ytext.toString()).toContain('User Content');

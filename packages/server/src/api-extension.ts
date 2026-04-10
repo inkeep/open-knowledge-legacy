@@ -21,6 +21,13 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /**
+   * When true, register test-only routes (currently `/api/test-reset`).
+   * Defaults to `false` — these routes allow any client to destroy document
+   * state and must never be exposed in production. Enable only in tests and
+   * local dev mode.
+   */
+  enableTestRoutes?: boolean;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -42,7 +49,7 @@ function json(res: ServerResponse, status: number, data: unknown): void {
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
-  const { hocuspocus, sessionManager, contentDir } = options;
+  const { hocuspocus, sessionManager, contentDir, enableTestRoutes = false } = options;
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
@@ -337,8 +344,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-undo-status': handleAgentUndoStatus,
     '/api/agent-undo': handleAgentUndo,
     '/api/agent-redo': handleAgentRedo,
-    '/api/test-reset': handleTestReset,
   };
+
+  if (enableTestRoutes) {
+    routes['/api/test-reset'] = handleTestReset;
+  }
 
   return {
     priority: 100, // Higher priority — API routes run before static file serving

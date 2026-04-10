@@ -27,7 +27,8 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
   page.on('pageerror', (e) => logs.push({ type: 'uncaught', text: e.message }));
 
   // 2. Reset server state
-  await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+  const resetRes = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
 
   // 3. Navigate + wait for singleton provider
   await page.goto(BASE);

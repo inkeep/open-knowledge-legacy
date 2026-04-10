@@ -70,6 +70,7 @@ export async function createTestServer(): Promise<TestServer> {
     debounce: 200,
     maxDebounce: 1000,
     gitEnabled: false,
+    enableTestRoutes: true,
   });
 
   // Wire up HTTP server + WebSocket (same pattern as packages/cli/src/commands/start.ts)

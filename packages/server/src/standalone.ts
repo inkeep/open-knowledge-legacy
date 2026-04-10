@@ -16,6 +16,12 @@ export interface ServerOptions {
   gitEnabled?: boolean;
   commitDebounceMs?: number;
   wipRef?: string;
+  /**
+   * When true, register test-only routes (currently `/api/test-reset`).
+   * Defaults to `false` — these routes allow any client to destroy document
+   * state and must never be exposed in production. Enable only in tests.
+   */
+  enableTestRoutes?: boolean;
 }
 
 export interface ServerInstance {
@@ -34,6 +40,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     gitEnabled = true,
     commitDebounceMs = 30_000,
     wipRef = 'refs/wip/main',
+    enableTestRoutes = false,
   } = options;
 
   const persistenceOpts: PersistenceOptions = {
@@ -60,6 +67,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus,
     sessionManager,
     contentDir,
+    enableTestRoutes,
   });
   hocuspocus.configuration.extensions.push(apiExtension);
 

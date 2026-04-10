@@ -48,11 +48,14 @@ const sessionManager = new AgentSessionManager(hocuspocus);
 
 // Add API extension — push directly rather than using hocuspocus.configure()
 // which replaces the extensions array via spread, losing the persistence extension.
+// enableTestRoutes is safe here: this plugin only runs under `vite dev` (local
+// development), never in production builds. E2E tests rely on /api/test-reset.
 hocuspocus.configuration.extensions.push(
   createApiExtension({
     hocuspocus,
     sessionManager,
     contentDir: CONTENT_DIR,
+    enableTestRoutes: true,
   }),
 );
 
