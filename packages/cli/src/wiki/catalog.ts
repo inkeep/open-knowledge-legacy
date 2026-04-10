@@ -1,8 +1,20 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
+import { z } from 'zod';
 import { parseFrontmatter, serializeFrontmatter } from '../utils/frontmatter.ts';
 import { CATALOG_FILENAME } from './constants.ts';
+
+const ArticleFrontmatter = z.object({
+  title: z.string().optional(),
+  description: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+});
+
+const IndexFrontmatter = z.object({
+  title: z.string().optional(),
+  description: z.string().optional(),
+});
 
 export interface ArticleMeta {
   title: string;
@@ -36,13 +48,13 @@ interface RootSection {
 
 function extractArticleMeta(filePath: string, relativePath: string): ArticleMeta {
   const content = readFileSync(filePath, 'utf-8');
-  const fm = parseFrontmatter(content);
+  const fm = parseFrontmatter(content, ArticleFrontmatter);
   const fileName = basename(filePath, '.md');
 
   return {
-    title: (fm?.title as string) || fileName,
-    description: (fm?.description as string) || '',
-    tags: Array.isArray(fm?.tags) ? (fm.tags as string[]) : [],
+    title: fm?.title ?? fileName,
+    description: fm?.description ?? '',
+    tags: fm?.tags ?? [],
     relativePath,
   };
 }
@@ -57,12 +69,7 @@ export function readIndexMeta(dirPath: string): IndexMeta | null {
   const indexPath = join(dirPath, CATALOG_FILENAME);
   if (!existsSync(indexPath)) return null;
   const content = readFileSync(indexPath, 'utf-8');
-  const fm = parseFrontmatter(content);
-  if (!fm) return null;
-  return {
-    title: typeof fm.title === 'string' ? fm.title : undefined,
-    description: typeof fm.description === 'string' ? fm.description : undefined,
-  };
+  return parseFrontmatter(content, IndexFrontmatter);
 }
 
 function countArticles(dirPath: string): number {
