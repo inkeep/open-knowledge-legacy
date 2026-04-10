@@ -66,8 +66,14 @@ export function startCommand(getConfig: () => Config): Command {
       process.on('SIGTERM', shutdown);
 
       // Static asset serving — locate built React app
-      // Convention: ../app/dist/ relative to CLI package, or search common locations
-      const assetPaths = [resolve(cwd, 'packages/app/dist'), resolve(cwd, 'dist')];
+      // Search relative to CLI package (installed/linked), then relative to cwd (monorepo dev)
+      const cliDir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
+      const assetPaths = [
+        resolve(cliDir, '../../app/dist'), // monorepo: packages/cli/src → packages/app/dist
+        resolve(cliDir, '../../../app/dist'), // monorepo from dist: packages/cli/dist → packages/app/dist
+        resolve(cwd, 'packages/app/dist'), // cwd-relative monorepo
+        resolve(cwd, 'dist'), // cwd-relative standalone
+      ];
       const assetDir = assetPaths.find((p) => existsSync(p));
       const staticHandler = assetDir
         ? sirv(assetDir, { single: true, gzip: true, immutable: true })

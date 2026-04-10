@@ -134,21 +134,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   // Lives inside the closure so multiple server instances don't share mutable state.
   const frontmatterCache = new Map<string, string>();
 
-  // Per-instance reconciled base — last known-good markdown for each document.
-  // Updated on load, store, and reconciliation. Used as the merge base
-  // for three-way reconciliation.
-  const reconciledBase = new Map<string, string>();
-
-  // Per-instance batch flag — gates L1 writes and L2 commits during coordinated git operations.
-  let batchInProgress = false;
-
-  function _setBatchInProgress(value: boolean): void {
-    batchInProgress = value;
-  }
-
-  function _isBatchInProgress(): boolean {
-    return batchInProgress;
-  }
+  // reconciledBase and batchInProgress use the module-level systems
+  // (reconciledBaseByBranch via get/setReconciledBase, and isBatchInProgress)
+  // so that standalone.ts and persistence stay in sync.
 
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 30_000;
@@ -254,7 +242,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   function scheduleGitCommit(): void {
     if (!gitEnabled) return;
-    if (batchInProgress) return;
+    if (isBatchInProgress()) return;
     if (gitCommitTimer) clearTimeout(gitCommitTimer);
     gitCommitTimer = setTimeout(() => {
       gitCommitTimer = null;
@@ -325,11 +313,11 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       }
 
       // Initialize reconciled base
-      reconciledBase.set(documentName, raw);
+      setReconciledBase(documentName, raw);
     },
 
     async onStoreDocument({ document, documentName }) {
-      if (batchInProgress) return;
+      if (isBatchInProgress()) return;
 
       const xmlFragment = document.getXmlFragment('default');
       const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
@@ -360,7 +348,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       console.log(`[persistence] Wrote ${filePath} (${markdown.length} bytes)`);
 
       // Update reconciled base after successful store
-      reconciledBase.set(documentName, markdown);
+      setReconciledBase(documentName, markdown);
 
       scheduleGitCommit();
     },
