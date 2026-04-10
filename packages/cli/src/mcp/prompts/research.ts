@@ -1,5 +1,5 @@
 /**
- * `research` MCP prompt — analyze a topic by gathering external sources,
+ * `research` MCP workflow tool — analyze a topic by gathering external sources,
  * reading them alongside existing wiki content, and writing provisional
  * findings to .open-knowledge/research/.
  *
@@ -7,12 +7,13 @@
  * trade-offs, and open questions at a point in time. Promoted to articles/
  * only when decisions solidify.
  *
- * This prompt body is modeled after the /research skill definition that was
+ * This tool body is modeled after the /research skill definition that was
  * previously shipped as .claude/skills/research/SKILL.md — restored and
  * adapted from git history (commit 803fda5).
  */
 import { z } from 'zod';
-import { type PromptRegister, userMessage } from './shared.ts';
+import type { ServerInstance } from './shared.ts';
+import { textResult } from './shared.ts';
 
 function buildBody(topic: string): string {
   return `Research this topic and write provisional findings to \`.open-knowledge/research/\`. Research is **provisional, not canonical** — it captures findings, trade-offs, and open questions at a point in time. Promoting to \`articles/\` is a deliberate later step.
@@ -44,7 +45,7 @@ If the topic is itself a URL, treat that URL as the anchor source and widen from
 
 ### 2. Gather sources via \`ingest\`
 
-Invoke the \`ingest\` prompt (or follow its workflow manually — fetch the source and save it to \`.open-knowledge/external-sources/\`) for each relevant URL, paper, or document. **Typical research pulls 3–8 sources.** Too few and the synthesis is thin; too many and you'll be reading for the rest of the session.
+Invoke the \`ingest\` tool (or follow its workflow manually — fetch the source and save it to \`.open-knowledge/external-sources/\`) for each relevant URL, paper, or document. **Typical research pulls 3–8 sources.** Too few and the synthesis is thin; too many and you'll be reading for the rest of the session.
 
 **Don't skip \`ingest\`.** Raw sources must be preserved before analysis — it separates capture from interpretation and makes the research reproducible. A research article without preserved sources is just opinion; a research article with preserved sources is a trail someone else can follow.
 
@@ -153,11 +154,27 @@ Structure:
 Full convention: read \`.open-knowledge/AGENTS.md\`.`;
 }
 
-export function register(prompt: PromptRegister): void {
-  prompt(
+export const DESCRIPTION = [
+  'Analyze a topic by gathering sources via ingest and writing provisional findings to .open-knowledge/research/.',
+  'Provisional, not canonical — findings live here until decisions solidify.',
+  '',
+  '**Use when:**',
+  '- Researching a topic before committing to an approach',
+  '- Exploring a decision space or comparing alternatives',
+  '- Synthesizing multiple sources into structured analysis',
+  '- Spec conversations and exploratory work that is not yet canonical',
+  '',
+  '**Triggers on:**',
+  '- "research", "investigate", "compare options for", "analyze alternatives"',
+  '- User asks to explore trade-offs, gather evidence, or evaluate approaches',
+  '- A decision needs structured analysis grounded in external sources',
+].join('\n');
+
+export function register(server: ServerInstance): void {
+  server.tool(
     'research',
-    'Analyze a topic by gathering sources via ingest and writing provisional findings to .open-knowledge/research/. Non-canonical.',
+    DESCRIPTION,
     { topic: z.string().describe('The topic, question, or anchor URL to research') },
-    (args: { topic: string }) => userMessage(buildBody(args.topic)),
+    (args: { topic: string }) => textResult(buildBody(args.topic)),
   );
 }

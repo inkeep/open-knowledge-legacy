@@ -1,37 +1,20 @@
 /**
- * Shared helpers for MCP prompt registration.
+ * Shared helpers for MCP workflow tool registration.
  *
- * Each prompt file in this directory exports a `register(prompt)` function
- * that calls the bound `server.prompt(...)` with its name, description,
- * argument schema, and handler. `index.ts` aggregates all three into a single
- * `registerAllPrompts` function that `server.ts` calls during startup.
- *
- * This keeps `server.ts` focused on lifecycle (connect, watcher) and lets
- * each prompt's full workflow content live in its own file.
+ * Each workflow file in this directory exports a `register(server)` function
+ * that calls `server.tool(...)` with its name, description, optional arg
+ * schema, and handler. `index.ts` aggregates all three into a single
+ * `registerAllTools` function that `server.ts` calls during startup.
  */
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
-// biome-ignore lint/suspicious/noExplicitAny: MCP SDK TS2589 workaround — deeply recursive generics
-export type PromptRegister = (
-  name: string,
-  description: string,
-  // biome-ignore lint/suspicious/noExplicitAny: prompt arg schemas are client-facing, no tight type
-  argsSchema: Record<string, any>,
-  // biome-ignore lint/suspicious/noExplicitAny: handler return type is MCP-SDK-internal
-  handler: (...args: any[]) => any,
-) => void;
+export type ServerInstance = McpServer;
 
 /**
- * Wrap a single string into the message-sequence shape MCP prompts require.
- * All three current prompts emit exactly one user message; the handler closes
- * over whatever template logic it needs and returns this structure.
+ * Wrap a single string into the content shape MCP tools require for text results.
  */
-export function userMessage(text: string) {
+export function textResult(text: string) {
   return {
-    messages: [
-      {
-        role: 'user' as const,
-        content: { type: 'text' as const, text },
-      },
-    ],
+    content: [{ type: 'text' as const, text }],
   };
 }

@@ -1,17 +1,14 @@
 /**
- * MCP stdio server — thin wiki server with instructions, catalog auto-generation, and prompts.
+ * MCP stdio server — thin wiki server with instructions, catalog auto-generation, and workflow tools.
  *
- * This server exposes **no tools**. Scaffolding (`.open-knowledge/` directory creation
- * plus `.mcp.json` wiring) is a terminal-side operation handled by the CLI `init`
- * subcommand (`packages/cli/src/commands/init.ts`). That's deliberate — scaffolding
- * has to run *before* any MCP server is configured, so it can't live inside the MCP
- * server without creating a chicken-and-egg problem.
- *
- * What this server does provide:
+ * What this server provides:
  *   - Instructions on connect (the INSTRUCTIONS constant below)
  *   - Catalog auto-generation via file watcher on `.open-knowledge/`
- *   - Three cross-client workflow prompts (init-wiki, ingest, research) registered
- *     from packages/cli/src/mcp/prompts/ so this file stays focused on lifecycle
+ *   - Three workflow tools (init-wiki, ingest, research) registered from
+ *     packages/cli/src/mcp/prompts/ — each returns instructional text the agent follows
+ *
+ * Scaffolding (`.open-knowledge/` directory creation plus `.mcp.json` wiring) is a
+ * terminal-side operation handled by the CLI `init` subcommand.
  *
  * Does NOT require Hocuspocus running. Agent uses native Read/Edit/Grep tools for
  * file access. All diagnostic logging goes to stderr (stdout is the MCP wire).
@@ -25,11 +22,7 @@ import { WIKI_DIR } from '../constants.ts';
 import { dim } from '../ui/colors.ts';
 import { resolveWikiPaths } from '../wiki/paths.ts';
 import { rebuildCatalogs, startCatalogWatcher } from '../wiki/watcher.ts';
-import { registerAllPrompts } from './prompts/index.ts';
-
-// Note: `registerTools` is no longer imported — this server exposes no tools
-// (see tools.ts for the D2-rejected / D1-deferred implementation preserved
-// as commented reference code).
+import { registerAllTools, TOOL_DESCRIPTIONS } from './prompts/index.ts';
 
 export interface McpServerOptions {
   projectDir: string;
@@ -49,7 +42,7 @@ This project may have a \`.open-knowledge/\` wiki for structured project knowled
 ## Getting Started
 If \`.open-knowledge/\` doesn't exist yet, scaffolding is a **terminal-side** operation — the user (or the agent via \`Bash\`) runs \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That scaffolds the directory structure, registers this MCP server in \`.mcp.json\`, and returns. After scaffolding, reconnect the MCP client so this server sees the new directory and starts its file watcher.
 
-This MCP server intentionally exposes **no tools** — scaffolding belongs in the CLI, runtime behavior (catalogs, watcher, prompts, instructions) belongs here.
+This MCP server exposes three workflow tools (init-wiki, ingest, research) that return instructional text for agents to follow. Scaffolding belongs in the CLI; runtime behavior (catalogs, watcher, tools, instructions) belongs here.
 
 ## Navigation
 1. Read \`.open-knowledge/INDEX.md\` for a top-level overview of all wiki sections
@@ -71,14 +64,12 @@ Use your native Read, Edit, Grep, and Glob tools for all file operations. The MC
 - Group by topic in subdirectories under articles/
 - INDEX.md catalogs regenerate automatically when you create or modify articles
 
-## Workflow Prompts
-This server exposes three MCP prompts that codify the main workflows. Invoke them via your client's prompt UI (Claude Code: slash menu as \`mcp__openknowledge__<name>\`; Cursor/Windsurf/Codex/other MCP clients: whatever prompt menu your client provides). The canonical names are:
+## Workflow Tools
+This server exposes three MCP tools that codify the main workflows. Each tool returns instructional text that guides the agent through the workflow — all real work (reads, edits, fetches) happens via the agent's native tools.
 
-- \`mcp__openknowledge__init-wiki\` — bootstrap a new wiki by reading the codebase and writing initial articles grouped by topic
-- \`mcp__openknowledge__ingest\` — capture an external source (URL or local file) as raw reference material in \`external-sources/\`
-- \`mcp__openknowledge__research\` — gather sources via \`ingest\` and write provisional findings to \`research/\`
-
-The MCP server has no slash-command-file dependency — these prompts are discovered via the standard MCP \`prompts/list\` handshake and work in any client that supports it. The names above are canonical; refer to them as \`mcp__openknowledge__<name>\` in docs and conversation so they're unambiguous across clients.
+${Object.entries(TOOL_DESCRIPTIONS)
+  .map(([name, desc]) => `### \`${name}\`\n${desc}`)
+  .join('\n\n')}
 
 ## Folder Descriptions
 When you create a new subfolder (e.g., \`articles/auth/\`), set \`title\` and \`description\` in that subfolder's \`INDEX.md\` frontmatter. These two fields are sticky — preserved across every catalog rebuild — and surface in the parent folder's Subfolders list so readers know what's inside without opening it. Do this at the same time you create the first article in the folder.
@@ -148,25 +139,11 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     }
   }
 
-  // This MCP server exposes no tools. Scaffolding moved to the CLI
-  // (`open-knowledge init`) because it's a one-shot setup operation that has
-  // to run *before* any MCP server is configured — see the design note at the
-  // top of packages/cli/src/commands/init.ts for the full rationale.
-  //
-  // Runtime operations (watching files, regenerating catalogs, serving
-  // instructions, exposing workflow prompts) are what this server does.
-
-  // MCP prompts — cross-client workflow surface. Each prompt's full body
-  // lives in packages/cli/src/mcp/prompts/<name>.ts. Claude Code surfaces
-  // them as `mcp__openknowledge__<name>` in the slash menu; other MCP clients
-  // (Cursor, Windsurf, Cline, etc.) use their own prompt UX. Each prompt body
-  // is a one-shot natural-language instruction the agent follows; all real
-  // work (reads, edits, fetches) happens via the agent's native tools, not
-  // through the MCP server.
-  //
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK TS2589 workaround — deeply recursive generics
-  const prompt = server.prompt.bind(server) as any;
-  registerAllPrompts(prompt);
+  // MCP workflow tools — cross-client workflow surface. Each tool's full body
+  // lives in packages/cli/src/mcp/prompts/<name>.ts. Each tool returns
+  // instructional text the agent follows; all real work (reads, edits, fetches)
+  // happens via the agent's native tools, not through the MCP server.
+  registerAllTools(server);
 
   // Startup catalog rebuild + watcher (no-op if .open-knowledge/ doesn't exist yet)
   if (existsSync(okDir)) {

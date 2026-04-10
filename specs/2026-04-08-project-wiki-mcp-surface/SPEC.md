@@ -1,8 +1,8 @@
 # Project Wiki — MCP Surface, Catalogs & Skills
 
-**Status:** Draft
+**Status:** Complete
 **Owner(s):** Tim Cardona
-**Last updated:** 2026-04-08
+**Last updated:** 2026-04-10
 **Baseline commit:** bfee3dc
 **Links:**
 - Parent project: [PROJECT.md](../../PROJECT.md), [STORIES.md](../../STORIES.md)
@@ -99,7 +99,7 @@
 
 | Priority | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|
-| Must | Thin MCP server: file watcher + catalog generator + instructions + workflow prompts | MCP server starts via `.mcp.json` (stdio), watches `.open-knowledge/` for file changes, regenerates catalogs automatically, exposes three workflow prompts (`init-wiki`, `ingest`, `research`) via the MCP `prompts/list` handshake | @modelcontextprotocol/sdk + @parcel/watcher. Scaffolding moved to CLI (D4 update). |
+| Must | Thin MCP server: file watcher + catalog generator + instructions + workflow tools | MCP server starts via `.mcp.json` (stdio), watches `.open-knowledge/` for file changes, regenerates catalogs automatically, exposes three workflow tools (`init-wiki`, `ingest`, `research`) via the MCP `tools/list` handshake. Each tool description includes structured trigger/use-when guidance so agents know when to invoke them. | @modelcontextprotocol/sdk + @parcel/watcher. Scaffolding moved to CLI (D4 update). Pivoted from prompts to tools for better agent discoverability. |
 | Must | Agent uses native tools (Read, Write, Edit, Grep) for file reads AND writes in P0. | MCP server does NOT proxy reads or writes. Agent writes to `.open-knowledge/` via native tools; the file watcher picks up changes and regenerates catalogs. | **Adaptive write path deferred — see D1 and §15 Future Work.** Native writes are functionally equivalent in the disk-only case; adaptive routing becomes valuable when Hocuspocus is running alongside (instant propagation, origin tagging, per-origin undo). |
 | Must | `open-knowledge init` CLI subcommand scaffolds `.open-knowledge/` structure + wires `.mcp.json` | Running `open-knowledge init` creates the directory structure, `AGENTS.md`, starter catalogs, and writes an `openknowledge` entry to `./.mcp.json` (preserving existing entries, idempotent). | Changed from MCP tool → CLI subcommand this session — the MCP init tool created a chicken-and-egg problem for first-time setup. See D4 update. |
 | Must | Catalog files (`INDEX.md`) auto-generate per folder inside `.open-knowledge/` | After any file write, the parent folder's INDEX.md updates with title/description/tags from all children | File watcher triggers regeneration |
@@ -128,14 +128,15 @@
 - **Adoption signal:** Number of repos with `.open-knowledge/` directory
 - **What we will log:** MCP tool call counts, catalog regeneration frequency
 
-## 8) Current state (how it works today)
+## 8) Current state
 
-- **Init spike exists** with validated CRDT plumbing, TipTap editor, observer sync, persistence pipeline, disk bridge
-- **No MCP server built yet**
-- **No catalog generator built yet**
-- **No skills built yet**
-- **48 research reports** inform architectural decisions
-- **`.mcp.json` support** exists in Claude Code for project-scoped MCP servers
+- **All phases shipped (1-5).** CLI `init`, MCP server (instructions + file watcher + catalog generator + sticky folder descriptions), three MCP workflow tools (`init-wiki`, `ingest`, `research`) with structured skill-style descriptions, AGENTS.md conventions, `.mcp.json` auto-config.
+- **Phase 2 exercised end-to-end (2026-04-10):** `mcp__openknowledge__init-wiki` run against the Open Knowledge codebase itself — produced 9 canonical articles across 4 topic folders (architecture, server, editor, cli, development) with auto-generated INDEX.md catalogs.
+- **Phase 4 exercised:** `mcp__openknowledge__ingest` run against Karpathy LLM Wiki gist — raw source saved with correct frontmatter.
+- **Phase 5 exercised:** `mcp__openknowledge__research` produced provisional analysis of the LLM-maintained wikis pattern.
+- **Phase 6 (extensions) deferred:** `/consolidate`, `rebuild_catalogs` tool, `status` tool, GitHub Actions.
+- **~56 research reports** in `reports/` inform architectural decisions.
+- **Adaptive write path (D1) deferred** — disk-first via native tools for P0; see §15 Future Work.
 
 ## 9) Proposed solution (vertical slice)
 
@@ -443,15 +444,28 @@ This repo has a living knowledge base in `.open-knowledge/`.
 }
 ```
 
-### Skill definitions
+### Workflow tool definitions
 
-**`/init-wiki`** — Bootstraps the wiki from an empty state. Reads the codebase systematically (source files, README, existing docs, specs). Synthesizes knowledge articles grouped by topic in `articles/`. Uses bash exploration to map the filesystem, then reads files for deeper understanding. Keeps articles focused and not too long.
+Each tool exports a structured `DESCRIPTION` constant with trigger/use-when guidance — mirroring the skill description pattern. The description is defined once per tool file and imported into both the `server.tool()` registration and the `INSTRUCTIONS` constant (via `TOOL_DESCRIPTIONS` from `prompts/index.ts`), so there is a single source of truth. The full instructional body is returned when the tool is called.
 
-**`/ingest`** — Fetches and captures an external source (URL, PDF, or other document). Saves the raw content to `external-sources/` with frontmatter (title, source URL, date fetched). No analysis — just raw preservation. This is the capture step in the content lifecycle.
+**`init-wiki`**
+- **What:** Bootstrap the wiki by reading the codebase and writing initial knowledge articles grouped by topic.
+- **Use when:** Setting up a wiki for the first time, onboarding to a new codebase, or `.open-knowledge/articles/` is empty or sparse.
+- **Triggers on:** "init wiki", "bootstrap wiki", "populate wiki", "set up project knowledge", or when `.open-knowledge/` exists but has no articles.
 
-**`/research`** — Analyzes a topic by gathering and synthesizing sources. Calls `/ingest` to fetch external sources into `external-sources/`, reads them alongside existing wiki content, and writes analysis/synthesis to `research/`. Research articles are provisional — findings, trade-offs, open questions. Not canonical.
+**`ingest`**
+- **What:** Fetch an external source (URL, local file, or document) and save raw content to `external-sources/` with frontmatter. Raw preservation only — no analysis.
+- **Use when:** Capturing reference material, saving a URL for later research, archiving an external document, or when the user shares a URL or document to preserve.
+- **Triggers on:** "ingest", "save this source", "capture this URL", "add to external sources", or when a user shares a URL or document to preserve in the wiki.
 
-**`/consolidate`** — Promotes research into canonical knowledge. Reads research articles and external sources on a topic, synthesizes a definitive article in `articles/`. The research stays as historical context; the article becomes the source of truth.
+**`research`**
+- **What:** Gather sources via `ingest` and write provisional findings to `research/`. Provisional, not canonical — findings live here until decisions solidify.
+- **Use when:** Researching a topic before committing to an approach, exploring a decision space, comparing alternatives, or synthesizing multiple sources.
+- **Triggers on:** "research", "investigate", "compare options for", "analyze alternatives", or when a decision needs structured analysis grounded in external sources.
+
+**`consolidate`** (deferred)
+- **What:** Promote research into canonical knowledge in `articles/`. The research stays as historical context; the article becomes the source of truth.
+- **Use when:** A decision has solidified and research findings should graduate to canonical articles.
 
 ### Implementation sequencing
 
@@ -487,7 +501,7 @@ Phase 6 (extensions): /consolidate, status tool, GitHub Actions
 | ID | Decision | Type (P/T/X) | Resolution | 1-way door? | Rationale | Evidence / links |
 |---|---|---|---|---|---|---|
 | D1 | Adaptive write path: DirectConnection when Hocuspocus is running, disk when not | T | **DEFERRED** (was LOCKED) | No | **Reverted 2026-04-09**: not built in any user story (US-005 shipped the MCP server without the write tool). For P0, disk-first via native tools is functionally equivalent per NG5 ("MCP server works without Hocuspocus via disk fallback"). Adaptive routing becomes valuable when the editor runs alongside the MCP server — deferred until editor integration becomes priority. **Trigger to revisit:** Phase 2 (editor S1) ships AND users/agents report write conflicts or stale-editor friction that disk-first can't handle. See §15 Future Work. | Original: Conversation with Tim. Reverted: this session's session-changelog entry. |
-| D2 | Thin MCP server (file watcher + catalog gen + instructions + workflow prompts), NOT a full filesystem proxy | T | LOCKED | No | **Updated 2026-04-09**: MCP server has NO tools. Scaffolding moved to CLI (D4). Write routing deferred (D1). The server exposes: `instructions`, file watcher, catalog generator with sticky folder descriptions, and three workflow prompts (`init-wiki`, `ingest`, `research`) via the MCP `prompts/list` handshake. Agent uses native tools for all file operations. | Research confirmed. |
+| D2 | Thin MCP server (file watcher + catalog gen + instructions + workflow tools), NOT a full filesystem proxy | T | LOCKED | No | **Updated 2026-04-10**: MCP server exposes three workflow tools (`init-wiki`, `ingest`, `research`) via MCP `tools/list` (pivoted from `prompts/list`). Each tool has a structured description with **Use when** and **Triggers on** sections mirroring the skill description pattern, defined once per tool file and imported into both tool registration and INSTRUCTIONS. Agent uses native tools for all file operations. | Research confirmed. |
 | D3 | No drafts/permissions for P0 | P | LOCKED | No | Agent writes directly; review via git history | Conversation with Tim |
 | D4 | Scaffolding is a CLI subcommand (`open-knowledge init`); `mcp__openknowledge__init-wiki` MCP prompt handles population | P | DIRECTED | No | **Updated 2026-04-09**: previously "`init` as MCP tool + `/init-wiki` skill". Both halves pivoted this session. Scaffolding moved from MCP tool to CLI because the tool created a chicken-and-egg problem for first-time setup (users couldn't invoke an MCP tool before MCP was wired up). Skills moved to MCP prompts because prompts are cross-client via the protocol (work in Claude Code, Cursor, Windsurf, etc. without client-specific file copying). | Original: conversation with Tim. Updated: this session. |
 | D5 | `.mcp.json` in repo for Claude Code auto-config | T | LOCKED | No | Portable across team; committed to git | Claude Code docs |
@@ -498,7 +512,7 @@ Phase 6 (extensions): /consolidate, status tool, GitHub Actions
 | D10 | Catalog naming: `INDEX.md` | P | LOCKED | Yes | Team preference; uppercase distinguishes from Fumadocs `index.md`; supports frontmatter; `schema_version` field for future migration | CC6 research |
 | D11 | Directory structure: `articles/` + `external-sources/` + `research/` — three stages of the content lifecycle | P | DIRECTED | No | Raw sources → research analysis → canonical articles. Each stage has a clear home and purpose. | Conversation with Tim |
 | D12 | Frontmatter schema: `title` + `description` required, `tags` recommended, open schema | P | DIRECTED | No | Minimal required set; `description` is most important for catalog navigation | Conversation with Tim |
-| D13 | MCP server tools: **none**. Scaffolding is a CLI subcommand (`open-knowledge init`, D4). `rebuild_catalogs` and `status` extensions remain deferred. `instructions` is a server capability. | T | DIRECTED | No | **Updated 2026-04-09**: previously said `init` was the core tool. Moved out of the MCP server. The server's only surfaces are now: `instructions`, file watcher/catalog regen, and the three workflow prompts. | Updated this session. |
+| D13 | MCP server exposes three workflow tools (`init-wiki`, `ingest`, `research`) with structured skill-style descriptions. Scaffolding remains a CLI subcommand (`open-knowledge init`, D4). `rebuild_catalogs` and `status` extensions remain deferred. | T | DIRECTED | No | **Updated 2026-04-10**: pivoted from MCP prompts to MCP tools. Each tool exports a `DESCRIPTION` constant with structured **Use when** / **Triggers on** sections; `TOOL_DESCRIPTIONS` map in `prompts/index.ts` feeds both tool registration and INSTRUCTIONS (single source of truth). | Updated this session. |
 | D14 | Content lifecycle: external-sources (raw) → research (analysis) → articles (canonical) | P | LOCKED | No | `/ingest` captures raw, `/research` analyzes, `/consolidate` promotes. Knowledge matures through stages. | Conversation with Tim |
 | D15 | stdio transport; full catalog rebuild on startup | T | LOCKED | No | Server lives/dies with agent session; startup rebuild catches offline changes | Conversation with Tim |
 | D16 | `.open-knowledge/config.yml` `wiki:` section supports user-defined roots with `include`/`exclude` globs | P | DIRECTED | No | **Updated 2026-04-10**: wiki config now uses `wiki: { roots: [{ path, label }], include, exclude }` — user-defined roots replace the fixed `articles_path`/`external_sources_path`/`research_path` keys. Each root is a browsable subtree with its own `INDEX.md`. `init` seeds a default convention (articles/, external-sources/, research/); users reshape freely by editing config. `resolveWikiPaths(config, okDir)` in `packages/cli/src/wiki/paths.ts` maps roots to absolute dirs. | Original: meeting notes. Updated: this session. |

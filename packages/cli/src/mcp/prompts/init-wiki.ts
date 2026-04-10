@@ -1,13 +1,14 @@
 /**
- * `init-wiki` MCP prompt — bootstrap a project wiki by reading the codebase
+ * `init-wiki` MCP workflow tool — bootstrap a project wiki by reading the codebase
  * and writing initial knowledge articles grouped by topic.
  *
- * Non-content rendering: the prompt emits one user message with step-by-step
+ * Non-content rendering: the tool emits instructional text with step-by-step
  * instructions; all real work (reading, writing articles, editing INDEX.md
  * frontmatter) happens via the agent's native tools, not through the MCP
  * server. The server only provides the instructions.
  */
-import { type PromptRegister, userMessage } from './shared.ts';
+import type { ServerInstance } from './shared.ts';
+import { textResult } from './shared.ts';
 
 const BODY = `Initialize a project wiki at .open-knowledge/ for this repository.
 
@@ -109,11 +110,20 @@ Depending on the project, consider articles covering:
 
 Full convention: read \`.open-knowledge/AGENTS.md\`.`;
 
-export function register(prompt: PromptRegister): void {
-  prompt(
-    'init-wiki',
-    'Bootstrap .open-knowledge/ by reading the codebase and writing initial knowledge articles grouped by topic',
-    {},
-    () => userMessage(BODY),
-  );
+export const DESCRIPTION = [
+  'Bootstrap .open-knowledge/ by reading the codebase and writing initial knowledge articles grouped by topic.',
+  '',
+  '**Use when:**',
+  '- Setting up a wiki for the first time in a repo',
+  '- Onboarding to a new codebase and capturing initial understanding',
+  '- .open-knowledge/ exists but articles/ is empty or sparse',
+  '',
+  '**Triggers on:**',
+  '- "init wiki", "bootstrap wiki", "populate wiki", "set up project knowledge"',
+  '- .open-knowledge/ exists but has no articles',
+  '- User asks to document or catalog the codebase into the wiki',
+].join('\n');
+
+export function register(server: ServerInstance): void {
+  server.tool('init-wiki', DESCRIPTION, () => textResult(BODY));
 }

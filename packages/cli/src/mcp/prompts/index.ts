@@ -1,24 +1,31 @@
 /**
- * MCP prompt registry.
+ * MCP workflow tool registry.
  *
- * Aggregates the three workflow prompts (init-wiki, ingest, research) into a
- * single `registerAllPrompts` function that `server.ts` calls during startup.
- * Each individual prompt file owns its own name, description, argument schema,
+ * Aggregates the three workflow tools (init-wiki, ingest, research) into a
+ * single `registerAllTools` function that `server.ts` calls during startup.
+ * Each individual tool file owns its own name, description, argument schema,
  * and handler body — this module just wires them into the McpServer instance.
  *
- * To add a new prompt: create `packages/cli/src/mcp/prompts/<name>.ts` with a
- * `register(prompt)` export, then import and call it from here.
+ * To add a new tool: create `packages/cli/src/mcp/prompts/<name>.ts` with a
+ * `register(server)` export, then import and call it from here.
  */
-import { register as registerIngest } from './ingest.ts';
-import { register as registerInitWiki } from './init-wiki.ts';
-import { register as registerResearch } from './research.ts';
-import type { PromptRegister } from './shared.ts';
+import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';
+import { DESCRIPTION as INIT_WIKI_DESCRIPTION, register as registerInitWiki } from './init-wiki.ts';
+import { DESCRIPTION as RESEARCH_DESCRIPTION, register as registerResearch } from './research.ts';
+import type { ServerInstance } from './shared.ts';
 
-export type { PromptRegister } from './shared.ts';
-export { userMessage } from './shared.ts';
+export type { ServerInstance } from './shared.ts';
+export { textResult } from './shared.ts';
 
-export function registerAllPrompts(prompt: PromptRegister): void {
-  registerInitWiki(prompt);
-  registerIngest(prompt);
-  registerResearch(prompt);
+/** Tool descriptions keyed by name — used by INSTRUCTIONS in server.ts to avoid duplication. */
+export const TOOL_DESCRIPTIONS = {
+  'init-wiki': INIT_WIKI_DESCRIPTION,
+  ingest: INGEST_DESCRIPTION,
+  research: RESEARCH_DESCRIPTION,
+} as const;
+
+export function registerAllTools(server: ServerInstance): void {
+  registerInitWiki(server);
+  registerIngest(server);
+  registerResearch(server);
 }

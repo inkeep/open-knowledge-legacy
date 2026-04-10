@@ -1,12 +1,13 @@
 /**
- * `ingest` MCP prompt — capture an external source as raw reference material
+ * `ingest` MCP workflow tool — capture an external source as raw reference material
  * in .open-knowledge/external-sources/.
  *
  * Principle: raw preservation only. No summary, no analysis, no interpretation.
  * That's `research`'s job.
  */
 import { z } from 'zod';
-import { type PromptRegister, userMessage } from './shared.ts';
+import type { ServerInstance } from './shared.ts';
+import { textResult } from './shared.ts';
 
 function buildBody(source: string): string {
   return `Capture this external source into the project wiki as raw reference material. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` prompt later.
@@ -63,11 +64,27 @@ tags:
 Full convention: read \`.open-knowledge/AGENTS.md\`.`;
 }
 
-export function register(prompt: PromptRegister): void {
-  prompt(
+export const DESCRIPTION = [
+  'Fetch an external source (URL or local file) and save raw content to .open-knowledge/external-sources/.',
+  'Raw preservation only — no analysis or interpretation.',
+  '',
+  '**Use when:**',
+  '- Capturing reference material for the project wiki',
+  '- Saving a URL or document for later research',
+  '- Archiving an external source alongside the codebase',
+  '- The user shares a URL or document they want preserved',
+  '',
+  '**Triggers on:**',
+  '- "ingest", "save this source", "capture this URL", "add to external sources"',
+  '- User shares a URL, article, or document to preserve in the wiki',
+  '- Research workflow needs raw sources before analysis',
+].join('\n');
+
+export function register(server: ServerInstance): void {
+  server.tool(
     'ingest',
-    'Fetch an external source (URL or local file) and save raw content to .open-knowledge/external-sources/',
+    DESCRIPTION,
     { source: z.string().describe('URL, file path, or identifier of the source to ingest') },
-    (args: { source: string }) => userMessage(buildBody(args.source)),
+    (args: { source: string }) => textResult(buildBody(args.source)),
   );
 }

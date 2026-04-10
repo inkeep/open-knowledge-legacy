@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-04-10 — Phase 2 exercised, prompts → tools pivot, structured descriptions, spec Complete
+
+### Phase 2 acceptance: `mcp__openknowledge__init-wiki` run end-to-end
+
+Ran the init-wiki workflow against the Open Knowledge codebase itself. Produced 9 canonical articles across 4 topic folders:
+
+- **architecture/** — Architecture Overview, CRDT Collaboration Model
+- **server/** — Persistence & File Watcher, Agent Sessions & HTTP API
+- **editor/** — Dual-Mode Editor, Presence & Awareness
+- **cli/** — CLI Commands & Config, MCP Server Design
+- **development/** — Development Workflow
+
+Each subfolder has sticky `title`/`description` in its `INDEX.md`. Catalogs auto-regenerated after MCP reconnect (watcher only starts on startup; scaffolding mid-session requires `/mcp` reconnect — documented behavior).
+
+### Architectural pivot: MCP prompts → MCP tools with structured descriptions
+
+- **Prompts → tools.** The three workflows (`init-wiki`, `ingest`, `research`) moved from `server.prompt()` (`prompts/list` handshake) to `server.tool()` (`tools/list` handshake). Tools are more naturally invocable by agents and don't require client-specific prompt UI.
+- **Structured skill-style descriptions.** Each tool now exports a `DESCRIPTION` constant with markdown-formatted **Use when** and **Triggers on** sections, mirroring how Claude Code skills declare their trigger conditions. This tells agents not just *what* the tool does but *when* to invoke it.
+- **Single source of truth.** `TOOL_DESCRIPTIONS` map in `prompts/index.ts` aggregates all three descriptions. `server.ts` imports this map and interpolates it into the `INSTRUCTIONS` constant. The description is authored once per tool file and consumed in both places — no duplication.
+- **Code changes:** `shared.ts` (`PromptRegister` → `ServerInstance`, `userMessage` → `textResult`), all three tool files (`server.tool()` + exported `DESCRIPTION`), `index.ts` (barrel + `TOOL_DESCRIPTIONS`), `server.ts` (import + interpolation in INSTRUCTIONS), `server.test.ts` (updated for tool registration).
+
+### Spec updates
+
+- **Status: Draft → Complete.** All phases 1-5 have been exercised. Phase 6 (extensions) remains deferred.
+- **§6 Must row updated** — "workflow prompts" → "workflow tools" with structured descriptions.
+- **§8 Current state rewritten** to reflect shipped state.
+- **§9 Skill definitions renamed** to "Workflow tool definitions" with structured What/Use when/Triggers on format.
+- **D2 updated** — reflects tools (not prompts) with structured descriptions.
+- **D13 updated** — documents the `DESCRIPTION` export + `TOOL_DESCRIPTIONS` pattern.
+- **Last updated: 2026-04-10.**
+
 ## 2026-04-08 — Initial spec session
 
 ### Intake
