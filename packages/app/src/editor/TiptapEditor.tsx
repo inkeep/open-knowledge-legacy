@@ -14,6 +14,7 @@ import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, type Ref, useEffect, useImperativeHandle, useRef } from 'react';
 import type * as Y from 'yjs';
 import { useIdentity } from '../presence/identity';
+import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import { sharedExtensions } from './extensions/shared.ts';
 import { markUserTyping, setupObservers } from './observers';
 
@@ -402,6 +403,7 @@ export const TiptapEditor: FC<{
       data-agent-flash-position="append"
       data-agent-flash-agent-id=""
     >
+      {editor && <BubbleMenuBar editor={editor} />}
       <EditorContent editor={editor} className="h-full" />
     </div>
   );
