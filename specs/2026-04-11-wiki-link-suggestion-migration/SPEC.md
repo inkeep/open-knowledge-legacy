@@ -133,7 +133,7 @@ items: async ({ query }) => {
 },
 ```
 
-**Loading state:** Suggestion calls `onStart` then `items()`. While `items()` is resolving (async), the menu shows loading state. When items resolve, `onUpdate` fires with the populated items. The render callback's `onStart` mounts the menu with `loading: true`; `onUpdate` transitions to `loading: false`.
+**Loading state:** Suggestion's actual lifecycle (verified from source lines 189-209) is: `onBeforeStart` → `await items()` → `onStart`/`onUpdate`. The `onBeforeStart` callback fires BEFORE items are fetched — this is where we mount the menu with `loading: true`. When `items()` resolves, `onStart` fires with `props.items` already populated — this is where we transition to `loading: false`. If the query changes while the menu is open, `onUpdate` fires (also with resolved items).
 
 ### 3.4 Floating UI positioning (matching slash-command.ts pattern)
 
@@ -191,7 +191,7 @@ command: ({ editor, range, props: item }) => {
 
 ### 3.6 Preserve WikiLinkSuggestionMenu component
 
-The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it's already a pure render function receiving `items`, `selectedIndex`, `onSelect`, `loading`, `error` as props. The only change: remove the `query` prop (filtering happens in the `items()` callback now, matching the slash command pattern where the menu receives pre-filtered items).
+The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it's already a pure render function receiving `items`, `query`, `selectedIndex`, `onSelect`, `loading`, `error` as props. The `query` prop is kept (unlike the slash command menu which dropped it) because the wiki-link empty state uses it for a contextual message: `No pages found for "${query.trim()}"`. Add the Floating UI CSS var: `style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}`.
 
 ---
 
@@ -267,7 +267,7 @@ The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it
 | D2 | Async items: Suggestion native vs manual fetch-in-render | **Suggestion native.** `items()` callback supports async (`await` at source line 196). Simpler than manual fetch-in-view(). | LOCKED | HIGH |
 | D3 | Prefix restriction: `allowedPrefixes: null` vs `[' ']` | **`null` (no restriction).** Wiki-links trigger anywhere including mid-word (`word[[page`). Unlike slash commands where mid-word trigger is a regression, mid-word `[[` is valid wiki-link syntax. | LOCKED | HIGH |
 | D4 | Floating UI: match slash-command.ts pattern | **Yes.** Same `computePosition` + `autoUpdate` + `flip` + `offset(4)` + `size` middleware. Consistent positioning across all suggestion menus. | DIRECTED | HIGH |
-| D5 | Menu component: rewrite or update | **Update.** Remove `query` prop (filtering now in `items()` callback). Add inline `maxHeight` CSS var style. Keep everything else. | DIRECTED | HIGH |
+| D5 | Menu component: rewrite or update | **Update.** Keep `query` prop (needed for contextual empty state message). Add inline `maxHeight` CSS var style. Keep everything else. | DIRECTED | HIGH |
 
 ---
 
