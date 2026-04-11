@@ -87,7 +87,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             try {
               return source();
             } catch (err) {
-              console.error('SlashCommand: item source threw an error', err);
+              console.error('[slash-command] item source threw an error', err);
               return [];
             }
           });
