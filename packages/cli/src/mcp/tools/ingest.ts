@@ -53,7 +53,7 @@ tags:
 
 - File exists at \`.open-knowledge/external-sources/<slug>.md\`
 - Valid frontmatter (at minimum \`title\`, \`description\`, and either \`source_url\` or \`source_path\`)
-- \`.open-knowledge/external-sources/INDEX.md\` picks it up automatically via the MCP server's file watcher
+- \`.open-knowledge/catalogs/\` picks it up automatically via the MCP server's file watcher
 
 ## Non-goals
 

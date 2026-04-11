@@ -140,9 +140,8 @@ Structure:
 
 - File exists in \`.open-knowledge/research/\` (or a subfolder you created)
 - Has frontmatter with \`title\`, \`description\`, \`status: provisional\`, \`date\`, and a \`sources\` list
-- \`research/INDEX.md\` catalog picks up the new entry automatically via the file watcher
+- \`.open-knowledge/catalogs/\` picks up the new entry automatically via the file watcher
 - Linked external sources exist in \`.open-knowledge/external-sources/\` — broken source links mean something went wrong in step 2
-- If you created a new subfolder under \`research/\`, its \`INDEX.md\` has sticky \`title\` and \`description\`
 
 ## Non-goals
 

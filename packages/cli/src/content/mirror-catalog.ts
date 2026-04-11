@@ -71,8 +71,8 @@ function globToRegex(pattern: string): RegExp {
     } else if (ch === '?') {
       re += '[^/]';
       i++;
-    } else if (ch === '.') {
-      re += '\\.';
+    } else if ('.+[](){}^$|\\'.includes(ch)) {
+      re += `\\${ch}`;
       i++;
     } else {
       re += ch;

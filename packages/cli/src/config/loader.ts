@@ -91,10 +91,20 @@ export function loadConfig(cwd?: string): LoadConfigResult {
     sources.push(workspaceConfigPath);
   }
 
-  // Deprecation warning for old config key
+  // Auto-migrate deprecated wiki config key → content
   if ('wiki' in merged) {
-    console.warn('[config] Warning: "wiki" config section is deprecated and will be ignored.');
-    console.warn('[config] Migration: move wiki.include/exclude to content.include/exclude');
+    const wiki = merged.wiki as Record<string, unknown> | undefined;
+    if (wiki && typeof wiki === 'object') {
+      const content = (merged.content ?? {}) as Record<string, unknown>;
+      if (wiki.include && !content.include) content.include = wiki.include;
+      if (wiki.exclude && !content.exclude) content.exclude = wiki.exclude;
+      merged.content = content;
+    }
+    delete merged.wiki;
+    console.warn(
+      '[config] Warning: "wiki" section is deprecated — values auto-migrated to "content".',
+    );
+    console.warn('[config] Please rename "wiki" to "content" in your config.yml.');
   }
 
   // Validate with Zod (applies defaults for missing fields)

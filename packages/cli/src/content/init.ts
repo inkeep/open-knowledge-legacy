@@ -137,7 +137,7 @@ export const CLAUDE_MD_SECTION = `## .open-knowledge/ — Project Knowledge Base
 
 This repo has a living knowledge base in \`.open-knowledge/\`.
 
-- Read \`INDEX.md\` at any level for navigation
+- Read \`.open-knowledge/catalogs/INDEX.md\` for a navigable overview of all tracked content
 - After doing significant work, update or create relevant knowledge articles
 - Knowledge articles live in \`.open-knowledge/articles/\` grouped by topic
 - External sources live in \`.open-knowledge/external-sources/\`
