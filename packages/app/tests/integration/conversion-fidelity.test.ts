@@ -11,13 +11,13 @@
  * Documents which constructs are stable vs which normalize.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 
-import { __resetCoordinationState, setupObservers } from '../../src/editor/observers';
+import { setupObservers } from '../../src/editor/observers';
 import {
   agentWriteMd,
   assertBridgeInvariant,
@@ -206,10 +206,6 @@ describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemir
 // ─── 3. Observer round-trip ───
 
 describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observer B → XmlFragment', () => {
-  beforeEach(() => {
-    __resetCoordinationState();
-  });
-
   for (const { name, input } of CONSTRUCTS) {
     test(name, async () => {
       const doc = new Y.Doc();
@@ -251,10 +247,6 @@ describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observe
 // ─── 4. Full-stack chain ───
 
 describe('full-stack chain: md → parse → XmlFragment → Observer A → Y.Text → Observer B → XmlFragment → serialize → md', () => {
-  beforeEach(() => {
-    __resetCoordinationState();
-  });
-
   for (const { name, input } of CONSTRUCTS) {
     test(name, async () => {
       const doc = new Y.Doc();

@@ -2,6 +2,7 @@
  * Shared extension list used by the editor, persistence layer, and round-trip tests.
  * Single source of truth — drift between these causes silent data corruption.
  */
+import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
@@ -26,6 +27,7 @@ export const sharedExtensions = [
       },
     },
   }),
+  StarterKit.configure({ undoRedo: false, link: false }),
   Table.configure({
     resizable: true,
   }),
@@ -35,4 +37,5 @@ export const sharedExtensions = [
   Image,
   TaskList,
   TaskItem,
+  Highlight,
 ];

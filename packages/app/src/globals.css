@@ -267,10 +267,16 @@
   outline: none;
   min-height: 200px;
   line-height: 1.7;
+  @apply text-gray-800 dark:text-white/80;
 }
 
 .ProseMirror p {
   margin-bottom: 0.5em;
+}
+
+.ProseMirror mark {
+  color: inherit;
+  @apply py-0.5 px-1 rounded-sm bg-amber-100 dark:bg-amber-900/50;
 }
 
 .ProseMirror h1,
@@ -283,12 +289,15 @@
 
 .ProseMirror h1 {
   font-size: 1.5em;
+  @apply tracking-tighter;
 }
 .ProseMirror h2 {
   font-size: 1.25em;
+  @apply tracking-tight;
 }
 .ProseMirror h3 {
   font-size: 1.1em;
+  @apply tracking-tight;
 }
 
 /* Lists */
@@ -377,6 +386,14 @@
 
 .ProseMirror ul[data-type="taskList"] li > div {
   flex: 1;
+}
+
+.ProseMirror ul[data-type="taskList"] li > div p {
+  margin-bottom: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  margin-bottom: 0.1em;
 }
 
 .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
@@ -508,12 +525,12 @@
   cursor: col-resize;
 }
 
-.ProseMirror p.is-editor-empty:first-child::before {
-  content: "Start writing...";
-  color: var(--color-muted-foreground);
+.ProseMirror p.is-empty::before {
+  content: attr(data-placeholder);
   pointer-events: none;
   float: left;
   height: 0;
+  @apply text-muted-foreground/60;
 }
 
 /* CodeMirror polish */
