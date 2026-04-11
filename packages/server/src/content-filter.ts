@@ -64,8 +64,8 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
       const patterns = parseGitignorePatterns(content);
       rootGitignorePatterns.push(...patterns);
       ig.add(patterns);
-    } catch {
-      // unreadable .gitignore — continue without it
+    } catch (err) {
+      console.warn(`[content-filter] Failed to read .gitignore at ${rootGitignorePath}:`, err);
     }
   }
 
@@ -109,10 +109,12 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
     isDirExcluded(relativePath: string): boolean {
       // Only check exclusion rules (gitignore + config.exclude), not include patterns.
       // Directories don't need to match **/*.md — we still want to traverse them.
+      // Check both with and without trailing slash — the `ignore` package distinguishes
+      // directory-specific patterns (e.g. `node_modules/`) from file patterns.
       const projectRelPath = contentRelPrefix
         ? `${contentRelPrefix}/${relativePath}`
         : relativePath;
-      return ig.ignores(projectRelPath);
+      return ig.ignores(projectRelPath) || ig.ignores(`${projectRelPath}/`);
     },
 
     getWatcherIgnoreGlobs(): string[] {
@@ -140,8 +142,9 @@ function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void
   let entries: import('node:fs').Dirent[];
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return; // unreadable directory — skip
+  } catch (err) {
+    console.warn(`[content-filter] Failed to read directory ${dir}:`, err);
+    return;
   }
 
   for (const entry of entries) {
@@ -167,8 +170,11 @@ function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void
           return `${relToProject}/${p}`;
         });
         ig.add(prefixed);
-      } catch {
-        // unreadable nested .gitignore — skip
+      } catch (err) {
+        console.warn(
+          `[content-filter] Failed to read nested .gitignore at ${nestedGitignore}:`,
+          err,
+        );
       }
     }
 

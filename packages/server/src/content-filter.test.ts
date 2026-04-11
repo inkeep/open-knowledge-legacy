@@ -250,6 +250,50 @@ describe('ContentFilter', () => {
     });
   });
 
+  describe('isDirExcluded', () => {
+    test('excludes directories matching gitignore directory patterns (trailing slash)', () => {
+      writeFileSync(join(projectDir, '.gitignore'), 'node_modules/\ndist/\n');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isDirExcluded('node_modules')).toBe(true);
+      expect(filter.isDirExcluded('dist')).toBe(true);
+      expect(filter.isDirExcluded('src')).toBe(false);
+      expect(filter.isDirExcluded('docs')).toBe(false);
+    });
+
+    test('excludes directories matching config exclude patterns', () => {
+      // Pattern 'archive/' excludes the directory itself; 'archive/**' only excludes contents.
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: ['archive/'],
+      });
+
+      expect(filter.isDirExcluded('archive')).toBe(true);
+      expect(filter.isDirExcluded('docs')).toBe(false);
+    });
+
+    test('does not apply include patterns to directories', () => {
+      // Directories should not be excluded just because they don't match **/*.md
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isDirExcluded('src')).toBe(false);
+      expect(filter.isDirExcluded('docs')).toBe(false);
+    });
+  });
+
   describe('contentDir different from projectDir', () => {
     test('filter works when contentDir is a subdirectory of projectDir', () => {
       const contentDir = join(projectDir, 'content');

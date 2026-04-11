@@ -53,9 +53,6 @@ export interface WatcherHandle {
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
 }
 
-/** In-memory index of content files: docName → { size, modified }. */
-const fileIndex = new Map<string, FileIndexEntry>();
-
 // ─── Write tracker ───────────────────────────────────────────────────────────
 
 // Content-hash tracker — persistence layer registers writes via registerWrite().
@@ -313,7 +310,12 @@ export function isSelfWrite(filePath: string, hash: string): boolean {
  *
  * When a ContentFilter is provided, excluded files are skipped.
  */
-function seedLastKnownHashes(dir: string, contentDir: string, contentFilter?: ContentFilter): void {
+function seedLastKnownHashes(
+  dir: string,
+  contentDir: string,
+  contentFilter: ContentFilter | undefined,
+  fileIndex: Map<string, FileIndexEntry>,
+): void {
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
@@ -324,7 +326,7 @@ function seedLastKnownHashes(dir: string, contentDir: string, contentFilter?: Co
           const relPath = relative(contentDir, fullPath);
           if (contentFilter.isDirExcluded(relPath)) continue;
         }
-        seedLastKnownHashes(fullPath, contentDir, contentFilter);
+        seedLastKnownHashes(fullPath, contentDir, contentFilter, fileIndex);
       } else if (entry.isFile() && entry.name.endsWith('.md')) {
         // Skip files the content filter excludes
         if (contentFilter) {
@@ -354,9 +356,14 @@ function seedLastKnownHashes(dir: string, contentDir: string, contentFilter?: Co
 
 /**
  * Update the file index after a disk event.
- * Called for each classified event that passes self-write checks.
+ * Called unconditionally for every classified event (including self-writes)
+ * to keep the index in sync with actual disk state.
  */
-function updateFileIndex(event: DiskEvent, contentDir: string): void {
+function updateFileIndex(
+  event: DiskEvent,
+  contentDir: string,
+  fileIndex: Map<string, FileIndexEntry>,
+): void {
   switch (event.kind) {
     case 'create':
     case 'update':
@@ -402,11 +409,11 @@ export async function startWatcher(
   onDiskEvent: (event: DiskEvent) => Promise<void>,
   contentFilter?: ContentFilter,
 ): Promise<WatcherHandle> {
-  // Clear file index for fresh scan
-  fileIndex.clear();
+  // Allocate file index per watcher instance — each handle owns its index
+  const fileIndex = new Map<string, FileIndexEntry>();
 
   // Seed hashes and populate file index (filtered if contentFilter provided)
-  seedLastKnownHashes(contentDir, contentDir, contentFilter);
+  seedLastKnownHashes(contentDir, contentDir, contentFilter, fileIndex);
 
   // Run TTL eviction periodically
   const evictionInterval = setInterval(evictStaleTrackerEntries, WRITE_TRACKER_TTL_MS);
@@ -437,22 +444,26 @@ export async function startWatcher(
         );
 
         for (const event of diskEvents) {
+          let isSelf = false;
+
           // Self-write check for events that carry content
           if (event.kind !== 'delete' && event.kind !== 'rename') {
             const hash = contentHash(event.content);
-            if (isSelfWrite(event.path, hash)) {
-              console.log(`[file-watcher] Skipped self-write: ${event.kind} ${event.path}`);
-              continue;
-            }
-          }
-          if (event.kind === 'rename') {
-            // Check if the content matches a self-write on the new path
+            isSelf = isSelfWrite(event.path, hash);
+          } else if (event.kind === 'rename') {
             const hash = contentHash(event.content);
-            if (isSelfWrite(event.newPath, hash)) continue;
+            isSelf = isSelfWrite(event.newPath, hash);
           }
 
-          // Update in-memory file index
-          updateFileIndex(event, contentDir);
+          // Always keep index in sync — self-writes still represent real disk state
+          updateFileIndex(event, contentDir, fileIndex);
+
+          if (isSelf) {
+            console.log(
+              `[file-watcher] Skipped self-write: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+            );
+            continue;
+          }
 
           console.log(
             `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,

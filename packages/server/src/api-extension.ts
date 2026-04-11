@@ -45,12 +45,8 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
-  /**
-   * Accessor for the watcher's in-memory file index.
-   * When provided, GET /api/documents reads from this index (instant).
-   * When absent, returns an empty document list.
-   */
-  getFileIndex?: () => ReadonlyMap<string, FileIndexEntry>;
+  /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
+  getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   /**
    * When true, register test-only routes (currently `/api/test-reset`).
    * Defaults to `false` — these routes allow any client to destroy document
@@ -326,7 +322,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       // Read from the watcher's in-memory file index (instant, no filesystem scan)
-      const index = getFileIndex?.() ?? new Map();
+      const index = getFileIndex();
       const documents: { docName: string; size: number; modified: string }[] = [];
 
       for (const [docName, entry] of index) {
