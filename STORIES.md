@@ -114,7 +114,7 @@ The "tool count is the strongest failure predictor" research argues for (a). Dec
 
 ---
 
-## Bucket 3 — Presence &amp; coauthoring UX [Mike // Sarah and or Dima]
+## Bucket 3 — Presence & coauthoring UX [Mike // Sarah and or Dima]
 
 **Primary story:** S5, currently in-flight as PR #7 (`feat/presence-awareness-ux`)
 
@@ -152,7 +152,7 @@ The data model + awareness protocol work is in PR #7. Editor-side rendering is B
 
 ---
 
-## Bucket 4 — Auto-persistence &amp; version history [Miles]
+## Bucket 4 — Auto-persistence & version history [Miles]
 
 **Primary story:** S6
 
@@ -190,7 +190,7 @@ The full "Save Version" + timeline UI is the biggest remaining work in this buck
 
 ---
 
-## Bucket 5 — Permission &amp; coauthoring model (cross-cutting) [Andre]
+## Bucket 5 — Permission & coauthoring model (cross-cutting) [Andre]
 
 **This is not one of the 7 Now stories.** It is a cross-cutting concern that gates Buckets 2, 3, and 4. Driven primarily by PQ7, PQ9, CC4, TQ10, TQ14, PQ12.
 
@@ -225,7 +225,7 @@ TQ10 decision → PQ12 decision → Bucket 2 can finalize write-path routing →
 
 ---
 
-## Bucket 6 — Zero-friction onboarding &amp; cross-agent DX [Andrew / Miles]
+## Bucket 6 — Zero-friction onboarding & cross-agent DX [Andrew / Miles]
 
 **Primary stories:** S9 (embeddable editor) + CC5 (zero-friction onboarding) + CC7 (agent DX)
 
@@ -309,7 +309,7 @@ T7.8 (6 link-graph MCP tools) live in Bucket 2's surface. This is the M2' 10-vs-
 
 ---
 
-## Bucket 8 — Interop bug bash &amp; integration QA (validating CRDT // bidirectional stuff) [Dima // Mike]]
+## Bucket 8 — Interop bug bash & integration QA (validating CRDT // bidirectional stuff) [Dima // Mike]]
 
 **This is a cross-story QA workstream, not a product story.** Validates the full disk ↔ WYSIWYG ↔ source mode ↔ MCP-agent pipeline holds under real-world usage.
 
