@@ -5,38 +5,57 @@
  * This plugin wires Hocuspocus into Vite's HTTP/WS server so that
  * `bun run dev` starts everything in a single process.
  */
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { Hocuspocus, type LocalTransactionOrigin } from '@hocuspocus/server';
-import { sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
   type AsyncSubscription,
   createApiExtension,
+  createExternalChangeHandler,
   createPersistenceExtension,
   startWatcher,
 } from '@inkeep/open-knowledge-server';
-import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
-import { updateYFragment } from '@tiptap/y-tiptap';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
+import { parse as parseYaml } from 'yaml';
 
 // Module-level watcher subscription — survives Vite HMR restarts so we can
 // unsubscribe the previous instance before starting a new one.
 let activeWatcher: AsyncSubscription | null = null;
 
-const CONTENT_DIR = resolve(
-  import.meta.dirname ?? new URL('.', import.meta.url).pathname,
-  '../../../content',
-);
+// Resolve project root (directory containing .open-knowledge/)
+const PLUGIN_DIR = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
+const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
+
+/**
+ * Read content.dir from .open-knowledge/config.yml.
+ * Falls back to 'content' (the old hardcoded default) if no config exists
+ * or no content.dir is specified.
+ */
+function resolveContentDir(): string {
+  const configPath = resolve(PROJECT_ROOT, '.open-knowledge/config.yml');
+  if (existsSync(configPath)) {
+    try {
+      const raw = readFileSync(configPath, 'utf-8');
+      const parsed = parseYaml(raw) as Record<string, unknown> | null;
+      const content = parsed?.content as Record<string, unknown> | undefined;
+      if (typeof content?.dir === 'string') {
+        return resolve(PROJECT_ROOT, content.dir);
+      }
+    } catch (err) {
+      console.warn('[hocuspocus] Failed to parse config:', err);
+    }
+  }
+  // Default to project root (matches config schema default: content.dir = '.')
+  return PROJECT_ROOT;
+}
+
+const CONTENT_DIR = resolveContentDir();
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -46,22 +65,24 @@ export const hocuspocus = new Hocuspocus({
     createPersistenceExtension({
       contentDir: CONTENT_DIR,
       projectDir: resolve(CONTENT_DIR, '..'),
-    }),
+    }).extension,
   ],
 });
 
 const sessionManager = new AgentSessionManager(hocuspocus);
 
-// Add API extension for HTTP endpoints
-hocuspocus.configure({
-  extensions: [
-    createApiExtension({
-      hocuspocus,
-      sessionManager,
-      contentDir: CONTENT_DIR,
-    }),
-  ],
-});
+// Add API extension — push directly rather than using hocuspocus.configure()
+// which replaces the extensions array via spread, losing the persistence extension.
+// enableTestRoutes is safe here: this plugin only runs under `vite dev` (local
+// development), never in production builds. E2E tests rely on /api/test-reset.
+hocuspocus.configuration.extensions.push(
+  createApiExtension({
+    hocuspocus,
+    sessionManager,
+    contentDir: CONTENT_DIR,
+    enableTestRoutes: true,
+  }),
+);
 
 export function hocuspocusPlugin(): Plugin {
   return {
@@ -115,41 +136,7 @@ export function hocuspocusPlugin(): Plugin {
       });
 
       // --- Disk bridge: watch content directory for external .md changes ---
-      async function handleExternalChange(docName: string, content: string): Promise<void> {
-        try {
-          const document = hocuspocus.documents.get(docName);
-          if (!document) return;
-          const { frontmatter, body } = stripFrontmatter(content);
-          const parsedJson = mdManager.parse(body);
-          const pmNode = schema.nodeFromJSON(parsedJson);
-          const xmlFragment = document.getXmlFragment('default');
-
-          document.transact(
-            () => {
-              const meta = { mapping: new Map(), isOMark: new Map() };
-              updateYFragment(document, xmlFragment, pmNode, meta);
-              const metaMap = document.getMap('metadata');
-              metaMap.set('frontmatter', frontmatter);
-
-              const ytext = document.getText('source');
-              const currentText = ytext.toString();
-              if (currentText !== content) {
-                ytext.delete(0, currentText.length);
-                ytext.insert(0, content);
-              }
-            },
-            {
-              source: 'local',
-              skipStoreHooks: true,
-              context: { origin: 'file-watcher' },
-            } satisfies LocalTransactionOrigin,
-          );
-
-          console.log(`[file-watcher] Applied external change: ${docName}`);
-        } catch (err) {
-          console.error(`[file-watcher] Failed to apply external change for ${docName}:`, err);
-        }
-      }
+      const handleExternalChange = createExternalChangeHandler(hocuspocus);
 
       (async () => {
         if (activeWatcher) {
@@ -158,7 +145,11 @@ export function hocuspocusPlugin(): Plugin {
           activeWatcher = null;
         }
         try {
-          activeWatcher = await startWatcher(CONTENT_DIR, handleExternalChange);
+          activeWatcher = await startWatcher(CONTENT_DIR, async (event) => {
+            if (event.kind === 'update' || event.kind === 'create') {
+              await handleExternalChange(event.docName, event.content);
+            }
+          });
           server.httpServer?.on('close', async () => {
             if (activeWatcher) {
               await activeWatcher.unsubscribe();

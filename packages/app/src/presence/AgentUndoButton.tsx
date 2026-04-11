@@ -1,6 +1,7 @@
 import { Undo2 } from 'lucide-react';
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { Button } from '@/components/ui/button';
+import { useDocumentContext } from '@/editor/DocumentContext';
 
 interface AgentUndoState {
   canUndo: boolean;
@@ -10,7 +11,7 @@ interface AgentUndoState {
   redo: () => void;
 }
 
-function useAgentUndo(): AgentUndoState {
+function useAgentUndo(docName: string | null): AgentUndoState {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [isPending, startPending] = useTransition();
@@ -19,6 +20,12 @@ function useAgentUndo(): AgentUndoState {
   // Base interval 2s. Failures double up to a 30s cap; resets on next success.
   // Prevents thundering-herd during server outages.
   useEffect(() => {
+    if (!docName) {
+      setCanUndo(false);
+      setCanRedo(false);
+      return;
+    }
+
     let active = true;
     let timer: number | null = null;
     let currentDelayMs = 2000;
@@ -32,7 +39,7 @@ function useAgentUndo(): AgentUndoState {
 
     const poll = async () => {
       try {
-        const res = await fetch('/api/agent-undo-status');
+        const res = await fetch(`/api/agent-undo-status?docName=${encodeURIComponent(docName)}`);
         if (!active) return;
         if (res.ok) {
           const data = (await res.json()) as { canUndo: boolean; canRedo: boolean };
@@ -57,12 +64,17 @@ function useAgentUndo(): AgentUndoState {
       active = false;
       if (timer) clearTimeout(timer);
     };
-  }, []);
+  }, [docName]);
 
   function undo() {
+    if (!docName) return;
     startPending(async () => {
       try {
-        const res = await fetch('/api/agent-undo', { method: 'POST' });
+        const res = await fetch('/api/agent-undo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docName }),
+        });
         if (res.ok) {
           const data: { ok: boolean; canUndo: boolean; canRedo: boolean } = await res.json();
           setCanUndo(data.canUndo);
@@ -77,9 +89,14 @@ function useAgentUndo(): AgentUndoState {
   }
 
   function redo() {
+    if (!docName) return;
     startPending(async () => {
       try {
-        const res = await fetch('/api/agent-redo', { method: 'POST' });
+        const res = await fetch('/api/agent-redo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docName }),
+        });
         if (res.ok) {
           const data: { ok: boolean; canUndo: boolean; canRedo: boolean } = await res.json();
           setCanUndo(data.canUndo);
@@ -97,7 +114,8 @@ function useAgentUndo(): AgentUndoState {
 }
 
 export function AgentUndoButton() {
-  const { canUndo, isPending, undo } = useAgentUndo();
+  const { activeDocName } = useDocumentContext();
+  const { canUndo, isPending, undo } = useAgentUndo(activeDocName);
 
   // Track false→true transition so the scale+glow animation fires exactly once per enable,
   // not on every re-render. Reset when canUndo returns to false.
@@ -117,13 +135,12 @@ export function AgentUndoButton() {
 
   return (
     <Button
-      variant="outline"
+      variant="ghost"
       size="sm"
-      disabled={!canUndo || isPending}
+      disabled={!canUndo || isPending || !activeDocName}
       onClick={undo}
       data-undo-state={undoState}
       data-undo-just-enabled={justEnabled ? 'true' : 'false'}
-      className="border-agent/50 text-agent hover:bg-agent/10 disabled:opacity-40"
     >
       <Undo2 className="size-3.5" />
       <span>Undo Agent Edit</span>

@@ -43,26 +43,35 @@ const schema = getSchema(sharedExtensions);
 export function syncTextToFragment(document: Document): void {
   const ytext = document.getText('source');
   const fullText = ytext.toString();
-  const { frontmatter, body } = stripFrontmatter(fullText);
-  const parsedJson = mdManager.parse(body);
-  const pmNode = schema.nodeFromJSON(parsedJson);
-  const xmlFragment = document.getXmlFragment('default');
-  const meta = { mapping: new Map(), isOMark: new Map() };
-  updateYFragment(document, xmlFragment, pmNode, meta);
+  try {
+    const { frontmatter, body } = stripFrontmatter(fullText);
+    const parsedJson = mdManager.parse(body);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+    const xmlFragment = document.getXmlFragment('default');
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(document, xmlFragment, pmNode, meta);
 
-  // Enforce bridge invariant: ytext must be byte-equal to canonical serialization.
-  // Raw markdown may differ from round-tripped form (e.g., `## H\nP` → `## H\n\nP`).
-  // Without this, Observer A's guard (currentText === md) fails on the client,
-  // triggering content duplication via applyUserDelta with a stale baseline.
-  const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
-  const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
-  if (canonicalFull !== fullText) {
-    ytext.delete(0, fullText.length);
-    ytext.insert(0, canonicalFull);
+    // Enforce bridge invariant: ytext must be byte-equal to canonical serialization.
+    // Raw markdown may differ from round-tripped form (e.g., `## H\nP` → `## H\n\nP`).
+    // Without this, Observer A's guard (currentText === md) fails on the client,
+    // triggering content duplication via applyUserDelta with a stale baseline.
+    const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
+    if (canonicalFull !== fullText) {
+      ytext.delete(0, fullText.length);
+      ytext.insert(0, canonicalFull);
+    }
+
+    const metaMap = document.getMap('metadata');
+    metaMap.set('frontmatter', frontmatter);
+  } catch (err) {
+    console.error(
+      `[syncTextToFragment] Failed for '${document.name}':`,
+      { textLength: fullText.length, preview: fullText.slice(0, 100) },
+      err,
+    );
+    throw err;
   }
-
-  const metaMap = document.getMap('metadata');
-  metaMap.set('frontmatter', frontmatter);
 }
 
 export class AgentSessionManager {
@@ -159,7 +168,11 @@ export class AgentSessionManager {
   async closeAll(): Promise<void> {
     const entries = [...this.sessions.keys()];
     for (const docName of entries) {
-      await this.closeSession(docName);
+      try {
+        await this.closeSession(docName);
+      } catch (err) {
+        console.error(`[agent-session] Failed to close session for ${docName}:`, err);
+      }
     }
   }
 }

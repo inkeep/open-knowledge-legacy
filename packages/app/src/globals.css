@@ -217,10 +217,10 @@
 
 .collaboration-cursor__label {
   position: absolute;
-  top: -1.4em;
+  top: calc(-100% - 0.2em);
   left: -1px;
-  padding: 1px 6px;
-  border-radius: 6px;
+  padding: 1.5px 6px;
+  border-radius: 5px 5px 5px 0;
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 500;
@@ -262,15 +262,38 @@
   opacity: 0.3;
 }
 
+/* Editor layout — grid lives on the wrapper so ProseMirror content stays normal block flow */
+.tiptap-editor {
+  --content-width: 1fr;
+  --margin-width: 6rem;
+  display: grid;
+  width: 100%;
+  grid-template-columns:
+    [full-start] var(--margin-left-width, var(--margin-width))
+    [content-start] var(--content-width)
+    [content-end] var(--margin-right-width, var(--margin-width))
+    [full-end];
+}
+
+.tiptap-editor > div {
+  grid-column: content;
+}
+
 /* Editor polish */
 .ProseMirror {
   outline: none;
   min-height: 200px;
   line-height: 1.7;
+  @apply text-gray-800 dark:text-white/80;
 }
 
 .ProseMirror p {
   margin-bottom: 0.5em;
+}
+
+.ProseMirror mark {
+  color: inherit;
+  @apply py-0.5 px-1 rounded-sm bg-amber-100 dark:bg-amber-900/50;
 }
 
 .ProseMirror h1,
@@ -283,20 +306,248 @@
 
 .ProseMirror h1 {
   font-size: 1.5em;
+  @apply tracking-tighter;
 }
 .ProseMirror h2 {
   font-size: 1.25em;
+  @apply tracking-tight;
 }
 .ProseMirror h3 {
   font-size: 1.1em;
+  @apply tracking-tight;
 }
 
-.ProseMirror p.is-editor-empty:first-child::before {
-  content: "Start writing...";
-  color: var(--color-muted-foreground);
+/* Lists */
+.ProseMirror ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.ProseMirror ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.ProseMirror li {
+  margin-bottom: 0.15em;
+}
+
+.ProseMirror li > p {
+  margin-bottom: 0.15em;
+}
+
+/* Nested lists */
+.ProseMirror ul ul {
+  list-style-type: circle;
+  margin-bottom: 0;
+}
+
+.ProseMirror ul ul ul {
+  list-style-type: square;
+}
+
+/* Task lists */
+.ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+
+.ProseMirror ul[data-type="taskList"] li > label {
+  flex-shrink: 0;
+  margin-top: 0.3em;
+}
+
+.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border: 1.5px solid var(--color-gray-400);
+  border-radius: calc(var(--radius) * 0.4);
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-content: center;
+  margin: 0;
+  transition:
+    background-color 150ms,
+    border-color 150ms;
+}
+
+.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
+  background-color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
+  content: "";
+  width: 0.55rem;
+  height: 0.55rem;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E");
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  background-color: var(--color-primary-foreground);
+}
+
+.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+.ProseMirror ul[data-type="taskList"] li > div {
+  flex: 1;
+}
+
+.ProseMirror ul[data-type="taskList"] li > div p {
+  margin-bottom: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  margin-bottom: 0.1em;
+}
+
+.ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  color: var(--color-gray-400);
+}
+
+/* Blockquote */
+.ProseMirror blockquote {
+  border-left: 3px solid var(--color-gray-300);
+  padding-left: 1em;
+  margin-left: 0;
+  margin-bottom: 0.5em;
+  color: var(--color-gray-600);
+}
+
+/* Code blocks */
+.ProseMirror pre {
+  background: var(--color-gray-100);
+  border-radius: 0.5em;
+  padding: 0.75em 1em;
+  margin-bottom: 0.5em;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  line-height: 1.6;
+}
+
+/* Inline code */
+.ProseMirror code {
+  background: var(--color-gray-100);
+  border-radius: 0.25em;
+  padding: 0.15em 0.35em;
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+.ProseMirror pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+
+/* Links */
+.ProseMirror a {
+  color: var(--color-azure-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.ProseMirror a:hover {
+  color: var(--color-azure-600);
+}
+
+/* Horizontal rule */
+.ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--color-gray-200);
+  margin: 1em 0;
+}
+
+/* Images */
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 0.375em;
+  margin: 0.5em 0;
+}
+
+/* Tables */
+.ProseMirror .tableWrapper {
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.ProseMirror th,
+.ProseMirror td {
+  border: 1px solid var(--color-gray-200);
+  padding: 0.4em 0.6em;
+  vertical-align: top;
+  position: relative;
+  min-width: 80px;
+  box-sizing: border-box;
+}
+
+.ProseMirror th {
+  background: var(--color-gray-50);
+  font-weight: 600;
+  text-align: left;
+}
+
+.ProseMirror td > p,
+.ProseMirror th > p {
+  margin-bottom: 0;
+}
+
+.ProseMirror .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--color-azure-100);
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ProseMirror .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background-color: var(--color-azure-400);
+  pointer-events: none;
+  z-index: 20;
+}
+
+.ProseMirror.resize-cursor {
+  cursor: col-resize;
+}
+
+.ProseMirror p.is-empty::before {
+  content: attr(data-placeholder);
   pointer-events: none;
   float: left;
   height: 0;
+  @apply text-muted-foreground/60;
 }
 
 /* CodeMirror polish */

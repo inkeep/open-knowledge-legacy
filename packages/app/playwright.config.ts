@@ -1,18 +1,21 @@
 import { defineConfig } from '@playwright/test';
 
+const port = process.env.VITE_PORT || '5173';
+const baseURL = `http://localhost:${port}`;
+
 export default defineConfig({
   testDir: './tests/stress',
-  testMatch: /.*\.spec\.ts$/,
+  testMatch: /.*\.e2e\.ts$/,
   timeout: 120_000,
   retries: 0,
   use: {
-    baseURL: 'http://localhost:5173',
+    baseURL,
     headless: true,
   },
   webServer: {
-    command: 'bun run dev',
-    url: 'http://localhost:5173',
-    reuseExistingServer: true,
+    command: `VITE_PORT=${port} bun run dev`,
+    url: baseURL,
+    reuseExistingServer: false,
     timeout: 30_000,
   },
 });

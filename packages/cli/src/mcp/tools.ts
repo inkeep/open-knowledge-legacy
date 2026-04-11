@@ -1,23 +1,62 @@
 /**
- * MCP tool definitions — 8 tools for document operations.
+ * MCP tools — intentionally empty (runtime surface).
  *
- * Tools interact with the running Hocuspocus server via HTTP API.
- * Read operations are direct file reads; write operations use the HTTP API
- * which goes through the CRDT layer.
+ * The 8 document-proxy tools that used to live here were split between two
+ * separate design decisions and are kept below as commented-out reference
+ * code so the rejected/deferred implementations stay visible for future work.
  *
- * Note: server.tool() calls use `as any` casts on handlers because the MCP SDK's
- * generic type inference causes TS2589 (excessively deep type instantiation) with
- * multi-field Zod schemas. Runtime behavior is correct — Zod validates inputs.
+ * ## Why this file exists but exports nothing
+ *
+ * - **Read tools (`read_document`, `list_documents`, `search_documents`)** —
+ *   D2-rejected. Agents use their native `Read`, `Grep`, and `Glob` tools
+ *   directly against files in `.open-knowledge/`. Proxying reads through MCP
+ *   adds latency, hides the filesystem, and duplicates capability the agent
+ *   already has. Do not revive without revisiting D2.
+ *
+ * - **Write/edit/undo tools (`write_document`, `edit_document`,
+ *   `update_frontmatter`, `undo_agent_edit`, `redo_agent_edit`)** — D1-deferred.
+ *   These routed through a `POST /api/agent-*` HTTP API backed by Hocuspocus
+ *   DirectConnection, which enabled (a) instant propagation to the editor,
+ *   (b) origin tagging (`agent-write`), and (c) per-origin undo. When D1 is
+ *   revisited — trigger condition: editor integration becomes priority, or
+ *   write-conflict/stale-editor friction is reported in the disk-only path —
+ *   these are the reference implementation to start from. Server-side
+ *   counterpart: `packages/server/src/api-extension.ts`. See SPEC.md §15
+ *   Future Work "Adaptive write path" for the full work plan.
+ *
+ * The commented block below is the full implementation that was on this
+ * file when D2 gutted it. Preserved verbatim (not pretty-printed or
+ * updated to newer APIs) because its value is as a historical / reference
+ * artifact, not as maintained code. When reviving, expect to modernize.
  */
+export {};
+
+/*
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { dim } from '../ui/colors.ts';
 
-/** MCP diagnostic log — must use stderr to avoid corrupting the MCP JSON-RPC protocol on stdout */
 function mcpLog(msg: string): void {
   process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
+}
+
+async function httpGet(
+  baseUrl: string,
+  path: string,
+): Promise<{ ok: boolean; [key: string]: unknown }> {
+  let res: Response;
+  try {
+    res = await fetch(`${baseUrl}${path}`);
+  } catch (err) {
+    return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
+  }
+  try {
+    return (await res.json()) as { ok: boolean; [key: string]: unknown };
+  } catch {
+    return { ok: false, error: `Server returned HTTP ${res.status} with non-JSON body` };
+  }
 }
 
 async function httpPost(
@@ -47,25 +86,33 @@ function textResult(text: string, isError?: boolean) {
 }
 
 export function registerTools(server: McpServer, httpUrl: string, contentDir: string): void {
-  // Cast to any for tool registration — MCP SDK's server.tool() has deeply
-  // recursive generics that cause TS2589 with multi-field Zod schemas.
-  // Runtime behavior is correct: Zod still validates inputs at the MCP layer.
   // biome-ignore lint/suspicious/noExplicitAny: MCP SDK TS2589 workaround — deeply recursive generics
   const tool = server.tool.bind(server) as any;
 
-  // Tool 1: read_document
-  tool('read_document', { path: z.string() }, async (args: { path: string }) => {
-    mcpLog(`read_document: ${args.path}`);
+  // =============================================================================
+  // D2-rejected read/list/search tools — agents use native Read/Grep/Glob instead
+  // =============================================================================
 
-    const filePath = resolve(contentDir, `${args.path}.md`);
-    if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
-    if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
-    return textResult(readFileSync(filePath, 'utf-8'));
-  });
+  // Tool 1: read_document
+  tool(
+    'read_document',
+    'Read the current live content of a document. Returns the Y.Text state from the CRDT layer.',
+    { path: z.string() },
+    async (args: { path: string }) => {
+      mcpLog(`read_document: ${args.path}`);
+      const result = await httpGet(
+        httpUrl,
+        `/api/document?docName=${encodeURIComponent(args.path)}`,
+      );
+      if (!result.ok) return textResult(`Error: ${result.error}`, true);
+      return textResult(result.content as string);
+    },
+  );
 
   // Tool 2: write_document
   tool(
     'write_document',
+    "Write markdown to a document via the CRDT. 'append' and 'prepend' insert at the current live Y.Text position.",
     { path: z.string(), markdown: z.string(), mode: z.enum(['append', 'prepend', 'replace']) },
     async (args: { path: string; markdown: string; mode: string }) => {
       mcpLog(`write_document: ${args.path} mode=${args.mode}`);
@@ -82,24 +129,28 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   // Tool 3: edit_document
   tool(
     'edit_document',
+    'Targeted find-and-replace on live document content.',
     { path: z.string(), find: z.string(), replace: z.string(), dry_run: z.boolean() },
     async (args: { path: string; find: string; replace: string; dry_run: boolean }) => {
       mcpLog(`edit_document: ${args.path} (dry_run=${args.dry_run})`);
-      const filePath = resolve(contentDir, `${args.path}.md`);
-      if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
-      if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
-      const content = readFileSync(filePath, 'utf-8');
-      if (!content.includes(args.find)) return textResult('Find text not found in document', true);
-      const newContent = content.replace(args.find, args.replace);
       if (args.dry_run) {
+        const readResult = await httpGet(
+          httpUrl,
+          `/api/document?docName=${encodeURIComponent(args.path)}`,
+        );
+        if (!readResult.ok) return textResult(`Error: ${readResult.error}`, true);
+        const content = readResult.content as string;
+        if (!content.includes(args.find))
+          return textResult('Find text not found in document', true);
+        const newContent = content.replace(args.find, args.replace);
         return textResult(
           `Preview (dry run):\n--- Before ---\n${content}\n--- After ---\n${newContent}`,
         );
       }
-      const result = await httpPost(httpUrl, '/api/agent-write-md', {
-        markdown: newContent,
-        position: 'replace',
+      const result = await httpPost(httpUrl, '/api/agent-patch', {
         docName: args.path,
+        find: args.find,
+        replace: args.replace,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       return textResult('Edit applied successfully');
@@ -107,34 +158,39 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   );
 
   // Tool 4: list_documents
-  tool('list_documents', { directory: z.string() }, async (args: { directory: string }) => {
-    mcpLog(`list_documents: ${args.directory || '(root)'}`);
-    const dirPath = resolve(contentDir, args.directory);
-    if (!dirPath.startsWith(`${contentDir}/`) && dirPath !== contentDir) {
-      return textResult('Error: invalid directory path', true);
-    }
-    if (!existsSync(dirPath)) return textResult(`Directory not found: ${args.directory}`);
-    const entries = readdirSync(dirPath, { recursive: true })
-      .filter((f) => typeof f === 'string' && f.endsWith('.md'))
-      .map((f) => {
-        const fullPath = resolve(dirPath, f as string);
-        const stat = statSync(fullPath);
-        return {
-          path: (f as string).replace(/\.md$/, ''),
-          size: stat.size,
-          modified: stat.mtime.toISOString(),
-        };
-      });
-    return textResult(JSON.stringify(entries, null, 2));
-  });
+  tool(
+    'list_documents',
+    'List all markdown documents in the content directory.',
+    { directory: z.string() },
+    async (args: { directory: string }) => {
+      mcpLog(`list_documents: ${args.directory || '(root)'}`);
+      const dirPath = resolve(contentDir, args.directory);
+      if (!dirPath.startsWith(`${contentDir}/`) && dirPath !== contentDir) {
+        return textResult('Error: invalid directory path', true);
+      }
+      if (!existsSync(dirPath)) return textResult(`Directory not found: ${args.directory}`);
+      const entries = readdirSync(dirPath, { recursive: true })
+        .filter((f) => typeof f === 'string' && f.endsWith('.md'))
+        .map((f) => {
+          const fullPath = resolve(dirPath, f as string);
+          const stat = statSync(fullPath);
+          return {
+            path: (f as string).replace(/\.md$/, ''),
+            size: stat.size,
+            modified: stat.mtime.toISOString(),
+          };
+        });
+      return textResult(JSON.stringify(entries, null, 2));
+    },
+  );
 
   // Tool 5: search_documents
   tool(
     'search_documents',
+    'Full-text search across all documents.',
     { query: z.string(), case_sensitive: z.boolean() },
     async (args: { query: string; case_sensitive: boolean }) => {
       mcpLog(`search_documents: "${args.query}"`);
-
       if (!existsSync(contentDir)) return textResult('Content directory not found');
       const results: Array<{ path: string; line: number; text: string }> = [];
       const files = readdirSync(contentDir, { recursive: true }).filter(
@@ -163,38 +219,51 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
   );
 
   // Tool 6: undo_agent_edit
-  tool('undo_agent_edit', {}, async () => {
-    mcpLog('undo_agent_edit');
-    const result = await httpPost(httpUrl, '/api/agent-undo');
-    return textResult(
-      result.ok
-        ? `Undo performed. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`
-        : `Cannot undo. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`,
-    );
-  });
+  tool(
+    'undo_agent_edit',
+    'Undo the last agent write. Only agent edits (origin: agent-write) are reversed.',
+    {},
+    async () => {
+      mcpLog('undo_agent_edit');
+      const result = await httpPost(httpUrl, '/api/agent-undo');
+      return textResult(
+        result.ok
+          ? `Undo performed. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`
+          : `Cannot undo. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`,
+      );
+    },
+  );
 
   // Tool 7: redo_agent_edit
-  tool('redo_agent_edit', {}, async () => {
-    mcpLog('redo_agent_edit');
-    const result = await httpPost(httpUrl, '/api/agent-redo');
-    return textResult(
-      result.ok
-        ? `Redo performed. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`
-        : `Cannot redo. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`,
-    );
-  });
+  tool(
+    'redo_agent_edit',
+    'Redo the last undone agent write.',
+    {},
+    async () => {
+      mcpLog('redo_agent_edit');
+      const result = await httpPost(httpUrl, '/api/agent-redo');
+      return textResult(
+        result.ok
+          ? `Redo performed. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`
+          : `Cannot redo. canUndo: ${result.canUndo}, canRedo: ${result.canRedo}`,
+      );
+    },
+  );
 
-  // Tool 8: update_frontmatter
+  // Tool 8: update_frontmatter — merge fields into existing frontmatter
   tool(
     'update_frontmatter',
+    'Merge fields into the document YAML frontmatter without touching the body.',
     { path: z.string(), fields: z.record(z.string(), z.string()) },
     async (args: { path: string; fields: Record<string, string> }) => {
       mcpLog(`update_frontmatter: ${args.path}`);
-      const filePath = resolve(contentDir, `${args.path}.md`);
-      if (!filePath.startsWith(`${contentDir}/`)) return textResult('Error: invalid path', true);
-      if (!existsSync(filePath)) return textResult(`Document not found: ${args.path}`, true);
+      const readResult = await httpGet(
+        httpUrl,
+        `/api/document?docName=${encodeURIComponent(args.path)}`,
+      );
+      if (!readResult.ok) return textResult(`Error: ${readResult.error}`, true);
 
-      const content = readFileSync(filePath, 'utf-8');
+      const content = readResult.content as string;
       const fmMatch = content.match(/^---\n([\s\S]*?)\n---\n?/);
       const existingFm: Record<string, string> = {};
       if (fmMatch) {
@@ -211,16 +280,24 @@ export function registerTools(server: McpServer, httpUrl: string, contentDir: st
       const merged = { ...existingFm, ...args.fields };
       const fmLines = Object.entries(merged).map(([k, v]) => `${k}: ${v}`);
       const newFm = `---\n${fmLines.join('\n')}\n---\n`;
-      const body = fmMatch ? content.slice(fmMatch[0].length) : content;
-      const newContent = newFm + body;
 
-      const result = await httpPost(httpUrl, '/api/agent-write-md', {
-        markdown: newContent,
-        position: 'replace',
-        docName: args.path,
-      });
-      if (!result.ok) return textResult(`Error: ${result.error}`, true);
+      if (fmMatch) {
+        const result = await httpPost(httpUrl, '/api/agent-patch', {
+          docName: args.path,
+          find: fmMatch[0],
+          replace: newFm,
+        });
+        if (!result.ok) return textResult(`Error: ${result.error}`, true);
+      } else {
+        const result = await httpPost(httpUrl, '/api/agent-write-md', {
+          markdown: newFm,
+          position: 'prepend',
+          docName: args.path,
+        });
+        if (!result.ok) return textResult(`Error: ${result.error}`, true);
+      }
       return textResult(`Frontmatter updated: ${Object.keys(args.fields).join(', ')}`);
     },
   );
 }
+*/
