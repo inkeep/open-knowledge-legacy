@@ -5,7 +5,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
-import { ExternalLink, FilePlus2, Pencil, Trash2 } from 'lucide-react';
+import { Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
 import { CreatePageDialog } from '../../components/CreatePageDialog';
@@ -65,7 +65,6 @@ interface EditWikiLinkDialogProps {
   target: string;
   alias: string | null;
   anchor: string | null;
-  /** True when the target page is known to exist — enables heading fetch. */
   targetResolved: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (target: string, alias: string | null, anchor: string | null) => void;
@@ -87,10 +86,8 @@ function EditWikiLinkDialog({
   const anchorId = useId();
   const aliasId = useId();
 
-  // Fetch headings only for the current editTarget when it matches a resolved page.
   const headings = useHeadings(editTarget, targetResolved && open);
 
-  // Reset fields each time the dialog opens.
   useEffect(() => {
     if (open) {
       setEditTarget(target);
@@ -220,9 +217,13 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
-  function handleOpenPage() {
+  /** Primary click: navigate (resolved/loading) or open create dialog (unresolved). */
+  function handlePrimaryClick() {
+    if (unresolved) {
+      setCreateDialogOpen(true);
+      return;
+    }
     if (anchor) {
-      // Same-page anchor: scroll directly without re-navigating.
       const currentDoc = window.location.hash.startsWith('#/')
         ? window.location.hash.slice(2)
         : null;
@@ -233,10 +234,16 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
           return;
         }
       }
-      // Cross-page anchor: store for TiptapEditor to pick up after doc loads.
       sessionStorage.setItem('pendingAnchor', anchor);
     }
     window.location.hash = `#/${target}`;
+  }
+
+  function handlePrimaryKeyDown(e: React.KeyboardEvent<HTMLSpanElement>) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      handlePrimaryClick();
+    }
   }
 
   function handleCreated(docName: string) {
@@ -255,41 +262,51 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
     <>
       <NodeViewWrapper as="span" contentEditable={false}>
         <DropdownMenuRoot>
-          <DropdownMenuTrigger asChild>
-            <span
-              className={cn(
-                'mx-0.5 inline-flex max-w-full cursor-pointer select-none items-center rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
-                resolved
-                  ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 focus-visible:ring-sky-300'
-                  : unresolved
-                    ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 focus-visible:ring-red-300'
-                    : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted focus-visible:ring-ring',
-              )}
-              data-target={target}
-              data-alias={alias ?? ''}
-              data-anchor={anchor ?? ''}
-              data-resolved={resolved ? 'true' : 'false'}
-              data-resolution-state={resolutionState}
-              title={source}
-            >
-              <span className="truncate">{label}</span>
-            </span>
-          </DropdownMenuTrigger>
+          {/* Chip — primary click action + group for hover-reveal of the ⋯ trigger */}
+          <span
+            className={cn(
+              'group mx-0.5 inline-flex max-w-full cursor-pointer select-none items-center gap-0.5 rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+              resolved
+                ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 focus-visible:ring-sky-300'
+                : unresolved
+                  ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 focus-visible:ring-red-300'
+                  : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted focus-visible:ring-ring',
+            )}
+            data-target={target}
+            data-alias={alias ?? ''}
+            data-anchor={anchor ?? ''}
+            data-resolved={resolved ? 'true' : 'false'}
+            data-resolution-state={resolutionState}
+            title={source}
+            role={resolved ? 'link' : 'button'}
+            tabIndex={0}
+            onClick={handlePrimaryClick}
+            onKeyDown={handlePrimaryKeyDown}
+          >
+            <span className="truncate">{label}</span>
 
-          <DropdownMenuContent align="start" className="w-44">
-            {resolved && (
-              <DropdownMenuItem onSelect={handleOpenPage}>
-                <ExternalLink />
-                Open page
-              </DropdownMenuItem>
-            )}
-            {unresolved && (
-              <DropdownMenuItem onSelect={() => setCreateDialogOpen(true)}>
-                <FilePlus2 />
-                Create page
-              </DropdownMenuItem>
-            )}
+            {/* ⋯ menu trigger — visible on chip hover/focus-within, stops click propagation */}
+            <DropdownMenuTrigger asChild>
+              <span
+                className={cn(
+                  'invisible ml-0.5 inline-flex shrink-0 items-center rounded-sm p-0.5',
+                  'group-hover:visible group-focus-within:visible',
+                  'hover:bg-black/10 focus-visible:visible focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current',
+                )}
+                role="button"
+                tabIndex={0}
+                aria-label="Link options"
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <Ellipsis className="size-3" />
+              </span>
+            </DropdownMenuTrigger>
+          </span>
+
+          <DropdownMenuContent align="start" className="w-36">
             <DropdownMenuItem onSelect={() => setEditDialogOpen(true)}>
               <Pencil />
               Edit link
