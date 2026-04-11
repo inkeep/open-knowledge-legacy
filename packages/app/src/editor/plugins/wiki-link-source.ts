@@ -38,17 +38,22 @@ interface HeadingEntry {
   slug: string;
 }
 
-// ── Data fetching (module-level cache, valid for the lifetime of the page) ────
+// ── Data fetching (module-level cache with TTL) ───────────────────────────────
+
+const PAGES_CACHE_TTL_MS = 5_000;
 
 let pagesCache: PageItem[] | null = null;
+let pagesCacheTime = 0;
 const headingsCache = new Map<string, HeadingEntry[]>();
 
 async function getPages(): Promise<PageItem[]> {
-  if (pagesCache) return pagesCache;
+  const now = Date.now();
+  if (pagesCache && now - pagesCacheTime < PAGES_CACHE_TTL_MS) return pagesCache;
   const r = await fetch('/api/pages');
   if (!r.ok) throw new Error(`/api/pages ${r.status}`);
   const data = (await r.json()) as { pages?: PageItem[] };
   pagesCache = Array.isArray(data.pages) ? data.pages : [];
+  pagesCacheTime = now;
   return pagesCache;
 }
 
@@ -118,7 +123,7 @@ const wikiLinkClickHandler = EditorView.domEventHandlers({
         const anchor = m[2]?.trim() || null;
         if (target) {
           event.preventDefault();
-          if (anchor) sessionStorage.setItem('pendingAnchor', anchor);
+          if (anchor) sessionStorage.setItem(`pendingAnchor:${target}`, anchor);
           window.location.hash = `#/${target}`;
         }
         return true;

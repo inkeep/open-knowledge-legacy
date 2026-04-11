@@ -17,6 +17,7 @@ import {
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import { type HeadingEntry, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
@@ -80,25 +81,11 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-export interface HeadingEntry {
-  level: number;
-  text: string;
-  /** URL-safe slug derived from the heading text — matches wiki link anchor syntax. */
-  slug: string;
-}
-
-function headingToSlug(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
-
 /**
  * Extract all ATX headings (# … ######) from a markdown document.
  * Frontmatter is stripped before scanning so `title:` YAML lines are ignored.
  */
+export type { HeadingEntry } from '@inkeep/open-knowledge-core';
 export function extractHeadings(content: string): HeadingEntry[] {
   let body = content;
   if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
@@ -113,7 +100,7 @@ export function extractHeadings(content: string): HeadingEntry[] {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       const text = match[2].trim();
-      const slug = headingToSlug(text);
+      const slug = toWikiLinkSlug(text);
       if (slug) headings.push({ level: match[1].length, text, slug });
     }
   }

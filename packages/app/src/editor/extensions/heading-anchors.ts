@@ -6,6 +6,9 @@
  * values in wiki links, so `[[page#my-heading]]` navigates to the heading
  * whose rendered text slugifies to "my-heading".
  *
+ * Duplicate heading texts are disambiguated with a numeric suffix (-1, -2, …)
+ * so every ID in the document remains unique.
+ *
  * This is deliberately kept out of core/shared extensions because:
  *   - The server doesn't render interactive HTML (IDs serve no purpose there).
  *   - Decorations don't mutate the ProseMirror document or serialised markdown.
@@ -24,14 +27,21 @@ export const HeadingAnchors = Extension.create({
         props: {
           decorations(state) {
             const decos: Decoration[] = [];
+            const idCounts = new Map<string, number>();
+
             state.doc.descendants((node, pos) => {
               if (node.type.name === 'heading') {
-                const id = toWikiLinkSlug(node.textContent);
-                if (id) {
-                  decos.push(Decoration.node(pos, pos + node.nodeSize, { id }));
-                }
+                const base = toWikiLinkSlug(node.textContent);
+                if (!base) return;
+
+                const count = idCounts.get(base) ?? 0;
+                idCounts.set(base, count + 1);
+                const id = count === 0 ? base : `${base}-${count}`;
+
+                decos.push(Decoration.node(pos, pos + node.nodeSize, { id }));
               }
             });
+
             return DecorationSet.create(state.doc, decos);
           },
         },

@@ -284,22 +284,31 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
   }, [editor, provider.document]);
 
   // Scroll to a heading anchor after navigating from a wiki link.
-  // WikiLinkView stores the target anchor slug in sessionStorage before setting
-  // the hash; this effect picks it up once the provider syncs the document.
-  // TiptapEditor is keyed by docName (see EditorArea), so this runs once per doc.
+  // WikiLinkView stores the target anchor slug in sessionStorage (namespaced by
+  // docName) before setting the hash; this effect picks it up once the provider
+  // syncs the document. TiptapEditor is keyed by docName (see EditorArea), so
+  // this runs once per doc.
   useEffect(() => {
-    const anchorRaw = sessionStorage.getItem('pendingAnchor');
-    if (!anchorRaw) return;
-    sessionStorage.removeItem('pendingAnchor');
+    const hashMatch = window.location.hash.match(/^#\/([^?#/]+)/);
+    const docName = hashMatch ? decodeURIComponent(hashMatch[1]) : null;
+    const anchorRaw = docName ? sessionStorage.getItem(`pendingAnchor:${docName}`) : null;
+    if (!anchorRaw || !docName) return;
+    sessionStorage.removeItem(`pendingAnchor:${docName}`);
     const anchor = anchorRaw; // narrowed to string for closure
 
     let attempts = 0;
+    let timeoutId: number | undefined;
+    let scrolled = false;
+
     function tryScroll() {
+      if (scrolled) return;
       const el = document.getElementById(anchor);
       if (el) {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        scrolled = true;
+        provider.off('synced', tryScroll);
       } else if (attempts++ < 20) {
-        setTimeout(tryScroll, 100);
+        timeoutId = window.setTimeout(tryScroll, 100);
       }
     }
 
@@ -307,6 +316,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     tryScroll();
     provider.on('synced', tryScroll);
     return () => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
       provider.off('synced', tryScroll);
     };
   }, [provider]);

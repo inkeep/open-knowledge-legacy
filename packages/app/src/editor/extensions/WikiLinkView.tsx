@@ -1,5 +1,6 @@
 import {
   getWikiLinkText,
+  type HeadingEntry,
   normalizeNullableString,
   renderWikiLink,
 } from '@inkeep/open-knowledge-core';
@@ -23,12 +24,6 @@ import { cn } from '../../lib/utils';
 import { isResolvedWikiLinkTarget } from './wiki-link-helpers';
 
 // ── Heading picker ────────────────────────────────────────────────────────────
-
-interface HeadingEntry {
-  level: number;
-  text: string;
-  slug: string;
-}
 
 /** Fetch headings for a resolved page. Returns null while loading, [] when none. */
 function useHeadings(docName: string, enabled: boolean): HeadingEntry[] | null {
@@ -65,7 +60,7 @@ interface EditWikiLinkDialogProps {
   target: string;
   alias: string | null;
   anchor: string | null;
-  targetResolved: boolean;
+  pages: Set<string>;
   onOpenChange: (open: boolean) => void;
   onSave: (target: string, alias: string | null, anchor: string | null) => void;
 }
@@ -75,7 +70,7 @@ function EditWikiLinkDialog({
   target,
   alias,
   anchor,
-  targetResolved,
+  pages,
   onOpenChange,
   onSave,
 }: EditWikiLinkDialogProps) {
@@ -85,8 +80,11 @@ function EditWikiLinkDialog({
   const targetId = useId();
   const anchorId = useId();
   const aliasId = useId();
+  const headingListId = useId();
 
-  const headings = useHeadings(editTarget, targetResolved && open);
+  // Resolve against the live editTarget so headings update as the user types
+  const isEditTargetResolved = isResolvedWikiLinkTarget(editTarget, pages);
+  const headings = useHeadings(editTarget, isEditTargetResolved && open);
 
   useEffect(() => {
     if (open) {
@@ -109,12 +107,29 @@ function EditWikiLinkDialog({
 
   const showHeadings = headings !== null && headings.length > 0;
 
+  // Deduplicate heading keys — mirrors heading-anchors.ts so identical heading
+  // texts get -1, -2 … suffixes, ensuring stable React keys without array index.
+  const headingsWithKeys = showHeadings
+    ? (() => {
+        const counts = new Map<string, number>();
+        return headings!.map((h) => {
+          const count = counts.get(h.slug) ?? 0;
+          counts.set(h.slug, count + 1);
+          const reactKey = count === 0 ? h.slug : `${h.slug}-${count}`;
+          return { ...h, reactKey };
+        });
+      })()
+    : [];
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-6 shadow-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
-          <Dialog.Title className="mb-4 text-base font-semibold">Edit wiki link</Dialog.Title>
+          <Dialog.Title className="mb-1 text-base font-semibold">Edit wiki link</Dialog.Title>
+          <Dialog.Description className="mb-4 text-sm text-muted-foreground">
+            Modify the link target, anchor, and display label.
+          </Dialog.Description>
 
           <div className="mb-4 space-y-3">
             <div>
@@ -127,6 +142,7 @@ function EditWikiLinkDialog({
                 onChange={(e) => setEditTarget(e.target.value)}
                 placeholder="page-name"
                 autoFocus
+                aria-required="true"
                 onKeyDown={handleKeyDown}
               />
             </div>
@@ -144,11 +160,18 @@ function EditWikiLinkDialog({
                 onKeyDown={handleKeyDown}
               />
               {showHeadings && (
-                <div className="mt-1.5 max-h-36 overflow-y-auto rounded-md border border-border bg-muted/30">
-                  {headings.map((h) => (
+                <div
+                  role="listbox"
+                  id={headingListId}
+                  aria-label="Heading anchors"
+                  className="mt-1.5 max-h-36 overflow-y-auto rounded-md border border-border bg-muted/30"
+                >
+                  {headingsWithKeys.map((h) => (
                     <button
-                      key={h.slug}
+                      key={h.reactKey}
                       type="button"
+                      role="option"
+                      aria-selected={editAnchor === h.slug}
                       className={cn(
                         'flex w-full items-center gap-2 px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground',
                         editAnchor === h.slug && 'bg-accent text-accent-foreground',
@@ -224,9 +247,9 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
       return;
     }
     if (anchor) {
-      const currentDoc = window.location.hash.startsWith('#/')
-        ? window.location.hash.slice(2)
-        : null;
+      // Robust hash parsing — handles trailing slashes/query params
+      const hashMatch = window.location.hash.match(/^#\/([^?#/]+)/);
+      const currentDoc = hashMatch ? hashMatch[1] : null;
       if (currentDoc === target) {
         const el = document.getElementById(anchor);
         if (el) {
@@ -234,12 +257,13 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
           return;
         }
       }
-      sessionStorage.setItem('pendingAnchor', anchor);
+      // Namespaced key prevents stale anchors from polluting other pages
+      sessionStorage.setItem(`pendingAnchor:${target}`, anchor);
     }
     window.location.hash = `#/${target}`;
   }
 
-  function handlePrimaryKeyDown(e: React.KeyboardEvent<HTMLSpanElement>) {
+  function handlePrimaryKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       handlePrimaryClick();
@@ -333,7 +357,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
         target={target}
         alias={alias}
         anchor={anchor}
-        targetResolved={resolved}
+        pages={pages}
         onOpenChange={setEditDialogOpen}
         onSave={handleSaveEdit}
       />
