@@ -5,6 +5,7 @@
  */
 import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
 import Placeholder from '@tiptap/extension-placeholder';
+import { HeadingAnchors } from './heading-anchors';
 import { JsxComponent } from './jsx-component';
 import { SlashCommand } from './slash-command';
 import { WikiLink } from './wiki-link';
@@ -17,6 +18,7 @@ export const sharedExtensions = [
     return ext;
   }),
   SlashCommand,
+  HeadingAnchors,
   Placeholder.configure({
     placeholder: "Type '/' for commands",
     showOnlyCurrent: true,

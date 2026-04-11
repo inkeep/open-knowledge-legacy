@@ -152,6 +152,21 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
   function handleOpenPage() {
+    if (anchor) {
+      // Same-page anchor: scroll directly without re-navigating.
+      const currentDoc = window.location.hash.startsWith('#/')
+        ? window.location.hash.slice(2)
+        : null;
+      if (currentDoc === target) {
+        const el = document.getElementById(anchor);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          return;
+        }
+      }
+      // Cross-page anchor: store for TiptapEditor to pick up after doc loads.
+      sessionStorage.setItem('pendingAnchor', anchor);
+    }
     window.location.hash = `#/${target}`;
   }
 

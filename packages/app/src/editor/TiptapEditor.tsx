@@ -283,6 +283,33 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     };
   }, [editor, provider.document]);
 
+  // Scroll to a heading anchor after navigating from a wiki link.
+  // WikiLinkView stores the target anchor slug in sessionStorage before setting
+  // the hash; this effect picks it up once the provider syncs the document.
+  // TiptapEditor is keyed by docName (see EditorArea), so this runs once per doc.
+  useEffect(() => {
+    const anchor = sessionStorage.getItem('pendingAnchor');
+    if (!anchor) return;
+    sessionStorage.removeItem('pendingAnchor');
+
+    let attempts = 0;
+    function tryScroll() {
+      const el = document.getElementById(anchor);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else if (attempts++ < 20) {
+        setTimeout(tryScroll, 100);
+      }
+    }
+
+    // Try immediately (already synced) and again after sync if needed.
+    tryScroll();
+    provider.on('synced', tryScroll);
+    return () => {
+      provider.off('synced', tryScroll);
+    };
+  }, [provider]);
+
   // Read frontmatter from Y.Doc metadata map (set by server persistence on load)
   useEffect(() => {
     const metaMap = provider.document.getMap('metadata');
