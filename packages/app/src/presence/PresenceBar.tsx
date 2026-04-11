@@ -120,13 +120,13 @@ function SyncIndicator({ status }: { status: SyncStatus }) {
 }
 
 export function PresenceBar() {
-  const { activeProvider } = useDocumentContext();
+  const { activeProvider, activeDocName } = useDocumentContext();
   const participants = usePresence(activeProvider);
   const syncStatus = useSyncStatus(activeProvider);
 
   return (
     <div data-slot="presence-bar" className="flex items-center gap-2 px-1 py-1.5">
-      <SyncIndicator status={syncStatus} />
+      {activeDocName && <SyncIndicator status={syncStatus} />}
       <div className="flex items-center -space-x-1.5">
         {participants.map((p) => (
           <PresenceAvatar key={p.clientId} user={p.user} mode={p.mode} />
