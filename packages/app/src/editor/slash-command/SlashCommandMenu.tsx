@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { SlashCommandItem } from './items';
 
-interface SlashCommandMenuProps {
+export interface SlashCommandMenuProps {
   items: SlashCommandItem[];
   selectedIndex: number;
   categoryLabels: Record<string, string>;

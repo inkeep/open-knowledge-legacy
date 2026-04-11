@@ -280,6 +280,12 @@ Y.Doc
 
 ## Testing
 
+### Test file naming convention
+
+- `*.test.ts` — Bun test runner (unit, integration, stress). Auto-discovered by `bun test`.
+- `*.e2e.ts` — Playwright E2E tests. Auto-discovered by `playwright.config.ts` (`testMatch: /.*\.e2e\.ts$/`). Run via `bun run test:stress:e2e`.
+- **Do not use `*.spec.ts`** — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
+
 ### Test layers
 
 | Layer | Type | Location | Command |

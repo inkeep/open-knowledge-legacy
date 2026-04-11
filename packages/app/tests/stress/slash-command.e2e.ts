@@ -327,6 +327,23 @@ test.describe('slash command — keyboard navigation', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('ArrowUp moves selection upward and wraps around to the last item', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/');
+    await page.waitForTimeout(300);
+
+    // First item is selected by default (index 0). ArrowUp should wrap to the last item.
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(100);
+
+    const m = await getMenuState(page);
+    expect(m.open).toBe(true);
+    if (!m.open) return;
+    const selectedIdx = m.items.findIndex((i) => i.dataSelected === 'true');
+    expect(selectedIdx).toBe(m.itemCount - 1);
+    await page.keyboard.press('Escape');
+  });
+
   test('Escape closes the menu without inserting anything', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/');
