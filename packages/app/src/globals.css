@@ -274,6 +274,11 @@
   margin-bottom: 0.5em;
 }
 
+.ProseMirror mark {
+  color: inherit;
+  @apply py-0.5 px-1 rounded-sm bg-amber-100;
+}
+
 .ProseMirror h1,
 .ProseMirror h2,
 .ProseMirror h3 {

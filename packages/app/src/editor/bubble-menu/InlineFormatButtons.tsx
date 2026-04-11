@@ -1,6 +1,6 @@
 import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
-import { Bold, Code, Italic, Strikethrough, Underline } from 'lucide-react';
+import { Bold, Code, Highlighter, Italic, Strikethrough, Underline } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -39,6 +39,13 @@ const formatActions = [
     command: (editor: Editor) => editor.chain().focus().toggleCode().run(),
     isActive: (editor: Editor) => editor.isActive('code'),
     shortcut: '⌘E',
+  },
+  {
+    name: 'highlight',
+    icon: Highlighter,
+    command: (editor: Editor) => editor.chain().focus().toggleHighlight().run(),
+    isActive: (editor: Editor) => editor.isActive('highlight'),
+    shortcut: '⌘⇧H',
   },
 ] as const;
 
