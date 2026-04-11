@@ -8,12 +8,12 @@
  */
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
-import Link from '@tiptap/extension-link';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
 import { componentManifest } from '../generated/components.ts';
 import { createJsxComponentExtensions } from '../registry/jsx-component-factory.ts';
+import { WikiLink } from './wiki-link.ts';
 
 // Factory call — runs once at module load (ESM single-instance semantics).
 // The manifest is committed as synchronous ESM — no async boot needed.
@@ -27,7 +27,19 @@ export const sharedExtensions = [
   // markdownTokenizer is registered before codeBlock's handler.
   jsxComponentEditable,
   jsxComponentVoid,
-  StarterKit.configure({ undoRedo: false, link: false }),
+  // WikiLink also needs to register before StarterKit so its custom tokenizer is
+  // part of the shared markdown schema everywhere we parse or serialize markdown.
+  WikiLink,
+  StarterKit.configure({
+    undoRedo: false,
+    link: {
+      openOnClick: false,
+      HTMLAttributes: {
+        target: '_blank',
+        rel: 'noopener noreferrer',
+      },
+    },
+  }),
   Table.configure({
     resizable: true,
   }),
@@ -35,13 +47,6 @@ export const sharedExtensions = [
   TableHeader,
   TableCell,
   Image,
-  Link.configure({
-    openOnClick: false,
-    HTMLAttributes: {
-      target: '_blank',
-      rel: 'noopener noreferrer',
-    },
-  }),
   TaskList,
   TaskItem,
   Highlight,

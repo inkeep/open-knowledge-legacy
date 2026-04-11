@@ -142,6 +142,30 @@ describe('Observer B: Y.Text → XmlFragment', () => {
   });
 });
 
+describe('WikiLink bridge regression', () => {
+  test('wikilink markdown survives XmlFragment ↔ Y.Text synchronization', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    try {
+      applyMarkdown(doc, fragment, 'Alpha [[Page#Heading|Alias]]\n');
+
+      await wait();
+
+      expect(ytext.toString().trim()).toBe('Alpha [[Page#Heading|Alias]]');
+
+      const json = yXmlFragmentToProsemirrorJSON(fragment);
+      const md = mdManager.serialize(json);
+      expect(md.trim()).toBe('Alpha [[Page#Heading|Alias]]');
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe('Origin guard loop prevention', () => {
   test('single edit produces bounded observer firings (no cascade)', async () => {
     const doc = new Y.Doc();

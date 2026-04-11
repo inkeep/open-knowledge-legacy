@@ -9,12 +9,14 @@ import { getComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
 import { JsxComponentEditable, JsxComponentVoid } from './jsx-component';
 import { SlashCommand } from './slash-command';
+import { WikiLink } from './wiki-link';
 
-// Replace core's jsxComponent extensions (no NodeView) with app's (has ReactNodeViewRenderer)
+// Replace core extensions that have app-side NodeViews or need app-specific config.
 export const sharedExtensions = [
   ...coreExtensions.map((ext) => {
     if (ext.name === 'jsxComponentEditable') return JsxComponentEditable;
     if (ext.name === 'jsxComponentVoid') return JsxComponentVoid;
+    if (ext.name === 'wikiLink') return WikiLink;
     return ext;
   }),
   SlashCommand.configure({

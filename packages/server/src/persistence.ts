@@ -326,10 +326,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
           );
         }
+        // Use normalized serialization as the base so onStoreDocument doesn't
+        // false-positive on the first store after load. Raw file content may
+        // differ from TipTap's output (blank lines, trailing newlines, list
+        // formatting) without any actual content change.
+        const normalizedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+        setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
+      } else {
+        // Unparseable body (empty file etc.) — fall back to raw so reconciliation
+        // has a base to work with if a watcher event fires later.
+        setReconciledBase(documentName, raw);
       }
-
-      // Initialize reconciled base
-      setReconciledBase(documentName, raw);
     },
 
     async onStoreDocument({ document, documentName }) {

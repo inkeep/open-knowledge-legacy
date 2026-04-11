@@ -1,160 +1,106 @@
 /**
- * Tests for GET /api/documents — document listing with directory exclusion,
- * nested paths, and subdirectory filtering.
+ * Tests for GET /api/documents — document listing from the file index,
+ * with directory prefix filtering.
+ *
+ * The document list API now reads from the watcher's in-memory file index
+ * (populated and filtered by ContentFilter) instead of doing its own readdirSync.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { describe, expect, test } from 'bun:test';
 import { safeSubdir } from './api-extension.ts';
+import type { FileIndexEntry } from './file-watcher.ts';
 
-// ── EXCLUDED_DIRS logic (mirrors module-level constant in api-extension.ts) ──
+// ── File index based document listing tests ──
 
-const EXCLUDED_DIRS = new Set(['.agents', '.claude', '.git', '.open-knowledge', 'node_modules']);
-
-function shouldExclude(relativePath: string): boolean {
-  const firstSegment = relativePath.split(/[\\/]/)[0];
-  return Boolean(firstSegment && EXCLUDED_DIRS.has(firstSegment));
+/**
+ * Simulate the document list handler logic:
+ * reads from a file index map, optionally filtered by dir prefix.
+ */
+function listDocuments(
+  index: ReadonlyMap<string, FileIndexEntry>,
+  dir?: string,
+): { docName: string; size: number; modified: string }[] {
+  const documents: { docName: string; size: number; modified: string }[] = [];
+  for (const [docName, entry] of index) {
+    if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
+    documents.push({ docName, size: entry.size, modified: entry.modified });
+  }
+  return documents.sort((a, b) => a.docName.localeCompare(b.docName));
 }
 
-describe('document list exclusion logic', () => {
-  test('excludes .agents directory', () => {
-    expect(shouldExclude('.agents/skills/foo.md')).toBe(true);
+describe('document listing from file index', () => {
+  const now = new Date().toISOString();
+  const sampleIndex = new Map<string, FileIndexEntry>([
+    ['README', { size: 50, modified: now }],
+    ['docs/guide', { size: 200, modified: now }],
+    ['docs/setup', { size: 150, modified: now }],
+    ['articles/intro', { size: 100, modified: now }],
+    ['articles/nested/deep', { size: 80, modified: now }],
+  ]);
+
+  test('lists all documents from index', () => {
+    const docs = listDocuments(sampleIndex);
+    expect(docs).toHaveLength(5);
+    expect(docs.map((d) => d.docName)).toEqual([
+      'articles/intro',
+      'articles/nested/deep',
+      'docs/guide',
+      'docs/setup',
+      'README',
+    ]);
   });
 
-  test('excludes .claude directory', () => {
-    expect(shouldExclude('.claude/settings.md')).toBe(true);
+  test('filters by dir prefix', () => {
+    const docs = listDocuments(sampleIndex, 'docs');
+    expect(docs).toHaveLength(2);
+    expect(docs.map((d) => d.docName)).toEqual(['docs/guide', 'docs/setup']);
   });
 
-  test('excludes .git directory', () => {
-    expect(shouldExclude('.git/HEAD.md')).toBe(true);
+  test('filters nested dir prefix', () => {
+    const docs = listDocuments(sampleIndex, 'articles');
+    expect(docs).toHaveLength(2);
+    expect(docs.map((d) => d.docName)).toEqual(['articles/intro', 'articles/nested/deep']);
   });
 
-  test('excludes .open-knowledge directory', () => {
-    expect(shouldExclude('.open-knowledge/articles/foo.md')).toBe(true);
+  test('returns empty for non-existent dir prefix', () => {
+    const docs = listDocuments(sampleIndex, 'nonexistent');
+    expect(docs).toHaveLength(0);
   });
 
-  test('excludes node_modules directory', () => {
-    expect(shouldExclude('node_modules/pkg/README.md')).toBe(true);
+  test('returns empty for empty index', () => {
+    const docs = listDocuments(new Map());
+    expect(docs).toHaveLength(0);
   });
 
-  test('allows regular files', () => {
-    expect(shouldExclude('README.md')).toBe(false);
+  test('preserves size and modified in response', () => {
+    const docs = listDocuments(sampleIndex);
+    const readme = docs.find((d) => d.docName === 'README');
+    expect(readme).toBeTruthy();
+    expect(readme?.size).toBe(50);
+    expect(readme?.modified).toBe(now);
   });
 
-  test('allows regular nested files', () => {
-    expect(shouldExclude('docs/guide/setup.md')).toBe(false);
-  });
-
-  test('allows files with similar names', () => {
-    expect(shouldExclude('agents/foo.md')).toBe(false); // no leading dot
-    expect(shouldExclude('my-node_modules/foo.md')).toBe(false);
+  test('results are sorted alphabetically by docName', () => {
+    const docs = listDocuments(sampleIndex);
+    for (let i = 1; i < docs.length; i++) {
+      expect(docs[i].docName.localeCompare(docs[i - 1].docName)).toBeGreaterThanOrEqual(0);
+    }
   });
 });
 
-// ── docName derivation (mirrors fullPath.slice(contentDir.length + 1).replace) ──
+// ── safeSubdir tests ──
 
-function deriveDocName(fullPath: string, contentDir: string): string {
-  return fullPath.slice(contentDir.length + 1).replace(/\.md$/, '');
-}
-
-describe('docName derivation', () => {
-  const contentDir = '/home/user/project';
-
-  test('top-level file', () => {
-    expect(deriveDocName('/home/user/project/README.md', contentDir)).toBe('README');
+describe('safeSubdir', () => {
+  test('resolves valid subdirectory', () => {
+    const result = safeSubdir('/base/dir', 'sub');
+    expect(result).toBe('/base/dir/sub');
   });
 
-  test('nested file', () => {
-    expect(deriveDocName('/home/user/project/docs/guide.md', contentDir)).toBe('docs/guide');
+  test('rejects traversal attempt', () => {
+    expect(() => safeSubdir('/base/dir', '../escape')).toThrow('Invalid directory');
   });
 
-  test('deeply nested file', () => {
-    expect(deriveDocName('/home/user/project/a/b/c/d.md', contentDir)).toBe('a/b/c/d');
-  });
-});
-
-// ── Integration: filesystem-based document listing ──
-
-describe('document listing (filesystem)', () => {
-  const testDir = resolve(tmpdir(), `ok-doclist-test-${Date.now()}`);
-
-  beforeAll(() => {
-    // Create test directory structure
-    mkdirSync(resolve(testDir, 'docs'), { recursive: true });
-    mkdirSync(resolve(testDir, 'articles/nested'), { recursive: true });
-    mkdirSync(resolve(testDir, '.git'), { recursive: true });
-    mkdirSync(resolve(testDir, 'node_modules/pkg'), { recursive: true });
-    mkdirSync(resolve(testDir, '.agents/skills'), { recursive: true });
-
-    // Create files
-    writeFileSync(resolve(testDir, 'README.md'), '# README');
-    writeFileSync(resolve(testDir, 'docs/guide.md'), '# Guide');
-    writeFileSync(resolve(testDir, 'articles/intro.md'), '# Intro');
-    writeFileSync(resolve(testDir, 'articles/nested/deep.md'), '# Deep');
-    writeFileSync(resolve(testDir, '.git/HEAD.md'), 'ref');
-    writeFileSync(resolve(testDir, 'node_modules/pkg/README.md'), '# Pkg');
-    writeFileSync(resolve(testDir, '.agents/skills/foo.md'), '# Skill');
-    writeFileSync(resolve(testDir, 'not-markdown.txt'), 'text');
-  });
-
-  afterAll(() => {
-    rmSync(testDir, { recursive: true, force: true });
-  });
-
-  test('lists .md files recursively', () => {
-    const { readdirSync } = require('node:fs');
-    const entries = readdirSync(testDir, { recursive: true }) as string[];
-    const mdFiles = entries.filter((e: string) => e.endsWith('.md'));
-    // Should include README, guide, intro, deep, plus excluded dirs
-    expect(mdFiles.length).toBeGreaterThanOrEqual(4);
-  });
-
-  test('filters excluded directories', () => {
-    const { readdirSync } = require('node:fs');
-    const entries = readdirSync(testDir, { recursive: true }) as string[];
-    const filtered = entries
-      .filter((e: string) => e.endsWith('.md'))
-      .filter((e: string) => !shouldExclude(e));
-    const docNames = filtered.map((e: string) => e.replace(/\.md$/, ''));
-
-    expect(docNames).toContain('README');
-    expect(docNames).toContain('docs/guide');
-    expect(docNames).toContain('articles/intro');
-    expect(docNames).toContain('articles/nested/deep');
-
-    // Should NOT contain excluded dirs
-    for (const name of docNames) {
-      expect(shouldExclude(`${name}.md`)).toBe(false);
-    }
-  });
-
-  test('subdirectory listing via safeSubdir', () => {
-    const articlesDir = safeSubdir(testDir, 'articles');
-    const { readdirSync } = require('node:fs');
-    const entries = readdirSync(articlesDir, { recursive: true }) as string[];
-    const mdFiles = entries.filter((e: string) => e.endsWith('.md'));
-    expect(mdFiles).toContain('intro.md');
-    expect(mdFiles).toContain('nested/deep.md');
-  });
-
-  test('non-existent subdirectory returns empty via existence check', () => {
-    const { existsSync } = require('node:fs');
-    const nonExistent = resolve(testDir, 'nonexistent');
-    expect(existsSync(nonExistent)).toBe(false);
-  });
-
-  test('sorted alphabetically by docName', () => {
-    const { readdirSync } = require('node:fs');
-    const entries = readdirSync(testDir, { recursive: true }) as string[];
-    const docNames = entries
-      .filter((e: string) => e.endsWith('.md'))
-      .filter((e: string) => !shouldExclude(e))
-      .map((e: string) => e.replace(/\.md$/, ''))
-      .sort((a: string, b: string) => a.localeCompare(b));
-
-    for (let i = 1; i < docNames.length; i++) {
-      expect(docNames[i].localeCompare(docNames[i - 1])).toBeGreaterThanOrEqual(0);
-    }
+  test('allows identity (empty-ish path)', () => {
+    const result = safeSubdir('/base/dir', '.');
+    expect(result).toBe('/base/dir');
   });
 });

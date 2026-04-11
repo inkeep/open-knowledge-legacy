@@ -23,6 +23,14 @@ export {
   jsxComponentVoid,
   sharedExtensions,
 } from './extensions/shared.ts';
+export {
+  getWikiLinkText,
+  normalizeNullableString,
+  parseWikiLink,
+  renderWikiLink,
+  WikiLink,
+  type WikiLinkAttrs,
+} from './extensions/wiki-link.ts';
 export type { BuiltInManifestEntry, ComponentMeta, PropDef } from './registry/index.ts';
 // Registry (BUILT_INS omitted — it uses node:module, only for build-registry script)
 export { componentManifest } from './registry/index.ts';

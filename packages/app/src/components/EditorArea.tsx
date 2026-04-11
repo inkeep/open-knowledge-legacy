@@ -1,4 +1,3 @@
-import { Activity } from 'react';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
@@ -23,16 +22,19 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
     // viewport (e.g. agent prepends). Browser default, but set explicitly to document
     // intent and guard against future overrides.
     <div className="flex-1 overflow-y-auto subtle-scrollbar" style={{ overflowAnchor: 'auto' }}>
-      <Activity mode={isSourceMode ? 'visible' : 'hidden'}>
+      {/* CSS-based show/hide — React Activity runs effect cleanup on 'hidden' which destroys
+          the CodeMirror/TipTap views. display:none keeps DOM in document without triggering
+          React's effect lifecycle, so both editors stay alive across mode switches. */}
+      <div className={isSourceMode ? 'h-full' : 'hidden'}>
         <SourceEditor
           key={activeDocName}
           ytext={activeProvider.document.getText('source')}
           provider={activeProvider}
         />
-      </Activity>
-      <Activity mode={isSourceMode ? 'hidden' : 'visible'}>
+      </div>
+      <div className={isSourceMode ? 'hidden' : 'h-full'}>
         <TiptapEditor key={activeDocName} provider={activeProvider} />
-      </Activity>
+      </div>
     </div>
   );
 }

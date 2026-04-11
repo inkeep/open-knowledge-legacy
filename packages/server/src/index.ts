@@ -6,6 +6,11 @@ export {
   syncTextToFragment,
 } from './agent-sessions.ts';
 export { type ApiExtensionOptions, createApiExtension, safeSubdir } from './api-extension.ts';
+export {
+  type ContentFilter,
+  type ContentFilterOptions,
+  createContentFilter,
+} from './content-filter.ts';
 export { createExternalChangeHandler } from './external-change.ts';
 export {
   type AsyncSubscription,
@@ -13,6 +18,7 @@ export {
   contentHash,
   type DiskEvent,
   evictStaleTrackerEntries,
+  type FileIndexEntry,
   isSelfWrite,
   lastKnownHash,
   pathToDocName,
@@ -20,6 +26,7 @@ export {
   removeLastKnownHash,
   startWatcher,
   updateLastKnownHash,
+  type WatcherHandle,
   writeTracker,
 } from './file-watcher.ts';
 export {
