@@ -236,8 +236,11 @@ describe('S9: observer init from restored doc', () => {
       await wait(500);
       sourceCleanup();
 
-      // Step 2: Encode source doc state
+      // Step 2: Encode source doc state, then release it — Y.Doc instances hold
+      // internal state (event listeners, update handlers) that should be
+      // explicitly released in tests rather than relying on V8 GC.
       const stateUpdate = Y.encodeStateAsUpdate(sourceDoc);
+      sourceDoc.destroy();
 
       // Step 3: Apply to fresh doc (simulates reconnect)
       const freshDoc = new Y.Doc();

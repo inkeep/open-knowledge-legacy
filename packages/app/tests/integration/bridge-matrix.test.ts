@@ -472,8 +472,11 @@ describe('multi-client sync', () => {
   });
 
   afterEach(async () => {
-    clientA?.cleanup();
-    clientB?.cleanup();
+    // cleanup() is async as of 79d1b51 (testReset wrapped in try/catch).
+    // Missing await would let the test.concurrent() runner race ahead into
+    // the next test before the server-side doc unloads.
+    await clientA?.cleanup();
+    await clientB?.cleanup();
     // Wait for WebSocket connections to fully close before the next testReset.
     // provider.destroy() sends a close frame but the socket close is async —
     // if we proceed immediately, old providers can reconnect into the reset
