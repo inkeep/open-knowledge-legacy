@@ -147,7 +147,7 @@ const CONSTRUCTS: Array<{ name: string; input: string; stable?: boolean; note?: 
 
 describe('markdown round-trip: serialize(parse(md))', () => {
   for (const { name, input, stable } of CONSTRUCTS) {
-    test(name, () => {
+    test.concurrent(name, () => {
       const output = stripTrailingWhitespace(mdRoundTrip(input));
       const normalized = stripTrailingWhitespace(input);
 
@@ -170,7 +170,7 @@ describe('markdown round-trip: serialize(parse(md))', () => {
 
 describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemirrorJSON → serialize', () => {
   for (const { name, input } of CONSTRUCTS) {
-    test(name, () => {
+    test.concurrent(name, () => {
       const output = stripTrailingWhitespace(treeRoundTrip(input));
       const normalized = stripTrailingWhitespace(input);
 
@@ -187,7 +187,7 @@ describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemir
 
 describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observer B → XmlFragment', () => {
   for (const { name, input } of CONSTRUCTS) {
-    test(name, async () => {
+    test.concurrent(name, async () => {
       const doc = new Y.Doc();
       const fragment = doc.getXmlFragment('default');
       const ytext = doc.getText('source');
@@ -228,7 +228,7 @@ describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observe
 
 describe('full-stack chain: md → parse → XmlFragment → Observer A → Y.Text → Observer B → XmlFragment → serialize → md', () => {
   for (const { name, input } of CONSTRUCTS) {
-    test(name, async () => {
+    test.concurrent(name, async () => {
       const doc = new Y.Doc();
       const fragment = doc.getXmlFragment('default');
       const ytext = doc.getText('source');

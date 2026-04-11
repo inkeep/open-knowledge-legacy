@@ -73,7 +73,7 @@ describe('smoke', () => {
 // ─── W1: WYSIWYG (XmlFragment) writes ───
 
 describe('W1: WYSIWYG writes', () => {
-  test('W1→Y.Text: local XmlFragment edit propagates to Y.Text via Observer A', async () => {
+  test.concurrent('W1→Y.Text: local XmlFragment edit propagates to Y.Text via Observer A', async () => {
     const client = await createTestClient(server.port);
     try {
       applyMarkdownToFragment(client, '# WYSIWYG Heading\n\nSome paragraph content.');
@@ -86,7 +86,7 @@ describe('W1: WYSIWYG writes', () => {
     }
   });
 
-  test('W1→Disk: local XmlFragment edit persists to .md file', async () => {
+  test.concurrent('W1→Disk: local XmlFragment edit persists to .md file', async () => {
     const client = await createTestClient(server.port);
     try {
       applyMarkdownToFragment(client, '# Disk Test\n\nThis should persist.');
@@ -107,7 +107,7 @@ describe('W1: WYSIWYG writes', () => {
 // ─── W2: Source mode (Y.Text) writes ───
 
 describe('W2: source mode writes', () => {
-  test('W2→XmlFragment: local Y.Text edit propagates to XmlFragment via Observer B', async () => {
+  test.concurrent('W2→XmlFragment: local Y.Text edit propagates to XmlFragment via Observer B', async () => {
     const client = await createTestClient(server.port);
     try {
       client.doc.transact(() => {
@@ -123,7 +123,7 @@ describe('W2: source mode writes', () => {
     }
   });
 
-  test('W2→Disk: local Y.Text edit persists to .md file', async () => {
+  test.concurrent('W2→Disk: local Y.Text edit persists to .md file', async () => {
     const client = await createTestClient(server.port);
     try {
       client.doc.transact(() => {
@@ -145,7 +145,7 @@ describe('W2: source mode writes', () => {
 // ─── W3: Agent writes (via API) ───
 
 describe('W3: agent writes', () => {
-  test('W3→Y.Text: agent-write-md propagates to client Y.Text', async () => {
+  test.concurrent('W3→Y.Text: agent-write-md propagates to client Y.Text', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Agent Heading\n\nAgent wrote this.', {
@@ -160,7 +160,7 @@ describe('W3: agent writes', () => {
     }
   });
 
-  test('W3→XmlFragment: agent-write-md propagates to client XmlFragment', async () => {
+  test.concurrent('W3→XmlFragment: agent-write-md propagates to client XmlFragment', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Agent Fragment\n\nVisible in WYSIWYG.', {
@@ -176,7 +176,7 @@ describe('W3: agent writes', () => {
     }
   });
 
-  test('W3→Disk: agent-write-md persists to .md file', async () => {
+  test.concurrent('W3→Disk: agent-write-md persists to .md file', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Agent Disk\n\nPersisted by agent.', {
@@ -245,7 +245,7 @@ describe('W4: disk writes', () => {
 // ─── Undo / Redo ───
 
 describe('undo / redo', () => {
-  test('Undo→Y.Text: agent-undo reverts client Y.Text', async () => {
+  test.concurrent('Undo→Y.Text: agent-undo reverts client Y.Text', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Undo Target\n\nThis will be undone.', {
@@ -264,7 +264,7 @@ describe('undo / redo', () => {
     }
   });
 
-  test('Undo→XmlFragment: agent-undo reverts client XmlFragment', async () => {
+  test.concurrent('Undo→XmlFragment: agent-undo reverts client XmlFragment', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Undo Fragment\n\nUndone in WYSIWYG.', {
@@ -283,7 +283,7 @@ describe('undo / redo', () => {
     }
   });
 
-  test('Redo→all: agent-redo restores both surfaces', async () => {
+  test.concurrent('Redo→all: agent-redo restores both surfaces', async () => {
     const client = await createTestClient(server.port);
     try {
       await agentWriteMd(server.port, '# Redo Target\n\nRedo restores this.', {
