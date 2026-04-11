@@ -86,14 +86,17 @@ Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, sh
 ```
 Hocuspocus Server
 ├── Persistence Extension (CRDT → markdown → disk → shadow git)
-├── API Extension (onRequest hook for HTTP endpoints)
+├── API Extension (onRequest hook — reads file index from watcher)
 ├── Agent Sessions (DirectConnection + UndoManager per agent)
-├── File Watcher (@parcel/watcher disk bridge)
+├── Content Filter (gitignore + config exclude/include filtering)
+├── File Watcher (@parcel/watcher — owns in-memory file index)
 ├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
 ├── Shadow Repo (.git/openknowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)
 └── Shadow Branch GC (orphaned ref cleanup)
 ```
+
+**File discovery:** The file watcher is the single source of truth for "what content files exist." It maintains a filtered in-memory index populated at startup and kept in sync via watcher events. The documents API reads from this index (no independent filesystem walk). Filtering uses `ContentFilter` which unions `.gitignore` rules with `config.content.exclude` patterns; exclusion supersedes inclusion.
 
 ### Shadow repo & branch runtime
 

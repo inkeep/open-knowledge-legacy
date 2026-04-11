@@ -51,10 +51,16 @@ function resolveContentConfig(): ContentConfig {
         defaults.dir = resolve(PROJECT_ROOT, content.dir);
       }
       if (Array.isArray(content?.include)) {
-        defaults.include = content.include as string[];
+        const valid = (content.include as unknown[]).filter(
+          (p): p is string => typeof p === 'string',
+        );
+        if (valid.length > 0) defaults.include = valid;
       }
       if (Array.isArray(content?.exclude)) {
-        defaults.exclude = content.exclude as string[];
+        const valid = (content.exclude as unknown[]).filter(
+          (p): p is string => typeof p === 'string',
+        );
+        if (valid.length > 0) defaults.exclude = valid;
       }
     } catch (err) {
       console.warn('[hocuspocus] Failed to parse config:', err);

@@ -309,9 +309,75 @@ describe('ContentFilter', () => {
 
       // Paths are relative to contentDir for include matching,
       // but relative to projectDir for gitignore matching.
-      // In practice, the watcher provides paths relative to contentDir.
-      // The filter receives paths relative to contentDir.
       expect(filter.isExcluded('readme.md')).toBe(false);
+    });
+
+    test('root gitignore excludes paths mapped through contentRelPrefix', () => {
+      const contentDir = join(projectDir, 'docs');
+      mkdirSync(contentDir);
+      mkdirSync(join(contentDir, 'generated'), { recursive: true });
+      // Root .gitignore excludes docs/generated/ (project-relative)
+      writeFileSync(join(projectDir, '.gitignore'), 'docs/generated/\n');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // Path is contentDir-relative; filter maps to project-relative for gitignore
+      expect(filter.isExcluded('generated/output.md')).toBe(true);
+      expect(filter.isExcluded('guide.md')).toBe(false);
+    });
+
+    test('config exclude patterns work with split dirs', () => {
+      const contentDir = join(projectDir, 'docs');
+      mkdirSync(contentDir);
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: ['archive/**'],
+      });
+
+      // Config exclude is contentDir-relative, prefixed internally to docs/archive/**
+      expect(filter.isExcluded('archive/old.md')).toBe(true);
+      expect(filter.isExcluded('guide.md')).toBe(false);
+    });
+
+    test('loads .gitignore at contentDir root when contentDir != projectDir', () => {
+      const contentDir = join(projectDir, 'docs');
+      mkdirSync(contentDir);
+      // .gitignore at contentDir root (not project root)
+      writeFileSync(join(contentDir, '.gitignore'), 'drafts/\n');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('drafts/wip.md')).toBe(true);
+      expect(filter.isExcluded('guide.md')).toBe(false);
+    });
+
+    test('isDirExcluded works with split dirs', () => {
+      const contentDir = join(projectDir, 'docs');
+      mkdirSync(contentDir);
+      writeFileSync(join(projectDir, '.gitignore'), 'docs/generated/\n');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isDirExcluded('generated')).toBe(true);
+      expect(filter.isDirExcluded('tutorials')).toBe(false);
     });
   });
 });

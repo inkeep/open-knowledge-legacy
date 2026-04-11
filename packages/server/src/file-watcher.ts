@@ -344,13 +344,19 @@ function seedLastKnownHashes(
             size: stat.size,
             modified: stat.mtime.toISOString(),
           });
-        } catch {
-          // skip unreadable files
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT' && code !== 'EACCES') {
+            console.warn(`[file-watcher] Failed to seed hash for ${fullPath}:`, err);
+          }
         }
       }
     }
-  } catch {
-    // dir doesn't exist or isn't readable — fine, no seeding
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      console.warn(`[file-watcher] Failed to read directory ${dir}:`, err);
+    }
   }
 }
 

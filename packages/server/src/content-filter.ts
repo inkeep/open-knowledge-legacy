@@ -83,7 +83,25 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
   }
 
   // --- Pass 2: Walk contentDir for nested .gitignore files ---
-  // Use the bootstrap filter to skip already-excluded directories
+  // Use the bootstrap filter to skip already-excluded directories.
+  // When contentDir != projectDir, the .gitignore at contentDir itself is not
+  // covered by Pass 1 (which only loads projectDir/.gitignore). Load it explicitly.
+  if (contentRelPrefix) {
+    const contentDirGitignore = join(contentDir, '.gitignore');
+    if (existsSync(contentDirGitignore)) {
+      try {
+        const content = readFileSync(contentDirGitignore, 'utf-8');
+        const patterns = parseGitignorePatterns(content);
+        const prefixed = patterns.map((p) => {
+          if (p.startsWith('!')) return `!${contentRelPrefix}/${p.slice(1)}`;
+          return `${contentRelPrefix}/${p}`;
+        });
+        ig.add(prefixed);
+      } catch (err) {
+        console.warn(`[content-filter] Failed to read .gitignore at ${contentDirGitignore}:`, err);
+      }
+    }
+  }
   loadNestedGitignores(contentDir, projectDir, ig);
 
   // Collect raw patterns for watcher ignore (best-effort optimization)
