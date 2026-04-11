@@ -23,11 +23,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
-import {
-  CATALOGS_DIR,
-  isTrackedContent,
-  rebuildMirroredCatalogs,
-} from '../content/mirror-catalog.ts';
+import { isTrackedContent, rebuildMirroredCatalogs } from '../content/mirror-catalog.ts';
 import { dim } from '../ui/colors.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
