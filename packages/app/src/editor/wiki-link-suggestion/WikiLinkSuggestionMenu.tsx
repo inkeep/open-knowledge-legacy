@@ -8,6 +8,13 @@ interface WikiLinkSuggestionMenuProps {
   onSelect: (item: WikiLinkSuggestionItem) => void;
   loading?: boolean;
   error?: string | null;
+  mode?: 'page' | 'anchor';
+  pageTarget?: string;
+  anchorQuery?: string;
+}
+
+function itemKey(item: WikiLinkSuggestionItem): string {
+  return item.kind === 'anchor' ? `${item.docName}#${item.slug}` : item.docName;
 }
 
 export function WikiLinkSuggestionMenu({
@@ -17,6 +24,9 @@ export function WikiLinkSuggestionMenu({
   onSelect,
   loading = false,
   error = null,
+  mode = 'page',
+  pageTarget = '',
+  anchorQuery = '',
 }: WikiLinkSuggestionMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const listboxId = useId();
@@ -31,9 +41,7 @@ export function WikiLinkSuggestionMenu({
     if (!container) return;
     const options = container.querySelectorAll('[role="option"]');
     const selected = options.item(selectedIndex);
-    if (selected) {
-      selected.scrollIntoView({ block: 'nearest' });
-    }
+    if (selected) selected.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex]);
 
   if (loading) {
@@ -42,18 +50,28 @@ export function WikiLinkSuggestionMenu({
         ref={containerRef}
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
       >
-        Loading pages…
+        {mode === 'anchor' ? `Loading headings for ${pageTarget}…` : 'Loading pages…'}
       </div>
     );
   }
 
   if (items.length === 0) {
+    const emptyMsg =
+      error ??
+      (mode === 'anchor'
+        ? anchorQuery.trim()
+          ? `No headings match "${anchorQuery.trim()}"`
+          : `No headings in ${pageTarget}`
+        : query.trim()
+          ? `No pages found for "${query.trim()}"`
+          : 'No pages found');
+
     return (
       <div
         ref={containerRef}
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
       >
-        {error ?? (query.trim() ? `No pages found for "${query.trim()}"` : 'No pages found')}
+        {emptyMsg}
       </div>
     );
   }
@@ -62,17 +80,50 @@ export function WikiLinkSuggestionMenu({
     <div
       ref={containerRef}
       role="listbox"
-      aria-label="Wiki link suggestions"
+      aria-label={mode === 'anchor' ? 'Heading suggestions' : 'Wiki link suggestions'}
       aria-activedescendant={activeDescendant}
       tabIndex={-1}
       className="w-64 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
     >
       {error && <div className="rounded-md px-2 py-1.5 text-xs text-amber-700">{error}</div>}
+      {mode === 'anchor' && (
+        <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          {pageTarget}
+        </div>
+      )}
       {items.map((item, idx) => {
         const isSelected = idx === selectedIndex;
+        const key = itemKey(item);
+
+        if (item.kind === 'anchor') {
+          return (
+            <button
+              key={key}
+              id={`${listboxId}-option-${idx}`}
+              type="button"
+              role="option"
+              aria-selected={isSelected}
+              data-selected={isSelected}
+              className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left ${
+                isSelected ? 'bg-accent text-accent-foreground' : ''
+              }`}
+              style={{ paddingLeft: `${(item.level - 1) * 10 + 8}px` }}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onSelect(item);
+              }}
+            >
+              <span className="w-6 shrink-0 font-mono text-[10px] text-muted-foreground">
+                H{item.level}
+              </span>
+              <span className="truncate font-medium">{item.text}</span>
+            </button>
+          );
+        }
+
         return (
           <button
-            key={item.docName}
+            key={key}
             id={`${listboxId}-option-${idx}`}
             type="button"
             role="option"
