@@ -78,6 +78,14 @@ export interface ServerOptions {
   includePatterns?: string[];
   /** Glob patterns for files to explicitly exclude. */
   excludePatterns?: string[];
+  /**
+   * Maximum time (ms) `destroy()` waits for all pending stores to drain
+   * before giving up and continuing with the rest of the shutdown sequence.
+   * Defaults to 10_000. Tune lower in tests (e.g., 500) to reclaim CI wall-time.
+   * Tune higher on slow-disk / NFS environments where a legitimate L1 flush
+   * could take more than 10s.
+   */
+  destroyTimeoutMs?: number;
 }
 
 export interface ServerInstance {
@@ -103,6 +111,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     contentRoot,
     includePatterns = ['**/*.md'],
     excludePatterns = [],
+    destroyTimeoutMs = 10_000,
   } = options;
 
   const log = getLogger('server');
