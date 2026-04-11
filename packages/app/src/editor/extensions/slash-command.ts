@@ -35,17 +35,17 @@ export interface SlashCommandOptions {
    * - `basic` → "Basic blocks"
    * - `insert` → "Insert"
    *
-   * Consumers can add labels for custom categories:
+   * Consumers can add labels for custom categories. TipTap's `configure()`
+   * deep-merges plain objects, so existing labels are preserved automatically:
    *
    * ```ts
    * SlashCommand.configure({
-   *   categoryLabels: {
-   *     ...SlashCommand.options.categoryLabels,
-   *     content: 'Content',
-   *     layout: 'Layout'
-   *   }
+   *   categoryLabels: { content: 'Content', layout: 'Layout' }
    * })
    * ```
+   *
+   * Note: `itemsSources` (an array) is *replaced* wholesale by `configure()`,
+   * but `categoryLabels` (a plain object) is deep-merged.
    */
   categoryLabels: Record<string, string>;
 }
@@ -81,6 +81,15 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
 
         items: ({ query }) => {
           const allItems = extension.options.itemsSources.flatMap((source) => source());
+          if (process.env.NODE_ENV !== 'production') {
+            const seen = new Set<string>();
+            for (const item of allItems) {
+              if (seen.has(item.name)) {
+                console.warn(`SlashCommand: duplicate item name "${item.name}" — last source wins`);
+              }
+              seen.add(item.name);
+            }
+          }
           return filterItems(allItems, query);
         },
 
@@ -137,7 +146,6 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             if (!renderer || !currentProps) return;
             renderer.updateProps({
               items: currentProps.items,
-              query: currentProps.query,
               selectedIndex,
               categoryLabels: extension.options.categoryLabels,
               onSelect: currentProps.command,
@@ -157,7 +165,6 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               renderer = new ReactRenderer(SlashCommandMenu, {
                 props: {
                   items: props.items,
-                  query: props.query,
                   selectedIndex,
                   categoryLabels: extension.options.categoryLabels,
                   onSelect: props.command,
@@ -190,12 +197,15 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
                 rerender();
                 return true;
               }
-              // Tab is an alias for Enter (matches main's current behavior — do not remove)
+              // Tab is an alias for Enter (intentional UX behavior — do not remove)
               if (event.key === 'Enter' || event.key === 'Tab') {
                 const item = items[selectedIndex];
                 if (item) currentProps.command(item);
                 return true;
               }
+              // Escape: @tiptap/suggestion calls onKeyDown but ignores the return
+              // value, then always dispatches exit. This branch is explicit for
+              // clarity — the return value has no effect.
               if (event.key === 'Escape') {
                 return false;
               }

@@ -1,9 +1,8 @@
 import { useEffect, useRef } from 'react';
-import { filterItems, type SlashCommandItem } from './items';
+import type { SlashCommandItem } from './items';
 
 interface SlashCommandMenuProps {
   items: SlashCommandItem[];
-  query: string;
   selectedIndex: number;
   categoryLabels: Record<string, string>;
   onSelect: (item: SlashCommandItem) => void;
@@ -11,13 +10,11 @@ interface SlashCommandMenuProps {
 
 export function SlashCommandMenu({
   items,
-  query,
   selectedIndex,
   categoryLabels,
   onSelect,
 }: SlashCommandMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const filtered = filterItems(items, query);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -30,7 +27,7 @@ export function SlashCommandMenu({
     }
   }, [selectedIndex]);
 
-  if (filtered.length === 0) {
+  if (items.length === 0) {
     return (
       <div
         ref={containerRef}
@@ -46,7 +43,7 @@ export function SlashCommandMenu({
   let flatIndex = 0;
   const indexMap = new Map<SlashCommandItem, number>();
 
-  for (const item of filtered) {
+  for (const item of items) {
     indexMap.set(item, flatIndex++);
     const existing = categories.find((c) => c.key === item.category);
     if (existing) {
