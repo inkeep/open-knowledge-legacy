@@ -59,7 +59,8 @@ export function SlashCommandMenu({ items, query, selectedIndex, onSelect }: Slas
       ref={containerRef}
       role="listbox"
       aria-label="Slash commands"
-      className="w-56 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
+      className="w-56 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
+      style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
     >
       {categories.map((cat) => (
         <fieldset key={cat.key} className="border-0 p-0 m-0 min-w-0">

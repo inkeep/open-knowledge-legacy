@@ -1,4 +1,5 @@
-import { Extension } from '@tiptap/core';
+import { autoUpdate, computePosition, flip, offset, size } from '@floating-ui/dom';
+import { Extension, posToDOMRect } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import { ReactRenderer } from '@tiptap/react';
@@ -134,28 +135,65 @@ export const SlashCommand = Extension.create({
         view() {
           let renderer: ReactRenderer<typeof SlashCommandMenu> | null = null;
           let popup: HTMLDivElement | null = null;
+          let activeView: EditorView | null = null;
+          let activeFrom = 0;
+          let stopAutoUpdate: (() => void) | null = null;
+
+          // Virtual reference element — always reflects current cursor position.
+          // contextElement lets autoUpdate find scroll ancestors (e.g. the overflow-y-auto
+          // editor container) so it repositions on inner-container scroll.
+          const virtualEl = {
+            getBoundingClientRect: () => {
+              if (!activeView) return new DOMRect();
+              try {
+                return posToDOMRect(activeView, activeFrom, activeFrom);
+              } catch {
+                return new DOMRect();
+              }
+            },
+            get contextElement() {
+              return activeView?.dom;
+            },
+          };
 
           const destroy = () => {
+            stopAutoUpdate?.();
+            stopAutoUpdate = null;
             renderer?.destroy();
             renderer = null;
             popup?.remove();
             popup = null;
           };
 
-          const updatePosition = (view: EditorView, from: number) => {
+          const doPosition = () => {
             if (!popup) return;
-            try {
-              const coords = view.coordsAtPos(from);
-              popup.style.left = `${coords.left}px`;
-              popup.style.top = `${coords.bottom + 4}px`;
-            } catch {
-              // Position can fail if the node was deleted
-              destroy();
-            }
+            computePosition(virtualEl, popup, {
+              placement: 'bottom-start',
+              middleware: [
+                offset(4),
+                flip(),
+                size({
+                  apply({ availableHeight }) {
+                    if (popup) {
+                      popup.style.setProperty(
+                        '--suggestion-menu-max-height',
+                        `${Math.min(availableHeight, window.innerHeight * 0.4)}px`,
+                      );
+                    }
+                  },
+                }),
+              ],
+            }).then(({ x, y }) => {
+              if (popup) {
+                popup.style.left = `${x}px`;
+                popup.style.top = `${y}px`;
+              }
+            });
           };
 
           return {
             update(view: EditorView) {
+              activeView = view;
               const state = slashCommandKey.getState(view.state) as SlashCommandState | undefined;
 
               if (!state?.active) {
@@ -188,6 +226,7 @@ export const SlashCommand = Extension.create({
                   editor,
                 });
                 popup.appendChild(renderer.element);
+                stopAutoUpdate = autoUpdate(virtualEl, popup, doPosition);
               } else {
                 renderer.updateProps({
                   items: slashCommandItems,
@@ -198,7 +237,8 @@ export const SlashCommand = Extension.create({
               }
 
               if (state.range) {
-                updatePosition(view, state.range.from);
+                activeFrom = state.range.from;
+                doPosition();
               }
             },
 
