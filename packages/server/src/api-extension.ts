@@ -6,7 +6,6 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_WRITE_ORIGIN,
@@ -14,6 +13,7 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import { safeContentPath } from './persistence.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
@@ -424,9 +424,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const docName = url.searchParams.get('docName') ?? 'test-doc';
 
-      // Path traversal guard — reject docNames that escape contentDir
-      const filePath = resolve(contentDir, `${docName}.md`);
-      if (!filePath.startsWith(`${contentDir}/`) && filePath !== contentDir) {
+      // Path traversal guard — reuse the canonical validator from persistence.ts.
+      // Throws `Invalid document name: ${docName}` for names that escape contentDir;
+      // we translate that to a 400 response. Keeping the guard in one place (not
+      // re-implementing the startsWith check inline) ensures handleTestReset stays
+      // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
+      let filePath: string;
+      try {
+        filePath = safeContentPath(docName, contentDir);
+      } catch {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
