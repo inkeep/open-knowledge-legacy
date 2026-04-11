@@ -224,6 +224,67 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  function safeSubdir(subdir: string): string {
+    const resolved = resolve(contentDir, subdir);
+    if (resolved !== contentDir && !resolved.startsWith(contentDir + '/')) {
+      throw new Error(`Invalid directory: ${subdir}`);
+    }
+    return resolved;
+  }
+
+  async function handleDocumentList(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const dir = url.searchParams.get('dir');
+
+      let targetDir = contentDir;
+      if (dir) {
+        try {
+          targetDir = safeSubdir(dir);
+        } catch {
+          json(res, 400, { ok: false, error: `Invalid directory: ${dir}` });
+          return;
+        }
+      }
+
+      if (!existsSync(targetDir)) {
+        json(res, 200, { ok: true, documents: [] });
+        return;
+      }
+
+      const entries = readdirSync(targetDir, { recursive: true });
+      const documents: { docName: string; size: number; modified: string }[] = [];
+
+      for (const entry of entries) {
+        const entryStr = typeof entry === 'string' ? entry : entry.toString();
+        if (!entryStr.endsWith('.md')) continue;
+
+        const fullPath = resolve(targetDir, entryStr);
+        const stat = statSync(fullPath);
+        if (!stat.isFile()) continue;
+
+        const docName = fullPath.slice(contentDir.length + 1).replace(/\.md$/, '');
+        documents.push({
+          docName,
+          size: stat.size,
+          modified: stat.mtime.toISOString(),
+        });
+      }
+
+      documents.sort((a, b) => a.docName.localeCompare(b.docName));
+      json(res, 200, { ok: true, documents });
+    } catch (e) {
+      console.error('[document-list]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   async function handleAgentPatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -629,6 +690,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
+    '/api/documents': handleDocumentList,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,

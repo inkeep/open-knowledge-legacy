@@ -1,26 +1,21 @@
-import { HocuspocusProvider } from '@hocuspocus/provider';
+import type { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   deriveIconColor,
   evictStaleEntries,
   FLASH_DEBOUNCE_MS,
   FLASH_DURATION_MS,
   hasNewEntries,
-  prependFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { Extension, getSchema } from '@tiptap/core';
+import { Extension } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
-import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { type FC, type Ref, useEffect, useImperativeHandle, useRef } from 'react';
-import type * as Y from 'yjs';
+import { type FC, useEffect, useRef } from 'react';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import { sharedExtensions } from './extensions/shared.ts';
-import { markUserTyping, setupObservers } from './observers';
+import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
-
-const DOC_NAME = 'test-doc';
 
 /** Custom cursor renderer — agents don't get cursors (NG1: no fake cursor animation). */
 function renderCursor(user: Record<string, string>): HTMLElement {
@@ -44,59 +39,6 @@ function renderCursor(user: Record<string, string>): HTMLElement {
   cursor.append(label);
 
   return cursor;
-}
-
-export interface TiptapEditorHandle {
-  getMarkdown: () => string;
-  /** Get Y.Text('source') for CodeMirror CRDT binding */
-  getYText: () => Y.Text;
-  /** Get HocuspocusProvider for awareness (cursor presence) */
-  getProvider: () => HocuspocusProvider;
-}
-
-const editorSchema = getSchema(sharedExtensions);
-
-// Singleton provider outside React lifecycle — survives StrictMode double-mount.
-// Provider is created once and persists for the app lifetime.
-let singletonProvider: HocuspocusProvider | null = null;
-let observerCleanup: (() => void) | null = null;
-
-function getProvider(): HocuspocusProvider {
-  if (!singletonProvider) {
-    console.log('[TiptapEditor] Creating provider singleton');
-    singletonProvider = new HocuspocusProvider({
-      url: `ws://${window.location.host}/collab`,
-      name: DOC_NAME,
-    });
-
-    // Set up bidirectional observers once after first sync
-    const provider = singletonProvider;
-    console.log('[TiptapEditor] Registering onSync handler');
-    const onSync = () => {
-      console.log('[TiptapEditor] onSync fired, observerCleanup=', !!observerCleanup);
-      if (observerCleanup) return; // Already set up
-      const doc = provider.document;
-      const mdMgr = new MarkdownManager({ extensions: sharedExtensions });
-      observerCleanup = setupObservers({
-        doc,
-        xmlFragment: doc.getXmlFragment('default'),
-        ytext: doc.getText('source'),
-        mdManager: mdMgr,
-        schema: editorSchema,
-        onSyncError: (direction, error) => {
-          console.warn(`[Sync] ${direction} failed:`, error.message);
-        },
-      });
-      provider.off('synced', onSync);
-    };
-    provider.on('synced', onSync);
-
-    // Expose provider on window for E2E test access
-    if (typeof window !== 'undefined') {
-      (window as unknown as Record<string, unknown>).__hocuspocusProvider = provider;
-    }
-  }
-  return singletonProvider;
 }
 
 /**
@@ -125,18 +67,17 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
   lastAgentId: null,
 };
 
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+interface TiptapEditorProps {
+  provider: HocuspocusProvider;
+}
 
-export const TiptapEditor: FC<{
-  ref?: Ref<TiptapEditorHandle>;
-}> = ({ ref }) => {
+export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
   const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
   // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
-  const provider = getProvider();
   const identity = useIdentity();
 
   const editor = useEditor({
@@ -157,9 +98,6 @@ export const TiptapEditor: FC<{
         addProseMirrorPlugins() {
           const awareness = provider.awareness;
           if (!awareness) {
-            // HocuspocusProvider constructs its awareness instance synchronously,
-            // so this should never happen. If it does, fail loudly with context
-            // instead of passing a bogus object that yCursorPlugin will blow up on.
             throw new Error(
               '[TiptapEditor] HocuspocusProvider has no awareness instance — cursor plugin cannot initialize',
             );
@@ -375,25 +313,6 @@ export const TiptapEditor: FC<{
     });
     awareness.setLocalStateField('mode', 'wysiwyg');
   }, [provider, identity]);
-
-  useImperativeHandle(
-    ref,
-    () => ({
-      getMarkdown() {
-        if (!editor) return '';
-        const json = editor.getJSON();
-        const body = mdManager.serialize(json);
-        return prependFrontmatter(frontmatterRef.current, body);
-      },
-      getYText() {
-        return provider.document.getText('source');
-      },
-      getProvider() {
-        return provider;
-      },
-    }),
-    [editor, provider.document, provider],
-  );
 
   // Data attributes are set once on initial render; the flash useEffect updates them
   // imperatively via wrapperRef to avoid triggering React re-renders during typing.

@@ -8,8 +8,8 @@
  * Git commit debounced separately: 30s idle after last disk write (L2)
  */
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { rename, writeFile } from 'node:fs/promises';
-import { relative, resolve } from 'node:path';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { dirname, relative, resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
   prependFrontmatter,
@@ -360,6 +360,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const tmpPath = `${filePath}.tmp`;
 
       try {
+        await mkdir(dirname(filePath), { recursive: true });
         await writeFile(tmpPath, markdown, 'utf-8');
         await rename(tmpPath, filePath);
         registerWrite(filePath, contentHash(markdown));
