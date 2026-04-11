@@ -263,7 +263,8 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
       <NodeViewWrapper as="span" contentEditable={false}>
         <DropdownMenuRoot>
           {/* Chip — primary click action + group for hover-reveal of the ⋯ trigger */}
-          <span
+          <button
+            type="button"
             className={cn(
               'group mx-0.5 inline-flex max-w-full cursor-pointer select-none items-center gap-0.5 rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
@@ -279,8 +280,6 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
             data-resolved={resolved ? 'true' : 'false'}
             data-resolution-state={resolutionState}
             title={source}
-            role={resolved ? 'link' : 'button'}
-            tabIndex={0}
             onClick={handlePrimaryClick}
             onKeyDown={handlePrimaryKeyDown}
           >
@@ -288,23 +287,22 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
 
             {/* ⋯ menu trigger — visible on chip hover/focus-within, stops click propagation */}
             <DropdownMenuTrigger asChild>
-              <span
+              <button
+                type="button"
                 className={cn(
                   'invisible ml-0.5 inline-flex shrink-0 items-center rounded-sm p-0.5',
                   'group-hover:visible group-focus-within:visible',
                   'hover:bg-black/10 focus-visible:visible focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current',
                 )}
-                role="button"
-                tabIndex={0}
                 aria-label="Link options"
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
                 onKeyDown={(e) => e.stopPropagation()}
               >
                 <Ellipsis className="size-3" />
-              </span>
+              </button>
             </DropdownMenuTrigger>
-          </span>
+          </button>
 
           <DropdownMenuContent align="start" className="w-36">
             <DropdownMenuItem onSelect={() => setEditDialogOpen(true)}>

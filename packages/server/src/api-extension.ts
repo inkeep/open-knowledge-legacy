@@ -850,7 +850,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      const url = new URL(req.url!, 'http://localhost');
+      const url = new URL(req.url ?? '', 'http://localhost');
       const docName = url.searchParams.get('docName');
       if (!docName || typeof docName !== 'string' || docName.length === 0) {
         json(res, 400, { ok: false, error: 'Missing docName parameter' });
