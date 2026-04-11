@@ -114,7 +114,11 @@ export function BlockTypeSelector({ editor }: { editor: Editor }) {
   return (
     <DropdownMenuRoot>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-1 px-2 text-xs font-normal">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1 px-2 text-sm font-medium text-accent-foreground/80"
+        >
           <CurrentIcon className="size-3.5" />
           <span>{current.label}</span>
           <ChevronDown className="size-3 opacity-50" />

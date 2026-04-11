@@ -1,6 +1,6 @@
 import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
-import { Bold, Code, Italic, Strikethrough, Underline } from 'lucide-react';
+import { Bold, Code, Highlighter, Italic, Strikethrough, Underline } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -40,6 +40,13 @@ const formatActions = [
     isActive: (editor: Editor) => editor.isActive('code'),
     shortcut: '⌘E',
   },
+  {
+    name: 'highlight',
+    icon: Highlighter,
+    command: (editor: Editor) => editor.chain().focus().toggleHighlight().run(),
+    isActive: (editor: Editor) => editor.isActive('highlight'),
+    shortcut: '⌘⇧H',
+  },
 ] as const;
 
 export function InlineFormatButtons({ editor }: { editor: Editor }) {
@@ -61,7 +68,7 @@ export function InlineFormatButtons({ editor }: { editor: Editor }) {
                 variant="ghost"
                 size="icon-xs"
                 aria-label={action.name}
-                className={active ? 'bg-accent text-primary' : 'text-muted-foreground'}
+                className={active ? 'bg-accent text-primary' : 'text-accent-foreground'}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   action.command(editor);
