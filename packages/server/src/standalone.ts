@@ -28,6 +28,8 @@ export interface ServerInstance {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   destroy: () => Promise<void>;
+  /** Resolves after the file watcher subscription is established. */
+  ready: Promise<void>;
 }
 
 export function createServer(options: ServerOptions): ServerInstance {
@@ -84,14 +86,15 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus.closeConnections();
   }
 
-  // Start file watcher asynchronously
-  startWatcher(contentDir, handleExternalChange)
+  // Start file watcher — capture the promise so consumers can await readiness
+  const ready = startWatcher(contentDir, handleExternalChange)
     .then((sub) => {
       watcher = sub;
     })
     .catch((err) => {
       console.error('[server] Disk bridge watcher failed to start:', err);
+      throw err;
     });
 
-  return { hocuspocus, sessionManager, destroy };
+  return { hocuspocus, sessionManager, destroy, ready };
 }

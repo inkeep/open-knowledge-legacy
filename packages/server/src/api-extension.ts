@@ -410,21 +410,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      await sessionManager.closeAll();
-      hocuspocus.closeConnections('test-doc');
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') ?? 'test-doc';
+
+      await sessionManager.closeAll(docName);
+      hocuspocus.closeConnections(docName);
 
       // D18: Force-flush any pending onStoreDocument debounced work before unload.
       // Without this, unloadDocument silently no-ops if the debouncer is active
       // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
-      const debounceId = 'onStoreDocument-test-doc';
+      const debounceId = `onStoreDocument-${docName}`;
       if (hocuspocus.debouncer.isDebounced(debounceId)) {
         await hocuspocus.debouncer.executeNow(debounceId);
       }
 
-      const doc = hocuspocus.documents.get('test-doc');
+      const doc = hocuspocus.documents.get(docName);
       if (doc) await hocuspocus.unloadDocument(doc);
       const { writeFileSync } = await import('node:fs');
-      writeFileSync(resolve(contentDir, 'test-doc.md'), '', 'utf-8');
+      writeFileSync(resolve(contentDir, `${docName}.md`), '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);
