@@ -29,7 +29,7 @@ import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
-import { __resetCoordinationState, setupObservers } from '../../src/editor/observers';
+import { setupObservers } from '../../src/editor/observers';
 
 // ─── Shared instances (created once, reused across all tests) ───
 
@@ -140,8 +140,6 @@ export interface TestClient {
 }
 
 export async function createTestClient(port: number): Promise<TestClient> {
-  __resetCoordinationState();
-
   const doc = new Y.Doc();
   const ytext = doc.getText('source');
   const fragment = doc.getXmlFragment('default');
