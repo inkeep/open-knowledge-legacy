@@ -7,7 +7,7 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createApiExtension, extractPageTitle } from './api-extension.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
