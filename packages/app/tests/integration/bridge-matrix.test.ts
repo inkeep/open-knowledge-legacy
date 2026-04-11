@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { updateYFragment } from '@tiptap/y-tiptap';
 
 import {
+  agentPatch,
   agentRedo,
   agentUndo,
   agentWriteMd,
@@ -189,6 +190,78 @@ describe('W3: agent writes', () => {
       const diskContent = readTestDoc(server.contentDir, client.docName);
       expect(diskContent).toContain('Agent Disk');
       expect(diskContent).toContain('Persisted by agent');
+      assertBridgeInvariant(client.ytext, client.fragment);
+    } finally {
+      await client.cleanup();
+    }
+  });
+
+  // Agent-patch (find-and-replace) covers a distinct code path from agent-write-md —
+  // it mutates an existing span via ytext.delete + ytext.insert instead of append/prepend.
+  // These tests closed a coverage gap that existed before this PR (agent-patch landed in
+  // PR #31 without integration tests; agent-write-md had full W3 coverage).
+  test.concurrent('W3-patch→Y.Text: agent-patch replaces target span in Y.Text', async () => {
+    const client = await createTestClient(server.port);
+    try {
+      await agentWriteMd(server.port, '# Header\n\nOriginal body text.', {
+        docName: client.docName,
+      });
+      await pollUntil(() => client.ytext.toString().includes('Original body text'), 5000);
+
+      const result = await agentPatch(
+        server.port,
+        'Original body text',
+        'Replaced body text',
+        client.docName,
+      );
+      expect(result.ok).toBe(true);
+      await pollUntil(() => client.ytext.toString().includes('Replaced body text'), 5000);
+      expect(client.ytext.toString()).not.toContain('Original body text');
+      expect(client.ytext.toString()).toContain('Header');
+      assertBridgeInvariant(client.ytext, client.fragment);
+    } finally {
+      await client.cleanup();
+    }
+  });
+
+  test.concurrent('W3-patch→XmlFragment: agent-patch propagates to XmlFragment', async () => {
+    const client = await createTestClient(server.port);
+    try {
+      await agentWriteMd(server.port, '# Title\n\nFoo bar baz qux.', { docName: client.docName });
+      await pollUntil(() => serializeFragment(client.fragment).includes('Foo bar'), 5000);
+
+      const result = await agentPatch(server.port, 'Foo bar', 'FOO BAR', client.docName);
+      expect(result.ok).toBe(true);
+      await pollUntil(() => serializeFragment(client.fragment).includes('FOO BAR'), 5000);
+      const fragContent = serializeFragment(client.fragment);
+      expect(fragContent).toContain('FOO BAR');
+      expect(fragContent).toContain('baz qux');
+      assertBridgeInvariant(client.ytext, client.fragment);
+    } finally {
+      await client.cleanup();
+    }
+  });
+
+  test.concurrent('W3-patch: agent-patch with unknown find text returns 404 without mutating', async () => {
+    const client = await createTestClient(server.port);
+    try {
+      await agentWriteMd(server.port, '# Seed\n\nUntouched content.', {
+        docName: client.docName,
+      });
+      await pollUntil(() => client.ytext.toString().includes('Untouched content'), 5000);
+
+      const before = client.ytext.toString();
+      const result = await agentPatch(
+        server.port,
+        'text-that-is-not-in-the-document',
+        'replacement',
+        client.docName,
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.status).toBe(404);
+      // The content must not have been mutated
+      await wait(300);
+      expect(client.ytext.toString()).toBe(before);
       assertBridgeInvariant(client.ytext, client.fragment);
     } finally {
       await client.cleanup();

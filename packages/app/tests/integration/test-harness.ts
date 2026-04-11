@@ -264,6 +264,25 @@ export async function agentWriteMd(
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
 
+/** POST to agent-patch endpoint (find-and-replace) */
+export async function agentPatch(
+  port: number,
+  find: string,
+  replace: string,
+  docName?: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const res = await fetch(`http://localhost:${port}/api/agent-patch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ find, replace, docName }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, status: res.status, error: body.error ?? 'unknown' };
+  }
+  return { ok: true };
+}
+
 /** POST to agent-undo endpoint */
 export async function agentUndo(port: number, docName?: string): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-undo`, {
