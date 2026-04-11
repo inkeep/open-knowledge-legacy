@@ -172,7 +172,12 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
     if (!attrs) return false;
 
     view.dispatch(view.state.tr.setMeta(wikiLinkSuggestionKey, { close: true }));
-    editor.chain().focus().deleteRange(state.range).insertContent({ type: 'wikiLink', attrs }).run();
+    editor
+      .chain()
+      .focus()
+      .deleteRange(state.range)
+      .insertContent({ type: 'wikiLink', attrs })
+      .run();
     return true;
   }
 
