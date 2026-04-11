@@ -13,6 +13,7 @@ import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { markUserTyping } from '@/editor/observers';
+import { getYDoc } from '@/editor/utils/get-ydoc';
 import { ComponentToolbar } from '../components/ComponentToolbar';
 import { componentMap } from '../components/componentMap';
 import { PropPanel } from '../components/PropPanel';
@@ -70,6 +71,7 @@ function PropPanelWrapper(props: {
   meta: import('@inkeep/open-knowledge-core').ComponentMeta;
   currentProps: Record<string, unknown>;
   onChange: (propName: string, value: unknown) => void;
+  markTyping: () => void;
 }) {
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: ProseMirror node view event isolation
@@ -78,7 +80,12 @@ function PropPanelWrapper(props: {
       style={{ userSelect: 'none', marginTop: '4px' }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      <PropPanel meta={props.meta} currentProps={props.currentProps} onChange={props.onChange} />
+      <PropPanel
+        meta={props.meta}
+        currentProps={props.currentProps}
+        onChange={props.onChange}
+        markTyping={props.markTyping}
+      />
     </div>
   );
 }
@@ -115,7 +122,7 @@ export function JsxComponentView({
   }
 
   const handlePropChange = (propName: string, value: unknown) => {
-    markUserTyping();
+    markUserTyping(getYDoc(editor));
     updateAttributes({ [propName]: value });
   };
 
@@ -191,7 +198,12 @@ export function JsxComponentView({
         )}
       </ComponentErrorBoundary>
       {selected && (
-        <PropPanelWrapper meta={meta} currentProps={currentProps} onChange={handlePropChange} />
+        <PropPanelWrapper
+          meta={meta}
+          currentProps={currentProps}
+          onChange={handlePropChange}
+          markTyping={() => markUserTyping(getYDoc(editor))}
+        />
       )}
     </NodeViewWrapper>
   );

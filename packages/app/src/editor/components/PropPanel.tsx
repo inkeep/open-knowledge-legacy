@@ -10,15 +10,16 @@
 import type { ComponentMeta, PropDef } from '@inkeep/open-knowledge-core';
 import { Select, Switch } from 'radix-ui';
 import { useState } from 'react';
-import { markUserTyping } from '@/editor/observers';
 
 interface PropPanelProps {
   meta: ComponentMeta;
   currentProps: Record<string, unknown>;
   onChange: (propName: string, value: unknown) => void;
+  /** Signal that the user is actively editing props (defers Observer B sync). */
+  markTyping: () => void;
 }
 
-export function PropPanel({ meta, currentProps, onChange }: PropPanelProps) {
+export function PropPanel({ meta, currentProps, onChange, markTyping }: PropPanelProps) {
   const editableProps = meta.props.filter((p) => p.type !== 'reactnode');
 
   return (
@@ -46,6 +47,7 @@ export function PropPanel({ meta, currentProps, onChange }: PropPanelProps) {
             prop={prop}
             value={currentProps[prop.name]}
             onChange={onChange}
+            markTyping={markTyping}
           />
         ))}
       </div>
@@ -57,12 +59,13 @@ interface PropControlProps {
   prop: PropDef;
   value: unknown;
   onChange: (propName: string, value: unknown) => void;
+  markTyping: () => void;
 }
 
-function PropControl({ prop, value, onChange }: PropControlProps) {
+function PropControl({ prop, value, onChange, markTyping }: PropControlProps) {
   // React Compiler handles memoization automatically — do not add useCallback.
   const handleChange = (newValue: unknown) => {
-    markUserTyping();
+    markTyping();
     onChange(prop.name, newValue);
   };
 
@@ -86,21 +89,37 @@ function PropControl({ prop, value, onChange }: PropControlProps) {
         {prop.required && <span style={{ color: '#ef4444', marginLeft: '2px' }}>*</span>}
       </span>
       {prop.type === 'string' && (
-        <StringControl value={value as string} onChange={handleChange} ariaLabelledBy={labelId} />
+        <StringControl
+          value={value as string}
+          onChange={handleChange}
+          markTyping={markTyping}
+          ariaLabelledBy={labelId}
+        />
       )}
       {prop.type === 'boolean' && (
-        <BooleanControl value={value as boolean} onChange={handleChange} ariaLabelledBy={labelId} />
+        <BooleanControl
+          value={value as boolean}
+          onChange={handleChange}
+          markTyping={markTyping}
+          ariaLabelledBy={labelId}
+        />
       )}
       {prop.type === 'enum' && (
         <EnumControl
           value={value as string}
           enumValues={prop.enumValues}
           onChange={handleChange}
+          markTyping={markTyping}
           ariaLabelledBy={labelId}
         />
       )}
       {prop.type === 'number' && (
-        <NumberControl value={value as number} onChange={handleChange} ariaLabelledBy={labelId} />
+        <NumberControl
+          value={value as number}
+          onChange={handleChange}
+          markTyping={markTyping}
+          ariaLabelledBy={labelId}
+        />
       )}
       {prop.description && (
         <span style={{ fontSize: '10px', color: '#999' }}>{prop.description.split('\n')[0]}</span>
@@ -112,10 +131,12 @@ function PropControl({ prop, value, onChange }: PropControlProps) {
 function StringControl({
   value,
   onChange,
+  markTyping,
   ariaLabelledBy,
 }: {
   value: string | undefined;
   onChange: (v: string) => void;
+  markTyping: () => void;
   ariaLabelledBy: string;
 }) {
   return (
@@ -123,7 +144,7 @@ function StringControl({
       type="text"
       value={value ?? ''}
       onChange={(e) => onChange(e.target.value)}
-      onKeyDown={() => markUserTyping()}
+      onKeyDown={() => markTyping()}
       aria-labelledby={ariaLabelledBy}
       style={{
         border: '1px solid #d0d0d0',
@@ -141,17 +162,19 @@ function StringControl({
 function BooleanControl({
   value,
   onChange,
+  markTyping,
   ariaLabelledBy,
 }: {
   value: boolean | undefined;
   onChange: (v: boolean) => void;
+  markTyping: () => void;
   ariaLabelledBy: string;
 }) {
   return (
     <Switch.Root
       checked={value ?? false}
       onCheckedChange={(checked) => {
-        markUserTyping();
+        markTyping();
         onChange(checked);
       }}
       aria-labelledby={ariaLabelledBy}
@@ -210,18 +233,20 @@ function EnumControl({
   value,
   enumValues,
   onChange,
+  markTyping,
   ariaLabelledBy,
 }: {
   value: string | undefined;
   enumValues: string[];
   onChange: (v: string) => void;
+  markTyping: () => void;
   ariaLabelledBy: string;
 }) {
   return (
     <Select.Root
       value={value ?? ''}
       onValueChange={(v) => {
-        markUserTyping();
+        markTyping();
         onChange(v);
       }}
     >
@@ -271,10 +296,12 @@ function EnumControl({
 function NumberControl({
   value,
   onChange,
+  markTyping,
   ariaLabelledBy,
 }: {
   value: number | undefined;
   onChange: (v: number | undefined) => void;
+  markTyping: () => void;
   ariaLabelledBy: string;
 }) {
   return (
@@ -290,7 +317,7 @@ function NumberControl({
         const n = Number(raw);
         if (!Number.isNaN(n)) onChange(n);
       }}
-      onKeyDown={() => markUserTyping()}
+      onKeyDown={() => markTyping()}
       aria-labelledby={ariaLabelledBy}
       style={{
         border: '1px solid #d0d0d0',

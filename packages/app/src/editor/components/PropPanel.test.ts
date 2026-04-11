@@ -2,15 +2,12 @@
  * PropPanel unit tests — verifies prop filtering, markUserTyping protocol,
  * and control type mapping without DOM rendering (no @testing-library/react).
  */
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import type { ComponentMeta, PropDef } from '@inkeep/open-knowledge-core';
+import * as Y from 'yjs';
 
 // Verify the module-level contract: markUserTyping is importable from observers
-import { __resetCoordinationState, markUserTyping } from '@/editor/observers';
-
-beforeEach(() => {
-  __resetCoordinationState();
-});
+import { markUserTyping } from '@/editor/observers';
 
 const calloutMeta: ComponentMeta = {
   props: [
@@ -77,16 +74,18 @@ describe('PropPanel prop filtering', () => {
 });
 
 describe('markUserTyping protocol', () => {
-  test('markUserTyping is a callable function from observers', () => {
+  test('markUserTyping accepts a Y.Doc and does not throw', () => {
     expect(typeof markUserTyping).toBe('function');
-    // Should not throw
-    markUserTyping();
+    const doc = new Y.Doc();
+    // Should not throw when given a valid doc
+    markUserTyping(doc);
+    doc.destroy();
   });
 
-  test('simulated change handler calls markUserTyping before onChange', () => {
+  test('simulated change handler calls markTyping before onChange', () => {
     const callOrder: string[] = [];
-    const mockMarkUserTyping = () => {
-      callOrder.push('markUserTyping');
+    const mockMarkTyping = () => {
+      callOrder.push('markTyping');
     };
     const mockOnChange = (_propName: string, _value: unknown) => {
       callOrder.push('onChange');
@@ -94,12 +93,12 @@ describe('markUserTyping protocol', () => {
 
     // Simulate the pattern used in PropPanel change handlers
     const handleChange = (propName: string, value: unknown) => {
-      mockMarkUserTyping();
+      mockMarkTyping();
       mockOnChange(propName, value);
     };
 
     handleChange('type', 'error');
-    expect(callOrder).toEqual(['markUserTyping', 'onChange']);
+    expect(callOrder).toEqual(['markTyping', 'onChange']);
   });
 });
 
@@ -132,17 +131,12 @@ describe('prop type to control mapping', () => {
 
   test('reactnode prop is never rendered as a control', () => {
     const prop: PropDef = { name: 'children', type: 'reactnode', required: true };
-    // This is the filtering logic used in PropPanel
     expect(prop.type === 'reactnode').toBe(true);
   });
 });
 
 describe('componentMap contract', () => {
   test('componentMap keys match componentManifest keys exactly', async () => {
-    // Dynamic sync check: forgetting to add a React import to componentMap when
-    // adding a new built-in to BUILT_INS would silently degrade rendering
-    // (unregistered fallback instead of typed component). This test catches
-    // that class of bug by comparing the two sources of truth directly.
     const { componentMap } = await import('./componentMap');
     const { componentManifest } = await import('@inkeep/open-knowledge-core');
 
@@ -156,7 +150,6 @@ describe('componentMap contract', () => {
     const { componentMap } = await import('./componentMap');
     for (const [name, Component] of Object.entries(componentMap)) {
       expect(Component).toBeDefined();
-      // React components are functions or forwardRef objects (object with $$typeof + render)
       const t = typeof Component;
       expect(
         t === 'function' || t === 'object',

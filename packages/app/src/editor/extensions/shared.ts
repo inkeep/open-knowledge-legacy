@@ -5,6 +5,8 @@
  */
 import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
 import Placeholder from '@tiptap/extension-placeholder';
+import { getComponentItems } from '../slash-command/component-items';
+import { slashCommandItems } from '../slash-command/items';
 import { JsxComponentEditable, JsxComponentVoid } from './jsx-component';
 import { SlashCommand } from './slash-command';
 
@@ -15,7 +17,15 @@ export const sharedExtensions = [
     if (ext.name === 'jsxComponentVoid') return JsxComponentVoid;
     return ext;
   }),
-  SlashCommand,
+  SlashCommand.configure({
+    itemsSources: [() => slashCommandItems, getComponentItems],
+    categoryLabels: {
+      content: 'Content',
+      layout: 'Layout',
+      media: 'Media',
+      data: 'Data',
+    },
+  }),
   Placeholder.configure({
     placeholder: "Type '/' for commands",
     showOnlyCurrent: true,
