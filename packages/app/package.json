@@ -19,7 +19,7 @@
     "test:stress:s5-s6": "bun test tests/stress/observers.stress.s5-s6.test.ts",
     "test:fuzz": "bun test tests/stress/observers.fuzz.test.ts",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
-    "test:e2e": "VITE_PORT=13579 node node_modules/@playwright/test/cli.js test tests/stress/ux-interactions.spec.ts && VITE_PORT=13579 node node_modules/@playwright/test/cli.js test tests/stress/crdt-stress.spec.ts"
+    "test:e2e": "VITE_PORT=13579 node node_modules/@playwright/test/cli.js test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 node node_modules/@playwright/test/cli.js test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 node node_modules/@playwright/test/cli.js test tests/stress/slash-command.e2e.ts"
   },
   "dependencies": {
     "@codemirror/lang-markdown": "^6.5.0",

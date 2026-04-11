@@ -23,6 +23,10 @@ async function resetEditor(page: import('@playwright/test').Page) {
   const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
   if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
   await page.reload({ waitUntil: 'networkidle' });
+  // Multi-doc arch: reload drops back to the sidebar, re-select the doc.
+  // Use role+name to disambiguate: the reload may leave 'test-doc.md' in both
+  // the sidebar list (button) and the main-area header label.
+  await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
   await page.waitForSelector('.ProseMirror');
   await page.click('.ProseMirror');
   await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent === '', {
@@ -116,6 +120,13 @@ test.describe('slash command — triggering and filtering', () => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
     await page.goto(BASE);
+    // Multi-doc arch: must open a document from sidebar before the editor renders.
+    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
+    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
+    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
+    // appears in BOTH the sidebar list item (button) and the main-area header label.
+    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
+    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
     await page.waitForSelector('.ProseMirror');
   });
 
@@ -186,6 +197,13 @@ test.describe('slash command — item insertion', () => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
     await page.goto(BASE);
+    // Multi-doc arch: must open a document from sidebar before the editor renders.
+    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
+    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
+    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
+    // appears in BOTH the sidebar list item (button) and the main-area header label.
+    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
+    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
     await page.waitForSelector('.ProseMirror');
   });
 
@@ -303,6 +321,13 @@ test.describe('slash command — keyboard navigation', () => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
     await page.goto(BASE);
+    // Multi-doc arch: must open a document from sidebar before the editor renders.
+    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
+    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
+    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
+    // appears in BOTH the sidebar list item (button) and the main-area header label.
+    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
+    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
     await page.waitForSelector('.ProseMirror');
   });
 
@@ -424,6 +449,13 @@ test.describe('slash command — accessibility', () => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
     await page.goto(BASE);
+    // Multi-doc arch: must open a document from sidebar before the editor renders.
+    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
+    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
+    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
+    // appears in BOTH the sidebar list item (button) and the main-area header label.
+    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
+    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
     await page.waitForSelector('.ProseMirror');
   });
 
@@ -498,6 +530,13 @@ test.describe('slash command — menu positioning', () => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
     await page.goto(BASE);
+    // Multi-doc arch: must open a document from sidebar before the editor renders.
+    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
+    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
+    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
+    // appears in BOTH the sidebar list item (button) and the main-area header label.
+    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
+    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
     await page.waitForSelector('.ProseMirror');
   });
 

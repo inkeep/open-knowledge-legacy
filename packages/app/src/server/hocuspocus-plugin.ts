@@ -86,13 +86,25 @@ mkdirSync(CONTENT_DIR, { recursive: true });
 
 console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 
-// Create content filter at module scope — unified exclusion (gitignore + config exclude)
+// Create content filter at module scope — unified exclusion (gitignore + config exclude).
+// When OK_TEST_CONTENT_DIR is set (E2E test isolation), the content dir is an external
+// tmpdir outside the project tree. Passing PROJECT_ROOT as projectDir would make
+// content-filter compute `relative(projectDir, contentDir)` as a path with many `..`
+// components, which the `ignore` npm library rejects. Treat the test content dir as
+// its own project root — gitignore scanning becomes a no-op (the tmpdir has no
+// .gitignore), which is semantically correct for isolated test runs.
 const contentFilter = createContentFilter({
-  projectDir: PROJECT_ROOT,
+  projectDir: process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT,
   contentDir: CONTENT_DIR,
   includePatterns: contentConfig.include,
   excludePatterns: contentConfig.exclude,
 });
+
+// When test isolation is active, persistence's git integration is a liability —
+// it tries to `git add <contentRoot>` in the worktree's .git, but contentRoot is
+// an external tmpdir path starting with `../../..` which git refuses. Tests don't
+// need git tracking of their throwaway content, so disable it outright.
+const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -101,8 +113,9 @@ export const hocuspocus = new Hocuspocus({
   extensions: [
     createPersistenceExtension({
       contentDir: CONTENT_DIR,
-      projectDir: PROJECT_ROOT,
-      contentRoot: CONTENT_ROOT,
+      projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
+      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      gitEnabled: !isTestIsolated,
     }).extension,
   ],
 });
@@ -120,8 +133,11 @@ hocuspocus.configuration.extensions.push(
     contentDir: CONTENT_DIR,
     getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
     enableTestRoutes: true,
-    projectRoot: PROJECT_ROOT,
-    contentRoot: CONTENT_ROOT,
+    // Mirror persistence's test-isolation handling so shadow-repo path calculation
+    // doesn't try to resolve paths through ../.. components when CONTENT_DIR is
+    // outside the worktree.
+    projectRoot: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
+    contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
   }),
 );
 
