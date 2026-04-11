@@ -65,6 +65,8 @@ Two-mode toggle between WYSIWYG (TipTap) and source (CodeMirror 6):
 
 **Live agent writes in source mode:** When source mode is active, a Y.XmlFragment observer detects changes to the Y.Doc (from agent writes via `/api/agent-write-md`) and serializes the updated content into CodeMirror via React state. The observer is unsubscribed before toggle-back to prevent interference with the merge.
 
+**Typing coordination:** Both editors register DOM listeners (keydown, paste, drop, cut) that signal the observer system to defer background sync while the user is actively typing. This applies symmetrically -- source-mode typing receives the same protection from observer-driven tree replacement as WYSIWYG typing.
+
 **Conflict handling:** If both the user and an agent modified the same paragraph, the user's version wins. Conflicts are logged to the console with the paragraph index.
 
 ## Persistence pipeline
