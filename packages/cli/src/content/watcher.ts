@@ -3,7 +3,7 @@ import { join, relative, resolve } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import { CATALOG_FILENAME } from '../constants.ts';
 import { contentHash, generateCatalog, generateRootCatalog, readIndexMeta } from './catalog.ts';
-import type { WikiPaths } from './paths.ts';
+import type { ContentPaths } from './paths.ts';
 
 const DEBOUNCE_QUIET_MS = 500;
 const DEBOUNCE_MAX_MS = 2000;
@@ -23,7 +23,7 @@ function writeIfChanged(filePath: string, content: string): boolean {
   return true;
 }
 
-export function rebuildCatalogs(openknowledgeDir: string, paths: WikiPaths): void {
+export function rebuildCatalogs(openknowledgeDir: string, paths: ContentPaths): void {
   const okDir = resolve(openknowledgeDir);
 
   for (const root of paths.roots) {
@@ -70,7 +70,7 @@ function rebuildDirCatalog(dirPath: string, title?: string, description?: string
     entries = readdirSync(dirPath, { withFileTypes: true });
   } catch (err) {
     console.warn(
-      `[wiki-watcher] Cannot read directory ${dirPath}: ${err instanceof Error ? err.message : err}`,
+      `[content-watcher] Cannot read directory ${dirPath}: ${err instanceof Error ? err.message : err}`,
     );
     return;
   }
@@ -83,7 +83,7 @@ function rebuildDirCatalog(dirPath: string, title?: string, description?: string
 
 export async function startCatalogWatcher(
   openknowledgeDir: string,
-  paths: WikiPaths,
+  paths: ContentPaths,
 ): Promise<{ stop: () => Promise<void> }> {
   const okDir = resolve(openknowledgeDir);
 
@@ -120,13 +120,13 @@ export async function startCatalogWatcher(
     try {
       rebuildCatalogs(okDir, paths);
     } catch (err) {
-      console.error('[wiki-watcher] Catalog rebuild failed:', err);
+      console.error('[content-watcher] Catalog rebuild failed:', err);
     }
   }
 
   const subscription: AsyncSubscription = await subscribe(okDir, (_err, events) => {
     if (_err) {
-      console.error('[wiki-watcher]', _err);
+      console.error('[content-watcher]', _err);
       return;
     }
 

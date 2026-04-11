@@ -34,8 +34,9 @@ describe('loadConfig', () => {
     // sources
     expect(sources).toHaveLength(0);
 
-    // content
-    expect(config.content.dir).toBe('./content');
+    // content globs
+    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.exclude).toEqual([]);
 
     // server
     expect(config.server.port).toBe(3000);
@@ -44,16 +45,6 @@ describe('loadConfig', () => {
     // persistence
     expect(config.persistence.debounceMs).toBe(2000);
     expect(config.persistence.maxDebounceMs).toBe(10000);
-
-    // wiki roots
-    expect(config.wiki.roots).toHaveLength(3);
-    expect(config.wiki.roots[0]).toEqual({ path: './articles', label: 'Knowledge Articles' });
-    expect(config.wiki.roots[1]).toEqual({ path: './external-sources', label: 'External Sources' });
-    expect(config.wiki.roots[2]).toEqual({ path: './research', label: 'Research' });
-
-    // wiki globs
-    expect(config.wiki.include).toEqual(['**/*.md']);
-    expect(config.wiki.exclude).toEqual([]);
   });
 
   test('empty YAML file → all defaults resolve', () => {
@@ -61,16 +52,16 @@ describe('loadConfig', () => {
     const { config } = loadConfig(testDir);
 
     expect(config.server.port).toBe(3000);
-    expect(config.content.dir).toBe('./content');
+    expect(config.content.include).toEqual(['**/*.md']);
     expect(config.persistence.debounceMs).toBe(2000);
-    expect(config.wiki.roots).toHaveLength(3);
   });
 
   test('comments-only YAML (scaffolded config) → all defaults resolve', () => {
     writeWorkspaceConfig(`
 # This is a fully commented config
 # content:
-#   dir: ./content
+#   include:
+#     - "**/*.md"
 # server:
 #   port: 3000
 # persistence:
@@ -81,7 +72,7 @@ describe('loadConfig', () => {
     // Comments-only YAML parses to null, so no source is recorded
     expect(sources).toHaveLength(0);
     expect(config.server.port).toBe(3000);
-    expect(config.content.dir).toBe('./content');
+    expect(config.content.include).toEqual(['**/*.md']);
   });
 
   // ── Workspace overrides ─────────────────────────────────────────────
@@ -96,15 +87,12 @@ describe('loadConfig', () => {
     // sibling default preserved
     expect(config.server.host).toBe('localhost');
     // other sections untouched
-    expect(config.content.dir).toBe('./content');
+    expect(config.content.include).toEqual(['**/*.md']);
     expect(config.persistence.debounceMs).toBe(2000);
-    expect(config.wiki.roots).toHaveLength(3);
   });
 
   test('workspace config overrides multiple sections at once', () => {
     writeWorkspaceConfig(`
-content:
-  dir: ./docs
 server:
   port: 8080
   host: 0.0.0.0
@@ -113,7 +101,6 @@ persistence:
 `);
     const { config } = loadConfig(testDir);
 
-    expect(config.content.dir).toBe('./docs');
     expect(config.server.port).toBe(8080);
     expect(config.server.host).toBe('0.0.0.0');
     expect(config.persistence.debounceMs).toBe(5000);
@@ -121,34 +108,9 @@ persistence:
     expect(config.persistence.maxDebounceMs).toBe(10000);
   });
 
-  test('custom wiki roots replace defaults entirely', () => {
+  test('custom content include/exclude patterns', () => {
     writeWorkspaceConfig(`
-wiki:
-  roots:
-    - path: ./eng-research
-      label: Engineering Research
-    - path: ./product-research
-      label: Product Research
-`);
-    const { config } = loadConfig(testDir);
-
-    expect(config.wiki.roots).toHaveLength(2);
-    expect(config.wiki.roots[0]).toEqual({
-      path: './eng-research',
-      label: 'Engineering Research',
-    });
-    expect(config.wiki.roots[1]).toEqual({
-      path: './product-research',
-      label: 'Product Research',
-    });
-    // globs still default
-    expect(config.wiki.include).toEqual(['**/*.md']);
-    expect(config.wiki.exclude).toEqual([]);
-  });
-
-  test('custom include/exclude globs', () => {
-    writeWorkspaceConfig(`
-wiki:
+content:
   include:
     - "**/*.md"
     - "**/*.mdx"
@@ -157,8 +119,8 @@ wiki:
 `);
     const { config } = loadConfig(testDir);
 
-    expect(config.wiki.include).toEqual(['**/*.md', '**/*.mdx']);
-    expect(config.wiki.exclude).toEqual(['**/drafts/**']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
+    expect(config.content.exclude).toEqual(['**/drafts/**']);
   });
 
   test('partial section override preserves sibling defaults within that section', () => {
@@ -187,8 +149,8 @@ wiki:
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 
-  test('empty roots array throws', () => {
-    writeWorkspaceConfig('wiki:\n  roots: []\n');
+  test('empty include array throws', () => {
+    writeWorkspaceConfig('content:\n  include: []\n');
     expect(() => loadConfig(testDir)).toThrow('Invalid configuration');
   });
 

@@ -1,4 +1,4 @@
-# .open-knowledge/ — Project Wiki
+# .open-knowledge/ — Project Knowledge Base
 
 This directory contains a living knowledge base for this project, maintained by both agents and humans.
 
@@ -12,7 +12,7 @@ This directory contains a living knowledge base for this project, maintained by 
 ## Navigation
 
 1. **Start with INDEX.md** — Every directory has an auto-generated `INDEX.md` catalog listing all articles and subfolders
-2. **Search with grep** — Use grep/ripgrep to find specific topics across all wiki content
+2. **Search with grep** — Use grep/ripgrep to find specific topics across all content
 3. **Read specific files** — Once you find the right article, read it for full context
 
 ## Content Lifecycle
@@ -42,7 +42,7 @@ tags:
 
 ## Folder Descriptions
 
-Every subfolder in the wiki should have a `title` and `description` in its `INDEX.md` frontmatter. These appear in the parent folder's catalog so readers can see what's inside a folder without opening it.
+Every subfolder should have a `title` and `description` in its `INDEX.md` frontmatter. These appear in the parent folder's catalog so readers can see what's inside a folder without opening it.
 
 **When to set them:** at the same time you create the first article in a new subfolder. If you're creating `articles/auth/sso-migration.md`, also create (or edit) `articles/auth/INDEX.md` with:
 
@@ -53,7 +53,7 @@ description: How auth works in this codebase — SSO, sessions, tokens.
 ---
 ```
 
-**When to re-check them:** every time you *create or edit* an article, glance at the containing folder's `INDEX.md` and decide whether the folder's `title` or `description` needs to be updated. If the new article expands the folder's scope (e.g., you added an RBAC article to a folder currently described as "SSO and sessions"), update the description to match. A stale folder description is worse than no description — it gives future agents a misleading map of the wiki. The check is cheap: one read, usually no edit.
+**When to re-check them:** every time you *create or edit* an article, glance at the containing folder's `INDEX.md` and decide whether the folder's `title` or `description` needs to be updated. If the new article expands the folder's scope (e.g., you added an RBAC article to a folder currently described as "SSO and sessions"), update the description to match. A stale folder description is worse than no description — it gives future agents a misleading map. The check is cheap: one read, usually no edit.
 
 **What's editable in `INDEX.md`:** only the `title` and `description` frontmatter fields. These are **sticky** — preserved verbatim across every catalog regeneration. Everything else in an `INDEX.md` file is auto-generated and will be overwritten on the next rebuild:
 
@@ -70,9 +70,9 @@ description: How auth works in this codebase — SSO, sessions, tokens.
 
 **Do not put free-form prose in an `INDEX.md` body** — it will be clobbered. If a folder needs a longer overview than the `description` field supports, write a regular article (e.g., `articles/auth/overview.md`) and reference it from the folder description.
 
-## Scaffolding this wiki (first-time setup)
+## Scaffolding (first-time setup)
 
-This wiki directory was almost certainly scaffolded by running `open-knowledge init` (or `npx @inkeep/open-knowledge init`) in the project root. That same command:
+This directory was almost certainly scaffolded by running `open-knowledge init` (or `npx @inkeep/open-knowledge init`) in the project root. That same command:
 
 1. Creates the directory layout you're reading this from
 2. Writes `AGENTS.md`, `.gitignore`, and starter `INDEX.md` catalogs
@@ -87,7 +87,7 @@ Your `.mcp.json` at the repo root should look like this after running `init`:
 ```json
 {
   "mcpServers": {
-    "openknowledge": {
+    "open-knowledge": {
       "command": "npx",
       "args": ["@inkeep/open-knowledge", "mcp"]
     }
@@ -99,7 +99,7 @@ Your `.mcp.json` at the repo root should look like this after running `init`:
 
 The MCP server exposes three tools that codify the main workflows. Each tool returns instructional text that guides the agent through the workflow — all real work (reads, edits, fetches) happens via the agent's native tools. The tools are:
 
-- **`init-wiki`** — Bootstrap this wiki by reading the codebase and writing initial knowledge articles grouped by topic. Use when setting up a wiki for the first time or onboarding to a new codebase.
+- **`init-content`** — Bootstrap this knowledge base by reading the codebase and writing initial knowledge articles grouped by topic. Use when setting up for the first time or onboarding to a new codebase.
 - **`ingest`** — Capture an external source (URL or local file) as raw reference material in `external-sources/`. Use when the user shares a URL or document to preserve. Raw preservation only; no analysis.
 - **`research`** — Gather sources via `ingest` and write provisional findings to `research/`. Use when researching a topic, comparing alternatives, or exploring a decision space. Non-canonical until promoted to `articles/`.
 

@@ -1,6 +1,6 @@
 /**
  * `research` MCP workflow tool — analyze a topic by gathering external sources,
- * reading them alongside existing wiki content, and writing provisional
+ * reading them alongside existing content, and writing provisional
  * findings to .open-knowledge/research/.
  *
  * Principle: provisional, not canonical. Research articles capture findings,
@@ -55,7 +55,7 @@ If a fetch fails for a source you specifically need, stop and ask the user to pa
 
 Read each ingested source carefully. Also read:
 
-- **Existing wiki articles** on the topic (\`articles/\`)
+- **Existing articles** on the topic (\`articles/\`)
 - **Prior research** on adjacent topics (\`research/\`)
 - **Relevant source code** for projects where research is grounded in the codebase (read entry points, core modules, and any specs that touch the topic)
 - **Project context** — \`PROJECT.md\`, \`STORIES.md\`, \`specs/\`, \`reports/\` if they exist

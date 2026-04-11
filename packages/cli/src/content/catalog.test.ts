@@ -10,7 +10,7 @@ describe('generateCatalog', () => {
   beforeEach(() => {
     testDir = resolve(
       tmpdir(),
-      `wiki-catalog-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      `content-catalog-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(testDir, { recursive: true });
   });
@@ -96,7 +96,7 @@ describe('generateRootCatalog', () => {
   beforeEach(() => {
     testDir = resolve(
       tmpdir(),
-      `wiki-root-catalog-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      `content-root-catalog-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(testDir, { recursive: true });
     mkdirSync(join(testDir, 'articles'));

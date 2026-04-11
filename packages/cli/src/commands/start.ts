@@ -19,29 +19,18 @@ export function startCommand(getConfig: () => Config): Command {
       const { createServer, getLogger } = await import('@inkeep/open-knowledge-server');
       const { default: sirv } = await import('sirv');
       const { WebSocketServer } = await import('ws');
-      const { CONFIG_FILENAME, WIKI_DIR } = await import('../constants.ts');
       const { renderBanner } = await import('../ui/banner.ts');
       const { dim, error, info } = await import('../ui/colors.ts');
 
       const log = getLogger('start');
       const config = getConfig();
       const cwd = process.cwd();
+
       const contentDir = resolve(cwd, config.content.dir);
 
       if (!existsSync(contentDir)) {
-        const configPath = resolve(cwd, WIKI_DIR, CONFIG_FILENAME);
-        const hasConfig = existsSync(configPath);
         console.error(`\n  ${error('Error:')} Content directory not found: ${info(contentDir)}\n`);
-        if (!hasConfig) {
-          console.error(`  ${dim('No config file found. Create one at:')}`);
-          console.error(`    ${info(configPath)}\n`);
-          console.error(`  ${dim('Example .open-knowledge/config.yml:')}`);
-          console.error(`  ${dim('  content:')}`);
-          console.error(`  ${dim('    dir: ./content')}\n`);
-        } else {
-          console.error(`  ${dim('Check "content.dir" in')} ${info(configPath)}`);
-          console.error(`  ${dim('Or create the directory:')} mkdir ${config.content.dir}\n`);
-        }
+        console.error(`  ${dim('Create the directory:')} mkdir ${config.content.dir}\n`);
         process.exit(1);
       }
 

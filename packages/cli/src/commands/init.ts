@@ -2,7 +2,7 @@
  * `open-knowledge init` — one-shot terminal setup command.
  *
  * Does two things:
- *   1. Scaffolds `.open-knowledge/` in the current directory via initWiki()
+ *   1. Scaffolds `.open-knowledge/` in the current directory via initContent()
  *      (same logic the MCP server's init flow used to call — now factored out).
  *   2. Writes an MCP server entry for `open-knowledge` into `./.mcp.json`,
  *      preserving any existing entries. Idempotent: skips if an `open-knowledge`
@@ -20,8 +20,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { Command } from 'commander';
-import { WIKI_DIR } from '../constants.ts';
-import { initWiki } from '../wiki/init.ts';
+import { OK_DIR } from '../constants.ts';
+import { initContent } from '../content/init.ts';
 
 const MCP_SERVER_NAME = 'open-knowledge';
 const MCP_SERVER_COMMAND = 'npx';
@@ -89,7 +89,7 @@ function writeMcpConfig(path: string, config: McpConfigShape): void {
 }
 
 /**
- * Core logic: scaffold wiki + wire MCP config. Exported for testing so the
+ * Core logic: scaffold content + wire MCP config. Exported for testing so the
  * Commander wrapper stays a thin shell around this function.
  */
 export function runInit(options: InitCommandOptions = {}): InitCommandResult {
@@ -97,24 +97,24 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   const mcpPath = join(cwd, '.mcp.json');
 
   // 1. Scaffold .open-knowledge/
-  let wikiResult: ReturnType<typeof initWiki>;
+  let contentResult: ReturnType<typeof initContent>;
   try {
-    wikiResult = initWiki(cwd);
+    contentResult = initContent(cwd);
   } catch (err) {
     return {
       wikiCreated: [],
       wikiSkipped: [],
       mcpAction: 'failed',
       mcpPath,
-      mcpError: `Wiki scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
+      mcpError: `Content scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 
   // 2. Wire MCP config (unless --no-mcp)
   if (options.mcp === false) {
     return {
-      wikiCreated: wikiResult.created,
-      wikiSkipped: wikiResult.skipped,
+      wikiCreated: contentResult.created,
+      wikiSkipped: contentResult.skipped,
       mcpAction: 'skipped-flag',
       mcpPath,
     };
@@ -125,8 +125,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     config = readMcpConfig(mcpPath);
   } catch (err) {
     return {
-      wikiCreated: wikiResult.created,
-      wikiSkipped: wikiResult.skipped,
+      wikiCreated: contentResult.created,
+      wikiSkipped: contentResult.skipped,
       mcpAction: 'failed',
       mcpPath,
       mcpError: err instanceof Error ? err.message : String(err),
@@ -138,8 +138,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
 
   if (existing && !options.force) {
     return {
-      wikiCreated: wikiResult.created,
-      wikiSkipped: wikiResult.skipped,
+      wikiCreated: contentResult.created,
+      wikiSkipped: contentResult.skipped,
       mcpAction: 'skipped-existing',
       mcpPath,
     };
@@ -162,8 +162,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     writeMcpConfig(mcpPath, nextConfig);
   } catch (err) {
     return {
-      wikiCreated: wikiResult.created,
-      wikiSkipped: wikiResult.skipped,
+      wikiCreated: contentResult.created,
+      wikiSkipped: contentResult.skipped,
       mcpAction: 'failed',
       mcpPath,
       mcpError: err instanceof Error ? err.message : String(err),
@@ -171,8 +171,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   }
 
   return {
-    wikiCreated: wikiResult.created,
-    wikiSkipped: wikiResult.skipped,
+    wikiCreated: contentResult.created,
+    wikiSkipped: contentResult.skipped,
     mcpAction: existing ? 'overwritten' : 'written',
     mcpPath,
   };
@@ -186,13 +186,13 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
 export function formatInitResult(result: InitCommandResult, cwd: string): string {
   const lines: string[] = [];
 
-  // Wiki scaffolding summary
-  const okDir = join(cwd, WIKI_DIR);
+  // Content scaffolding summary
+  const okDir = join(cwd, OK_DIR);
   if (result.wikiCreated.length > 0) {
-    lines.push(`Wiki scaffolded at ${okDir}/`);
+    lines.push(`Content scaffolded at ${okDir}/`);
     lines.push(`  Created: ${result.wikiCreated.join(', ')}`);
   } else {
-    lines.push(`Wiki already present at ${okDir}/`);
+    lines.push(`Content already present at ${okDir}/`);
   }
   if (result.wikiSkipped.length > 0) {
     lines.push(`  Skipped (already exist): ${result.wikiSkipped.join(', ')}`);
@@ -216,9 +216,7 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       break;
     case 'skipped-flag':
       lines.push('MCP config not written — .mcp.json unchanged');
-      lines.push(
-        '  To use wiki workflow tools, add the open-knowledge server to .mcp.json manually',
-      );
+      lines.push('  To use workflow tools, add the open-knowledge server to .mcp.json manually');
       break;
     case 'failed':
       lines.push(`Warning: MCP config write failed — ${result.mcpError}`);
@@ -239,8 +237,8 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
   lines.push('Next steps:');
   lines.push('  1. Open your editor with Claude Code / Cursor / Windsurf');
   lines.push('  2. Approve the MCP server when prompted');
-  lines.push('  3. The wiki is ready — use the three workflow tools:');
-  lines.push('     - mcp__open-knowledge__init-wiki  — bootstrap articles from the codebase');
+  lines.push('  3. The knowledge base is ready — use the three workflow tools:');
+  lines.push('     - mcp__open-knowledge__init-content  — bootstrap articles from the codebase');
   lines.push('     - mcp__open-knowledge__ingest     — capture an external source');
   lines.push('     - mcp__open-knowledge__research   — gather sources and write findings');
 
@@ -253,7 +251,7 @@ export function initCommand(): Command {
       'Scaffold .open-knowledge/ in the current directory and register the MCP server in .mcp.json',
     )
     .option('--mcp', 'Register the MCP server in .mcp.json (default: true)', true)
-    .option('--no-mcp', 'Scaffold the wiki directory but do not touch .mcp.json')
+    .option('--no-mcp', 'Scaffold the .open-knowledge/ directory but do not touch .mcp.json')
     .option('--force', 'Overwrite an existing open-knowledge MCP entry (default: skip)')
     .action((opts: { mcp?: boolean; force?: boolean }) => {
       const cwd = process.cwd();

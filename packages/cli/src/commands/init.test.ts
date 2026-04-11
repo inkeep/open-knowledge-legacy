@@ -22,7 +22,7 @@ describe('runInit', () => {
   it('scaffolds .open-knowledge/ and writes a fresh .mcp.json', () => {
     const result = runInit({ cwd: testDir });
 
-    // Wiki scaffolded
+    // Content scaffolded
     expect(result.wikiCreated.length).toBeGreaterThan(0);
     expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
     expect(existsSync(join(testDir, '.open-knowledge', 'external-sources'))).toBe(true);
@@ -134,7 +134,7 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('skipped-flag');
     expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
 
-    // But the wiki IS scaffolded
+    // But the content IS scaffolded
     expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
   });
 
@@ -147,7 +147,7 @@ describe('runInit', () => {
 
     const secondResult = runInit({ cwd: testDir });
     expect(secondResult.mcpAction).toBe('skipped-existing');
-    // Wiki scaffolding is idempotent too — writeIfMissing skips existing files
+    // Content scaffolding is idempotent too — writeIfMissing skips existing files
     expect(secondResult.wikiCreated.length).toBe(0);
     expect(secondResult.wikiSkipped.length).toBeGreaterThan(0);
 
@@ -162,7 +162,7 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('failed');
     expect(result.mcpError).toMatch(/invalid JSON/i);
 
-    // Wiki should still have been scaffolded (best-effort separation)
+    // Content should still have been scaffolded (best-effort separation)
     expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
   });
 });

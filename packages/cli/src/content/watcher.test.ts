@@ -2,18 +2,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import type { WikiPaths } from './paths.ts';
+import type { ContentPaths } from './paths.ts';
 import { rebuildCatalogs } from './watcher.ts';
 
 describe('rebuildCatalogs', () => {
   let testDir: string;
   let okDir: string;
-  let paths: WikiPaths;
+  let paths: ContentPaths;
 
   beforeEach(() => {
     testDir = resolve(
       tmpdir(),
-      `wiki-watcher-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      `content-watcher-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     okDir = join(testDir, '.open-knowledge');
     mkdirSync(join(okDir, 'articles', 'auth'), { recursive: true });

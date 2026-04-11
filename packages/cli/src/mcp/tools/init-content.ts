@@ -1,5 +1,5 @@
 /**
- * `init-wiki` MCP workflow tool — bootstrap a project wiki by reading the codebase
+ * `init-content` MCP workflow tool — bootstrap a project knowledge base by reading the codebase
  * and writing initial knowledge articles grouped by topic.
  *
  * Non-content rendering: the tool emits instructional text with step-by-step
@@ -10,16 +10,16 @@
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
-const BODY = `Initialize a project wiki at .open-knowledge/ for this repository.
+const BODY = `Initialize a project knowledge base at .open-knowledge/ for this repository.
 
 ## When to use
 
-- First time setting up a wiki in a repo where \`.open-knowledge/\` does not exist or is empty
+- First time setting up a knowledge base in a repo where \`.open-knowledge/\` does not exist or is empty
 - When onboarding to a new codebase and you want to capture initial understanding for future agent sessions
 
 ## Steps
 
-### 1. Verify the wiki structure exists
+### 1. Verify the structure exists
 
 If \`.open-knowledge/\` does not already exist, scaffold it from a terminal (not from within this MCP session — scaffolding is a CLI operation, not a tool call):
 
@@ -98,7 +98,7 @@ Depending on the project, consider articles covering:
 ### 6. Verify
 
 - Catalogs (\`INDEX.md\` files) auto-regenerate as you write articles — the file watcher picks up changes
-- Read \`.open-knowledge/INDEX.md\` to verify the wiki is navigable
+- Read \`.open-knowledge/INDEX.md\` to verify the knowledge base is navigable
 - Ensure every article has frontmatter with at minimum \`title\` and \`description\`
 - Ensure every subfolder's \`INDEX.md\` has its sticky \`title\` and \`description\` set
 
@@ -114,16 +114,16 @@ export const DESCRIPTION = [
   'Bootstrap .open-knowledge/ by reading the codebase and writing initial knowledge articles grouped by topic.',
   '',
   '**Use when:**',
-  '- Setting up a wiki for the first time in a repo',
+  '- Setting up a knowledge base for the first time in a repo',
   '- Onboarding to a new codebase and capturing initial understanding',
   '- .open-knowledge/ exists but articles/ is empty or sparse',
   '',
   '**Triggers on:**',
-  '- "init wiki", "bootstrap wiki", "populate wiki", "set up project knowledge"',
+  '- "init content", "bootstrap knowledge base", "populate articles", "set up project knowledge"',
   '- .open-knowledge/ exists but has no articles',
-  '- User asks to document or catalog the codebase into the wiki',
+  '- User asks to document or catalog the codebase',
 ].join('\n');
 
 export function register(server: ServerInstance): void {
-  server.tool('init-wiki', DESCRIPTION, () => textResult(BODY));
+  server.tool('init-content', DESCRIPTION, () => textResult(BODY));
 }

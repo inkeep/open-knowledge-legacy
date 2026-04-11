@@ -182,7 +182,7 @@ export interface RootCatalogOptions {
 }
 
 export function generateRootCatalog(openknowledgeDir: string, options: RootCatalogOptions): string {
-  const projectName = options.projectName || 'Project Wiki';
+  const projectName = options.projectName || 'Project Knowledge Base';
 
   const fm = serializeFrontmatter({
     title: projectName,
