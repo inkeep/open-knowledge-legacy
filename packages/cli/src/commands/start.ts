@@ -56,13 +56,13 @@ export function startCommand(getConfig: () => Config): Command {
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
 
-      // Static asset serving — locate built React app relative to CLI package.
-      // The app is always a sibling package in the open-knowledge monorepo,
-      // never in the user's cwd (which is their project repo).
+      // Static asset serving — locate built React app.
+      // Priority: (1) dist/public/ for npm-installed CLI, (2-3) monorepo dev paths.
       const cliDir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
       const assetPaths = [
-        resolve(cliDir, '../../app/dist'), // from src: packages/cli/src → packages/app/dist
-        resolve(cliDir, '../../../app/dist'), // from dist: packages/cli/dist → packages/app/dist
+        resolve(cliDir, 'public'), // npm install: dist/public/ (bundled assets)
+        resolve(cliDir, '../../app/dist'), // monorepo dev from src/
+        resolve(cliDir, '../../../app/dist'), // monorepo dev from dist/
       ];
       const assetDir = assetPaths.find((p) => existsSync(p));
       const staticHandler = assetDir
@@ -71,6 +71,8 @@ export function startCommand(getConfig: () => Config): Command {
 
       if (assetDir) {
         log.info({ assetDir }, 'Serving static assets');
+      } else {
+        log.warn({}, 'No React app assets found — browser UI will not be available');
       }
 
       // Create HTTP server and wire up Hocuspocus
