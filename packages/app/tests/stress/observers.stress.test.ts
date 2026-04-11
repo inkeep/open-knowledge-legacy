@@ -99,10 +99,14 @@ interface Tier {
   timeout: number;
 }
 
+// Timeouts include margin for running inside a large mixed Bun test process
+// (raw `bun test` picks up all .test.ts files; GC/memory pressure from the full
+// suite can slow these scenarios ~10x vs isolated runs). Sanctioned commands
+// (`bun run test`, `bun run test:stress`) never hit these budgets.
 const TIERS: Record<string, Tier> = {
-  small: { name: 'small-realistic', lines: 500, timeout: 10_000 },
+  small: { name: 'small-realistic', lines: 500, timeout: 20_000 },
   medium: { name: 'medium-realistic', lines: 2000, timeout: 30_000 },
-  large: { name: 'large-realistic', lines: 10000, timeout: 60_000 },
+  large: { name: 'large-realistic', lines: 10000, timeout: 120_000 },
   adversarial: { name: 'adversarial', lines: 50000, probe: true, timeout: 120_000 },
 };
 
