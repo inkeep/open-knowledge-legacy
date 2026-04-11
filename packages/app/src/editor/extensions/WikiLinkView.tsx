@@ -112,7 +112,7 @@ function EditWikiLinkDialog({
   const headingsWithKeys = showHeadings
     ? (() => {
         const counts = new Map<string, number>();
-        return headings!.map((h) => {
+        return headings?.map((h) => {
           const count = counts.get(h.slug) ?? 0;
           counts.set(h.slug, count + 1);
           const reactKey = count === 0 ? h.slug : `${h.slug}-${count}`;
