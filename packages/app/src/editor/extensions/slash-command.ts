@@ -85,7 +85,9 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             const seen = new Set<string>();
             for (const item of allItems) {
               if (seen.has(item.name)) {
-                console.warn(`SlashCommand: duplicate item name "${item.name}" — last source wins`);
+                console.warn(
+                  `SlashCommand: duplicate item name "${item.name}" — both will appear in the menu; ensure names are unique across sources`,
+                );
               }
               seen.add(item.name);
             }
