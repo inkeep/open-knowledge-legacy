@@ -11,6 +11,7 @@ import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
   createApiExtension,
+  createContentFilter,
   createExternalChangeHandler,
   createPersistenceExtension,
   startWatcher,
@@ -28,12 +29,18 @@ let activeWatcher: WatcherHandle | null = null;
 const PLUGIN_DIR = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
 const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
 
+interface ContentConfig {
+  dir: string;
+  include: string[];
+  exclude: string[];
+}
+
 /**
- * Read content.dir from .open-knowledge/config.yml.
- * Falls back to project root (matching config schema default: content.dir = '.') if no config
- * exists or no content.dir is specified.
+ * Read content config from .open-knowledge/config.yml.
+ * Falls back to defaults if no config exists or fields are unspecified.
  */
-function resolveContentDir(): string {
+function resolveContentConfig(): ContentConfig {
+  const defaults: ContentConfig = { dir: PROJECT_ROOT, include: ['**/*.md'], exclude: [] };
   const configPath = resolve(PROJECT_ROOT, '.open-knowledge/config.yml');
   if (existsSync(configPath)) {
     try {
@@ -41,21 +48,36 @@ function resolveContentDir(): string {
       const parsed = parseYaml(raw) as Record<string, unknown> | null;
       const content = parsed?.content as Record<string, unknown> | undefined;
       if (typeof content?.dir === 'string') {
-        return resolve(PROJECT_ROOT, content.dir);
+        defaults.dir = resolve(PROJECT_ROOT, content.dir);
+      }
+      if (Array.isArray(content?.include)) {
+        defaults.include = content.include as string[];
+      }
+      if (Array.isArray(content?.exclude)) {
+        defaults.exclude = content.exclude as string[];
       }
     } catch (err) {
       console.warn('[hocuspocus] Failed to parse config:', err);
     }
   }
-  return PROJECT_ROOT;
+  return defaults;
 }
 
-const CONTENT_DIR = resolveContentDir();
+const contentConfig = resolveContentConfig();
+const CONTENT_DIR = contentConfig.dir;
 const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
+
+// Create content filter at module scope — unified exclusion (gitignore + config exclude)
+const contentFilter = createContentFilter({
+  projectDir: PROJECT_ROOT,
+  contentDir: CONTENT_DIR,
+  includePatterns: contentConfig.include,
+  excludePatterns: contentConfig.exclude,
+});
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -81,6 +103,7 @@ hocuspocus.configuration.extensions.push(
     hocuspocus,
     sessionManager,
     contentDir: CONTENT_DIR,
+    getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
     enableTestRoutes: true,
     projectRoot: PROJECT_ROOT,
     contentRoot: CONTENT_ROOT,
@@ -148,11 +171,15 @@ export function hocuspocusPlugin(): Plugin {
           activeWatcher = null;
         }
         try {
-          activeWatcher = await startWatcher(CONTENT_DIR, async (event) => {
-            if (event.kind === 'update' || event.kind === 'create') {
-              await handleExternalChange(event.docName, event.content);
-            }
-          });
+          activeWatcher = await startWatcher(
+            CONTENT_DIR,
+            async (event) => {
+              if (event.kind === 'update' || event.kind === 'create') {
+                await handleExternalChange(event.docName, event.content);
+              }
+            },
+            contentFilter,
+          );
           server.httpServer?.on('close', async () => {
             if (activeWatcher) {
               await activeWatcher.unsubscribe();
