@@ -107,22 +107,20 @@ The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or
 
 ### API Endpoints
 
-
-| Method | Path                          | Purpose                                                                   |
-| ------ | ----------------------------- | ------------------------------------------------------------------------- |
-| GET    | `/api/document`               | Read live Y.Text state (bypasses persistence debounce)                    |
-| POST   | `/api/agent-write`            | Agent write via Y.Text                                                    |
-| POST   | `/api/agent-write-md`         | Agent markdown write via Y.Text (append/prepend/replace)                  |
-| POST   | `/api/agent-patch`            | Targeted find/replace on live Y.Text — only matched span mutated          |
-| POST   | `/api/agent-undo`             | Undo last agent edit (agent-write origin only)                            |
-| POST   | `/api/agent-redo`             | Redo last undone agent edit                                               |
-| GET    | `/api/agent-undo-status`      | Check canUndo/canRedo                                                     |
-| POST   | `/api/test-reset`             | Reset document (E2E test isolation)                                       |
-| POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                    |
-| GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park) |
-| GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)       |
-| GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                         |
-
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/document` | Read live Y.Text state (bypasses persistence debounce) |
+| POST | `/api/agent-write` | Agent write via Y.Text |
+| POST | `/api/agent-write-md` | Agent markdown write via Y.Text (append/prepend/replace) |
+| POST | `/api/agent-patch` | Targeted find/replace on live Y.Text — only matched span mutated |
+| POST | `/api/agent-undo` | Undo last agent edit (agent-write origin only) |
+| POST | `/api/agent-redo` | Redo last undone agent edit |
+| GET | `/api/agent-undo-status` | Check canUndo/canRedo |
+| POST | `/api/test-reset` | Reset document (E2E test isolation) |
+| POST | `/api/save-version` | Save Version — project repo commit + shadow checkpoint |
+| GET | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park) |
+| GET | `/api/rescue` | List rescue buffers (dirty docs from deleted/branch-switched files) |
+| GET | `/api/rescue/:docName` | Retrieve a specific rescue buffer (text/markdown) |
 
 ### Key files
 
@@ -144,17 +142,14 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 
 ### CLI Commands
 
-
-| Command                                   | Description                                         |
-| ----------------------------------------- | --------------------------------------------------- |
-| `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app           |
-| `open-knowledge mcp`                      | Start MCP stdio server (connects to running server) |
-
+| Command | Description |
+|---------|-------------|
+| `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app |
+| `open-knowledge mcp` | Start MCP stdio server (connects to running server) |
 
 ### Config system
 
 Hierarchical YAML in `.open-knowledge/` directories:
-
 - `~/.open-knowledge/config.yml` — user-level defaults
 - `./.open-knowledge/config.yml` — workspace-level overrides
 - Precedence: CLI flags > ENV > workspace > user > Zod defaults
@@ -235,15 +230,13 @@ Y.Doc
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
-
-| Write Surface             | → Y.Text                         | → XmlFragment                | → Disk               |
-| ------------------------- | -------------------------------- | ---------------------------- | -------------------- |
-| W1: WYSIWYG (XmlFragment) | Observer A                       | (direct)                     | Persistence debounce |
-| W2: Source (Y.Text)       | (direct)                         | Observer B                   | Persistence debounce |
-| W3: Agent API             | CRDT sync (WebSocket)            | syncTextToFragment on server | Persistence debounce |
-| W4: Disk (file watcher)   | handleExternalChange             | handleExternalChange         | (direct)             |
-| Undo/Redo                 | UndoManager + syncTextToFragment | syncTextToFragment           | Persistence debounce |
-
+| Write Surface | → Y.Text | → XmlFragment | → Disk |
+|---|---|---|---|
+| W1: WYSIWYG (XmlFragment) | Observer A | (direct) | Persistence debounce |
+| W2: Source (Y.Text) | (direct) | Observer B | Persistence debounce |
+| W3: Agent API | CRDT sync (WebSocket) | syncTextToFragment on server | Persistence debounce |
+| W4: Disk (file watcher) | handleExternalChange | handleExternalChange | (direct) |
+| Undo/Redo | UndoManager + syncTextToFragment | syncTextToFragment | Persistence debounce |
 
 ### transaction.local semantics
 
@@ -277,29 +270,25 @@ Y.Doc
 
 ### Origin-guard truth table
 
-
-| Transaction Origin      | Observer A (tree→text)          | Observer B (text→tree) |
-| ----------------------- | ------------------------------- | ---------------------- |
-| `'sync-from-tree'`      | — (self)                        | SKIP                   |
-| `'sync-from-text'`      | SKIP                            | — (self)               |
-| `'agent-write'`         | Skip (remote; refresh baseline) | Sync normally          |
-| `'file-watcher'`        | Sync normally                   | Sync normally          |
-| `undefined` (WebSocket) | Sync normally                   | Sync normally          |
-
+| Transaction Origin | Observer A (tree→text) | Observer B (text→tree) |
+|---|---|---|
+| `'sync-from-tree'` | — (self) | SKIP |
+| `'sync-from-text'` | SKIP | — (self) |
+| `'agent-write'` | Skip (remote; refresh baseline) | Sync normally |
+| `'file-watcher'` | Sync normally | Sync normally |
+| `undefined` (WebSocket) | Sync normally | Sync normally |
 
 ## Testing
 
 ### Test layers
 
-
-| Layer       | Type                    | Location                                                                                | Command                                                 |
-| ----------- | ----------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| A           | Unit + stress           | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.test.ts`    | `bun run test`                                          |
-| B           | HTTP + server-side CRDT | `packages/app/tests/stress/stress-api.ts`                                               | `bun run tests/stress/stress-api.ts` (needs dev server) |
-| C           | Playwright E2E          | `packages/app/tests/stress/crdt-stress.spec.ts`, `tests/stress/ux-interactions.spec.ts` | `bunx playwright test`                                  |
-| D           | Fuzz                    | `packages/app/tests/stress/observers.fuzz.test.ts`                                      | `STRESS_FUZZ_SEED=<seed> bun run test`                  |
-| Integration | Tier 1 bridge matrix    | `packages/app/tests/integration/bridge-matrix.test.ts`                                  | `bun run test`                                          |
-
+| Layer | Type | Location | Command |
+|---|---|---|---|
+| A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.test.ts` | `bun run test` |
+| B | HTTP + server-side CRDT | `packages/app/tests/stress/stress-api.ts` | `bun run tests/stress/stress-api.ts` (needs dev server) |
+| C | Playwright E2E | `packages/app/tests/stress/crdt-stress.spec.ts`, `tests/stress/ux-interactions.spec.ts` | `bunx playwright test` |
+| D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |
+| Integration | Tier 1 bridge matrix | `packages/app/tests/integration/bridge-matrix.test.ts` | `bun run test` |
 
 ### Tier 1 integration harness
 
@@ -389,7 +378,6 @@ Each worktree has its own content directory. The test harness creates a fresh `t
 ### Observer instrumentation
 
 Add logging to `observers.ts` to trace sync behavior:
-
 ```typescript
 // In Observer A callback:
 console.log('[Observer A]', { ytextLen: ytext.toString().length, fragLen: serializeFragment(fragment).length, lastSyncedLen: lastSyncedXmlMd.length });
@@ -435,7 +423,6 @@ bun run changeset        # Create a new changeset
 bun run version          # Apply pending changesets
 bun run release          # Publish to npm
 ```
-
 ## Code Style
 
 - React Compiler is enabled for this repo. Do not add `forwardRef`, `memo`, `useMemo`, or `useCallback`; rely on the compiler unless a maintainer explicitly requests an exception
