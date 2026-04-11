@@ -211,7 +211,11 @@ export class ProviderPool {
     // Observer cleanup first (observers reference Y.Doc state), then full teardown
     entry.observerCleanup?.();
     entry.observerCleanup = null;
-    entry.provider.destroy(); // destroy() disconnects + removes all listeners + awareness cleanup
+    try {
+      entry.provider.destroy(); // destroy() disconnects + removes all listeners + awareness cleanup
+    } catch (err) {
+      console.warn(`[ProviderPool] Provider destroy failed for ${entry.docName}:`, err);
+    }
   }
 
   private recycleDisconnectedEntry(docName: string): void {
