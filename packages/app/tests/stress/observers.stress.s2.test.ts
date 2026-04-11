@@ -176,16 +176,21 @@ describe('S2: concurrent typing + agent write', () => {
   }
 
   // ASCII variants — all 4 tiers (adversarial is probe-only)
+  // NOTE: the probe path (`test.todo`) must not evaluate `stabilize(generateMarkdown(50000))`
+  // at module load. JavaScript evaluates function arguments eagerly, so calling `runS2(tier,
+  // stabilize(...), ...)` inline inside `testFn(...)` would run the stabilize even when
+  // `testFn === test.todo`. On a 50000-line adversarial input this costs ~176s per shard
+  // load — nearly 95% of s2's wall clock on M-series. Split the probe branch out and call
+  // `test.todo(name)` with no body so no content is computed for the never-run test.
   for (const tier of ALL_TIERS) {
-    const testFn = tier.probe ? test.todo : test;
-    testFn(
-      `ASCII ${tier.name} (${tier.lines}L)`,
-      runS2(
-        tier,
-        tier.probe ? stabilize(generateMarkdown(tier.lines)) : contentFor(tier),
-        `USER-S2-${tier.name.toUpperCase()}`,
-        `S2-ascii/${tier.name}`,
-      ),
+    const name = `ASCII ${tier.name} (${tier.lines}L)`;
+    if (tier.probe) {
+      test.todo(name);
+      continue;
+    }
+    test(
+      name,
+      runS2(tier, contentFor(tier), `USER-S2-${tier.name.toUpperCase()}`, `S2-ascii/${tier.name}`),
       tier.timeout,
     );
   }
