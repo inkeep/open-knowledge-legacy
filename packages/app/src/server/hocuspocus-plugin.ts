@@ -5,7 +5,7 @@
  * This plugin wires Hocuspocus into Vite's HTTP/WS server so that
  * `bun run dev` starts everything in a single process.
  */
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
@@ -23,14 +23,20 @@ import { WebSocketServer } from 'ws';
 // unsubscribe the previous instance before starting a new one.
 let activeWatcher: AsyncSubscription | null = null;
 
-const CONTENT_DIR = resolve(
+const DEFAULT_CONTENT_DIR = resolve(
   import.meta.dirname ?? new URL('.', import.meta.url).pathname,
   '../../../content',
 );
 
+const CONTENT_DIR = process.env.OK_TEST_CONTENT_DIR
+  ? realpathSync(process.env.OK_TEST_CONTENT_DIR)
+  : DEFAULT_CONTENT_DIR;
+
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
+
+console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
