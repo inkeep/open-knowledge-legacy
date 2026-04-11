@@ -158,7 +158,7 @@ export function FileSidebar() {
                 node={node}
                 selectedPath={activeDocName}
                 onSelect={(docName) => {
-                  window.location.hash = '#/' + docName;
+                  window.location.hash = `#/${docName}`;
                 }}
               />
             ))}

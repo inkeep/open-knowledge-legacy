@@ -14,7 +14,7 @@ export function docNameFromHash(): string | null {
 }
 
 export function hashFromDocName(docName: string): string {
-  return '#/' + docName;
+  return `#/${docName}`;
 }
 
 /** Syncs window.location.hash ↔ DocumentContext.openDocument, unidirectionally:

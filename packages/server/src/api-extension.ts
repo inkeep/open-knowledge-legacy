@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_WRITE_ORIGIN,
@@ -109,25 +109,6 @@ export function extractPageTitle(content: string, filename: string): string {
 
   // 3. Filename fallback
   return filename;
-}
-
-function listMarkdownFiles(dir: string): string[] {
-  const files: string[] = [];
-
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (EXCLUDED_DIRS.has(entry.name)) continue;
-    if (entry.isSymbolicLink()) continue;
-    const entryPath = resolve(dir, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...listMarkdownFiles(entryPath));
-      continue;
-    }
-    if (entry.isFile() && entry.name.endsWith('.md')) {
-      files.push(entryPath);
-    }
-  }
-
-  return files;
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
@@ -822,22 +803,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      if (!existsSync(contentDir)) {
-        json(res, 200, { ok: true, pages: [] });
-        return;
-      }
-      const files = listMarkdownFiles(contentDir);
-      const pages = files.map((filePath) => {
-        const docName = relative(contentDir, filePath).replace(/\\/g, '/').slice(0, -3);
+      const index = getFileIndex?.() ?? new Map();
+      const pages: { docName: string; title: string }[] = [];
+      for (const [docName] of index) {
         let title = docName;
         try {
+          const filePath = resolve(contentDir, `${docName}.md`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch {
           // unreadable file — fall back to docName
         }
-        return { docName, title };
-      });
+        pages.push({ docName, title });
+      }
       pages.sort((a, b) => a.docName.localeCompare(b.docName));
       json(res, 200, { ok: true, pages });
     } catch (e) {
