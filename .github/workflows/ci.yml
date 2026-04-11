@@ -83,6 +83,10 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/bun.lock') }}
+          # Partial cache hit on minor version bumps is preferable to a
+          # full ~200MB re-download of Chromium every time bun.lock changes.
+          restore-keys: |
+            ${{ runner.os }}-playwright-
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
       - env:

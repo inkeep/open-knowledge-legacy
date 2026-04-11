@@ -179,8 +179,17 @@ export async function createTestClient(port: number, docName?: string): Promise<
     docName: resolvedDocName,
     cleanup: async () => {
       observerCleanup();
-      // R9: unload the per-test doc on the server to prevent memory growth
-      await testReset(port, resolvedDocName);
+      // R9: unload the per-test doc on the server to prevent memory growth.
+      // Best-effort — if the server is already shutting down or the network
+      // fails during test.concurrent() teardown, a failed testReset must not
+      // throw out of cleanup(). provider.destroy() + doc.destroy() are the
+      // critical local-state cleanups and must still run.
+      try {
+        await testReset(port, resolvedDocName);
+      } catch {
+        // Cleanup is best-effort — the server-side doc will be reaped on
+        // next onStoreDocument or process exit.
+      }
       provider.destroy();
       doc.destroy();
     },

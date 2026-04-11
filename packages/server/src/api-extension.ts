@@ -593,7 +593,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       let filePath: string;
       try {
         filePath = safeContentPath(docName, contentDir);
-      } catch {
+      } catch (err) {
+        // Log the original error (safeContentPath produces messages like
+        // `Invalid document name: ${docName}` which are useful for diagnosing
+        // unexpected failures beyond the standard path-traversal case — e.g.,
+        // encoding errors from resolve(), null-byte truncation, etc.) but
+        // still return a sanitized, uniform 400 message to the client so
+        // filesystem details never leak through the API boundary.
+        console.error('[test-reset] safeContentPath rejected docName:', docName, err);
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
