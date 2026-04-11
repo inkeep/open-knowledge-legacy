@@ -18,17 +18,17 @@
  * covered by agent-sessions tests and the @hocuspocus transport layer.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { AsyncSubscription } from './file-watcher.ts';
+import { contentHash, registerWrite, startWatcher, writeTracker } from './file-watcher.ts';
 
 // @parcel/watcher relies on OS-level FSEvents (macOS) or inotify (Linux).
 // GitHub Actions runners use overlayfs/tmpfs where filesystem event delivery
 // is unreliable — the watcher starts but never fires callbacks. Skip on CI.
 const isCI = !!process.env.CI;
 const describeWatcher = isCI ? describe.skip : describe;
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import type { AsyncSubscription } from './file-watcher.ts';
-import { contentHash, registerWrite, startWatcher, writeTracker } from './file-watcher.ts';
 
 // macOS symlinks /var → /private/var. @parcel/watcher reports the real
 // (resolved) path in FSEvents. pathToDocName uses relative(), so contentDir
