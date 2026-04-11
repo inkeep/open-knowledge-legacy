@@ -205,6 +205,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content = dc.document.getText('source').toString();
       json(res, 200, { ok: true, docName, content });
     } catch (e) {
+      console.error('[document-read]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -328,7 +329,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
             if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
           } catch {
-            console.warn('[agent-undo] Invalid JSON body — using default docName');
+            json(res, 400, { ok: false, error: 'Invalid JSON body' });
+            return;
           }
         }
       } catch {
@@ -373,7 +375,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
             if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
           } catch {
-            console.warn('[agent-redo] Invalid JSON body — using default docName');
+            json(res, 400, { ok: false, error: 'Invalid JSON body' });
+            return;
           }
         }
       } catch {

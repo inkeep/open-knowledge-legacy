@@ -238,8 +238,11 @@ export function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment): v
 export function readTestDoc(contentDir: string, docName = 'test-doc'): string {
   try {
     return readFileSync(join(contentDir, `${docName}.md`), 'utf-8');
-  } catch {
-    return '';
+  } catch (err) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return '';
+    }
+    throw err;
   }
 }
 

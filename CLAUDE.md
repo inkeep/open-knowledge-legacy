@@ -81,8 +81,10 @@ Hocuspocus Server
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/document` | Read document content (`?docName=` param) |
 | POST | `/api/agent-write` | Agent write via Y.Text |
 | POST | `/api/agent-write-md` | Agent markdown write via Y.Text |
+| POST | `/api/agent-patch` | Find-and-replace patch via Y.Text |
 | POST | `/api/agent-undo` | Undo last agent edit |
 | POST | `/api/agent-redo` | Redo last undone agent edit |
 | GET | `/api/agent-undo-status` | Check canUndo/canRedo |

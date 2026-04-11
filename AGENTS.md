@@ -260,7 +260,7 @@ Y.Doc
 
 | Layer | Type | Location | Command |
 |---|---|---|---|
-| A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.test.ts` | `bun run test` |
+| A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` | `bun run test` (unit), `bun run test:stress:*` (per-shard) |
 | B | HTTP + server-side CRDT | `packages/app/tests/stress/stress-api.ts` | `bun run tests/stress/stress-api.ts` (needs dev server) |
 | C | Playwright E2E | `packages/app/tests/stress/crdt-stress.spec.ts`, `tests/stress/ux-interactions.spec.ts` | `bunx playwright test` |
 | D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |
