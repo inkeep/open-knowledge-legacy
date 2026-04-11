@@ -35,7 +35,12 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         pluginKey: slashCommandKey,
         char: '/',
         startOfLine: false,
-        allowedPrefixes: null,
+        // allowedPrefixes: [' '] is the default — accept it. Verified against
+        // @tiptap/suggestion source (findSuggestionMatch): the prefix check uses
+        // regex `^[<allowedPrefixes>\0]?$` against the char immediately before
+        // the match position. Empty string (start-of-block) passes, space passes,
+        // any other char fails — equivalent to main's `(?:^|\s)\/` regex. Setting
+        // this to null would allow mid-word triggers like "hello/world" (regression).
 
         items: ({ query }) => {
           const allItems = extension.options.itemsSources.flatMap((source) => source());
