@@ -22,11 +22,51 @@ import { Input } from '../../components/ui/input';
 import { cn } from '../../lib/utils';
 import { isResolvedWikiLinkTarget } from './wiki-link-helpers';
 
+// ── Heading picker ────────────────────────────────────────────────────────────
+
+interface HeadingEntry {
+  level: number;
+  text: string;
+  slug: string;
+}
+
+/** Fetch headings for a resolved page. Returns null while loading, [] when none. */
+function useHeadings(docName: string, enabled: boolean): HeadingEntry[] | null {
+  const [headings, setHeadings] = useState<HeadingEntry[] | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !docName) {
+      setHeadings(null);
+      return;
+    }
+    setHeadings(null);
+    const controller = new AbortController();
+    fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`, {
+      signal: controller.signal,
+    })
+      .then((r) => r.json() as Promise<{ ok: boolean; headings?: HeadingEntry[] }>)
+      .then((data) => {
+        if (data.ok && Array.isArray(data.headings)) setHeadings(data.headings);
+        else setHeadings([]);
+      })
+      .catch(() => {
+        setHeadings([]);
+      });
+    return () => controller.abort();
+  }, [docName, enabled]);
+
+  return headings;
+}
+
+// ── Edit dialog ───────────────────────────────────────────────────────────────
+
 interface EditWikiLinkDialogProps {
   open: boolean;
   target: string;
   alias: string | null;
   anchor: string | null;
+  /** True when the target page is known to exist — enables heading fetch. */
+  targetResolved: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (target: string, alias: string | null, anchor: string | null) => void;
 }
@@ -36,6 +76,7 @@ function EditWikiLinkDialog({
   target,
   alias,
   anchor,
+  targetResolved,
   onOpenChange,
   onSave,
 }: EditWikiLinkDialogProps) {
@@ -46,7 +87,10 @@ function EditWikiLinkDialog({
   const anchorId = useId();
   const aliasId = useId();
 
-  // Reset fields each time the dialog opens (may be for a different link).
+  // Fetch headings only for the current editTarget when it matches a resolved page.
+  const headings = useHeadings(editTarget, targetResolved && open);
+
+  // Reset fields each time the dialog opens.
   useEffect(() => {
     if (open) {
       setEditTarget(target);
@@ -65,6 +109,8 @@ function EditWikiLinkDialog({
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter') handleSave();
   }
+
+  const showHeadings = headings !== null && headings.length > 0;
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -90,16 +136,37 @@ function EditWikiLinkDialog({
 
             <div>
               <label className="mb-1.5 block text-sm font-medium" htmlFor={anchorId}>
-                Anchor{' '}
-                <span className="font-normal text-muted-foreground">(optional heading link)</span>
+                Section{' '}
+                <span className="font-normal text-muted-foreground">(optional heading anchor)</span>
               </label>
               <Input
                 id={anchorId}
                 value={editAnchor}
                 onChange={(e) => setEditAnchor(e.target.value)}
-                placeholder="heading-anchor"
+                placeholder="heading-slug"
                 onKeyDown={handleKeyDown}
               />
+              {showHeadings && (
+                <div className="mt-1.5 max-h-36 overflow-y-auto rounded-md border border-border bg-muted/30">
+                  {headings.map((h) => (
+                    <button
+                      key={h.slug}
+                      type="button"
+                      className={cn(
+                        'flex w-full items-center gap-2 px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground',
+                        editAnchor === h.slug && 'bg-accent text-accent-foreground',
+                      )}
+                      style={{ paddingLeft: `${(h.level - 1) * 12 + 8}px` }}
+                      onClick={() => setEditAnchor(editAnchor === h.slug ? '' : h.slug)}
+                    >
+                      <span className="w-7 shrink-0 font-mono text-[10px] text-muted-foreground">
+                        H{h.level}
+                      </span>
+                      <span className="truncate">{h.text}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div>
@@ -130,6 +197,8 @@ function EditWikiLinkDialog({
     </Dialog.Root>
   );
 }
+
+// ── WikiLinkView ──────────────────────────────────────────────────────────────
 
 export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
   const target = String(node.attrs.target ?? '');
@@ -249,6 +318,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
         target={target}
         alias={alias}
         anchor={anchor}
+        targetResolved={resolved}
         onOpenChange={setEditDialogOpen}
         onSave={handleSaveEdit}
       />

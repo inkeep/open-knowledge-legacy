@@ -80,6 +80,46 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+export interface HeadingEntry {
+  level: number;
+  text: string;
+  /** URL-safe slug derived from the heading text — matches wiki link anchor syntax. */
+  slug: string;
+}
+
+function headingToSlug(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Extract all ATX headings (# … ######) from a markdown document.
+ * Frontmatter is stripped before scanning so `title:` YAML lines are ignored.
+ */
+export function extractHeadings(content: string): HeadingEntry[] {
+  let body = content;
+  if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
+    const closingIdx = content.indexOf('\n---', 3);
+    if (closingIdx !== -1) {
+      body = content.slice(closingIdx + 4);
+    }
+  }
+
+  const headings: HeadingEntry[] = [];
+  for (const line of body.split('\n')) {
+    const match = line.match(/^(#{1,6})\s+(.+)$/);
+    if (match) {
+      const text = match[2].trim();
+      const slug = headingToSlug(text);
+      if (slug) headings.push({ level: match[1].length, text, slug });
+    }
+  }
+  return headings;
+}
+
 /**
  * Extract a human-readable title from a markdown file's content.
  *
@@ -804,6 +844,46 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handlePageHeadings(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const url = new URL(req.url!, 'http://localhost');
+      const docName = url.searchParams.get('docName');
+      if (!docName || typeof docName !== 'string' || docName.length === 0) {
+        json(res, 400, { ok: false, error: 'Missing docName parameter' });
+        return;
+      }
+      if (
+        docName.includes('..') ||
+        docName.startsWith('/') ||
+        docName.includes('\x00') ||
+        docName.includes('\\')
+      ) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const resolvedContentDir = resolve(contentDir);
+      const filePath = resolve(resolvedContentDir, `${docName}.md`);
+      if (!filePath.startsWith(`${resolvedContentDir}/`) && filePath !== resolvedContentDir) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      if (!existsSync(filePath)) {
+        json(res, 404, { ok: false, error: 'Page not found' });
+        return;
+      }
+      const content = readFileSync(filePath, 'utf-8');
+      const headings = extractHeadings(content);
+      json(res, 200, { ok: true, docName, headings });
+    } catch (e) {
+      console.error('[page-headings]', e);
+      json(res, 500, { ok: false, error: 'Failed to read headings' });
+    }
+  }
+
   async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -835,6 +915,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
     '/api/pages': handlePages,
+    '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
