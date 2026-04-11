@@ -17,8 +17,8 @@
       "dependsOn": [],
       "cache": true,
       "inputs": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
+        "src/editor/**/*.ts",
+        "src/editor/**/*.tsx",
         "tests/integration/bridge-matrix.test.ts",
         "tests/integration/test-harness.ts",
         "../server/src/**/*.ts",
@@ -29,8 +29,8 @@
       "dependsOn": [],
       "cache": true,
       "inputs": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
+        "src/editor/**/*.ts",
+        "src/editor/**/*.tsx",
         "tests/integration/conversion-fidelity.test.ts",
         "tests/integration/test-harness.ts",
         "../core/src/**/*.ts",
@@ -41,8 +41,8 @@
       "dependsOn": [],
       "cache": true,
       "inputs": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
+        "src/editor/**/*.ts",
+        "src/editor/**/*.tsx",
         "tests/stress/observers.stress.s1-s8-s9.test.ts",
         "tests/stress/synthetic.ts"
       ]
@@ -51,8 +51,8 @@
       "dependsOn": [],
       "cache": true,
       "inputs": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
+        "src/editor/**/*.ts",
+        "src/editor/**/*.tsx",
         "tests/stress/observers.stress.s2.test.ts",
         "tests/stress/synthetic.ts"
       ]
@@ -61,8 +61,8 @@
       "dependsOn": [],
       "cache": true,
       "inputs": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
+        "src/editor/**/*.ts",
+        "src/editor/**/*.tsx",
         "tests/stress/observers.stress.s4.test.ts",
         "tests/stress/synthetic.ts"
       ]
@@ -71,8 +71,8 @@
       "dependsOn": [],
       "cache": true,
       "inputs": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
+        "src/editor/**/*.ts",
+        "src/editor/**/*.tsx",
         "tests/stress/observers.stress.s5-s6.test.ts",
         "tests/stress/synthetic.ts"
       ]
@@ -81,8 +81,8 @@
       "dependsOn": [],
       "cache": true,
       "inputs": [
-        "src/**/*.ts",
-        "src/**/*.tsx",
+        "src/editor/**/*.ts",
+        "src/editor/**/*.tsx",
         "tests/stress/observers.fuzz.test.ts",
         "tests/stress/synthetic.ts"
       ]
