@@ -196,12 +196,12 @@ export function hocuspocusPlugin(): Plugin {
       const handleExternalChange = createExternalChangeHandler(hocuspocus);
 
       (async () => {
-        if (activeWatcher) {
-          console.log('[hocuspocus] Unsubscribing previous file watcher (HMR restart)');
-          await activeWatcher.unsubscribe();
-          activeWatcher = null;
-        }
         try {
+          if (activeWatcher) {
+            console.log('[hocuspocus] Unsubscribing previous file watcher (HMR restart)');
+            await activeWatcher.unsubscribe();
+            activeWatcher = null;
+          }
           activeWatcher = await startWatcher(
             CONTENT_DIR,
             async (event) => {

@@ -165,6 +165,10 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
+## Architecture deep-dive
+
+See `AGENTS.md` in the repo root for extended architecture documentation: CRDT bridge internals, origin-guard truth table, propagation matrix, known pitfalls (STOP/WARN rules), and debug tooling.
+
 ## Testing — per-test docName isolation
 
 Integration tests use per-test docNames via `createTestClient(port)` which auto-generates `test-${randomUUID()}`. Tests are safe to run concurrently (`test.concurrent()`, multiple `bun test` processes in the same worktree) because:

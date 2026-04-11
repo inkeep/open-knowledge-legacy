@@ -20,6 +20,7 @@
         "src/editor/**/*.ts",
         "src/editor/**/*.tsx",
         "tests/integration/bridge-matrix.test.ts",
+        "tests/integration/slash-command-extension.test.ts",
         "tests/integration/test-harness.ts",
         "../server/src/**/*.ts",
         "../core/src/**/*.ts"

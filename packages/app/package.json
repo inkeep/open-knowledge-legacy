@@ -11,7 +11,7 @@
     "format": "biome check --write .",
     "test": "bun test src/",
     "check": "tsc --noEmit && biome check . && bun run test && bun run test:integration && bun run test:conversion",
-    "test:integration": "bun test tests/integration/bridge-matrix.test.ts",
+    "test:integration": "bun test tests/integration/bridge-matrix.test.ts tests/integration/slash-command-extension.test.ts",
     "test:conversion": "bun test tests/integration/conversion-fidelity.test.ts",
     "test:stress:s1-s8-s9": "bun test tests/stress/observers.stress.s1-s8-s9.test.ts",
     "test:stress:s2": "bun test tests/stress/observers.stress.s2.test.ts",
