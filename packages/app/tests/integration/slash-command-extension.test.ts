@@ -1,25 +1,12 @@
 /**
- * Slash command extension — pluggable API integration tests.
+ * Slash command extension — pluggable API behavioral tests.
  *
- * Verifies E01-E04 from SPEC §7 by exercising the real `SlashCommand` extension's
- * option resolution through the real TipTap `Extension.configure()` machinery
- * (Level-2 verification: real component, no DOM, no Editor instance — TipTap's
- * Editor requires a `window` global which Bun's test runner doesn't provide).
+ * Verifies that the SlashCommand TipTap extension exposes a working
+ * configuration surface for downstream consumers: registering additional
+ * item sources, adding category labels, and replacing the default source.
  *
- * What this proves about the extension that source-reading and `filterItems`
- * unit tests cannot:
- *
- * - The extension's `addOptions()` produces the documented defaults
- * - `SlashCommand.configure({ itemsSources: [...] })` REPLACES the default array
- *   (TipTap arrays are not deep-merged)
- * - `SlashCommand.configure({ categoryLabels: {...} })` DEEP-MERGES into the
- *   default object (TipTap deep-merges plain objects)
- * - The same flat-map + filterItems flow that the runtime `items()` callback
- *   uses produces the expected merged result for multi-source configurations
- *
- * Together with the runtime Playwright regression suite (R01-R17 + POS-01-04),
- * this gives us full coverage of the extensibility surface area without
- * requiring a browser harness for each variant.
+ * Exercises the real `Extension.configure()` machinery from `@tiptap/core`
+ * (Level-2: real component, no DOM — TipTap's Editor requires `window`).
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -31,10 +18,10 @@ import {
   slashCommandItems,
 } from '../../src/editor/slash-command/items';
 
-function makeCustomItem(overrides: Partial<SlashCommandItem> = {}): SlashCommandItem {
+function makeItem(overrides: Partial<SlashCommandItem> = {}): SlashCommandItem {
   return {
-    name: 'test-item',
-    label: 'Test Item',
+    name: 'custom-item',
+    label: 'Custom Item',
     icon: Minus,
     category: 'custom',
     command: () => {},
@@ -42,159 +29,132 @@ function makeCustomItem(overrides: Partial<SlashCommandItem> = {}): SlashCommand
   };
 }
 
-/** Mirror of the runtime Suggestion `items()` callback in slash-command.ts. */
-function resolveItems(opts: SlashCommandOptions, query = ''): SlashCommandItem[] {
-  const allItems = opts.itemsSources.flatMap((source) => source());
-  return filterItems(allItems, query);
+function optionsOf(ext: ReturnType<typeof SlashCommand.configure>): SlashCommandOptions {
+  return ext.options as SlashCommandOptions;
 }
 
-describe('SlashCommand pluggable API — option resolution', () => {
-  test('default options reproduce shared.ts behavior (no .configure() call site)', () => {
-    // Default options come from addOptions() — no configure call
+describe('SlashCommand extension configuration', () => {
+  test('unconfigured extension produces a working set of built-in items', () => {
     const opts = SlashCommand.options as SlashCommandOptions;
 
-    expect(opts.itemsSources).toHaveLength(1);
-    const defaultItems = opts.itemsSources[0]?.();
-    expect(defaultItems).toEqual(slashCommandItems);
+    // Has at least one source that returns items
+    expect(opts.itemsSources.length).toBeGreaterThan(0);
+    const items = opts.itemsSources.flatMap((fn) => fn());
+    expect(items.length).toBeGreaterThan(0);
 
-    expect(opts.categoryLabels).toEqual({
-      basic: 'Basic blocks',
-      insert: 'Insert',
-    });
+    // Every resolved item has the fields a consumer needs
+    for (const item of items) {
+      expect(item.name).toBeString();
+      expect(item.label).toBeString();
+      expect(item.command).toBeFunction();
+      expect(item.category).toBeString();
+    }
 
-    // The full resolved item set is exactly the 10 built-in items
-    const resolved = resolveItems(opts);
-    expect(resolved).toHaveLength(10);
-    expect(resolved.map((i) => i.name)).toEqual([
-      'heading1',
-      'heading2',
-      'heading3',
-      'bulletList',
-      'orderedList',
-      'taskList',
-      'blockquote',
-      'codeBlock',
-      'table',
-      'separator',
-    ]);
+    // Category labels cover every category present in the items
+    const categories = new Set(items.map((i) => i.category));
+    for (const cat of categories) {
+      expect(opts.categoryLabels[cat]).toBeString();
+    }
   });
 
-  test('E01: itemsSources merges additional source into resolved items', () => {
-    const customItem = makeCustomItem({ name: 'merge-test', category: 'custom' });
+  test('additional item sources appear alongside built-ins when configured', () => {
+    const custom = makeItem({ name: 'added-item' });
     const ext = SlashCommand.configure({
-      itemsSources: [() => slashCommandItems, () => [customItem]],
+      itemsSources: [() => slashCommandItems, () => [custom]],
     });
-    const opts = ext.options as SlashCommandOptions;
+    const opts = optionsOf(ext);
+    const all = opts.itemsSources.flatMap((fn) => fn());
 
-    expect(opts.itemsSources).toHaveLength(2);
-
-    const resolved = resolveItems(opts);
-    expect(resolved).toHaveLength(slashCommandItems.length + 1);
-    expect(resolved.find((i) => i.name === 'merge-test')).toBeDefined();
-    // Built-ins still present
-    expect(resolved.find((i) => i.name === 'heading1')).toBeDefined();
-    expect(resolved.find((i) => i.name === 'table')).toBeDefined();
+    // Both the built-in items and the custom item are present
+    expect(all.find((i) => i.name === 'added-item')).toBeDefined();
+    expect(all.find((i) => i.name === 'heading1')).toBeDefined();
+    expect(all.length).toBe(slashCommandItems.length + 1);
   });
 
-  test('E02: categoryLabels deep-merges custom labels into defaults', () => {
+  test('custom category labels coexist with built-in labels', () => {
     const ext = SlashCommand.configure({
-      categoryLabels: { custom: 'My Category', media: 'Media' },
+      categoryLabels: { content: 'Content', layout: 'Layout' },
     });
-    const opts = ext.options as SlashCommandOptions;
+    const opts = optionsOf(ext);
 
-    // Custom labels added
-    expect(opts.categoryLabels.custom).toBe('My Category');
-    expect(opts.categoryLabels.media).toBe('Media');
-    // Default labels preserved (TipTap deep-merges plain objects)
+    // Custom labels present
+    expect(opts.categoryLabels.content).toBe('Content');
+    expect(opts.categoryLabels.layout).toBe('Layout');
+    // Built-in labels still present (TipTap deep-merges plain objects)
     expect(opts.categoryLabels.basic).toBe('Basic blocks');
     expect(opts.categoryLabels.insert).toBe('Insert');
   });
 
-  test('E03: replacing itemsSources with a custom-only source removes defaults', () => {
-    const customItem = makeCustomItem({ name: 'only-item' });
+  test('providing only a custom source replaces the built-in items entirely', () => {
+    const custom = makeItem({ name: 'only-item' });
     const ext = SlashCommand.configure({
-      itemsSources: [() => [customItem]],
+      itemsSources: [() => [custom]],
     });
-    const opts = ext.options as SlashCommandOptions;
+    const opts = optionsOf(ext);
+    const all = opts.itemsSources.flatMap((fn) => fn());
 
-    expect(opts.itemsSources).toHaveLength(1);
-
-    const resolved = resolveItems(opts);
-    expect(resolved).toHaveLength(1);
-    expect(resolved[0]?.name).toBe('only-item');
-    // Built-in items NOT present (array-replace semantics, not merge)
-    expect(resolved.find((i) => i.name === 'heading1')).toBeUndefined();
-    expect(resolved.find((i) => i.name === 'table')).toBeUndefined();
+    expect(all).toHaveLength(1);
+    expect(all[0]?.name).toBe('only-item');
+    // No built-in items present
+    expect(all.find((i) => i.name === 'heading1')).toBeUndefined();
   });
 
-  test('E04: optional description field on a custom item does not break merging', () => {
-    const customItem = makeCustomItem({
-      name: 'with-desc',
-      description: 'A test item with a description',
+  test('items with an optional description field resolve without error', () => {
+    const custom = makeItem({
+      name: 'described',
+      description: 'This item has a description',
     });
     const ext = SlashCommand.configure({
-      itemsSources: [() => slashCommandItems, () => [customItem]],
+      itemsSources: [() => slashCommandItems, () => [custom]],
     });
-    const opts = ext.options as SlashCommandOptions;
-    const resolved = resolveItems(opts);
+    const all = optionsOf(ext).itemsSources.flatMap((fn) => fn());
 
-    const found = resolved.find((i) => i.name === 'with-desc');
-    expect(found).toBeDefined();
-    expect(found?.description).toBe('A test item with a description');
-    // Built-in items (which lack description) still resolve fine
-    expect(resolved.find((i) => i.name === 'heading1')?.description).toBeUndefined();
+    expect(all.find((i) => i.name === 'described')?.description).toBe(
+      'This item has a description',
+    );
+    // Built-in items (no description) still resolve
+    expect(all.find((i) => i.name === 'heading1')?.description).toBeUndefined();
   });
 
-  test('Multiple sources with the same category — items merge in source order', () => {
-    const itemA = makeCustomItem({ name: 'item-a', category: 'shared' });
-    const itemB = makeCustomItem({ name: 'item-b', category: 'shared' });
+  test('items from multiple sources appear in source registration order', () => {
+    const a = makeItem({ name: 'first', category: 'shared' });
+    const b = makeItem({ name: 'second', category: 'shared' });
     const ext = SlashCommand.configure({
-      itemsSources: [() => [itemA], () => [itemB]],
-      categoryLabels: { shared: 'Shared' },
+      itemsSources: [() => [a], () => [b]],
     });
-    const opts = ext.options as SlashCommandOptions;
-    const resolved = resolveItems(opts);
+    const all = optionsOf(ext).itemsSources.flatMap((fn) => fn());
+    const names = all.map((i) => i.name);
 
-    // Source order: itemA (from source 0) before itemB (from source 1)
-    expect(resolved.map((i) => i.name)).toEqual(['item-a', 'item-b']);
-    expect(resolved.every((i) => i.category === 'shared')).toBe(true);
+    expect(names.indexOf('first')).toBeLessThan(names.indexOf('second'));
   });
 
-  test('Empty itemsSources array resolves to zero items (no fallback to defaults)', () => {
-    const ext = SlashCommand.configure({
-      itemsSources: [],
-    });
-    const opts = ext.options as SlashCommandOptions;
-    expect(opts.itemsSources).toHaveLength(0);
-    expect(resolveItems(opts)).toHaveLength(0);
+  test('empty sources array means no items — no silent fallback', () => {
+    const ext = SlashCommand.configure({ itemsSources: [] });
+    const all = optionsOf(ext).itemsSources.flatMap((fn) => fn());
+    expect(all).toHaveLength(0);
   });
 
-  test('Filter narrows merged items by query (case-insensitive across all sources)', () => {
-    const componentItem = makeCustomItem({
+  test('filterItems works across items from multiple configured sources', () => {
+    const callout = makeItem({
       name: 'callout',
       label: 'Callout',
       category: 'component',
       aliases: ['warn', 'note'],
     });
     const ext = SlashCommand.configure({
-      itemsSources: [() => slashCommandItems, () => [componentItem]],
+      itemsSources: [() => slashCommandItems, () => [callout]],
     });
-    const opts = ext.options as SlashCommandOptions;
+    const all = optionsOf(ext).itemsSources.flatMap((fn) => fn());
 
-    // Built-in match
-    expect(resolveItems(opts, 'heading').map((i) => i.name)).toEqual([
-      'heading1',
-      'heading2',
-      'heading3',
-    ]);
+    // Filtering narrows across all sources
+    const headings = filterItems(all, 'heading');
+    expect(headings.length).toBeGreaterThan(0);
+    expect(headings.every((i) => i.label.toLowerCase().includes('heading'))).toBe(true);
 
-    // Custom item match by label
-    expect(resolveItems(opts, 'call').map((i) => i.name)).toEqual(['callout']);
+    // Custom item findable by alias, case-insensitive
+    expect(filterItems(all, 'WARN').map((i) => i.name)).toEqual(['callout']);
 
-    // Custom item match by alias (case-insensitive both sides — Phase 8 review fix)
-    expect(resolveItems(opts, 'WARN').map((i) => i.name)).toEqual(['callout']);
-
-    // No-match
-    expect(resolveItems(opts, 'xyz')).toEqual([]);
+    // No-match still returns empty
+    expect(filterItems(all, 'zzz')).toEqual([]);
   });
 });

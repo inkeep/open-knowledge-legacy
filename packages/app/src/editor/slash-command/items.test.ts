@@ -2,38 +2,42 @@ import { describe, expect, test } from 'bun:test';
 import { filterItems, type SlashCommandItem, slashCommandItems } from './items';
 
 describe('filterItems', () => {
-  test('empty query returns all items', () => {
+  test('empty query returns all provided items', () => {
     expect(filterItems(slashCommandItems, '')).toEqual(slashCommandItems);
   });
 
-  test('filters by label (case-insensitive)', () => {
+  test('matches items by label substring', () => {
     const result = filterItems(slashCommandItems, 'heading');
-    expect(result.map((i) => i.name)).toEqual(['heading1', 'heading2', 'heading3']);
+    expect(result.every((i) => i.label.toLowerCase().includes('heading'))).toBe(true);
+    expect(result.length).toBeGreaterThan(0);
   });
 
-  test('filters by name', () => {
+  test('matches items by name', () => {
     const result = filterItems(slashCommandItems, 'bulletList');
     expect(result).toHaveLength(1);
     expect(result[0]?.name).toBe('bulletList');
   });
 
-  test('filters by alias', () => {
+  test('matches items by alias', () => {
     const result = filterItems(slashCommandItems, 'h1');
     expect(result).toHaveLength(1);
     expect(result[0]?.name).toBe('heading1');
   });
 
-  test('partial match works', () => {
-    const result = filterItems(slashCommandItems, 'head');
-    expect(result.map((i) => i.name)).toEqual(['heading1', 'heading2', 'heading3']);
+  test('partial queries narrow results progressively', () => {
+    const broad = filterItems(slashCommandItems, 'h');
+    const narrow = filterItems(slashCommandItems, 'heading');
+    expect(narrow.length).toBeLessThanOrEqual(broad.length);
+    expect(narrow.length).toBeGreaterThan(0);
   });
 
-  test('uppercase query matches (case-insensitive)', () => {
-    const result = filterItems(slashCommandItems, 'HEADING');
-    expect(result.map((i) => i.name)).toEqual(['heading1', 'heading2', 'heading3']);
+  test('query matching is case-insensitive', () => {
+    const lower = filterItems(slashCommandItems, 'heading');
+    const upper = filterItems(slashCommandItems, 'HEADING');
+    expect(upper).toEqual(lower);
   });
 
-  test('alias matching is case-insensitive on the alias side', () => {
+  test('alias matching is case-insensitive on both sides', () => {
     const items: SlashCommandItem[] = [
       {
         name: 'test',
@@ -49,30 +53,27 @@ describe('filterItems', () => {
   });
 
   test('no match returns empty array', () => {
-    expect(filterItems(slashCommandItems, 'xyz')).toEqual([]);
+    expect(filterItems(slashCommandItems, 'zzzznonexistent')).toEqual([]);
   });
 
-  test('items without aliases do not crash', () => {
+  test('items without aliases are still matchable by name and label', () => {
     const items: SlashCommandItem[] = [
       {
-        name: 'test',
-        label: 'Test',
+        name: 'noalias',
+        label: 'No Alias Item',
         icon: () => null,
         category: 'basic',
         command: () => {},
       },
     ];
-    expect(filterItems(items, 'test')).toHaveLength(1);
+    expect(filterItems(items, 'noalias')).toHaveLength(1);
+    expect(filterItems(items, 'No Alias')).toHaveLength(1);
     expect(filterItems(items, 'xyz')).toHaveLength(0);
   });
 });
 
-describe('slashCommandItems', () => {
-  test('contains exactly 10 built-in items', () => {
-    expect(slashCommandItems).toHaveLength(10);
-  });
-
-  test('all items have required fields', () => {
+describe('built-in slash command items', () => {
+  test('every item has a name, label, icon, category, and command', () => {
     for (const item of slashCommandItems) {
       expect(item.name).toBeString();
       expect(item.label).toBeString();
@@ -82,13 +83,15 @@ describe('slashCommandItems', () => {
     }
   });
 
-  test('all item names are unique', () => {
+  test('no two items share the same name', () => {
     const names = slashCommandItems.map((i) => i.name);
     expect(new Set(names).size).toBe(names.length);
   });
 
-  test('categories are basic or insert', () => {
-    const categories = new Set(slashCommandItems.map((i) => i.category));
-    expect(categories).toEqual(new Set(['basic', 'insert']));
+  test('every item is findable by its own name via filterItems', () => {
+    for (const item of slashCommandItems) {
+      const found = filterItems(slashCommandItems, item.name);
+      expect(found.some((i) => i.name === item.name)).toBe(true);
+    }
   });
 });

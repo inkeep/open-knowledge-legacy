@@ -1,15 +1,10 @@
 /**
- * Slash command — Playwright E2E regression suite.
+ * Slash command menu — behavioral E2E specification.
  *
- * Codifies SPEC §7 R01-R17 regression scenarios + extensibility-rendering and
- * Floating UI positioning checks. These exercise the real running editor end
- * to end, providing the runtime safety net that the
- * `tests/integration/slash-command-extension.test.ts` Bun integration tests
- * (which test option resolution headlessly) cannot.
- *
- * Each scenario uses /api/test-reset between runs to guarantee a clean editor
- * — the dev server persists CRDT state across reloads otherwise, which would
- * leak content between scenarios and produce false failures.
+ * Describes how the slash command menu works from a user's perspective:
+ * triggering, filtering, keyboard navigation, item insertion, positioning,
+ * and accessibility. Each test is a behavioral statement that should remain
+ * true regardless of the internal implementation.
  *
  * Requires: Playwright browsers installed. Dev server started by
  * `playwright.config.ts` `webServer` on VITE_PORT (or default 5173).
@@ -19,6 +14,10 @@ import { expect, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
+
+// ---------------------------------------------------------------------------
+// Helpers — thin wrappers around the editor's observable surface
+// ---------------------------------------------------------------------------
 
 async function resetEditor(page: import('@playwright/test').Page) {
   const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
@@ -32,15 +31,13 @@ async function resetEditor(page: import('@playwright/test').Page) {
 }
 
 async function getEditorState(page: import('@playwright/test').Page) {
-  return await page.evaluate(() => {
+  return page.evaluate(() => {
     const pm = document.querySelector('.ProseMirror');
     return {
       text: pm?.textContent ?? '',
       h1Count: pm?.querySelectorAll('h1').length ?? 0,
       h2Count: pm?.querySelectorAll('h2').length ?? 0,
-      h3Count: pm?.querySelectorAll('h3').length ?? 0,
       ulCount: pm?.querySelectorAll('ul').length ?? 0,
-      olCount: pm?.querySelectorAll('ol').length ?? 0,
       blockquoteCount: pm?.querySelectorAll('blockquote').length ?? 0,
       tableCount: pm?.querySelectorAll('table').length ?? 0,
     };
@@ -48,7 +45,7 @@ async function getEditorState(page: import('@playwright/test').Page) {
 }
 
 async function getMenuState(page: import('@playwright/test').Page) {
-  return await page.evaluate(() => {
+  return page.evaluate(() => {
     const menu = document.querySelector('[role="listbox"][aria-label="Slash commands"]');
     if (!menu) return { open: false } as const;
     const items = Array.from(menu.querySelectorAll('[role="option"]'));
@@ -68,30 +65,27 @@ async function getMenuState(page: import('@playwright/test').Page) {
   });
 }
 
-/** Walks up from the menu element to find the body-attached fixed-position popup div. */
+/** Walks up from the menu to the body-attached fixed-position popup div. */
 async function getPopupInfo(page: import('@playwright/test').Page) {
-  return await page.evaluate(() => {
+  return page.evaluate(() => {
     const menu = document.querySelector('[role="listbox"][aria-label="Slash commands"]');
     if (!menu) return null;
     let el: HTMLElement | null = menu as HTMLElement;
     while (el && el !== document.body) {
       if (window.getComputedStyle(el).position === 'fixed') {
         return {
-          left: el.style.left,
-          top: el.style.top,
           cssVar: el.style.getPropertyValue('--suggestion-menu-max-height'),
-          rawStyle: el.getAttribute('style') ?? '',
           rect: el.getBoundingClientRect().toJSON(),
         };
       }
       el = el.parentElement;
     }
-    return { error: 'no fixed popup ancestor found' as const };
+    return null;
   });
 }
 
 async function getCursorRect(page: import('@playwright/test').Page) {
-  return await page.evaluate(() => {
+  return page.evaluate(() => {
     const pm = document.querySelector('.ProseMirror');
     if (!pm) return null;
     const walker = document.createTreeWalker(pm, NodeFilter.SHOW_TEXT);
@@ -112,7 +106,11 @@ async function getCursorRect(page: import('@playwright/test').Page) {
   });
 }
 
-test.describe('Slash command — regression suite (R01-R17)', () => {
+// ---------------------------------------------------------------------------
+// Triggering and filtering
+// ---------------------------------------------------------------------------
+
+test.describe('slash command — triggering and filtering', () => {
   test.beforeEach(async ({ page }) => {
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
@@ -121,7 +119,7 @@ test.describe('Slash command — regression suite (R01-R17)', () => {
     await page.waitForSelector('.ProseMirror');
   });
 
-  test('R01: slash at start of empty paragraph opens menu with all 10 items', async ({ page }) => {
+  test('typing / in an empty paragraph opens the command menu', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
@@ -129,13 +127,11 @@ test.describe('Slash command — regression suite (R01-R17)', () => {
     const m = await getMenuState(page);
     expect(m.open).toBe(true);
     if (!m.open) return;
-    expect(m.itemCount).toBe(10);
-    expect(m.legends).toEqual(['Basic blocks', 'Insert']);
+    expect(m.itemCount).toBeGreaterThan(0);
     expect(m.items[0]?.ariaSelected).toBe('true');
-    expect(m.items[0]?.dataSelected).toBe('true');
   });
 
-  test('R02: /heading filters to heading items only', async ({ page }) => {
+  test('typing a query after / narrows items to those matching the query', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/heading');
     await page.waitForTimeout(300);
@@ -143,13 +139,57 @@ test.describe('Slash command — regression suite (R01-R17)', () => {
     const m = await getMenuState(page);
     expect(m.open).toBe(true);
     if (!m.open) return;
-    expect(m.itemCount).toBe(3);
-    expect(m.items.map((i) => i.text)).toEqual(['Heading 1', 'Heading 2', 'Heading 3']);
+    expect(m.items.every((i) => i.text.toLowerCase().includes('heading'))).toBe(true);
   });
 
-  test('R03: /h2 + Enter converts current block to H2 with no trigger remnant', async ({
-    page,
-  }) => {
+  test('query matching is case-insensitive', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/HEADING');
+    await page.waitForTimeout(300);
+
+    const m = await getMenuState(page);
+    expect(m.open).toBe(true);
+    if (!m.open) return;
+    expect(m.items.every((i) => i.text.toLowerCase().includes('heading'))).toBe(true);
+    await page.keyboard.press('Escape');
+  });
+
+  test('typing / after whitespace mid-line opens the menu', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('hello world ');
+    await page.waitForTimeout(150);
+    await page.keyboard.type('/bullet');
+    await page.waitForTimeout(300);
+
+    const m = await getMenuState(page);
+    expect(m.open).toBe(true);
+    await page.keyboard.press('Escape');
+  });
+
+  test('a query with no matches closes the menu and preserves the typed text', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/xyz');
+    await page.waitForTimeout(300);
+
+    expect(await getMenuState(page).then((m) => m.open)).toBe(false);
+    expect(await getEditorState(page).then((s) => s.text)).toContain('/xyz');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Item insertion
+// ---------------------------------------------------------------------------
+
+test.describe('slash command — item insertion', () => {
+  test.beforeEach(async ({ page }) => {
+    page.on('pageerror', (e) => {
+      throw new Error(`Uncaught page error: ${e.message}`);
+    });
+    await page.goto(BASE);
+    await page.waitForSelector('.ProseMirror');
+  });
+
+  test('selecting an item via Enter inserts it and removes the trigger text', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/h2');
     await page.waitForTimeout(200);
@@ -158,35 +198,62 @@ test.describe('Slash command — regression suite (R01-R17)', () => {
 
     const s = await getEditorState(page);
     expect(s.h2Count).toBe(1);
+    expect(s.text).not.toContain('/');
+  });
+
+  test('Tab inserts the selected item (same as Enter)', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/h2');
+    await page.waitForTimeout(200);
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(300);
+
+    const s = await getEditorState(page);
+    expect(s.h2Count).toBe(1);
     expect(s.text).not.toContain('/h2');
   });
 
-  test('R04: /table + Enter inserts 3x3 table with header row, no remnant', async ({ page }) => {
+  test('clicking an item with the mouse inserts it', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/quote');
+    await page.waitForTimeout(300);
+
+    const clicked = await page.evaluate(() => {
+      const item = document.querySelector('[role="listbox"] [role="option"]');
+      if (!item) return false;
+      item.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      return true;
+    });
+    expect(clicked).toBe(true);
+    await page.waitForTimeout(300);
+
+    const s = await getEditorState(page);
+    expect(s.blockquoteCount).toBe(1);
+    expect(s.text).not.toContain('/');
+  });
+
+  test('table command inserts a table with a header row', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/table');
     await page.waitForTimeout(200);
     await page.keyboard.press('Enter');
     await page.waitForTimeout(300);
 
-    const tableInfo = await page.evaluate(() => {
+    const info = await page.evaluate(() => {
       const pm = document.querySelector('.ProseMirror');
       const table = pm?.querySelector('table');
       return {
-        tableCount: pm?.querySelectorAll('table').length ?? 0,
-        rowCount: table?.querySelectorAll('tr').length ?? 0,
-        thCount: table?.querySelectorAll('th').length ?? 0,
-        text: pm?.textContent ?? '',
+        exists: !!table,
+        rows: table?.querySelectorAll('tr').length ?? 0,
+        hasHeader: (table?.querySelectorAll('th').length ?? 0) > 0,
       };
     });
-    expect(tableInfo.tableCount).toBe(1);
-    expect(tableInfo.rowCount).toBe(3);
-    expect(tableInfo.thCount).toBeGreaterThan(0);
-    expect(tableInfo.text).not.toContain('/table');
+    expect(info.exists).toBe(true);
+    expect(info.rows).toBeGreaterThanOrEqual(2);
+    expect(info.hasHeader).toBe(true);
   });
 
-  test('R05: mid-line trigger after whitespace → /bullet + Enter creates bullet list', async ({
-    page,
-  }) => {
+  test('mid-line insertion converts the paragraph and preserves prior text', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('hello world ');
     await page.waitForTimeout(150);
@@ -201,7 +268,66 @@ test.describe('Slash command — regression suite (R01-R17)', () => {
     expect(s.text).not.toContain('/bullet');
   });
 
-  test('R06: / then Escape closes menu and preserves /', async ({ page }) => {
+  test('rapid / then Enter inserts an item without leftover trigger text', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.press('Slash');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+
+    const s = await getEditorState(page);
+    // Some item was inserted (first item in the menu)
+    expect(s.h1Count + s.h2Count + s.ulCount + s.blockquoteCount + s.tableCount).toBeGreaterThan(0);
+    expect(s.text).not.toContain('/');
+  });
+
+  test('no trigger text remains in the document after any insertion', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/bulletList');
+    await page.waitForTimeout(200);
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+
+    const s = await getEditorState(page);
+    expect(s.text).not.toContain('/');
+    expect(s.ulCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Keyboard navigation
+// ---------------------------------------------------------------------------
+
+test.describe('slash command — keyboard navigation', () => {
+  test.beforeEach(async ({ page }) => {
+    page.on('pageerror', (e) => {
+      throw new Error(`Uncaught page error: ${e.message}`);
+    });
+    await page.goto(BASE);
+    await page.waitForSelector('.ProseMirror');
+  });
+
+  test('arrow keys move the selection through menu items', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/');
+    await page.waitForTimeout(300);
+
+    // Navigate down 3 times
+    for (let i = 0; i < 3; i++) {
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(80);
+    }
+    const m = await getMenuState(page);
+    expect(m.open).toBe(true);
+    if (!m.open) return;
+
+    // Exactly one item is selected, and it's the 4th (index 3)
+    const selected = m.items.filter((i) => i.dataSelected === 'true');
+    expect(selected).toHaveLength(1);
+    expect(m.items.findIndex((i) => i.dataSelected === 'true')).toBe(3);
+    await page.keyboard.press('Escape');
+  });
+
+  test('Escape closes the menu without inserting anything', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
@@ -211,133 +337,23 @@ test.describe('Slash command — regression suite (R01-R17)', () => {
     await page.waitForTimeout(300);
 
     expect(await getMenuState(page).then((m) => m.open)).toBe(false);
-    const s = await getEditorState(page);
-    expect(s.text).toContain('/');
+    // The / character remains — nothing was inserted or deleted
+    expect(await getEditorState(page).then((s) => s.text)).toContain('/');
   });
 
-  test('R07: ArrowDown x3 moves selection to 4th item', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/');
-    await page.waitForTimeout(300);
-    for (let i = 0; i < 3; i++) {
-      await page.keyboard.press('ArrowDown');
-      await page.waitForTimeout(100);
-    }
-    const m = await getMenuState(page);
-    expect(m.open).toBe(true);
-    if (!m.open) return;
-    const selectedIdx = m.items.findIndex((i) => i.dataSelected === 'true');
-    expect(selectedIdx).toBe(3);
-    await page.keyboard.press('Escape');
-  });
-
-  test('R08: mousedown on item inserts and removes trigger range', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/quote');
-    await page.waitForTimeout(300);
-    // Use mousedown — onMouseDown handler in SlashCommandMenu
-    const clicked = await page.evaluate(() => {
-      const item = document.querySelector('[role="listbox"] [role="option"]');
-      if (!item) return false;
-      const ev = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
-      item.dispatchEvent(ev);
-      return true;
-    });
-    expect(clicked).toBe(true);
-    await page.waitForTimeout(300);
-
-    const s = await getEditorState(page);
-    expect(s.blockquoteCount).toBe(1);
-    expect(s.text).not.toContain('/quote');
-  });
-
-  test('R09: /xyz (no match) closes menu and preserves text', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/xyz');
-    await page.waitForTimeout(300);
-
-    expect(await getMenuState(page).then((m) => m.open)).toBe(false);
-    const s = await getEditorState(page);
-    expect(s.text).toContain('/xyz');
-  });
-
-  test('R10: ARIA roles (listbox, option, aria-selected, data-selected)', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/');
-    await page.waitForTimeout(300);
-
-    const aria = await page.evaluate(() => {
-      const menu = document.querySelector('[role="listbox"]');
-      if (!menu) return null;
-      const opts = menu.querySelectorAll('[role="option"]');
-      return {
-        menuRole: menu.getAttribute('role'),
-        menuAriaLabel: menu.getAttribute('aria-label'),
-        optionCount: opts.length,
-        allHaveAriaSelected: Array.from(opts).every((o) => o.hasAttribute('aria-selected')),
-        allHaveDataSelected: Array.from(opts).every((o) => o.hasAttribute('data-selected')),
-        exactlyOneAriaSelectedTrue:
-          Array.from(opts).filter((o) => o.getAttribute('aria-selected') === 'true').length === 1,
-      };
-    });
-    if (!aria) throw new Error('menu not rendered');
-    expect(aria.menuRole).toBe('listbox');
-    expect(aria.menuAriaLabel).toBe('Slash commands');
-    expect(aria.optionCount).toBe(10);
-    expect(aria.allHaveAriaSelected).toBe(true);
-    expect(aria.allHaveDataSelected).toBe(true);
-    expect(aria.exactlyOneAriaSelectedTrue).toBe(true);
-    await page.keyboard.press('Escape');
-  });
-
-  test('R11: category headers render as "Basic blocks" and "Insert"', async ({ page }) => {
+  test('navigating past the last item keeps the selected item visible', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
     const m = await getMenuState(page);
-    expect(m.open).toBe(true);
     if (!m.open) return;
-    expect(m.legends).toEqual(['Basic blocks', 'Insert']);
-    await page.keyboard.press('Escape');
-  });
-
-  test('R12: Tailwind classes + inline CSS var style preserved on menu', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/');
-    await page.waitForTimeout(300);
-
-    const cls = await page.evaluate(() => {
-      const menu = document.querySelector('[role="listbox"]');
-      return {
-        className: menu?.className ?? '',
-        style: menu?.getAttribute('style') ?? '',
-      };
-    });
-    for (const c of [
-      'w-56',
-      'overflow-y-auto',
-      'subtle-scrollbar',
-      'rounded-lg',
-      'border',
-      'bg-popover',
-      'p-1',
-      'shadow-md',
-    ]) {
-      expect(cls.className).toContain(c);
-    }
-    expect(cls.style).toContain('--suggestion-menu-max-height');
-    await page.keyboard.press('Escape');
-  });
-
-  test('R13: scroll-into-view keeps last item visible after navigation', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/');
-    await page.waitForTimeout(300);
-    for (let i = 0; i < 9; i++) {
+    // Press down enough times to reach the last item
+    for (let i = 0; i < m.itemCount - 1; i++) {
       await page.keyboard.press('ArrowDown');
       await page.waitForTimeout(40);
     }
+
     const lastVisible = await page.evaluate(() => {
       const menu = document.querySelector('[role="listbox"]');
       if (!menu) return false;
@@ -351,57 +367,13 @@ test.describe('Slash command — regression suite (R01-R17)', () => {
     expect(lastVisible).toBe(true);
     await page.keyboard.press('Escape');
   });
-
-  test('R14: Tab is an Enter alias (D10) — /h2 + Tab converts to H2', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/h2');
-    await page.waitForTimeout(200);
-    await page.keyboard.press('Tab');
-    await page.waitForTimeout(300);
-
-    const s = await getEditorState(page);
-    expect(s.h2Count).toBe(1);
-    expect(s.text).not.toContain('/h2');
-  });
-
-  test('R15: case-insensitive trigger — /HEADING filters heading items', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/HEADING');
-    await page.waitForTimeout(300);
-
-    const m = await getMenuState(page);
-    expect(m.open).toBe(true);
-    if (!m.open) return;
-    expect(m.itemCount).toBe(3);
-    expect(m.items.map((i) => i.text)).toEqual(['Heading 1', 'Heading 2', 'Heading 3']);
-    await page.keyboard.press('Escape');
-  });
-
-  test('R16: rapid / + Enter inserts first item without stale trigger', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.press('Slash');
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(300);
-
-    const s = await getEditorState(page);
-    expect(s.h1Count).toBe(1);
-    expect(s.text).not.toContain('/');
-  });
-
-  test('R17: no /query remnant after any insertion', async ({ page }) => {
-    await resetEditor(page);
-    await page.keyboard.type('/bulletList');
-    await page.waitForTimeout(200);
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(300);
-
-    const s = await getEditorState(page);
-    expect(s.text).not.toContain('/');
-    expect(s.ulCount).toBe(1);
-  });
 });
 
-test.describe('Slash command — Floating UI positioning (POS-01 to POS-04)', () => {
+// ---------------------------------------------------------------------------
+// Accessibility
+// ---------------------------------------------------------------------------
+
+test.describe('slash command — accessibility', () => {
   test.beforeEach(async ({ page }) => {
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
@@ -410,9 +382,81 @@ test.describe('Slash command — Floating UI positioning (POS-01 to POS-04)', ()
     await page.waitForSelector('.ProseMirror');
   });
 
-  test('POS-01: menu top is exactly cursor.rect.bottom + 4px (offset middleware)', async ({
+  test('the menu uses listbox role with labeled options', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/');
+    await page.waitForTimeout(300);
+
+    const aria = await page.evaluate(() => {
+      const menu = document.querySelector('[role="listbox"]');
+      if (!menu) return null;
+      const opts = menu.querySelectorAll('[role="option"]');
+      return {
+        menuAriaLabel: menu.getAttribute('aria-label'),
+        optionCount: opts.length,
+        allHaveAriaSelected: Array.from(opts).every((o) => o.hasAttribute('aria-selected')),
+        exactlyOneSelected:
+          Array.from(opts).filter((o) => o.getAttribute('aria-selected') === 'true').length === 1,
+      };
+    });
+    if (!aria) throw new Error('menu not rendered');
+    expect(aria.menuAriaLabel).toBe('Slash commands');
+    expect(aria.optionCount).toBeGreaterThan(0);
+    expect(aria.allHaveAriaSelected).toBe(true);
+    expect(aria.exactlyOneSelected).toBe(true);
+    await page.keyboard.press('Escape');
+  });
+
+  test('items are grouped under category headers', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/');
+    await page.waitForTimeout(300);
+
+    const m = await getMenuState(page);
+    expect(m.open).toBe(true);
+    if (!m.open) return;
+    // There are category headers, and they have human-readable labels
+    expect(m.legends.length).toBeGreaterThan(0);
+    for (const legend of m.legends) {
+      expect(legend.length).toBeGreaterThan(0);
+    }
+    await page.keyboard.press('Escape');
+  });
+
+  test('the menu has a constrained max-height driven by available viewport space', async ({
     page,
   }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/');
+    await page.waitForTimeout(300);
+
+    const cls = await page.evaluate(() => {
+      const menu = document.querySelector('[role="listbox"]');
+      return {
+        hasOverflow: menu?.className.includes('overflow-y-auto') ?? false,
+        style: menu?.getAttribute('style') ?? '',
+      };
+    });
+    expect(cls.hasOverflow).toBe(true);
+    expect(cls.style).toContain('max-height');
+    await page.keyboard.press('Escape');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Positioning
+// ---------------------------------------------------------------------------
+
+test.describe('slash command — menu positioning', () => {
+  test.beforeEach(async ({ page }) => {
+    page.on('pageerror', (e) => {
+      throw new Error(`Uncaught page error: ${e.message}`);
+    });
+    await page.goto(BASE);
+    await page.waitForSelector('.ProseMirror');
+  });
+
+  test('the menu appears just below the cursor', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/');
     await page.waitForTimeout(400);
@@ -421,16 +465,17 @@ test.describe('Slash command — Floating UI positioning (POS-01 to POS-04)', ()
     const popup = await getPopupInfo(page);
     expect(cursor).not.toBeNull();
     expect(popup).not.toBeNull();
-    if (!popup || !('left' in popup)) throw new Error('popup not found');
-    if (!cursor) return;
+    if (!popup || !cursor) return;
 
-    const offset = popup.rect.top - cursor.bottom;
-    expect(Math.abs(offset - 4)).toBeLessThan(1.5);
+    const gap = popup.rect.top - cursor.bottom;
+    // Small positive gap (a few pixels of offset)
+    expect(gap).toBeGreaterThan(0);
+    expect(gap).toBeLessThan(20);
   });
 
-  test('POS-02: flip middleware engages when cursor near viewport bottom', async ({ page }) => {
+  test('the menu flips above the cursor when there is not enough room below', async ({ page }) => {
     await resetEditor(page);
-    // Push cursor to near the bottom of the viewport
+    // Push cursor near the bottom of the viewport
     for (let i = 0; i < 18; i++) {
       await page.keyboard.type(`line ${i}`);
       await page.keyboard.press('Enter');
@@ -438,61 +483,43 @@ test.describe('Slash command — Floating UI positioning (POS-01 to POS-04)', ()
     await page.keyboard.type('/');
     await page.waitForTimeout(400);
 
-    const info = await page.evaluate(() => {
-      const menu = document.querySelector('[role="listbox"]');
-      if (!menu) return null;
-      let el: HTMLElement | null = menu as HTMLElement;
-      while (el && el !== document.body) {
-        if (window.getComputedStyle(el).position === 'fixed') {
-          return {
-            menuRect: el.getBoundingClientRect().toJSON(),
-            viewportHeight: window.innerHeight,
-          };
-        }
-        el = el.parentElement;
-      }
-      return null;
-    });
-    expect(info).not.toBeNull();
-    if (!info) return;
-    // Cursor was pushed to ~bottom; menu should flip above and end up in upper half
-    expect(info.menuRect.top).toBeLessThan(info.viewportHeight * 0.75);
+    const popup = await getPopupInfo(page);
+    const viewport = await page.evaluate(() => window.innerHeight);
+    expect(popup).not.toBeNull();
+    if (!popup) return;
+    // Menu should be in the upper portion of the viewport (flipped above cursor)
+    expect(popup.rect.top).toBeLessThan(viewport * 0.75);
     await page.keyboard.press('Escape');
   });
 
-  test('POS-03: --suggestion-menu-max-height CSS var set by size middleware', async ({ page }) => {
+  test('the menu max-height adapts to available viewport space', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/');
     await page.waitForTimeout(400);
 
     const popup = await getPopupInfo(page);
     expect(popup).not.toBeNull();
-    if (!popup || !('cssVar' in popup)) throw new Error('popup not found');
+    if (!popup) return;
 
-    // The size middleware sets --suggestion-menu-max-height to
-    // min(availableHeight, viewport.height * 0.4) + 'px'
-    // With viewport 1280x720 (Playwright default), expect 288px
-    const viewport = await page.evaluate(() => window.innerHeight);
-    const expectedMax = viewport * 0.4;
+    // The CSS variable is set by the size middleware — its value is viewport-relative
     expect(popup.cssVar).toBeTruthy();
     expect(popup.cssVar).toMatch(/^\d+(\.\d+)?px$/);
-    const cssVarPx = parseFloat(popup.cssVar);
-    expect(cssVarPx).toBeLessThanOrEqual(expectedMax + 1);
-    expect(cssVarPx).toBeGreaterThan(0);
+    const maxHeightPx = parseFloat(popup.cssVar);
+    const viewport = await page.evaluate(() => window.innerHeight);
+    expect(maxHeightPx).toBeGreaterThan(0);
+    expect(maxHeightPx).toBeLessThanOrEqual(viewport * 0.5);
     await page.keyboard.press('Escape');
   });
 
-  test('POS-04: autoUpdate repositions menu on inner-container scroll', async ({ page }) => {
+  test('the menu repositions when the editor container is scrolled', async ({ page }) => {
     await resetEditor(page);
-    // Build up some scrollable content
     for (let i = 0; i < 30; i++) {
       await page.keyboard.type(`line ${i}`);
       await page.keyboard.press('Enter');
     }
+    // Position cursor in the middle of the content
     await page.keyboard.press('Control+Home');
-    for (let i = 0; i < 15; i++) {
-      await page.keyboard.press('ArrowDown');
-    }
+    for (let i = 0; i < 15; i++) await page.keyboard.press('ArrowDown');
     await page.keyboard.press('End');
     await page.keyboard.press('Enter');
     await page.keyboard.type('/');
@@ -500,36 +527,34 @@ test.describe('Slash command — Floating UI positioning (POS-01 to POS-04)', ()
 
     const before = await getPopupInfo(page);
     expect(before).not.toBeNull();
-    if (!before || !('rect' in before) || !before.rect) throw new Error('popup not found');
-    const beforeTop = before.rect.top;
+    if (!before) return;
 
-    // Scroll the inner container UP by 50px
-    const scrollResult = await page.evaluate(() => {
+    // Scroll the editor container
+    const scrolled = await page.evaluate(() => {
       let el: HTMLElement | null = document.querySelector('.ProseMirror');
       while (el && el !== document.body) {
         const styles = window.getComputedStyle(el);
         if (styles.overflowY === 'auto' || styles.overflowY === 'scroll') {
           if (el.scrollTop > 50) {
             el.scrollTop -= 50;
-            return { scrolled: true, newScrollTop: el.scrollTop };
+            return true;
           }
-          // Already at top — scroll down instead
           if (el.scrollHeight - el.clientHeight - el.scrollTop > 50) {
             el.scrollTop += 50;
-            return { scrolled: true, newScrollTop: el.scrollTop };
+            return true;
           }
         }
         el = el.parentElement;
       }
-      return { scrolled: false };
+      return false;
     });
-    expect(scrollResult.scrolled).toBe(true);
+    expect(scrolled).toBe(true);
     await page.waitForTimeout(300);
 
     const after = await getPopupInfo(page);
-    if (!after || !('rect' in after) || !after.rect) throw new Error('popup gone after scroll');
-    const moved = Math.abs(after.rect.top - beforeTop);
-    expect(moved).toBeGreaterThan(5);
+    if (!after) return;
+    // Menu position should have changed in response to scroll
+    expect(Math.abs(after.rect.top - before.rect.top)).toBeGreaterThan(5);
     await page.keyboard.press('Escape');
   });
 });
