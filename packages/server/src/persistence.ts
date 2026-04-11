@@ -39,6 +39,9 @@ const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
 export function safeContentPath(documentName: string, contentDir: string): string {
+  if (documentName.includes('\x00')) {
+    throw new Error(`Invalid document name: ${documentName}`);
+  }
   const filePath = resolve(contentDir, `${documentName}.md`);
   if (!filePath.startsWith(`${contentDir}/`)) {
     throw new Error(`Invalid document name: ${documentName}`);

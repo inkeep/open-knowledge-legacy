@@ -87,7 +87,7 @@ Hocuspocus Server
 ├── API Extension (onRequest hook — reads file index from watcher)
 ├── Agent Sessions (DirectConnection + UndoManager per agent)
 ├── Content Filter (gitignore + config exclude/include filtering)
-├── File Watcher (@parcel/watcher — owns in-memory file index)
+├── File Watcher (@parcel/watcher → chokidar fallback — owns in-memory file index)
 ├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
 ├── Shadow Repo (.git/openknowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)

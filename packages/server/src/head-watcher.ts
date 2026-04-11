@@ -237,8 +237,15 @@ export async function startHeadWatcher(
   }
 
   let unsubscribeFn: () => Promise<void>;
+  let parcel: typeof import('@parcel/watcher');
   try {
-    const parcel = await import('@parcel/watcher');
+    parcel = await import('@parcel/watcher');
+  } catch {
+    console.warn('[head-watcher] @parcel/watcher unavailable — HEAD watching disabled');
+    return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
+  }
+
+  try {
     const subscription = await parcel.subscribe(gitDir, (err, events) => {
       if (err) {
         console.error('[head-watcher]', err);
@@ -254,8 +261,8 @@ export async function startHeadWatcher(
       }
     });
     unsubscribeFn = () => subscription.unsubscribe();
-  } catch {
-    console.warn('[head-watcher] @parcel/watcher unavailable — HEAD watching disabled');
+  } catch (err) {
+    console.warn('[head-watcher] @parcel/watcher subscribe failed — HEAD watching disabled:', err);
     return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
   }
 

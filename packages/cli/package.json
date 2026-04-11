@@ -33,6 +33,7 @@
   "dependencies": {
     "@hocuspocus/provider": "4.0.0-rc.1",
     "@modelcontextprotocol/sdk": "^1.28.0",
+    "chokidar": "^5.0.0",
     "cli-boxes": "^4.0.1",
     "commander": "^14.0.0",
     "picocolors": "^1.1.1",
@@ -41,6 +42,9 @@
     "ws": "^8.20.0",
     "yaml": "^2.7.1",
     "zod": "^4.3.6"
+  },
+  "optionalDependencies": {
+    "@parcel/watcher": "^2.5.6"
   },
   "devDependencies": {
     "@inkeep/open-knowledge-core": "workspace:*",

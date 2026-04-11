@@ -460,8 +460,14 @@ async function startParcelWatcher(
   fileIndex: Map<string, FileIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
 ): Promise<AsyncSubscription | null> {
+  let parcel: typeof import('@parcel/watcher');
   try {
-    const parcel = await import('@parcel/watcher');
+    parcel = await import('@parcel/watcher');
+  } catch {
+    return null;
+  }
+
+  try {
     const subscribeOpts = contentFilter
       ? { ignore: contentFilter.getWatcherIgnoreGlobs() }
       : undefined;
@@ -485,7 +491,8 @@ async function startParcelWatcher(
     );
 
     return subscription;
-  } catch {
+  } catch (err) {
+    console.warn('[file-watcher] @parcel/watcher subscribe failed, falling back to chokidar:', err);
     return null;
   }
 }
@@ -504,22 +511,43 @@ async function startChokidarWatcher(
   const watcher = watch(contentDir, {
     ignoreInitial: true,
     ignored: contentFilter
-      ? (filePath: string) => {
+      ? (filePath: string, stats?: import('node:fs').Stats) => {
           const rel = relative(contentDir, filePath);
           if (rel === '' || rel === '.') return false;
+          if (stats?.isDirectory()) return contentFilter.isDirExcluded(rel);
           return contentFilter.isExcluded(rel);
         }
       : undefined,
   });
 
+  watcher.on('error', (err) => console.error('[file-watcher] Chokidar error:', err));
+
   watcher.on('add', (path) => {
-    handleRawEvents([{ type: 'create', path }], contentDir, contentFilter, fileIndex, onDiskEvent);
+    handleRawEvents(
+      [{ type: 'create', path }],
+      contentDir,
+      contentFilter,
+      fileIndex,
+      onDiskEvent,
+    ).catch((err) => console.error('[file-watcher] chokidar event error:', err));
   });
   watcher.on('change', (path) => {
-    handleRawEvents([{ type: 'update', path }], contentDir, contentFilter, fileIndex, onDiskEvent);
+    handleRawEvents(
+      [{ type: 'update', path }],
+      contentDir,
+      contentFilter,
+      fileIndex,
+      onDiskEvent,
+    ).catch((err) => console.error('[file-watcher] chokidar event error:', err));
   });
   watcher.on('unlink', (path) => {
-    handleRawEvents([{ type: 'delete', path }], contentDir, contentFilter, fileIndex, onDiskEvent);
+    handleRawEvents(
+      [{ type: 'delete', path }],
+      contentDir,
+      contentFilter,
+      fileIndex,
+      onDiskEvent,
+    ).catch((err) => console.error('[file-watcher] chokidar event error:', err));
   });
 
   return {

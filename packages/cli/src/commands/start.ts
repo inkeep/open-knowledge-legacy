@@ -33,9 +33,13 @@ export function startCommand(getConfig: () => Config): Command {
       let didAutoInit = false;
       const okDir = resolve(cwd, '.open-knowledge');
       if (!existsSync(okDir) && opts.init !== false) {
-        const { runInit } = await import('./init.ts');
-        runInit({ cwd, mcp: false });
-        didAutoInit = true;
+        try {
+          const { runInit } = await import('./init.ts');
+          const result = runInit({ cwd, mcp: false });
+          didAutoInit = result.mcpAction !== 'failed';
+        } catch (err) {
+          console.warn('Auto-init failed:', err instanceof Error ? err.message : err);
+        }
       }
 
       // Ensure content directory exists (for non-default content.dir)

@@ -153,28 +153,45 @@ async function startCatalogWatcher(
   }
 
   // Try @parcel/watcher, fall back to chokidar
-  let stopFn: () => Promise<void>;
+  let stopFn!: () => Promise<void>;
+  let parcel: typeof import('@parcel/watcher') | null = null;
   try {
-    const parcel = await import('@parcel/watcher');
-    const subscription = await parcel.subscribe(
-      projectDir,
-      (_err, events) => {
-        if (_err) {
-          console.error('[content-watcher]', _err);
-          return;
-        }
-        onEvents(events);
-      },
-      { ignore: ['node_modules', '.git', '.claude'] },
-    );
-    stopFn = () => subscription.unsubscribe();
+    parcel = await import('@parcel/watcher');
   } catch {
+    // Module not installed — fall through to chokidar
+  }
+
+  if (parcel) {
+    try {
+      const subscription = await parcel.subscribe(
+        projectDir,
+        (_err, events) => {
+          if (_err) {
+            console.error('[content-watcher]', _err);
+            return;
+          }
+          onEvents(events);
+        },
+        { ignore: ['node_modules', '.git', '.claude'] },
+      );
+      stopFn = () => subscription.unsubscribe();
+    } catch (err) {
+      console.warn(
+        '[content-watcher] @parcel/watcher subscribe failed, using chokidar fallback:',
+        err,
+      );
+      parcel = null;
+    }
+  }
+
+  if (!parcel) {
     const { watch } = await import('chokidar');
     log('@parcel/watcher unavailable, using chokidar fallback for catalog watching');
     const watcher = watch(projectDir, {
       ignoreInitial: true,
       ignored: ['**/node_modules/**', '**/.git/**', '**/.claude/**'],
     });
+    watcher.on('error', (err) => console.error('[content-watcher] Chokidar error:', err));
     watcher.on('add', (path) => onEvents([{ path }]));
     watcher.on('change', (path) => onEvents([{ path }]));
     watcher.on('unlink', (path) => onEvents([{ path }]));
