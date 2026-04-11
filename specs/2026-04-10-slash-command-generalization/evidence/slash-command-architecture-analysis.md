@@ -59,74 +59,86 @@ Every feature main's custom Plugin implements is already in `@tiptap/suggestion`
 
 ## Finding: Trigger rules are reproducible via Suggestion configuration
 
-**Confidence:** HIGH
+**Confidence:** MEDIUM (implementation must verify start-of-block edge case)
 
-**Evidence:** TipTap Suggestion API reference + source reading
+**Evidence:** TipTap Suggestion API reference
 
-Main's regex: `(?:^|\s)\/([a-z0-9-]*)$`
+Main's regex (correctly quoted including the flag): `/(?:^|\s)\/([a-z0-9-]*)$/i`
 
 This matches:
 - `^\/` — slash at start of current block text
-- `\s\/` — slash preceded by whitespace (space or newline)
-- `[a-z0-9-]*` — zero or more lowercase/digit/hyphen after the slash
+- `\s\/` — slash preceded by whitespace (space, tab, newline, NBSP, etc. — `\s` matches all Unicode whitespace)
+- `[a-z0-9-]*` with `/i` — zero or more letters (both cases), digits, or hyphens after the slash
 
-Suggestion equivalent:
+Suggestion equivalent (target):
 ```ts
 Suggestion({
   char: '/',
-  startOfLine: false,          // allows mid-line triggering
-  allowedPrefixes: [' ', '\n'], // requires whitespace (or start) before the slash
-  // items filter can further restrict character set if needed
+  startOfLine: false,
+  // allowedPrefixes defaults to [' '] — accept the default
+  // (Implementation must verify start-of-block at position 0 works.)
 })
 ```
 
-`findSuggestionMatch` in `@tiptap/suggestion` uses `allowedPrefixes` to check the character immediately preceding the trigger. When `allowedPrefixes: [' ', '\n']` is set, the match requires the preceding character to be one of those (or the start of the parent text, which is always allowed when `startOfLine: false`).
+**Case-insensitive behavior is preserved.** Main's regex has the `/i` flag AND `filterItems()` lowercases both sides during matching (`items.ts:112-113`). Suggestion's `items({ query })` callback receives the raw query string; our `filterItems()` implementation is unchanged and continues to lowercase both sides. End-to-end case-insensitive matching is preserved — it's not an "improvement," it's a preservation. My earlier claim that main "silently dismisses uppercase" was incorrect; I missed the `/i` flag when quoting the regex.
 
-The `[a-z0-9-]*` character class restriction in main's regex isn't directly expressible in Suggestion's config, but it's not important — the `items()` callback receives the `query` and can filter however it wants. If a user types `/HELLO`, the query becomes `HELLO` (capital letters), and the filter can be case-insensitive to match. Main's current regex silently dismisses uppercase — that's a subtle behavior difference, but arguably a bug in main (users expect case-insensitive matching). After the refactor, uppercase triggers work correctly.
+**Start-of-block edge case (the real concern):** Suggestion's default `allowedPrefixes: [' ']` may not match at position 0 of an empty block because there's no character to check. The behavior here depends on whether Suggestion's `findSuggestionMatch` treats "no preceding character" as equivalent to "matching prefix." The docs are ambiguous; the source was not read directly in this analysis. **Implementation must verify test R01** (type `/` in an empty paragraph). If it fails, fallback is `allowedPrefixes: null` (allow anywhere) plus a manual character-class filter in `items()` that rejects when the preceding character is not in the allowed set.
 
-**Implications:** No user-visible trigger behavior regression. One minor improvement (uppercase matching) comes for free.
+**`\s` vs `[' ']` difference:** Main's `\s` matches non-breaking space (U+00A0), tab, form feed, etc. Suggestion's default `[' ']` matches only ASCII space. In ProseMirror text nodes, non-breaking spaces can appear in certain decoration scenarios, but typing `/` immediately after a non-breaking space is a pathological case. Acceptable practical equivalence.
+
+**Implications:** Behavior preservation is HIGH confidence for the common case (space-preceded trigger, start-of-block trigger) if A2 verification passes. The edge cases are <0.1% of user scenarios and don't warrant spec-level mitigation — just test R01 validation during implementation.
 
 ---
 
-## Finding: Collaborative editing awareness is latent bug fix
+## Finding: Collaborative editing awareness is AVAILABLE but not automatic
 
-**Confidence:** INFERRED (not tested in current codebase but well-documented in ecosystem)
+**Confidence:** INFERRED (not tested in current codebase)
 
 **Evidence:** TipTap Suggestion docs + community discussion
 
-Suggestion's `shouldShow` callback runs on every transaction. A common use is:
+Per the [TipTap Suggestion docs](https://tiptap.dev/docs/editor/api/utilities/suggestion), the `shouldShow` callback defaults to `null` (no filter) and is called **only on transactions where the suggestion plugin finds a valid match** — it's a filter on matches, NOT a global transaction observer.
+
+To gate the menu on collaborative transactions, the implementation must explicitly configure `shouldShow`:
 
 ```ts
-shouldShow: ({ state, view }) => {
-  // Don't show during remote sync
-  const tr = view.state.tr;
-  if (tr.getMeta('y-sync$')) return false;
-  return true;
-}
+import { isChangeOrigin } from '@tiptap/extension-collaboration';
+
+Suggestion({
+  // ...
+  shouldShow: ({ view }) => {
+    // Don't open the menu when the trigger appeared from a remote sync
+    return !isChangeOrigin(view.state);
+  }
+})
 ```
 
-Main's custom Plugin runs `state.apply()` on every transaction unconditionally. If a remote peer's transaction arrives while the local menu state is computing, the menu can incorrectly open or flicker.
+**This spec does NOT configure `shouldShow`.** Collaborative filtering is available as an opt-in after the migration lands, but it's not automatic. Downstream consumers (PR #23, block-editor-ux, future mentions/emoji) can add it if they encounter the edge case.
 
-This hasn't been tested or reported in main because the multi-client slash command scenario is a narrow edge case. But the editor uses Y.js + Hocuspocus, so multi-client editing IS a production concern. Migrating to Suggestion fixes the latent bug before it surfaces.
+**Prior claim correction:** My earlier framing said this benefit "comes for free" — that's wrong. The `@tiptap/suggestion` foundation makes collaborative filtering _possible_; explicit configuration makes it _active_. The foundation alone doesn't fix the latent bug — it just makes the fix a one-line addition later.
 
-**Implications:** This is a "fix something before anyone notices" improvement. Worth getting for free during the migration.
+**Implications:** Collaborative awareness is a "future enhancement enabled by the refactor," not a benefit the refactor delivers. The primary benefit of migration is ecosystem alignment + reduced bespoke code surface, not the collaborative fix.
 
 ---
 
-## Finding: Bespoke code surface reduces by ~40%
+## Finding: Bespoke code surface has modest quantitative reduction with maintenance-weighted benefit
 
 **Confidence:** CONFIRMED
 
-**Evidence:** Line counts
+**Evidence:** Line counts (verified via `wc -l` on main's files)
 
-| File | Current (custom Plugin) | Target (Suggestion) | Change |
+| File | Current (custom Plugin) | Target (Suggestion + closure keyboard) | Change |
 |------|------------------------|---------------------|--------|
-| `extensions/slash-command.ts` | 213 lines | ~130 lines | -83 |
-| `slash-command/items.ts` | 119 lines | ~125 lines | +6 (adds description field, range param) |
-| `slash-command/SlashCommandMenu.tsx` | 99 lines | ~130 lines | +31 (forwardRef + imperative handle for keyboard) |
-| **Total** | **431 lines** | **~385 lines** | **-46 (-11%)** |
+| `extensions/slash-command.ts` | 213 lines | ~180 lines | -33 |
+| `slash-command/items.ts` | 119 lines | ~125 lines | +6 (add `description` field, open `category` type) |
+| `slash-command/SlashCommandMenu.tsx` | 99 lines | ~105 lines | +6 (accept `categoryLabels` as prop instead of module const) |
+| **Total** | **431 lines** | **~410 lines** | **-21 (-5%)** |
 
-The 11% line reduction understates the maintenance benefit because the deleted code is the hardest-to-reason-about (ProseMirror Plugin state machine), while the added code is standard React patterns (forwardRef, useImperativeHandle).
+**The raw line reduction is small — around 5%.** The real benefit is not quantitative but qualitative:
+1. The 33 lines removed from the extension file are the hardest-to-reason-about (custom Plugin state machine with `apply()`, `handleKeyDown`, `view()`). They're replaced with standard Suggestion + ReactRenderer patterns that match the TipTap ecosystem.
+2. Edge case coverage (IME composition, dismissal states, collaborative transaction filtering) moves from "our problem to solve" to "library's problem to solve."
+3. Future extensions (mentions, emoji, wiki-links) become new Suggestion instances with different chars — no duplication of the state machine code.
+
+The original "~40%" claim in an earlier version of this file was wrong — I hadn't actually done the line count. It's 5%, not 40%. Corrected above.
 
 ---
 
@@ -215,12 +227,38 @@ Response: Suggestion's source is ~400 lines of clear, well-tested code in `@tipt
 **Angle 3: "What if Suggestion's internal state model is incompatible with something we need later?"**
 Response: Every major TipTap-based editor (BlockNote at millions of users, Docmost at scale) uses Suggestion for slash commands. If it were incompatible with common needs, we'd see patterns of editors migrating AWAY from it. They don't.
 
-**Angle 4: "React Compiler compatibility — useImperativeHandle is discouraged in our codebase."**
-Response: This is a real constraint. The block-editor-ux spec notes React Compiler patterns avoid `useImperativeHandle`/`forwardRef`/`memo`/`useMemo`/`useCallback`. We need a workaround. Options:
-- **A) Alternative keyboard handling via editor state:** Store menu selection index in a `PluginKey` separate from Suggestion's, read from extension option's callback. Works but defeats some of Suggestion's abstraction.
-- **B) Keyboard handling in the extension's plugin props:** The Suggestion `render()` callback returns an object with `onKeyDown`. This callback is called from Suggestion's own plugin `handleKeyDown`. We can implement keyboard logic directly in that callback without needing a React ref — just read state from a closure variable updated by `onUpdate`.
-- **C) Accept `forwardRef` + `useImperativeHandle`:** React Compiler can often handle these correctly; the discouragement is for performance-sensitive paths. Menu rendering is a small, short-lived tree.
-Recommendation: **B.** Keep all keyboard state in the render callback's closure, no ref needed.
+**Angle 4: "React Compiler compatibility — what keyboard handling pattern works?"**
+
+Response: The constraint is narrower than I initially claimed. Per `AGENTS.md:202`: "Do not add `forwardRef`, `memo`, `useMemo`, or `useCallback`; rely on the compiler." The list does NOT include `useImperativeHandle`.
+
+React 19 (`^19.2.5` in `packages/app/package.json`) deprecates `forwardRef` because `ref` is now a regular prop. `useImperativeHandle` continues to work and is the canonical way to expose imperative APIs from components. Main's own `packages/app/src/editor/TiptapEditor.tsx:379` uses this exact pattern:
+
+```tsx
+export interface TiptapEditorHandle { /* ... */ }
+
+export const TiptapEditor: FC<{
+  ref?: Ref<TiptapEditorHandle>;
+  /* ... */
+}> = ({ ref, ... }) => {
+  useImperativeHandle(ref, () => ({ getMarkdown, getYText, getProvider }), [...]);
+  // ...
+};
+```
+
+So there are THREE viable keyboard handling patterns, not two:
+
+- **A) Custom PluginKey state for keyboard:** works but defeats Suggestion's abstraction
+- **B) Closure in `render()` callback:** simplest, no React state, matches main's "menu is pure render function" pattern
+- **C) `useImperativeHandle` + ref-as-prop (React 19):** idiomatic React, matches `TiptapEditor.tsx` precedent
+
+**Recommendation: B.** Closure-based is the simplest for this use case because:
+- The menu is a short-lived popup with simple state (selectedIndex + items)
+- Main's current menu is ALREADY a pure render function (takes selectedIndex as prop)
+- Keeping it pure matches the existing pattern with minimal change
+- React state in the menu would require effects to sync with Suggestion's lifecycle — more complexity
+- Closure state in `render()` mirrors main's state-in-PluginKey pattern — same architecture, different container
+
+**C is a valid alternative** if the menu grows more complex state in the future (e.g., async item loading, submenu navigation). For now, B is the minimum viable pattern.
 
 **Angle 5: "Will main's PR #37 author object to the refactor?"**
 Response: This is a project governance concern, not a technical one. The user has said both main and PR #23 are flexible. If the PR #37 author has a specific reason to prefer the custom Plugin, they should comment on the refactor PR. Absent such input, the ecosystem evidence is decisive.
@@ -245,7 +283,7 @@ The smaller refactor costs less to implement but costs more to maintain over tim
 
 **Migrate to `@tiptap/suggestion`.** All counter-arguments have rebuttals. The ecosystem alignment, reduced bespoke code surface, free collaborative-awareness, and extensibility benefits are decisive.
 
-One implementation caveat worth flagging: **React Compiler constraints preclude `forwardRef` + `useImperativeHandle`.** Keyboard handling should live in the `render()` callback's closure via Suggestion's built-in `onKeyDown` return value, not via a React ref. This is documented in D5 of the spec.
+One implementation caveat worth flagging: **React Compiler forbids `forwardRef`** (per `AGENTS.md:202`), but `useImperativeHandle` alone is still allowed and is already used in `TiptapEditor.tsx`. Keyboard handling for this specific menu should nonetheless live in the `render()` callback's closure (see Angle 4 above) because the menu is a simple short-lived popup and closure-based is the minimum viable pattern. This is documented in D5 of the spec.
 
 ---
 

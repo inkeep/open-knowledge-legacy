@@ -14,7 +14,7 @@
 
 ## 1. Problem Statement (SCR)
 
-**Situation:** Main's editor has a working slash command menu (PR #37) that handles 10 formatting items across two categories (`basic`: headings/lists/quote/code, `insert`: table/separator). Implementation: custom ProseMirror Plugin with a hardcoded `slashCommandItems` array, trigger regex `(?:^|\s)\/([a-z0-9-]*)$` (mid-line capable), and a category-grouped React menu with Tailwind styling and ARIA roles.
+**Situation:** Main's editor has a working slash command menu (PR #37) that handles 10 formatting items across two categories (`basic`: headings/lists/quote/code, `insert`: table/separator). Implementation: custom ProseMirror Plugin with a hardcoded `slashCommandItems` array, trigger regex `/(?:^|\s)\/([a-z0-9-]*)$/i` (mid-line capable, case-insensitive via the `/i` flag), and a category-grouped React menu with Tailwind styling and ARIA roles. Keyboard handling includes Tab as an alias for Enter (line 111 of slash-command.ts).
 
 **Complication:** Two in-flight branches need to extend this with additional item sources:
 
@@ -65,13 +65,15 @@ After this refactor, a user testing main's current slash command functionality m
 - Render `<SlashCommandMenu />` in a floating div
 - Reuse item commands and keyboard handling
 
-### Tertiary: Collaborative-editing safety
-The migration to `@tiptap/suggestion` brings collaborative-awareness that main's custom Plugin lacks:
-- `shouldShow` callback can check transaction origin to avoid opening the menu on remote sync transactions
-- Y.Doc-wide menu state is handled correctly (doesn't open for all peers when one user triggers)
-- Tested by BlockNote at scale
+### Tertiary: Collaborative-editing safety (available, not automatic)
+The migration to `@tiptap/suggestion` makes collaborative-editing awareness **available as an optional configuration**, which main's custom Plugin lacks entirely.
 
-This is not a user-visible feature — it's a latent bug fix for multi-client editing scenarios that haven't been exercised yet in main's slash command. Worth getting for free during the migration.
+- `@tiptap/suggestion` exposes a `shouldShow` callback that runs on transactions where the plugin finds a valid match (NOT on every transaction — it's a filter on matches, not a global interceptor).
+- The canonical pattern for collaborative filtering is: check if the transaction originated from `y-prosemirror` sync via `isChangeOrigin` helper (from `@tiptap/extension-collaboration`), and return `false` to suppress the menu.
+- **This is not configured in the target code for this spec.** Collaborative awareness is _available_ after the migration, but gating it requires an explicit `shouldShow` implementation that this refactor does NOT include.
+- Downstream consumers (PR #23, block-editor-ux, future mentions/emoji extensions) can opt into collaborative filtering if they encounter the edge case.
+
+Framing: "migration unlocks collaborative filtering as a configurable option" — NOT "migration brings it for free." The current scope does not include validation or configuration of the collaborative path; tests C01-C02 are moved to Future Work.
 
 ---
 
@@ -160,10 +162,15 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         pluginKey: slashCommandKey,
         char: '/',
 
-        // Preserve main's current trigger behavior: start of line OR after whitespace.
-        // @tiptap/suggestion supports this via startOfLine:false + allowedPrefixes.
+        // Preserve main's current trigger behavior: start of block OR after whitespace.
+        // Main's regex is /(?:^|\s)\/([a-z0-9-]*)$/i (note the /i flag — case-insensitive).
+        // @tiptap/suggestion's default `allowedPrefixes: [' ']` + `startOfLine: false`
+        // matches "after space" and "at start of block" (position 0 is always allowed
+        // regardless of allowedPrefixes). Implementation must verify that start-of-block
+        // triggering works; if not, fallback is `allowedPrefixes: null` with a manual
+        // character-class filter in `items()`.
         startOfLine: false,
-        allowedPrefixes: [' ', '\n'],
+        // allowedPrefixes defaults to [' '] — we accept the default.
 
         // Dynamic items from all registered sources
         items: ({ query }) => {
@@ -171,18 +178,44 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
           return filterItems(allItems, query);
         },
 
-        // Each item self-executes its command
+        // Extension ALWAYS deletes the trigger range first, then runs the item command.
+        // This matches main's current behavior (slash-command.ts:116-119) and ensures
+        // existing items don't need to know about the range. PR #23 component items
+        // can just call `insertContent()` — the range is already deleted.
         command: ({ editor, range, props: item }) => {
-          item.command(editor, range);
+          editor.chain().focus().deleteRange(range).run();
+          item.command(editor);
         },
 
-        // ReactRenderer-based popup (replaces the custom view() lifecycle)
+        // ReactRenderer-based popup (replaces the custom view() lifecycle).
+        // Keyboard state lives in closure variables — no React ref, no useImperativeHandle.
+        // The menu component is a pure render function receiving selectedIndex as a prop.
         render: () => {
           let renderer: ReactRenderer | null = null;
           let popup: HTMLDivElement | null = null;
+          let currentProps: {
+            items: SlashCommandItem[];
+            query: string;
+            command: (item: SlashCommandItem) => void;
+          } | null = null;
+          let selectedIndex = 0;
+
+          const rerender = () => {
+            if (!renderer || !currentProps) return;
+            renderer.updateProps({
+              items: currentProps.items,
+              query: currentProps.query,
+              selectedIndex,
+              categoryLabels: extension.options.categoryLabels,
+              onSelect: currentProps.command,
+            });
+          };
 
           return {
             onStart(props) {
+              currentProps = props;
+              selectedIndex = 0;
+
               popup = document.createElement('div');
               popup.style.position = 'fixed';
               popup.style.zIndex = '50';
@@ -192,9 +225,9 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
                 props: {
                   items: props.items,
                   query: props.query,
-                  selectedIndex: 0,
+                  selectedIndex,
                   categoryLabels: extension.options.categoryLabels,
-                  onSelect: (item) => props.command(item),
+                  onSelect: props.command,
                 },
                 editor: props.editor,
               });
@@ -203,20 +236,37 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             },
 
             onUpdate(props) {
-              if (!renderer || !popup) return;
-              renderer.updateProps({
-                items: props.items,
-                query: props.query,
-                selectedIndex: 0,  // Suggestion manages selection internally via onKeyDown
-                categoryLabels: extension.options.categoryLabels,
-                onSelect: (item) => props.command(item),
-              });
+              currentProps = props;
+              // Clamp selected index if the items list shrank
+              selectedIndex = Math.min(selectedIndex, Math.max(0, props.items.length - 1));
+              rerender();
               updatePosition(popup, props.clientRect);
             },
 
-            onKeyDown(props) {
-              // Delegate arrow/enter/escape to the menu ref (see §3.3)
-              return menuHandleKeyDown(props.event);
+            onKeyDown({ event }) {
+              if (!currentProps || currentProps.items.length === 0) return false;
+              const items = currentProps.items;
+
+              if (event.key === 'ArrowDown') {
+                selectedIndex = (selectedIndex + 1) % items.length;
+                rerender();
+                return true;
+              }
+              if (event.key === 'ArrowUp') {
+                selectedIndex = (selectedIndex - 1 + items.length) % items.length;
+                rerender();
+                return true;
+              }
+              // Tab is an alias for Enter (matches main's current behavior — do not remove)
+              if (event.key === 'Enter' || event.key === 'Tab') {
+                const item = items[selectedIndex];
+                if (item) currentProps.command(item);
+                return true;
+              }
+              if (event.key === 'Escape') {
+                return false; // Suggestion's default Escape handling closes the menu
+              }
+              return false;
             },
 
             onExit() {
@@ -224,6 +274,8 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               renderer = null;
               popup?.remove();
               popup = null;
+              currentProps = null;
+              selectedIndex = 0;
             },
           };
         },
@@ -270,7 +322,7 @@ export interface SlashCommandItem {
   label: string;
   icon: ComponentType;
   category: string;  // OPEN STRING — allows 'content', 'layout', 'media', 'data', etc.
-  command: (editor: Editor, range?: Range) => void;  // optional range for Suggestion integration
+  command: (editor: Editor) => void;  // UNCHANGED from main — range deletion happens in extension
   aliases?: string[];
   description?: string;  // NEW: optional subtext for rich menu rendering (used by component items)
 }
@@ -291,10 +343,12 @@ export function filterItems(items: SlashCommandItem[], query: string): SlashComm
 
 **Changes:**
 - `category: 'basic' | 'insert'` → `category: string`
-- `SlashCommandItem.command` gains an optional `range` parameter (`(editor, range?) => void`). Existing items ignore it; Suggestion passes it for consumers that need to replace text (e.g., component insertion with `deleteRange(range)` before `insertContent`).
+- `SlashCommandItem.command` signature **unchanged** — `(editor: Editor) => void`. Range deletion is handled by the extension's Suggestion `command` callback before the item command runs (matches main's current behavior). This eliminates the need for items to know about the range and prevents the "forgot to delete the slash text" regression.
 - Add optional `description?: string` field for future subtext rendering. No behavior change today; used by PR #23's component items.
 
 All 10 existing items keep their current definitions. Zero behavior change.
+
+**PR #23 implication:** PR #23's component items currently do `editor.chain().focus().deleteRange(range).insertContent(...).run()`. After the refactor, they become `editor.chain().focus().insertContent(...).run()` — the `deleteRange` is handled by the extension. Simpler items, no custom range handling needed.
 
 ### 3.3 Update menu to read category labels from props
 
@@ -326,13 +380,15 @@ export function SlashCommandMenu({ items, query, selectedIndex, categoryLabels, 
 }
 ```
 
-**Menu also needs to expose a keyboard handler for Suggestion's `onKeyDown` callback.** The current menu just renders; keyboard handling lives in the custom Plugin. With Suggestion, the render lifecycle calls the menu's `onKeyDown` on every keystroke, and the menu must:
-1. Return `true` if it consumed the event (arrow up/down, enter, escape)
-2. Return `false` otherwise (typing continues into the editor)
+**Menu stays a pure render function.** No refs, no imperative handles, no internal state. Keyboard handling lives in the extension's `render().onKeyDown` callback (see §3.1 target code) — the callback holds `selectedIndex` in a closure variable and calls `renderer.updateProps({ selectedIndex })` when it changes. The menu simply receives `selectedIndex` as a prop and renders accordingly.
 
-Use React's `useImperativeHandle` + forwardRef pattern so the extension can call `menuRef.current.onKeyDown(event)`. This is how TipTap's official Suggestion examples handle it. See https://tiptap.dev/docs/editor/api/utilities/suggestion for the canonical pattern.
+**Why closure-based keyboard handling (not forwardRef + useImperativeHandle):**
+- React Compiler is enabled in this repo (`AGENTS.md:202`: "Do not add `forwardRef`, `memo`, `useMemo`, or `useCallback`"). `forwardRef` is explicitly forbidden.
+- The React 19 ref-as-prop pattern with `useImperativeHandle` is technically allowed (see `TiptapEditor.tsx:379`), but it's overkill for a short-lived popup menu where the extension already owns the render lifecycle.
+- Suggestion's `render()` callback IS the natural coordination point. Keeping keyboard state there matches main's current pattern (main's custom Plugin holds keyboard state in PluginKey state, updated via `handleKeyDown`; our closure is analogous but in Suggestion's render lifecycle).
+- The menu component becomes trivially testable — pure props in, DOM out. No React state to mock.
 
-**Result:** Menu component grows by ~30 lines (forwardRef + imperative handle + keyboard logic that was previously in the Plugin's `handleKeyDown`). Net change across extension + menu: roughly flat line count, but better separation of concerns (menu owns its keyboard; extension owns triggering).
+**Result:** Menu component has ~5 line delta (add `categoryLabels` to props, replace module const). Extension adds ~30 lines for the closure-based keyboard logic. Net change: ~35 lines added vs main.
 
 ### 3.4 Preserve all existing test behavior
 
@@ -370,7 +426,7 @@ Single phase. Order within the phase:
 
 | Package | Purpose | Notes |
 |---------|---------|-------|
-| `@tiptap/suggestion@3.22.3` | Foundation for the slash command menu | Already transitively present via `@tiptap/extension-mention` and other suggestion-using extensions. Needs explicit `bun add @tiptap/suggestion` if not. |
+| `@tiptap/suggestion@^3.22.3` | Foundation for the slash command menu | **NEW dependency — must be explicitly added.** Verified NOT in `bun.lock` (zero matches). Verified NOT installed in `node_modules`. No currently-installed `@tiptap/*` package depends on it transitively. Zero transitive dependencies itself; part of the TipTap monorepo version-locked to the same major as `@tiptap/core@3.22.3` already in use. Install via `bun add @tiptap/suggestion@^3.22.3`. |
 
 ### Existing (unchanged)
 
@@ -424,19 +480,23 @@ These are out of scope for this refactor but become easier to tackle after it la
 
 | ID | Scenario | Expected |
 |----|----------|----------|
-| R01 | Type `/` in empty paragraph | Menu opens, all 10 items visible, Heading 1 selected |
+| R01 | Type `/` in empty paragraph | Menu opens, all 10 items visible, first item selected. **Critical test** — validates start-of-block triggering with default `allowedPrefixes: [' ']`. If this fails, the implementation must switch to `allowedPrefixes: null` + manual filter. |
 | R02 | Type `/heading` | Menu filters to heading items only |
-| R03 | Type `/h2` then Enter | Current block becomes H2 |
-| R04 | Type `/table` then Enter | 3x3 table inserts with header row |
-| R05 | Type some text then ` /bullet` then Enter | Current paragraph becomes bullet list (mid-line trigger works) |
-| R06 | Type `/` then Escape | Menu closes, cursor stays where it was |
-| R07 | Type `/` then arrow down 3 times | Selection moves to item 4 |
-| R08 | Type `/` then click item with mouse | Menu closes, item inserted |
-| R09 | Type `/xyz` (no match) | Menu closes (no items to show) |
+| R03 | Type `/h2` then Enter | Current block becomes H2 (no `/h2` trigger text remaining) |
+| R04 | Type `/table` then Enter | 3x3 table inserts with header row (no `/table` trigger text remaining) |
+| R05 | Type some text then ` /bullet` then Enter | Current paragraph becomes bullet list (mid-line trigger after whitespace works). No `/bullet` remnant. |
+| R06 | Type `/` then Escape | Menu closes, cursor stays where it was, `/` character remains as typed |
+| R07 | Type `/` then arrow down 3 times | Selection moves to item 4 (visible via `aria-selected` and `data-selected` attributes) |
+| R08 | Type `/` then click item with mouse | Menu closes, item inserted, trigger range deleted |
+| R09 | Type `/xyz` (no match) | Menu closes (no items to show). `/xyz` text remains in editor. |
 | R10 | Verify menu ARIA: `role="listbox"`, items have `role="option"` + `aria-selected` | Inspector confirms |
-| R11 | Verify category headers render: "Basic blocks" and "Insert" | Visually present |
-| R12 | Verify Tailwind classes unchanged on menu wrapper and items | grep or screenshot diff |
+| R11 | Verify category headers render: "Basic blocks" and "Insert" | Visually present, matching main's current layout |
+| R12 | Verify Tailwind classes unchanged on menu wrapper and items | Screenshot diff vs main's current menu |
 | R13 | Scroll into view when navigating past last visible item | Selected item is in viewport |
+| R14 | **Tab key inserts** — Type `/h2` then **Tab** (not Enter) | Current block becomes H2. Main currently treats Tab as Enter alias at `slash-command.ts:111`. Regression if omitted. |
+| R15 | **Case-insensitive trigger** — Type `/HEADING` | Menu shows heading items. Main is already case-insensitive via regex `/i` flag + `filterItems` lowercase. |
+| R16 | **Rapid insert** — Type `/` then Enter immediately (before menu visibly renders) | First item inserts. No stale trigger text left behind. |
+| R17 | **Delete range verification** — After any insertion, search for remaining `/query` text in the document | None found. All insertions replace the trigger range. |
 
 ### Extensibility (P0 — must work for downstream)
 
@@ -447,12 +507,11 @@ These are out of scope for this refactor but become easier to tackle after it la
 | E03 | Pass only a custom source (replacing defaults) | Menu shows only the custom items, no formatting blocks |
 | E04 | Item command receives `range` parameter | Command can call `editor.chain().deleteRange(range).insertContent(...).run()` |
 
-### Collaborative (P1 — new latent behavior from Suggestion)
+### Collaborative — DEFERRED TO FUTURE WORK
 
-| ID | Scenario | Expected |
-|----|----------|----------|
-| C01 | Two peers in a Y.Doc; peer A types `/` to open menu; peer B's view does NOT open a menu | Suggestion's built-in transaction-origin filtering handles this |
-| C02 | Peer A's menu open; peer B types in a different paragraph; peer A's menu stays open | No cross-peer interference |
+Collaborative filtering is **NOT** configured in this refactor. `@tiptap/suggestion`'s `shouldShow` callback is available for downstream consumers who need it, but no `shouldShow` implementation ships with this spec. A follow-up can add `shouldShow: isChangeOrigin(/* ... */)` if multi-client slash command bugs surface.
+
+Tests previously numbered C01-C02 moved to Future Work.
 
 ---
 
@@ -460,7 +519,24 @@ These are out of scope for this refactor but become easier to tackle after it la
 
 Single PR to main. Target: ~200 lines changed (net), split across 3 files. Reviewable in one sitting.
 
-**Before merging:** verify the rebase path for PR #23 is clean by dry-running it (create a test branch, apply main's refactor, attempt PR #23 rebase, observe conflicts). If conflicts emerge beyond the expected `extensions/slash-commands.tsx` deletion, adjust this spec's scope.
+### Pre-merge verification checklist
+
+**1. PR #23 rebase dry-run (15 min, mandatory):**
+Create a throwaway branch `rebase-dryrun/pr-23-on-slash-refactor` by merging this refactor's branch into origin/main, then rebasing PR #23 (worktree-typed-component-nodes) onto that. Observe:
+- Are the only conflicts in `packages/app/src/editor/extensions/slash-commands.tsx`, `packages/app/src/editor/components/SlashCommandMenu.tsx`, and `packages/app/src/editor/extensions/shared.ts`?
+- Does the expected delta (~50 lines added, ~350 deleted) hold within ±100 lines?
+- If unexpected entanglement emerges (shared type exports, test imports, etc.), adjust this spec's scope before merging.
+
+**2. Manual QA regression sweep (30 min, mandatory):**
+Run all R01-R17 scenarios against the refactored branch. R01 and R14 are critical — failures require implementation adjustments before merging (not post-merge fixes).
+
+**3. Governance (10 min, mandatory):**
+Tag the PR #37 author (who authored the feature being refactored) as a required reviewer. This is a social/collaboration consideration — rewriting a contributor's code the day after their PR merges is a signal that warrants explicit communication. Include a note in the PR description explaining: (a) this is an unblocking refactor for two downstream branches, (b) zero user-visible behavior change, (c) the analysis that led to the refactor (link to this spec + evidence file).
+
+### Merge order
+1. This refactor merges first → main
+2. PR #23 rebases on updated main, merges second
+3. block-editor-ux spec rebases on (main + PR #23), ships third
 
 ---
 
@@ -472,11 +548,12 @@ Single PR to main. Target: ~200 lines changed (net), split across 3 files. Revie
 | D2 | Item source API: single const vs config array vs module-level registry | **Config array via `addOptions`.** `SlashCommand.configure({ itemsSources: [...] })`. Standard TipTap extension pattern. Explicit, no module-level mutable state, consumers declare their dependencies at configure time. | LOCKED | HIGH |
 | D3 | Category taxonomy: closed union vs open string | **Open string.** Enables PR #23's `content`/`layout`/`media`/`data` without editing this code. Label mapping is extensible via `categoryLabels` option. | LOCKED | HIGH |
 | D4 | Category labels: module const vs prop vs option | **Extension option passed as prop to menu.** Consumers configure via `SlashCommand.configure({ categoryLabels: {...} })`. Menu receives it as a prop on every render. No module-level mutable state. | LOCKED | HIGH |
-| D5 | Keyboard handling location | **In the menu component via `forwardRef` + `useImperativeHandle`.** Follows TipTap's canonical Suggestion pattern. Separates concerns: extension owns triggering, menu owns its keyboard. | LOCKED | HIGH |
-| D6 | Trigger rule preservation: mid-line after whitespace | **Use `startOfLine: false` + `allowedPrefixes: [' ', '\n']`.** Reproduces main's current regex `(?:^|\s)\/([a-z0-9-]*)$` via Suggestion configuration. Verified from TipTap Suggestion API docs. | LOCKED | HIGH |
+| D5 | Keyboard handling location | **In the extension's `render().onKeyDown` callback via closure variables.** Menu stays a pure render function receiving `selectedIndex` as a prop. Rationale: (1) React Compiler forbids `forwardRef` per AGENTS.md:202. (2) `useImperativeHandle` + ref-as-prop is allowed but overkill for a short-lived popup. (3) Closure-based matches main's current menu pattern (menu is already a pure render function taking `selectedIndex` as prop). (4) Keyboard state in `render()` mirrors main's state-in-PluginKey pattern — same architecture, different runtime. | LOCKED | HIGH |
+| D6 | Trigger rule preservation: mid-line after whitespace | **Use `startOfLine: false` + accept Suggestion's default `allowedPrefixes: [' ']`.** Suggestion's default behavior triggers after space OR at position 0 of a block (start-of-block is always allowed when `startOfLine: false` regardless of allowedPrefixes — needs implementation verification). Main's regex `(?:^|\s)\/([a-z0-9-]*)$/i` is effectively equivalent: `\s` matches space in practice for editor text nodes (no `\n` or tab in ProseMirror text). The `/i` flag makes main's regex case-insensitive; Suggestion passes the raw query to `items()` where `filterItems()` lowercases both sides — end-to-end case-insensitive preserved. | LOCKED | MEDIUM (flagged for implementation verification of start-of-block behavior) |
 | D7 | Preserve existing item definitions exactly | **Yes. All 10 items keep their name, label, category, icon, command, aliases.** Zero user-visible behavior change is a P0 success criterion. | LOCKED | HIGH |
 | D8 | Add optional `description` field to SlashCommandItem | **Yes.** Not used by main's current items; used by PR #23's component items for subtext. Optional field, no migration cost. | LOCKED | HIGH |
-| D9 | Add optional `range` parameter to `command` signature | **Yes.** Main's current items ignore it (they call editor commands that don't care about range). PR #23's component items use it for `deleteRange(range).insertContent(...)`. Optional parameter, no migration cost. | LOCKED | HIGH |
+| D9 | ~~Add optional `range` parameter to `command` signature~~ | **REMOVED — not needed.** Item signature stays `(editor: Editor) => void`, unchanged from main. The extension's Suggestion `command` callback handles `deleteRange(range)` BEFORE calling the item command — matches main's current behavior at `slash-command.ts:116-119`. PR #23's component items adapt: remove their own `deleteRange(range)` call (the extension handles it). Caught by challenger Finding 1: original D9 would have caused a catastrophic regression where existing items left the slash trigger text in the document. | LOCKED | HIGH |
+| D10 | Tab key as Enter alias | **Preserved.** Main's current code at `slash-command.ts:111` handles Tab identically to Enter (inserts selected item). The closure-based `onKeyDown` in §3.1 preserves this (`event.key === 'Enter' || event.key === 'Tab'`). Missing this would be a silent regression. | LOCKED | HIGH |
 
 ---
 
@@ -484,11 +561,12 @@ Single PR to main. Target: ~200 lines changed (net), split across 3 files. Revie
 
 | # | Assumption | Confidence | Verification |
 |---|-----------|------------|-------------|
-| A1 | `@tiptap/suggestion@3.22.3` is API-compatible with main's `@tiptap/core` + `@tiptap/react` versions | HIGH | Same major version (3.x), monorepo releases together |
-| A2 | `allowedPrefixes: [' ', '\n']` with `startOfLine: false` reproduces main's `(?:^|\s)\/([a-z0-9-]*)$` regex behavior | HIGH | Verified from TipTap Suggestion source (`findSuggestionMatch`): when `allowedPrefixes` is set, the match requires the character preceding the trigger to be one of the prefixes (or the start of the parent text). Equivalent to main's `(?:^|\s)` alternation. |
+| A1 | `@tiptap/suggestion@^3.22.3` is API-compatible with main's `@tiptap/core@3.22.3` and `@tiptap/react@3.22.3` | HIGH | Same major version, released together from the TipTap monorepo. No peer-dep conflict expected. |
+| A2 | Suggestion's default `allowedPrefixes: [' ']` + `startOfLine: false` triggers at start-of-block AND after whitespace | MEDIUM | `allowedPrefixes` is confirmed to exist from TipTap docs. Start-of-block behavior (triggering when there's no preceding character at position 0 of a block) is assumed to be allowed but has NOT been verified from `@tiptap/suggestion` source. **Implementation must test:** type `/` in an empty paragraph → menu opens. If it fails, fallback is `allowedPrefixes: null` (allow anywhere) + a manual character-class filter in `items()` that checks the character immediately before the trigger. |
 | A3 | `ReactRenderer` inside Suggestion's `render()` callback is the canonical pattern for menu rendering | HIGH | TipTap's official Suggestion example uses exactly this pattern. |
-| A4 | PR #23 can be rebased to use `SlashCommand.configure()` without touching its own typed-component-nodes schema work | HIGH | The slash command extension change is orthogonal to the registry/factory/NodeView work. PR #23 already has a `getComponentItems` equivalent; it just needs to be wired into `shared.ts` differently. |
-| A5 | Main's existing 10 items' commands (editor.chain().toggleX().run(), insertTable, setHorizontalRule) work identically when called from Suggestion's `command` callback | HIGH | The editor commands are library-level; they don't depend on how the slash command extension triggers them. |
+| A4 | PR #23 can be rebased to use `SlashCommand.configure()` without touching its own typed-component-nodes schema work | MEDIUM | The slash command extension change is orthogonal to the registry/factory/NodeView work. PR #23 already has a `getComponentItems`-equivalent function. Estimated delta: ~50 lines added (component items source), ~350 lines deleted (old slash command + menu). **NOT verified by dry-run rebase yet.** See §8 Delivery — should verify before merging this refactor. |
+| A5 | Main's existing 10 items' commands (editor.chain().toggleX().run(), insertTable, setHorizontalRule) work identically when called from Suggestion's `command` callback after the extension has run `deleteRange(range)` | HIGH | The editor commands are library-level and operate on the current selection. Pre-deleting the range leaves the cursor at the deletion point, where the item command then runs. Matches main's current pattern at `slash-command.ts:116-119`. |
+| A6 | `useImperativeHandle` is forbidden by React Compiler — **REFUTED** | — | False. `AGENTS.md:202` forbids only `forwardRef`, `memo`, `useMemo`, `useCallback`. `useImperativeHandle` is allowed and is already used in `packages/app/src/editor/TiptapEditor.tsx:379`. However, we still go with closure-based keyboard handling per D5 because it's simpler for this specific use case (short-lived popup menu), not because `useImperativeHandle` is forbidden. |
 
 ---
 
@@ -496,12 +574,13 @@ Single PR to main. Target: ~200 lines changed (net), split across 3 files. Revie
 
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|------|-----------|--------|------------|
-| R1 | Suggestion's trigger semantics differ subtly from main's regex in edge cases (IME composition, paste events, code block context) | Low | Medium | Manual QA of the Regression scenarios (R01-R13) covers the common cases. If an edge case emerges, Suggestion's `shouldShow` option provides a fine-grained escape hatch. |
-| R2 | forwardRef + useImperativeHandle pattern in the menu doesn't integrate cleanly with ReactRenderer's updateProps lifecycle | Low | Medium | This is the pattern TipTap's official Suggestion example uses. If issues arise, the fallback is to hoist keyboard state into the extension via `PluginKey` metadata (still Suggestion-based, just more plumbing). |
-| R3 | PR #23's rebase reveals that the `categoryLabels` option isn't sufficient for its needs (e.g., it needs per-item badges, hotkeys, or nested categories) | Medium | Low | The `description` field is already added for future-proofing. If more fields are needed, they can be added in a follow-up — the architecture is extensible by design. |
-| R4 | Module-level `slashCommandItems` const being used as both default option AND re-exported for PR #23 to compose creates import cycles | Low | Low | `items.ts` has no dependency on the extension. The extension imports from `items.ts`. PR #23 would also import from `items.ts`. No cycle. |
-| R5 | The refactor accidentally breaks a test that depends on the custom PluginKey state shape | Low | Medium | Grep for `slashCommandKey` usages outside the extension file. If any test imports the key to inspect state, rewrite it to use Suggestion's patterns. |
-| R6 | Dropping to `@tiptap/suggestion` as an explicit dependency produces a peer-dep conflict if it's currently transitively installed at a different version | Low | Low | `bun add @tiptap/suggestion@^3.22.3` pins the version. The monorepo already pins all `@tiptap/*` packages to 3.22.3. |
+| R1 | Suggestion's trigger semantics differ from main's regex in edge cases (IME composition, paste events, non-breaking spaces, start-of-block at position 0) | Medium | Medium | Manual QA of the Regression scenarios (R01-R14) covers the common cases. Specifically R01 validates start-of-block triggering. If R01 fails, fallback is `allowedPrefixes: null` + character-class filter in `items()`. |
+| R2 | PR #23's rebase reveals that the `categoryLabels` option or item source API is insufficient (e.g., needs per-item badges, hotkeys, or nested categories) | Low | Low | The `description` field is already added for future-proofing. If more fields are needed, they can be added in a follow-up — the architecture is extensible by design. |
+| R3 | Module-level `slashCommandItems` const being used as both default option AND re-exported for PR #23 to compose creates import cycles | Low | Low | `items.ts` has no dependency on the extension. The extension imports from `items.ts`. PR #23 would also import from `items.ts`. No cycle. |
+| R4 | Range deletion timing: if the item command runs before `deleteRange` completes, the item operates on stale document state | Low | High | The target code uses `editor.chain().focus().deleteRange(range).run()` which completes synchronously, THEN `item.command(editor)` runs. No race. Confirmed against main's existing pattern at `slash-command.ts:116-119`. |
+| R5 | **REMOVED** — the original R5 described breaking tests dependent on `slashCommandKey` state. Verified via grep that no test files reference `slashCommandKey` or `SlashCommand` on main. Zero-probability risk. |
+| R6 | Suggestion's default `allowedPrefixes: [' ']` does not trigger at start-of-block, causing regression on empty paragraphs | Medium | High | R01 test scenario explicitly validates this. If the test fails, switch to `allowedPrefixes: null` + manual filter in `items()` that checks the preceding character (or lack thereof) before returning matches. See A2. |
+| R7 | PR #23's rebase reveals unexpected entanglement with other shared state (type exports, test infrastructure) beyond the two files mentioned | Low | Medium | Dry-run rebase before merging this refactor — see §8 Delivery. If entanglement emerges, adjust scope or sequence. |
 
 ---
 
@@ -514,6 +593,7 @@ Single PR to main. Target: ~200 lines changed (net), split across 3 files. Revie
 | OQ3 | Should `categoryLabels` merge with defaults or replace them? | API design | Low | **RESOLVED** → Merge. Default options include `{ basic, insert }`; consumers passing additional labels should have theirs merged in, not replace the defaults. Implement via object spread in `addOptions` or in the menu's label lookup. |
 | OQ4 | Should items have explicit ordering (sort key) or rely on registration order? | API design | Low | **OPEN for P0** → Registration order. Simpler. If PR #23 needs to intersperse component items with formatting items (e.g., put Callout next to Quote), add a sort key field in a follow-up. |
 | OQ5 | Should the extension expose its `PluginKey` for external state inspection? | API | Low | **OPEN for P0** → No. Internal. If an external consumer needs menu state, use Suggestion's own pluginKey introspection. |
+| OQ6 | Does Suggestion's default `allowedPrefixes: [' ']` trigger at position 0 of an empty block? | Technical | P0 | **OPEN — implementation must verify via test R01.** If it fails, fallback is `allowedPrefixes: null` + manual character-class filter in `items()` that checks the character preceding the trigger (or its absence). Added as assumption A2 with MEDIUM confidence. |
 
 ---
 
