@@ -15,6 +15,7 @@ import { createApiExtension } from './api-extension.ts';
 import { createContentFilter } from './content-filter.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import { getLogger } from './logger.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -103,6 +104,8 @@ export function createServer(options: ServerOptions): ServerInstance {
     includePatterns = ['**/*.md'],
     excludePatterns = [],
   } = options;
+
+  const log = getLogger('server');
 
   // Create content filter — unified exclusion logic (gitignore + config.content.exclude)
   const contentFilter = createContentFilter({
@@ -214,7 +217,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     try {
       switch (event.kind) {
         case 'create': {
-          console.log(`[reconcile] Create: ${event.docName}`);
+          log.info({ docName: event.docName }, `[reconcile] create: ${event.docName}`);
           break;
         }
 
@@ -232,7 +235,8 @@ export function createServer(options: ServerOptions): ServerInstance {
           const baseH = contentHash(base).slice(0, 6);
           const oursH = contentHash(ours).slice(0, 6);
           const theirsH = contentHash(theirs).slice(0, 6);
-          console.log(
+          log.info(
+            { docName, base: baseH, ours: oursH, theirs: theirsH, result: result.kind },
             `[reconcile] ${docName} base=${baseH} ours=${oursH} theirs=${theirsH} result=${result.kind}`,
           );
 
@@ -246,9 +250,9 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
               } catch (e) {
-                console.error(
-                  `[reconcile] Failed to apply clean content to Y.Doc for ${docName}:`,
-                  e,
+                log.error(
+                  { err: e, docName },
+                  `[reconcile] failed to apply clean content to Y.Doc for ${docName}`,
                 );
               }
               break;
@@ -259,9 +263,9 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
               } catch (e) {
-                console.error(
-                  `[reconcile] Failed to apply merged content to Y.Doc for ${docName}:`,
-                  e,
+                log.error(
+                  { err: e, docName },
+                  `[reconcile] failed to apply merged content to Y.Doc for ${docName}`,
                 );
               }
               break;
@@ -283,9 +287,9 @@ export function createServer(options: ServerOptions): ServerInstance {
                   });
                 }
               } catch (e) {
-                console.error(
-                  `[reconcile] Failed to apply conflict content to Y.Doc for ${docName}:`,
-                  e,
+                log.error(
+                  { err: e, docName },
+                  `[reconcile] failed to apply conflict content to Y.Doc for ${docName}`,
                 );
               }
               break;
@@ -317,7 +321,7 @@ export function createServer(options: ServerOptions): ServerInstance {
               mkdirSync(dirname(rescuePath), { recursive: true });
               writeFileSync(rescuePath, ours, 'utf-8');
               incrementRescueBuffer();
-              console.log(`[reconcile] Rescue buffer saved: ${docName}`);
+              log.info({ docName }, `[reconcile] rescue buffer saved: ${docName}`);
             }
           }
 
@@ -325,7 +329,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           lifecycleMap.set('status', 'deleted-upstream');
 
           deleteReconciledBase(docName);
-          console.log(`[reconcile] Delete: ${docName} (dirty=${isDirty})`);
+          log.info({ docName, isDirty }, `[reconcile] delete: ${docName} (dirty=${isDirty})`);
 
           // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
@@ -346,7 +350,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             lifecycleMap.set('newPath', newDocName);
           }
 
-          console.log(`[reconcile] Rename: ${oldDocName} → ${newDocName}`);
+          log.info({ oldDocName, newDocName }, `[reconcile] rename: ${oldDocName} → ${newDocName}`);
           break;
         }
 
@@ -358,14 +362,14 @@ export function createServer(options: ServerOptions): ServerInstance {
           const lifecycleMap = document.getMap('lifecycle');
           lifecycleMap.set('status', 'conflict');
           lifecycleMap.set('reason', 'conflict-markers');
-          console.log(`[reconcile] Conflict markers detected: ${docName}`);
+          log.info({ docName }, `[reconcile] conflict markers detected: ${docName}`);
           break;
         }
       }
     } catch (err) {
-      console.error(
-        `[reconcile] Failed to handle ${event.kind} for ${diskEventDocName(event)}:`,
-        err,
+      log.error(
+        { err, kind: event.kind, docName: diskEventDocName(event) },
+        `[reconcile] failed to handle ${event.kind} for ${diskEventDocName(event)}`,
       );
     }
   }
@@ -429,9 +433,12 @@ export function createServer(options: ServerOptions): ServerInstance {
     if (!shadowRef.current) {
       try {
         shadowRef.current = await initShadowRepo(projectDir);
-        console.log(`[server] Shadow repo initialized at ${shadowRef.current.gitDir}`);
+        log.info(
+          { gitDir: shadowRef.current.gitDir },
+          `[server] shadow repo initialized at ${shadowRef.current.gitDir}`,
+        );
       } catch (e) {
-        console.error('[server] Shadow repo init failed:', e);
+        log.error({ err: e }, '[server] shadow repo init failed');
       }
     }
 
@@ -443,15 +450,15 @@ export function createServer(options: ServerOptions): ServerInstance {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes('not a git repository') || msg.includes('invalid object')) {
-          console.warn('[server] Shadow repo appears corrupted — reinitializing');
+          log.warn({}, '[server] shadow repo appears corrupted — reinitializing');
           try {
             shadowRef.current = await initShadowRepo(projectDir);
           } catch (e2) {
-            console.error('[server] Shadow repo reinit failed:', e2);
+            log.error({ err: e2 }, '[server] shadow repo reinit failed');
             shadowRef.current = undefined;
           }
         } else {
-          console.error('[server] Shadow repo check failed (transient?):', e);
+          log.error({ err: e }, '[server] shadow repo check failed (transient?)');
         }
       }
     }
@@ -460,7 +467,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     try {
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
     } catch (err) {
-      console.error('[server] Disk bridge watcher failed to start:', err);
+      log.error({ err }, '[server] disk bridge watcher failed to start');
     }
 
     // Start HEAD watcher (only if project .git/ exists)
@@ -469,7 +476,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         projectDir,
         // onBatchBegin — park current branch context before git modifies working tree
         async ({ trigger }) => {
-          console.log(`[batch] begin trigger=${trigger}`);
+          log.info({ trigger }, `[batch] begin trigger=${trigger}`);
           incrementBatch();
           hocuspocus.flushPendingStores();
           await persistence.flushPendingGitCommit();
@@ -489,12 +496,13 @@ export function createServer(options: ServerOptions): ServerInstance {
                 const sha = await parkBranch(shadowRef.current, currentBranch, 'server', docs);
                 if (sha) {
                   incrementPark();
-                  console.log(
+                  log.info(
+                    { count: docs.length, branch: currentBranch, sha: sha.slice(0, 8) },
                     `[shadow] parked ${docs.length} docs on ${currentBranch} → ${sha.slice(0, 8)}`,
                   );
                 }
               } catch (e) {
-                console.error('[shadow] park failed:', e);
+                log.error({ err: e }, '[shadow] park failed');
               }
             }
           }
@@ -508,7 +516,13 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           setBatchInProgress(false);
 
-          console.log(
+          log.info(
+            {
+              kind: info.batchKind,
+              headMoved: info.headMoved,
+              docs: bufferedCount,
+              timeout: !!info.timeout,
+            },
             `[batch] end kind=${info.batchKind} headMoved=${info.headMoved} docs=${bufferedCount}${info.timeout ? ' timeout' : ''}`,
           );
 
@@ -539,13 +553,19 @@ export function createServer(options: ServerOptions): ServerInstance {
                       mkdirSync(dirname(rescuePath), { recursive: true });
                       writeFileSync(rescuePath, ours, 'utf-8');
                       incrementRescueBuffer();
-                      console.log(`[reconcile] Rescue buffer saved on branch switch: ${docName}`);
+                      log.info(
+                        { docName },
+                        `[reconcile] rescue buffer saved on branch switch: ${docName}`,
+                      );
                     }
                   }
 
                   const lifecycleMap = document.getMap('lifecycle');
                   lifecycleMap.set('status', 'deleted-upstream');
-                  console.log(`[branch-switch] tombstone: ${docName} (not on ${newBranch})`);
+                  log.info(
+                    { docName, branch: newBranch },
+                    `[branch-switch] tombstone: ${docName} (not on ${newBranch})`,
+                  );
                   continue;
                 }
 
@@ -553,13 +573,14 @@ export function createServer(options: ServerOptions): ServerInstance {
                 const diskContent = readFileSync(filePath, 'utf-8');
                 applyToDoc(docName, diskContent);
                 setReconciledBase(docName, diskContent);
-                console.log(`[branch-switch] reset: ${docName}`);
+                log.info({ docName }, `[branch-switch] reset: ${docName}`);
               } catch (e) {
-                console.error(`[branch-switch] failed to reset ${docName}:`, e);
+                log.error({ err: e, docName }, `[branch-switch] failed to reset ${docName}`);
               }
             }
 
-            console.log(
+            log.info(
+              { branch: newBranch, docCount: hocuspocus.documents.size },
               `[branch-switch] loaded branch ${newBranch} (${hocuspocus.documents.size} docs)`,
             );
 
@@ -620,11 +641,15 @@ export function createServer(options: ServerOptions): ServerInstance {
                       break;
                   }
                 } catch (e) {
-                  console.error(`[branch-switch] restore WIP failed for ${docName}:`, e);
+                  log.error(
+                    { err: e, docName },
+                    `[branch-switch] restore WIP failed for ${docName}`,
+                  );
                 }
               }
               if (restoredCount > 0) {
-                console.log(
+                log.info(
+                  { count: restoredCount, branch: newBranch },
                   `[branch-switch] restored ${restoredCount} parked docs on ${newBranch}`,
                 );
               }
@@ -644,10 +669,13 @@ export function createServer(options: ServerOptions): ServerInstance {
                       await sg.raw('update-ref', '-d', ref);
                     }
                   }
-                  console.log(`[branch-switch] cleaned up detached context ${info.oldBranch}`);
+                  log.info(
+                    { context: info.oldBranch },
+                    `[branch-switch] cleaned up detached context ${info.oldBranch}`,
+                  );
                 }
               } catch (e) {
-                console.error(`[branch-switch] detached cleanup failed:`, e);
+                log.error({ err: e }, '[branch-switch] detached cleanup failed');
               }
             }
           }
@@ -668,17 +696,22 @@ export function createServer(options: ServerOptions): ServerInstance {
                 newBranch,
               );
               incrementUpstreamImport();
-              console.log(
+              log.info(
+                {
+                  oldHead: info.oldHead?.slice(0, 8) ?? 'null',
+                  newHead: info.newHead.slice(0, 8),
+                  sha: sha.slice(0, 8),
+                },
                 `[shadow] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
               );
             } catch (e) {
-              console.error('[shadow] upstream-import failed:', e);
+              log.error({ err: e }, '[shadow] upstream-import failed');
             }
           }
         },
       );
     } catch (err) {
-      console.error('[server] HEAD watcher failed to start:', err);
+      log.error({ err }, '[server] HEAD watcher failed to start');
     }
   }
 
