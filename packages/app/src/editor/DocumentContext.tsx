@@ -70,6 +70,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // React Compiler handles memoization — no manual useMemo/useCallback needed
   const value: DocumentContextValue = {
     activeDocName: snapshot.activeDocName,
     activeProvider: snapshot.activeProvider,

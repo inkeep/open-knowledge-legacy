@@ -20,6 +20,9 @@ import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
+/** Directories to exclude from document listing. */
+const EXCLUDED_DIRS = new Set(['.agents', '.claude', '.git', '.open-knowledge', 'node_modules']);
+
 /**
  * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
  * Throws if the resolved path escapes the base directory.
@@ -263,15 +266,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const entries = readdirSync(targetDir, { recursive: true });
       const documents: { docName: string; size: number; modified: string }[] = [];
-
-      /** Directories to exclude from document listing. */
-      const EXCLUDED_DIRS = new Set([
-        '.agents',
-        '.claude',
-        '.git',
-        '.open-knowledge',
-        'node_modules',
-      ]);
 
       for (const entry of entries) {
         const entryStr = typeof entry === 'string' ? entry : entry.toString();
