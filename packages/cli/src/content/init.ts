@@ -11,7 +11,7 @@ This directory contains a living knowledge base for this project, maintained by 
 - \`articles/\` — Canonical knowledge articles grouped by topic
 - \`external-sources/\` — Ingested external content (raw reference material)
 - \`research/\` — Exploratory research and provisional findings
-- \`catalogs/\` — Auto-generated INDEX.md catalogs mirroring the repo structure (gitignored)
+- \`catalogs/\` — Auto-generated INDEX.md catalogs mirroring the repo structure
 - \`cache/\` — Derived data (gitignored)
 
 ## Navigation

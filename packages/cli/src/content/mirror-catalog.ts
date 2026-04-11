@@ -230,7 +230,7 @@ function buildTree(files: string[]): DirNode {
   const root: DirNode = { relDir: '', files: [], children: new Map() };
 
   for (const file of files) {
-    const parts = file.split('/');
+    const parts = file.split(/[\\/]/).filter((p) => p.length > 0);
     const fileName = parts.pop()!;
     let node = root;
     let dirSoFar = '';
