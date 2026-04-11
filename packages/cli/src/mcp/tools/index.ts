@@ -1,21 +1,43 @@
 /**
- * MCP workflow tool registry.
+ * MCP tool registry.
  *
- * Aggregates the three workflow tools (init-content, ingest, research) into a
- * single `registerAllTools` function that `server.ts` calls during startup.
- * Each individual tool file owns its own name, description, argument schema,
- * and handler body — this module just wires them into the McpServer instance.
+ * Aggregates workflow tools (init-content, ingest, research) and document tools
+ * (write_document, edit_document, undo_agent_edit, redo_agent_edit, list_documents)
+ * into a single `registerAllTools` function that `server.ts` calls during startup.
+ *
+ * Workflow tools return instructional text and don't need a server connection.
+ * Document tools make HTTP calls to Hocuspocus and require `serverUrl`.
  *
  * To add a new tool: create `packages/cli/src/mcp/tools/<name>.ts` with a
  * `register(server)` export, then import and call it from here.
  */
+import {
+  DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
+  register as registerEditDocument,
+} from './edit-document.ts';
 import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';
 import {
   DESCRIPTION as INIT_CONTENT_DESCRIPTION,
   register as registerInitContent,
 } from './init-content.ts';
+import {
+  DESCRIPTION as LIST_DOCUMENTS_DESCRIPTION,
+  register as registerListDocuments,
+} from './list-documents.ts';
+import {
+  DESCRIPTION as REDO_AGENT_EDIT_DESCRIPTION,
+  register as registerRedoAgentEdit,
+} from './redo-agent-edit.ts';
 import { DESCRIPTION as RESEARCH_DESCRIPTION, register as registerResearch } from './research.ts';
 import type { ServerInstance } from './shared.ts';
+import {
+  register as registerUndoAgentEdit,
+  DESCRIPTION as UNDO_AGENT_EDIT_DESCRIPTION,
+} from './undo-agent-edit.ts';
+import {
+  register as registerWriteDocument,
+  DESCRIPTION as WRITE_DOCUMENT_DESCRIPTION,
+} from './write-document.ts';
 
 export type { ServerInstance } from './shared.ts';
 export { textResult } from './shared.ts';
@@ -25,10 +47,23 @@ export const TOOL_DESCRIPTIONS = {
   'init-content': INIT_CONTENT_DESCRIPTION,
   ingest: INGEST_DESCRIPTION,
   research: RESEARCH_DESCRIPTION,
+  write_document: WRITE_DOCUMENT_DESCRIPTION,
+  edit_document: EDIT_DOCUMENT_DESCRIPTION,
+  undo_agent_edit: UNDO_AGENT_EDIT_DESCRIPTION,
+  redo_agent_edit: REDO_AGENT_EDIT_DESCRIPTION,
+  list_documents: LIST_DOCUMENTS_DESCRIPTION,
 } as const;
 
-export function registerAllTools(server: ServerInstance): void {
+export function registerAllTools(server: ServerInstance, serverUrl?: string): void {
+  // Workflow tools — return instructional text, no server connection needed
   registerInitContent(server);
   registerIngest(server);
   registerResearch(server);
+
+  // Document tools — make HTTP calls to Hocuspocus
+  registerWriteDocument(server, serverUrl);
+  registerEditDocument(server, serverUrl);
+  registerUndoAgentEdit(server, serverUrl);
+  registerRedoAgentEdit(server, serverUrl);
+  registerListDocuments(server, serverUrl);
 }

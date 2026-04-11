@@ -68,8 +68,8 @@ Use your native Read, Edit, Grep, and Glob tools for all file operations. The MC
 - Keep articles focused on one topic
 - Group by topic in subdirectories under articles/
 
-## Workflow Tools
-This server exposes three MCP tools that codify the main workflows. Each tool returns instructional text that guides the agent through the workflow — all real work (reads, edits, fetches) happens via the agent's native tools.
+## Tools
+This server exposes workflow tools (init-content, ingest, research) that return instructional text, and document tools (write_document, edit_document, list_documents, undo_agent_edit, redo_agent_edit) that operate through the Hocuspocus CRDT layer when available.
 
 ${Object.entries(TOOL_DESCRIPTIONS)
   .map(([name, desc]) => `### \`${name}\`\n${desc}`)
@@ -203,8 +203,11 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const okDir = resolve(projectDir, OK_DIR);
   let watcherHandle: CatalogWatcher | null = null;
 
-  // MCP workflow tools
-  registerAllTools(server);
+  // MCP tools — workflow tools + document tools (document tools need httpUrl)
+  const httpUrl = serverUrl
+    ? serverUrl.replace('ws://', 'http://').replace('wss://', 'https://')
+    : undefined;
+  registerAllTools(server, httpUrl);
 
   // Catalog rebuild + watcher
   if (existsSync(okDir)) {
