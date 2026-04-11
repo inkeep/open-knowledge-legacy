@@ -26,9 +26,13 @@ cd packages/cli && bun run build     # Build CLI (tsdown → dist/)
 ```bash
 bun run lint                         # Biome lint across all packages
 bun run format                       # Biome format across all packages
+bun run check                        # Broad gate: lint + typecheck + unit + integration + fidelity
+bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel)
 cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
 cd packages/<pkg> && bun test           # Unit tests per package
 ```
+
+The `check` script composes `biome check .` + `turbo run typecheck test test:integration test:conversion`. Each test tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate.
 
 ### Agent simulator (requires dev server running)
 
@@ -82,7 +86,7 @@ Hocuspocus Server
 | POST | `/api/agent-undo` | Undo last agent edit |
 | POST | `/api/agent-redo` | Redo last undone agent edit |
 | GET | `/api/agent-undo-status` | Check canUndo/canRedo |
-| POST | `/api/test-reset` | Reset document (E2E test isolation) |
+| POST | `/api/test-reset` | Reset document (E2E test isolation, `?docName=` param) |
 
 ### Key files
 
@@ -153,6 +157,28 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/editor/observers.ts` — Bidirectional observer sync
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
+
+## Testing — per-test docName isolation
+
+Integration tests use per-test docNames via `createTestClient(port)` which auto-generates `test-${randomUUID()}`. Tests are safe to run concurrently (`test.concurrent()`, multiple `bun test` processes in the same worktree) because:
+
+1. Each test's Y.Doc is uniquely named and independent.
+2. Observer A's typing-defer state is per-doc (`WeakMap<Y.Doc, TypingState>`).
+3. `/api/test-reset` is scoped to a specific docName via `?docName=` query param.
+
+**Exception:** tests that verify shared-state behavior (initial sync, test-reset semantics) explicitly pass `'test-doc'` and do not run concurrently with each other.
+
+Client lifecycle is inside the test body via `try/finally` — NOT via `beforeEach/afterEach`. This is required for `test.concurrent()` correctness (the shared `let client` pattern races under concurrent mode).
+
+## Concurrent Development — multi-agent local workflows
+
+This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:
+
+- **Two agents, same worktree:** Each bun process gets its own port (`getFreePort`), its own Hocuspocus tmpdir (`mkdtempSync`), its own Y.Docs, and its own module state.
+- **Two agents, separate worktrees:** Stronger isolation via filesystem separation.
+- **Agent running Playwright + developer running `bun run dev`:** Playwright config sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; the manual dev server uses the default `packages/content/`. No contention.
+
+No environment variables must be set by hand for any of these scenarios.
 
 ## Research reports
 
