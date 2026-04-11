@@ -463,7 +463,11 @@ async function startParcelWatcher(
   let parcel: typeof import('@parcel/watcher');
   try {
     parcel = await import('@parcel/watcher');
-  } catch {
+  } catch (err) {
+    console.warn(
+      '[file-watcher] @parcel/watcher import failed:',
+      err instanceof Error ? err.message : err,
+    );
     return null;
   }
 
@@ -479,13 +483,17 @@ async function startParcelWatcher(
           console.error('[file-watcher]', err);
           return;
         }
-        await handleRawEvents(
-          events.map((e) => ({ type: e.type, path: e.path })),
-          contentDir,
-          contentFilter,
-          fileIndex,
-          onDiskEvent,
-        );
+        try {
+          await handleRawEvents(
+            events.map((e) => ({ type: e.type, path: e.path })),
+            contentDir,
+            contentFilter,
+            fileIndex,
+            onDiskEvent,
+          );
+        } catch (handleErr) {
+          console.error('[file-watcher] parcel batch error:', handleErr);
+        }
       },
       subscribeOpts,
     );

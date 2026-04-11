@@ -36,7 +36,11 @@ export function startCommand(getConfig: () => Config): Command {
         try {
           const { runInit } = await import('./init.ts');
           const result = runInit({ cwd, mcp: false });
-          didAutoInit = result.mcpAction !== 'failed';
+          if (result.mcpAction === 'failed') {
+            console.warn(`Auto-init: ${result.mcpError ?? 'unknown error'}`);
+          } else {
+            didAutoInit = true;
+          }
         } catch (err) {
           console.warn('Auto-init failed:', err instanceof Error ? err.message : err);
         }
@@ -46,6 +50,7 @@ export function startCommand(getConfig: () => Config): Command {
       const contentDir = resolve(cwd, config.content.dir);
       if (!existsSync(contentDir)) {
         mkdirSync(contentDir, { recursive: true });
+        log.info({ contentDir }, 'Created content directory');
       }
 
       const { hocuspocus, destroy } = createServer({

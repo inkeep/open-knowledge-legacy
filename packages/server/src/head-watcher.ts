@@ -240,8 +240,11 @@ export async function startHeadWatcher(
   let parcel: typeof import('@parcel/watcher');
   try {
     parcel = await import('@parcel/watcher');
-  } catch {
-    console.warn('[head-watcher] @parcel/watcher unavailable — HEAD watching disabled');
+  } catch (err) {
+    console.warn(
+      '[head-watcher] @parcel/watcher unavailable — HEAD watching disabled:',
+      err instanceof Error ? err.message : err,
+    );
     // Read initial branch state so callers get valid context even in degraded mode
     lastKnownBranch = readBranchFromHead(gitDir);
     return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };

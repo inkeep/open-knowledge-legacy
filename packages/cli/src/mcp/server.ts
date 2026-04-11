@@ -157,8 +157,11 @@ async function startCatalogWatcher(
   let parcel: typeof import('@parcel/watcher') | null = null;
   try {
     parcel = await import('@parcel/watcher');
-  } catch {
-    // Module not installed — fall through to chokidar
+  } catch (err) {
+    console.warn(
+      '[content-watcher] @parcel/watcher import failed:',
+      err instanceof Error ? err.message : err,
+    );
   }
 
   if (parcel) {

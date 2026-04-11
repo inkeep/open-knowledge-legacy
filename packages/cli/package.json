@@ -22,10 +22,9 @@
     "access": "public"
   },
   "scripts": {
-    "build:app": "cd ../app && bun run build",
     "build:cli": "tsdown",
     "build:assets": "cp -r ../app/dist dist/public",
-    "build": "bun run build:app && bun run build:cli && bun run build:assets",
+    "build": "bun run build:cli && bun run build:assets",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build && bun run test"
@@ -49,6 +48,7 @@
   "devDependencies": {
     "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
+    "open-knowledge-app": "workspace:*",
     "@types/node": "^22.16.0",
     "@types/ws": "^8.18.1",
     "tsdown": "^0.21.7",
