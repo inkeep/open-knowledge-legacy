@@ -288,9 +288,10 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
   // the hash; this effect picks it up once the provider syncs the document.
   // TiptapEditor is keyed by docName (see EditorArea), so this runs once per doc.
   useEffect(() => {
-    const anchor = sessionStorage.getItem('pendingAnchor');
-    if (!anchor) return;
+    const anchorRaw = sessionStorage.getItem('pendingAnchor');
+    if (!anchorRaw) return;
     sessionStorage.removeItem('pendingAnchor');
+    const anchor = anchorRaw; // narrowed to string for closure
 
     let attempts = 0;
     function tryScroll() {

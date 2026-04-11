@@ -7,6 +7,7 @@ import { useEffect, useRef } from 'react';
 import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
 import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
+import { createWikiLinkSourceExtension } from './plugins/wiki-link-source';
 
 interface SourceEditorProps {
   ytext: Y.Text;
@@ -37,6 +38,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         markdown(),
         yCollab(ytext, provider.awareness),
         createAgentFlashSourceExtension(provider.document),
+        createWikiLinkSourceExtension(),
         EditorView.theme({
           '&': {
             height: '100%',

@@ -45,6 +45,7 @@
       "name": "open-knowledge-app",
       "version": "0.0.1",
       "dependencies": {
+        "@codemirror/autocomplete": "^6.20.1",
         "@codemirror/lang-markdown": "^6.5.0",
         "@codemirror/state": "^6.6.0",
         "@codemirror/view": "^6.41.0",
@@ -74,6 +75,7 @@
         "codemirror": "^6.0.2",
         "diff": "^7.0.0",
         "diff-match-patch": "^1.0.5",
+        "fuzzysort": "^3.1.0",
         "lucide-react": "^1.7.0",
         "radix-ui": "^1.4.3",
         "react": "^19.2.5",
