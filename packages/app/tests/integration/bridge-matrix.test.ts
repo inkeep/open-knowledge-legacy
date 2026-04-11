@@ -78,7 +78,7 @@ describe('W1: WYSIWYG writes', () => {
     const client = await createTestClient(server.port);
     try {
       applyMarkdownToFragment(client, '# WYSIWYG Heading\n\nSome paragraph content.');
-      await wait(500);
+      await pollUntil(() => client.ytext.toString().includes('WYSIWYG Heading'), 5000);
       expect(client.ytext.toString()).toContain('WYSIWYG Heading');
       expect(client.ytext.toString()).toContain('Some paragraph content');
       assertBridgeInvariant(client.ytext, client.fragment);
@@ -114,7 +114,7 @@ describe('W2: source mode writes', () => {
       client.doc.transact(() => {
         client.ytext.insert(0, '# Source Heading\n\nTyped in source mode.');
       });
-      await wait(500);
+      await pollUntil(() => serializeFragment(client.fragment).includes('Source Heading'), 5000);
       const fragContent = serializeFragment(client.fragment);
       expect(fragContent).toContain('Source Heading');
       expect(fragContent).toContain('Typed in source mode');
@@ -152,7 +152,7 @@ describe('W3: agent writes', () => {
       await agentWriteMd(server.port, '# Agent Heading\n\nAgent wrote this.', {
         docName: client.docName,
       });
-      await wait(500);
+      await pollUntil(() => client.ytext.toString().includes('Agent Heading'), 5000);
       expect(client.ytext.toString()).toContain('Agent Heading');
       expect(client.ytext.toString()).toContain('Agent wrote this');
       assertBridgeInvariant(client.ytext, client.fragment);
@@ -167,7 +167,7 @@ describe('W3: agent writes', () => {
       await agentWriteMd(server.port, '# Agent Fragment\n\nVisible in WYSIWYG.', {
         docName: client.docName,
       });
-      await wait(500);
+      await pollUntil(() => serializeFragment(client.fragment).includes('Agent Fragment'), 5000);
       const fragContent = serializeFragment(client.fragment);
       expect(fragContent).toContain('Agent Fragment');
       expect(fragContent).toContain('Visible in WYSIWYG');
@@ -324,11 +324,11 @@ describe('undo / redo', () => {
       await agentWriteMd(server.port, '# Undo Target\n\nThis will be undone.', {
         docName: client.docName,
       });
-      await wait(500);
+      await pollUntil(() => client.ytext.toString().includes('Undo Target'), 5000);
       expect(client.ytext.toString()).toContain('Undo Target');
 
       await agentUndo(server.port, client.docName);
-      await wait(500);
+      await pollUntil(() => !client.ytext.toString().includes('Undo Target'), 5000);
       expect(client.ytext.toString()).not.toContain('Undo Target');
       expect(serializeFragment(client.fragment)).not.toContain('Undo Target');
       assertBridgeInvariant(client.ytext, client.fragment);
@@ -343,11 +343,11 @@ describe('undo / redo', () => {
       await agentWriteMd(server.port, '# Undo Fragment\n\nUndone in WYSIWYG.', {
         docName: client.docName,
       });
-      await wait(500);
+      await pollUntil(() => serializeFragment(client.fragment).includes('Undo Fragment'), 5000);
       expect(serializeFragment(client.fragment)).toContain('Undo Fragment');
 
       await agentUndo(server.port, client.docName);
-      await wait(500);
+      await pollUntil(() => !serializeFragment(client.fragment).includes('Undo Fragment'), 5000);
       expect(serializeFragment(client.fragment)).not.toContain('Undo Fragment');
       expect(client.ytext.toString()).not.toContain('Undo Fragment');
       assertBridgeInvariant(client.ytext, client.fragment);
@@ -362,15 +362,15 @@ describe('undo / redo', () => {
       await agentWriteMd(server.port, '# Redo Target\n\nRedo restores this.', {
         docName: client.docName,
       });
-      await wait(500);
+      await pollUntil(() => client.ytext.toString().includes('Redo Target'), 5000);
       expect(client.ytext.toString()).toContain('Redo Target');
 
       await agentUndo(server.port, client.docName);
-      await wait(500);
+      await pollUntil(() => !client.ytext.toString().includes('Redo Target'), 5000);
       expect(client.ytext.toString()).not.toContain('Redo Target');
 
       await agentRedo(server.port, client.docName);
-      await wait(500);
+      await pollUntil(() => client.ytext.toString().includes('Redo Target'), 5000);
       expect(client.ytext.toString()).toContain('Redo Target');
       expect(serializeFragment(client.fragment)).toContain('Redo Target');
       assertBridgeInvariant(client.ytext, client.fragment);

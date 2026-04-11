@@ -201,8 +201,15 @@ describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observe
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, fragment, pmNode, meta);
 
-        // Wait for Observer A (tree→text) + Observer B (text→tree) to settle
-        await wait(500);
+        // Poll until Observer A (tree→text) + Observer B (text→tree) settle —
+        // the bridge is converged when both sides are equal and non-empty.
+        await pollUntil(() => {
+          const t = stripTrailingWhitespace(ytext.toString());
+          const f = stripTrailingWhitespace(
+            mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
+          );
+          return t === f && t.length > 0;
+        }, 5000);
 
         // Verify bridge invariant holds
         const textContent = stripTrailingWhitespace(ytext.toString());
@@ -242,8 +249,14 @@ describe('full-stack chain: md → parse → XmlFragment → Observer A → Y.Te
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, fragment, pmNode, meta);
 
-        // Wait for full observer cycle to settle
-        await wait(500);
+        // Poll until the full observer cycle settles (bridge converged + non-empty)
+        await pollUntil(() => {
+          const t = stripTrailingWhitespace(ytext.toString());
+          const f = stripTrailingWhitespace(
+            mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
+          );
+          return t === f && t.length > 0;
+        }, 5000);
 
         // Final output: serialize back to markdown
         const finalMd = stripTrailingWhitespace(
@@ -406,7 +419,12 @@ describe('agent-as-file-editor fidelity', () => {
         updateYFragment(client.doc, client.fragment, userNode, meta);
       });
 
-      await wait(500);
+      // Poll until bridge converges after user XmlFragment edit
+      await pollUntil(() => {
+        const t = stripTrailingWhitespace(client.ytext.toString());
+        const f = stripTrailingWhitespace(serializeFragment(client.fragment));
+        return t === f && t.length > 0;
+      }, 5000);
 
       // Both agent and user content should coexist
       // (updateYFragment replaces tree, but user content replaces agent content in this test)
@@ -427,11 +445,11 @@ describe('agent-as-file-editor fidelity', () => {
       client.doc.transact(() => {
         client.ytext.insert(0, '# User Content\n\nTyped by user.');
       });
-      await wait(500);
+      await pollUntil(() => serializeFragment(client.fragment).includes('User Content'), 5000);
 
       // Agent writes via API
       await agentWriteMd(server.port, '## Agent Content\n\nWritten by agent.');
-      await wait(500);
+      await pollUntil(() => client.ytext.toString().includes('Agent Content'), 5000);
 
       // Both should coexist in Y.Text
       expect(client.ytext.toString()).toContain('User Content');
