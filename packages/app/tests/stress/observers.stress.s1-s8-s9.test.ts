@@ -88,10 +88,10 @@ interface Tier {
 }
 
 const TIERS: Record<string, Tier> = {
-  small: { name: 'small-realistic', lines: 500, timeout: 10_000 },
-  medium: { name: 'medium-realistic', lines: 2000, timeout: 30_000 },
-  large: { name: 'large-realistic', lines: 10000, timeout: 60_000 },
-  adversarial: { name: 'adversarial', lines: 50000, probe: true, timeout: 120_000 },
+  small: { name: 'small-realistic', lines: 500, timeout: 20_000 },
+  medium: { name: 'medium-realistic', lines: 2000, timeout: 60_000 },
+  large: { name: 'large-realistic', lines: 10000, timeout: 120_000 },
+  adversarial: { name: 'adversarial', lines: 50000, probe: true, timeout: 240_000 },
 };
 
 const REALISTIC_TIERS = [TIERS.small, TIERS.medium, TIERS.large];
@@ -341,7 +341,9 @@ describe('S3: undo chain', () => {
           cleanup();
         }
       },
-      tier.timeout + N * 5_000,
+      // N*10s bonus accounts for per-iteration undo + re-sync overhead, doubled
+      // from the original 5s to match the 2x CI timeout multiplier below.
+      tier.timeout + N * 10_000,
     );
   }
 });

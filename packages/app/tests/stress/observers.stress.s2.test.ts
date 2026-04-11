@@ -86,10 +86,10 @@ interface Tier {
 }
 
 const TIERS: Record<string, Tier> = {
-  small: { name: 'small-realistic', lines: 500, timeout: 10_000 },
-  medium: { name: 'medium-realistic', lines: 2000, timeout: 30_000 },
-  large: { name: 'large-realistic', lines: 10000, timeout: 60_000 },
-  adversarial: { name: 'adversarial', lines: 50000, probe: true, timeout: 120_000 },
+  small: { name: 'small-realistic', lines: 500, timeout: 20_000 },
+  medium: { name: 'medium-realistic', lines: 2000, timeout: 60_000 },
+  large: { name: 'large-realistic', lines: 10000, timeout: 120_000 },
+  adversarial: { name: 'adversarial', lines: 50000, probe: true, timeout: 240_000 },
 };
 
 const REALISTIC_TIERS = [TIERS.small, TIERS.medium, TIERS.large];

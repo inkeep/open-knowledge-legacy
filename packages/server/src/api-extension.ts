@@ -472,12 +472,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
         // Compensate: restore pre-undo state so bridge invariant holds.
+        // Track compensation success explicitly — if both the sync AND the
+        // compensation fail, the Y.Doc is in an inconsistent state and the
+        // caller needs a distinct signal so they can surface a corruption
+        // warning to the user instead of silently retrying.
+        let compensationFailed = false;
         try {
           um.redo();
         } catch (compensateErr) {
+          compensationFailed = true;
           console.error('[agent-undo] Compensation also failed:', compensateErr);
         }
-        throw syncErr;
+        const message = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        console.error('[agent-undo]', syncErr);
+        json(res, 500, {
+          ok: false,
+          error: message,
+          compensationFailed,
+          ...(compensationFailed
+            ? {
+                warning:
+                  'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
+              }
+            : {}),
+        });
+        return;
       }
       console.log('[agent-undo] Undo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
@@ -522,12 +541,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
         // Compensate: restore pre-redo state so bridge invariant holds.
+        // Track compensation success explicitly — see agent-undo handler for
+        // the full rationale. Callers receiving compensationFailed=true must
+        // surface a corruption warning rather than silently retrying.
+        let compensationFailed = false;
         try {
           um.undo();
         } catch (compensateErr) {
+          compensationFailed = true;
           console.error('[agent-redo] Compensation also failed:', compensateErr);
         }
-        throw syncErr;
+        const message = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        console.error('[agent-redo]', syncErr);
+        json(res, 500, {
+          ok: false,
+          error: message,
+          compensationFailed,
+          ...(compensationFailed
+            ? {
+                warning:
+                  'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
+              }
+            : {}),
+        });
+        return;
       }
       console.log('[agent-redo] Redo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
