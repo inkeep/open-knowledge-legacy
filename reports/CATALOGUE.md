@@ -1,12 +1,18 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-10 by `generate-catalogue.ts`
-> 56 valid reports indexed
+> Auto-generated on 2026-04-11 by `generate-catalogue.ts`
+> 63 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [Electron Desktop App Operations: Versioning, Signing, …](electron-desktop-app-operations-2025/REPORT.md) | 2026-04-11 | 5 files | electron operations, desktop app r… | Electron, electron-builder, electr… |
+| [OSS Licensing Strategies for Open-Core Companies: Lice…](oss-licensing-strategies-open-core/REPORT.md) | 2026-04-11 | 6 files | open source licensing, open core s… | MIT License, Apache 2.0, AGPL-3.0,… |
+| [Permissive Licenses and Compiled-Only Distribution: Ca…](permissive-licenses-compiled-distribution/REPORT.md) | 2026-04-11 | 1 files | permissive licensing, compiled dis… | MIT License, Apache 2.0, BSD, ISC,… |
+| [Can Compiled Code Be Distributed Under AGPL Without Re…](agpl-compiled-code-source-requirements/REPORT.md) | 2026-04-11 | 1 files | GPL source requirements, compiled … | AGPL-3.0, GPLv3, JavaScript, npm |
+| [Wrapping a Web App as a Native macOS Desktop App in 20…](web-to-macos-desktop-wrapping-2025/REPORT.md) | 2026-04-11 | 4 files | desktop app wrapping, macOS native… | Electron, Tauri, SwiftUI WebView, … |
+| [Open-Core Split Licensing Engineering Patterns: ee/ Di…](open-core-split-licensing-engineering/REPORT.md) | 2026-04-11 | 5 files | open core engineering, split licen… | Cal.com, Formbricks, Infisical, Gi… |
 | [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus C…](vite-6-to-8-migration/REPORT.md) | 2026-04-09 | 4 files | framework migration, bundler archi… | Vite 8, Vite 7, Rolldown, Oxc, @vi… |
 | [agent-browser vs Playwright for CRDT Integration Testi…](agent-browser-vs-playwright-crdt-testing/REPORT.md) | 2026-04-09 | 6 files | CRDT integration testing, browser … | Playwright, Vercel agent-browser, … |
 | [CRDT Observer Bridge Latency Analysis — Architecture R…](crdt-observer-bridge-latency-analysis/REPORT.md) | 2026-04-09 | 2 files | CRDT latency analysis, observer br… | Yjs, TipTap, Hocuspocus, ProseMirr… |
@@ -14,6 +20,7 @@
 | [Auto-Persistence & Version History Implementation Patt…](auto-persistence-version-history-patterns/REPORT.md) | 2026-04-08 | 7 files | version history UX, git plumbing, … | Open Knowledge, Figma, Google Docs… |
 | [Bun Module Resolution: File Extension Requirements in …](bun-module-resolution-extensions/REPORT.md) | 2026-04-08 | 4 files | module resolution, file extensions… | Bun, TypeScript, tsdown, esbuild |
 | [Zero-Friction Onboarding & Multi-Project UX for Open K…](onboarding-multiproject-ux/REPORT.md) | 2026-04-08 | 5 files | developer onboarding, multi-projec… | Open Knowledge, Claude Code, Obsid… |
+| [Nesting a Shadow Bare Repo Inside .git/ — Safety Analy…](git-directory-nesting-shadow-repo/REPORT.md) | 2026-04-08 | 4 files | git internals, repository layout, … | Git, Open Knowledge |
 | [Packaging open-knowledge as a Global npm CLI](npm-global-cli-packaging/REPORT.md) | 2026-04-08 | 7 files | CLI packaging, npm global packages… | open-knowledge, npm, Commander.js,… |
 | [Bridging AI Coding Agents and CRDT-Authoritative Editi…](crdt-mcp-filesystem-bridge/REPORT.md) | 2026-04-07 | 10 files | CRDT filesystem bridge, agent tool… | Hocuspocus, Yjs, MCP, Replit Crosi… |
 | [Automerge as Alternative CRDT Stack: Migration Assessm…](automerge-prosemirror-migration-assessment/REPORT.md) | 2026-04-07 | 9 files | CRDT migration assessment, Peritex… | Automerge, automerge-prosemirror, … |
@@ -67,6 +74,63 @@
 ---
 
 ## Report Details
+
+### [Electron Desktop App Operations: Versioning, Signing, Updates, CI, and Release Discipline (2025/2026)](electron-desktop-app-operations-2025/REPORT.md)
+
+> Operational playbook for shipping and maintaining an Electron desktop app alongside an existing npm package. Covers Electron release cadence, code signing economics, auto-update infrastructure, CI/CD pipelines, security hardening (fuses, ASAR integrity), release lifecycle, telemetry, and known fail…
+
+- **Created:** 2026-04-11
+- **Topics:** electron operations, desktop app release pipeline, code signing, auto-update infrastructure
+- **Subjects:** Electron, electron-builder, electron-vite, electron-updater, Sentry, GitHub Actions, Apple Developer Program, Azure Trusted Signing, Open Knowledge
+- **Evidence files:** 5
+- **Warnings:** 2
+
+### [OSS Licensing Strategies for Open-Core Companies: License Selection, Community Dynamics, and Business Model Interplay](oss-licensing-strategies-open-core/REPORT.md)
+
+> Comprehensive analysis of how open-core companies choose between MIT, Apache 2.0, AGPL, and source-available licenses. Covers 22 company case studies, community perception data from HN/Reddit, anti-commercialization strategies using OSI-approved licenses, the relicensing pattern and fork dynamics, …
+
+- **Created:** 2026-04-11
+- **Topics:** open source licensing, open core strategy, community perception, dual licensing
+- **Subjects:** MIT License, Apache 2.0, AGPL-3.0, BSL, SSPL, Cal.com, Infisical, Supabase, PostHog, Lago, MinIO, GitLab, Sentry, Redis, Elastic, HashiCorp, MongoDB, n8n, Penpot, NocoDB, Twenty, Formbricks, CockroachDB
+- **Evidence files:** 6
+- **Warnings:** 1
+
+### [Permissive Licenses and Compiled-Only Distribution: Can MIT/Apache npm Packages Ship Without Source?](permissive-licenses-compiled-distribution/REPORT.md)
+
+> Whether MIT, Apache 2.0, BSD, and ISC licenses allow distributing compiled/minified npm packages without providing readable source code. Short answer: yes — permissive licenses have zero source distribution requirements. This opens a simpler architecture for open-core split licensing than proprieta…
+
+- **Created:** 2026-04-11
+- **Topics:** permissive licensing, compiled distribution, source requirements
+- **Subjects:** MIT License, Apache 2.0, BSD, ISC, MPL 2.0, npm
+- **Evidence files:** 1
+
+### [Can Compiled Code Be Distributed Under AGPL Without Readable Source?](agpl-compiled-code-source-requirements/REPORT.md)
+
+> Whether compiled/minified JavaScript can be distributed under AGPL while keeping source private. Covers GPLv3 'Corresponding Source' requirements, what counts as 'object code' for interpreted languages, the written offer provision, obfuscation strategies, and enforcement precedents. Short answer: n…
+
+- **Created:** 2026-04-11
+- **Topics:** GPL source requirements, compiled code licensing, open source compliance
+- **Subjects:** AGPL-3.0, GPLv3, JavaScript, npm
+- **Evidence files:** 1
+
+### [Wrapping a Web App as a Native macOS Desktop App in 2025/2026](web-to-macos-desktop-wrapping-2025/REPORT.md)
+
+> Comprehensive analysis of desktop app frameworks (Electron, Tauri v2, Wails, SwiftUI WebView, native Swift) for wrapping a TypeScript/React web app as a native macOS desktop app. Includes primary-source tech stack investigations of 20 popular apps (Claude Desktop, ChatGPT, Codex, Obsidian, Figma, N…
+
+- **Created:** 2026-04-11
+- **Topics:** desktop app wrapping, macOS native apps, web to desktop, electron vs tauri
+- **Subjects:** Electron, Tauri, SwiftUI WebView, Claude Desktop, ChatGPT Desktop, Codex, Obsidian, Figma, Notion, Linear, VS Code, Cursor, Raycast, Warp Terminal, electron-vite, ToDesktop
+- **Evidence files:** 4
+
+### [Open-Core Split Licensing Engineering Patterns: ee/ Directories, AGPL Linking Exceptions, and npm IP Protection](open-core-split-licensing-engineering/REPORT.md)
+
+> How open-core companies architecturally implement split licensing — structuring proprietary code alongside open-source code, building/distributing compiled-only npm packages, handling contributor boundaries, and using AGPL linking exceptions. 13 company code-first case studies, legal mechanics, npm…
+
+- **Created:** 2026-04-11
+- **Topics:** open core engineering, split licensing, npm obfuscation, AGPL linking exceptions
+- **Subjects:** Cal.com, Formbricks, Infisical, GitLab, Grafana, Documenso, Dub.co, Twenty, Appsmith, Mastra, Activepieces, n8n, Tldraw, Liveblocks, Firecrawl, napi-rs, terser, javascript-obfuscator
+- **Evidence files:** 5
+- **Warnings:** 1
 
 ### [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus CRDT Editor](vite-6-to-8-migration/REPORT.md)
 
@@ -131,6 +195,15 @@
 - **Topics:** developer onboarding, multi-project UX, agent context loading, CLI scaffolding
 - **Subjects:** Open Knowledge, Claude Code, Obsidian, Cursor, MCP
 - **Evidence files:** 5
+
+### [Nesting a Shadow Bare Repo Inside .git/ — Safety Analysis](git-directory-nesting-shadow-repo/REPORT.md)
+
+> Can openknowledge's shadow attribution repo live at .git/openknowledge/history.git instead of .openknowledge/history.git? Investigates git internals, maintenance commands, transport behavior, worktree interaction, and tool precedents.
+
+- **Created:** 2026-04-08
+- **Topics:** git internals, repository layout, shadow repo architecture
+- **Subjects:** Git, Open Knowledge
+- **Evidence files:** 4
 
 ### [Packaging open-knowledge as a Global npm CLI](npm-global-cli-packaging/REPORT.md)
 
