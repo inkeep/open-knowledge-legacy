@@ -1,5 +1,5 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
+import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import { ProviderPool, type SyncState } from './provider-pool';
 
 export interface DocumentContextValue {
@@ -12,49 +12,76 @@ export interface DocumentContextValue {
 
 const DocumentContext = createContext<DocumentContextValue | null>(null);
 
-export function DocumentProvider({ children }: { children: ReactNode }) {
-  const poolRef = useRef<ProviderPool | null>(null);
-  if (!poolRef.current) {
-    poolRef.current = new ProviderPool(10);
+// Module-level singleton — survives React re-renders and StrictMode double-mount.
+// Same pattern the old singleton HocuspocusProvider used.
+let pool: ProviderPool | null = null;
+
+function getPool(): ProviderPool {
+  if (!pool) {
+    pool = new ProviderPool(10);
   }
-  const pool = poolRef.current;
+  return pool;
+}
 
-  // Revision counter — bumped by pool.onChange to trigger React re-render
-  const [, setRevision] = useState(0);
+interface Snapshot {
+  activeDocName: string | null;
+  activeProvider: HocuspocusProvider | null;
+  syncState: SyncState | 'connecting';
+}
+
+const EMPTY_SNAPSHOT: Snapshot = {
+  activeDocName: null,
+  activeProvider: null,
+  syncState: 'connecting',
+};
+
+function takeSnapshot(p: ProviderPool): Snapshot {
+  const active = p.getActive();
+  return {
+    activeDocName: p.getActiveDocName(),
+    activeProvider: active?.provider ?? null,
+    syncState: active?.syncState ?? 'connecting',
+  };
+}
+
+export function DocumentProvider({ children }: { children: ReactNode }) {
+  const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
 
   useEffect(() => {
-    pool.setOnChange(() => setRevision((r) => r + 1));
-    return () => {
-      pool.setOnChange(null);
-    };
-  }, [pool]);
+    const p = getPool();
 
-  // Expose pool on window for E2E test access
-  useEffect(() => {
+    // Sync initial state
+    setSnapshot(takeSnapshot(p));
+
+    // Subscribe to pool changes
+    p.setOnChange(() => setSnapshot(takeSnapshot(p)));
+
+    // Expose pool on window for E2E test access
     if (typeof window !== 'undefined') {
-      (window as unknown as Record<string, unknown>).__providerPool = pool;
+      (window as unknown as Record<string, unknown>).__providerPool = p;
       Object.defineProperty(window, '__activeProvider', {
-        get: () => pool.getActive()?.provider ?? null,
+        get: () => p.getActive()?.provider ?? null,
         configurable: true,
       });
     }
-    return () => {
-      pool.dispose();
-    };
-  }, [pool]);
 
-  const activeEntry = pool.getActive();
+    return () => {
+      p.setOnChange(null);
+    };
+  }, []);
 
   const value: DocumentContextValue = {
-    activeDocName: pool.getActiveDocName(),
-    activeProvider: activeEntry?.provider ?? null,
-    syncState: activeEntry?.syncState ?? 'connecting',
+    activeDocName: snapshot.activeDocName,
+    activeProvider: snapshot.activeProvider,
+    syncState: snapshot.syncState,
     openDocument: (docName: string) => {
-      pool.open(docName);
-      pool.setActive(docName);
+      const p = getPool();
+      p.open(docName);
+      p.setActive(docName);
     },
     closeDocument: (docName: string) => {
-      pool.close(docName);
+      const p = getPool();
+      p.close(docName);
     },
   };
 
