@@ -23,8 +23,14 @@ export interface ContentFilterOptions {
 }
 
 export interface ContentFilter {
-  /** True if the relative path should be excluded from the document system. */
+  /** True if the file at relativePath should be excluded from the document system. */
   isExcluded(relativePath: string): boolean;
+  /**
+   * True if the directory at relativePath is excluded by gitignore/config rules.
+   * Unlike isExcluded(), this does NOT check include patterns — directories don't
+   * need to match include globs, only files do. Used for traversal decisions.
+   */
+  isDirExcluded(relativePath: string): boolean;
   /** Relative glob patterns for @parcel/watcher ignore option (best-effort). */
   getWatcherIgnoreGlobs(): string[];
 }
@@ -63,9 +69,17 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
     }
   }
 
-  // Add config content.exclude patterns after .gitignore
+  // Precompute the contentDir-to-projectDir prefix for path conversion.
+  const contentRelPrefix = relative(projectDir, contentDir);
+
+  // Add config content.exclude patterns after .gitignore.
+  // Config patterns are relative to contentDir, so prefix them when contentDir != projectDir.
   if (excludePatterns.length > 0) {
-    ig.add(excludePatterns);
+    if (contentRelPrefix) {
+      ig.add(excludePatterns.map((p) => `${contentRelPrefix}/${p}`));
+    } else {
+      ig.add(excludePatterns);
+    }
   }
 
   // --- Pass 2: Walk contentDir for nested .gitignore files ---
@@ -81,13 +95,24 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
 
   return {
     isExcluded(relativePath: string): boolean {
-      // A file is included if and only if:
-      // 1. It matches at least one content.include pattern, AND
-      // 2. It does NOT match any exclusion rule
-      // Exclusion supersedes inclusion.
+      // relativePath is relative to contentDir (what the watcher provides).
+      // 1. Include check uses contentDir-relative path (patterns like **/*.md)
       if (!isIncluded(relativePath)) return true;
-      if (ig.ignores(relativePath)) return true;
+      // 2. Exclude check uses projectDir-relative path (gitignore patterns)
+      const projectRelPath = contentRelPrefix
+        ? `${contentRelPrefix}/${relativePath}`
+        : relativePath;
+      if (ig.ignores(projectRelPath)) return true;
       return false;
+    },
+
+    isDirExcluded(relativePath: string): boolean {
+      // Only check exclusion rules (gitignore + config.exclude), not include patterns.
+      // Directories don't need to match **/*.md — we still want to traverse them.
+      const projectRelPath = contentRelPrefix
+        ? `${contentRelPrefix}/${relativePath}`
+        : relativePath;
+      return ig.ignores(projectRelPath);
     },
 
     getWatcherIgnoreGlobs(): string[] {

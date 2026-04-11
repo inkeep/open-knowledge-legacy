@@ -12,12 +12,7 @@ import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
-import {
-  type AsyncSubscription,
-  contentHash,
-  type DiskEvent,
-  startWatcher,
-} from './file-watcher.ts';
+import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import {
   incrementBatch,
@@ -381,7 +376,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
 
-  let watcher: AsyncSubscription | null = null;
+  let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
 
   async function destroy(): Promise<void> {

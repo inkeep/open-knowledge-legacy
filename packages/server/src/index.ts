@@ -18,6 +18,7 @@ export {
   contentHash,
   type DiskEvent,
   evictStaleTrackerEntries,
+  type FileIndexEntry,
   isSelfWrite,
   lastKnownHash,
   pathToDocName,
@@ -25,6 +26,7 @@ export {
   removeLastKnownHash,
   startWatcher,
   updateLastKnownHash,
+  type WatcherHandle,
   writeTracker,
 } from './file-watcher.ts';
 export {

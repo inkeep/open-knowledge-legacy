@@ -10,11 +10,11 @@ import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
-  type AsyncSubscription,
   createApiExtension,
   createExternalChangeHandler,
   createPersistenceExtension,
   startWatcher,
+  type WatcherHandle,
 } from '@inkeep/open-knowledge-server';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
@@ -22,7 +22,7 @@ import { parse as parseYaml } from 'yaml';
 
 // Module-level watcher subscription — survives Vite HMR restarts so we can
 // unsubscribe the previous instance before starting a new one.
-let activeWatcher: AsyncSubscription | null = null;
+let activeWatcher: WatcherHandle | null = null;
 
 // Resolve project root (directory containing .open-knowledge/)
 const PLUGIN_DIR = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
