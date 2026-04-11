@@ -359,4 +359,21 @@ export function rebuildMirroredCatalogs(options: MirrorCatalogOptions): void {
   generateNodeCatalog(tree, projectDir, catalogsDir);
 }
 
+/**
+ * Check whether a project-root-relative file path matches the content
+ * include/exclude patterns (including built-in directory excludes).
+ */
+export function isTrackedContent(relPath: string, include: string[], exclude: string[]): boolean {
+  // Check built-in directory excludes
+  const parts = relPath.split('/');
+  for (let i = 0; i < parts.length - 1; i++) {
+    const dir = parts[i];
+    if (BUILTIN_EXCLUDES.has(dir)) return false;
+    if (dir.startsWith('.') && dir !== '.open-knowledge') return false;
+    // Exclude catalogs/ and cache/ inside .open-knowledge/
+    if (i > 0 && parts[i - 1] === '.open-knowledge' && OK_INTERNAL_EXCLUDES.has(dir)) return false;
+  }
+  return matchesAny(relPath, include) && !matchesAny(relPath, exclude);
+}
+
 export { CATALOGS_DIR };

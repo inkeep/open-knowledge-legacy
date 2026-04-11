@@ -17,13 +17,17 @@
  * file access. All diagnostic logging goes to stderr (stdout is the MCP wire).
  */
 import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
-import { CATALOGS_DIR, rebuildMirroredCatalogs } from '../content/mirror-catalog.ts';
+import {
+  CATALOGS_DIR,
+  isTrackedContent,
+  rebuildMirroredCatalogs,
+} from '../content/mirror-catalog.ts';
 import { dim } from '../ui/colors.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
@@ -141,7 +145,7 @@ async function startCatalogWatcher(
     }
   }
 
-  const catalogsAbsDir = resolve(okDir, CATALOGS_DIR);
+  const { include, exclude } = config.content;
 
   const subscription: AsyncSubscription = await subscribe(
     projectDir,
@@ -150,10 +154,10 @@ async function startCatalogWatcher(
         console.error('[content-watcher]', _err);
         return;
       }
-      // Only rebuild on .md changes outside the catalogs directory
-      const hasRelevantChange = events.some(
-        (e) => e.path.endsWith('.md') && !e.path.startsWith(catalogsAbsDir),
-      );
+      const hasRelevantChange = events.some((e) => {
+        const rel = relative(projectDir, e.path);
+        return isTrackedContent(rel, include, exclude);
+      });
       if (hasRelevantChange) {
         scheduleRebuild();
       }
