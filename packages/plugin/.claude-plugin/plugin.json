@@ -1,0 +1,7 @@
+{
+  "name": "open-knowledge",
+  "version": "0.1.0",
+  "description": "CRDT knowledge base with real-time collaboration and AI agent tools",
+  "author": { "name": "Inkeep" },
+  "repository": "https://github.com/inkeep/open-knowledge"
+}
