@@ -226,7 +226,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   function safeSubdir(subdir: string): string {
     const resolved = resolve(contentDir, subdir);
-    if (resolved !== contentDir && !resolved.startsWith(contentDir + '/')) {
+    if (resolved !== contentDir && !resolved.startsWith(`${contentDir}/`)) {
       throw new Error(`Invalid directory: ${subdir}`);
     }
     return resolved;
@@ -260,9 +260,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const entries = readdirSync(targetDir, { recursive: true });
       const documents: { docName: string; size: number; modified: string }[] = [];
 
+      /** Directories to exclude from document listing. */
+      const EXCLUDED_DIRS = new Set([
+        '.agents',
+        '.claude',
+        '.git',
+        '.open-knowledge',
+        'node_modules',
+      ]);
+
       for (const entry of entries) {
         const entryStr = typeof entry === 'string' ? entry : entry.toString();
         if (!entryStr.endsWith('.md')) continue;
+
+        // Skip files inside excluded directories
+        const firstSegment = entryStr.split(/[\\/]/)[0];
+        if (firstSegment && EXCLUDED_DIRS.has(firstSegment)) continue;
 
         const fullPath = resolve(targetDir, entryStr);
         const stat = statSync(fullPath);
