@@ -8,8 +8,45 @@ import { SlashCommandMenu } from '../slash-command/SlashCommandMenu';
 
 const slashCommandKey = new PluginKey('slashCommand');
 
+/**
+ * Configuration options for the slash command extension.
+ *
+ * The slash command is pluggable — downstream branches can register additional
+ * item sources and category labels without modifying this extension.
+ */
 export interface SlashCommandOptions {
+  /**
+   * Item source functions. Each is called on every trigger and its results
+   * are merged into the menu. Default: `[() => slashCommandItems]` (the
+   * built-in formatting items: headings, lists, quote, code, table, separator).
+   *
+   * Downstream consumers extend by passing additional sources via `.configure()`:
+   *
+   * ```ts
+   * SlashCommand.configure({
+   *   itemsSources: [() => slashCommandItems, () => getComponentItems()]
+   * })
+   * ```
+   */
   itemsSources: (() => SlashCommandItem[])[];
+
+  /**
+   * Category labels to display in the menu. Defaults include:
+   * - `basic` → "Basic blocks"
+   * - `insert` → "Insert"
+   *
+   * Consumers can add labels for custom categories:
+   *
+   * ```ts
+   * SlashCommand.configure({
+   *   categoryLabels: {
+   *     ...SlashCommand.options.categoryLabels,
+   *     content: 'Content',
+   *     layout: 'Layout'
+   *   }
+   * })
+   * ```
+   */
   categoryLabels: Record<string, string>;
 }
 
