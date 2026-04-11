@@ -142,7 +142,7 @@ export const TiptapEditor: FC<{
   const editor = useEditor({
     editorProps: {
       attributes: {
-        class: 'p-6 h-full',
+        class: 'pt-10 pb-16 h-full',
       },
     },
     extensions: [
