@@ -17,11 +17,15 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
-import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import type { ContentFilter } from './content-filter.ts';
 import { containsConflictMarkers } from './reconciliation.ts';
 
-export type { AsyncSubscription };
+/** Subscription handle compatible with both @parcel/watcher and chokidar backends. */
+export interface AsyncSubscription {
+  unsubscribe(): Promise<void>;
+}
+
+export type WatcherBackend = 'parcel' | 'chokidar';
 
 // ─── DiskEvent taxonomy ──────────────────────────────────────────────────────
 
@@ -403,9 +407,174 @@ export function updateFileIndex(
   }
 }
 
+// ─── Shared event handler ───────────────────────────────────────────────────
+
+/**
+ * Process a batch of raw file events through the classification + self-write
+ * detection pipeline. Shared by both @parcel/watcher and chokidar backends.
+ */
+async function handleRawEvents(
+  rawEvents: Array<{ type: 'create' | 'update' | 'delete'; path: string }>,
+  contentDir: string,
+  contentFilter: ContentFilter | undefined,
+  fileIndex: Map<string, FileIndexEntry>,
+  onDiskEvent: (event: DiskEvent) => Promise<void>,
+): Promise<void> {
+  const mdEvents = rawEvents.filter((e) => e.path.endsWith('.md'));
+  if (mdEvents.length === 0) return;
+
+  const diskEvents = await classifyEvents(mdEvents, contentDir, contentFilter);
+
+  for (const event of diskEvents) {
+    let isSelf = false;
+
+    if (event.kind !== 'delete' && event.kind !== 'rename') {
+      const hash = contentHash(event.content);
+      isSelf = isSelfWrite(event.path, hash);
+    } else if (event.kind === 'rename') {
+      const hash = contentHash(event.content);
+      isSelf = isSelfWrite(event.newPath, hash);
+    }
+
+    updateFileIndex(event, contentDir, fileIndex);
+
+    if (isSelf) {
+      console.log(
+        `[file-watcher] Skipped self-write: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+      );
+      continue;
+    }
+
+    console.log(
+      `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+    );
+    await onDiskEvent(event);
+  }
+}
+
+// ─── Backend: @parcel/watcher ───────────────────────────────────────────────
+
+async function startParcelWatcher(
+  contentDir: string,
+  contentFilter: ContentFilter | undefined,
+  fileIndex: Map<string, FileIndexEntry>,
+  onDiskEvent: (event: DiskEvent) => Promise<void>,
+): Promise<AsyncSubscription | null> {
+  let parcel: typeof import('@parcel/watcher');
+  try {
+    parcel = await import('@parcel/watcher');
+  } catch (err) {
+    console.warn(
+      '[file-watcher] @parcel/watcher import failed:',
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+
+  try {
+    const subscribeOpts = contentFilter
+      ? { ignore: contentFilter.getWatcherIgnoreGlobs() }
+      : undefined;
+
+    const subscription = await parcel.subscribe(
+      contentDir,
+      async (err, events) => {
+        if (err) {
+          console.error('[file-watcher]', err);
+          return;
+        }
+        try {
+          await handleRawEvents(
+            events.map((e) => ({ type: e.type, path: e.path })),
+            contentDir,
+            contentFilter,
+            fileIndex,
+            onDiskEvent,
+          );
+        } catch (handleErr) {
+          console.error('[file-watcher] parcel batch error:', handleErr);
+        }
+      },
+      subscribeOpts,
+    );
+
+    return subscription;
+  } catch (err) {
+    console.warn('[file-watcher] @parcel/watcher subscribe failed, falling back to chokidar:', err);
+    return null;
+  }
+}
+
+// ─── Backend: chokidar ──────────────────────────────────────────────────────
+
+async function startChokidarWatcher(
+  contentDir: string,
+  contentFilter: ContentFilter | undefined,
+  fileIndex: Map<string, FileIndexEntry>,
+  onDiskEvent: (event: DiskEvent) => Promise<void>,
+): Promise<AsyncSubscription> {
+  const { watch } = await import('chokidar');
+  console.warn('[file-watcher] @parcel/watcher unavailable, using chokidar fallback');
+
+  const watcher = watch(contentDir, {
+    ignoreInitial: true,
+    ignored: contentFilter
+      ? (filePath: string, stats?: import('node:fs').Stats) => {
+          const rel = relative(contentDir, filePath);
+          if (rel === '' || rel === '.') return false;
+          if (stats?.isDirectory()) return contentFilter.isDirExcluded(rel);
+          return contentFilter.isExcluded(rel);
+        }
+      : undefined,
+  });
+
+  watcher.on('error', (err) => console.error('[file-watcher] chokidar error:', err));
+
+  // Batch chokidar events to match @parcel/watcher's coalescing behavior.
+  // Without batching, a file rename (mv old.md new.md) produces separate
+  // delete + create calls, breaking classifyEvents' rename detection which
+  // requires both events in the same batch.
+  const BATCH_WINDOW_MS = 50;
+  let pendingEvents: Array<{ type: 'create' | 'update' | 'delete'; path: string }> = [];
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function queueEvent(type: 'create' | 'update' | 'delete', path: string) {
+    pendingEvents.push({ type, path });
+    if (!batchTimer) {
+      batchTimer = setTimeout(() => {
+        const batch = pendingEvents;
+        pendingEvents = [];
+        batchTimer = null;
+        handleRawEvents(batch, contentDir, contentFilter, fileIndex, onDiskEvent).catch((err) =>
+          console.error('[file-watcher] chokidar batch error:', err),
+        );
+      }, BATCH_WINDOW_MS);
+    }
+  }
+
+  watcher.on('add', (path) => queueEvent('create', path));
+  watcher.on('change', (path) => queueEvent('update', path));
+  watcher.on('unlink', (path) => queueEvent('delete', path));
+
+  return {
+    unsubscribe: () => {
+      if (batchTimer) {
+        clearTimeout(batchTimer);
+        batchTimer = null;
+        pendingEvents = [];
+      }
+      return watcher.close();
+    },
+  };
+}
+
+// ─── Watcher ─────────────────────────────────────────────────────────────────
+
 /**
  * Start watching a content directory for external .md file changes.
  * Calls onDiskEvent for each classified event (not our own persistence writes).
+ *
+ * Uses @parcel/watcher when available, falls back to chokidar otherwise.
  *
  * When a ContentFilter is provided:
  * - Excluded files are skipped during the initial scan
@@ -419,79 +588,33 @@ export async function startWatcher(
   onDiskEvent: (event: DiskEvent) => Promise<void>,
   contentFilter?: ContentFilter,
 ): Promise<WatcherHandle> {
-  // Allocate file index per watcher instance — each handle owns its index
   const fileIndex = new Map<string, FileIndexEntry>();
 
-  // Seed hashes and populate file index (filtered if contentFilter provided)
   seedLastKnownHashes(contentDir, contentDir, contentFilter, fileIndex);
 
-  // Run TTL eviction periodically
   const evictionInterval = setInterval(evictStaleTrackerEntries, WRITE_TRACKER_TTL_MS);
 
-  // Build subscribe options — pass watcher ignore globs as best-effort optimization
-  const subscribeOpts = contentFilter
-    ? { ignore: contentFilter.getWatcherIgnoreGlobs() }
-    : undefined;
-
   let subscription: AsyncSubscription;
+  let backend: WatcherBackend;
   try {
-    subscription = await subscribe(
-      contentDir,
-      async (err, events) => {
-        if (err) {
-          console.error('[file-watcher]', err);
-          return;
-        }
-
-        // Filter to .md and classify (content filter applied inside classifyEvents)
-        const mdEvents = events.filter((e) => e.path.endsWith('.md'));
-        if (mdEvents.length === 0) return;
-
-        const diskEvents = await classifyEvents(
-          mdEvents.map((e) => ({ type: e.type, path: e.path })),
-          contentDir,
-          contentFilter,
-        );
-
-        for (const event of diskEvents) {
-          let isSelf = false;
-
-          // Self-write check for events that carry content
-          if (event.kind !== 'delete' && event.kind !== 'rename') {
-            const hash = contentHash(event.content);
-            isSelf = isSelfWrite(event.path, hash);
-          } else if (event.kind === 'rename') {
-            const hash = contentHash(event.content);
-            isSelf = isSelfWrite(event.newPath, hash);
-          }
-
-          // Always keep index in sync — self-writes still represent real disk state
-          updateFileIndex(event, contentDir, fileIndex);
-
-          if (isSelf) {
-            console.log(
-              `[file-watcher] Skipped self-write: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
-            );
-            continue;
-          }
-
-          console.log(
-            `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
-          );
-          await onDiskEvent(event);
-        }
-      },
-      subscribeOpts,
-    );
+    const parcelSub = await startParcelWatcher(contentDir, contentFilter, fileIndex, onDiskEvent);
+    if (parcelSub) {
+      subscription = parcelSub;
+      backend = 'parcel';
+    } else {
+      subscription = await startChokidarWatcher(contentDir, contentFilter, fileIndex, onDiskEvent);
+      backend = 'chokidar';
+    }
   } catch (e) {
     clearInterval(evictionInterval);
     throw e;
   }
 
-  // Wrap unsubscribe to also clear the eviction interval
   const originalUnsubscribe = subscription.unsubscribe.bind(subscription);
 
-  console.log(`[file-watcher] Watching ${contentDir} for external .md changes`);
+  console.log(
+    `[file-watcher] Watching ${contentDir} for external .md changes (backend: ${backend})`,
+  );
 
   return {
     async unsubscribe() {

@@ -45,7 +45,9 @@
         "src/editor/**/*.ts",
         "src/editor/**/*.tsx",
         "tests/stress/observers.stress.s1-s8-s9.test.ts",
-        "tests/stress/synthetic.ts"
+        "tests/stress/synthetic.ts",
+        "../core/src/**/*.ts",
+        "../server/src/**/*.ts"
       ]
     },
     "test:stress:s2": {
@@ -55,7 +57,9 @@
         "src/editor/**/*.ts",
         "src/editor/**/*.tsx",
         "tests/stress/observers.stress.s2.test.ts",
-        "tests/stress/synthetic.ts"
+        "tests/stress/synthetic.ts",
+        "../core/src/**/*.ts",
+        "../server/src/**/*.ts"
       ]
     },
     "test:stress:s4": {
@@ -65,7 +69,9 @@
         "src/editor/**/*.ts",
         "src/editor/**/*.tsx",
         "tests/stress/observers.stress.s4.test.ts",
-        "tests/stress/synthetic.ts"
+        "tests/stress/synthetic.ts",
+        "../core/src/**/*.ts",
+        "../server/src/**/*.ts"
       ]
     },
     "test:stress:s5-s6": {
@@ -75,7 +81,9 @@
         "src/editor/**/*.ts",
         "src/editor/**/*.tsx",
         "tests/stress/observers.stress.s5-s6.test.ts",
-        "tests/stress/synthetic.ts"
+        "tests/stress/synthetic.ts",
+        "../core/src/**/*.ts",
+        "../server/src/**/*.ts"
       ]
     },
     "test:fuzz": {
@@ -85,7 +93,9 @@
         "src/editor/**/*.ts",
         "src/editor/**/*.tsx",
         "tests/stress/observers.fuzz.test.ts",
-        "tests/stress/synthetic.ts"
+        "tests/stress/synthetic.ts",
+        "../core/src/**/*.ts",
+        "../server/src/**/*.ts"
       ]
     },
     "test:e2e": {
