@@ -234,12 +234,14 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             },
 
             onExit() {
+              // Clean up positioning first (must run even if renderer.destroy throws)
               stopAutoUpdate?.();
               stopAutoUpdate = null;
-              renderer?.destroy();
-              renderer = null;
               popup?.remove();
               popup = null;
+              // React cleanup last — if destroy() throws, DOM is already clean
+              renderer?.destroy();
+              renderer = null;
               currentProps = null;
               selectedIndex = 0;
             },

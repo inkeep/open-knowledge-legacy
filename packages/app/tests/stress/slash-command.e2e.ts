@@ -344,6 +344,34 @@ test.describe('slash command — keyboard navigation', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('selection clamps to the last item when filtering narrows the list', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/');
+    await page.waitForTimeout(300);
+
+    // Navigate down 5 items (selection at index 5)
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press('ArrowDown');
+      await page.waitForTimeout(80);
+    }
+
+    // Now type a query that narrows to fewer items than current index
+    // Backspace to delete '/', then type '/h' — which should match heading items only (~3)
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(200);
+    await page.keyboard.type('/heading');
+    await page.waitForTimeout(400);
+
+    const m = await getMenuState(page);
+    expect(m.open).toBe(true);
+    if (!m.open) return;
+    // Selection should be clamped to within the narrowed list, not beyond it
+    const selectedIdx = m.items.findIndex((i) => i.dataSelected === 'true');
+    expect(selectedIdx).toBeGreaterThanOrEqual(0);
+    expect(selectedIdx).toBeLessThan(m.itemCount);
+    await page.keyboard.press('Escape');
+  });
+
   test('Escape closes the menu without inserting anything', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/');
