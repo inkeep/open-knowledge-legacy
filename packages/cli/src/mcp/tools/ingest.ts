@@ -10,7 +10,7 @@ import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
 function buildBody(source: string): string {
-  return `Capture this external source into the project wiki as raw reference material. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
+  return `Capture this external source into the project knowledge base as raw reference material. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
 
 Source: ${source}
 
@@ -19,7 +19,7 @@ Source: ${source}
 - **URL** → use your available web fetch tool.
 - **Local file or attachment** → use your native file read tool.
 
-If the fetch fails (login wall, 401/402/403/429, anti-scraping block), **stop and ask the user to paste the content directly**. Do not save a stub, an error page, or a login wall as "raw content" — that poisons the wiki.
+If the fetch fails (login wall, 401/402/403/429, anti-scraping block), **stop and ask the user to paste the content directly**. Do not save a stub, an error page, or a login wall as "raw content" — that poisons the knowledge base.
 
 If the fetcher returns an obvious *summary* of the page instead of the raw content (some LLM-backed fetch tools do this), note it and try a raw alternative (e.g., \`curl -sL <url>\` for text-heavy sources, or ask the user to paste). The goal is verbatim bytes.
 
@@ -53,7 +53,7 @@ tags:
 
 - File exists at \`.open-knowledge/external-sources/<slug>.md\`
 - Valid frontmatter (at minimum \`title\`, \`description\`, and either \`source_url\` or \`source_path\`)
-- \`.open-knowledge/external-sources/INDEX.md\` picks it up automatically via the MCP server's file watcher
+- \`.open-knowledge/catalogs/\` picks it up automatically via the MCP server's file watcher
 
 ## Non-goals
 
@@ -69,14 +69,14 @@ export const DESCRIPTION = [
   'Raw preservation only — no analysis or interpretation.',
   '',
   '**Use when:**',
-  '- Capturing reference material for the project wiki',
+  '- Capturing reference material for the project knowledge base',
   '- Saving a URL or document for later research',
   '- Archiving an external source alongside the codebase',
   '- The user shares a URL or document they want preserved',
   '',
   '**Triggers on:**',
   '- "ingest", "save this source", "capture this URL", "add to external sources"',
-  '- User shares a URL, article, or document to preserve in the wiki',
+  '- User shares a URL, article, or document to preserve in the knowledge base',
   '- Research workflow needs raw sources before analysis',
 ].join('\n');
 

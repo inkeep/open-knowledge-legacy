@@ -22,8 +22,8 @@ describe('runInit', () => {
   it('scaffolds .open-knowledge/ and writes a fresh .mcp.json', () => {
     const result = runInit({ cwd: testDir });
 
-    // Wiki scaffolded
-    expect(result.wikiCreated.length).toBeGreaterThan(0);
+    // Content scaffolded
+    expect(result.contentCreated.length).toBeGreaterThan(0);
     expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
     expect(existsSync(join(testDir, '.open-knowledge', 'external-sources'))).toBe(true);
     expect(existsSync(join(testDir, '.open-knowledge', 'research'))).toBe(true);
@@ -134,22 +134,22 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('skipped-flag');
     expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
 
-    // But the wiki IS scaffolded
+    // But the content IS scaffolded
     expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
   });
 
   it('is idempotent — running twice produces the same end state', () => {
     const firstResult = runInit({ cwd: testDir });
     expect(firstResult.mcpAction).toBe('written');
-    expect(firstResult.wikiCreated.length).toBeGreaterThan(0);
+    expect(firstResult.contentCreated.length).toBeGreaterThan(0);
 
     const firstConfig = readFileSync(join(testDir, '.mcp.json'), 'utf-8');
 
     const secondResult = runInit({ cwd: testDir });
     expect(secondResult.mcpAction).toBe('skipped-existing');
-    // Wiki scaffolding is idempotent too — writeIfMissing skips existing files
-    expect(secondResult.wikiCreated.length).toBe(0);
-    expect(secondResult.wikiSkipped.length).toBeGreaterThan(0);
+    // Content scaffolding is idempotent too — writeIfMissing skips existing files
+    expect(secondResult.contentCreated.length).toBe(0);
+    expect(secondResult.contentSkipped.length).toBeGreaterThan(0);
 
     const secondConfig = readFileSync(join(testDir, '.mcp.json'), 'utf-8');
     expect(secondConfig).toBe(firstConfig);
@@ -162,7 +162,7 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('failed');
     expect(result.mcpError).toMatch(/invalid JSON/i);
 
-    // Wiki should still have been scaffolded (best-effort separation)
+    // Content should still have been scaffolded (best-effort separation)
     expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
   });
 });
