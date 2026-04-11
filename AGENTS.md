@@ -92,15 +92,29 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 
 ## Package: server
 
-Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, and HTTP API.
+Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, shadow repo, and HTTP API.
 
 ```
 Hocuspocus Server
-├── Persistence Extension (CRDT → markdown → disk → git)
+├── Persistence Extension (CRDT → markdown → disk → shadow git)
 ├── API Extension (onRequest hook for HTTP endpoints)
 ├── Agent Sessions (DirectConnection + UndoManager per agent)
-└── File Watcher (@parcel/watcher disk bridge)
+├── File Watcher (@parcel/watcher disk bridge)
+├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
+├── Shadow Repo (.git/openknowledge/ — attribution journal)
+├── Reconciliation (three-way merge for external writes)
+└── Shadow Branch GC (orphaned ref cleanup)
 ```
+
+### Shadow repo & branch runtime
+
+The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or `.openknowledge/` (standalone mode, no project `.git/`). It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store.
+
+**Branch-scoped state:** `reconciledBase` (the three-way merge base) is `Map<branch, Map<docName, string>>`. On branch switch, the active scope switches to the target branch's map. WIP refs are namespaced as `refs/wip/<branch>/<writer-id>`.
+
+**Branch switch protocol:** On `BatchBegin` the server parks current Y.Doc in-memory state to shadow refs via `parkBranch()`. On `BatchEnd` with `cross-branch` kind, Y.Docs reset from disk, `reconciledBase` scope switches, and parked WIP from a prior visit is restored via three-way merge (`restoreBranchWIP`).
+
+**Writer lock:** Only one active writer instance may mutate a given shadow root. The lock file at `<shadowDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
 
 ### API Endpoints
 
@@ -114,14 +128,24 @@ Hocuspocus Server
 | POST | `/api/agent-redo` | Redo last undone agent edit |
 | GET | `/api/agent-undo-status` | Check canUndo/canRedo |
 | POST | `/api/test-reset` | Reset document (E2E test isolation) |
+| POST | `/api/save-version` | Save Version — project repo commit + shadow checkpoint |
+| GET | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park) |
+| GET | `/api/rescue` | List rescue buffers (dirty docs from deleted/branch-switched files) |
+| GET | `/api/rescue/:docName` | Retrieve a specific rescue buffer (text/markdown) |
 
 ### Key files
 
-- `src/standalone.ts` — `createServer()` factory
-- `src/persistence.ts` — `createPersistenceExtension()` with configurable contentDir/projectDir
-- `src/file-watcher.ts` — `startWatcher()` + writeTracker
+- `src/standalone.ts` — `createServer()` factory; wires HEAD watcher callbacks (park on BatchBegin, reconcile/restore on BatchEnd)
+- `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating
+- `src/shadow-repo.ts` — `initShadowRepo()`, `commitWip()`, `commitUpstreamImport()`, `parkBranch()`, `readParkedState()`, `saveVersion()`
+- `src/shadow-lock.ts` — `acquireLock()` / `releaseLock()` for exclusive shadow-root writer access
+- `src/head-watcher.ts` — `startHeadWatcher()`; tracks `lastKnownBranch`, classifies `BatchKind` (within-branch / cross-branch / detached-head)
+- `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection
+- `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
+- `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
+- `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park
 - `src/agent-sessions.ts` — `AgentSessionManager` class
-- `src/api-extension.ts` — HTTP API as Hocuspocus onRequest extension
+- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, and metrics endpoints
 
 ## Package: cli
 
@@ -267,13 +291,19 @@ Y.Doc
 
 ## Testing
 
+### Test file naming convention
+
+- `*.test.ts` — Bun test runner (unit, integration, stress). Auto-discovered by `bun test`.
+- `*.e2e.ts` — Playwright E2E tests. Auto-discovered by `playwright.config.ts` (`testMatch: /.*\.e2e\.ts$/`). Run via `bun run test:stress:e2e`.
+- **Do not use `*.spec.ts`** — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
+
 ### Test layers
 
 | Layer | Type | Location | Command |
 |---|---|---|---|
 | A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.test.ts` | `bun run test` |
 | B | HTTP + server-side CRDT | `packages/app/tests/stress/stress-api.ts` | `bun run tests/stress/stress-api.ts` (needs dev server) |
-| C | Playwright E2E | `packages/app/tests/stress/crdt-stress.spec.ts`, `tests/stress/ux-interactions.spec.ts` | `bunx playwright test` |
+| C | Playwright E2E | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts` | `bunx playwright test` |
 | D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |
 | Integration | Tier 1 bridge matrix | `packages/app/tests/integration/bridge-matrix.test.ts` | `bun run test` |
 

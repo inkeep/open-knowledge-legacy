@@ -11,25 +11,17 @@
  * Env vars: STRESS_FUZZ_SEED, STRESS_FUZZ_MAX_ITER, STRESS_FUZZ_VERBOSE
  */
 
-import { beforeEach, describe, test } from 'bun:test';
+import { describe, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
-import {
-  __resetCoordinationState,
-  markUserTyping,
-  setupObservers,
-} from '../../src/editor/observers';
+import { markUserTyping, setupObservers } from '../../src/editor/observers';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-beforeEach(() => {
-  __resetCoordinationState();
-});
 
 // ---------- seeded PRNG ----------
 
@@ -172,8 +164,8 @@ const mutators: Array<{ name: string; fn: Mutator }> = [
   },
   {
     name: 'markTyping',
-    fn: (_ctx) => {
-      markUserTyping();
+    fn: (ctx) => {
+      markUserTyping(ctx.doc);
     },
   },
 ];

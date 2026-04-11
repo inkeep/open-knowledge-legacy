@@ -1,11 +1,12 @@
 /**
  * App-specific shared extensions — uses core's sharedExtensions but swaps
  * BOTH jsxComponentEditable and jsxComponentVoid with React-enabled versions
- * that have NodeView renderers, and adds app-only extensions (slash commands).
+ * that have NodeView renderers, and adds app-only extensions (slash commands, placeholder).
  */
 import { sharedExtensions as coreExtensions } from '@inkeep/open-knowledge-core';
+import Placeholder from '@tiptap/extension-placeholder';
 import { JsxComponentEditable, JsxComponentVoid } from './jsx-component';
-import { SlashCommands } from './slash-commands.tsx';
+import { SlashCommand } from './slash-command';
 
 // Replace core's jsxComponent extensions (no NodeView) with app's (has ReactNodeViewRenderer)
 export const sharedExtensions = [
@@ -14,5 +15,9 @@ export const sharedExtensions = [
     if (ext.name === 'jsxComponentVoid') return JsxComponentVoid;
     return ext;
   }),
-  SlashCommands,
+  SlashCommand,
+  Placeholder.configure({
+    placeholder: "Type '/' for commands",
+    showOnlyCurrent: true,
+  }),
 ];

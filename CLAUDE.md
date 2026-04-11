@@ -101,7 +101,8 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 | Command | Description |
 |---------|-------------|
 | `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app |
-| `open-knowledge mcp` | Start MCP stdio server (connects to running server) |
+| `open-knowledge init` | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json` |
+| `open-knowledge mcp` | Start MCP stdio server (disk-only or with optional Hocuspocus) |
 
 ### Config system
 

@@ -51,7 +51,7 @@ Seven Now stories form **one delivery group** — they share the CRDT layer and 
 
 - **T1.1** Wire TipTap + y-prosemirror to Y.XmlFragment('default') — block-level CRDT, void nodes atomic. *(Already landed via init-spike; this bucket inherits it.)*
 - **T1.2** Build custom block schemas for the pre-defined component set, each backed by a React component from the project's `mdx-components.tsx`
-- **T1.3** Build the component introspection pipeline: react-docgen-typescript reads the TypeScript interface → auto-generate prop controls (string→text, boolean→toggle, union→dropdown). Override file (`.openknowledge/component-meta.ts`) upgrades specific controls. React.ReactNode props become inline-editable children, not prop fields. Cache to `.openknowledge/component-cache.json` with mtime invalidation. *(See TQ31 findings — `skipChildrenPropWithoutDoc: false`, `shouldExtractLiteralValuesFromEnum: true`, not `shouldExtractValuesFromUnion`.)*
+- **T1.3** Build the component introspection pipeline: react-docgen-typescript reads the TypeScript interface → auto-generate prop controls (string→text, boolean→toggle, union→dropdown). Override file (`.open-knowledge/component-meta.ts`) upgrades specific controls. React.ReactNode props become inline-editable children, not prop fields. Cache to `.open-knowledge/component-cache.json` with mtime invalidation. *(See TQ31 findings — `skipChildrenPropWithoutDoc: false`, `shouldExtractLiteralValuesFromEnum: true`, not `shouldExtractValuesFromUnion`.)*
 - **T1.4** Build the void-node-with-mini-CodeMirror extension for non-registered JSX. Raw string in, raw string out.
 - **T1.5** Build the per-block code toggle — one component block switches to code view while the rest stays WYSIWYG
 - **T1.6** Build the file-level source toggle UI on top of the observer sync already landed in PR #6 (TQ25). *(The sync is done; the polish is not.)*
@@ -72,7 +72,7 @@ Seven Now stories form **one delivery group** — they share the CRDT layer and 
 
 ---
 
-## Bucket 2 — Agent integration (MCP surface + _INDEX.md + .openknowledge/*) ++[Tim]++
+## Bucket 2 — Agent integration (MCP surface + _INDEX.md + .open-knowledge/*) ++[Tim]++
 
 **Primary story:** S4, plus derived work on CC6 (catalog files) and CC7 (agent DX)
 
@@ -214,7 +214,7 @@ The full "Save Version" + timeline UI is the biggest remaining work in this buck
 
 ### Technical stories
 
-- **T5.1** Pick the permission store implementation (TQ10, currently Parked): (a) frontmatter-only, (b) `.openknowledge/permissions.yaml` config, (c) full Zanzibar (SpiceDB/OpenFGA/Permify). P0 recommendation: (a) or (b); full Zanzibar is Later.
+- **T5.1** Pick the permission store implementation (TQ10, currently Parked): (a) frontmatter-only, (b) `.open-knowledge/permissions.yaml` config, (c) full Zanzibar (SpiceDB/OpenFGA/Permify). P0 recommendation: (a) or (b); full Zanzibar is Later.
 - **T5.2** Build the permission resolution layer — given (agent identity, file path), return the effective relation (`editor` / `proposer` / `maintainer` / `reader`)
 - **T5.3** Wire permission resolution into the MCP write pipeline (Bucket 2 integration point) — resolved permission determines: write-to-main, auto-draft, overwrite, or reject
 - **T5.4** Draft branch creation from proposer writes — `create_draft` called internally when an agent with `proposer` calls `write_file`
@@ -254,8 +254,8 @@ TQ10 decision → PQ12 decision → Bucket 2 can finalize write-path routing →
 - **T6.3** Embeddable editor — renders in standalone browser tab AND as iframe inside agent preview panels. No reliance on `window.top`, responsive to panel-sized viewports, works within sandboxed iframes
 - **T6.4** Programmatic editor-open integration — MCP `instructions` field tells the agent to open `localhost:3000` via whatever browser capability is available (preview panel, browser tool, Playwright, CLI `open`)
 - **T6.5** `AGENTS.md` template — portability principle (CC7): any coding agent without our MCP server can still navigate the KB via files alone
-- **T6.6** Resolve TQ30 — is `.openknowledge/` the project namespace? What goes in it (permissions, config, component cache, component overrides, gitignored derived data)?
-- **T6.7** Resolve `.openknowledge/config.json` — what does it contain? Is it needed at all or does `AGENTS.md` carry the conventions?
+- **T6.6** Resolve TQ30 — is `.open-knowledge/` the project namespace? What goes in it (permissions, config, component cache, component overrides, gitignored derived data)?
+- **T6.7** Resolve `.open-knowledge/config.json` — what does it contain? Is it needed at all or does `AGENTS.md` carry the conventions?
 - **T6.8** Resolve the KB-git-vs-parent-project question (new from team plan, not in PROJECT.md): own repo / subdir with own `.git` / git worktree / tracked in parent. Affects `npx openknowledge init` behavior and the version history surface from Bucket 4.
 - **T6.9** Resolve "starting dir" convention — `npx openknowledge init .` vs `init <path>` vs auto-detect from existing markdown files
 - **T6.10** Cross-platform verification matrix — run T6.1/T6.2/T6.4 on macOS, Linux, Windows; document any quirks
@@ -268,7 +268,7 @@ TQ10 decision → PQ12 decision → Bucket 2 can finalize write-path routing →
 
 ### Critical path
 
-T5.6 (PQ12 init defaults) + T6.6 (TQ30 `.openknowledge/`) + T6.8 (git relationship) must resolve early — they're a three-way interlock.
+T5.6 (PQ12 init defaults) + T6.6 (TQ30 `.open-knowledge/`) + T6.8 (git relationship) must resolve early — they're a three-way interlock.
 
 ---
 
@@ -296,7 +296,7 @@ T5.6 (PQ12 init defaults) + T6.6 (TQ30 `.openknowledge/`) + T6.8 (git relationsh
 - **T7.3** Wiki-link parser for markdown round-trip (input + output) — integrate with the `@tiptap/markdown` pipeline from TQ3/TQ4
 - **T7.4** Red link detection + click-to-create handler
 - **T7.5** Dual adjacency list (forward + backward) built incrementally on `onStoreDocument`. Server-side extraction via `yDocToProsemirrorJSON()` — no editor schema needed on the server.
-- **T7.6** Per-branch backlink cache (CC6) — serialized to `.openknowledge/cache/<branch>/backlinks.json`; content-addressed dedup for branch switching
+- **T7.6** Per-branch backlink cache (CC6) — serialized to `.open-knowledge/cache/<branch>/backlinks.json`; content-addressed dedup for branch switching
 - **T7.7** Backlinks panel UI — bottom of article, context snippets, click to navigate
 - **T7.8** MCP link-graph tools: `get_backlinks(page)`, `get_forward_links(page)`, `get_orphans()`, `get_hubs()`, `get_link_graph()`, `suggest_links(page)`
 - **T7.9** Reference definitions generation for git portability (Foam pattern) — standard markdown link ref defs emitted alongside wiki-links
@@ -359,7 +359,7 @@ PR #6 already shipped the architecture + 24 Playwright tests under controlled co
 
 Buckets 2 (MCP), 5 (permissions), and 6 (onboarding) all touch:
 
-- **TQ30** — is `.openknowledge/` the project namespace? What goes in it?
+- **TQ30** — is `.open-knowledge/` the project namespace? What goes in it?
 - **PQ12** — editor-by-default or proposer-by-default?
 - **MCP `instructions` field** — what does an agent read on connect?
 
@@ -406,7 +406,7 @@ Items in the team planning doc that PROJECT.md has in Next or Later. Each needs:
 2. **M2' audit (Bucket 2):** 10 MCP tools with S10's links behind a capability flag, or 16 tools in two namespaces, or drop the framing?
 3. **TQ10 permission store (Bucket 5):** frontmatter-only, config file, or full Zanzibar?
 4. **PQ12 init defaults (Buckets 5, 6):** editor-by-default or proposer-by-default for new KBs?
-5. **TQ30 `.openknowledge/` directory (Buckets 2, 5, 6):** confirm as project namespace, or alternative convention?
+5. **TQ30 `.open-knowledge/` directory (Buckets 2, 5, 6):** confirm as project namespace, or alternative convention?
 6. **KB git relationship to parent repo (Bucket 6):** own repo / subdir with own `.git` / worktree / tracked in parent?
 7. **Bucket 4 timeline UI scope:** ship the full "Save Version" + timeline in Now, or ship invisible auto-persist with UI deferred to Next?
 8. **Bucket 1 / Bucket 3 boundary on S5:** who draws the cursor + diff view inside the editor canvas?

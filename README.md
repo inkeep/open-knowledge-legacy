@@ -1,83 +1,102 @@
 # Open Knowledge
 
-Bun monorepo -- CRDT collaboration editor with bidirectional observer sync, packaged as `@inkeep/open-knowledge` CLI.
+Local-first knowledge base with real-time CRDT collaboration. Includes a rich editor, markdown file-backed persistence, and an MCP server for AI agent integration.
 
-## Monorepo structure
+## Prerequisites
 
-| Package | Name | Description |
-|---------|------|-------------|
-| `packages/core` | `@inkeep/open-knowledge-core` | Shared extensions, types, registry, utils (browser + Node) |
-| `packages/server` | `@inkeep/open-knowledge-server` | Hocuspocus CRDT server library (persistence, file-watcher, agent sessions, HTTP API) |
-| `packages/cli` | `@inkeep/open-knowledge` | Published CLI + MCP stdio server |
-| `packages/app` | (private) | React editor frontend (TipTap WYSIWYG + CodeMirror source mode) |
-| `docs/` | (private) | Next.js docs site (Fumadocs) |
+- [Bun](https://bun.sh) >= 1.3.11
+- [Node.js](https://nodejs.org) >= 22
+- Git
 
-## Quick start
+## Quick Start
+
+### Install the CLI
 
 ```bash
+bun install -g @inkeep/open-knowledge
+```
+
+Or run directly with bunx:
+
+```bash
+bunx @inkeep/open-knowledge
+```
+
+### Initialize a project wiki
+
+```bash
+cd your-project
+open-knowledge init
+```
+
+This scaffolds a `.open-knowledge/` directory and registers the MCP server in `.mcp.json`.
+
+### Start the editor
+
+```bash
+open-knowledge start
+```
+
+Opens the collaborative editor at `http://localhost:5173`. Edits are persisted as markdown files in `.open-knowledge/`.
+
+### Start the MCP server
+
+```bash
+open-knowledge mcp
+```
+
+Starts the MCP stdio server for AI agent integration.
+
+## Development
+
+```bash
+git clone <repo-url>
+cd open-knowledge
 bun install
-cd packages/app && bun run dev
 ```
 
-This starts the Vite dev server with embedded Hocuspocus on port 5173.
-
-## Quality gates
+### Run the dev server
 
 ```bash
-bun run check       # Full gate: typecheck + lint + test (all packages via turbo)
-bun run check:fast  # Typecheck + lint only (skips tests)
-bun run format      # Auto-fix lint + format + imports (biome)
+cd packages/app
+bun run dev
 ```
 
-## Build
+Starts Vite + Hocuspocus on port 5173 with hot reload.
+
+### Build the CLI
 
 ```bash
-bun run build            # Build all packages via turbo
-bun run build-registry   # Regenerate component manifest from built-ins + .d.ts extraction
-bun run drift-check      # Verify generated components.ts matches built-ins (CI gate)
+cd packages/cli
+bun run build
 ```
 
-## Editor architecture
-
-```
-Y.Doc
-+-- Y.XmlFragment('default')  <-- TipTap binds here
-+-- Y.Text('source')          <-- CodeMirror binds here via y-codemirror.next
-+-- Y.Map('metadata')         <-- frontmatter cache
-+-- Y.Map('activity')         <-- agent write attribution side-channel
-
-Observer A: XmlFragment -> Text (incremental diff)
-Observer B: Text -> XmlFragment (parse + updateYFragment)
-```
-
-## Component registry
-
-21 built-in component entries across 15 families (Callout, Tabs, Card, Steps, Accordion, ImageZoom, Files, TypeTable, Banner, InlineTOC, Video, Frame, CodeGroup, Mermaid, Audio). Props auto-extracted from TypeScript declarations via react-docgen-typescript.
+### Run the CLI locally (after building)
 
 ```bash
-bun run build-registry   # Regenerate packages/core/src/generated/components.ts
+node packages/cli/dist/cli.mjs start
+node packages/cli/dist/cli.mjs init
+node packages/cli/dist/cli.mjs mcp
 ```
 
-## CLI usage
+### Quality checks
 
 ```bash
-npx @inkeep/open-knowledge start   # Start server + editor
-npx @inkeep/open-knowledge mcp     # Start MCP stdio server
+bun run lint          # Biome lint
+bun run format        # Biome format
+bun run typecheck     # TypeScript across all packages
+bun run test          # Tests across all packages
+bun run check         # All of the above
 ```
 
-## Testing
+## Monorepo Structure
 
-```bash
-bun run test                            # Unit tests across workspace
-cd packages/app && bunx playwright test # E2E tests (requires dev server)
+```
+packages/
+  core/    — Shared extensions, types, and utilities
+  server/  — Hocuspocus CRDT collaboration server
+  cli/     — Published CLI + MCP server (@inkeep/open-knowledge)
+  app/     — React editor frontend
+docs/      — Documentation site (Fumadocs)
 ```
 
-## Further reading
-
-- [AGENTS.md](AGENTS.md) -- Detailed conventions for AI coding agents
-- [ARCHITECTURE.md](ARCHITECTURE.md) -- System design and data flow
-- [STORIES.md](STORIES.md) -- User stories and workstream status
-
-## License
-
-See [LICENSE](LICENSE) for details.

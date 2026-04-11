@@ -1,0 +1,33 @@
+# Open Knowledge — workspace configuration
+#
+# This file overrides built-in defaults for this workspace. Every key below
+# is commented out and shows its current default value. Uncomment any key
+# to override it.
+#
+# Precedence (lowest -> highest):
+#   Built-in defaults
+#     -> ~/.open-knowledge/config.yml         (user defaults)
+#     -> ./.open-knowledge/config.yml         (this file)
+#
+# Schema reference: packages/cli/src/config/schema.ts
+
+
+# --- Content ---------------------------------------------------------------
+# dir: where the CRDT editor reads/writes documents. Relative to the project
+# root (the directory containing .open-knowledge/), NOT to this file.
+#
+# include/exclude: glob patterns for tracked content files. Relative to the
+# project root.
+#
+# content:
+#   dir: .
+#   include:
+#     - "**/*.md"
+#   exclude: []
+
+
+# --- Persistence -----------------------------------------------------------
+# How aggressively CRDT updates are flushed to disk.
+# persistence:
+#   debounceMs: 2000
+#   maxDebounceMs: 10000

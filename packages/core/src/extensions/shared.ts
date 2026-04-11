@@ -6,6 +6,7 @@
  * sharedExtensions automatically gets the registry-aware extension set.
  * None of the 9 sites need to import the factory directly (R12).
  */
+import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
@@ -26,8 +27,10 @@ export const sharedExtensions = [
   // markdownTokenizer is registered before codeBlock's handler.
   jsxComponentEditable,
   jsxComponentVoid,
-  StarterKit.configure({ undoRedo: false }),
-  Table,
+  StarterKit.configure({ undoRedo: false, link: false }),
+  Table.configure({
+    resizable: true,
+  }),
   TableRow,
   TableHeader,
   TableCell,
@@ -41,4 +44,5 @@ export const sharedExtensions = [
   }),
   TaskList,
   TaskItem,
+  Highlight,
 ];

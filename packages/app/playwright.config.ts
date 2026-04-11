@@ -22,7 +22,7 @@ export default defineConfig({
     {
       name: 'stress',
       testDir: './tests/stress',
-      testMatch: /.*\.spec\.ts$/,
+      testMatch: /.*\.e2e\.ts$/,
       timeout: 120_000,
       retries: 0,
       use: { headless: true },
