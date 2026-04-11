@@ -20,6 +20,14 @@ export {
   type TokenizerVersion,
 } from './extensions/jsx-tokenizer.ts';
 export { sharedExtensions } from './extensions/shared.ts';
+export {
+  getWikiLinkText,
+  normalizeNullableString,
+  parseWikiLink,
+  renderWikiLink,
+  WikiLink,
+  type WikiLinkAttrs,
+} from './extensions/wiki-link.ts';
 
 // Types
 export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';

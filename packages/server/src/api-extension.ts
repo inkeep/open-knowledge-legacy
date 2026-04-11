@@ -5,9 +5,17 @@
  * the standalone Server and the Vite dev plugin.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_WRITE_ORIGIN,
@@ -70,6 +78,56 @@ function json(res: ServerResponse, status: number, data: unknown): void {
     'X-Content-Type-Options': 'nosniff',
   });
   res.end(JSON.stringify(data));
+}
+
+/**
+ * Extract a human-readable title from a markdown file's content.
+ *
+ * Priority:
+ *  1. `title:` field in YAML frontmatter (between leading `---` delimiters)
+ *  2. First `# heading` line in the file
+ *  3. filename (without extension, as provided by the caller)
+ */
+export function extractPageTitle(content: string, filename: string): string {
+  // 1. Frontmatter title — only if the file starts with ---
+  if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
+    const closingIdx = content.indexOf('\n---', 3);
+    if (closingIdx !== -1) {
+      const frontmatter = content.slice(0, closingIdx + 4);
+      const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
+      if (titleMatch) {
+        return titleMatch[1].trim();
+      }
+    }
+  }
+
+  // 2. First # heading
+  const headingMatch = content.match(/^# (.+)$/m);
+  if (headingMatch) {
+    return headingMatch[1].trim();
+  }
+
+  // 3. Filename fallback
+  return filename;
+}
+
+function listMarkdownFiles(dir: string): string[] {
+  const files: string[] = [];
+
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (EXCLUDED_DIRS.has(entry.name)) continue;
+    if (entry.isSymbolicLink()) continue;
+    const entryPath = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listMarkdownFiles(entryPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith('.md')) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
@@ -512,7 +570,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const doc = hocuspocus.documents.get('test-doc');
       if (doc) await hocuspocus.unloadDocument(doc);
-      const { writeFileSync } = await import('node:fs');
       writeFileSync(resolve(contentDir, 'test-doc.md'), '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
@@ -705,9 +762,107 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     res.end(content);
   }
 
+  async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+      const { path: filePath } = body as Record<string, unknown>;
+      if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
+        json(res, 400, { ok: false, error: 'path is required' });
+        return;
+      }
+      if (!filePath.endsWith('.md')) {
+        json(res, 400, { ok: false, error: 'path must end with .md' });
+        return;
+      }
+      if (
+        filePath.includes('..') ||
+        filePath.startsWith('/') ||
+        filePath.includes('\x00') ||
+        filePath.includes('\\')
+      ) {
+        json(res, 400, { ok: false, error: 'path must not contain .. or start with /' });
+        return;
+      }
+      const resolvedContentDir = resolve(contentDir);
+      const fullPath = resolve(resolvedContentDir, filePath);
+      if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
+        json(res, 400, { ok: false, error: 'path must not escape content directory' });
+        return;
+      }
+      mkdirSync(dirname(fullPath), { recursive: true });
+      try {
+        writeFileSync(fullPath, '', { encoding: 'utf-8', flag: 'wx' });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          json(res, 409, { ok: false, error: 'File already exists' });
+          return;
+        }
+        throw err;
+      }
+      const docName = filePath.slice(0, -3);
+      json(res, 200, { ok: true, docName });
+    } catch (e) {
+      console.error('[create-page]', e);
+      json(res, 500, { ok: false, error: 'Failed to create page' });
+    }
+  }
+
+  async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      if (!existsSync(contentDir)) {
+        json(res, 200, { ok: true, pages: [] });
+        return;
+      }
+      const files = listMarkdownFiles(contentDir);
+      const pages = files.map((filePath) => {
+        const docName = relative(contentDir, filePath).replace(/\\/g, '/').slice(0, -3);
+        let title = docName;
+        try {
+          const content = readFileSync(filePath, 'utf-8');
+          title = extractPageTitle(content, docName);
+        } catch {
+          // unreadable file — fall back to docName
+        }
+        return { docName, title };
+      });
+      pages.sort((a, b) => a.docName.localeCompare(b.docName));
+      json(res, 200, { ok: true, pages });
+    } catch (e) {
+      console.error('[pages]', e);
+      json(res, 500, { ok: false, error: 'Failed to list pages' });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
+    '/api/pages': handlePages,
+    '/api/create-page': handleCreatePage,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,

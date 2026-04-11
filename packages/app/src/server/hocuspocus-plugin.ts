@@ -6,7 +6,7 @@
  * `bun run dev` starts everything in a single process.
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
@@ -30,8 +30,8 @@ const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
 
 /**
  * Read content.dir from .open-knowledge/config.yml.
- * Falls back to 'content' (the old hardcoded default) if no config exists
- * or no content.dir is specified.
+ * Falls back to project root (matching config schema default: content.dir = '.') if no config
+ * exists or no content.dir is specified.
  */
 function resolveContentDir(): string {
   const configPath = resolve(PROJECT_ROOT, '.open-knowledge/config.yml');
@@ -47,11 +47,11 @@ function resolveContentDir(): string {
       console.warn('[hocuspocus] Failed to parse config:', err);
     }
   }
-  // Default to project root (matches config schema default: content.dir = '.')
   return PROJECT_ROOT;
 }
 
 const CONTENT_DIR = resolveContentDir();
+const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
@@ -64,7 +64,8 @@ export const hocuspocus = new Hocuspocus({
   extensions: [
     createPersistenceExtension({
       contentDir: CONTENT_DIR,
-      projectDir: resolve(CONTENT_DIR, '..'),
+      projectDir: PROJECT_ROOT,
+      contentRoot: CONTENT_ROOT,
     }).extension,
   ],
 });
@@ -81,6 +82,8 @@ hocuspocus.configuration.extensions.push(
     sessionManager,
     contentDir: CONTENT_DIR,
     enableTestRoutes: true,
+    projectRoot: PROJECT_ROOT,
+    contentRoot: CONTENT_ROOT,
   }),
 );
 
