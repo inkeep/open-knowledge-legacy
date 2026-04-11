@@ -103,7 +103,7 @@ describe('document listing (filesystem)', () => {
   });
 
   test('lists .md files recursively', () => {
-    const { readdirSync, statSync } = require('node:fs');
+    const { readdirSync } = require('node:fs');
     const entries = readdirSync(testDir, { recursive: true }) as string[];
     const mdFiles = entries.filter((e: string) => e.endsWith('.md'));
     // Should include README, guide, intro, deep, plus excluded dirs
