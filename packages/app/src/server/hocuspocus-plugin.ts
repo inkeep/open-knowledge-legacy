@@ -5,7 +5,7 @@
  * This plugin wires Hocuspocus into Vite's HTTP/WS server so that
  * `bun run dev` starts everything in a single process.
  */
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
@@ -37,7 +37,8 @@ interface ContentConfig {
 
 /**
  * Read content config from .open-knowledge/config.yml.
- * Falls back to defaults if no config exists or fields are unspecified.
+ * Falls back to defaults (PROJECT_ROOT + all-markdown include + empty exclude) if no
+ * config exists or fields are unspecified.
  */
 function resolveContentConfig(): ContentConfig {
   const defaults: ContentConfig = { dir: PROJECT_ROOT, include: ['**/*.md'], exclude: [] };
@@ -70,20 +71,40 @@ function resolveContentConfig(): ContentConfig {
 }
 
 const contentConfig = resolveContentConfig();
-const CONTENT_DIR = contentConfig.dir;
+// Resolution priority: OK_TEST_CONTENT_DIR env var (for isolated test runs —
+// realpathSync resolves symlinks like /tmp → /private/tmp on macOS so the
+// watcher and persistence layer agree on canonical paths) falls back to the
+// config-driven workspace default.
+const CONTENT_DIR = process.env.OK_TEST_CONTENT_DIR
+  ? realpathSync(process.env.OK_TEST_CONTENT_DIR)
+  : contentConfig.dir;
 const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
 
-// Create content filter at module scope — unified exclusion (gitignore + config exclude)
+console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
+
+// Create content filter at module scope — unified exclusion (gitignore + config exclude).
+// When OK_TEST_CONTENT_DIR is set (E2E test isolation), the content dir is an external
+// tmpdir outside the project tree. Passing PROJECT_ROOT as projectDir would make
+// content-filter compute `relative(projectDir, contentDir)` as a path with many `..`
+// components, which the `ignore` npm library rejects. Treat the test content dir as
+// its own project root — gitignore scanning becomes a no-op (the tmpdir has no
+// .gitignore), which is semantically correct for isolated test runs.
 const contentFilter = createContentFilter({
-  projectDir: PROJECT_ROOT,
+  projectDir: process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT,
   contentDir: CONTENT_DIR,
   includePatterns: contentConfig.include,
   excludePatterns: contentConfig.exclude,
 });
+
+// When test isolation is active, persistence's git integration is a liability —
+// it tries to `git add <contentRoot>` in the worktree's .git, but contentRoot is
+// an external tmpdir path starting with `../../..` which git refuses. Tests don't
+// need git tracking of their throwaway content, so disable it outright.
+const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -92,8 +113,9 @@ export const hocuspocus = new Hocuspocus({
   extensions: [
     createPersistenceExtension({
       contentDir: CONTENT_DIR,
-      projectDir: PROJECT_ROOT,
-      contentRoot: CONTENT_ROOT,
+      projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
+      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      gitEnabled: !isTestIsolated,
     }).extension,
   ],
 });
@@ -111,8 +133,11 @@ hocuspocus.configuration.extensions.push(
     contentDir: CONTENT_DIR,
     getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
     enableTestRoutes: true,
-    projectRoot: PROJECT_ROOT,
-    contentRoot: CONTENT_ROOT,
+    // Mirror persistence's test-isolation handling so shadow-repo path calculation
+    // doesn't try to resolve paths through ../.. components when CONTENT_DIR is
+    // outside the worktree.
+    projectRoot: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
+    contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
   }),
 );
 
@@ -171,12 +196,12 @@ export function hocuspocusPlugin(): Plugin {
       const handleExternalChange = createExternalChangeHandler(hocuspocus);
 
       (async () => {
-        if (activeWatcher) {
-          console.log('[hocuspocus] Unsubscribing previous file watcher (HMR restart)');
-          await activeWatcher.unsubscribe();
-          activeWatcher = null;
-        }
         try {
+          if (activeWatcher) {
+            console.log('[hocuspocus] Unsubscribing previous file watcher (HMR restart)');
+            await activeWatcher.unsubscribe();
+            activeWatcher = null;
+          }
           activeWatcher = await startWatcher(
             CONTENT_DIR,
             async (event) => {

@@ -6,6 +6,7 @@ import { basicSetup } from 'codemirror';
 import { useEffect, useRef } from 'react';
 import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
+import { markUserTyping } from './observers';
 import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
 
 interface SourceEditorProps {
@@ -51,7 +52,20 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
     });
     viewRef.current = view;
 
+    // Mirror the TiptapEditor DOM listeners so Observer B's typing-defer
+    // window applies uniformly regardless of which editor has focus (R7 fix).
+    const mark = () => markUserTyping(provider.document);
+    const dom = view.contentDOM;
+    dom.addEventListener('keydown', mark);
+    dom.addEventListener('paste', mark);
+    dom.addEventListener('drop', mark);
+    dom.addEventListener('cut', mark);
+
     return () => {
+      dom.removeEventListener('keydown', mark);
+      dom.removeEventListener('paste', mark);
+      dom.removeEventListener('drop', mark);
+      dom.removeEventListener('cut', mark);
       view.destroy();
       viewRef.current = null;
     };
