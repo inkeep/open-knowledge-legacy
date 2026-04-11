@@ -121,6 +121,26 @@ const CONSTRUCTS: Array<{ name: string; input: string; stable?: boolean; note?: 
     stable: true,
   },
   {
+    name: 'wikilink: bare',
+    input: 'Alpha [[Page]]\n',
+    stable: true,
+  },
+  {
+    name: 'wikilink: alias',
+    input: 'Beta [[Page|Alias]]\n',
+    stable: true,
+  },
+  {
+    name: 'wikilink: section',
+    input: 'Gamma [[Page#Heading]]\n',
+    stable: true,
+  },
+  {
+    name: 'wikilink: section alias',
+    input: 'Delta [[Page#Heading|Alias]]\n',
+    stable: true,
+  },
+  {
     name: 'image',
     input: '![Alt text](https://example.com/img.png)\n',
   },

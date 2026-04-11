@@ -72,10 +72,13 @@ Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, an
 ```
 Hocuspocus Server
 ├── Persistence Extension (CRDT → markdown → disk → git)
-├── API Extension (onRequest hook for HTTP endpoints)
+├── API Extension (onRequest hook — reads file index from watcher)
 ├── Agent Sessions (DirectConnection + UndoManager per agent)
-└── File Watcher (@parcel/watcher disk bridge)
+├── Content Filter (gitignore + config exclude/include filtering)
+└── File Watcher (@parcel/watcher — owns in-memory file index)
 ```
+
+**File discovery:** The file watcher is the single source of truth for "what content files exist." It maintains a filtered in-memory index populated at startup and kept in sync via watcher events. The documents API reads from this index (no independent filesystem walk). Filtering uses `ContentFilter` which unions `.gitignore` rules with `config.content.exclude` patterns; exclusion supersedes inclusion.
 
 ### API Endpoints
 
@@ -94,9 +97,10 @@ Hocuspocus Server
 
 - `src/standalone.ts` — `createServer()` factory
 - `src/persistence.ts` — `createPersistenceExtension()` with configurable contentDir/projectDir
-- `src/file-watcher.ts` — `startWatcher()` + writeTracker
+- `src/content-filter.ts` — `createContentFilter()` — unified gitignore + config exclude/include filtering
+- `src/file-watcher.ts` — `startWatcher()` + in-memory file index (`WatcherHandle` with `getFileIndex()`)
 - `src/agent-sessions.ts` — `AgentSessionManager` class
-- `src/api-extension.ts` — HTTP API as Hocuspocus onRequest extension
+- `src/api-extension.ts` — HTTP API as Hocuspocus onRequest extension (reads file index from watcher)
 
 ## Package: cli
 

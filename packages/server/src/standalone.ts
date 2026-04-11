@@ -12,12 +12,8 @@ import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
-import {
-  type AsyncSubscription,
-  contentHash,
-  type DiskEvent,
-  startWatcher,
-} from './file-watcher.ts';
+import { createContentFilter } from './content-filter.ts';
+import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import {
   incrementBatch,
@@ -77,6 +73,10 @@ export interface ServerOptions {
   shadowRepo?: ShadowHandle;
   /** Content root relative to project dir. */
   contentRoot?: string;
+  /** Glob patterns for files to include (default: ['**\/*.md']). */
+  includePatterns?: string[];
+  /** Glob patterns for files to explicitly exclude. */
+  excludePatterns?: string[];
 }
 
 export interface ServerInstance {
@@ -100,7 +100,17 @@ export function createServer(options: ServerOptions): ServerInstance {
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
+    includePatterns = ['**/*.md'],
+    excludePatterns = [],
   } = options;
+
+  // Create content filter — unified exclusion logic (gitignore + config.content.exclude)
+  const contentFilter = createContentFilter({
+    projectDir,
+    contentDir,
+    includePatterns,
+    excludePatterns,
+  });
 
   // Mutable ref so deferred init (initAsync) propagates to persistence and API
   const shadowRef: ShadowRef = { current: shadowRepo };
@@ -129,10 +139,12 @@ export function createServer(options: ServerOptions): ServerInstance {
   // Add API extension — push directly onto the extensions array rather than
   // calling hocuspocus.configure({ extensions: [...] }), which uses spread
   // and would REPLACE the existing persistence extension.
+  // getFileIndex delegates to the watcher once it's ready (watcher starts async in initAsync).
   const apiExtension = createApiExtension({
     hocuspocus,
     sessionManager,
     contentDir,
+    getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
     enableTestRoutes,
     shadowRef,
     projectRoot: projectDir,
@@ -381,7 +393,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
 
-  let watcher: AsyncSubscription | null = null;
+  let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
 
   async function destroy(): Promise<void> {
@@ -444,9 +456,9 @@ export function createServer(options: ServerOptions): ServerInstance {
       }
     }
 
-    // Start file watcher
+    // Start file watcher (with content filter for gitignore + config exclude)
     try {
-      watcher = await startWatcher(contentDir, onDiskEvent);
+      watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
     } catch (err) {
       console.error('[server] Disk bridge watcher failed to start:', err);
     }

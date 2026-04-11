@@ -14,10 +14,11 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import { type AsyncSubscription, subscribe } from '@parcel/watcher';
+import type { ContentFilter } from './content-filter.ts';
 import { containsConflictMarkers } from './reconciliation.ts';
 
 export type { AsyncSubscription };
@@ -37,6 +38,20 @@ export type DiskEvent =
       content: string;
     }
   | { kind: 'conflict'; path: string; docName: string; content: string };
+
+// ─── File index ─────────────────────────────────────────────────────────────
+
+export interface FileIndexEntry {
+  size: number;
+  modified: string;
+}
+
+export interface WatcherHandle {
+  /** Stop watching (unsubscribe from @parcel/watcher). */
+  unsubscribe: () => Promise<void>;
+  /** Read the current file index — filtered snapshot of known content files. */
+  getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
+}
 
 // ─── Write tracker ───────────────────────────────────────────────────────────
 
@@ -112,10 +127,13 @@ interface RawFileEvent {
  *
  * Rename detection: if a delete+create pair in the same batch has matching
  * content hashes, emit a single Rename event instead of Delete + Create.
+ *
+ * When a ContentFilter is provided, events for excluded paths are silently dropped.
  */
 export async function classifyEvents(
   rawEvents: RawFileEvent[],
   contentDir: string,
+  contentFilter?: ContentFilter,
 ): Promise<DiskEvent[]> {
   const deletes: RawFileEvent[] = [];
   const creates: RawFileEvent[] = [];
@@ -123,6 +141,13 @@ export async function classifyEvents(
 
   for (const event of rawEvents) {
     if (!event.path.endsWith('.md')) continue;
+
+    // Apply content filter if provided
+    if (contentFilter) {
+      const relPath = relative(contentDir, event.path);
+      if (contentFilter.isExcluded(relPath)) continue;
+    }
+
     switch (event.type) {
       case 'delete':
         deletes.push(event);
@@ -280,81 +305,184 @@ export function isSelfWrite(filePath: string, hash: string): boolean {
 // ─── Watcher ─────────────────────────────────────────────────────────────────
 
 /**
- * Start watching a content directory for external .md file changes.
- * Calls onDiskEvent for each classified event (not our own persistence writes).
+ * Seed lastKnownHash with existing .md files so first edits classify as 'update'
+ * not 'create'. Also populates the in-memory file index.
  *
- * Returns the @parcel/watcher subscription (call .unsubscribe() to stop).
+ * When a ContentFilter is provided, excluded files are skipped.
  */
-/** Seed lastKnownHash with existing .md files so first edits classify as 'update' not 'create'. */
-function seedLastKnownHashes(dir: string): void {
+function seedLastKnownHashes(
+  dir: string,
+  contentDir: string,
+  contentFilter: ContentFilter | undefined,
+  fileIndex: Map<string, FileIndexEntry>,
+): void {
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
-        seedLastKnownHashes(fullPath);
+        // Skip directories the content filter excludes (gitignore/config only, not include patterns)
+        if (contentFilter) {
+          const relPath = relative(contentDir, fullPath);
+          if (contentFilter.isDirExcluded(relPath)) continue;
+        }
+        seedLastKnownHashes(fullPath, contentDir, contentFilter, fileIndex);
       } else if (entry.isFile() && entry.name.endsWith('.md')) {
+        // Skip files the content filter excludes
+        if (contentFilter) {
+          const relPath = relative(contentDir, fullPath);
+          if (contentFilter.isExcluded(relPath)) continue;
+        }
         try {
           const content = readFileSync(fullPath, 'utf-8');
           lastKnownHash.set(fullPath, contentHash(content));
-        } catch {
-          // skip unreadable files
+
+          // Populate file index
+          const docName = pathToDocName(fullPath, contentDir);
+          const stat = statSync(fullPath);
+          fileIndex.set(docName, {
+            size: stat.size,
+            modified: stat.mtime.toISOString(),
+          });
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === 'EACCES') {
+            console.warn(
+              `[file-watcher] Permission denied reading ${fullPath}, file excluded from index`,
+            );
+          } else if (code !== 'ENOENT') {
+            console.warn(`[file-watcher] Failed to seed hash for ${fullPath}:`, err);
+          }
         }
       }
     }
-  } catch {
-    // dir doesn't exist or isn't readable — fine, no seeding
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      console.warn(`[file-watcher] Failed to read directory ${dir}:`, err);
+    }
   }
 }
 
+/**
+ * Update the file index after a disk event.
+ * Called unconditionally for every classified event (including self-writes)
+ * to keep the index in sync with actual disk state.
+ */
+export function updateFileIndex(
+  event: DiskEvent,
+  contentDir: string,
+  fileIndex: Map<string, FileIndexEntry>,
+): void {
+  switch (event.kind) {
+    case 'create':
+    case 'update':
+    case 'conflict': {
+      const docName = pathToDocName(event.path, contentDir);
+      fileIndex.set(docName, {
+        size: Buffer.byteLength(event.content, 'utf-8'),
+        modified: new Date().toISOString(),
+      });
+      break;
+    }
+    case 'delete': {
+      const docName = pathToDocName(event.path, contentDir);
+      fileIndex.delete(docName);
+      break;
+    }
+    case 'rename': {
+      const oldDocName = pathToDocName(event.oldPath, contentDir);
+      const newDocName = pathToDocName(event.newPath, contentDir);
+      fileIndex.delete(oldDocName);
+      fileIndex.set(newDocName, {
+        size: Buffer.byteLength(event.content, 'utf-8'),
+        modified: new Date().toISOString(),
+      });
+      break;
+    }
+  }
+}
+
+/**
+ * Start watching a content directory for external .md file changes.
+ * Calls onDiskEvent for each classified event (not our own persistence writes).
+ *
+ * When a ContentFilter is provided:
+ * - Excluded files are skipped during the initial scan
+ * - Excluded events are dropped in classifyEvents
+ * - Best-effort ignore globs are passed to @parcel/watcher
+ *
+ * Returns a WatcherHandle with unsubscribe() and getFileIndex().
+ */
 export async function startWatcher(
   contentDir: string,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
-): Promise<AsyncSubscription> {
-  // Seed hashes for existing files so edits are classified as 'update' not 'create'
-  seedLastKnownHashes(contentDir);
+  contentFilter?: ContentFilter,
+): Promise<WatcherHandle> {
+  // Allocate file index per watcher instance — each handle owns its index
+  const fileIndex = new Map<string, FileIndexEntry>();
+
+  // Seed hashes and populate file index (filtered if contentFilter provided)
+  seedLastKnownHashes(contentDir, contentDir, contentFilter, fileIndex);
 
   // Run TTL eviction periodically
   const evictionInterval = setInterval(evictStaleTrackerEntries, WRITE_TRACKER_TTL_MS);
 
+  // Build subscribe options — pass watcher ignore globs as best-effort optimization
+  const subscribeOpts = contentFilter
+    ? { ignore: contentFilter.getWatcherIgnoreGlobs() }
+    : undefined;
+
   let subscription: AsyncSubscription;
   try {
-    subscription = await subscribe(contentDir, async (err, events) => {
-      if (err) {
-        console.error('[file-watcher]', err);
-        return;
-      }
+    subscription = await subscribe(
+      contentDir,
+      async (err, events) => {
+        if (err) {
+          console.error('[file-watcher]', err);
+          return;
+        }
 
-      // Filter to .md and classify
-      const mdEvents = events.filter((e) => e.path.endsWith('.md'));
-      if (mdEvents.length === 0) return;
+        // Filter to .md and classify (content filter applied inside classifyEvents)
+        const mdEvents = events.filter((e) => e.path.endsWith('.md'));
+        if (mdEvents.length === 0) return;
 
-      const diskEvents = await classifyEvents(
-        mdEvents.map((e) => ({ type: e.type, path: e.path })),
-        contentDir,
-      );
+        const diskEvents = await classifyEvents(
+          mdEvents.map((e) => ({ type: e.type, path: e.path })),
+          contentDir,
+          contentFilter,
+        );
 
-      for (const event of diskEvents) {
-        // Self-write check for events that carry content
-        if (event.kind !== 'delete' && event.kind !== 'rename') {
-          const hash = contentHash(event.content);
-          if (isSelfWrite(event.path, hash)) {
-            console.log(`[file-watcher] Skipped self-write: ${event.kind} ${event.path}`);
+        for (const event of diskEvents) {
+          let isSelf = false;
+
+          // Self-write check for events that carry content
+          if (event.kind !== 'delete' && event.kind !== 'rename') {
+            const hash = contentHash(event.content);
+            isSelf = isSelfWrite(event.path, hash);
+          } else if (event.kind === 'rename') {
+            const hash = contentHash(event.content);
+            isSelf = isSelfWrite(event.newPath, hash);
+          }
+
+          // Always keep index in sync — self-writes still represent real disk state
+          updateFileIndex(event, contentDir, fileIndex);
+
+          if (isSelf) {
+            console.log(
+              `[file-watcher] Skipped self-write: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+            );
             continue;
           }
-        }
-        if (event.kind === 'rename') {
-          // Check if the content matches a self-write on the new path
-          const hash = contentHash(event.content);
-          if (isSelfWrite(event.newPath, hash)) continue;
-        }
 
-        console.log(
-          `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
-        );
-        await onDiskEvent(event);
-      }
-    });
+          console.log(
+            `[file-watcher] Dispatching: ${event.kind} ${event.kind === 'rename' ? event.newPath : event.path}`,
+          );
+          await onDiskEvent(event);
+        }
+      },
+      subscribeOpts,
+    );
   } catch (e) {
     clearInterval(evictionInterval);
     throw e;
@@ -362,11 +490,16 @@ export async function startWatcher(
 
   // Wrap unsubscribe to also clear the eviction interval
   const originalUnsubscribe = subscription.unsubscribe.bind(subscription);
-  subscription.unsubscribe = async () => {
-    clearInterval(evictionInterval);
-    return originalUnsubscribe();
-  };
 
   console.log(`[file-watcher] Watching ${contentDir} for external .md changes`);
-  return subscription;
+
+  return {
+    async unsubscribe() {
+      clearInterval(evictionInterval);
+      return originalUnsubscribe();
+    },
+    getFileIndex() {
+      return fileIndex;
+    },
+  };
 }

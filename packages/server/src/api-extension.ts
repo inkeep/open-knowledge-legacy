@@ -5,9 +5,17 @@
  * the standalone Server and the Vite dev plugin.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_WRITE_ORIGIN,
@@ -15,14 +23,12 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
 import { safeContentPath } from './persistence.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-
-/** Directories to exclude from document listing. */
-const EXCLUDED_DIRS = new Set(['.agents', '.claude', '.git', '.open-knowledge', 'node_modules']);
 
 /**
  * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
@@ -40,6 +46,8 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
+  getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   /**
    * When true, register test-only routes (currently `/api/test-reset`).
    * Defaults to `false` — these routes allow any client to destroy document
@@ -73,11 +81,50 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
+/**
+ * Extract a human-readable title from a markdown file's content.
+ *
+ * Priority:
+ *  1. `title:` field in YAML frontmatter (between leading `---` delimiters)
+ *  2. First `# heading` line in the file
+ *  3. filename (without extension, as provided by the caller)
+ */
+export function extractPageTitle(content: string, filename: string): string {
+  // 1. Frontmatter title — only if the file starts with ---
+  if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
+    const closingIdx = content.indexOf('\n---', 3);
+    if (closingIdx !== -1) {
+      const frontmatter = content.slice(0, closingIdx + 4);
+      const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
+      if (titleMatch) {
+        let title = titleMatch[1].trim();
+        if (
+          (title.startsWith('"') && title.endsWith('"')) ||
+          (title.startsWith("'") && title.endsWith("'"))
+        ) {
+          title = title.slice(1, -1);
+        }
+        return title;
+      }
+    }
+  }
+
+  // 2. First # heading
+  const headingMatch = content.match(/^# (.+)$/m);
+  if (headingMatch) {
+    return headingMatch[1].trim();
+  }
+
+  // 3. Filename fallback
+  return filename;
+}
+
 export function createApiExtension(options: ApiExtensionOptions): Extension {
   const {
     hocuspocus,
     sessionManager,
     contentDir,
+    getFileIndex,
     enableTestRoutes = false,
     shadowRef,
     projectRoot,
@@ -254,41 +301,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const dir = url.searchParams.get('dir');
 
-      let targetDir = contentDir;
+      // Validate dir parameter (reject traversal attempts)
       if (dir) {
         try {
-          targetDir = safeSubdir(contentDir, dir);
+          safeSubdir(contentDir, dir);
         } catch {
           json(res, 400, { ok: false, error: `Invalid directory: ${dir}` });
           return;
         }
       }
 
-      if (!existsSync(targetDir)) {
-        json(res, 200, { ok: true, documents: [] });
-        return;
-      }
-
-      const entries = readdirSync(targetDir, { recursive: true });
+      // Read from the watcher's in-memory file index (instant, no filesystem scan)
+      const index = getFileIndex();
       const documents: { docName: string; size: number; modified: string }[] = [];
 
-      for (const entry of entries) {
-        const entryStr = typeof entry === 'string' ? entry : entry.toString();
-        if (!entryStr.endsWith('.md')) continue;
+      for (const [docName, entry] of index) {
+        // Filter by dir prefix if specified
+        if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
-        // Skip files inside excluded directories
-        const firstSegment = entryStr.split(/[\\/]/)[0];
-        if (firstSegment && EXCLUDED_DIRS.has(firstSegment)) continue;
-
-        const fullPath = resolve(targetDir, entryStr);
-        const stat = statSync(fullPath);
-        if (!stat.isFile()) continue;
-
-        const docName = fullPath.slice(contentDir.length + 1).replace(/\.md$/, '');
         documents.push({
           docName,
-          size: stat.size,
-          modified: stat.mtime.toISOString(),
+          size: entry.size,
+          modified: entry.modified,
         });
       }
 
@@ -540,7 +574,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const doc = hocuspocus.documents.get(docName);
       if (doc) await hocuspocus.unloadDocument(doc);
-      const { writeFileSync } = await import('node:fs');
       writeFileSync(filePath, '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
@@ -733,9 +766,104 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     res.end(content);
   }
 
+  async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+      const { path: filePath } = body as Record<string, unknown>;
+      if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
+        json(res, 400, { ok: false, error: 'path is required' });
+        return;
+      }
+      if (!filePath.endsWith('.md')) {
+        json(res, 400, { ok: false, error: 'path must end with .md' });
+        return;
+      }
+      if (
+        filePath.includes('..') ||
+        filePath.startsWith('/') ||
+        filePath.includes('\x00') ||
+        filePath.includes('\\')
+      ) {
+        json(res, 400, { ok: false, error: 'path must not contain .. or start with /' });
+        return;
+      }
+      const resolvedContentDir = resolve(contentDir);
+      const fullPath = resolve(resolvedContentDir, filePath);
+      if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
+        json(res, 400, { ok: false, error: 'path must not escape content directory' });
+        return;
+      }
+      mkdirSync(dirname(fullPath), { recursive: true });
+      try {
+        writeFileSync(fullPath, '', { encoding: 'utf-8', flag: 'wx' });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          json(res, 409, { ok: false, error: 'File already exists' });
+          return;
+        }
+        throw err;
+      }
+      const docName = filePath.slice(0, -3);
+      json(res, 200, { ok: true, docName });
+    } catch (e) {
+      console.error('[create-page]', e);
+      json(res, 500, { ok: false, error: 'Failed to create page' });
+    }
+  }
+
+  async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const index = getFileIndex();
+      const pages: { docName: string; title: string }[] = [];
+      for (const [docName] of index) {
+        let title = docName;
+        try {
+          const filePath = resolve(contentDir, `${docName}.md`);
+          const content = readFileSync(filePath, 'utf-8');
+          title = extractPageTitle(content, docName);
+        } catch (err) {
+          console.warn(`[pages] Failed to read title for ${docName}:`, err);
+        }
+        pages.push({ docName, title });
+      }
+      pages.sort((a, b) => a.docName.localeCompare(b.docName));
+      json(res, 200, { ok: true, pages });
+    } catch (e) {
+      console.error('[pages]', e);
+      json(res, 500, { ok: false, error: 'Failed to list pages' });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
+    '/api/pages': handlePages,
+    '/api/create-page': handleCreatePage,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,

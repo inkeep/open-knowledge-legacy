@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { createContentFilter } from './content-filter.ts';
 import {
   classifyEvents,
   contentHash,
@@ -11,6 +12,7 @@ import {
   lastKnownHash,
   pathToDocName,
   registerWrite,
+  startWatcher,
   updateLastKnownHash,
   writeTracker,
 } from './file-watcher';
@@ -288,5 +290,198 @@ describe('classifyEvents', () => {
     const events = await classifyEvents([{ type: 'update', path: filePath }], contentDir);
 
     expect(events).toHaveLength(0);
+  });
+
+  test('filters events through ContentFilter when provided', async () => {
+    // Create a filter that excludes dist/
+    writeFileSync(resolve(tmpDir, '.gitignore'), 'dist/\n');
+    const filter = createContentFilter({
+      projectDir: tmpDir,
+      contentDir,
+      includePatterns: ['**/*.md'],
+      excludePatterns: [],
+    });
+
+    // Create files in both included and excluded dirs
+    mkdirSync(resolve(contentDir, 'dist'), { recursive: true });
+    mkdirSync(resolve(contentDir, 'docs'), { recursive: true });
+    writeFileSync(resolve(contentDir, 'dist', 'output.md'), '# Build Output\n');
+    writeFileSync(resolve(contentDir, 'docs', 'guide.md'), '# Guide\n');
+
+    const events = await classifyEvents(
+      [
+        { type: 'create', path: resolve(contentDir, 'dist', 'output.md') },
+        { type: 'create', path: resolve(contentDir, 'docs', 'guide.md') },
+      ],
+      contentDir,
+      filter,
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('create');
+    if (events[0].kind === 'create') {
+      expect(events[0].docName).toBe('docs/guide');
+    }
+  });
+});
+
+// ─── startWatcher file index ────────────────────────────────────────────────
+
+describe('startWatcher file index', () => {
+  let tmpDir: string;
+  let contentDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-watcher-index-'));
+    contentDir = resolve(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    lastKnownHash.clear();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('initial scan populates file index with .md files', async () => {
+    writeFileSync(resolve(contentDir, 'readme.md'), '# README\n');
+    mkdirSync(resolve(contentDir, 'docs'));
+    writeFileSync(resolve(contentDir, 'docs', 'guide.md'), '# Guide\n');
+    writeFileSync(resolve(contentDir, 'script.js'), 'console.log("hi")');
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      const index = handle.getFileIndex();
+      expect(index.size).toBe(2);
+      expect(index.has('readme')).toBe(true);
+      expect(index.has('docs/guide')).toBe(true);
+      // Non-.md files are not in the index
+      expect(index.has('script')).toBe(false);
+
+      // Entries have size and modified
+      const entry = index.get('readme');
+      expect(entry).toBeTruthy();
+      expect(entry?.size).toBeGreaterThan(0);
+      expect(entry?.modified).toBeTruthy();
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('file index excludes files filtered by ContentFilter', async () => {
+    writeFileSync(resolve(tmpDir, '.gitignore'), 'dist/\n');
+    mkdirSync(resolve(contentDir, 'dist'), { recursive: true });
+    mkdirSync(resolve(contentDir, 'docs'), { recursive: true });
+    writeFileSync(resolve(contentDir, 'dist', 'output.md'), '# Build\n');
+    writeFileSync(resolve(contentDir, 'docs', 'guide.md'), '# Guide\n');
+
+    const filter = createContentFilter({
+      projectDir: tmpDir,
+      contentDir,
+      includePatterns: ['**/*.md'],
+      excludePatterns: [],
+    });
+
+    const handle = await startWatcher(contentDir, async () => {}, filter);
+    try {
+      const index = handle.getFileIndex();
+      expect(index.size).toBe(1);
+      expect(index.has('docs/guide')).toBe(true);
+      expect(index.has('dist/output')).toBe(false);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('file index excludes files matching config exclude patterns', async () => {
+    mkdirSync(resolve(contentDir, 'archive'), { recursive: true });
+    writeFileSync(resolve(contentDir, 'readme.md'), '# README\n');
+    writeFileSync(resolve(contentDir, 'archive', 'old.md'), '# Old\n');
+
+    const filter = createContentFilter({
+      projectDir: tmpDir,
+      contentDir,
+      includePatterns: ['**/*.md'],
+      excludePatterns: ['archive/**'],
+    });
+
+    const handle = await startWatcher(contentDir, async () => {}, filter);
+    try {
+      const index = handle.getFileIndex();
+      expect(index.size).toBe(1);
+      expect(index.has('readme')).toBe(true);
+      expect(index.has('archive/old')).toBe(false);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('file index updates on create event', () => {
+    const { updateFileIndex } = require('./file-watcher.ts');
+    const index = new Map();
+    const event = {
+      kind: 'create' as const,
+      path: resolve(contentDir, 'new-file.md'),
+      docName: 'new-file',
+      content: '# New File\n',
+    };
+    updateFileIndex(event, contentDir, index);
+    expect(index.has('new-file')).toBe(true);
+    expect(index.get('new-file')?.size).toBe(Buffer.byteLength('# New File\n', 'utf-8'));
+    expect(index.get('new-file')?.modified).toBeTruthy();
+  });
+
+  test('file index removes entry on delete event', () => {
+    const { updateFileIndex } = require('./file-watcher.ts');
+    const index = new Map([['existing', { size: 10, modified: new Date().toISOString() }]]);
+    const event = {
+      kind: 'delete' as const,
+      path: resolve(contentDir, 'existing.md'),
+      docName: 'existing',
+    };
+    updateFileIndex(event, contentDir, index);
+    expect(index.has('existing')).toBe(false);
+  });
+
+  test('file index updates size/modified on update event', () => {
+    const { updateFileIndex } = require('./file-watcher.ts');
+    const oldModified = '2020-01-01T00:00:00.000Z';
+    const index = new Map([['doc', { size: 5, modified: oldModified }]]);
+    const event = {
+      kind: 'update' as const,
+      path: resolve(contentDir, 'doc.md'),
+      docName: 'doc',
+      content: '# Updated content with more text\n',
+    };
+    updateFileIndex(event, contentDir, index);
+    expect(index.get('doc')?.size).toBe(
+      Buffer.byteLength('# Updated content with more text\n', 'utf-8'),
+    );
+    expect(index.get('doc')?.modified).not.toBe(oldModified);
+  });
+
+  test('file index handles rename event', () => {
+    const { updateFileIndex } = require('./file-watcher.ts');
+    const index = new Map([['old-name', { size: 10, modified: new Date().toISOString() }]]);
+    const event = {
+      kind: 'rename' as const,
+      oldPath: resolve(contentDir, 'old-name.md'),
+      newPath: resolve(contentDir, 'new-name.md'),
+      oldDocName: 'old-name',
+      newDocName: 'new-name',
+      content: '# Renamed\n',
+    };
+    updateFileIndex(event, contentDir, index);
+    expect(index.has('old-name')).toBe(false);
+    expect(index.has('new-name')).toBe(true);
+    expect(index.get('new-name')?.size).toBe(Buffer.byteLength('# Renamed\n', 'utf-8'));
+  });
+
+  test('getFileIndex returns empty map when no .md files exist', async () => {
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      expect(handle.getFileIndex().size).toBe(0);
+    } finally {
+      await handle.unsubscribe();
+    }
   });
 });

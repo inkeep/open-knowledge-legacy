@@ -43,6 +43,8 @@ export function startCommand(getConfig: () => Config): Command {
         quiet: false,
         debounce: config.persistence.debounceMs,
         maxDebounce: config.persistence.maxDebounceMs,
+        includePatterns: config.content.include,
+        excludePatterns: config.content.exclude,
       });
 
       // Graceful shutdown
