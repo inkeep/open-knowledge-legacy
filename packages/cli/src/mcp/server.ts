@@ -1,14 +1,14 @@
 /**
- * MCP stdio server — content server with instructions and workflow tools.
+ * MCP stdio server — content server with instructions, mirrored catalog
+ * auto-generation, and workflow tools.
  *
  * What this server provides:
  *   - Instructions on connect (the INSTRUCTIONS constant below)
+ *   - Mirrored catalog auto-generation: scans project for content files
+ *     matching config globs, writes INDEX.md catalogs inside
+ *     `.open-knowledge/catalogs/` (never pollutes the source tree)
  *   - Three workflow tools (init-content, ingest, research) registered from
  *     packages/cli/src/mcp/tools/ — each returns instructional text the agent follows
- *
- * Catalog auto-generation (INDEX.md per directory) is implemented in
- * packages/cli/src/content/{catalog,watcher,paths}.ts but currently disconnected.
- * It can be re-enabled when the catalog UX is revisited.
  *
  * Scaffolding (`.open-knowledge/` directory creation plus `.mcp.json` wiring) is a
  * terminal-side operation handled by the CLI `init` subcommand.
@@ -20,8 +20,10 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
+import { CATALOGS_DIR, rebuildMirroredCatalogs } from '../content/mirror-catalog.ts';
 import { dim } from '../ui/colors.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
@@ -43,15 +45,18 @@ This project may have a \`.open-knowledge/\` directory for structured project kn
 ## Getting Started
 If \`.open-knowledge/\` doesn't exist yet, scaffolding is a **terminal-side** operation — the user (or the agent via \`Bash\`) runs \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That scaffolds the directory structure, registers this MCP server in \`.mcp.json\`, and returns. After scaffolding, reconnect the MCP client so this server sees the new directory and starts its file watcher.
 
-This MCP server exposes three workflow tools (init-content, ingest, research) that return instructional text for agents to follow. Scaffolding belongs in the CLI; runtime behavior (tools, instructions) belongs here.
+This MCP server exposes three workflow tools (init-content, ingest, research) that return instructional text for agents to follow. Scaffolding belongs in the CLI; runtime behavior (catalogs, watcher, tools, instructions) belongs here.
 
 ## Navigation
-1. Read \`.open-knowledge/\` for structured project knowledge
-2. Use grep to search across content for specific topics
-3. Read specific articles for detailed context
+1. Read \`.open-knowledge/catalogs/INDEX.md\` for a top-level overview of all tracked content
+2. Follow links to subdirectory catalogs for deeper navigation
+3. Use grep to search across content for specific topics
+4. Read specific articles for detailed context
+
+Catalogs are auto-generated inside \`.open-knowledge/catalogs/\` — they mirror the project's directory structure without polluting the source tree.
 
 ## File Access
-Use your native Read, Edit, Grep, and Glob tools for all file operations.
+Use your native Read, Edit, Grep, and Glob tools for all file operations. The MCP server handles catalog generation automatically.
 
 ## Content Lifecycle
 - \`external-sources/\` — Raw ingested content (URLs, documents). Reference material.
@@ -84,8 +89,93 @@ async function detectHocuspocus(serverUrl: string): Promise<boolean> {
   }
 }
 
+// ── Catalog watcher ────────────────────────────────────────────────────
+
+const DEBOUNCE_QUIET_MS = 500;
+const DEBOUNCE_MAX_MS = 2000;
+
+interface CatalogWatcher {
+  stop: () => Promise<void>;
+}
+
+async function startCatalogWatcher(
+  projectDir: string,
+  okDir: string,
+  config: Config,
+): Promise<CatalogWatcher> {
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingRebuild = false;
+
+  const catalogOptions = {
+    projectDir,
+    okDir,
+    include: config.content.include,
+    exclude: config.content.exclude,
+  };
+
+  function scheduleRebuild(): void {
+    pendingRebuild = true;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(executeRebuild, DEBOUNCE_QUIET_MS);
+    if (!maxWaitTimer) {
+      maxWaitTimer = setTimeout(executeRebuild, DEBOUNCE_MAX_MS);
+    }
+  }
+
+  function executeRebuild(): void {
+    if (!pendingRebuild) return;
+    pendingRebuild = false;
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    if (maxWaitTimer) {
+      clearTimeout(maxWaitTimer);
+      maxWaitTimer = null;
+    }
+    try {
+      rebuildMirroredCatalogs(catalogOptions);
+    } catch (err) {
+      console.error('[content-watcher] Catalog rebuild failed:', err);
+    }
+  }
+
+  const catalogsAbsDir = resolve(okDir, CATALOGS_DIR);
+
+  const subscription: AsyncSubscription = await subscribe(
+    projectDir,
+    (_err, events) => {
+      if (_err) {
+        console.error('[content-watcher]', _err);
+        return;
+      }
+      // Only rebuild on .md changes outside the catalogs directory
+      const hasRelevantChange = events.some(
+        (e) => e.path.endsWith('.md') && !e.path.startsWith(catalogsAbsDir),
+      );
+      if (hasRelevantChange) {
+        scheduleRebuild();
+      }
+    },
+    {
+      ignore: ['node_modules', '.git', '.claude'],
+    },
+  );
+
+  return {
+    stop: async () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (maxWaitTimer) clearTimeout(maxWaitTimer);
+      await subscription.unsubscribe();
+    },
+  };
+}
+
+// ── Server entrypoint ──────────────────────────────────────────────────
+
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
-  const { projectDir, serverUrl } = options;
+  const { projectDir, serverUrl, config } = options;
 
   // Detect Hocuspocus (non-blocking)
   let hocuspocusAvailable = false;
@@ -111,14 +201,27 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   );
 
   const okDir = resolve(projectDir, OK_DIR);
+  let watcherHandle: CatalogWatcher | null = null;
 
-  // MCP workflow tools — cross-client workflow surface. Each tool's full body
-  // lives in packages/cli/src/mcp/tools/<name>.ts. Each tool returns
-  // instructional text the agent follows; all real work (reads, edits, fetches)
-  // happens via the agent's native tools, not through the MCP server.
+  // MCP workflow tools
   registerAllTools(server);
 
-  if (!existsSync(okDir)) {
+  // Catalog rebuild + watcher
+  if (existsSync(okDir)) {
+    try {
+      rebuildMirroredCatalogs({
+        projectDir,
+        okDir,
+        include: config.content.include,
+        exclude: config.content.exclude,
+      });
+      log('Catalogs rebuilt');
+      watcherHandle = await startCatalogWatcher(projectDir, okDir, config);
+      log('File watcher started');
+    } catch (err) {
+      log(`Warning: catalog setup failed: ${err instanceof Error ? err.message : err}`);
+    }
+  } else {
     log('.open-knowledge/ not found — run `open-knowledge init` in your terminal to scaffold');
   }
 
@@ -127,10 +230,14 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   log('MCP server running (stdio)');
 
   // Cleanup on exit
-  process.on('SIGINT', () => {
+  const shutdown = async () => {
+    try {
+      if (watcherHandle) await watcherHandle.stop();
+    } catch (err) {
+      log(`Warning: watcher cleanup failed: ${err instanceof Error ? err.message : err}`);
+    }
     process.exit(0);
-  });
-  process.on('SIGTERM', () => {
-    process.exit(0);
-  });
+  };
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
