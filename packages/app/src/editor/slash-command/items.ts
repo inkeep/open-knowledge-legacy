@@ -16,9 +16,10 @@ export interface SlashCommandItem {
   name: string;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-  category: 'basic' | 'insert';
+  category: string;
   command: (editor: Editor) => void;
   aliases?: string[];
+  description?: string;
 }
 
 export const slashCommandItems: SlashCommandItem[] = [
