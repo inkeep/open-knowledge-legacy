@@ -14,25 +14,26 @@ const PageListContext = createContext<PageListContextValue>({
 
 async function loadPages(): Promise<Set<string>> {
   const r = await fetch('/api/pages');
-  const data = (await r.json()) as { pages?: Array<{ docName: string }> };
+  const data = (await r.json()) as { ok?: boolean; pages?: Array<{ docName: string }> };
   if (Array.isArray(data.pages)) {
     return new Set(data.pages.map((p) => p.docName));
   }
   return new Set();
 }
 
+function logLoadPagesError(err: unknown) {
+  console.error('[PageListContext] Failed to load pages:', err);
+}
+
 export function PageListProvider({ children }: { children: ReactNode }) {
   const [pages, setPages] = useState<Set<string>>(new Set());
 
   function refetch() {
-    loadPages()
-      .then(setPages)
-      .catch(() => {});
+    void loadPages().then(setPages).catch(logLoadPagesError);
   }
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refetch captures only stable setPages
   useEffect(() => {
-    refetch();
+    void loadPages().then(setPages).catch(logLoadPagesError);
   }, []);
 
   return <PageListContext value={{ pages, refetch }}>{children}</PageListContext>;

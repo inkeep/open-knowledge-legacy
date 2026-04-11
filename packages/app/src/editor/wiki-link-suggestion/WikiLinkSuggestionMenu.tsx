@@ -7,6 +7,7 @@ interface WikiLinkSuggestionMenuProps {
   selectedIndex: number;
   onSelect: (item: WikiLinkSuggestionItem) => void;
   loading?: boolean;
+  error?: string | null;
 }
 
 export function WikiLinkSuggestionMenu({
@@ -15,6 +16,7 @@ export function WikiLinkSuggestionMenu({
   selectedIndex,
   onSelect,
   loading = false,
+  error = null,
 }: WikiLinkSuggestionMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -46,7 +48,7 @@ export function WikiLinkSuggestionMenu({
         ref={containerRef}
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
       >
-        {query.trim() ? `No pages found for "${query.trim()}"` : 'No pages found'}
+        {error ?? (query.trim() ? `No pages found for "${query.trim()}"` : 'No pages found')}
       </div>
     );
   }
@@ -58,6 +60,7 @@ export function WikiLinkSuggestionMenu({
       aria-label="Wiki link suggestions"
       className="w-64 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
     >
+      {error && <div className="rounded-md px-2 py-1.5 text-xs text-amber-700">{error}</div>}
       {items.map((item, idx) => {
         const isSelected = idx === selectedIndex;
         return (

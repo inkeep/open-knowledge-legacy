@@ -105,6 +105,17 @@ describe('POST /api/create-page', () => {
     expect(existsSync(join(dir, 'my-page.md'))).toBe(true);
   });
 
+  test('creates parent directories for nested paths and returns full docName', async () => {
+    const dir = setupTmpDir();
+    const result = await callCreatePage(dir, 'POST', { path: 'nested/folder/my-page.md' });
+
+    expect(result.status).toBe(200);
+    const body = JSON.parse(result.body) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.docName).toBe('nested/folder/my-page');
+    expect(existsSync(join(dir, 'nested/folder/my-page.md'))).toBe(true);
+  });
+
   test('returns 400 when path field is missing', async () => {
     const dir = setupTmpDir();
     const result = await callCreatePage(dir, 'POST', {});

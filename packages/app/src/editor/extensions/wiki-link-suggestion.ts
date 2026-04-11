@@ -80,6 +80,7 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
   // Mutable state shared between handleKeyDown and view
   let cachedPages: PageItem[] = [];
   let currentFiltered: WikiLinkSuggestionItem[] = [];
+  let fetchError: string | null = null;
 
   function insertWikiLink(
     view: EditorView,
@@ -225,6 +226,7 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
         // Clear cache so next open gets fresh data
         cachedPages = [];
         currentFiltered = [];
+        fetchError = null;
       };
 
       const updatePosition = (view: EditorView, from: number) => {
@@ -273,6 +275,7 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
                 selectedIndex: state.selectedIndex,
                 onSelect,
                 loading: true,
+                error: null,
               },
               editor,
             });
@@ -281,6 +284,7 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
             // Fetch pages and update renderer immediately on resolve
             fetchPages()
               .then((pages) => {
+                fetchError = null;
                 cachedPages = pages;
                 currentFiltered = buildSuggestionItems(cachedPages, state.query);
                 renderer?.updateProps({
@@ -289,15 +293,20 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
                   selectedIndex: state.selectedIndex,
                   onSelect,
                   loading: false,
+                  error: null,
                 });
               })
-              .catch(() => {
+              .catch((err) => {
+                console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
+                fetchError = 'Failed to load pages. You can still insert an unresolved link.';
+                currentFiltered = buildSuggestionItems([], state.query);
                 renderer?.updateProps({
-                  items: [],
+                  items: currentFiltered,
                   query: state.query,
                   selectedIndex: state.selectedIndex,
                   onSelect,
                   loading: false,
+                  error: fetchError,
                 });
               });
           } else {
@@ -307,6 +316,7 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
               selectedIndex: state.selectedIndex,
               onSelect,
               loading: false,
+              error: fetchError,
             });
           }
 

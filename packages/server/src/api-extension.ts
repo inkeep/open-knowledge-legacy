@@ -7,6 +7,7 @@
 
 import {
   existsSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
   statSync,
@@ -14,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { basename, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   AGENT_WRITE_ORIGIN,
@@ -90,6 +91,23 @@ export function extractPageTitle(content: string, filename: string): string {
 
   // 3. Filename fallback
   return filename;
+}
+
+function listMarkdownFiles(dir: string): string[] {
+  const files: string[] = [];
+
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listMarkdownFiles(entryPath));
+      continue;
+    }
+    if (entry.isFile() && entry.name.endsWith('.md')) {
+      files.push(entryPath);
+    }
+  }
+
+  return files;
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
@@ -707,48 +725,51 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'path must not escape content directory' });
         return;
       }
-      if (existsSync(fullPath)) {
-        json(res, 409, { ok: false, error: 'File already exists' });
-        return;
+      mkdirSync(dirname(fullPath), { recursive: true });
+      try {
+        writeFileSync(fullPath, '', { encoding: 'utf-8', flag: 'wx' });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          json(res, 409, { ok: false, error: 'File already exists' });
+          return;
+        }
+        throw err;
       }
-      writeFileSync(fullPath, '', 'utf-8');
-      const docName = basename(filePath, '.md');
+      const docName = filePath.slice(0, -3);
       json(res, 200, { ok: true, docName });
     } catch (e) {
       console.error('[create-page]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Failed to create page' });
     }
   }
 
   async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
+      json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
     try {
       if (!existsSync(contentDir)) {
-        json(res, 200, { pages: [] });
+        json(res, 200, { ok: true, pages: [] });
         return;
       }
-      const files = readdirSync(contentDir).filter((f) => f.endsWith('.md'));
-      const pages = files.map((file) => {
-        const docName = file.slice(0, -3); // strip .md
+      const files = listMarkdownFiles(contentDir);
+      const pages = files.map((filePath) => {
+        const docName = relative(contentDir, filePath).replace(/\\/g, '/').slice(0, -3);
         let title = docName;
         try {
-          const content = readFileSync(resolve(contentDir, file), 'utf-8');
+          const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch {
           // unreadable file — fall back to docName
         }
         return { docName, title };
       });
-      json(res, 200, { pages });
+      pages.sort((a, b) => a.docName.localeCompare(b.docName));
+      json(res, 200, { ok: true, pages });
     } catch (e) {
       console.error('[pages]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Failed to list pages' });
     }
   }
 
