@@ -52,7 +52,21 @@ const DEBOUNCE_MS = 50;
  * enough that source mode catches up quickly when the user pauses.
  */
 const TYPING_DEFER_MS = 300;
-const REMOTE_TREE_SYNC_GRACE_MS = 150;
+/**
+ * Peer WYSIWYG edits arrive as a remote XmlFragment-only transaction first. The
+ * remote peer's Observer A then emits a follow-up Y.Text transaction after its
+ * local debounce window. Give that paired text sync one debounce window plus
+ * network / event-loop slack before Observer B rebuilds from the current local
+ * source buffer.
+ *
+ * This is a pragmatic eventual-consistency guard, not an explicit cross-client
+ * handshake. If the follow-up text sync misses this window, Observer B may
+ * briefly rebuild from stale local source, but the subsequent remote sync still
+ * re-converges both surfaces instead of wedging the bridge. A future metadata-
+ * based sync counter or similar event-driven handshake would let us remove this
+ * heuristic entirely.
+ */
+const REMOTE_TREE_SYNC_GRACE_MS = DEBOUNCE_MS * 3;
 
 // ─────────────────────────────────────────────────────────────
 // Per-document coordination state
@@ -266,7 +280,10 @@ export function setupObservers(deps: ObserverDeps): () => void {
    * (e.g., an agent write awaiting Observer B's propagation), that content is
    * preserved — it's not part of the user's delta so Observer A doesn't touch it.
    *
-   * Debounced to coalesce rapid tree mutations into one serialization pass.
+   * Debounced to coalesce rapid tree mutations into one serialization pass. The
+   * older explicit "typed within the last 50ms" gate was redundant with this
+   * debounce once typing state became per-document, so the debounce is now the
+   * sole coalescing mechanism here.
    */
   const runObserverASync = (): void => {
     debounceA = null;
@@ -327,6 +344,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
       // before rebuilding the tree from a stale local source buffer.
       try {
         const state = getTypingState(doc);
+        // `changedParentTypes` is not part of the public Y.Transaction type. If a future
+        // Yjs release removes or renames it, this degrades to arming the grace window for
+        // every remote XmlFragment change, which adds latency but preserves convergence.
         const changedParentTypes = (
           transaction as Y.Transaction & { changedParentTypes?: Map<unknown, unknown> }
         ).changedParentTypes;
@@ -378,6 +398,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
         );
         return;
       }
+      // The paired remote Y.Text sync took longer than the grace window. Proceed with the
+      // current local source buffer; if a stale rebuild happens here, the follow-up remote
+      // sync still re-converges the document on the next transaction.
     }
 
     try {

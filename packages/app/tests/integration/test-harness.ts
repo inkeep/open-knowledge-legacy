@@ -41,7 +41,7 @@ export const schema = getSchema(sharedExtensions);
 export async function getFreePort(): Promise<number> {
   return new Promise((resolve) => {
     const s = createNetServer();
-    s.listen(0, '127.0.0.1', () => {
+    s.listen(0, () => {
       const port = (s.address() as AddressInfo).port;
       s.close(() => resolve(port));
     });
@@ -114,7 +114,7 @@ export async function createTestServer(): Promise<TestServer> {
   });
 
   await new Promise<void>((resolve) => {
-    httpServer.listen(port, '127.0.0.1', () => resolve());
+    httpServer.listen(port, () => resolve());
   });
 
   return {
