@@ -27,10 +27,12 @@ export class ProviderPool {
   private lruOrder: string[] = [];
   private activeDocName: string | null = null;
   private readonly maxSize: number;
+  private readonly wsUrl: string;
   private onChange: PoolChangeCallback | null = null;
 
-  constructor(maxSize = 10) {
+  constructor(maxSize = 10, wsUrl?: string) {
     this.maxSize = maxSize;
+    this.wsUrl = wsUrl ?? `ws://${globalThis.location?.host ?? 'localhost'}/collab`;
   }
 
   /** Register a callback that fires whenever pool state changes. */
@@ -68,7 +70,7 @@ export class ProviderPool {
     }
 
     const provider = new HocuspocusProvider({
-      url: `ws://${window.location.host}/collab`,
+      url: this.wsUrl,
       name: docName,
     });
 

@@ -9,7 +9,7 @@ import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Write markdown content to a document via the CRDT layer.',
+  '[Requires: Hocuspocus server] Write markdown content to a document via the CRDT layer.',
   'Content is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
   '**Parameters:**',

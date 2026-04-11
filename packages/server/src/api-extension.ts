@@ -65,7 +65,10 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 function json(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'X-Content-Type-Options': 'nosniff',
+  });
   res.end(JSON.stringify(data));
 }
 
@@ -695,7 +698,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const content = readFileSync(filePath, 'utf-8');
-    res.writeHead(200, { 'Content-Type': 'text/markdown' });
+    res.writeHead(200, {
+      'Content-Type': 'text/markdown',
+      'X-Content-Type-Options': 'nosniff',
+    });
     res.end(content);
   }
 

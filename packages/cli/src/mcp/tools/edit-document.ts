@@ -9,7 +9,7 @@ import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Find-and-replace on a live document via the CRDT layer.',
+  '[Requires: Hocuspocus server] Find-and-replace on a live document via the CRDT layer.',
   'The patch is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
   '**Parameters:**',

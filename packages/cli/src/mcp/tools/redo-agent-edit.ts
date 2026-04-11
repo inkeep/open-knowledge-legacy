@@ -9,7 +9,7 @@ import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Redo the last undone agent edit on a document.',
+  '[Requires: Hocuspocus server] Redo the last undone agent edit on a document.',
   'Re-applies the most recently undone agent edit (origin: agent-write).',
 ].join('\n');
 

@@ -9,7 +9,7 @@ import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
-  'List available documents from the Hocuspocus server.',
+  '[Requires: Hocuspocus server] List available documents from the Hocuspocus server.',
   'Returns document names, optionally filtered by directory.',
   '',
   '**Parameters:**',
