@@ -5,8 +5,8 @@ import { Input } from '@/components/ui/input';
 import { toWikiLinkSlug } from '@/editor/extensions/wiki-link-helpers';
 
 function getSuggestedPath(target: string): string {
-  const match = window.location.hash.match(/^#doc=(.+)$/);
-  const currentDoc = match ? decodeURIComponent(match[1]) : 'test-doc';
+  const hash = window.location.hash;
+  const currentDoc = hash.startsWith('#/') ? hash.slice(2) : '';
   const lastSlash = currentDoc.lastIndexOf('/');
   const dir = lastSlash > 0 ? currentDoc.slice(0, lastSlash + 1) : '';
   return `${dir}${toWikiLinkSlug(target)}.md`;

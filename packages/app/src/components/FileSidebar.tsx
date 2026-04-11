@@ -91,7 +91,7 @@ const FileTreeNode: FC<{
 // ── Sidebar component ────────────────────────────────────────────────
 
 export function FileSidebar() {
-  const { activeDocName, openDocument } = useDocumentContext();
+  const { activeDocName } = useDocumentContext();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -157,7 +157,9 @@ export function FileSidebar() {
                 key={node.path}
                 node={node}
                 selectedPath={activeDocName}
-                onSelect={openDocument}
+                onSelect={(docName) => {
+                  window.location.hash = '#/' + docName;
+                }}
               />
             ))}
           </SidebarMenu>

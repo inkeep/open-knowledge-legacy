@@ -48,7 +48,7 @@ export function WikiLinkView({ node, updateAttributes }: NodeViewProps) {
       });
     }
     refetch();
-    window.location.hash = `#doc=${encodeURIComponent(docName)}`;
+    window.location.hash = '#/' + docName;
   }
 
   return (
