@@ -5,15 +5,17 @@ interface SlashCommandMenuProps {
   items: SlashCommandItem[];
   query: string;
   selectedIndex: number;
+  categoryLabels: Record<string, string>;
   onSelect: (item: SlashCommandItem) => void;
 }
 
-const categoryLabels: Record<string, string> = {
-  basic: 'Basic blocks',
-  insert: 'Insert',
-};
-
-export function SlashCommandMenu({ items, query, selectedIndex, onSelect }: SlashCommandMenuProps) {
+export function SlashCommandMenu({
+  items,
+  query,
+  selectedIndex,
+  categoryLabels,
+  onSelect,
+}: SlashCommandMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const filtered = filterItems(items, query);
 
