@@ -5,6 +5,8 @@ interface PageListContextValue {
   pages: Set<string>;
   /** True while the page list is being fetched from the server. */
   loading: boolean;
+  /** Error message from the most recent fetch failure, or null on success. */
+  error: string | null;
   /** Re-fetch the page list from the server. Call after creating a new page. */
   refetch: () => void;
 }
@@ -12,6 +14,7 @@ interface PageListContextValue {
 const PageListContext = createContext<PageListContextValue>({
   pages: new Set(),
   loading: true,
+  error: null,
   refetch: () => {},
 });
 
@@ -34,12 +37,19 @@ function logLoadPagesError(err: unknown) {
 export function PageListProvider({ children }: { children: ReactNode }) {
   const [pages, setPages] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   function refetch() {
     setLoading(true);
     void loadPages()
-      .then(setPages)
-      .catch(logLoadPagesError)
+      .then((p) => {
+        setPages(p);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        logLoadPagesError(err);
+        setError(err instanceof Error ? err.message : 'Failed to load pages');
+      })
       .finally(() => {
         setLoading(false);
       });
@@ -48,14 +58,20 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setLoading(true);
     void loadPages()
-      .then(setPages)
-      .catch(logLoadPagesError)
+      .then((p) => {
+        setPages(p);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        logLoadPagesError(err);
+        setError(err instanceof Error ? err.message : 'Failed to load pages');
+      })
       .finally(() => {
         setLoading(false);
       });
   }, []);
 
-  return <PageListContext value={{ pages, loading, refetch }}>{children}</PageListContext>;
+  return <PageListContext value={{ pages, loading, error, refetch }}>{children}</PageListContext>;
 }
 
 export function usePageList(): PageListContextValue {

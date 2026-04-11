@@ -4,12 +4,13 @@
  * Priority: frontmatter `title:` field → first `# heading` line → filename without extension.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createApiExtension, extractPageTitle } from './api-extension.ts';
+import type { FileIndexEntry } from './file-watcher.ts';
 
 describe('extractPageTitle', () => {
   test('returns frontmatter title when present', () => {
@@ -63,6 +64,21 @@ describe('extractPageTitle', () => {
     const content = '---\ndate: 2026-01-01\n---\n\n# Actual Title\n\nContent.';
     expect(extractPageTitle(content, 'filename')).toBe('Actual Title');
   });
+
+  test('strips double quotes from frontmatter title', () => {
+    const content = '---\ntitle: "Quoted: Title"\n---\n\nBody.';
+    expect(extractPageTitle(content, 'filename')).toBe('Quoted: Title');
+  });
+
+  test('strips single quotes from frontmatter title', () => {
+    const content = "---\ntitle: 'Single Quoted'\n---\n\nBody.";
+    expect(extractPageTitle(content, 'filename')).toBe('Single Quoted');
+  });
+
+  test('does not strip mismatched quotes from frontmatter title', () => {
+    const content = '---\ntitle: "Mismatched\'\n---\n\nBody.';
+    expect(extractPageTitle(content, 'filename')).toBe('"Mismatched\'');
+  });
 });
 
 function makeReq(method: string): IncomingMessage {
@@ -93,11 +109,29 @@ function makeRes(): { res: ServerResponse; captured: CapturedResponse } {
   return { res, captured };
 }
 
+function buildFileIndex(dir: string, base = ''): ReadonlyMap<string, FileIndexEntry> {
+  const index = new Map<string, FileIndexEntry>();
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const rel = base ? `${base}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      for (const [k, v] of buildFileIndex(join(dir, entry.name), rel)) {
+        index.set(k, v);
+      }
+    } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      const st = statSync(join(dir, entry.name));
+      index.set(rel.slice(0, -3), { size: st.size, modified: st.mtime.toISOString() });
+    }
+  }
+  return index;
+}
+
 async function callPages(contentDir: string, method = 'GET'): Promise<CapturedResponse> {
+  const fileIndex = buildFileIndex(contentDir);
   const ext = createApiExtension({
     hocuspocus: {} as unknown as Parameters<typeof createApiExtension>[0]['hocuspocus'],
     sessionManager: {} as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
     contentDir,
+    getFileIndex: () => fileIndex,
   });
   const req = makeReq(method);
   const { res, captured } = makeRes();
