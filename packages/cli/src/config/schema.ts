@@ -1,11 +1,5 @@
 import { z } from 'zod';
 
-/** Retained for future catalog support — not currently used in config. */
-const ContentRootSchema = z.object({
-  path: z.string(),
-  label: z.string(),
-});
-
 export const ConfigSchema = z.object({
   content: z
     .object({
@@ -36,4 +30,3 @@ export const ConfigSchema = z.object({
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
-export type ContentRoot = z.infer<typeof ContentRootSchema>;

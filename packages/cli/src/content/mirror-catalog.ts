@@ -41,14 +41,22 @@ const IndexMetaSchema = z.object({
  * Convert a simple glob pattern to a RegExp.
  * Supports: `*` (single segment), `**` (any depth), `?` (single char).
  */
+const globCache = new Map<string, RegExp>();
+
+/**
+ * Convert a simple glob pattern to a RegExp (memoized).
+ * Supports: `*` (single segment), `**` (any depth), `?` (single char).
+ */
 function globToRegex(pattern: string): RegExp {
+  const cached = globCache.get(pattern);
+  if (cached) return cached;
+
   let re = '';
   let i = 0;
   while (i < pattern.length) {
     const ch = pattern[i];
     if (ch === '*') {
       if (pattern[i + 1] === '*') {
-        // ** matches any path segments
         if (pattern[i + 2] === '/') {
           re += '(?:.+/)?';
           i += 3;
@@ -57,7 +65,6 @@ function globToRegex(pattern: string): RegExp {
           i += 2;
         }
       } else {
-        // * matches anything except /
         re += '[^/]*';
         i++;
       }
@@ -72,7 +79,9 @@ function globToRegex(pattern: string): RegExp {
       i++;
     }
   }
-  return new RegExp(`^${re}$`);
+  const regex = new RegExp(`^${re}$`);
+  globCache.set(pattern, regex);
+  return regex;
 }
 
 function matchesAny(relPath: string, patterns: string[]): boolean {

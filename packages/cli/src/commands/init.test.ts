@@ -23,7 +23,7 @@ describe('runInit', () => {
     const result = runInit({ cwd: testDir });
 
     // Content scaffolded
-    expect(result.wikiCreated.length).toBeGreaterThan(0);
+    expect(result.contentCreated.length).toBeGreaterThan(0);
     expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
     expect(existsSync(join(testDir, '.open-knowledge', 'external-sources'))).toBe(true);
     expect(existsSync(join(testDir, '.open-knowledge', 'research'))).toBe(true);
@@ -141,15 +141,15 @@ describe('runInit', () => {
   it('is idempotent — running twice produces the same end state', () => {
     const firstResult = runInit({ cwd: testDir });
     expect(firstResult.mcpAction).toBe('written');
-    expect(firstResult.wikiCreated.length).toBeGreaterThan(0);
+    expect(firstResult.contentCreated.length).toBeGreaterThan(0);
 
     const firstConfig = readFileSync(join(testDir, '.mcp.json'), 'utf-8');
 
     const secondResult = runInit({ cwd: testDir });
     expect(secondResult.mcpAction).toBe('skipped-existing');
     // Content scaffolding is idempotent too — writeIfMissing skips existing files
-    expect(secondResult.wikiCreated.length).toBe(0);
-    expect(secondResult.wikiSkipped.length).toBeGreaterThan(0);
+    expect(secondResult.contentCreated.length).toBe(0);
+    expect(secondResult.contentSkipped.length).toBeGreaterThan(0);
 
     const secondConfig = readFileSync(join(testDir, '.mcp.json'), 'utf-8');
     expect(secondConfig).toBe(firstConfig);

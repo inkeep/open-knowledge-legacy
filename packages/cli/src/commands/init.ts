@@ -45,8 +45,8 @@ export interface InitCommandOptions {
 }
 
 export interface InitCommandResult {
-  wikiCreated: string[];
-  wikiSkipped: string[];
+  contentCreated: string[];
+  contentSkipped: string[];
   mcpAction: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
   mcpPath: string;
   mcpError?: string;
@@ -102,8 +102,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     contentResult = initContent(cwd);
   } catch (err) {
     return {
-      wikiCreated: [],
-      wikiSkipped: [],
+      contentCreated: [],
+      contentSkipped: [],
       mcpAction: 'failed',
       mcpPath,
       mcpError: `Content scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -113,8 +113,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   // 2. Wire MCP config (unless --no-mcp)
   if (options.mcp === false) {
     return {
-      wikiCreated: contentResult.created,
-      wikiSkipped: contentResult.skipped,
+      contentCreated: contentResult.created,
+      contentSkipped: contentResult.skipped,
       mcpAction: 'skipped-flag',
       mcpPath,
     };
@@ -125,8 +125,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     config = readMcpConfig(mcpPath);
   } catch (err) {
     return {
-      wikiCreated: contentResult.created,
-      wikiSkipped: contentResult.skipped,
+      contentCreated: contentResult.created,
+      contentSkipped: contentResult.skipped,
       mcpAction: 'failed',
       mcpPath,
       mcpError: err instanceof Error ? err.message : String(err),
@@ -138,8 +138,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
 
   if (existing && !options.force) {
     return {
-      wikiCreated: contentResult.created,
-      wikiSkipped: contentResult.skipped,
+      contentCreated: contentResult.created,
+      contentSkipped: contentResult.skipped,
       mcpAction: 'skipped-existing',
       mcpPath,
     };
@@ -162,8 +162,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     writeMcpConfig(mcpPath, nextConfig);
   } catch (err) {
     return {
-      wikiCreated: contentResult.created,
-      wikiSkipped: contentResult.skipped,
+      contentCreated: contentResult.created,
+      contentSkipped: contentResult.skipped,
       mcpAction: 'failed',
       mcpPath,
       mcpError: err instanceof Error ? err.message : String(err),
@@ -171,8 +171,8 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
   }
 
   return {
-    wikiCreated: contentResult.created,
-    wikiSkipped: contentResult.skipped,
+    contentCreated: contentResult.created,
+    contentSkipped: contentResult.skipped,
     mcpAction: existing ? 'overwritten' : 'written',
     mcpPath,
   };
@@ -188,14 +188,14 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
 
   // Content scaffolding summary
   const okDir = join(cwd, OK_DIR);
-  if (result.wikiCreated.length > 0) {
+  if (result.contentCreated.length > 0) {
     lines.push(`Content scaffolded at ${okDir}/`);
-    lines.push(`  Created: ${result.wikiCreated.join(', ')}`);
+    lines.push(`  Created: ${result.contentCreated.join(', ')}`);
   } else {
     lines.push(`Content already present at ${okDir}/`);
   }
-  if (result.wikiSkipped.length > 0) {
-    lines.push(`  Skipped (already exist): ${result.wikiSkipped.join(', ')}`);
+  if (result.contentSkipped.length > 0) {
+    lines.push(`  Skipped (already exist): ${result.contentSkipped.join(', ')}`);
   }
 
   lines.push('');

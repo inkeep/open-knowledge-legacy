@@ -28,7 +28,7 @@ open-knowledge init
 # or:  npx @inkeep/open-knowledge init
 \`\`\`
 
-That creates the directory layout (\`articles/\`, \`external-sources/\`, \`research/\`, \`cache/\`), \`AGENTS.md\`, \`.gitignore\`, starter INDEX.md catalogs, and wires this MCP server into \`.mcp.json\`. After scaffolding, reconnect the MCP client (\`/mcp\` in Claude Code) so the server picks up the new directory and starts its catalog file watcher.
+That creates the directory layout (\`articles/\`, \`external-sources/\`, \`research/\`, \`cache/\`), \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. After scaffolding, reconnect the MCP client (\`/mcp\` in Claude Code) so the server picks up the new directory and starts its catalog file watcher.
 
 If you have \`Bash\` tool access, you can shell out: \`bash\` → \`npx @inkeep/open-knowledge init\`, then prompt the user to reconnect.
 
@@ -66,22 +66,20 @@ tags:
 - **Keep articles concise** — 100-300 lines is a good target. Split larger topics into multiple articles.
 - **Link to source code** by file path when helpful, but don't duplicate code into articles.
 
-### 4. Set folder-level title and description for every subfolder you create
+### 4. Set folder-level descriptions via mirrored catalogs
 
-This is the highest-leverage place to establish the habit. For every subfolder under \`articles/\` (or \`research/\` / \`external-sources/\`), set \`title\` and \`description\` in that subfolder's \`INDEX.md\` frontmatter. These two fields are **sticky** across catalog regenerations and surface in the parent catalog's Subfolders list — so readers know what's in each folder without opening it.
+To improve catalog navigation, you can set a \`title\` and \`description\` for any folder by editing its mirrored catalog at \`.open-knowledge/catalogs/<dir>/INDEX.md\`. These two fields are **sticky** — preserved across catalog rebuilds.
 
-Do this alongside creating the first article in the folder. In parallel tool calls, write:
+For example, after creating articles in \`articles/auth/\`, edit \`.open-knowledge/catalogs/articles/auth/INDEX.md\`:
 
-1. \`articles/auth/INDEX.md\`:
-   \`\`\`yaml
-   ---
-   title: Authentication
-   description: How auth works in this codebase — SSO, sessions, tokens.
-   ---
-   \`\`\`
-2. \`articles/auth/sso-migration.md\` (the first article)
+\`\`\`yaml
+---
+title: Authentication
+description: How auth works in this codebase — SSO, sessions, tokens.
+---
+\`\`\`
 
-The watcher rebuild preserves the \`title\`/\`description\` you wrote in \`INDEX.md\` and fills in the auto-generated sections (\`## Articles\`, \`## Subfolders\`). **Only** \`title\` and \`description\` are editable in \`INDEX.md\` — don't write a body or extra frontmatter fields, the rebuild will clobber them.
+The rebuild preserves your \`title\` and \`description\` while regenerating the article/subfolder listings. Catalogs live entirely inside \`.open-knowledge/catalogs/\` — they are never written into the source tree.
 
 ### 5. Suggested starting topics
 
@@ -97,10 +95,9 @@ Depending on the project, consider articles covering:
 
 ### 6. Verify
 
-- Catalogs (\`INDEX.md\` files) auto-regenerate as you write articles — the file watcher picks up changes
-- Read \`.open-knowledge/INDEX.md\` to verify the knowledge base is navigable
+- Catalogs in \`.open-knowledge/catalogs/\` auto-regenerate as you write articles — the file watcher picks up changes
+- Read \`.open-knowledge/catalogs/INDEX.md\` to verify the knowledge base is navigable
 - Ensure every article has frontmatter with at minimum \`title\` and \`description\`
-- Ensure every subfolder's \`INDEX.md\` has its sticky \`title\` and \`description\` set
 
 ## Non-goals
 

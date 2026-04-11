@@ -91,6 +91,12 @@ export function loadConfig(cwd?: string): LoadConfigResult {
     sources.push(workspaceConfigPath);
   }
 
+  // Deprecation warning for old config key
+  if ('wiki' in merged) {
+    console.warn('[config] Warning: "wiki" config section is deprecated and will be ignored.');
+    console.warn('[config] Migration: move wiki.include/exclude to content.include/exclude');
+  }
+
   // Validate with Zod (applies defaults for missing fields)
   const result = ConfigSchema.safeParse(merged);
   if (!result.success) {

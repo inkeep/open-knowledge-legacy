@@ -9,7 +9,11 @@
  * globs instead of roots). Retained for future catalog support.
  */
 import { resolve } from 'node:path';
-import type { ContentRoot } from '../config/schema.ts';
+
+export interface ContentRoot {
+  path: string;
+  label: string;
+}
 
 export interface ResolvedRoot {
   dir: string;
