@@ -1,5 +1,6 @@
 import { ChevronRight, File, Folder, FolderOpen } from 'lucide-react';
 import { type FC, useEffect, useState } from 'react';
+import { buildTree, type DocEntry, type TreeNode } from '@/components/file-tree-utils';
 import {
   Sidebar,
   SidebarContent,
@@ -14,60 +15,6 @@ import {
 } from '@/components/ui/sidebar';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { cn } from '@/lib/utils';
-
-// ── Tree data model ──────────────────────────────────────────────────
-
-interface DocEntry {
-  docName: string;
-  size: number;
-  modified: string;
-}
-
-interface TreeNode {
-  name: string;
-  path: string;
-  kind: 'folder' | 'file';
-  children: TreeNode[];
-}
-
-function buildTree(documents: DocEntry[]): TreeNode[] {
-  const root: TreeNode[] = [];
-
-  for (const doc of documents) {
-    const segments = doc.docName.split('/').filter(Boolean);
-    let children = root;
-
-    for (const [index, segment] of segments.entries()) {
-      const path = segments.slice(0, index + 1).join('/');
-      const isFile = index === segments.length - 1;
-      let node = children.find((child) => child.path === path);
-
-      if (!node) {
-        node = {
-          name: segment,
-          path,
-          kind: isFile ? 'file' : 'folder',
-          children: [],
-        };
-        children.push(node);
-      }
-
-      children = node.children;
-    }
-  }
-
-  // Sort: folders first, then alphabetically
-  function sortNodes(nodes: TreeNode[]): void {
-    nodes.sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    for (const node of nodes) sortNodes(node.children);
-  }
-  sortNodes(root);
-
-  return root;
-}
 
 // ── Tree node component ──────────────────────────────────────────────
 
