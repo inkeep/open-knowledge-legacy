@@ -346,7 +346,11 @@ function seedLastKnownHashes(
           });
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
-          if (code !== 'ENOENT' && code !== 'EACCES') {
+          if (code === 'EACCES') {
+            console.warn(
+              `[file-watcher] Permission denied reading ${fullPath}, file excluded from index`,
+            );
+          } else if (code !== 'ENOENT') {
             console.warn(`[file-watcher] Failed to seed hash for ${fullPath}:`, err);
           }
         }
@@ -365,7 +369,7 @@ function seedLastKnownHashes(
  * Called unconditionally for every classified event (including self-writes)
  * to keep the index in sync with actual disk state.
  */
-function updateFileIndex(
+export function updateFileIndex(
   event: DiskEvent,
   contentDir: string,
   fileIndex: Map<string, FileIndexEntry>,

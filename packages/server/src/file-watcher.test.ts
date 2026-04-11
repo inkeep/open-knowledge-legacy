@@ -415,6 +415,67 @@ describe('startWatcher file index', () => {
     }
   });
 
+  test('file index updates on create event', () => {
+    const { updateFileIndex, pathToDocName } = require('./file-watcher.ts');
+    const index = new Map();
+    const event = {
+      kind: 'create' as const,
+      path: resolve(contentDir, 'new-file.md'),
+      docName: 'new-file',
+      content: '# New File\n',
+    };
+    updateFileIndex(event, contentDir, index);
+    expect(index.has('new-file')).toBe(true);
+    expect(index.get('new-file')?.size).toBe(Buffer.byteLength('# New File\n', 'utf-8'));
+    expect(index.get('new-file')?.modified).toBeTruthy();
+  });
+
+  test('file index removes entry on delete event', () => {
+    const { updateFileIndex } = require('./file-watcher.ts');
+    const index = new Map([['existing', { size: 10, modified: new Date().toISOString() }]]);
+    const event = {
+      kind: 'delete' as const,
+      path: resolve(contentDir, 'existing.md'),
+      docName: 'existing',
+    };
+    updateFileIndex(event, contentDir, index);
+    expect(index.has('existing')).toBe(false);
+  });
+
+  test('file index updates size/modified on update event', () => {
+    const { updateFileIndex } = require('./file-watcher.ts');
+    const oldModified = '2020-01-01T00:00:00.000Z';
+    const index = new Map([['doc', { size: 5, modified: oldModified }]]);
+    const event = {
+      kind: 'update' as const,
+      path: resolve(contentDir, 'doc.md'),
+      docName: 'doc',
+      content: '# Updated content with more text\n',
+    };
+    updateFileIndex(event, contentDir, index);
+    expect(index.get('doc')?.size).toBe(
+      Buffer.byteLength('# Updated content with more text\n', 'utf-8'),
+    );
+    expect(index.get('doc')?.modified).not.toBe(oldModified);
+  });
+
+  test('file index handles rename event', () => {
+    const { updateFileIndex } = require('./file-watcher.ts');
+    const index = new Map([['old-name', { size: 10, modified: new Date().toISOString() }]]);
+    const event = {
+      kind: 'rename' as const,
+      oldPath: resolve(contentDir, 'old-name.md'),
+      newPath: resolve(contentDir, 'new-name.md'),
+      oldDocName: 'old-name',
+      newDocName: 'new-name',
+      content: '# Renamed\n',
+    };
+    updateFileIndex(event, contentDir, index);
+    expect(index.has('old-name')).toBe(false);
+    expect(index.has('new-name')).toBe(true);
+    expect(index.get('new-name')?.size).toBe(Buffer.byteLength('# Renamed\n', 'utf-8'));
+  });
+
   test('getFileIndex returns empty map when no .md files exist', async () => {
     const handle = await startWatcher(contentDir, async () => {});
     try {
