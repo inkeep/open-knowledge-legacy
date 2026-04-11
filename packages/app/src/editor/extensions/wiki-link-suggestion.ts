@@ -208,13 +208,6 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
       handleKeyDown(view: EditorView, event: KeyboardEvent): boolean {
         return handleSuggestionKeyDown(view, event);
       },
-
-      handleDOMEvents: {
-        keydown(view: EditorView, event: Event): boolean {
-          if (!(event instanceof KeyboardEvent)) return false;
-          return handleSuggestionKeyDown(view, event);
-        },
-      },
     },
 
     view() {
@@ -289,11 +282,15 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
               .then((pages) => {
                 fetchError = null;
                 cachedPages = pages;
-                currentFiltered = buildSuggestionItems(cachedPages, state.query);
+                const currentState = wikiLinkSuggestionKey.getState(editor.state) as
+                  | WikiLinkSuggestionState
+                  | undefined;
+                if (!currentState?.active) return;
+                currentFiltered = buildSuggestionItems(cachedPages, currentState.query);
                 renderer?.updateProps({
                   items: currentFiltered,
-                  query: state.query,
-                  selectedIndex: state.selectedIndex,
+                  query: currentState.query,
+                  selectedIndex: currentState.selectedIndex,
                   onSelect,
                   loading: false,
                   error: null,
@@ -302,11 +299,15 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
               .catch((err) => {
                 console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
                 fetchError = 'Failed to load pages. You can still insert an unresolved link.';
-                currentFiltered = buildSuggestionItems([], state.query);
+                const currentState = wikiLinkSuggestionKey.getState(editor.state) as
+                  | WikiLinkSuggestionState
+                  | undefined;
+                if (!currentState?.active) return;
+                currentFiltered = buildSuggestionItems([], currentState.query);
                 renderer?.updateProps({
                   items: currentFiltered,
-                  query: state.query,
-                  selectedIndex: state.selectedIndex,
+                  query: currentState.query,
+                  selectedIndex: currentState.selectedIndex,
                   onSelect,
                   loading: false,
                   error: fetchError,

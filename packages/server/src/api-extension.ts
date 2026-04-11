@@ -96,7 +96,14 @@ export function extractPageTitle(content: string, filename: string): string {
       const frontmatter = content.slice(0, closingIdx + 4);
       const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
       if (titleMatch) {
-        return titleMatch[1].trim();
+        let title = titleMatch[1].trim();
+        if (
+          (title.startsWith('"') && title.endsWith('"')) ||
+          (title.startsWith("'") && title.endsWith("'"))
+        ) {
+          title = title.slice(1, -1);
+        }
+        return title;
       }
     }
   }
@@ -803,7 +810,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      const index = getFileIndex?.() ?? new Map();
+      const index = getFileIndex();
       const pages: { docName: string; title: string }[] = [];
       for (const [docName] of index) {
         let title = docName;
@@ -811,8 +818,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           const filePath = resolve(contentDir, `${docName}.md`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
-        } catch {
-          // unreadable file — fall back to docName
+        } catch (err) {
+          console.warn(`[pages] Failed to read title for ${docName}:`, err);
         }
         pages.push({ docName, title });
       }

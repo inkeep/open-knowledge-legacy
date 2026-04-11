@@ -64,6 +64,21 @@ describe('extractPageTitle', () => {
     const content = '---\ndate: 2026-01-01\n---\n\n# Actual Title\n\nContent.';
     expect(extractPageTitle(content, 'filename')).toBe('Actual Title');
   });
+
+  test('strips double quotes from frontmatter title', () => {
+    const content = '---\ntitle: "Quoted: Title"\n---\n\nBody.';
+    expect(extractPageTitle(content, 'filename')).toBe('Quoted: Title');
+  });
+
+  test('strips single quotes from frontmatter title', () => {
+    const content = "---\ntitle: 'Single Quoted'\n---\n\nBody.";
+    expect(extractPageTitle(content, 'filename')).toBe('Single Quoted');
+  });
+
+  test('does not strip mismatched quotes from frontmatter title', () => {
+    const content = '---\ntitle: "Mismatched\'\n---\n\nBody.';
+    expect(extractPageTitle(content, 'filename')).toBe('"Mismatched\'');
+  });
 });
 
 function makeReq(method: string): IncomingMessage {
