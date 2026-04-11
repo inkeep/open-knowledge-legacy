@@ -186,12 +186,12 @@ async function startCatalogWatcher(
 
   if (!parcel) {
     const { watch } = await import('chokidar');
-    log('@parcel/watcher unavailable, using chokidar fallback for catalog watching');
+    console.warn('[content-watcher] @parcel/watcher unavailable, using chokidar fallback');
     const watcher = watch(projectDir, {
       ignoreInitial: true,
       ignored: ['**/node_modules/**', '**/.git/**', '**/.claude/**'],
     });
-    watcher.on('error', (err) => console.error('[content-watcher] Chokidar error:', err));
+    watcher.on('error', (err) => console.error('[content-watcher] chokidar error:', err));
     watcher.on('add', (path) => onEvents([{ path }]));
     watcher.on('change', (path) => onEvents([{ path }]));
     watcher.on('unlink', (path) => onEvents([{ path }]));

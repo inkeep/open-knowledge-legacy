@@ -549,7 +549,14 @@ async function startChokidarWatcher(
   watcher.on('unlink', (path) => queueEvent('delete', path));
 
   return {
-    unsubscribe: () => watcher.close(),
+    unsubscribe: () => {
+      if (batchTimer) {
+        clearTimeout(batchTimer);
+        batchTimer = null;
+        pendingEvents = [];
+      }
+      return watcher.close();
+    },
   };
 }
 
