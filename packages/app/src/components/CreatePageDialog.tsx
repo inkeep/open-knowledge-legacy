@@ -1,5 +1,5 @@
 import { Dialog } from 'radix-ui';
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toWikiLinkSlug } from '@/editor/extensions/wiki-link-helpers';
@@ -23,6 +23,7 @@ export function CreatePageDialog({ open, target, onOpenChange, onCreated }: Crea
   const [path, setPath] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const errorId = useId();
 
   // Reset state each time the dialog opens (possibly for a different target).
   useEffect(() => {
@@ -74,12 +75,18 @@ export function CreatePageDialog({ open, target, onOpenChange, onCreated }: Crea
               value={path}
               onChange={(e) => setPath(e.target.value)}
               placeholder="my-page.md"
+              aria-describedby={error ? errorId : undefined}
+              aria-invalid={error ? true : undefined}
               autoFocus
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !busy) handleCreate();
+                if (e.key === 'Enter' && !busy) void handleCreate();
               }}
             />
-            {error && <p className="mt-1.5 text-xs text-red-600">{error}</p>}
+            {error && (
+              <p id={errorId} className="mt-1.5 text-xs text-red-600">
+                {error}
+              </p>
+            )}
           </div>
 
           <div className="flex justify-end gap-2">

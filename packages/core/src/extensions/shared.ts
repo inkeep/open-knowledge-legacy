@@ -27,7 +27,6 @@ export const sharedExtensions = [
       },
     },
   }),
-  StarterKit.configure({ undoRedo: false, link: false }),
   Table.configure({
     resizable: true,
   }),

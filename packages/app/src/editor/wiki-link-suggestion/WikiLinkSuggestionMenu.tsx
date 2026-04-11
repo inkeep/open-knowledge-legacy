@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import type { WikiLinkSuggestionItem } from '../extensions/wiki-link-suggestion';
 
 interface WikiLinkSuggestionMenuProps {
@@ -19,6 +19,11 @@ export function WikiLinkSuggestionMenu({
   error = null,
 }: WikiLinkSuggestionMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
+  const activeDescendant =
+    selectedIndex >= 0 && selectedIndex < items.length
+      ? `${listboxId}-option-${selectedIndex}`
+      : undefined;
 
   // Scroll selected item into view
   useEffect(() => {
@@ -58,6 +63,8 @@ export function WikiLinkSuggestionMenu({
       ref={containerRef}
       role="listbox"
       aria-label="Wiki link suggestions"
+      aria-activedescendant={activeDescendant}
+      tabIndex={-1}
       className="w-64 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
     >
       {error && <div className="rounded-md px-2 py-1.5 text-xs text-amber-700">{error}</div>}
@@ -66,6 +73,7 @@ export function WikiLinkSuggestionMenu({
         return (
           <button
             key={item.docName}
+            id={`${listboxId}-option-${idx}`}
             type="button"
             role="option"
             aria-selected={isSelected}

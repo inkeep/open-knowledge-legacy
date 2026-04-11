@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { sharedExtensions } from './shared';
-import { getWikiLinkText, parseWikiLink, renderWikiLink } from './wiki-link';
+import {
+  getWikiLinkText,
+  normalizeNullableString,
+  parseWikiLink,
+  renderWikiLink,
+} from './wiki-link';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
@@ -37,6 +42,12 @@ describe('parseWikiLink', () => {
 });
 
 describe('wikiLink helpers', () => {
+  test('normalizes nullable strings', () => {
+    expect(normalizeNullableString('  Alias  ')).toBe('Alias');
+    expect(normalizeNullableString('   ')).toBeNull();
+    expect(normalizeNullableString(null)).toBeNull();
+  });
+
   test('renders markdown syntax from attrs', () => {
     expect(renderWikiLink({ target: 'Page', alias: null, anchor: null })).toBe('[[Page]]');
     expect(renderWikiLink({ target: 'Page', alias: 'Alias', anchor: null })).toBe('[[Page|Alias]]');

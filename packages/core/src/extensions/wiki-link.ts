@@ -17,7 +17,7 @@ interface WikiLinkToken {
 
 const WIKI_LINK_PATTERN = /^\[\[([^[\]|#]+?)(?:#([^\]|]+?))?(?:\|([^\]]+?))?\]\]/;
 
-function normalizeNullableString(value: unknown): string | null {
+export function normalizeNullableString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;

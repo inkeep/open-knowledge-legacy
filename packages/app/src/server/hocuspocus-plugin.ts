@@ -6,7 +6,7 @@
  * `bun run dev` starts everything in a single process.
  */
 import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
@@ -27,6 +27,8 @@ const CONTENT_DIR = resolve(
   import.meta.dirname ?? new URL('.', import.meta.url).pathname,
   '../../../content',
 );
+const PROJECT_ROOT = resolve(CONTENT_DIR, '../..');
+const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR) || 'packages/content';
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
@@ -39,7 +41,8 @@ export const hocuspocus = new Hocuspocus({
   extensions: [
     createPersistenceExtension({
       contentDir: CONTENT_DIR,
-      projectDir: resolve(CONTENT_DIR, '..'),
+      projectDir: PROJECT_ROOT,
+      contentRoot: CONTENT_ROOT,
     }).extension,
   ],
 });
@@ -56,6 +59,8 @@ hocuspocus.configuration.extensions.push(
     sessionManager,
     contentDir: CONTENT_DIR,
     enableTestRoutes: true,
+    projectRoot: PROJECT_ROOT,
+    contentRoot: CONTENT_ROOT,
   }),
 );
 

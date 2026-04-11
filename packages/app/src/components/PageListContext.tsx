@@ -3,12 +3,15 @@ import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 interface PageListContextValue {
   /** Set of known docNames (filename without .md extension). */
   pages: Set<string>;
+  /** True while the page list is being fetched from the server. */
+  loading: boolean;
   /** Re-fetch the page list from the server. Call after creating a new page. */
   refetch: () => void;
 }
 
 const PageListContext = createContext<PageListContextValue>({
   pages: new Set(),
+  loading: true,
   refetch: () => {},
 });
 
@@ -27,16 +30,29 @@ function logLoadPagesError(err: unknown) {
 
 export function PageListProvider({ children }: { children: ReactNode }) {
   const [pages, setPages] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
 
   function refetch() {
-    void loadPages().then(setPages).catch(logLoadPagesError);
+    setLoading(true);
+    void loadPages()
+      .then(setPages)
+      .catch(logLoadPagesError)
+      .finally(() => {
+        setLoading(false);
+      });
   }
 
   useEffect(() => {
-    void loadPages().then(setPages).catch(logLoadPagesError);
+    setLoading(true);
+    void loadPages()
+      .then(setPages)
+      .catch(logLoadPagesError)
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
 
-  return <PageListContext value={{ pages, refetch }}>{children}</PageListContext>;
+  return <PageListContext value={{ pages, loading, refetch }}>{children}</PageListContext>;
 }
 
 export function usePageList(): PageListContextValue {

@@ -22,6 +22,7 @@ export {
 export { sharedExtensions } from './extensions/shared.ts';
 export {
   getWikiLinkText,
+  normalizeNullableString,
   parseWikiLink,
   renderWikiLink,
   WikiLink,
