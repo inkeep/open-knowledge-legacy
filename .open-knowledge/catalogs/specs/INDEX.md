@@ -25,5 +25,8 @@ schema_version: 1
 - **[2026-04-10-mcp-write-tools](.open-knowledge/catalogs/specs/2026-04-10-mcp-write-tools/INDEX.md)** (2 articles)
 - **[2026-04-10-multi-file-documents](.open-knowledge/catalogs/specs/2026-04-10-multi-file-documents/INDEX.md)** (7 articles)
 - **[2026-04-10-provider-pool](.open-knowledge/catalogs/specs/2026-04-10-provider-pool/INDEX.md)** (3 articles)
+- **[2026-04-10-slash-command-generalization](.open-knowledge/catalogs/specs/2026-04-10-slash-command-generalization/INDEX.md)** (6 articles)
 - **[2026-04-10-wiki-links-backlinks](.open-knowledge/catalogs/specs/2026-04-10-wiki-links-backlinks/INDEX.md)** (5 articles)
 - **[2026-04-11-content-config-unification](.open-knowledge/catalogs/specs/2026-04-11-content-config-unification/INDEX.md)** (2 articles)
+- **[2026-04-11-exclude-gitignored-files](.open-knowledge/catalogs/specs/2026-04-11-exclude-gitignored-files/INDEX.md)** (1 article)
+- **[2026-04-11-sidebar-realtime-updates](.open-knowledge/catalogs/specs/2026-04-11-sidebar-realtime-updates/INDEX.md)** (1 article)

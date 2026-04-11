@@ -6,15 +6,16 @@
  * `bun run dev` starts everything in a single process.
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
-  type AsyncSubscription,
   createApiExtension,
+  createContentFilter,
   createExternalChangeHandler,
   createPersistenceExtension,
   startWatcher,
+  type WatcherHandle,
 } from '@inkeep/open-knowledge-server';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
@@ -22,18 +23,24 @@ import { parse as parseYaml } from 'yaml';
 
 // Module-level watcher subscription — survives Vite HMR restarts so we can
 // unsubscribe the previous instance before starting a new one.
-let activeWatcher: AsyncSubscription | null = null;
+let activeWatcher: WatcherHandle | null = null;
 
 // Resolve project root (directory containing .open-knowledge/)
 const PLUGIN_DIR = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
 const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
 
+interface ContentConfig {
+  dir: string;
+  include: string[];
+  exclude: string[];
+}
+
 /**
- * Read content.dir from .open-knowledge/config.yml.
- * Falls back to 'content' (the old hardcoded default) if no config exists
- * or no content.dir is specified.
+ * Read content config from .open-knowledge/config.yml.
+ * Falls back to defaults if no config exists or fields are unspecified.
  */
-function resolveContentDir(): string {
+function resolveContentConfig(): ContentConfig {
+  const defaults: ContentConfig = { dir: PROJECT_ROOT, include: ['**/*.md'], exclude: [] };
   const configPath = resolve(PROJECT_ROOT, '.open-knowledge/config.yml');
   if (existsSync(configPath)) {
     try {
@@ -41,21 +48,42 @@ function resolveContentDir(): string {
       const parsed = parseYaml(raw) as Record<string, unknown> | null;
       const content = parsed?.content as Record<string, unknown> | undefined;
       if (typeof content?.dir === 'string') {
-        return resolve(PROJECT_ROOT, content.dir);
+        defaults.dir = resolve(PROJECT_ROOT, content.dir);
+      }
+      if (Array.isArray(content?.include)) {
+        const valid = (content.include as unknown[]).filter(
+          (p): p is string => typeof p === 'string',
+        );
+        if (valid.length > 0) defaults.include = valid;
+      }
+      if (Array.isArray(content?.exclude)) {
+        const valid = (content.exclude as unknown[]).filter(
+          (p): p is string => typeof p === 'string',
+        );
+        if (valid.length > 0) defaults.exclude = valid;
       }
     } catch (err) {
       console.warn('[hocuspocus] Failed to parse config:', err);
     }
   }
-  // Default to project root (matches config schema default: content.dir = '.')
-  return PROJECT_ROOT;
+  return defaults;
 }
 
-const CONTENT_DIR = resolveContentDir();
+const contentConfig = resolveContentConfig();
+const CONTENT_DIR = contentConfig.dir;
+const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
+
+// Create content filter at module scope — unified exclusion (gitignore + config exclude)
+const contentFilter = createContentFilter({
+  projectDir: PROJECT_ROOT,
+  contentDir: CONTENT_DIR,
+  includePatterns: contentConfig.include,
+  excludePatterns: contentConfig.exclude,
+});
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -64,7 +92,8 @@ export const hocuspocus = new Hocuspocus({
   extensions: [
     createPersistenceExtension({
       contentDir: CONTENT_DIR,
-      projectDir: resolve(CONTENT_DIR, '..'),
+      projectDir: PROJECT_ROOT,
+      contentRoot: CONTENT_ROOT,
     }).extension,
   ],
 });
@@ -80,7 +109,10 @@ hocuspocus.configuration.extensions.push(
     hocuspocus,
     sessionManager,
     contentDir: CONTENT_DIR,
+    getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
     enableTestRoutes: true,
+    projectRoot: PROJECT_ROOT,
+    contentRoot: CONTENT_ROOT,
   }),
 );
 
@@ -145,11 +177,15 @@ export function hocuspocusPlugin(): Plugin {
           activeWatcher = null;
         }
         try {
-          activeWatcher = await startWatcher(CONTENT_DIR, async (event) => {
-            if (event.kind === 'update' || event.kind === 'create') {
-              await handleExternalChange(event.docName, event.content);
-            }
-          });
+          activeWatcher = await startWatcher(
+            CONTENT_DIR,
+            async (event) => {
+              if (event.kind === 'update' || event.kind === 'create') {
+                await handleExternalChange(event.docName, event.content);
+              }
+            },
+            contentFilter,
+          );
           server.httpServer?.on('close', async () => {
             if (activeWatcher) {
               await activeWatcher.unsubscribe();
