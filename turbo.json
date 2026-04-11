@@ -9,7 +9,86 @@
       "dependsOn": ["^build"]
     },
     "test": {
-      "dependsOn": ["^build"]
+      "dependsOn": ["^build"],
+      "cache": true,
+      "inputs": ["src/**/*.ts", "src/**/*.tsx"]
+    },
+    "test:integration": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/integration/bridge-matrix.test.ts",
+        "tests/integration/test-harness.ts",
+        "../server/src/**/*.ts",
+        "../core/src/**/*.ts"
+      ]
+    },
+    "test:conversion": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/integration/conversion-fidelity.test.ts",
+        "tests/integration/test-harness.ts",
+        "../core/src/**/*.ts"
+      ]
+    },
+    "test:stress:s1-s8-s9": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/stress/observers.stress.s1-s8-s9.test.ts",
+        "tests/stress/synthetic.ts"
+      ]
+    },
+    "test:stress:s2": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/stress/observers.stress.s2.test.ts",
+        "tests/stress/synthetic.ts"
+      ]
+    },
+    "test:stress:s4": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/stress/observers.stress.s4.test.ts",
+        "tests/stress/synthetic.ts"
+      ]
+    },
+    "test:stress:s5-s6": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/stress/observers.stress.s5-s6.test.ts",
+        "tests/stress/synthetic.ts"
+      ]
+    },
+    "test:fuzz": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/**/*.ts",
+        "src/**/*.tsx",
+        "tests/stress/observers.fuzz.test.ts",
+        "tests/stress/synthetic.ts"
+      ]
+    },
+    "test:e2e": {
+      "dependsOn": ["^build"],
+      "cache": false
     }
   }
 }
