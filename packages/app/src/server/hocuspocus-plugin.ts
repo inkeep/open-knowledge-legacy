@@ -5,7 +5,7 @@
  * This plugin wires Hocuspocus into Vite's HTTP/WS server so that
  * `bun run dev` starts everything in a single process.
  */
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
@@ -18,15 +18,40 @@ import {
 } from '@inkeep/open-knowledge-server';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
+import { parse as parseYaml } from 'yaml';
 
 // Module-level watcher subscription — survives Vite HMR restarts so we can
 // unsubscribe the previous instance before starting a new one.
 let activeWatcher: AsyncSubscription | null = null;
 
-const CONTENT_DIR = resolve(
-  import.meta.dirname ?? new URL('.', import.meta.url).pathname,
-  '../../../content',
-);
+// Resolve project root (directory containing .open-knowledge/)
+const PLUGIN_DIR = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
+const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
+
+/**
+ * Read content.dir from .open-knowledge/config.yml.
+ * Falls back to 'content' (the old hardcoded default) if no config exists
+ * or no content.dir is specified.
+ */
+function resolveContentDir(): string {
+  const configPath = resolve(PROJECT_ROOT, '.open-knowledge/config.yml');
+  if (existsSync(configPath)) {
+    try {
+      const raw = readFileSync(configPath, 'utf-8');
+      const parsed = parseYaml(raw) as Record<string, unknown> | null;
+      const content = parsed?.content as Record<string, unknown> | undefined;
+      if (typeof content?.dir === 'string') {
+        return resolve(PROJECT_ROOT, content.dir);
+      }
+    } catch (err) {
+      console.warn('[hocuspocus] Failed to parse config:', err);
+    }
+  }
+  // Default to project root (matches config schema default: content.dir = '.')
+  return PROJECT_ROOT;
+}
+
+const CONTENT_DIR = resolveContentDir();
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.

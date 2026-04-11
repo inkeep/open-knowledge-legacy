@@ -5,7 +5,7 @@ export {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
-export { type ApiExtensionOptions, createApiExtension } from './api-extension.ts';
+export { type ApiExtensionOptions, createApiExtension, safeSubdir } from './api-extension.ts';
 export { createExternalChangeHandler } from './external-change.ts';
 export {
   type AsyncSubscription,
