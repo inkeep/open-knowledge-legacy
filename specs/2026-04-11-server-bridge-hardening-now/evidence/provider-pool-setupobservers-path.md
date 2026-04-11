@@ -6,22 +6,25 @@ sources:
   - packages/app/src/editor/DocumentContext.tsx
   - packages/app/src/editor/provider-pool.test.ts
 created: 2026-04-11
-baseline-commit: 2d35736
+baseline-commit: 48d8f04
+superseded-baseline: 2d35736 (line refs shifted +5 by PR #56 — see "PR #56 drift audit" below)
 ---
 
 ## TLDR
 
-`setupObservers()` is called synchronously at `provider-pool.ts:100-109` inside the `onSynced` event handler. If it throws, the error propagates up into HocuspocusProvider's internal event emitter and disappears — no caller sees it. The provider remains cached in the pool with `observerCleanup: null`; future lookups return the broken entry permanently until page reload or pool disposal. The existing `onSyncError` callback handles *runtime* sync errors (caught inside observer bodies after setup succeeds); the init-time throw is a separate failure mode that `onSyncError` does not cover.
+`setupObservers()` is called synchronously at `provider-pool.ts:105-114` (inside the `onSynced` event handler declared at line 97) in baseline `48d8f04`. Was at lines 100-109 in `2d35736`; shifted +5 by PR #56 (which added `hasSynced`/`tearingDown` fields and event-handler guards). If it throws, the error propagates up into HocuspocusProvider's internal event emitter and disappears — no caller sees it. The provider remains cached in the pool with `observerCleanup: null`; future lookups return the broken entry permanently until page reload or pool disposal. The existing `onSyncError` callback handles *runtime* sync errors (caught inside observer bodies after setup succeeds); the init-time throw is a separate failure mode that `onSyncError` does not cover. **PR #56 integration: S4's fix composes cleanly with the new `tearingDown` mechanism — destroy+evict in S4's catch path automatically propagates the `tearingDown = true` flag via `destroyEntry()`, suppressing any late-firing event handlers on the already-torn-down entry.**
 
 ## Detail
 
-### The call site
+### The call site (baseline `48d8f04`, post-PR-56)
 
-**CONFIRMED** — `packages/app/src/editor/provider-pool.ts:92-111`:
+**CONFIRMED** — `packages/app/src/editor/provider-pool.ts:97-116`:
 
 ```typescript
 const onSynced = () => {
+  if (entry.tearingDown || this.entries.get(docName) !== entry) return;  // NEW (PR #56) — suppresses events on torn-down entries
   entry.syncState = 'synced';
+  entry.hasSynced = true;  // NEW (PR #56) — used by onDisconnect's recycleDisconnectedEntry path
   this.notify();
 
   // Set up bidirectional observers once after first sync
@@ -42,7 +45,57 @@ const onSynced = () => {
 };
 ```
 
-Registered via `provider.on('synced', onSynced)` at line 118.
+Registered via `provider.on('synced', onSynced)` at line 123 (was 118 pre-PR-56).
+
+### PR #56 drift audit (new section added 2026-04-11 post-migration)
+
+PR #56 ("Prevent whole-document duplication after server restart") added 42 lines to `provider-pool.ts` between our baseline (`2d35736`) and the new worktree's base (`48d8f04`). Changes relevant to S4:
+
+1. **`PoolEntry` interface gained two fields** (lines 14-15):
+   ```typescript
+   hasSynced: boolean;
+   tearingDown: boolean;
+   ```
+
+2. **All three event handlers (`onStatus`, `onSynced`, `onDisconnect`) got a top guard:**
+   ```typescript
+   if (entry.tearingDown || this.entries.get(docName) !== entry) return;
+   ```
+   This is the entry-identity check: if the entry has been replaced in the pool (e.g., by recycle) or flagged for teardown, the handler is a no-op.
+
+3. **`onDisconnect` got a new `recycleDisconnectedEntry` path:**
+   ```typescript
+   if (entry.hasSynced && provider.unsyncedChanges === 0) {
+     this.recycleDisconnectedEntry(docName);
+   }
+   ```
+   Only fires if the entry had reached `synced` state AND has no buffered local-only edits. Tears down the entry and re-opens a fresh one.
+
+4. **`destroyEntry()` was hardened (lines 209-220):**
+   ```typescript
+   private destroyEntry(entry: PoolEntry): void {
+     entry.tearingDown = true;  // NEW
+     entry.observerCleanup?.();
+     entry.observerCleanup = null;
+     try {
+       entry.provider.destroy();
+     } catch (err) {
+       console.warn(`[ProviderPool] Provider destroy failed for ${entry.docName}:`, err);
+     }
+   }
+   ```
+
+5. **New `recycleDisconnectedEntry(docName)` method** at lines 222-237 — mirrors `close()`'s teardown but optionally re-opens if the recycled entry was active.
+
+**Consequences for S4's fix:**
+
+| Concern | Pre-PR-56 | Post-PR-56 |
+|---|---|---|
+| Late-firing event handlers after S4's destroy+evict | Possible latent bug (reconnect storm → spurious re-fire → partial observer state) | **Suppressed by `tearingDown` guard** — S4's call to `destroyEntry()` automatically sets the flag |
+| Error inside `provider.destroy()` during S4's teardown | Unhandled, could escape S4's catch | **Caught by `destroyEntry`'s own try/catch** |
+| Race with `recycleDisconnectedEntry` | N/A (method didn't exist) | **No race:** S4's path fires during `onSynced` before `onDisconnect`; even if both fired, both route through `destroyEntry` which is idempotent via `tearingDown` |
+
+**Net effect: S4's fix is structurally identical but its runtime integration is more robust after PR #56.** No changes to the spec's planned code shape — just line numbers shift and the rationale/interaction note gets richer.
 
 ### Failure mode analysis
 
@@ -64,9 +117,9 @@ The guard exists so that if `onSynced` fires multiple times (unusual but possibl
 
 This is a second-order concern: in practice, `onSynced` fires once per connection lifecycle. But it's a latent footgun that a retry loop during reconnect storms could hit.
 
-### `destroyEntry` semantics — exists as cleanup pattern
+### `destroyEntry` semantics — exists as cleanup pattern (PRE-PR-56)
 
-**CONFIRMED** — `provider-pool.ts:193-198`:
+**Pre-PR-56 form (`2d35736`, lines 193-198)** — preserved here for historical context:
 
 ```typescript
 private destroyEntry(entry: PoolEntry): void {

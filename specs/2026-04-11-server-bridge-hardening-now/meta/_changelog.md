@@ -216,3 +216,51 @@ Ran `/analyze` protocol against both specs:
 
 ### Pending
 - No blocking items. Spec A finalization stands. Cross-spec coordination is documented.
+
+## 2026-04-11 (evening) — Post-migration drift audit
+
+### Trigger
+Spec artifacts were migrated from `.claude/worktrees/test-isolation-parallelism` (baseline 2d35736) to a new worktree at `.claude/worktrees/server-bridge-hardening-now` branched from `origin/main` (48d8f04). Three commits landed on main between those baselines:
+- **fe89406** — feat: zero-config bunx CLI packaging (#57)
+- **611f2bd** — spec: zero-config bunx CLI packaging (#54)
+- **48d8f04** — Prevent whole-document duplication after server restart (#56)
+
+Drift audit ran before declaring ready-to-ship.
+
+### Verification results
+- `standalone.ts` — **zero drift.** 688 lines; destroy() at 399; applyToDoc at 177. All Spec A target regions (82-88, 177-205, 428-464, 680, 685-687) intact.
+- `external-change.ts` — **zero drift.** 69 lines.
+- `observers.ts`, `observers.test.ts`, `CLAUDE.md` — **zero drift** (not touched by any of the 3 commits).
+- `head-watcher.ts:141-144` — **no-op guard still at exact same lines.** D8 (locked decision on `startHeadWatcher` returning no-op handle) remains valid.
+- `persistence.ts` — module-level state (`reconciledBaseByBranch`, `batchInProgress`, `consecutiveGitFailures`) shifted +3 lines from baseline but still module-level. NG2 (S5 deferred) still coherent.
+- `file-watcher.ts` — **grew from ~465 → 628 lines** (+163) via PR #57. `writeTracker` at line 68 (was 64), `lastKnownHash` at line 108 (was 104) — both still `export const` module-level. NG2 still coherent. Note: PR #57 was named "zero-config bunx CLI packaging" but actually touched file-watcher/head-watcher/persistence substantively — misleading PR name, real server-package changes.
+- `provider-pool.ts` — **material drift from PR #56.** Grew from 200 → 240 lines. `onSynced` at line 97 (was 92, +5). `destroyEntry` at line 209 (was 193, +16). New `PoolEntry` fields: `hasSynced`, `tearingDown`. New method: `recycleDisconnectedEntry`. `destroyEntry` now sets `tearingDown = true` and wraps `provider.destroy()` in try/catch.
+
+### Impact on S4
+- **S4 still valid.** The `setupObservers` call inside `onSynced` is still unguarded; the bug S4 targets still exists.
+- **Integration is cleaner than pre-PR-56.** PR #56's `tearingDown` guard at the top of each event handler means S4's `destroyEntry()` call automatically suppresses late-firing events — the latent concern in A4 (reconnect storm re-fire) is now structurally prevented.
+- **No interaction race with `recycleDisconnectedEntry`.** S4's catch fires during `onSynced` (before `onDisconnect`); both paths are idempotent via `tearingDown`.
+- **Line numbers shifted.** Spec + evidence file references updated.
+
+### Applied edits
+- **SPEC.md header:** baseline bumped `2d35736` → `48d8f04`; Last updated annotated with "post-migration drift audit"
+- **SPEC.md §6 S4.R1:** line refs updated `92-111` → `97-116`; added note about `tearingDown` guard interaction
+- **SPEC.md §8 "provider-pool.ts setupObservers call site":** rewrote with PR #56 context, new line refs, `recycleDisconnectedEntry` interaction note, new PoolEntry fields, hardened destroyEntry, new integration test file note
+- **SPEC.md §12 A4:** strengthened with post-PR-56 mechanism reference
+- **SPEC.md §16 SCOPE:** line refs for provider-pool.ts updated; baseline note added
+- **evidence/provider-pool-setupobservers-path.md:** baseline updated to 48d8f04 with superseded-baseline note; TLDR rewritten with new line refs and PR #56 integration summary; "The call site" section updated with post-PR-56 code showing `tearingDown` guard + `hasSynced` assignment; new "PR #56 drift audit" section added with full impact table; `destroyEntry` section marked "PRE-PR-56" and preserved for historical context
+
+### NOT applied (verified unnecessary)
+- `external-change.ts` references — unchanged file, no drift
+- `standalone.ts` line refs — unchanged file, no drift
+- `observers.ts` line refs — unchanged file, no drift
+- `CLAUDE.md` refs — unchanged file, no drift
+- `head-watcher.ts` refs (D8 evidence) — unchanged lines
+- Decision Log entries — no decisions invalidated by the drift
+- Non-goals — none invalidated
+- Assumptions beyond A4 — A3/A5/A6/A7/A8/A9/A10 all unaffected
+- Items in S7 / Unification / S1 / S3 — all orthogonal to the drift
+
+### Status
+- Spec remains **Approved (ready for implementation)** at new baseline `48d8f04`.
+- Drift audit is the final pre-ship check. **Ready to push branch and open PR (or hand to `/implement`).**
