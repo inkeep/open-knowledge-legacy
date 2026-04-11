@@ -46,13 +46,17 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
         placement: 'top',
         strategy: 'fixed',
         middleware: [offset(8), flip(), shift({ padding: 8 })],
-      }).then(({ x, y }) => {
-        if (popup.isConnected) {
-          popup.style.position = 'fixed';
-          popup.style.left = `${x}px`;
-          popup.style.top = `${y}px`;
-        }
-      });
+      })
+        .then(({ x, y }) => {
+          if (popup.isConnected) {
+            popup.style.position = 'fixed';
+            popup.style.left = `${x}px`;
+            popup.style.top = `${y}px`;
+          }
+        })
+        .catch(() => {
+          // Position calculation failed (e.g., detached element) — autoUpdate will retry
+        });
     });
   };
 
