@@ -242,6 +242,8 @@ export async function startHeadWatcher(
     parcel = await import('@parcel/watcher');
   } catch {
     console.warn('[head-watcher] @parcel/watcher unavailable — HEAD watching disabled');
+    // Read initial branch state so callers get valid context even in degraded mode
+    lastKnownBranch = readBranchFromHead(gitDir);
     return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
   }
 

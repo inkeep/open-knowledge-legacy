@@ -24,8 +24,11 @@ Once installed, open any project in Claude Code. The MCP tools are available in 
 - `mcp__open-knowledge__init-content` — Bootstrap articles from the codebase
 - `mcp__open-knowledge__ingest` — Capture an external source
 - `mcp__open-knowledge__research` — Gather sources and write findings
+- `mcp__open-knowledge__list_documents` — List available documents
 - `mcp__open-knowledge__write_document` — Write a document via CRDT layer
 - `mcp__open-knowledge__edit_document` — Edit a document via CRDT layer
+- `mcp__open-knowledge__undo_agent_edit` — Undo last agent edit
+- `mcp__open-knowledge__redo_agent_edit` — Redo last undone agent edit
 
 ## Browser editor
 

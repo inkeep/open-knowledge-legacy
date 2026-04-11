@@ -506,7 +506,7 @@ async function startChokidarWatcher(
   onDiskEvent: (event: DiskEvent) => Promise<void>,
 ): Promise<AsyncSubscription> {
   const { watch } = await import('chokidar');
-  console.warn('[watcher] @parcel/watcher unavailable, using chokidar fallback');
+  console.warn('[file-watcher] @parcel/watcher unavailable, using chokidar fallback');
 
   const watcher = watch(contentDir, {
     ignoreInitial: true,
@@ -520,35 +520,33 @@ async function startChokidarWatcher(
       : undefined,
   });
 
-  watcher.on('error', (err) => console.error('[file-watcher] Chokidar error:', err));
+  watcher.on('error', (err) => console.error('[file-watcher] chokidar error:', err));
 
-  watcher.on('add', (path) => {
-    handleRawEvents(
-      [{ type: 'create', path }],
-      contentDir,
-      contentFilter,
-      fileIndex,
-      onDiskEvent,
-    ).catch((err) => console.error('[file-watcher] chokidar event error:', err));
-  });
-  watcher.on('change', (path) => {
-    handleRawEvents(
-      [{ type: 'update', path }],
-      contentDir,
-      contentFilter,
-      fileIndex,
-      onDiskEvent,
-    ).catch((err) => console.error('[file-watcher] chokidar event error:', err));
-  });
-  watcher.on('unlink', (path) => {
-    handleRawEvents(
-      [{ type: 'delete', path }],
-      contentDir,
-      contentFilter,
-      fileIndex,
-      onDiskEvent,
-    ).catch((err) => console.error('[file-watcher] chokidar event error:', err));
-  });
+  // Batch chokidar events to match @parcel/watcher's coalescing behavior.
+  // Without batching, a file rename (mv old.md new.md) produces separate
+  // delete + create calls, breaking classifyEvents' rename detection which
+  // requires both events in the same batch.
+  const BATCH_WINDOW_MS = 50;
+  let pendingEvents: Array<{ type: 'create' | 'update' | 'delete'; path: string }> = [];
+  let batchTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function queueEvent(type: 'create' | 'update' | 'delete', path: string) {
+    pendingEvents.push({ type, path });
+    if (!batchTimer) {
+      batchTimer = setTimeout(() => {
+        const batch = pendingEvents;
+        pendingEvents = [];
+        batchTimer = null;
+        handleRawEvents(batch, contentDir, contentFilter, fileIndex, onDiskEvent).catch((err) =>
+          console.error('[file-watcher] chokidar batch error:', err),
+        );
+      }, BATCH_WINDOW_MS);
+    }
+  }
+
+  watcher.on('add', (path) => queueEvent('create', path));
+  watcher.on('change', (path) => queueEvent('update', path));
+  watcher.on('unlink', (path) => queueEvent('delete', path));
 
   return {
     unsubscribe: () => watcher.close(),
