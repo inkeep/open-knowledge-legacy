@@ -70,7 +70,7 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
             onChange={(e) => setUrl(e.target.value)}
             onKeyDown={handleKeyDown}
             aria-label="Link URL"
-            className="h-5 w-44 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+            className="h-5 w-44 bg-transparent text-sm border-none outline-none placeholder:text-muted-foreground"
           />
           <Button
             variant="ghost"
@@ -120,7 +120,7 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
           variant="ghost"
           size="icon-xs"
           aria-label="Insert link"
-          className={isLinkActive ? 'bg-accent text-primary' : ''}
+          className={isLinkActive ? 'bg-accent text-primary' : 'text-accent-foreground'}
           onMouseDown={(e) => {
             e.preventDefault();
             setShowInput(true);

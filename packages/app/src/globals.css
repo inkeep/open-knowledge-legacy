@@ -522,10 +522,10 @@
 
 .ProseMirror p.is-empty::before {
   content: attr(data-placeholder);
-  color: var(--color-muted-foreground);
   pointer-events: none;
   float: left;
   height: 0;
+  @apply text-muted-foreground/60;
 }
 
 /* CodeMirror polish */

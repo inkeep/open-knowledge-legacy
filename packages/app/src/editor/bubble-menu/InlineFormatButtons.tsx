@@ -61,7 +61,7 @@ export function InlineFormatButtons({ editor }: { editor: Editor }) {
                 variant="ghost"
                 size="icon-xs"
                 aria-label={action.name}
-                className={active ? 'bg-accent text-primary' : 'text-muted-foreground'}
+                className={active ? 'bg-accent text-primary' : 'text-accent-foreground'}
                 onMouseDown={(e) => {
                   e.preventDefault();
                   action.command(editor);
