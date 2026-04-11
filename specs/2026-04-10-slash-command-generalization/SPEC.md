@@ -2,7 +2,8 @@
 
 **Status:** Draft
 **Created:** 2026-04-10
-**Baseline commit:** 8f291ac (origin/main head)
+**Baseline commit:** 748f63e (origin/main head; rebased from 8f291ac during /ship Phase 0)
+**Baseline delta from original spec:** PR #48 "Slash command polish" landed after this spec was written. It adds `@floating-ui/dom@^1.7.6` and rewrites positioning to use `computePosition` + `autoUpdate` + `flip`/`offset`/`size` middleware. It introduces a `--suggestion-menu-max-height` CSS variable driven by the `size` middleware and consumed by `SlashCommandMenu.tsx` (inline style `maxHeight: var(--suggestion-menu-max-height, 40vh)`). PR #43 "Fix per-document observer typing state" also landed; not relevant to slash command. **The refactor MUST preserve all Floating UI positioning behavior** — virtual element pattern, `contextElement` scroll-ancestor detection, `autoUpdate` lifecycle, dynamic max-height CSS variable. The §3.1 target code below is updated accordingly.
 **Implementer:** AI coding agent (Claude Code)
 **Location:** `packages/app/src/editor/` only — `extensions/slash-command.ts`, `slash-command/items.ts`, `slash-command/SlashCommandMenu.tsx`
 **Nature:** Architectural refactor on main to unblock two downstream branches (PR #23 typed-component-nodes, and block-editor-ux spec) that both need to extend the slash command with additional item sources. Pure view-layer change with zero user-visible behavior regression.
@@ -107,9 +108,10 @@ export const SlashCommand = Extension.create({
 });
 ```
 
-**Target:**
+**Target (updated for 748f63e baseline with Floating UI):**
 
 ```ts
+import { autoUpdate, computePosition, flip, offset, size } from '@floating-ui/dom';
 import { Extension } from '@tiptap/core';
 import { PluginKey } from '@tiptap/pm/state';
 import Suggestion, { type SuggestionOptions } from '@tiptap/suggestion';
@@ -188,6 +190,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         },
 
         // ReactRenderer-based popup (replaces the custom view() lifecycle).
+        // Positioning uses @floating-ui/dom (from PR #48 polish) — preserved.
         // Keyboard state lives in closure variables — no React ref, no useImperativeHandle.
         // The menu component is a pure render function receiving selectedIndex as a prop.
         render: () => {
@@ -197,8 +200,52 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             items: SlashCommandItem[];
             query: string;
             command: (item: SlashCommandItem) => void;
+            clientRect: (() => DOMRect | null) | null;
+            editor: Editor;
           } | null = null;
           let selectedIndex = 0;
+          let stopAutoUpdate: (() => void) | null = null;
+
+          // Virtual reference element — always reflects current cursor position via
+          // Suggestion's clientRect callback. `contextElement` lets Floating UI's
+          // autoUpdate find scroll ancestors (e.g. the overflow-y-auto editor
+          // container) so the menu repositions on inner-container scroll.
+          const virtualEl = {
+            getBoundingClientRect: () => currentProps?.clientRect?.() ?? new DOMRect(),
+            get contextElement() {
+              return currentProps?.editor.view.dom;
+            },
+          };
+
+          const doPosition = () => {
+            if (!popup) return;
+            computePosition(virtualEl, popup, {
+              placement: 'bottom-start',
+              middleware: [
+                offset(4),
+                flip(),
+                size({
+                  apply({ availableHeight }) {
+                    if (popup) {
+                      popup.style.setProperty(
+                        '--suggestion-menu-max-height',
+                        `${Math.min(availableHeight, window.innerHeight * 0.4)}px`,
+                      );
+                    }
+                  },
+                }),
+              ],
+            })
+              .then(({ x, y }) => {
+                if (popup) {
+                  popup.style.left = `${x}px`;
+                  popup.style.top = `${y}px`;
+                }
+              })
+              .catch(() => {
+                // Position calc failed (detached element during rapid state changes) — menu will be destroyed shortly
+              });
+          };
 
           const rerender = () => {
             if (!renderer || !currentProps) return;
@@ -232,7 +279,8 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
                 editor: props.editor,
               });
               popup.appendChild(renderer.element);
-              updatePosition(popup, props.clientRect);
+              stopAutoUpdate = autoUpdate(virtualEl, popup, doPosition);
+              doPosition();
             },
 
             onUpdate(props) {
@@ -240,7 +288,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               // Clamp selected index if the items list shrank
               selectedIndex = Math.min(selectedIndex, Math.max(0, props.items.length - 1));
               rerender();
-              updatePosition(popup, props.clientRect);
+              doPosition();
             },
 
             onKeyDown({ event }) {
@@ -270,6 +318,8 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             },
 
             onExit() {
+              stopAutoUpdate?.();
+              stopAutoUpdate = null;
               renderer?.destroy();
               renderer = null;
               popup?.remove();
@@ -283,13 +333,6 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
     ];
   },
 });
-
-function updatePosition(popup: HTMLDivElement, clientRect: (() => DOMRect | null) | null) {
-  const rect = clientRect?.();
-  if (!rect) return;
-  popup.style.left = `${rect.left}px`;
-  popup.style.top = `${rect.bottom + 4}px`;
-}
 ```
 
 **Result:** ~130 lines (down from 213), standard TipTap patterns, collaborative-safe.
@@ -352,18 +395,27 @@ All 10 existing items keep their current definitions. Zero behavior change.
 
 ### 3.3 Update menu to read category labels from props
 
-**Current (`packages/app/src/editor/slash-command/SlashCommandMenu.tsx`):**
+**Current (`packages/app/src/editor/slash-command/SlashCommandMenu.tsx` at 748f63e):**
 
-```ts
+```tsx
 const categoryLabels: Record<string, string> = {
   basic: 'Basic blocks',
   insert: 'Insert',
 };
+
+// ... inside the return:
+<div
+  ref={containerRef}
+  role="listbox"
+  aria-label="Slash commands"
+  className="w-56 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
+  style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
+>
 ```
 
 **Target:**
 
-```ts
+```tsx
 interface SlashCommandMenuProps {
   items: SlashCommandItem[];
   query: string;
@@ -377,6 +429,9 @@ interface SlashCommandMenuProps {
 export function SlashCommandMenu({ items, query, selectedIndex, categoryLabels, onSelect }: SlashCommandMenuProps) {
   // ... existing logic unchanged
   // Only change: `categoryLabels[cat.key] ?? cat.key` uses the prop instead of the module const
+  // PRESERVE the inline `style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}`
+  // and the `overflow-y-auto subtle-scrollbar` classes exactly — driven by the extension's
+  // Floating UI `size` middleware.
 }
 ```
 
@@ -412,11 +467,12 @@ export function SlashCommandMenu({ items, query, selectedIndex, categoryLabels, 
 
 Single phase. Order within the phase:
 
-1. **Update `slash-command/items.ts`**: Open the `category` type to `string`, add optional `description` field, add optional `range` param to `command` signature. All 10 existing items continue to compile.
-2. **Update `slash-command/SlashCommandMenu.tsx`**: Accept `categoryLabels` as a prop, remove the module-level const. Add forwardRef + useImperativeHandle for keyboard handling. Move arrow/enter/escape logic from the old extension into the menu's imperative handle.
-3. **Rewrite `extensions/slash-command.ts`**: Replace custom Plugin with `Suggestion(...)` config. Pass `itemsSources` and `categoryLabels` via `addOptions`. Move positioning logic into `render()` lifecycle. Delete the old PluginKey state machine.
-4. **Verify `shared.ts`** unchanged (still imports `SlashCommand`). Zero call-site changes for consumers.
-5. **Manual QA** the checklist above.
+1. **Update `slash-command/items.ts`**: Open the `category` type to `string`, add optional `description` field. All 10 existing items continue to compile. Item signature stays `(editor: Editor) => void` per D9.
+2. **Update `slash-command/SlashCommandMenu.tsx`**: Accept `categoryLabels` as a prop, remove the module-level const. **Preserve** the inline `style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh) }}` and `overflow-y-auto subtle-scrollbar` classes (driven by PR #48 Floating UI size middleware). Menu stays a pure render function per D5.
+3. **Rewrite `extensions/slash-command.ts`**: Replace custom Plugin with `Suggestion(...)` config. Pass `itemsSources` and `categoryLabels` via `addOptions`. Move positioning logic into `render()` lifecycle. **Preserve** the Floating UI integration from PR #48: `computePosition` + `autoUpdate` + `flip`/`offset`/`size` middleware, via a virtual element pattern that reads `props.clientRect()` from the Suggestion callback (instead of `posToDOMRect`). Delete the old PluginKey state machine.
+4. **Install `@tiptap/suggestion@^3.22.3`** via `bun add @tiptap/suggestion@^3.22.3 --filter @inkeep/open-knowledge-app` (from repo root) or `bun add @tiptap/suggestion@^3.22.3` from `packages/app/`.
+5. **Verify `shared.ts`** unchanged (still imports `SlashCommand`). Zero call-site changes for consumers.
+6. **Manual QA** the checklist above — especially R01 (start-of-block trigger) and positioning regression tests.
 
 ---
 
@@ -431,6 +487,7 @@ Single phase. Order within the phase:
 ### Existing (unchanged)
 
 - `@tiptap/core`, `@tiptap/react`, `@tiptap/pm/state` — all still used
+- `@floating-ui/dom@^1.7.6` — positioning (added by PR #48); **preserved** via `computePosition` + `autoUpdate` + `flip`/`offset`/`size` middleware wired into Suggestion's `render()` lifecycle
 - `lucide-react` — icons for formatting items
 - Tailwind + shadcn `ui` tokens — menu styling
 
