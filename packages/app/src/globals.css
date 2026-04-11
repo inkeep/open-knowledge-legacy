@@ -276,7 +276,7 @@
 
 .ProseMirror mark {
   color: inherit;
-  @apply py-0.5 px-1 rounded-sm bg-amber-100;
+  @apply py-0.5 px-1 rounded-sm bg-amber-100 dark:bg-amber-900/50;
 }
 
 .ProseMirror h1,
