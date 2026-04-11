@@ -408,6 +408,43 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
+  const inflightDestroy: Promise<void> | null = null;
+
+  // This helper mirrors @hocuspocus/server's internal Server.destroy() pattern
+  // at node_modules/@hocuspocus/server/src/Server.ts:200-225. We can't use
+  // Server.destroy() directly because Server owns its own httpServer + crossws
+  // WebSocket adapter + signal binding, which conflicts with OK's shared HTTP
+  // server + /api/* routing + static asset serving + /collab-only upgrade.
+  async function flushAllStoresAndWait(timeoutMs: number): Promise<void> {
+    if (hocuspocus.documents.size === 0) return;
+
+    let resolved = false;
+    const allDone = new Promise<void>((resolve) => {
+      hocuspocus.configuration.extensions.push({
+        async afterUnloadDocument({ instance }) {
+          if (!resolved && instance.getDocumentsCount() === 0) {
+            resolved = true;
+            resolve();
+          }
+        },
+      });
+    });
+
+    hocuspocus.closeConnections();
+    hocuspocus.flushPendingStores();
+
+    await Promise.race([
+      allDone,
+      new Promise<void>((_, reject) =>
+        setTimeout(() => {
+          resolved = true;
+          reject(new Error(`flushAllStoresAndWait timeout after ${timeoutMs}ms`));
+        }, timeoutMs),
+      ),
+    ]).catch((err) => {
+      log.error({ err, timeoutMs }, '[server] shutdown flush timed out');
+    });
+  }
 
   async function destroy(): Promise<void> {
     // Wait for async init to complete before cleanup — prevents leaked watcher
