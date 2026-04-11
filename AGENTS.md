@@ -95,7 +95,7 @@ Hocuspocus Server
 └── Shadow Branch GC (orphaned ref cleanup)
 ```
 
-### Shadow repo &amp; branch runtime
+### Shadow repo & branch runtime
 
 The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or `.openknowledge/` (standalone mode, no project `.git/`). It stores per-writer WIP refs, upstream-import commits, and checkpoint refs — never touches the project repo's ref namespace or object store.
 
@@ -157,9 +157,9 @@ Hierarchical YAML in `.open-knowledge/` directories:
 
 - `~/.open-knowledge/config.yml` — user-level defaults
 - `./.open-knowledge/config.yml` — workspace-level overrides
-- Precedence: CLI flags &gt; ENV &gt; workspace &gt; user &gt; Zod defaults
+- Precedence: CLI flags > ENV > workspace > user > Zod defaults
 
-### Output &amp; color system
+### Output & color system
 
 - `src/ui/colors.ts` — Semantic color helpers wrapping picocolors (error, warning, success, info, dim, accent)
 - `src/ui/banner.ts` — Vite-style boxed startup banner (cli-boxes + picocolors)
@@ -193,7 +193,7 @@ Observer A: XmlFragment → Text (incremental diff, origin: 'sync-from-tree')
 Observer B: Text → XmlFragment (parse + updateYFragment, origin: 'sync-from-text')
 ```
 
-### Presence &amp; awareness
+### Presence & awareness
 
 - Human cursors via CollaborationCursor (WYSIWYG) + yCollab (Source)
 - Agent activity flash via Y.Map('activity') → CSS @keyframes

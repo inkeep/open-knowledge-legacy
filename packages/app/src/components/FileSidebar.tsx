@@ -147,24 +147,35 @@ export function FileSidebar() {
   const { activeDocName, openDocument } = useDocumentContext();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    fetch('/api/documents')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: { ok: boolean; documents: DocEntry[] } | null) => {
-        if (active && data?.ok) {
-          setDocuments(data.documents);
-        }
-      })
-      .catch(() => {
-        // Silently fail — server may not be ready yet
-      })
-      .then(() => {
-        if (active) setLoading(false);
-      });
+    const fetchDocs = () =>
+      fetch('/api/documents')
+        .then(async (res) => {
+          const data = await res.json().catch(() => null);
+          if (!active) return;
+          if (res.ok && data?.ok) {
+            setDocuments(data.documents);
+            setError(null);
+          } else {
+            setError(data?.error ?? `Server error (HTTP ${res.status})`);
+          }
+        })
+        .catch((err) => {
+          if (active) setError('Could not reach server');
+          console.warn('[FileSidebar] fetch failed:', err);
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+
+    fetchDocs();
+    const interval = setInterval(fetchDocs, 5000);
     return () => {
       active = false;
+      clearInterval(interval);
     };
   }, []);
 
@@ -183,6 +194,10 @@ export function FileSidebar() {
         {loading ? (
           <div className="flex flex-1 items-center justify-center py-8">
             <span className="select-none text-sm text-sidebar-foreground/30">Loading...</span>
+          </div>
+        ) : error ? (
+          <div className="flex flex-1 items-center justify-center py-8">
+            <span className="select-none text-sm text-sidebar-foreground/50">{error}</span>
           </div>
         ) : documents.length === 0 ? (
           <div className="flex flex-1 items-center justify-center py-8">

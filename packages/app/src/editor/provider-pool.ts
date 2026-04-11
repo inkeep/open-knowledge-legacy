@@ -189,9 +189,9 @@ export class ProviderPool {
   }
 
   private destroyEntry(entry: PoolEntry): void {
-    // Order matters: disconnect first (stops Y.Doc updates), then observer cleanup
-    entry.provider.disconnect();
+    // Observer cleanup first (observers reference Y.Doc state), then full teardown
     entry.observerCleanup?.();
     entry.observerCleanup = null;
+    entry.provider.destroy(); // destroy() disconnects + removes all listeners + awareness cleanup
   }
 }

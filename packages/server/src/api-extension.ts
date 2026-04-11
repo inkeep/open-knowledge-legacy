@@ -20,6 +20,18 @@ import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
+/**
+ * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
+ * Throws if the resolved path escapes the base directory.
+ */
+export function safeSubdir(baseDir: string, subdir: string): string {
+  const resolved = resolve(baseDir, subdir);
+  if (resolved !== baseDir && !resolved.startsWith(`${baseDir}/`)) {
+    throw new Error(`Invalid directory: ${subdir}`);
+  }
+  return resolved;
+}
+
 export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
@@ -224,14 +236,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  function safeSubdir(subdir: string): string {
-    const resolved = resolve(contentDir, subdir);
-    if (resolved !== contentDir && !resolved.startsWith(`${contentDir}/`)) {
-      throw new Error(`Invalid directory: ${subdir}`);
-    }
-    return resolved;
-  }
-
   async function handleDocumentList(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       res.writeHead(405);
@@ -245,7 +249,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       let targetDir = contentDir;
       if (dir) {
         try {
-          targetDir = safeSubdir(dir);
+          targetDir = safeSubdir(contentDir, dir);
         } catch {
           json(res, 400, { ok: false, error: `Invalid directory: ${dir}` });
           return;

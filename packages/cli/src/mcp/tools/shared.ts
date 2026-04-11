@@ -35,7 +35,7 @@ export async function httpGet(
 ): Promise<{ ok: boolean; [key: string]: unknown }> {
   let res: Response;
   try {
-    res = await fetch(`${baseUrl}${path}`);
+    res = await fetch(`${baseUrl}${path}`, { signal: AbortSignal.timeout(30_000) });
   } catch (err) {
     return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };
   }
@@ -61,6 +61,7 @@ export async function httpPost(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
     return { ok: false, error: `Server unreachable: ${err instanceof Error ? err.message : err}` };

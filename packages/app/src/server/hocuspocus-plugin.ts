@@ -43,12 +43,11 @@ function resolveContentDir(): string {
       if (typeof content?.dir === 'string') {
         return resolve(PROJECT_ROOT, content.dir);
       }
-    } catch {
-      // Fall through to default
+    } catch (err) {
+      console.warn('[hocuspocus] Failed to parse config:', err);
     }
   }
-  // Default: 'content' subdirectory (matches Zod schema default of '.')
-  // But the Zod default is '.' (project root). Use that for consistency.
+  // Default to project root (matches config schema default: content.dir = '.')
   return PROJECT_ROOT;
 }
 

@@ -36,6 +36,8 @@ test.beforeEach(async ({ page }) => {
   const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
   if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
   await page.goto(BASE);
+  // Multi-doc arch: must open a document from sidebar before provider is active
+  await page.getByText('test-doc.md').click({ timeout: 10_000 });
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
 });

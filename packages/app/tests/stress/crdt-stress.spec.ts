@@ -30,8 +30,9 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
   const resetRes = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
   if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
 
-  // 3. Navigate + wait for active provider
+  // 3. Navigate + open test-doc from sidebar (multi-doc arch requires explicit selection)
   await page.goto(BASE);
+  await page.getByText('test-doc.md').click({ timeout: 10_000 });
   // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
   await page.waitForFunction(() => Boolean((window as any).__activeProvider), {
     timeout: 15_000,

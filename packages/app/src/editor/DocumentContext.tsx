@@ -5,7 +5,7 @@ import { ProviderPool, type SyncState } from './provider-pool';
 export interface DocumentContextValue {
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
-  syncState: SyncState | 'connecting';
+  syncState: SyncState;
   openDocument: (docName: string) => void;
   closeDocument: (docName: string) => void;
 }
@@ -26,7 +26,7 @@ function getPool(): ProviderPool {
 interface Snapshot {
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
-  syncState: SyncState | 'connecting';
+  syncState: SyncState;
 }
 
 const EMPTY_SNAPSHOT: Snapshot = {
