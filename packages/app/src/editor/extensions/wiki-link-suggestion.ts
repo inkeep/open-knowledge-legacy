@@ -69,6 +69,9 @@ export function buildSuggestionItems(pages: PageItem[], query: string): WikiLink
 
 async function fetchPages(): Promise<PageItem[]> {
   const r = await fetch('/api/pages');
+  if (!r.ok) {
+    throw new Error(`/api/pages responded with ${r.status}`);
+  }
   const data = (await r.json()) as { pages?: Array<{ docName: string; title: string }> };
   if (Array.isArray(data.pages)) {
     return data.pages;

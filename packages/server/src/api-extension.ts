@@ -115,6 +115,8 @@ function listMarkdownFiles(dir: string): string[] {
   const files: string[] = [];
 
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (EXCLUDED_DIRS.has(entry.name)) continue;
+    if (entry.isSymbolicLink()) continue;
     const entryPath = resolve(dir, entry.name);
     if (entry.isDirectory()) {
       files.push(...listMarkdownFiles(entryPath));
@@ -793,7 +795,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'path must end with .md' });
         return;
       }
-      if (filePath.includes('..') || filePath.startsWith('/')) {
+      if (filePath.includes('..') || filePath.startsWith('/') || filePath.includes('\x00')) {
         json(res, 400, { ok: false, error: 'path must not contain .. or start with /' });
         return;
       }
