@@ -416,7 +416,7 @@ describe('startWatcher file index', () => {
   });
 
   test('file index updates on create event', () => {
-    const { updateFileIndex, pathToDocName } = require('./file-watcher.ts');
+    const { updateFileIndex } = require('./file-watcher.ts');
     const index = new Map();
     const event = {
       kind: 'create' as const,
