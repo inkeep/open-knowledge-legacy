@@ -947,3 +947,398 @@ describe('R7: source-mode typing defers Observer B', () => {
     cleanup();
   });
 });
+
+// ─────────────────────────────────────────────────────────────
+// Observer A: remote transaction handling
+// ─────────────────────────────────────────────────────────────
+//
+// When a transaction is applied to the Y.Doc from a remote source
+// (Y.applyUpdate from another doc, or a peer via WebSocket), the
+// transaction's `local` flag is false. Observer A MUST:
+//   1. Not schedule its debounced sync work (the receiving doc already
+//      has the paired ytext + XmlFragment updates from the remote origin
+//      — re-syncing would create a cross-tab amplification loop).
+//   2. Refresh `lastSyncedXmlMd` to the current serialized XmlFragment
+//      state, so the NEXT local edit computes its delta from a correct
+//      baseline. Without this, the next local edit would see a stale
+//      baseline and re-propagate the remote content as if it were a
+//      user delta, duplicating it in Y.Text.
+//
+// The existing "Remote write baseline staleness (regression)" test above
+// covers the downstream effect (no duplication) for one narrow markdown
+// scenario. These tests target the mechanism directly across multiple
+// remote-update shapes.
+
+describe('Observer A: remote transaction baseline refresh', () => {
+  /** Create two Y.Docs with live bidirectional sync. Simulates a server ↔ client pair. */
+  function createSyncedPair() {
+    const serverDoc = new Y.Doc();
+    const clientDoc = new Y.Doc();
+    serverDoc.on('update', (update: Uint8Array) => Y.applyUpdate(clientDoc, update));
+    clientDoc.on('update', (update: Uint8Array) => Y.applyUpdate(serverDoc, update));
+    return { serverDoc, clientDoc };
+  }
+
+  test('remote write propagates, then next local edit computes delta from refreshed baseline', async () => {
+    const { serverDoc, clientDoc } = createSyncedPair();
+    const clientFragment = clientDoc.getXmlFragment('default');
+    const clientYtext = clientDoc.getText('source');
+
+    // Seed client with initial content and set up observers
+    applyMarkdown(clientDoc, clientFragment, 'Seed paragraph.\n');
+    const cleanup = setupObservers({
+      doc: clientDoc,
+      xmlFragment: clientFragment,
+      ytext: clientYtext,
+      mdManager,
+      schema,
+    });
+    await wait();
+    expect(clientYtext.toString()).toContain('Seed paragraph');
+
+    // Server writes new content — transaction flows to client as NON-local
+    const serverFragment = serverDoc.getXmlFragment('default');
+    const serverYtext = serverDoc.getText('source');
+    const updatedMd = 'Seed paragraph.\n\nRemote addition one.\n';
+    serverDoc.transact(() => {
+      serverYtext.delete(0, serverYtext.length);
+      serverYtext.insert(0, updatedMd);
+      const parsed = mdManager.parse(updatedMd);
+      const pmNode = schema.nodeFromJSON(parsed);
+      updateYFragment(serverDoc, serverFragment, pmNode, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
+    }, 'agent-write');
+    await wait();
+
+    // Client received the remote update; Observer A's !transaction.local branch fired
+    // and must have refreshed lastSyncedXmlMd to include "Remote addition one".
+    expect(clientYtext.toString()).toContain('Remote addition one');
+
+    // Now the user types LOCALLY in WYSIWYG.
+    // If the baseline was refreshed correctly, Observer A diffs
+    //   old = "Seed paragraph.\n\nRemote addition one.\n"
+    //   new = "Seed paragraph.\n\nRemote addition one.\n\nLocal user line.\n"
+    // and applies ONLY "Local user line" to Y.Text.
+    // If the baseline is STALE (still "Seed paragraph.\n"), Observer A would diff
+    //   old = "Seed paragraph.\n"
+    //   new = "Seed paragraph.\n\nRemote addition one.\n\nLocal user line.\n"
+    // and try to INSERT "Remote addition one" into Y.Text — which already has it —
+    // producing duplication.
+    const userPara = new Y.XmlElement('paragraph');
+    const userText = new Y.XmlText();
+    userText.applyDelta([{ insert: 'Local user line.' }]);
+    userPara.insert(0, [userText]);
+    clientFragment.push([userPara]);
+    await wait();
+
+    const finalText = clientYtext.toString();
+    expect(finalText).toContain('Seed paragraph');
+    expect(finalText).toContain('Remote addition one');
+    expect(finalText).toContain('Local user line');
+
+    // Critical correctness check: no duplication. Each content fragment must
+    // appear exactly once. A stale baseline would produce "Remote addition one"
+    // twice (once from remote sync, once from delta re-application).
+    expect(finalText.split('Seed paragraph').length - 1).toBe(1);
+    expect(finalText.split('Remote addition one').length - 1).toBe(1);
+    expect(finalText.split('Local user line').length - 1).toBe(1);
+
+    cleanup();
+  });
+
+  test('multiple sequential remote writes each refresh baseline', async () => {
+    const { serverDoc, clientDoc } = createSyncedPair();
+    const clientFragment = clientDoc.getXmlFragment('default');
+    const clientYtext = clientDoc.getText('source');
+
+    applyMarkdown(clientDoc, clientFragment, 'Initial.\n');
+    const cleanup = setupObservers({
+      doc: clientDoc,
+      xmlFragment: clientFragment,
+      ytext: clientYtext,
+      mdManager,
+      schema,
+    });
+    await wait();
+
+    const serverFragment = serverDoc.getXmlFragment('default');
+    const serverYtext = serverDoc.getText('source');
+
+    // Helper: server writes a complete markdown document
+    const serverWrite = (md: string) => {
+      serverDoc.transact(() => {
+        serverYtext.delete(0, serverYtext.length);
+        serverYtext.insert(0, md);
+        const parsed = mdManager.parse(md);
+        const pmNode = schema.nodeFromJSON(parsed);
+        updateYFragment(serverDoc, serverFragment, pmNode, {
+          mapping: new Map(),
+          isOMark: new Map(),
+        });
+      }, 'agent-write');
+    };
+
+    // Three successive remote writes — each one must refresh the baseline so the
+    // next local edit diffs from the LATEST state, not the initial seed.
+    serverWrite('Initial.\n\nFirst remote.\n');
+    await wait();
+    serverWrite('Initial.\n\nFirst remote.\n\nSecond remote.\n');
+    await wait();
+    serverWrite('Initial.\n\nFirst remote.\n\nSecond remote.\n\nThird remote.\n');
+    await wait();
+
+    expect(clientYtext.toString()).toContain('Third remote');
+
+    // Now user types locally — baseline should reflect all three remote additions
+    const userPara = new Y.XmlElement('paragraph');
+    const userText = new Y.XmlText();
+    userText.applyDelta([{ insert: 'User addition after all remote writes.' }]);
+    userPara.insert(0, [userText]);
+    clientFragment.push([userPara]);
+    await wait();
+
+    const finalText = clientYtext.toString();
+    // Each earlier remote write must appear exactly once — not duplicated by a
+    // stale-baseline delta replay.
+    expect(finalText.split('First remote').length - 1).toBe(1);
+    expect(finalText.split('Second remote').length - 1).toBe(1);
+    expect(finalText.split('Third remote').length - 1).toBe(1);
+    expect(finalText).toContain('User addition after all remote writes');
+
+    cleanup();
+  });
+
+  test('remote delete refreshes baseline so next local add does not resurrect deleted content', async () => {
+    const { serverDoc, clientDoc } = createSyncedPair();
+    const clientFragment = clientDoc.getXmlFragment('default');
+    const clientYtext = clientDoc.getText('source');
+
+    // Seed with two paragraphs
+    applyMarkdown(clientDoc, clientFragment, 'First paragraph.\n\nSecond paragraph.\n');
+    const cleanup = setupObservers({
+      doc: clientDoc,
+      xmlFragment: clientFragment,
+      ytext: clientYtext,
+      mdManager,
+      schema,
+    });
+    await wait();
+    expect(clientYtext.toString()).toContain('Second paragraph');
+
+    // Server deletes the second paragraph — transaction arrives at client as remote
+    const serverFragment = serverDoc.getXmlFragment('default');
+    const serverYtext = serverDoc.getText('source');
+    const afterDeleteMd = 'First paragraph.\n';
+    serverDoc.transact(() => {
+      serverYtext.delete(0, serverYtext.length);
+      serverYtext.insert(0, afterDeleteMd);
+      const parsed = mdManager.parse(afterDeleteMd);
+      const pmNode = schema.nodeFromJSON(parsed);
+      updateYFragment(serverDoc, serverFragment, pmNode, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
+    }, 'agent-write');
+    await wait();
+
+    // Client's Y.Text reflects the deletion
+    expect(clientYtext.toString()).not.toContain('Second paragraph');
+
+    // User types a new paragraph locally
+    const userPara = new Y.XmlElement('paragraph');
+    const userText = new Y.XmlText();
+    userText.applyDelta([{ insert: 'Third paragraph.' }]);
+    userPara.insert(0, [userText]);
+    clientFragment.push([userPara]);
+    await wait();
+
+    const finalText = clientYtext.toString();
+    expect(finalText).toContain('First paragraph');
+    expect(finalText).toContain('Third paragraph');
+    // The deleted "Second paragraph" MUST NOT resurrect. A stale baseline that
+    // still remembered "Second paragraph" would compute a delta that re-inserts it.
+    expect(finalText).not.toContain('Second paragraph');
+
+    cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// applyUserDelta: divergence between Y.Text and lastSyncedXmlMd
+// ─────────────────────────────────────────────────────────────
+//
+// applyUserDelta fires from runObserverASync when Y.Text has diverged
+// from the last synced XmlFragment state (currentText !== lastSyncedXmlMd).
+// This happens when some OTHER source (agent write to Y.Text, file
+// watcher, peer) wrote to Y.Text between Observer A syncs. The function
+// applies ONLY the user's XmlFragment delta while preserving the
+// divergent content.
+//
+// The existing "Observer A defers after agent write" test covers one
+// scenario (agent appends to Y.Text, user triggers re-sync via empty
+// XmlFragment element). These tests exercise the three canonical
+// divergence patterns: user-adds, user-deletes, user-modifies — each
+// with pre-existing agent content that must survive.
+//
+// Mechanism: write to Y.Text with the 'agent-write' origin to create
+// divergence, then mutate the XmlFragment to represent a user edit.
+// Critically, we MUST call markUserTyping to defer Observer B during the
+// window when Observer A runs — otherwise Observer B's debounced callback
+// fires first (same 50ms delay, earlier queue insertion) and overwrites
+// the XmlFragment by parsing the divergent Y.Text, destroying the user's
+// edit before Observer A can apply the delta.
+
+describe('applyUserDelta: divergence preservation', () => {
+  /** Directly mutate Y.Text with agent-write origin to create divergence. */
+  function agentAppendToYText(doc: Y.Doc, ytext: Y.Text, content: string) {
+    doc.transact(() => {
+      const insertAt = ytext.length;
+      const sep = ytext.toString().endsWith('\n') ? '' : '\n';
+      ytext.insert(insertAt, `${sep}${content}`);
+    }, 'agent-write');
+  }
+
+  test('user adds a paragraph — agent content already in Y.Text is preserved', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Baseline: one paragraph
+    applyMarkdown(doc, fragment, 'Baseline paragraph.\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+    expect(ytext.toString()).toContain('Baseline paragraph');
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent writes directly to Y.Text — creates divergence
+    agentAppendToYText(doc, ytext, '\nAgent-only line.\n');
+
+    // Mark typing so Observer B defers, giving Observer A the first shot at
+    // reconciling the divergence via applyUserDelta. Keep the interval fresh
+    // throughout the applyUserDelta window (~250ms for Observer A to run).
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User mutates XmlFragment (simulates WYSIWYG keystroke). Observer A
+    // fires on its 50ms debounce and detects divergence:
+    //   old = "Baseline paragraph.\n" (lastSyncedXmlMd)
+    //   new = "Baseline paragraph.\n\nUser-added paragraph.\n"
+    //   currentText = "Baseline paragraph.\n\nAgent-only line.\n"
+    // applyUserDelta splices "User-added paragraph" into Y.Text while
+    // preserving "Agent-only line".
+    const userPara = new Y.XmlElement('paragraph');
+    const userText = new Y.XmlText();
+    userText.applyDelta([{ insert: 'User-added paragraph.' }]);
+    userPara.insert(0, [userText]);
+    fragment.push([userPara]);
+
+    // Wait long enough for Observer A to run but Observer B to still be deferred
+    await wait(200);
+
+    // Stop typing and let Observer B settle the final XmlFragment reconciliation
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    // All three pieces of content must be present
+    expect(finalText).toContain('Baseline paragraph');
+    expect(finalText).toContain('Agent-only line');
+    expect(finalText).toContain('User-added paragraph');
+    // No duplication — applyUserDelta applied the user delta without
+    // re-inserting pre-existing content
+    expect(finalText.split('Baseline paragraph').length - 1).toBe(1);
+    expect(finalText.split('Agent-only line').length - 1).toBe(1);
+    expect(finalText.split('User-added paragraph').length - 1).toBe(1);
+
+    cleanup();
+  });
+
+  test('user deletes a baseline paragraph — agent content is preserved, deletion applied', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Baseline: three paragraphs
+    applyMarkdown(doc, fragment, 'First.\n\nSecond.\n\nThird.\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+    expect(ytext.toString()).toContain('Second');
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent appends directly to Y.Text (divergence)
+    agentAppendToYText(doc, ytext, '\nAgent-content-line.\n');
+
+    // Defer Observer B so Observer A's applyUserDelta runs first
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User deletes the second paragraph via XmlFragment mutation.
+    applyMarkdown(doc, fragment, 'First.\n\nThird.\n');
+
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    expect(finalText).toContain('First');
+    expect(finalText).toContain('Third');
+    // "Second" should be GONE (user deleted it via XmlFragment — the delta
+    // applyUserDelta computed was {remove: "Second\n"})
+    expect(finalText).not.toContain('Second');
+    // Agent content must survive — it was never part of the user's delta
+    expect(finalText).toContain('Agent-content-line');
+
+    cleanup();
+  });
+
+  test('user modifies a baseline line — agent content is preserved, modification applied', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Baseline: two distinct paragraphs
+    applyMarkdown(doc, fragment, 'Alpha original text.\n\nBeta unchanged.\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+    expect(ytext.toString()).toContain('Alpha original text');
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent appends to Y.Text (divergence)
+    agentAppendToYText(doc, ytext, '\nAgent tail line.\n');
+
+    // Defer Observer B
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User modifies the first paragraph. applyUserDelta sees:
+    //   old = "Alpha original text.\n\nBeta unchanged.\n"
+    //   new = "Alpha MODIFIED text.\n\nBeta unchanged.\n"
+    //   currentText = "Alpha original text.\n\nBeta unchanged.\n\nAgent tail line.\n"
+    // The delta is {remove: "Alpha original text", add: "Alpha MODIFIED text"},
+    // which applies to currentLines preserving "Agent tail line" at the end.
+    applyMarkdown(doc, fragment, 'Alpha MODIFIED text.\n\nBeta unchanged.\n');
+
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    // User's modification is reflected
+    expect(finalText).toContain('Alpha MODIFIED text');
+    expect(finalText).not.toContain('Alpha original text');
+    // Second paragraph is unchanged
+    expect(finalText).toContain('Beta unchanged');
+    // Agent content must survive
+    expect(finalText).toContain('Agent tail line');
+    // No duplication
+    expect(finalText.split('Agent tail line').length - 1).toBe(1);
+    expect(finalText.split('Beta unchanged').length - 1).toBe(1);
+
+    cleanup();
+  });
+});
