@@ -408,7 +408,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
-  const inflightDestroy: Promise<void> | null = null;
+  let inflightDestroy: Promise<void> | null = null;
 
   // This helper mirrors @hocuspocus/server's internal Server.destroy() pattern
   // at node_modules/@hocuspocus/server/src/Server.ts:200-225. We can't use
@@ -447,30 +447,92 @@ export function createServer(options: ServerOptions): ServerInstance {
   }
 
   async function destroy(): Promise<void> {
-    // Wait for async init to complete before cleanup — prevents leaked watcher
-    // subscriptions if destroy() is called during startup (e.g., Ctrl+C)
-    await ready.catch(() => {});
+    if (inflightDestroy) return inflightDestroy;
 
-    // Flush pending git commit before stopping watchers
-    await persistence.flushPendingGitCommit();
-    await persistence.waitForPendingCommits();
+    inflightDestroy = (async () => {
+      const t0 = Date.now();
+      const flushedCountBefore = hocuspocus.documents.size;
+      const phaseErrors: Array<{ phase: string; error: string }> = [];
 
-    if (headWatcher) {
-      await headWatcher.unsubscribe();
-      headWatcher = null;
-    }
-    if (watcher) {
-      await watcher.unsubscribe();
-      watcher = null;
-    }
-    await sessionManager.closeAll();
-    hocuspocus.flushPendingStores();
-    await persistence.waitForPendingCommits();
-    hocuspocus.closeConnections();
-    // Release shadow-root writer lock
-    if (shadowRef.current) {
-      destroyShadowRepo(shadowRef.current);
-    }
+      // Wait for async init to complete before cleanup — prevents leaked watcher
+      // subscriptions if destroy() is called during startup (e.g., Ctrl+C)
+      await ready.catch(() => {});
+
+      try {
+        // Phase 1: stop watchers FIRST so L1 disk writes don't trigger reconcile loops
+        try {
+          if (headWatcher) {
+            await headWatcher.unsubscribe();
+            headWatcher = null;
+          }
+          if (watcher) {
+            await watcher.unsubscribe();
+            watcher = null;
+          }
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'watcher-unsubscribe',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
+        }
+
+        // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
+        await sessionManager.closeAll();
+
+        // Phase 3: drain L1 (Y.Doc → markdown → disk) via afterUnloadDocument hook
+        try {
+          await flushAllStoresAndWait(destroyTimeoutMs);
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'flush-all-stores',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-3 flush failed');
+        }
+
+        // Phase 4: drain L2 (disk → git) — only meaningful AFTER L1 has run
+        try {
+          await persistence.flushPendingGitCommit();
+          await persistence.waitForPendingCommits();
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'git-commit-flush',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-4 git commit flush failed');
+        }
+      } finally {
+        // Phase 5: shadow repo release — ALWAYS runs
+        if (shadowRef.current) {
+          try {
+            destroyShadowRepo(shadowRef.current);
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'shadow-repo-release',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown phase-5 destroyShadowRepo failed');
+          }
+        }
+
+        const durationMs = Date.now() - t0;
+        const flushedCount = flushedCountBefore;
+        if (phaseErrors.length === 0) {
+          log.info(
+            { flushedCount, durationMs },
+            `[server] shutdown flushed ${flushedCount} documents in ${durationMs}ms`,
+          );
+        } else {
+          log.warn(
+            { flushedCount, durationMs, phaseErrors },
+            `[server] shutdown flushed ${flushedCount} documents in ${durationMs}ms with ${phaseErrors.length} phase error(s)`,
+          );
+        }
+      }
+    })();
+
+    return inflightDestroy;
   }
 
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
