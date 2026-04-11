@@ -24,15 +24,15 @@ cd packages/cli && bun run build     # Build CLI (tsdown → dist/)
 ### Quality gates
 
 ```bash
-bun run lint                         # Biome lint across all packages
-bun run format                       # Biome format across all packages
-bun run check                        # Broad gate: lint + typecheck + unit + integration + fidelity
-bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel)
+bun run check                        # THE gate — lint + typecheck + unit + integration + fidelity (~20-30s warm)
+bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel, ~2 min warm)
+bun run lint                         # Biome lint only
+bun run format                       # Biome format (auto-fix)
 cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
 cd packages/<pkg> && bun test           # Unit tests per package
 ```
 
-The `check` script composes `biome check .` + `turbo run typecheck test test:integration test:conversion`. Each test tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate.
+**`bun run check` is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion` — lint, typecheck, unit tests, integration (bridge-matrix), and conversion fidelity. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is <50ms.
 
 ### Agent simulator (requires dev server running)
 

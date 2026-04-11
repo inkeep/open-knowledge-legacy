@@ -16,7 +16,6 @@
     "test": "turbo run test",
     "lint": "biome check .",
     "format": "biome check --write --unsafe .",
-    "check:fast": "bun run typecheck && bun run lint",
     "check": "biome check . && turbo run typecheck test test:integration test:conversion",
     "check:full:parallel": "biome check . && turbo run typecheck test test:integration test:conversion test:stress:s1-s8-s9 test:stress:s2 test:stress:s4 test:stress:s5-s6 test:fuzz test:e2e --concurrency=100% --output-logs=errors-only",
     "prepare": "husky && chmod +x .husky/pre-commit .husky/pre-push 2>/dev/null || true",

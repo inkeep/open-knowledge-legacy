@@ -25,13 +25,10 @@ bun run build                        # Build all packages via turbo (cli, app, d
 ### Quality gates
 
 ```bash
-bun run check                        # Broad gate: lint (biome) + typecheck + unit + integration + conversion
-bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel)
-bun run check:fast                   # Typecheck + lint only (skips tests)
-bun run typecheck                    # Typecheck all packages via turbo
+bun run check                        # THE gate — run after every iteration (~20-30s warm)
+bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel, ~2 min warm)
 bun run lint                         # Biome check (lint + format + imports) across workspace
 bun run format                       # Biome check --write (auto-fix lint + format + imports)
-bun run test                         # Run tests across workspace via turbo
 ```
 
 ### Agent simulator (requires dev server running)
