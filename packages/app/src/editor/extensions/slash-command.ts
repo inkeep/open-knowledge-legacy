@@ -159,6 +159,8 @@ export const SlashCommand = Extension.create({
           const destroy = () => {
             stopAutoUpdate?.();
             stopAutoUpdate = null;
+            activeView = null;
+            activeFrom = 0;
             renderer?.destroy();
             renderer = null;
             popup?.remove();
@@ -183,12 +185,16 @@ export const SlashCommand = Extension.create({
                   },
                 }),
               ],
-            }).then(({ x, y }) => {
-              if (popup) {
-                popup.style.left = `${x}px`;
-                popup.style.top = `${y}px`;
-              }
-            });
+            })
+              .then(({ x, y }) => {
+                if (popup) {
+                  popup.style.left = `${x}px`;
+                  popup.style.top = `${y}px`;
+                }
+              })
+              .catch(() => {
+                // Position calculation failed (e.g., detached element during rapid state changes) — menu will be destroyed shortly
+              });
           };
 
           return {

@@ -59,6 +59,8 @@ export function BubbleMenuBar({ editor }: { editor: Editor }) {
   const onHide = () => {
     stopAutoUpdateRef.current?.();
     stopAutoUpdateRef.current = null;
+    // Bump key to force remount of tooltip-bearing children — prevents "rogue tooltips"
+    // that stay open after the bubble menu hides due to portal/z-index timing.
     setTooltipKey((k) => k + 1);
   };
 
