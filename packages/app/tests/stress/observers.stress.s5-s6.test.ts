@@ -8,23 +8,19 @@
  * was moved to the s1-s8-s9 shard for balance.
  */
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
-import { __resetCoordinationState, setupObservers } from '../../src/editor/observers';
+import { setupObservers } from '../../src/editor/observers';
 import { generateMarkdown } from './synthetic';
 
 // ---------- shared setup ----------
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-beforeEach(() => {
-  __resetCoordinationState();
-});
 
 // ---------- helpers ----------
 

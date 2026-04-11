@@ -7,23 +7,19 @@
  * is already the heaviest without it).
  */
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
-import { __resetCoordinationState, setupObservers } from '../../src/editor/observers';
+import { setupObservers } from '../../src/editor/observers';
 import { generateMarkdown } from './synthetic';
 
 // ---------- shared setup ----------
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-beforeEach(() => {
-  __resetCoordinationState();
-});
 
 // ---------- helpers ----------
 
@@ -250,7 +246,6 @@ describe('S9: observer init from restored doc', () => {
       const freshYtext = freshDoc.getText('source');
 
       // Step 4: Run setupObservers on the pre-populated fresh doc (production reconnect path)
-      __resetCoordinationState();
       const freshCleanup = setupObservers({
         doc: freshDoc,
         xmlFragment: freshFragment,

@@ -54,23 +54,31 @@ const DEBOUNCE_MS = 50;
 const TYPING_DEFER_MS = 300;
 
 // ─────────────────────────────────────────────────────────────
-// Module-level coordination state
+// Per-doc coordination state (WeakMap — GC'd with the Y.Doc)
 // ─────────────────────────────────────────────────────────────
 
-/** Timestamp of the last local user typing event (set by markUserTyping). */
-let lastUserTypedAt = 0;
+interface TypingState {
+  lastUserTypedAt: number;
+}
+
+const typingStates = new WeakMap<Y.Doc, TypingState>();
+
+function getTypingState(doc: Y.Doc): TypingState {
+  let state = typingStates.get(doc);
+  if (!state) {
+    state = { lastUserTypedAt: 0 };
+    typingStates.set(doc, state);
+  }
+  return state;
+}
 
 /**
  * Mark that the local user just typed. Call this from the editor's DOM event handlers
- * (keydown, paste, drop, etc.). Observer B uses this to defer its tree replacement.
+ * (keydown, paste, drop, cut) in BOTH TiptapEditor and SourceEditor.
+ * Observer B uses this to defer its tree replacement.
  */
-export function markUserTyping(): void {
-  lastUserTypedAt = Date.now();
-}
-
-/** Test helper: reset coordination state (call before each test case). */
-export function __resetCoordinationState(): void {
-  lastUserTypedAt = 0;
+export function markUserTyping(doc: Y.Doc): void {
+  getTypingState(doc).lastUserTypedAt = Date.now();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -265,7 +273,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
 
     // Coalesce rapid typing — if the user is still actively typing, wait a bit.
     // (Much shorter than TYPING_DEFER_MS because we now sync incrementally.)
-    const elapsedSinceTyping = Date.now() - lastUserTypedAt;
+    const elapsedSinceTyping = Date.now() - getTypingState(doc).lastUserTypedAt;
     if (elapsedSinceTyping < DEBOUNCE_MS) {
       debounceA = setTimeout(runObserverASync, DEBOUNCE_MS - elapsedSinceTyping);
       return;
@@ -355,7 +363,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
    */
   const runObserverBSync = (): void => {
     debounceB = null;
-    const elapsedSinceTyping = Date.now() - lastUserTypedAt;
+    const elapsedSinceTyping = Date.now() - getTypingState(doc).lastUserTypedAt;
     if (elapsedSinceTyping < TYPING_DEFER_MS) {
       // User is still typing. Defer.
       const waitMs = TYPING_DEFER_MS - elapsedSinceTyping;

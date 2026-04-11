@@ -5,27 +5,19 @@
  * Split from observers.stress.test.ts for turbo-based parallel sharding.
  */
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
-import {
-  __resetCoordinationState,
-  markUserTyping,
-  setupObservers,
-} from '../../src/editor/observers';
+import { markUserTyping, setupObservers } from '../../src/editor/observers';
 import { generateMarkdown } from './synthetic';
 
 // ---------- shared setup ----------
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-beforeEach(() => {
-  __resetCoordinationState();
-});
 
 // ---------- helpers ----------
 
@@ -171,14 +163,14 @@ describe('S4: agent undo during active typing', () => {
         expect(undoManager.canUndo()).toBe(true);
 
         // Step 3: user begins typing
-        markUserTyping();
+        markUserTyping(doc);
         const userPara = new Y.XmlElement('paragraph');
         const userText = new Y.XmlText();
         userText.applyDelta([{ insert: userMarker }]);
         userPara.insert(0, [userText]);
         fragment.push([userPara]);
 
-        const typingInterval = setInterval(() => markUserTyping(), 50);
+        const typingInterval = setInterval(() => markUserTyping(doc), 50);
 
         // Step 4: undo fires during typing
         await wait(100);
@@ -255,7 +247,7 @@ describe('S4b: unterminated-final-line gap 2 regression', () => {
 
           // Step 3: user types — triggers Observer A → applyUserDelta with
           // oldXmlMd that may lack trailing newline
-          markUserTyping();
+          markUserTyping(doc);
           const userPara = new Y.XmlElement('paragraph');
           const userText = new Y.XmlText();
           const marker = `USER-S4B-${tier.name.toUpperCase()}`;
@@ -264,7 +256,7 @@ describe('S4b: unterminated-final-line gap 2 regression', () => {
           fragment.push([userPara]);
 
           // Keep typing briefly then stop
-          const typingInterval = setInterval(() => markUserTyping(), 50);
+          const typingInterval = setInterval(() => markUserTyping(doc), 50);
           await wait(400);
           clearInterval(typingInterval);
 

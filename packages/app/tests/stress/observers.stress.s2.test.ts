@@ -5,27 +5,19 @@
  * Contains S2 ASCII (all 4 tiers) + S2 Unicode (3 realistic tiers).
  */
 
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
-import {
-  __resetCoordinationState,
-  markUserTyping,
-  setupObservers,
-} from '../../src/editor/observers';
+import { markUserTyping, setupObservers } from '../../src/editor/observers';
 import { generateMarkdown } from './synthetic';
 
 // ---------- shared setup ----------
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-beforeEach(() => {
-  __resetCoordinationState();
-});
 
 // ---------- helpers ----------
 
@@ -152,7 +144,7 @@ describe('S2: concurrent typing + agent write', () => {
         await wait(100);
 
         // User types concurrently — markUserTyping keeps Observer B deferred
-        markUserTyping();
+        markUserTyping(doc);
         const userPara = new Y.XmlElement('paragraph');
         const userText = new Y.XmlText();
         userText.applyDelta([{ insert: userMarker }]);
@@ -160,7 +152,7 @@ describe('S2: concurrent typing + agent write', () => {
         fragment.push([userPara]);
 
         // Simulate typing window (300ms+ so Observer B defers)
-        const typingInterval = setInterval(() => markUserTyping(), 50);
+        const typingInterval = setInterval(() => markUserTyping(doc), 50);
         await wait(400);
         clearInterval(typingInterval);
 

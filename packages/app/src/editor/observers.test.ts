@@ -1,24 +1,13 @@
-import { beforeEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from './extensions/shared';
-import {
-  __resetCoordinationState,
-  ORIGIN_TEXT_TO_TREE,
-  ORIGIN_TREE_TO_TEXT,
-  setupObservers,
-} from './observers';
+import { ORIGIN_TEXT_TO_TREE, ORIGIN_TREE_TO_TEXT, setupObservers } from './observers';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-// Reset module-level coordination state between tests so the typing-defer and
-// other-write-defer windows don't leak between unrelated test cases.
-beforeEach(() => {
-  __resetCoordinationState();
-});
 
 /** Helper: wait for debounce + microtask to settle. Must exceed TYPING_DEFER_MS (300ms)
  *  for tests that trigger the defer path (e.g., Y.Text writes from non-local origin). */
@@ -680,10 +669,10 @@ describe('Concurrent edit race conditions (regression)', () => {
     }, 'agent-write');
 
     // User is "typing" — keep the defer window fresh
-    const typingInterval = setInterval(() => markUserTyping(), 20);
+    const typingInterval = setInterval(() => markUserTyping(doc), 20);
 
     // Meanwhile, the user's typing has mutated XmlFragment (simulated)
-    markUserTyping();
+    markUserTyping(doc);
     const para = new Y.XmlElement('paragraph');
     const text = new Y.XmlText();
     text.applyDelta([{ insert: 'USER TYPED' }]);
@@ -811,8 +800,8 @@ describe('Concurrent edit race conditions (regression)', () => {
     }
 
     // Step 2: user begins typing — keep the typing window fresh
-    const typingInterval = setInterval(() => markUserTyping(), 20);
-    markUserTyping();
+    const typingInterval = setInterval(() => markUserTyping(doc), 20);
+    markUserTyping(doc);
 
     // Mutate XmlFragment to simulate user typing a new paragraph in WYSIWYG
     const userPara = new Y.XmlElement('paragraph');
@@ -862,7 +851,6 @@ describe('Remote write baseline staleness (regression)', () => {
 
     const clientFragment = clientDoc.getXmlFragment('default');
     const clientYtext = clientDoc.getText('source');
-    __resetCoordinationState();
     const cleanup = setupObservers({
       doc: clientDoc,
       xmlFragment: clientFragment,
@@ -907,6 +895,54 @@ describe('Remote write baseline staleness (regression)', () => {
     expect(afterText).toContain('USER-TYPED');
     // "Paragraph content" must appear exactly once (not duplicated)
     expect(afterText.split('Paragraph content here.').length - 1).toBe(1);
+
+    cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// R7 regression: source-mode typing defers Observer B
+// ─────────────────────────────────────────────────────────────
+
+describe('R7: source-mode typing defers Observer B', () => {
+  test('markUserTyping(doc) from source-mode events defers tree replacement', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Seed content so Observer B has something to replace
+    applyMarkdown(doc, fragment, '# Existing content\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Simulate source-mode typing: stamp the typing-defer window
+    const typingInterval = setInterval(() => markUserTyping(doc), 20);
+    markUserTyping(doc);
+
+    // Agent writes to Y.Text (would trigger Observer B → updateYFragment)
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\n\nAgent content during source typing');
+    }, 'agent-write');
+
+    // Wait less than TYPING_DEFER_MS (300ms) — Observer B should still be deferred
+    await wait(150);
+
+    // Fragment should NOT yet have 'Agent content during source typing'
+    // because Observer B is deferred by the typing window
+    const midTypingFragment = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    expect(midTypingFragment).not.toContain('Agent content during source typing');
+
+    // Stop typing
+    clearInterval(typingInterval);
+
+    // Wait for Observer B to fire after typing window expires
+    await wait(600);
+
+    // Now the fragment should have the agent content
+    const finalFragment = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    expect(finalFragment).toContain('Agent content during source typing');
 
     cleanup();
   });
