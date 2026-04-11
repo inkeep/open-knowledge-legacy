@@ -1,19 +1,147 @@
-import { useEffect, useState } from 'react';
+import { ChevronRight, File, Folder, FolderOpen } from 'lucide-react';
+import { type FC, useEffect, useState } from 'react';
 import {
   Sidebar,
   SidebarContent,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { cn } from '@/lib/utils';
+
+// ── Tree data model ──────────────────────────────────────────────────
 
 interface DocEntry {
   docName: string;
   size: number;
   modified: string;
 }
+
+interface TreeNode {
+  name: string;
+  path: string;
+  kind: 'folder' | 'file';
+  children: TreeNode[];
+}
+
+function buildTree(documents: DocEntry[]): TreeNode[] {
+  const root: TreeNode[] = [];
+
+  for (const doc of documents) {
+    const segments = doc.docName.split('/').filter(Boolean);
+    let children = root;
+
+    for (const [index, segment] of segments.entries()) {
+      const path = segments.slice(0, index + 1).join('/');
+      const isFile = index === segments.length - 1;
+      let node = children.find((child) => child.path === path);
+
+      if (!node) {
+        node = {
+          name: segment,
+          path,
+          kind: isFile ? 'file' : 'folder',
+          children: [],
+        };
+        children.push(node);
+      }
+
+      children = node.children;
+    }
+  }
+
+  // Sort: folders first, then alphabetically
+  function sortNodes(nodes: TreeNode[]): void {
+    nodes.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const node of nodes) sortNodes(node.children);
+  }
+  sortNodes(root);
+
+  return root;
+}
+
+// ── Tree node component ──────────────────────────────────────────────
+
+const FileTreeNode: FC<{
+  node: TreeNode;
+  selectedPath: string | null;
+  onSelect: (docName: string) => void;
+  nested?: boolean;
+}> = ({ node, nested = false, selectedPath, onSelect }) => {
+  const [collapsed, setCollapsed] = useState(() => {
+    // Auto-expand if selected file is inside this folder
+    if (!selectedPath || node.kind === 'file') return true;
+    return !selectedPath.startsWith(`${node.path}/`) && selectedPath !== node.path;
+  });
+
+  const isFile = node.kind === 'file';
+  const isActive = isFile && node.path === selectedPath;
+  const IconToUse = isFile ? File : collapsed ? Folder : FolderOpen;
+
+  const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
+  const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
+
+  const content = (
+    <>
+      <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+      <span className="min-w-0 flex-1 truncate font-mono text-xs">
+        {node.name}
+        {isFile && '.md'}
+      </span>
+    </>
+  );
+
+  return (
+    <ComponentToUse>
+      {isFile ? (
+        <ButtonToUse
+          isActive={isActive}
+          onClick={() => onSelect(node.path)}
+          className="cursor-pointer"
+        >
+          {content}
+        </ButtonToUse>
+      ) : (
+        <div>
+          <ButtonToUse className="w-full pr-8">{content}</ButtonToUse>
+          <SidebarMenuAction
+            className={cn('top-1', !collapsed && 'rotate-90')}
+            onClick={(e) => {
+              e.preventDefault();
+              setCollapsed((v) => !v);
+            }}
+          >
+            <ChevronRight className="size-4" />
+          </SidebarMenuAction>
+        </div>
+      )}
+      {node.children.length > 0 && !collapsed && (
+        <SidebarMenuSub className="mr-0 pr-0">
+          {node.children.map((child) => (
+            <FileTreeNode
+              key={child.path}
+              node={child}
+              selectedPath={selectedPath}
+              onSelect={onSelect}
+              nested
+            />
+          ))}
+        </SidebarMenuSub>
+      )}
+    </ComponentToUse>
+  );
+};
+
+// ── Sidebar component ────────────────────────────────────────────────
 
 export function FileSidebar() {
   const { activeDocName, openDocument } = useDocumentContext();
@@ -40,6 +168,8 @@ export function FileSidebar() {
     };
   }, []);
 
+  const treeNodes = buildTree(documents);
+
   return (
     <Sidebar variant="inset">
       <SidebarHeader>
@@ -59,17 +189,14 @@ export function FileSidebar() {
             <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
           </div>
         ) : (
-          <SidebarMenu className="px-2">
-            {documents.map((doc) => (
-              <SidebarMenuItem key={doc.docName}>
-                <SidebarMenuButton
-                  isActive={doc.docName === activeDocName}
-                  onClick={() => openDocument(doc.docName)}
-                  className="font-mono text-xs"
-                >
-                  {doc.docName}.md
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+          <SidebarMenu>
+            {treeNodes.map((node) => (
+              <FileTreeNode
+                key={node.path}
+                node={node}
+                selectedPath={activeDocName}
+                onSelect={openDocument}
+              />
             ))}
           </SidebarMenu>
         )}
