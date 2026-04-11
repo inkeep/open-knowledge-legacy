@@ -1,4 +1,4 @@
-# Customization & Theming
+# Customization &amp; Theming
 
 Components reference semantic CSS variable tokens. Change the variables to change every component.
 
@@ -27,6 +27,7 @@ Components reference semantic CSS variable tokens. Change the variables to chang
 
 Every color follows the `name` / `name-foreground` convention. The base variable is for backgrounds, `-foreground` is for text/icons on that background.
 
+
 | Variable                                     | Purpose                          |
 | -------------------------------------------- | -------------------------------- |
 | `--background` / `--foreground`              | Page background and default text |
@@ -42,6 +43,7 @@ Every color follows the `name` / `name-foreground` convention. The base variable
 | `--chart-1` through `--chart-5`              | Chart/data visualization         |
 | `--sidebar-*`                                | Sidebar-specific colors          |
 | `--surface` / `--surface-foreground`         | Secondary surface                |
+
 
 Colors use OKLCH: `--primary: oklch(0.205 0 0)` where values are lightness (0–1), chroma (0 = gray), and hue (0–360).
 

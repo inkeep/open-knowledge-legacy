@@ -25,6 +25,7 @@ npx shadcn@latest init [components...] [options]
 
 Initializes shadcn/ui in an existing project or creates a new project (when `--name` is provided). Optionally installs components in the same step.
 
+
 | Flag                    | Short | Description                                               | Default |
 | ----------------------- | ----- | --------------------------------------------------------- | ------- |
 | `--template <template>` | `-t`  | Template (next, start, vite, next-monorepo, react-router) | —       |
@@ -40,6 +41,7 @@ Initializes shadcn/ui in an existing project or creates a new project (when `--n
 | `--monorepo`            |       | Scaffold a monorepo project                               | —       |
 | `--no-monorepo`         |       | Skip the monorepo prompt                                  | —       |
 
+
 `npx shadcn@latest create` is an alias for `npx shadcn@latest init`.
 
 ### `apply` — Apply a preset to an existing project
@@ -50,12 +52,14 @@ npx shadcn@latest apply [preset] [options]
 
 Applies a preset to an existing project, overwriting preset-driven config, fonts, CSS variables, and detected UI components.
 
+
 | Flag                | Short | Description                                | Default |
 | ------------------- | ----- | ------------------------------------------ | ------- |
 | `--preset <preset>` | —     | Preset configuration (named, code, or URL) | —       |
 | `--yes`             | `-y`  | Skip confirmation prompt                   | `false` |
 | `--cwd <cwd>`       | `-c`  | Working directory                          | current |
 | `--silent`          | `-s`  | Mute output                                | `false` |
+
 
 `[preset]` is a shorthand for `--preset <preset>`. If both are provided, they must match.
 If no preset is provided, the CLI offers to open the custom preset builder on `ui.shadcn.com/create`.
@@ -70,6 +74,7 @@ npx shadcn@latest add [components...] [options]
 
 Accepts component names, registry-prefixed names (`@magicui/shimmer-button`), URLs, or local paths.
 
+
 | Flag            | Short | Description                                                                                                          | Default |
 | --------------- | ----- | -------------------------------------------------------------------------------------------------------------------- | ------- |
 | `--yes`         | `-y`  | Skip confirmation prompt                                                                                             | `false` |
@@ -81,6 +86,7 @@ Accepts component names, registry-prefixed names (`@magicui/shimmer-button`), UR
 | `--dry-run`     |       | Preview all changes without writing files                                                                            | `false` |
 | `--diff [path]` |       | Show diffs. Without a path, shows the first 5 files. With a path, shows that file only (implies `--dry-run`)         | —       |
 | `--view [path]` |       | Show file contents. Without a path, shows the first 5 files. With a path, shows that file only (implies `--dry-run`) | —       |
+
 
 #### Dry-Run Mode
 
@@ -117,7 +123,7 @@ npx shadcn@latest add button --diff globals.css
 - When checking what CSS changes would be made to `globals.css` — use `--diff globals.css`.
 - When the user asks to review or audit third-party registry code before installing — use `--view` to inspect the source.
 
-> **`npx shadcn@latest add --dry-run` vs `npx shadcn@latest view`:** Prefer `npx shadcn@latest add --dry-run/--diff/--view` over `npx shadcn@latest view` when the user wants to preview changes to their project. `npx shadcn@latest view` only shows raw registry metadata. `npx shadcn@latest add --dry-run` shows exactly what would happen in the user's project: resolved file paths, diffs against existing files, and CSS updates. Use `npx shadcn@latest view` only when the user wants to browse registry info without a project context.
+> `**npx shadcn@latest add --dry-run` vs `npx shadcn@latest view`:** Prefer `npx shadcn@latest add --dry-run/--diff/--view` over `npx shadcn@latest view` when the user wants to preview changes to their project. `npx shadcn@latest view` only shows raw registry metadata. `npx shadcn@latest add --dry-run` shows exactly what would happen in the user's project: resolved file paths, diffs against existing files, and CSS updates. Use `npx shadcn@latest view` only when the user wants to browse registry info without a project context.
 
 #### Smart Merge from Upstream
 
@@ -131,12 +137,14 @@ npx shadcn@latest search <registries...> [options]
 
 Fuzzy search across registries. Also aliased as `npx shadcn@latest list`. Without `-q`, lists all items.
 
+
 | Flag                | Short | Description            | Default |
 | ------------------- | ----- | ---------------------- | ------- |
 | `--query <query>`   | `-q`  | Search query           | —       |
 | `--limit <number>`  | `-l`  | Max items per registry | `100`   |
 | `--offset <number>` | `-o`  | Items to skip          | `0`     |
 | `--cwd <cwd>`       | `-c`  | Working directory      | current |
+
 
 ### `view` — View item details
 
@@ -182,11 +190,14 @@ npx shadcn@latest info [options]
 
 Displays project info and `components.json` configuration. Run this first to discover the project's framework, aliases, Tailwind version, and resolved paths.
 
+
 | Flag          | Short | Description       | Default |
 | ------------- | ----- | ----------------- | ------- |
 | `--cwd <cwd>` | `-c`  | Working directory | current |
 
+
 **Project Info fields:**
+
 
 | Field                | Type      | Meaning                                                            |
 | -------------------- | --------- | ------------------------------------------------------------------ |
@@ -201,7 +212,9 @@ Displays project info and `components.json` configuration. Run this first to dis
 | `aliasPrefix`        | `string`  | Import alias prefix (e.g. `@`, `~`, `@/`)                          |
 | `packageManager`     | `string`  | Detected package manager (`npm`, `pnpm`, `yarn`, `bun`)            |
 
+
 **Components.json fields:**
+
 
 | Field                | Type      | Meaning                                                                                    |
 | -------------------- | --------- | ------------------------------------------------------------------------------------------ |
@@ -220,6 +233,7 @@ Displays project info and `components.json` configuration. Run this first to dis
 | `resolvedPaths`      | `object`  | Absolute file-system paths for each alias                                                  |
 | `registries`         | `object`  | Configured custom registries                                                               |
 
+
 **Links fields:**
 
 The `info` output includes a **Links** section with templated URLs for component docs, source, and examples. For resolved URLs, use `npx shadcn@latest docs <component>` instead.
@@ -232,14 +246,17 @@ npx shadcn@latest build [registry] [options]
 
 Builds `registry.json` into individual JSON files for distribution. Default input: `./registry.json`, default output: `./public/r`.
 
+
 | Flag              | Short | Description       | Default      |
 | ----------------- | ----- | ----------------- | ------------ |
 | `--output <path>` | `-o`  | Output directory  | `./public/r` |
 | `--cwd <cwd>`     | `-c`  | Working directory | current      |
 
+
 ---
 
 ## Templates
+
 
 | Value          | Framework      | Monorepo support |
 | -------------- | -------------- | ---------------- |
@@ -249,6 +266,7 @@ Builds `registry.json` into individual JSON files for distribution. Default inpu
 | `react-router` | React Router   | Yes              |
 | `astro`        | Astro          | Yes              |
 | `laravel`      | Laravel        | No               |
+
 
 All templates support monorepo scaffolding via the `--monorepo` flag. When passed, the CLI uses a monorepo-specific template directory (e.g. `next-monorepo`, `vite-monorepo`). When neither `--monorepo` nor `--no-monorepo` is passed, the CLI prompts interactively. Laravel does not support monorepo scaffolding.
 
