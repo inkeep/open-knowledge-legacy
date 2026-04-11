@@ -280,13 +280,19 @@ Y.Doc
 
 ## Testing
 
+### Test file naming convention
+
+- `*.test.ts` — Bun test runner (unit, integration, stress). Auto-discovered by `bun test`.
+- `*.e2e.ts` — Playwright E2E tests. Auto-discovered by `playwright.config.ts` (`testMatch: /.*\.e2e\.ts$/`). Run via `bun run test:stress:e2e`.
+- **Do not use `*.spec.ts`** — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
+
 ### Test layers
 
 | Layer | Type | Location | Command |
 |---|---|---|---|
 | A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.test.ts` | `bun run test` |
 | B | HTTP + server-side CRDT | `packages/app/tests/stress/stress-api.ts` | `bun run tests/stress/stress-api.ts` (needs dev server) |
-| C | Playwright E2E | `packages/app/tests/stress/crdt-stress.spec.ts`, `tests/stress/ux-interactions.spec.ts` | `bunx playwright test` |
+| C | Playwright E2E | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts` | `bunx playwright test` |
 | D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |
 | Integration | Tier 1 bridge matrix | `packages/app/tests/integration/bridge-matrix.test.ts` | `bun run test` |
 
