@@ -13,7 +13,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-import { CONFIG_FILENAME, WIKI_DIR } from '../constants.ts';
+import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 import { type Config, ConfigSchema } from './schema.ts';
 
 export interface LoadConfigResult {
@@ -75,7 +75,7 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   const sources: string[] = [];
 
   // Layer 1: user config
-  const userConfigPath = resolve(homedir(), WIKI_DIR, CONFIG_FILENAME);
+  const userConfigPath = resolve(homedir(), OK_DIR, CONFIG_FILENAME);
   let merged: Record<string, unknown> = {};
   const userConfig = loadYamlFile(userConfigPath);
   if (userConfig) {
@@ -84,7 +84,7 @@ export function loadConfig(cwd?: string): LoadConfigResult {
   }
 
   // Layer 2: workspace config
-  const workspaceConfigPath = resolve(workingDir, WIKI_DIR, CONFIG_FILENAME);
+  const workspaceConfigPath = resolve(workingDir, OK_DIR, CONFIG_FILENAME);
   const workspaceConfig = loadYamlFile(workspaceConfigPath);
   if (workspaceConfig) {
     merged = deepMerge(merged, workspaceConfig);

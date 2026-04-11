@@ -1,4 +1,3 @@
-import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { deriveIconColor } from '@inkeep/open-knowledge-core';
 import {
   Bird,
@@ -16,6 +15,7 @@ import {
 import type { FC } from 'react';
 import { ClaudeIcon } from '@/components/icons/claude';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useDocumentContext } from '@/editor/DocumentContext';
 import { type Participant, usePresence } from './use-presence';
 import { type SyncStatus, useSyncStatus } from './use-sync-status';
 
@@ -119,13 +119,14 @@ function SyncIndicator({ status }: { status: SyncStatus }) {
   );
 }
 
-export function PresenceBar({ provider }: { provider: HocuspocusProvider | null }) {
-  const participants = usePresence(provider);
-  const syncStatus = useSyncStatus(provider);
+export function PresenceBar() {
+  const { activeProvider, activeDocName } = useDocumentContext();
+  const participants = usePresence(activeProvider);
+  const syncStatus = useSyncStatus(activeProvider);
 
   return (
     <div data-slot="presence-bar" className="flex items-center gap-2 px-1 py-1.5">
-      <SyncIndicator status={syncStatus} />
+      {activeDocName && <SyncIndicator status={syncStatus} />}
       <div className="flex items-center -space-x-1.5">
         {participants.map((p) => (
           <PresenceAvatar key={p.clientId} user={p.user} mode={p.mode} />

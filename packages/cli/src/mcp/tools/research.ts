@@ -1,6 +1,6 @@
 /**
  * `research` MCP workflow tool — analyze a topic by gathering external sources,
- * reading them alongside existing wiki content, and writing provisional
+ * reading them alongside existing content, and writing provisional
  * findings to .open-knowledge/research/.
  *
  * Principle: provisional, not canonical. Research articles capture findings,
@@ -55,7 +55,7 @@ If a fetch fails for a source you specifically need, stop and ask the user to pa
 
 Read each ingested source carefully. Also read:
 
-- **Existing wiki articles** on the topic (\`articles/\`)
+- **Existing articles** on the topic (\`articles/\`)
 - **Prior research** on adjacent topics (\`research/\`)
 - **Relevant source code** for projects where research is grounded in the codebase (read entry points, core modules, and any specs that touch the topic)
 - **Project context** — \`PROJECT.md\`, \`STORIES.md\`, \`specs/\`, \`reports/\` if they exist
@@ -140,9 +140,8 @@ Structure:
 
 - File exists in \`.open-knowledge/research/\` (or a subfolder you created)
 - Has frontmatter with \`title\`, \`description\`, \`status: provisional\`, \`date\`, and a \`sources\` list
-- \`research/INDEX.md\` catalog picks up the new entry automatically via the file watcher
+- \`.open-knowledge/catalogs/\` picks up the new entry automatically via the file watcher
 - Linked external sources exist in \`.open-knowledge/external-sources/\` — broken source links mean something went wrong in step 2
-- If you created a new subfolder under \`research/\`, its \`INDEX.md\` has sticky \`title\` and \`description\`
 
 ## Non-goals
 

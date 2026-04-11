@@ -28,6 +28,21 @@ import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 
+/** Directories to exclude from document listing. */
+const EXCLUDED_DIRS = new Set(['.agents', '.claude', '.git', '.open-knowledge', 'node_modules']);
+
+/**
+ * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
+ * Throws if the resolved path escapes the base directory.
+ */
+export function safeSubdir(baseDir: string, subdir: string): string {
+  const resolved = resolve(baseDir, subdir);
+  if (resolved !== baseDir && !resolved.startsWith(`${baseDir}/`)) {
+    throw new Error(`Invalid directory: ${subdir}`);
+  }
+  return resolved;
+}
+
 export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
@@ -58,7 +73,10 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 function json(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'X-Content-Type-Options': 'nosniff',
+  });
   res.end(JSON.stringify(data));
 }
 
@@ -275,6 +293,63 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content = dc.document.getText('source').toString();
       json(res, 200, { ok: true, docName, content });
     } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleDocumentList(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const dir = url.searchParams.get('dir');
+
+      let targetDir = contentDir;
+      if (dir) {
+        try {
+          targetDir = safeSubdir(contentDir, dir);
+        } catch {
+          json(res, 400, { ok: false, error: `Invalid directory: ${dir}` });
+          return;
+        }
+      }
+
+      if (!existsSync(targetDir)) {
+        json(res, 200, { ok: true, documents: [] });
+        return;
+      }
+
+      const entries = readdirSync(targetDir, { recursive: true });
+      const documents: { docName: string; size: number; modified: string }[] = [];
+
+      for (const entry of entries) {
+        const entryStr = typeof entry === 'string' ? entry : entry.toString();
+        if (!entryStr.endsWith('.md')) continue;
+
+        // Skip files inside excluded directories
+        const firstSegment = entryStr.split(/[\\/]/)[0];
+        if (firstSegment && EXCLUDED_DIRS.has(firstSegment)) continue;
+
+        const fullPath = resolve(targetDir, entryStr);
+        const stat = statSync(fullPath);
+        if (!stat.isFile()) continue;
+
+        const docName = fullPath.slice(contentDir.length + 1).replace(/\.md$/, '');
+        documents.push({
+          docName,
+          size: stat.size,
+          modified: stat.mtime.toISOString(),
+        });
+      }
+
+      documents.sort((a, b) => a.docName.localeCompare(b.docName));
+      json(res, 200, { ok: true, documents });
+    } catch (e) {
+      console.error('[document-list]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -678,7 +753,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const content = readFileSync(filePath, 'utf-8');
-    res.writeHead(200, { 'Content-Type': 'text/markdown' });
+    res.writeHead(200, {
+      'Content-Type': 'text/markdown',
+      'X-Content-Type-Options': 'nosniff',
+    });
     res.end(content);
   }
 
@@ -775,6 +853,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
+    '/api/documents': handleDocumentList,
     '/api/pages': handlePages,
     '/api/create-page': handleCreatePage,
     '/api/agent-write': handleAgentWrite,

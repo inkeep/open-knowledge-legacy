@@ -3,6 +3,10 @@
     "openknowledge": {
       "command": "node",
       "args": ["./packages/cli/dist/cli.mjs", "mcp"]
+    },
+    "open-knowledge": {
+      "command": "npx",
+      "args": ["@inkeep/open-knowledge", "mcp"]
     }
   }
 }

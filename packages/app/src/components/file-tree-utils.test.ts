@@ -1,0 +1,106 @@
+import { describe, expect, test } from 'bun:test';
+import { buildTree, type DocEntry } from './file-tree-utils';
+
+function doc(docName: string): DocEntry {
+  return { docName, size: 100, modified: '2026-01-01T00:00:00Z' };
+}
+
+describe('buildTree', () => {
+  test('returns empty array for no documents', () => {
+    expect(buildTree([])).toEqual([]);
+  });
+
+  test('creates flat file nodes for top-level documents', () => {
+    const tree = buildTree([doc('README'), doc('CHANGELOG')]);
+    expect(tree).toHaveLength(2);
+    expect(tree[0].name).toBe('CHANGELOG');
+    expect(tree[0].kind).toBe('file');
+    expect(tree[0].path).toBe('CHANGELOG');
+    expect(tree[0].children).toEqual([]);
+    expect(tree[1].name).toBe('README');
+    expect(tree[1].kind).toBe('file');
+  });
+
+  test('creates folder nodes for nested paths', () => {
+    const tree = buildTree([doc('docs/guide')]);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].name).toBe('docs');
+    expect(tree[0].kind).toBe('folder');
+    expect(tree[0].path).toBe('docs');
+    expect(tree[0].children).toHaveLength(1);
+    expect(tree[0].children[0].name).toBe('guide');
+    expect(tree[0].children[0].kind).toBe('file');
+    expect(tree[0].children[0].path).toBe('docs/guide');
+  });
+
+  test('groups files under shared parent folders', () => {
+    const tree = buildTree([doc('docs/a'), doc('docs/b'), doc('docs/c')]);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].name).toBe('docs');
+    expect(tree[0].children).toHaveLength(3);
+    expect(tree[0].children.map((c) => c.name)).toEqual(['a', 'b', 'c']);
+  });
+
+  test('handles deeply nested paths', () => {
+    const tree = buildTree([doc('a/b/c/d')]);
+    expect(tree[0].name).toBe('a');
+    expect(tree[0].children[0].name).toBe('b');
+    expect(tree[0].children[0].children[0].name).toBe('c');
+    expect(tree[0].children[0].children[0].children[0].name).toBe('d');
+    expect(tree[0].children[0].children[0].children[0].kind).toBe('file');
+  });
+
+  test('sorts folders before files', () => {
+    const tree = buildTree([doc('zebra'), doc('articles/intro'), doc('alpha')]);
+    // 'articles' folder should come before 'alpha' and 'zebra' files
+    expect(tree[0].kind).toBe('folder');
+    expect(tree[0].name).toBe('articles');
+    expect(tree[1].kind).toBe('file');
+    expect(tree[1].name).toBe('alpha');
+    expect(tree[2].kind).toBe('file');
+    expect(tree[2].name).toBe('zebra');
+  });
+
+  test('sorts alphabetically within folders and files', () => {
+    const tree = buildTree([
+      doc('docs/zz'),
+      doc('docs/aa'),
+      doc('articles/bb'),
+      doc('articles/aa'),
+    ]);
+    expect(tree[0].name).toBe('articles');
+    expect(tree[0].children.map((c) => c.name)).toEqual(['aa', 'bb']);
+    expect(tree[1].name).toBe('docs');
+    expect(tree[1].children.map((c) => c.name)).toEqual(['aa', 'zz']);
+  });
+
+  test('handles mixed depth — some files at root, some nested', () => {
+    const tree = buildTree([doc('README'), doc('specs/feature/SPEC'), doc('docs/guide')]);
+    // folders first: docs, specs; then files: README
+    expect(tree.map((n) => n.name)).toEqual(['docs', 'specs', 'README']);
+    expect(tree[1].children[0].name).toBe('feature');
+    expect(tree[1].children[0].children[0].name).toBe('SPEC');
+  });
+
+  test('deduplicates folder nodes when multiple files share a path prefix', () => {
+    const tree = buildTree([
+      doc('reports/a/evidence/e1'),
+      doc('reports/a/evidence/e2'),
+      doc('reports/a/REPORT'),
+    ]);
+    expect(tree).toHaveLength(1);
+    expect(tree[0].name).toBe('reports');
+    const a = tree[0].children[0];
+    expect(a.name).toBe('a');
+    // Should have 'evidence' folder + 'REPORT' file
+    expect(a.children.map((c) => c.name)).toEqual(['evidence', 'REPORT']);
+    expect(a.children[0].children.map((c) => c.name)).toEqual(['e1', 'e2']);
+  });
+
+  test('preserves full path on each node', () => {
+    const tree = buildTree([doc('a/b/c')]);
+    expect(tree[0].path).toBe('a');
+    expect(tree[0].children[0].path).toBe('a/b');
+    expect(tree[0].children[0].children[0].path).toBe('a/b/c');
+  });
+});

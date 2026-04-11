@@ -262,6 +262,23 @@
   opacity: 0.3;
 }
 
+/* Editor layout — grid lives on the wrapper so ProseMirror content stays normal block flow */
+.tiptap-editor {
+  --content-width: 1fr;
+  --margin-width: 6rem;
+  display: grid;
+  width: 100%;
+  grid-template-columns:
+    [full-start] var(--margin-left-width, var(--margin-width))
+    [content-start] var(--content-width)
+    [content-end] var(--margin-right-width, var(--margin-width))
+    [full-end];
+}
+
+.tiptap-editor > div {
+  grid-column: content;
+}
+
 /* Editor polish */
 .ProseMirror {
   outline: none;

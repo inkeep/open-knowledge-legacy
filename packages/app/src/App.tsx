@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
+import { DocumentProvider } from '@/editor/DocumentContext';
 
 function getDocNameFromHash(): string {
   const match = window.location.hash.match(/^#doc=(.+)$/);
@@ -18,11 +19,13 @@ export function App() {
   }, []);
 
   return (
-    <SidebarProvider className="h-screen overflow-hidden">
-      <FileSidebar />
-      <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
-        <EditorPane key={docName} />
-      </SidebarInset>
-    </SidebarProvider>
+    <DocumentProvider>
+      <SidebarProvider className="h-screen overflow-hidden">
+        <FileSidebar />
+        <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
+          <EditorPane key={docName} />
+        </SidebarInset>
+      </SidebarProvider>
+    </DocumentProvider>
   );
 }
