@@ -2,6 +2,7 @@
  * Shared extension list used by the editor, persistence layer, and round-trip tests.
  * Single source of truth — drift between these causes silent data corruption.
  */
+import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
 import Link from '@tiptap/extension-link';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
@@ -13,7 +14,7 @@ export const sharedExtensions = [
   // JsxComponent MUST be before StarterKit so its markdown parseMarkdown handler
   // for 'code' tokens runs before codeBlock's handler (registry uses insertion order).
   JsxComponent,
-  StarterKit.configure({ undoRedo: false }),
+  StarterKit.configure({ undoRedo: false, link: false }),
   Table.configure({
     resizable: true,
   }),
@@ -30,4 +31,5 @@ export const sharedExtensions = [
   }),
   TaskList,
   TaskItem,
+  Highlight,
 ];
