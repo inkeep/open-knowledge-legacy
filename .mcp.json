@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "openknowledge": {
+      "command": "node",
+      "args": ["./packages/cli/dist/cli.mjs", "mcp"]
+    }
+  }
+}
