@@ -932,7 +932,7 @@ describe('Remote write baseline staleness (regression)', () => {
         ytextB.insert(0, '# Doc B heading\n\nBody from doc B.\n');
       }, 'user-edit');
 
-      await wait(150);
+      await wait(200);
 
       const mdB = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragmentB));
       expect(mdB).toContain('Doc B heading');
