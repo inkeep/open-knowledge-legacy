@@ -12,6 +12,8 @@ export interface PoolEntry {
   syncState: SyncState;
   docName: string;
   lastAccessedAt: number;
+  hasSynced: boolean;
+  tearingDown: boolean;
 }
 
 export type PoolChangeCallback = () => void;
@@ -80,17 +82,22 @@ export class ProviderPool {
       syncState: 'connecting',
       docName,
       lastAccessedAt: Date.now(),
+      hasSynced: false,
+      tearingDown: false,
     };
 
     // Track sync state
     const onStatus = ({ status }: { status: string }) => {
+      if (entry.tearingDown || this.entries.get(docName) !== entry) return;
       if (status === 'disconnected') {
         entry.syncState = 'disconnected';
         this.notify();
       }
     };
     const onSynced = () => {
+      if (entry.tearingDown || this.entries.get(docName) !== entry) return;
       entry.syncState = 'synced';
+      entry.hasSynced = true;
       this.notify();
 
       // Set up bidirectional observers once after first sync
@@ -110,8 +117,17 @@ export class ProviderPool {
       }
     };
     const onDisconnect = () => {
+      if (entry.tearingDown || this.entries.get(docName) !== entry) return;
       entry.syncState = 'disconnected';
       this.notify();
+
+      // If this provider has no local-only CRDT changes buffered, discard the in-memory
+      // Y.Doc instead of letting it reconnect to a freshly restarted server. Reusing the
+      // old doc after a server restart causes Yjs to merge two equivalent document copies
+      // with different item identities, duplicating the whole tree on reconnect.
+      if (entry.hasSynced && provider.unsyncedChanges === 0) {
+        this.recycleDisconnectedEntry(docName);
+      }
     };
 
     provider.on('status', onStatus);
@@ -191,9 +207,30 @@ export class ProviderPool {
   }
 
   private destroyEntry(entry: PoolEntry): void {
+    entry.tearingDown = true;
     // Observer cleanup first (observers reference Y.Doc state), then full teardown
     entry.observerCleanup?.();
     entry.observerCleanup = null;
     entry.provider.destroy(); // destroy() disconnects + removes all listeners + awareness cleanup
+  }
+
+  private recycleDisconnectedEntry(docName: string): void {
+    const entry = this.entries.get(docName);
+    if (!entry || entry.tearingDown) return;
+
+    const wasActive = this.activeDocName === docName;
+    console.log(`[ProviderPool] Recycling disconnected entry: ${docName}`);
+
+    this.destroyEntry(entry);
+    this.entries.delete(docName);
+    this.lruOrder = this.lruOrder.filter((n) => n !== docName);
+
+    if (wasActive) {
+      this.open(docName);
+      this.setActive(docName);
+      return;
+    }
+
+    this.notify();
   }
 }
