@@ -795,7 +795,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'path must end with .md' });
         return;
       }
-      if (filePath.includes('..') || filePath.startsWith('/') || filePath.includes('\x00')) {
+      if (
+        filePath.includes('..') ||
+        filePath.startsWith('/') ||
+        filePath.includes('\x00') ||
+        filePath.includes('\\')
+      ) {
         json(res, 400, { ok: false, error: 'path must not contain .. or start with /' });
         return;
       }

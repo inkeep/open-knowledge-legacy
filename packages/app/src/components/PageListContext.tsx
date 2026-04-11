@@ -17,6 +17,9 @@ const PageListContext = createContext<PageListContextValue>({
 
 async function loadPages(): Promise<Set<string>> {
   const r = await fetch('/api/pages');
+  if (!r.ok) {
+    throw new Error(`/api/pages responded with ${r.status}`);
+  }
   const data = (await r.json()) as { ok?: boolean; pages?: Array<{ docName: string }> };
   if (Array.isArray(data.pages)) {
     return new Set(data.pages.map((p) => p.docName));
