@@ -5,7 +5,7 @@
  * This plugin wires Hocuspocus into Vite's HTTP/WS server so that
  * `bun run dev` starts everything in a single process.
  */
-import { mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
@@ -18,19 +18,45 @@ import {
 } from '@inkeep/open-knowledge-server';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
+import { parse as parseYaml } from 'yaml';
 
 // Module-level watcher subscription — survives Vite HMR restarts so we can
 // unsubscribe the previous instance before starting a new one.
 let activeWatcher: AsyncSubscription | null = null;
 
-const DEFAULT_CONTENT_DIR = resolve(
-  import.meta.dirname ?? new URL('.', import.meta.url).pathname,
-  '../../../content',
-);
+// Resolve project root (directory containing .open-knowledge/)
+const PLUGIN_DIR = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
+const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
 
+/**
+ * Read content.dir from .open-knowledge/config.yml.
+ * Falls back to PROJECT_ROOT if no config exists or no content.dir is specified.
+ */
+function resolveContentDir(): string {
+  const configPath = resolve(PROJECT_ROOT, '.open-knowledge/config.yml');
+  if (existsSync(configPath)) {
+    try {
+      const raw = readFileSync(configPath, 'utf-8');
+      const parsed = parseYaml(raw) as Record<string, unknown> | null;
+      const content = parsed?.content as Record<string, unknown> | undefined;
+      if (typeof content?.dir === 'string') {
+        return resolve(PROJECT_ROOT, content.dir);
+      }
+    } catch (err) {
+      console.warn('[hocuspocus] Failed to parse config:', err);
+    }
+  }
+  // Default to project root (matches config schema default: content.dir = '.')
+  return PROJECT_ROOT;
+}
+
+// Resolution priority: OK_TEST_CONTENT_DIR env var (for isolated test runs —
+// realpathSync resolves symlinks like /tmp → /private/tmp on macOS so the
+// watcher and persistence layer agree on canonical paths) falls back to the
+// config-driven workspace default.
 const CONTENT_DIR = process.env.OK_TEST_CONTENT_DIR
   ? realpathSync(process.env.OK_TEST_CONTENT_DIR)
-  : DEFAULT_CONTENT_DIR;
+  : resolveContentDir();
 
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
@@ -46,7 +72,7 @@ export const hocuspocus = new Hocuspocus({
     createPersistenceExtension({
       contentDir: CONTENT_DIR,
       projectDir: resolve(CONTENT_DIR, '..'),
-    }),
+    }).extension,
   ],
 });
 
@@ -126,7 +152,11 @@ export function hocuspocusPlugin(): Plugin {
           activeWatcher = null;
         }
         try {
-          activeWatcher = await startWatcher(CONTENT_DIR, handleExternalChange);
+          activeWatcher = await startWatcher(CONTENT_DIR, async (event) => {
+            if (event.kind === 'update' || event.kind === 'create') {
+              await handleExternalChange(event.docName, event.content);
+            }
+          });
           server.httpServer?.on('close', async () => {
             if (activeWatcher) {
               await activeWatcher.unsubscribe();

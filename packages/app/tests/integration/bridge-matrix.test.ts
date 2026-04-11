@@ -13,10 +13,12 @@
  * Each test uses a per-test unique docName via createTestClient(port).
  */
 
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { updateYFragment } from '@tiptap/y-tiptap';
+import * as Y from 'yjs';
+import { markUserTyping } from '../../src/editor/observers';
 
 import {
   agentPatch,
@@ -43,6 +45,32 @@ function applyMarkdownToFragment(client: TestClient, md: string): void {
   const pmNode = schema.nodeFromJSON(json);
   const meta = { mapping: new Map(), isOMark: new Map() };
   updateYFragment(client.doc, client.fragment, pmNode, meta);
+}
+
+function appendParagraphToFragment(client: TestClient, text: string): void {
+  const paragraph = new Y.XmlElement('paragraph');
+  const ytext = new Y.XmlText();
+  ytext.applyDelta([{ insert: text }]);
+  paragraph.insert(0, [ytext]);
+  client.fragment.push([paragraph]);
+}
+
+function normalizeMarkdown(md: string): string {
+  return md
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .join('\n')
+    .replace(/\n+$/, '');
+}
+
+function assertClientsConverged(...clients: TestClient[]): void {
+  const normalized = clients.map((client) => normalizeMarkdown(client.ytext.toString()));
+  for (const client of clients) {
+    assertBridgeInvariant(client.ytext, client.fragment);
+  }
+  for (let i = 1; i < normalized.length; i++) {
+    expect(normalized[i]).toBe(normalized[0]);
+  }
 }
 
 let server: TestServer;
@@ -423,5 +451,139 @@ describe('initial sync and test isolation', () => {
     } finally {
       await client2.cleanup();
     }
+  });
+});
+
+// ─── Multi-client sync ───
+
+describe('multi-client sync', () => {
+  let clientA: TestClient;
+  let clientB: TestClient;
+
+  beforeEach(async () => {
+    await testReset(server.port);
+    await wait(300);
+    // Multi-client tests MUST share a docName so the CRDT layer links both
+    // providers to the same Y.Doc. Pass 'test-doc' explicitly — the default
+    // is per-test randomUUID for isolation, which would produce two
+    // independent docs that never sync.
+    clientA = await createTestClient(server.port, 'test-doc');
+    clientB = await createTestClient(server.port, 'test-doc');
+  });
+
+  afterEach(async () => {
+    clientA?.cleanup();
+    clientB?.cleanup();
+    // Wait for WebSocket connections to fully close before the next testReset.
+    // provider.destroy() sends a close frame but the socket close is async —
+    // if we proceed immediately, old providers can reconnect into the reset
+    // document and push stale state from previous tests.
+    await wait(300);
+  });
+
+  test('client A WYSIWYG edit propagates to client B source view', async () => {
+    appendParagraphToFragment(clientA, 'Client A wrote from WYSIWYG.');
+
+    await pollUntil(() => clientB.ytext.toString().includes('Client A wrote from WYSIWYG.'), 5000);
+
+    expect(clientB.ytext.toString()).toContain('Client A wrote from WYSIWYG.');
+    expect(serializeFragment(clientB.fragment)).toContain('Client A wrote from WYSIWYG.');
+    assertClientsConverged(clientA, clientB);
+  });
+
+  test('client A source edit propagates to client B WYSIWYG view', async () => {
+    clientA.doc.transact(() => {
+      clientA.ytext.insert(0, '# Shared Heading\n\nClient A typed from source mode.\n');
+    }, 'user-edit');
+
+    await pollUntil(
+      () => serializeFragment(clientB.fragment).includes('Client A typed from source mode.'),
+      5000,
+    );
+
+    expect(serializeFragment(clientB.fragment)).toContain('Shared Heading');
+    expect(serializeFragment(clientB.fragment)).toContain('Client A typed from source mode.');
+    assertClientsConverged(clientA, clientB);
+  });
+
+  test('simultaneous cross-mode edits on two clients converge', async () => {
+    await agentWriteMd(server.port, '# Shared Base\n\nStarting point.');
+    await pollUntil(() => clientA.ytext.toString().includes('Shared Base'), 5000);
+    await pollUntil(() => clientB.ytext.toString().includes('Shared Base'), 5000);
+
+    appendParagraphToFragment(clientA, 'CLIENT-A-WYSIWYG-MARKER');
+
+    clientB.doc.transact(() => {
+      clientB.ytext.insert(clientB.ytext.length, '\n\nCLIENT-B-SOURCE-MARKER\n');
+    }, 'user-edit');
+
+    await pollUntil(() => clientA.ytext.toString().includes('CLIENT-B-SOURCE-MARKER'), 5000);
+    await pollUntil(() => clientB.ytext.toString().includes('CLIENT-A-WYSIWYG-MARKER'), 5000);
+    // Wait for observer debounces (50ms each) + remote-tree grace window (150ms) to settle.
+    await wait(400);
+
+    expect(clientA.ytext.toString()).toContain('CLIENT-A-WYSIWYG-MARKER');
+    expect(clientA.ytext.toString()).toContain('CLIENT-B-SOURCE-MARKER');
+    expect(clientB.ytext.toString()).toContain('CLIENT-A-WYSIWYG-MARKER');
+    expect(clientB.ytext.toString()).toContain('CLIENT-B-SOURCE-MARKER');
+    assertClientsConverged(clientA, clientB);
+  });
+
+  test('local typing defer does not block remote source edits from another client', async () => {
+    await agentWriteMd(server.port, '# Base\n\nSeed content.');
+    await pollUntil(() => clientA.ytext.toString().includes('Seed content.'), 5000);
+    await pollUntil(() => clientB.ytext.toString().includes('Seed content.'), 5000);
+
+    const typingInterval = setInterval(() => markUserTyping(clientA.doc), 50);
+    markUserTyping(clientA.doc);
+
+    appendParagraphToFragment(clientA, 'CLIENT-A-LOCAL-TYPING');
+
+    clientB.doc.transact(() => {
+      clientB.ytext.insert(clientB.ytext.length, '\n\nCLIENT-B-REMOTE-SOURCE\n');
+    }, 'user-edit');
+
+    await wait(400);
+    clearInterval(typingInterval);
+    await pollUntil(() => clientA.ytext.toString().includes('CLIENT-B-REMOTE-SOURCE'), 5000);
+
+    expect(clientA.ytext.toString()).toContain('CLIENT-A-LOCAL-TYPING');
+    expect(clientA.ytext.toString()).toContain('CLIENT-B-REMOTE-SOURCE');
+    expect(clientB.ytext.toString()).toContain('CLIENT-A-LOCAL-TYPING');
+    expect(clientB.ytext.toString()).toContain('CLIENT-B-REMOTE-SOURCE');
+    assertClientsConverged(clientA, clientB);
+  });
+
+  test('agent write after two-client cross-mode edits propagate preserves all contributions', async () => {
+    await agentWriteMd(server.port, '# Shared Base\n\nSeed content.');
+    await pollUntil(() => clientA.ytext.toString().includes('Seed content.'), 5000);
+    await pollUntil(() => clientB.ytext.toString().includes('Seed content.'), 5000);
+
+    appendParagraphToFragment(clientA, 'CLIENT-A-WYSIWYG-EDIT');
+
+    clientB.doc.transact(() => {
+      clientB.ytext.insert(clientB.ytext.length, '\n\nCLIENT-B-SOURCE-EDIT\n');
+    }, 'user-edit');
+
+    // The server agent write operates on server-side Y.Text. Wait for both client edits
+    // to cross the local bridge and become shared state before appending agent content.
+    await pollUntil(() => clientA.ytext.toString().includes('CLIENT-B-SOURCE-EDIT'), 5000);
+    await pollUntil(() => clientB.ytext.toString().includes('CLIENT-A-WYSIWYG-EDIT'), 5000);
+    await wait(400);
+
+    await agentWriteMd(server.port, '## Agent Contribution\n\nSERVER-AGENT-CONTENT');
+
+    await pollUntil(() => clientA.ytext.toString().includes('SERVER-AGENT-CONTENT'), 5000);
+    await pollUntil(() => clientB.ytext.toString().includes('SERVER-AGENT-CONTENT'), 5000);
+    await pollUntil(() => clientA.ytext.toString().includes('CLIENT-B-SOURCE-EDIT'), 5000);
+    await pollUntil(() => clientB.ytext.toString().includes('CLIENT-A-WYSIWYG-EDIT'), 5000);
+
+    expect(clientA.ytext.toString()).toContain('CLIENT-A-WYSIWYG-EDIT');
+    expect(clientA.ytext.toString()).toContain('CLIENT-B-SOURCE-EDIT');
+    expect(clientA.ytext.toString()).toContain('SERVER-AGENT-CONTENT');
+    expect(clientB.ytext.toString()).toContain('CLIENT-A-WYSIWYG-EDIT');
+    expect(clientB.ytext.toString()).toContain('CLIENT-B-SOURCE-EDIT');
+    expect(clientB.ytext.toString()).toContain('SERVER-AGENT-CONTENT');
+    assertClientsConverged(clientA, clientB);
   });
 });

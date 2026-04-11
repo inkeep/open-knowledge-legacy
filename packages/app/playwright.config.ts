@@ -16,7 +16,7 @@ const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
   testDir: './tests/stress',
-  testMatch: /.*\.spec\.ts$/,
+  testMatch: /.*\.e2e\.ts$/,
   timeout: 120_000,
   retries: 0,
   globalTeardown: './tests/stress/global-teardown.ts',

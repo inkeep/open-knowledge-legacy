@@ -262,15 +262,38 @@
   opacity: 0.3;
 }
 
+/* Editor layout — grid lives on the wrapper so ProseMirror content stays normal block flow */
+.tiptap-editor {
+  --content-width: 1fr;
+  --margin-width: 6rem;
+  display: grid;
+  width: 100%;
+  grid-template-columns:
+    [full-start] var(--margin-left-width, var(--margin-width))
+    [content-start] var(--content-width)
+    [content-end] var(--margin-right-width, var(--margin-width))
+    [full-end];
+}
+
+.tiptap-editor > div {
+  grid-column: content;
+}
+
 /* Editor polish */
 .ProseMirror {
   outline: none;
   min-height: 200px;
   line-height: 1.7;
+  @apply text-gray-800 dark:text-white/80;
 }
 
 .ProseMirror p {
   margin-bottom: 0.5em;
+}
+
+.ProseMirror mark {
+  color: inherit;
+  @apply py-0.5 px-1 rounded-sm bg-amber-100 dark:bg-amber-900/50;
 }
 
 .ProseMirror h1,
@@ -283,12 +306,15 @@
 
 .ProseMirror h1 {
   font-size: 1.5em;
+  @apply tracking-tighter;
 }
 .ProseMirror h2 {
   font-size: 1.25em;
+  @apply tracking-tight;
 }
 .ProseMirror h3 {
   font-size: 1.1em;
+  @apply tracking-tight;
 }
 
 /* Lists */
@@ -379,6 +405,14 @@
   flex: 1;
 }
 
+.ProseMirror ul[data-type="taskList"] li > div p {
+  margin-bottom: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  margin-bottom: 0.1em;
+}
+
 .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
   text-decoration: line-through;
   color: var(--color-gray-400);
@@ -449,12 +483,71 @@
   margin: 0.5em 0;
 }
 
-.ProseMirror p.is-editor-empty:first-child::before {
-  content: "Start writing...";
-  color: var(--color-muted-foreground);
+/* Tables */
+.ProseMirror .tableWrapper {
+  overflow-x: auto;
+  margin: 0.5em 0;
+}
+
+.ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+  table-layout: fixed;
+  overflow: hidden;
+}
+
+.ProseMirror th,
+.ProseMirror td {
+  border: 1px solid var(--color-gray-200);
+  padding: 0.4em 0.6em;
+  vertical-align: top;
+  position: relative;
+  min-width: 80px;
+  box-sizing: border-box;
+}
+
+.ProseMirror th {
+  background: var(--color-gray-50);
+  font-weight: 600;
+  text-align: left;
+}
+
+.ProseMirror td > p,
+.ProseMirror th > p {
+  margin-bottom: 0;
+}
+
+.ProseMirror .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--color-azure-100);
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.ProseMirror .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: -2px;
+  width: 4px;
+  background-color: var(--color-azure-400);
+  pointer-events: none;
+  z-index: 20;
+}
+
+.ProseMirror.resize-cursor {
+  cursor: col-resize;
+}
+
+.ProseMirror p.is-empty::before {
+  content: attr(data-placeholder);
   pointer-events: none;
   float: left;
   height: 0;
+  @apply text-muted-foreground/60;
 }
 
 /* CodeMirror polish */

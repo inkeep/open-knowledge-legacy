@@ -2,18 +2,8 @@
  * `open-knowledge start` command — launches standalone Hocuspocus server
  * with optional static React app serving.
  */
-import { existsSync } from 'node:fs';
-import { createServer as createHttpServer } from 'node:http';
-import { resolve } from 'node:path';
-import { createServer, getLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
-import sirv from 'sirv';
-import { WebSocketServer } from 'ws';
 import type { Config } from '../config/schema.ts';
-import { renderBanner } from '../ui/banner.ts';
-import { dim, error, info } from '../ui/colors.ts';
-
-const log = getLogger('start');
 
 export function startCommand(getConfig: () => Config): Command {
   const cmd = new Command('start')
@@ -22,38 +12,37 @@ export function startCommand(getConfig: () => Config): Command {
     .option('-H, --host <host>', 'Server host', undefined)
     .option('--open', 'Open browser after start')
     .action(async (opts) => {
+      // Lazy imports — avoids loading TipTap/Hocuspocus for other commands
+      const { existsSync } = await import('node:fs');
+      const { createServer: createHttpServer } = await import('node:http');
+      const { resolve } = await import('node:path');
+      const { createServer, getLogger } = await import('@inkeep/open-knowledge-server');
+      const { default: sirv } = await import('sirv');
+      const { WebSocketServer } = await import('ws');
+      const { renderBanner } = await import('../ui/banner.ts');
+      const { dim, error, info } = await import('../ui/colors.ts');
+
+      const log = getLogger('start');
       const config = getConfig();
       const cwd = process.cwd();
+
       const contentDir = resolve(cwd, config.content.dir);
 
       if (!existsSync(contentDir)) {
-        const configPath = resolve(cwd, '.open-knowledge', 'config.yml');
-        const hasConfig = existsSync(configPath);
         console.error(`\n  ${error('Error:')} Content directory not found: ${info(contentDir)}\n`);
-        if (!hasConfig) {
-          console.error(`  ${dim('No config file found. Create one at:')}`);
-          console.error(`    ${info(configPath)}\n`);
-          console.error(`  ${dim('Example .open-knowledge/config.yml:')}`);
-          console.error(`  ${dim('  content:')}`);
-          console.error(`  ${dim('    dir: ./content')}\n`);
-        } else {
-          console.error(`  ${dim('Check "content.dir" in')} ${info(configPath)}`);
-          console.error(`  ${dim('Or create the directory:')} mkdir ${config.content.dir}\n`);
-        }
+        console.error(`  ${dim('Create the directory:')} mkdir ${config.content.dir}\n`);
         process.exit(1);
       }
 
       const { hocuspocus, destroy } = createServer({
         contentDir,
         projectDir: cwd,
+        contentRoot: config.content.dir,
         port: config.server.port,
         host: config.server.host,
         quiet: false,
         debounce: config.persistence.debounceMs,
         maxDebounce: config.persistence.maxDebounceMs,
-        gitEnabled: config.git.enabled,
-        commitDebounceMs: config.git.commitDebounceMs,
-        wipRef: config.git.wipRef,
       });
 
       // Graceful shutdown
@@ -65,9 +54,14 @@ export function startCommand(getConfig: () => Config): Command {
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
 
-      // Static asset serving — locate built React app
-      // Convention: ../app/dist/ relative to CLI package, or search common locations
-      const assetPaths = [resolve(cwd, 'packages/app/dist'), resolve(cwd, 'dist')];
+      // Static asset serving — locate built React app relative to CLI package.
+      // The app is always a sibling package in the open-knowledge monorepo,
+      // never in the user's cwd (which is their project repo).
+      const cliDir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
+      const assetPaths = [
+        resolve(cliDir, '../../app/dist'), // from src: packages/cli/src → packages/app/dist
+        resolve(cliDir, '../../../app/dist'), // from dist: packages/cli/dist → packages/app/dist
+      ];
       const assetDir = assetPaths.find((p) => existsSync(p));
       const staticHandler = assetDir
         ? sirv(assetDir, { single: true, gzip: true, immutable: true })
