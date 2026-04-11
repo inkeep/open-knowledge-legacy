@@ -33,6 +33,21 @@ describe('filterItems', () => {
     expect(result.map((i) => i.name)).toEqual(['heading1', 'heading2', 'heading3']);
   });
 
+  test('alias matching is case-insensitive on the alias side', () => {
+    const items: SlashCommandItem[] = [
+      {
+        name: 'test',
+        label: 'Test',
+        icon: () => null,
+        category: 'basic',
+        command: () => {},
+        aliases: ['MyAlias'],
+      },
+    ];
+    expect(filterItems(items, 'myalias')).toHaveLength(1);
+    expect(filterItems(items, 'MYALIAS')).toHaveLength(1);
+  });
+
   test('no match returns empty array', () => {
     expect(filterItems(slashCommandItems, 'xyz')).toEqual([]);
   });

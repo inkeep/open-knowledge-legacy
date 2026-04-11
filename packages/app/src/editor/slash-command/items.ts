@@ -155,6 +155,6 @@ export function filterItems(items: SlashCommandItem[], query: string): SlashComm
     (item) =>
       item.label.toLowerCase().includes(lower) ||
       item.name.toLowerCase().includes(lower) ||
-      item.aliases?.some((a) => a.includes(lower)),
+      item.aliases?.some((a) => a.toLowerCase().includes(lower)),
   );
 }

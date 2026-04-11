@@ -76,11 +76,21 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         // @tiptap/suggestion source (findSuggestionMatch): the prefix check uses
         // regex `^[<allowedPrefixes>\0]?$` against the char immediately before
         // the match position. Empty string (start-of-block) passes, space passes,
-        // any other char fails — equivalent to main's `(?:^|\s)\/` regex. Setting
-        // this to null would allow mid-word triggers like "hello/world" (regression).
+        // any other char fails — equivalent to main's `(?:^|\s)\/` trigger prefix
+        // check. Note: the query character class is broader than main's [a-z0-9-]*
+        // — @tiptap/suggestion accepts any non-whitespace character after the
+        // trigger. Setting allowedPrefixes to null would allow mid-word triggers
+        // like "hello/world" (regression).
 
         items: ({ query }) => {
-          const allItems = extension.options.itemsSources.flatMap((source) => source());
+          const allItems = extension.options.itemsSources.flatMap((source) => {
+            try {
+              return source();
+            } catch (err) {
+              console.error('SlashCommand: item source threw an error', err);
+              return [];
+            }
+          });
           if (process.env.NODE_ENV !== 'production') {
             const seen = new Set<string>();
             for (const item of allItems) {
@@ -97,7 +107,11 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
 
         command: ({ editor, range, props: item }) => {
           editor.chain().focus().deleteRange(range).run();
-          item.command(editor);
+          try {
+            item.command(editor);
+          } catch (err) {
+            console.error(`SlashCommand: command "${item.name}" threw an error`, err);
+          }
         },
 
         render: () => {
@@ -139,8 +153,13 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
                   popup.style.top = `${y}px`;
                 }
               })
-              .catch(() => {
-                // Position calc failed (detached element during rapid state changes) — menu will be destroyed shortly
+              .catch((err) => {
+                if (popup) {
+                  console.warn(
+                    'SlashCommand: computePosition failed while menu is still active',
+                    err,
+                  );
+                }
               });
           };
 
