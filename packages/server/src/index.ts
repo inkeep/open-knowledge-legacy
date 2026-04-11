@@ -6,6 +6,11 @@ export {
   syncTextToFragment,
 } from './agent-sessions.ts';
 export { type ApiExtensionOptions, createApiExtension, safeSubdir } from './api-extension.ts';
+export {
+  type ContentFilter,
+  type ContentFilterOptions,
+  createContentFilter,
+} from './content-filter.ts';
 export { createExternalChangeHandler } from './external-change.ts';
 export {
   type AsyncSubscription,
