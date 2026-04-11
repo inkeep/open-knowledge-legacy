@@ -25,7 +25,8 @@ bun run build                        # Build all packages via turbo (cli, app, d
 ### Quality gates
 
 ```bash
-bun run check                        # Full gate: typecheck (turbo) + lint (biome) + test (turbo)
+bun run check                        # Broad gate: lint (biome) + typecheck + unit + integration + conversion
+bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel)
 bun run check:fast                   # Typecheck + lint only (skips tests)
 bun run typecheck                    # Typecheck all packages via turbo
 bun run lint                         # Biome check (lint + format + imports) across workspace

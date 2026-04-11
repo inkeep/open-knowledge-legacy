@@ -348,7 +348,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
         // Compensate: restore pre-undo state so bridge invariant holds.
-        um.redo();
+        try {
+          um.redo();
+        } catch (compensateErr) {
+          console.error('[agent-undo] Compensation also failed:', compensateErr);
+        }
         throw syncErr;
       }
       console.log('[agent-undo] Undo performed');
@@ -394,7 +398,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
         // Compensate: restore pre-redo state so bridge invariant holds.
-        um.undo();
+        try {
+          um.undo();
+        } catch (compensateErr) {
+          console.error('[agent-redo] Compensation also failed:', compensateErr);
+        }
         throw syncErr;
       }
       console.log('[agent-redo] Redo performed');
@@ -416,6 +424,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const docName = url.searchParams.get('docName') ?? 'test-doc';
 
+      // Path traversal guard — reject docNames that escape contentDir
+      const filePath = resolve(contentDir, `${docName}.md`);
+      if (!filePath.startsWith(`${contentDir}/`) && filePath !== contentDir) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+
       await sessionManager.closeAll(docName);
       hocuspocus.closeConnections(docName);
 
@@ -430,7 +445,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const doc = hocuspocus.documents.get(docName);
       if (doc) await hocuspocus.unloadDocument(doc);
       const { writeFileSync } = await import('node:fs');
-      writeFileSync(resolve(contentDir, `${docName}.md`), '', 'utf-8');
+      writeFileSync(filePath, '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);

@@ -86,15 +86,16 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus.closeConnections();
   }
 
-  // Start file watcher — capture the promise so consumers can await readiness
-  const ready = startWatcher(contentDir, handleExternalChange)
-    .then((sub) => {
-      watcher = sub;
-    })
-    .catch((err) => {
-      console.error('[server] Disk bridge watcher failed to start:', err);
-      throw err;
-    });
+  // Start file watcher — capture the promise so consumers can await readiness.
+  // The separate .catch() branch logs failures AND prevents Node's unhandledRejection
+  // when callers (e.g. CLI) don't await `ready`. Callers who DO await `ready`
+  // (e.g. test harness) still receive the rejection.
+  const ready = startWatcher(contentDir, handleExternalChange).then((sub) => {
+    watcher = sub;
+  });
+  ready.catch((err) => {
+    console.error('[server] Disk bridge watcher failed to start:', err);
+  });
 
   return { hocuspocus, sessionManager, destroy, ready };
 }
