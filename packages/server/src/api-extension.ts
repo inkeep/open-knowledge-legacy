@@ -23,13 +23,11 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
-
-/** Directories to exclude from document listing. */
-const EXCLUDED_DIRS = new Set(['.agents', '.claude', '.git', '.open-knowledge', 'node_modules']);
 
 /**
  * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
@@ -47,6 +45,12 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /**
+   * Accessor for the watcher's in-memory file index.
+   * When provided, GET /api/documents reads from this index (instant).
+   * When absent, returns an empty document list.
+   */
+  getFileIndex?: () => ReadonlyMap<string, FileIndexEntry>;
   /**
    * When true, register test-only routes (currently `/api/test-reset`).
    * Defaults to `false` — these routes allow any client to destroy document
@@ -135,6 +139,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     hocuspocus,
     sessionManager,
     contentDir,
+    getFileIndex,
     enableTestRoutes = false,
     shadowRef,
     projectRoot,
@@ -310,41 +315,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const dir = url.searchParams.get('dir');
 
-      let targetDir = contentDir;
+      // Validate dir parameter (reject traversal attempts)
       if (dir) {
         try {
-          targetDir = safeSubdir(contentDir, dir);
+          safeSubdir(contentDir, dir);
         } catch {
           json(res, 400, { ok: false, error: `Invalid directory: ${dir}` });
           return;
         }
       }
 
-      if (!existsSync(targetDir)) {
-        json(res, 200, { ok: true, documents: [] });
-        return;
-      }
-
-      const entries = readdirSync(targetDir, { recursive: true });
+      // Read from the watcher's in-memory file index (instant, no filesystem scan)
+      const index = getFileIndex?.() ?? new Map();
       const documents: { docName: string; size: number; modified: string }[] = [];
 
-      for (const entry of entries) {
-        const entryStr = typeof entry === 'string' ? entry : entry.toString();
-        if (!entryStr.endsWith('.md')) continue;
+      for (const [docName, entry] of index) {
+        // Filter by dir prefix if specified
+        if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
 
-        // Skip files inside excluded directories
-        const firstSegment = entryStr.split(/[\\/]/)[0];
-        if (firstSegment && EXCLUDED_DIRS.has(firstSegment)) continue;
-
-        const fullPath = resolve(targetDir, entryStr);
-        const stat = statSync(fullPath);
-        if (!stat.isFile()) continue;
-
-        const docName = fullPath.slice(contentDir.length + 1).replace(/\.md$/, '');
         documents.push({
           docName,
-          size: stat.size,
-          modified: stat.mtime.toISOString(),
+          size: entry.size,
+          modified: entry.modified,
         });
       }
 
