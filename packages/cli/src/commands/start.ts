@@ -11,6 +11,7 @@ export function startCommand(getConfig: () => Config): Command {
     .option('-p, --port <port>', 'Server port', undefined)
     .option('-H, --host <host>', 'Server host', undefined)
     .option('--open', 'Open browser after start')
+    .option('--no-init', 'Skip auto-scaffolding of .open-knowledge/')
     .action(async (opts) => {
       // Lazy imports — avoids loading TipTap/Hocuspocus for other commands
       const { existsSync } = await import('node:fs');
@@ -22,16 +23,25 @@ export function startCommand(getConfig: () => Config): Command {
       const { renderBanner } = await import('../ui/banner.ts');
       const { dim, error, info } = await import('../ui/colors.ts');
 
+      const { mkdirSync } = await import('node:fs');
+
       const log = getLogger('start');
       const config = getConfig();
       const cwd = process.cwd();
 
-      const contentDir = resolve(cwd, config.content.dir);
+      // Auto-init: scaffold .open-knowledge/ on first run (unless --no-init)
+      let didAutoInit = false;
+      const okDir = resolve(cwd, '.open-knowledge');
+      if (!existsSync(okDir) && opts.init !== false) {
+        const { runInit } = await import('./init.ts');
+        runInit({ cwd, mcp: false });
+        didAutoInit = true;
+      }
 
+      // Ensure content directory exists (for non-default content.dir)
+      const contentDir = resolve(cwd, config.content.dir);
       if (!existsSync(contentDir)) {
-        console.error(`\n  ${error('Error:')} Content directory not found: ${info(contentDir)}\n`);
-        console.error(`  ${dim('Create the directory:')} mkdir ${config.content.dir}\n`);
-        process.exit(1);
+        mkdirSync(contentDir, { recursive: true });
       }
 
       const { hocuspocus, destroy } = createServer({
@@ -144,6 +154,12 @@ export function startCommand(getConfig: () => Config): Command {
             networkUrl,
           }),
         );
+        if (didAutoInit) {
+          console.log(`  ${info('\u2713')} Scaffolded .open-knowledge/ (first run)`);
+          console.log(
+            `  ${dim('Tip: Run `open-knowledge init` to register MCP tools for Claude Code')}\n`,
+          );
+        }
       });
 
       if (opts.open) {
