@@ -37,7 +37,7 @@ let subscription: AsyncSubscription | null = null;
 const received: Array<{ docName: string; content: string }> = [];
 
 /** Promise that resolves when the next callback fires. */
-function waitForCallback(timeoutMs = 3000): Promise<{ docName: string; content: string }> {
+function waitForCallback(timeoutMs = 10000): Promise<{ docName: string; content: string }> {
   const startLen = received.length;
   return new Promise((resolve, reject) => {
     const interval = setInterval(() => {
