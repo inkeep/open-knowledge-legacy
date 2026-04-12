@@ -9,13 +9,13 @@
   <title>Open Knowledge</title>
   <script>
     var stored = null;
-                                            try { stored = localStorage.getItem('ok-theme-v1'); } catch (_e) {}
-                                            var theme = stored === 'dark' || stored === 'light' ? stored : 'system';
-                                            var resolved = theme === 'system'
-                                              ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-                                              : theme;
-                                            if (resolved === 'dark') document.documentElement.classList.add('dark');
-                                            document.documentElement.style.colorScheme = resolved;
+                                                try { stored = localStorage.getItem('ok-theme-v1'); } catch (_e) {}
+                                                var theme = stored === 'dark' || stored === 'light' ? stored : 'system';
+                                                var resolved = theme === 'system'
+                                                  ? window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+                                                  : theme;
+                                                if (resolved === 'dark') document.documentElement.classList.add('dark');
+                                                document.documentElement.style.colorScheme = resolved;
   </script>
 </head>
 
