@@ -40,7 +40,7 @@ const FileTreeNode: FC<{
   const content = (
     <>
       <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
-      <span className="min-w-0 flex-1 truncate font-mono text-xs">
+      <span className="min-w-0 flex-1 truncate text-sm text-sidebar-foreground/70">
         {node.name}
         {isFile && '.md'}
       </span>
@@ -59,15 +59,19 @@ const FileTreeNode: FC<{
         </ButtonToUse>
       ) : (
         <div>
-          <ButtonToUse className="w-full pr-8">{content}</ButtonToUse>
-          <SidebarMenuAction
-            className={cn('top-1', !collapsed && 'rotate-90')}
-            onClick={(e) => {
-              e.preventDefault();
-              setCollapsed((v) => !v);
-            }}
+          <ButtonToUse
+            className="w-full cursor-pointer pr-8"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((v) => !v)}
           >
-            <ChevronRight className="size-4" />
+            {content}
+          </ButtonToUse>
+          <SidebarMenuAction
+            className={cn('top-1 pointer-events-none', !collapsed && 'rotate-90')}
+            aria-hidden
+            tabIndex={-1}
+          >
+            <ChevronRight className="size-4 text-muted-foreground/50" />
           </SidebarMenuAction>
         </div>
       )}
@@ -133,7 +137,7 @@ export function FileSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <span className="px-2 text-sm text-sidebar-foreground/50">Files</span>
+            <span className="text-sm text-sidebar-foreground/50">Files</span>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

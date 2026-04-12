@@ -96,7 +96,11 @@ export function WikiLinkSuggestionMenu({
       onMouseDown={preventFocusSteal}
       className="w-64 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
     >
-      {error && <div className="rounded-md px-2 py-1.5 text-xs text-amber-700">{error}</div>}
+      {error && (
+        <div className="rounded-md px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+          {error}
+        </div>
+      )}
       {mode === 'anchor' && (
         <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
           {pageTarget}

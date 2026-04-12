@@ -1,12 +1,9 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: {
-    cli: 'src/cli.ts',
-    index: 'src/index.ts',
-  },
+  entry: ['src/**/*.ts', '!src/**/*.test.ts'],
+  unbundle: true,
   format: 'esm',
-  outputExtension: () => ({ js: '.js', dts: '.d.ts' }),
   dts: true,
   clean: true,
   deps: {

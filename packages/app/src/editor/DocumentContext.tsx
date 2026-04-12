@@ -57,13 +57,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     p.setOnChange(() => setSnapshot(takeSnapshot(p)));
 
     // Expose pool on window for E2E test access
-    if (typeof window !== 'undefined') {
-      (window as unknown as Record<string, unknown>).__providerPool = p;
-      Object.defineProperty(window, '__activeProvider', {
-        get: () => p.getActive()?.provider ?? null,
-        configurable: true,
-      });
-    }
+    window.__providerPool = p;
+    Object.defineProperty(window, '__activeProvider', {
+      get: () => p.getActive()?.provider ?? null,
+      configurable: true,
+    });
 
     return () => {
       p.setOnChange(null);
@@ -92,7 +90,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
 export function useDocumentContext(): DocumentContextValue {
   const ctx = use(DocumentContext);
   if (!ctx) {
-    throw new Error('[useDocumentContext] Must be used within <DocumentProvider>');
+    throw new Error('useDocumentContext must be used within <DocumentProvider />');
   }
   return ctx;
 }

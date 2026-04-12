@@ -7,7 +7,7 @@
  * the pool's LRU logic, Map management, and eviction ordering are all
  * exercised without needing a running Hocuspocus server.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { ProviderPool } from './provider-pool';
 
 // Use a dummy URL — providers won't connect but pool logic still works
@@ -189,8 +189,9 @@ describe('ProviderPool disconnect recycling', () => {
     expect(pool.getActive()?.provider).toBe(originalProvider);
   });
 
-  test('recycles the active provider after disconnect when no unsynced changes remain', () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+  test('recycles the active provider after disconnect when no unsynced changes remain', async () => {
+    // Use recycleDebounceMs: 50 for fast test execution
+    pool = new ProviderPool(3, DUMMY_WS, 50);
     const entry = pool.open('doc1');
     pool.setActive('doc1');
 
@@ -199,6 +200,12 @@ describe('ProviderPool disconnect recycling', () => {
     originalProvider.emit('disconnect', {
       event: { code: 1006, reason: 'server restart', wasClean: false },
     });
+
+    // Recycle is debounced — entry still exists with a pending timer
+    expect(entry.pendingRecycleTimer).not.toBeNull();
+
+    // Wait for debounce to fire
+    await new Promise((r) => setTimeout(r, 100));
 
     const recycled = pool.getActive();
     expect(recycled).not.toBeNull();
@@ -232,5 +239,134 @@ describe('ProviderPool dispose', () => {
     expect(pool.entries.size).toBe(0);
     expect(pool.getActive()).toBeNull();
     expect(pool.getActiveDocName()).toBeNull();
+  });
+});
+
+describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
+  // Instead of mock.module (which leaks to other test files in the same bun test
+  // process), we sabotage the provider's Y.Doc to force a throw inside the onSynced
+  // try block. Overriding doc.getXmlFragment to throw triggers the catch before
+  // setupObservers is called — same code path, same recovery behavior.
+
+  test('init-time throw in onSynced triggers destroy-and-evict with onChange notification', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    let onChangeCalls = 0;
+    pool.setOnChange(() => onChangeCalls++);
+
+    const entry = pool.open('doc1');
+    pool.setActive('doc1');
+    onChangeCalls = 0; // reset after open + setActive notifications
+
+    // Sabotage the provider's document to force a throw during observer init
+    const doc = entry.provider.document;
+    doc.getXmlFragment = () => {
+      throw new Error('synthetic getXmlFragment failure');
+    };
+
+    // Spy on console.error to verify the error is logged (not re-thrown)
+    const errorSpy = mock(() => {});
+    const origError = console.error;
+    console.error = errorSpy;
+
+    // Fire synced manually — this triggers onSynced → try block → doc.getXmlFragment() → throw → catch → console.error
+    // Should NOT throw — the error is caught, logged, and the entry is evicted.
+    entry.provider.emit('synced', { state: true });
+
+    console.error = origError;
+
+    // Entry should be evicted from the pool
+    expect(pool.has('doc1')).toBe(false);
+    expect(pool.entries.size).toBe(0);
+
+    // Active document cleared (was the failing entry)
+    expect(pool.getActive()).toBeNull();
+    expect(pool.getActiveDocName()).toBeNull();
+
+    // onChange was called at least once (from notify() in the catch)
+    expect(onChangeCalls).toBeGreaterThanOrEqual(1);
+
+    // Error was logged via console.error with the expected prefix + full error object
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const loggedPrefix = errorSpy.mock.calls[0]?.[0] as string;
+    const loggedError = errorSpy.mock.calls[0]?.[1] as Error;
+    expect(loggedPrefix).toContain('[ProviderPool] setupObservers init failed for doc1:');
+    expect(loggedError).toBeInstanceOf(Error);
+    expect(loggedError.message).toContain('synthetic getXmlFragment failure');
+  });
+
+  test('non-active background doc disconnect triggers debounced destroy without re-open', async () => {
+    // Use recycleDebounceMs: 50 for fast test execution
+    pool = new ProviderPool(3, DUMMY_WS, 50);
+    let onChangeCalls = 0;
+    pool.setOnChange(() => onChangeCalls++);
+
+    // Open two docs, only doc1 is active
+    const entry1 = pool.open('doc1');
+    pool.setActive('doc1');
+    const entry2 = pool.open('doc2');
+    onChangeCalls = 0;
+
+    // Mark doc2 as synced with no unsynced changes
+    entry2.provider.emit('synced', { state: true });
+    entry2.provider.unsyncedChanges = 0;
+
+    // Disconnect doc2 — schedules a debounced recycle
+    entry2.provider.emit('disconnect', {
+      event: { code: 1006, reason: 'server restart', wasClean: false },
+    });
+
+    // Immediately after disconnect, the recycle timer is pending — entry still exists
+    expect(entry2.pendingRecycleTimer).not.toBeNull();
+    expect(pool.has('doc2')).toBe(true);
+
+    // Wait for the debounce to fire
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Now doc2 is removed from the pool
+    expect(pool.has('doc2')).toBe(false);
+
+    // doc1 remains active and unaffected
+    expect(pool.has('doc1')).toBe(true);
+    expect(pool.getActiveDocName()).toBe('doc1');
+    expect(pool.getActive()?.provider).toBe(entry1.provider);
+
+    // Pool size decreased
+    expect(pool.entries.size).toBe(1);
+
+    // onChange was called (from notify() in the non-active branch)
+    expect(onChangeCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  test('recycle debounce is cancelled when provider reconnects (onSynced)', () => {
+    pool = new ProviderPool(3, DUMMY_WS, 200);
+    const entry = pool.open('doc1');
+    pool.setActive('doc1');
+
+    // Pre-set observerCleanup so onSynced skips setupObservers (which would
+    // throw on a dummy provider with no real server). We're testing the
+    // debounce-cancel lifecycle, not the observer setup.
+    entry.observerCleanup = () => {};
+
+    // Simulate initial sync
+    entry.hasSynced = true;
+    entry.syncState = 'synced';
+    entry.provider.unsyncedChanges = 0;
+
+    // Disconnect — starts the debounce timer
+    entry.provider.emit('disconnect', {
+      event: { code: 1006, reason: 'server restart', wasClean: false },
+    });
+    expect(entry.pendingRecycleTimer).not.toBeNull();
+    const _originalTimer = entry.pendingRecycleTimer;
+
+    // Provider reconnects before the debounce fires — onSynced cancels the timer
+    entry.provider.emit('synced', { state: true });
+    expect(entry.pendingRecycleTimer).toBeNull();
+
+    // Entry was NOT recycled — still in the pool, same object identity
+    // (synchronous check, no need to wait — the timer was cleared)
+    expect(pool.has('doc1')).toBe(true);
+    expect(pool.getActive()?.provider).toBe(entry.provider);
+    expect(entry.syncState).toBe('synced');
   });
 });

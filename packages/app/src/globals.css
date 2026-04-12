@@ -128,10 +128,7 @@
   }
 
   body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
-    font-family: var(--font-sans);
-    @apply bg-background text-foreground;
+    @apply font-sans bg-sidebar text-foreground;
   }
   * {
     @apply border-border outline-ring/50;
@@ -262,17 +259,18 @@
   opacity: 0.3;
 }
 
-/* Editor layout — grid lives on the wrapper so ProseMirror content stays normal block flow */
+/* Editor layout — grid on wrapper; content column max 1024px (lg), side rails minmax(gutter, 1fr) */
 .tiptap-editor {
-  --content-width: 1fr;
-  --margin-width: 6rem;
+  --content-max-width: 1024px;
+  --margin-width: 3rem;
   display: grid;
   width: 100%;
   grid-template-columns:
-    [full-start] var(--margin-left-width, var(--margin-width))
-    [content-start] var(--content-width)
-    [content-end] var(--margin-right-width, var(--margin-width))
+    [full-start] minmax(var(--margin-left-width, var(--margin-width)), 1fr)
+    [content-start] minmax(0, min(var(--content-max-width), 100%))
+    [content-end] minmax(var(--margin-right-width, var(--margin-width)), 1fr)
     [full-end];
+  @apply lg:[--margin-width:8rem];
 }
 
 .tiptap-editor > div {
@@ -746,4 +744,125 @@ button:active:not(:disabled) {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* Dark overrides — ProseMirror content surfaces */
+.dark .ProseMirror blockquote {
+  border-color: var(--color-gray-600);
+  color: var(--color-gray-300);
+}
+
+.dark .ProseMirror pre {
+  background: var(--color-gray-900);
+}
+
+.dark .ProseMirror code {
+  background: var(--color-gray-800);
+}
+
+.dark .ProseMirror pre code {
+  background: none;
+}
+
+.dark .ProseMirror hr {
+  border-color: var(--color-gray-700);
+}
+
+.dark .ProseMirror th,
+.dark .ProseMirror td {
+  border-color: var(--color-gray-700);
+}
+
+.dark .ProseMirror th {
+  background: var(--color-gray-900);
+}
+
+/* Dark overrides — agent flash keyframes with boosted alpha for dark canvas */
+@keyframes agent-flash-dark {
+  0% {
+    box-shadow: inset 3px 0 0 transparent;
+    background: transparent;
+    transform: translateX(0);
+  }
+  8% {
+    box-shadow: inset 3px 0 0 var(--color-agent);
+    background: rgba(217, 119, 87, 0.22);
+    transform: translateX(1px);
+  }
+  35% {
+    box-shadow: inset 3px 0 0 var(--color-agent);
+    background: rgba(217, 119, 87, 0.14);
+    transform: translateX(0);
+  }
+  100% {
+    box-shadow: inset 3px 0 0 transparent;
+    background: transparent;
+    transform: translateX(0);
+  }
+}
+
+@keyframes agent-breathing-dark {
+  0%,
+  100% {
+    background: rgba(217, 119, 87, 0.1);
+  }
+  50% {
+    background: rgba(217, 119, 87, 0.28);
+  }
+}
+
+@keyframes undo-ready-dark {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(217, 119, 87, 0);
+  }
+  40% {
+    transform: scale(1.02);
+    box-shadow: 0 0 0 4px rgba(217, 119, 87, 0.3);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(217, 119, 87, 0);
+  }
+}
+
+.dark
+  [data-agent-flash-state="editing"][data-agent-flash-position="append"]
+  .ProseMirror
+  > *:nth-last-child(-n + 3),
+.dark
+  [data-agent-flash-state="editing"][data-agent-flash-position="prepend"]
+  .ProseMirror
+  > *:nth-child(-n + 3) {
+  animation-name: agent-flash-dark;
+}
+
+.dark [data-presence-badge="agent"][data-presence-mode="editing"] {
+  animation-name: agent-breathing-dark;
+}
+
+.dark [data-undo-state="ready"][data-undo-just-enabled="true"] {
+  animation-name: undo-ready-dark;
+}
+
+/* Dark overrides — MEDIUM-severity items */
+.dark .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+  border-color: var(--color-gray-600);
+}
+
+.dark .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: var(--color-gray-500);
+}
+
+.dark .ProseMirror a {
+  color: var(--color-sky-blue);
+}
+
+.dark .ProseMirror a:hover {
+  color: var(--color-azure-300);
+}
+
+.dark .ProseMirror .selectedCell::after {
+  background: var(--color-azure-900);
+  opacity: 0.4;
 }

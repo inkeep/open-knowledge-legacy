@@ -241,13 +241,9 @@ export async function startHeadWatcher(
   try {
     parcel = await import('@parcel/watcher');
   } catch (err) {
-    console.warn(
-      '[head-watcher] @parcel/watcher unavailable — HEAD watching disabled:',
-      err instanceof Error ? err.message : err,
+    throw new Error(
+      `@parcel/watcher unavailable for HEAD watching: ${err instanceof Error ? err.message : err}`,
     );
-    // Read initial branch state so callers get valid context even in degraded mode
-    lastKnownBranch = readBranchFromHead(gitDir);
-    return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
   }
 
   try {
@@ -267,8 +263,16 @@ export async function startHeadWatcher(
     });
     unsubscribeFn = () => subscription.unsubscribe();
   } catch (err) {
-    console.warn('[head-watcher] @parcel/watcher subscribe failed — HEAD watching disabled:', err);
-    return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
+    // parcel.subscribe() can fail on rarer scenarios: permission errors,
+    // inotify watcher-limit exhaustion, EACCES on the .git directory, etc.
+    // Throw to align with the import-failure path above — the caller's
+    // catch in standalone.ts pushes 'head-watcher' to degraded so
+    // consumers can detect the subsystem is non-functional.
+    throw new Error(
+      `@parcel/watcher subscribe failed for HEAD watching: ${
+        err instanceof Error ? err.message : err
+      }`,
+    );
   }
 
   // Read initial state AFTER subscription is active to avoid missing

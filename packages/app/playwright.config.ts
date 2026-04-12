@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { defineConfig } from '@playwright/test';
@@ -9,6 +9,8 @@ import { defineConfig } from '@playwright/test';
 // config.globalSetups (verified against source: lib/runner/tasks.js:100-109).
 const contentDir = mkdtempSync(join(tmpdir(), 'ok-playwright-'));
 writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
+mkdirSync(join(contentDir, 'sidebar-folder'), { recursive: true });
+writeFileSync(join(contentDir, 'sidebar-folder', 'nested-doc.md'), '', 'utf-8');
 console.log(`[playwright] OK_TEST_CONTENT_DIR = ${contentDir}`);
 
 const port = process.env.VITE_PORT || '5173';
