@@ -4,7 +4,8 @@ import type { ComponentProps, FC } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuRoot,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -16,7 +17,12 @@ const themes: Array<{ value: string; label: string; icon: FC<ComponentProps<'svg
 ];
 
 export const ThemeToggle: FC = () => {
-  const { setTheme } = useTheme();
+  const { theme, setTheme } = useTheme();
+
+  // Trigger icon mirrors the user's explicit choice, not the resolved theme.
+  // Showing Monitor when theme === 'system' makes the three-state model visible
+  // and mitigates the system→explicit→OS-change mental-model trap (spec D15).
+  const TriggerIcon = theme === 'system' ? Monitor : theme === 'dark' ? Moon : Sun;
 
   return (
     <DropdownMenuRoot>
@@ -26,22 +32,19 @@ export const ThemeToggle: FC = () => {
           size="icon"
           className="size-7 hover:bg-accent text-muted-foreground"
         >
-          <Sun className="dark:hidden" />
-          <Moon className="not-dark:hidden" />
-          <span className="sr-only">Toggle theme</span>
+          <TriggerIcon />
+          <span className="sr-only">Toggle theme (current: {theme ?? 'system'})</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {themes.map(({ value, label, icon: Icon }) => (
-          <DropdownMenuItem
-            key={value}
-            onClick={() => setTheme(value)}
-            className="capitalize gap-4"
-          >
-            <Icon />
-            {label}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
+          {themes.map(({ value, label, icon: Icon }) => (
+            <DropdownMenuRadioItem key={value} value={value} className="capitalize gap-4">
+              <Icon />
+              {label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenuRoot>
   );

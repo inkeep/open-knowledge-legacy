@@ -211,7 +211,12 @@ test('sidebar folder row: clicking anywhere on the row toggles expand/collapse',
   page,
 }) => {
   const folderRow = page.getByRole('button', { name: 'sidebar-folder' });
-  const nestedFile = page.getByText('nested-doc.md');
+  // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
+  // EditorHeader's `${activeDocName}.md` label after navigating into the file,
+  // causing toHaveCount(0) to fail on collapse even though the sidebar entry is
+  // correctly hidden.
+  const sidebar = page.locator('[data-slot="sidebar-container"]');
+  const nestedFile = sidebar.getByText('nested-doc.md');
 
   // Starts collapsed — nested child is not visible, aria-expanded reflects state
   await expect(folderRow).toBeVisible();
