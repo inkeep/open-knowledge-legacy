@@ -15,6 +15,19 @@ import {
   DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
   register as registerEditDocument,
 } from './edit-document.ts';
+import {
+  DESCRIPTION as GET_BACKLINKS_DESCRIPTION,
+  register as registerGetBacklinks,
+} from './get-backlinks.ts';
+import {
+  DESCRIPTION as GET_FORWARD_LINKS_DESCRIPTION,
+  register as registerGetForwardLinks,
+} from './get-forward-links.ts';
+import { DESCRIPTION as GET_HUBS_DESCRIPTION, register as registerGetHubs } from './get-hubs.ts';
+import {
+  DESCRIPTION as GET_ORPHANS_DESCRIPTION,
+  register as registerGetOrphans,
+} from './get-orphans.ts';
 import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';
 import {
   DESCRIPTION as INIT_CONTENT_DESCRIPTION,
@@ -52,6 +65,10 @@ export const TOOL_DESCRIPTIONS = {
   undo_agent_edit: UNDO_AGENT_EDIT_DESCRIPTION,
   redo_agent_edit: REDO_AGENT_EDIT_DESCRIPTION,
   list_documents: LIST_DOCUMENTS_DESCRIPTION,
+  get_backlinks: GET_BACKLINKS_DESCRIPTION,
+  get_forward_links: GET_FORWARD_LINKS_DESCRIPTION,
+  get_orphans: GET_ORPHANS_DESCRIPTION,
+  get_hubs: GET_HUBS_DESCRIPTION,
 } as const;
 
 export function registerAllTools(server: ServerInstance, serverUrl?: string): void {
@@ -66,4 +83,8 @@ export function registerAllTools(server: ServerInstance, serverUrl?: string): vo
   registerUndoAgentEdit(server, serverUrl);
   registerRedoAgentEdit(server, serverUrl);
   registerListDocuments(server, serverUrl);
+  registerGetBacklinks(server, serverUrl);
+  registerGetForwardLinks(server, serverUrl);
+  registerGetOrphans(server, serverUrl);
+  registerGetHubs(server, serverUrl);
 }

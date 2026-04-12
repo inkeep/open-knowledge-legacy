@@ -120,7 +120,7 @@ Principles:
 - Rebuild index on startup from disk
 - Add explicit extraction in the file-watcher path for external edits
 - Store context snippets with backlink entries
-- Persist derived index cache to `.openknowledge/cache/<branch>/backlinks.json`
+- Persist derived index cache to `.open-knowledge/cache/<branch>/backlinks.json`
 - Add backlinks panel at the bottom of articles
 - Add HTTP endpoints:
   - `/api/backlinks`
@@ -217,7 +217,7 @@ Principles:
   - high-confidence delete/create pairing
   - auto-rewrite only on high-confidence matches
 - Persist low-confidence ambiguity records to:
-  - `.openknowledge/cache/<branch>/rename-ambiguities.json`
+  - `.open-knowledge/cache/<branch>/rename-ambiguities.json`
 - No GUI review flow in this milestone
 
 **Primary files**

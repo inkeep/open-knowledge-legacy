@@ -19,6 +19,7 @@ import {
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { type BacklinkIndex, extractWikiLinksFromProsemirrorJson } from './backlink-index.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
@@ -36,6 +37,7 @@ export interface PersistenceOptions {
   shadowRef?: ShadowRef;
   /** Content root relative to project dir (e.g., 'content/docs'). Used for shadow repo staging. */
   contentRoot?: string;
+  backlinkIndex?: BacklinkIndex;
 }
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
@@ -135,6 +137,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const projectDir = options?.projectDir ?? process.cwd();
   const shadowRef = options?.shadowRef;
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
+  const backlinkIndex = options?.backlinkIndex;
 
   // Per-instance frontmatter cache — tracks frontmatter per document for round-trip fidelity.
   // Lives inside the closure so multiple server instances don't share mutable state.
@@ -415,6 +418,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
       // Update reconciled base after successful store
       setReconciledBase(documentName, markdown);
+
+      if (backlinkIndex) {
+        backlinkIndex.updateDocument(documentName, extractWikiLinksFromProsemirrorJson(json));
+        void backlinkIndex.saveToDisk().catch((err) => {
+          console.warn(`[backlinks] Failed to persist cache for ${documentName}:`, err);
+        });
+      }
 
       scheduleGitCommit();
     },

@@ -6,6 +6,7 @@ import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
+import { BacklinkIndex } from './backlink-index.ts';
 import { createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
@@ -124,6 +125,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     includePatterns,
     excludePatterns,
   });
+  const backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
 
   // Mutable ref so deferred init (initAsync) propagates to persistence and API
   const shadowRef: ShadowRef = { current: shadowRepo };
@@ -136,6 +138,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     wipRef,
     shadowRef,
     contentRoot,
+    backlinkIndex,
   };
 
   const persistence = createPersistenceExtension(persistenceOpts);
@@ -162,6 +165,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     shadowRef,
     projectRoot: projectDir,
     contentRoot,
+    backlinkIndex,
   });
   hocuspocus.configuration.extensions.push(apiExtension);
 
@@ -201,13 +205,23 @@ export function createServer(options: ServerOptions): ServerInstance {
       switch (event.kind) {
         case 'create': {
           log.info({ docName: event.docName }, `[reconcile] create: ${event.docName}`);
+          backlinkIndex.updateDocumentFromMarkdown(event.docName, event.content);
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(`[backlinks] Failed to persist create for ${event.docName}:`, err);
+          });
           break;
         }
 
         case 'update': {
           const { docName, content: theirs } = event;
           const document = hocuspocus.documents.get(docName);
-          if (!document) return;
+          if (!document) {
+            backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+            void backlinkIndex.saveToDisk().catch((err) => {
+              console.warn(`[backlinks] Failed to persist closed-doc update for ${docName}:`, err);
+            });
+            return;
+          }
 
           const base = getReconciledBase(docName) ?? '';
           const ours = serializeDoc(docName) ?? base;
@@ -225,6 +239,10 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           switch (result.kind) {
             case 'noop':
+              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+              void backlinkIndex.saveToDisk().catch((err) => {
+                console.warn(`[backlinks] Failed to persist noop update for ${docName}:`, err);
+              });
               break;
 
             case 'clean':
@@ -238,6 +256,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                   `[reconcile] failed to apply clean content to Y.Doc for ${docName}`,
                 );
               }
+              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+              void backlinkIndex.saveToDisk().catch((err) => {
+                console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
+              });
               break;
 
             case 'merged':
@@ -251,6 +273,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                   `[reconcile] failed to apply merged content to Y.Doc for ${docName}`,
                 );
               }
+              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+              void backlinkIndex.saveToDisk().catch((err) => {
+                console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
+              });
               break;
 
             case 'conflicts': {
@@ -275,6 +301,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                   `[reconcile] failed to apply conflict content to Y.Doc for ${docName}`,
                 );
               }
+              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+              void backlinkIndex.saveToDisk().catch((err) => {
+                console.warn(`[backlinks] Failed to persist conflict update for ${docName}:`, err);
+              });
               break;
             }
 
@@ -292,7 +322,13 @@ export function createServer(options: ServerOptions): ServerInstance {
         case 'delete': {
           const { docName } = event;
           const document = hocuspocus.documents.get(docName);
-          if (!document) return;
+          if (!document) {
+            backlinkIndex.deleteDocument(docName);
+            void backlinkIndex.saveToDisk().catch((err) => {
+              console.warn(`[backlinks] Failed to persist closed-doc delete for ${docName}:`, err);
+            });
+            return;
+          }
 
           const base = getReconciledBase(docName) ?? '';
           const ours = serializeDoc(docName) ?? '';
@@ -319,6 +355,10 @@ export function createServer(options: ServerOptions): ServerInstance {
           lifecycleMap.set('status', 'deleted-upstream');
 
           deleteReconciledBase(docName);
+          backlinkIndex.deleteDocument(docName);
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(`[backlinks] Failed to persist delete for ${docName}:`, err);
+          });
           log.info({ docName, isDirty }, `[reconcile] delete: ${docName} (dirty=${isDirty})`);
 
           // Unload document to prevent re-creation on next persistence cycle
@@ -333,6 +373,13 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           deleteReconciledBase(oldDocName);
           setReconciledBase(newDocName, content);
+          backlinkIndex.renameDocument(oldDocName, newDocName, content);
+          void backlinkIndex.saveToDisk().catch((err) => {
+            console.warn(
+              `[backlinks] Failed to persist rename for ${oldDocName} -> ${newDocName}:`,
+              err,
+            );
+          });
 
           if (document) {
             const lifecycleMap = document.getMap('lifecycle');
@@ -652,6 +699,10 @@ export function createServer(options: ServerOptions): ServerInstance {
     // Start file watcher (with content filter for gitignore + config exclude)
     try {
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
+      backlinkIndex.rebuildFromDisk(getActiveBranch());
+      void backlinkIndex.saveToDisk().catch((err) => {
+        console.warn(`[backlinks] Failed to persist startup cache for ${getActiveBranch()}:`, err);
+      });
     } catch (err) {
       log.error({ err }, '[server] disk bridge watcher failed to start');
       degraded.push('file-watcher');
@@ -723,6 +774,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
             // Switch reconciledBase scope to target branch
             switchReconciledBaseScope(newBranch);
+            backlinkIndex.switchBranch(newBranch);
 
             // Reset all open Y.Docs from the target branch's disk content
             for (const [docName, document] of hocuspocus.documents) {
@@ -777,6 +829,10 @@ export function createServer(options: ServerOptions): ServerInstance {
               { branch: newBranch, docCount: hocuspocus.documents.size },
               `[branch-switch] loaded branch ${newBranch} (${hocuspocus.documents.size} docs)`,
             );
+            backlinkIndex.rebuildFromDisk(newBranch);
+            void backlinkIndex.saveToDisk(newBranch).catch((err) => {
+              console.warn(`[backlinks] Failed to persist branch cache for ${newBranch}:`, err);
+            });
 
             // Restore parked WIP if exists (three-way merge parked state against current disk)
             if (shadowRef.current && info.batchKind === 'cross-branch') {

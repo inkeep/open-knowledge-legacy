@@ -93,7 +93,7 @@ Three approaches seen in OSS:
 
 - **Trigger:** Hocuspocus `onStoreDocument` (debounced 2-10s) — correct hook, confirmed
 - **Server-side JSON extraction:** Walk ProseMirror JSON from `yXmlFragmentToProsemirrorJSON` — no schema needed
-- **Branch isolation:** Per-branch index cache in `.openknowledge/cache/<branch>/backlinks.json`
+- **Branch isolation:** Per-branch index cache in `.open-knowledge/cache/<branch>/backlinks.json`
 - **Content-addressed dedup:** Files identical across branches share entries (Zoekt pattern)
 - **Startup:** Build from disk on server start (parse all .md files for `[[...]]` patterns)
 - **Incremental:** On `onStoreDocument` for doc X, diff old links(X) vs new links(X), update index

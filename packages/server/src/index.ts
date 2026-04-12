@@ -7,6 +7,13 @@ export {
 } from './agent-sessions.ts';
 export { type ApiExtensionOptions, createApiExtension, safeSubdir } from './api-extension.ts';
 export {
+  type BacklinkEntry,
+  BacklinkIndex,
+  type ExtractedWikiLink,
+  extractWikiLinksFromProsemirrorJson,
+  type HubEntry,
+} from './backlink-index.ts';
+export {
   type ContentFilter,
   type ContentFilterOptions,
   createContentFilter,

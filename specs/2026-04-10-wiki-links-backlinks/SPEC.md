@@ -94,13 +94,13 @@
 | Must | Backlink index rebuilt on external change | File watcher triggers re-index when external editor modifies a file | |
 | Must | Managed rename/move flow | Intentional rename/move operations go through a first-class app/server flow that rewrites inbound page and section links atomically | Guaranteed path for U7.5 |
 | Must | External rename reconciliation fallback | Watcher `delete` + `create` bursts are reconciled by confidence tiers using tombstones + last-known metadata | Best-effort support for external filesystem renames |
-| Must | Ambiguous external rename persistence | Low-confidence rename candidates are persisted to `.openknowledge/cache/<branch>/rename-ambiguities.json` | No GUI review flow in this spec |
+| Must | Ambiguous external rename persistence | Low-confidence rename candidates are persisted to `.open-knowledge/cache/<branch>/rename-ambiguities.json` | No GUI review flow in this spec |
 | Must | MCP tools: `get_backlinks`, `get_forward_links` | Returns JSON list of pages with context snippets | |
 | Must | MCP tools: `get_orphans`, `get_hubs` | Returns pages by link degree | |
 | Must | `[[Page|alias]]` display text | Alias renders as chip label; `[[Page]]` stored in node's `target` attr, alias in `alias` attr | P0 scope confirmed |
 | Must | Context snippets in backlinks panel | Show a short excerpt around the link in the source page, extracted from the parent paragraph/list context | In scope by user decision |
 | Should | MCP tool: `suggest_links(page)` | Finds pages that mention target page name but don't wikilink it — deterministic, no LLM | Text-match only |
-| Should | Backlink index persisted to disk | Cache written to `.openknowledge/cache/main/backlinks.json` on each update | Per-branch |
+| Should | Backlink index persisted to disk | Cache written to `.open-knowledge/cache/main/backlinks.json` on each update | Per-branch |
 | Must | `[[Page#Heading]]` section links | Section anchor stored in node; resolved via a documented heading-anchor algorithm | P0 scope confirmed; exact anchor policy still needs resolution |
 | Could | MCP tool: `get_link_graph()` | Returns full adjacency list for agent-side traversal | |
 | Should | Reference definitions (Foam portability) | `[Page Name]: ./page-name.md` footer appended to files on save | P0 scope confirmed |
@@ -250,7 +250,7 @@ class BacklinkIndex {
 
 **Reference definitions:** Generate them in a post-serialization step in persistence, not in per-node `renderMarkdown`. This allows deterministic document-global dedupe, relative-path computation, and footer regeneration.
 
-**Persistence:** Write to `.openknowledge/cache/<branch>/backlinks.json` after each update (async, non-blocking).
+**Persistence:** Write to `.open-knowledge/cache/<branch>/backlinks.json` after each update (async, non-blocking).
 
 ### Rename reconciliation state
 
@@ -258,7 +258,7 @@ class BacklinkIndex {
 - External filesystem renames are supported via watcher reconciliation, not a dedicated watcher rename event.
 - Watcher implementation stores short-lived delete tombstones plus last-known document metadata (hash, title, headings, outgoing links) and pairs them against subsequent creates by confidence tiers.
 - Auto-rewrite occurs only on high-confidence matches.
-- Low-confidence matches do not rewrite automatically. Persist them to `.openknowledge/cache/<branch>/rename-ambiguities.json` for later review tooling.
+- Low-confidence matches do not rewrite automatically. Persist them to `.open-knowledge/cache/<branch>/rename-ambiguities.json` for later review tooling.
 - No GUI for ambiguity review is included in this spec.
 
 **Startup rebuild:** On server start, read all `.md` files from disk, regex-match `\[\[([^\]|#]+)\]\]` to populate index (no TipTap runtime needed at this stage).
@@ -287,8 +287,8 @@ await backlinkIndex.saveToDisk(branch);  // async, non-blocking
 
 ```typescript
 // Must-have
-tool('get_backlinks', 'Find all pages that link to a given page', { page: z.string() }, ...)
-tool('get_forward_links', 'Find all pages that a given page links to', { page: z.string() }, ...)
+tool('get_backlinks', 'Find all pages that link to a given page', { docName: z.string() }, ...)
+tool('get_forward_links', 'Find all pages that a given page links to', { docName: z.string() }, ...)
 tool('get_orphans', 'Find pages with no incoming links', {}, ...)
 tool('get_hubs', 'Find most-referenced pages', { limit: z.number().default(20) }, ...)
 
@@ -353,7 +353,7 @@ tool('get_link_graph', 'Return full adjacency list', {}, ...)
 | Q14 | How do we handle duplicate headings when section links use text-derived anchors and auto-update on heading rename? | T | P1 | No | Need a deterministic ambiguity policy | Resolved: GitHub-style disambiguated slugs |
 | Q15 | For P0 portability, are footer reference definitions enough if alias links render as raw `target|alias` payload in standard markdown parsers? | P/T | P0 | Yes | Local parser tests show clickability but not clean alias rendering fidelity | Resolved: footer defs now, stronger preprocessing/export later if needed |
 | Q16 | Does P0 now include a first-class rename/move surface in app/server so U7.5 has an intentional path, with watcher reconciliation handling external filesystem changes as fallback? | P/T | P0 | Yes | No rename surface exists today; watcher heuristics alone are weaker than the user story implies | Resolved: yes, app/server rename flow in P0 |
-| Q17 | When watcher-side external rename inference is low-confidence, what should the system do? | P/T | P0 | Yes | High-confidence matches can auto-rewrite; ambiguous matches need an explicit fallback policy | Resolved: persist ambiguity records to `.openknowledge/cache/<branch>/rename-ambiguities.json`; no automatic rewrite, no GUI in this spec |
+| Q17 | When watcher-side external rename inference is low-confidence, what should the system do? | P/T | P0 | Yes | High-confidence matches can auto-rewrite; ambiguous matches need an explicit fallback policy | Resolved: persist ambiguity records to `.open-knowledge/cache/<branch>/rename-ambiguities.json`; no automatic rewrite, no GUI in this spec |
 
 ---
 
@@ -385,7 +385,7 @@ The following items are in scope for implementation:
 - Context snippet extraction during backlink indexing
 - Managed rename/move flow in app/server for intentional renames
 - Watcher-side external rename reconciliation with tombstones + confidence tiers
-- Persistence of low-confidence ambiguity records to `.openknowledge/cache/<branch>/rename-ambiguities.json`
+- Persistence of low-confidence ambiguity records to `.open-knowledge/cache/<branch>/rename-ambiguities.json`
 
 ---
 
@@ -451,7 +451,7 @@ The following items are in scope for implementation:
   - keep last-known per-document metadata in the derived index layer (hash, title, headings, outgoing links)
   - on create, pair against recent tombstones by confidence tiers
   - auto-rewrite only on high-confidence matches
-  - for low-confidence matches, do not rewrite automatically; persist ambiguity records to `.openknowledge/cache/<branch>/rename-ambiguities.json`
+  - for low-confidence matches, do not rewrite automatically; persist ambiguity records to `.open-knowledge/cache/<branch>/rename-ambiguities.json`
 
 ### Noted
 
