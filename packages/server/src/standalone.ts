@@ -441,9 +441,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           reject(new Error(`flushAllStoresAndWait timeout after ${timeoutMs}ms`));
         }, timeoutMs),
       ),
-    ]).catch((err) => {
-      log.error({ err, timeoutMs }, '[server] shutdown flush timed out');
-    });
+    ]);
   }
 
   async function destroy(): Promise<void> {

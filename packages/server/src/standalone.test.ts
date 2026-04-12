@@ -190,4 +190,53 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const refSha = (await sg.raw('rev-parse', 'refs/wip/main/server')).trim();
     expect(refSha).toBeTruthy();
   });
+
+  test('destroy() completes within destroyTimeoutMs when onStoreDocument throws', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+      destroyTimeoutMs: 500, // D11: fast timeout for CI — not the 10s default
+    });
+    await server.ready;
+
+    // Inject a failing onStoreDocument hook AFTER server construction.
+    // Must throw a generic Error (not SkipFurtherHooksError) to hit the
+    // "Document stays in memory to avoid data loss" branch at
+    // Hocuspocus.ts:486-490 — this prevents afterUnloadDocument from
+    // firing and triggers our timeout path.
+    server.hocuspocus.configuration.extensions.push({
+      async onStoreDocument() {
+        throw new Error('simulated store failure');
+      },
+    });
+
+    const conn = await server.hocuspocus.openDirectConnection('pathological-doc');
+    await conn.transact((doc) => {
+      const xmlFragment = doc.getXmlFragment('default');
+      const paragraph = new Y.XmlElement('paragraph');
+      paragraph.insert(0, [new Y.XmlText('will not be flushed')]);
+      xmlFragment.insert(0, [paragraph]);
+    });
+
+    // Release DirectConnection so closeConnections doesn't block unload
+    const doc = server.hocuspocus.documents.get('pathological-doc');
+    expect(doc).toBeDefined();
+    doc?.removeDirectConnection();
+
+    const startedAt = Date.now();
+    await server.destroy();
+    const elapsed = Date.now() - startedAt;
+
+    // Should have hit the 500ms timeout + small overhead, not the 10s default
+    expect(elapsed).toBeGreaterThanOrEqual(400); // allow small timing variance
+    expect(elapsed).toBeLessThan(2_000);
+
+    // D14: destroy() emits warn-level log with timeout phase error
+    const warnLogs = logCapture.getCalls('warn', 'shutdown flushed');
+    expect(warnLogs).toHaveLength(1);
+    expect(warnLogs[0].payload.phaseErrors).toContainEqual(
+      expect.objectContaining({ phase: 'flush-all-stores' }),
+    );
+  });
 });
