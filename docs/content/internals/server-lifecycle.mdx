@@ -1,0 +1,108 @@
+---
+title: Server lifecycle
+description: Startup initialization, graceful shutdown phases, and the data-loss guarantees of createServer().destroy().
+---
+
+`createServer()` in `packages/server/src/standalone.ts` returns a `ServerInstance` with two lifecycle handles: a `ready` promise for startup completion and a `destroy()` function for graceful shutdown. Understanding the lifecycle matters for CLI signal handlers, Electron window lifecycle events, and integration tests.
+
+## Startup
+
+`createServer()` returns synchronously. Heavy initialization runs in the background and resolves through the `ready` promise.
+
+```
+createServer(options)          ← synchronous, returns ServerInstance
+  ├─ Hocuspocus instance       ← immediate (in-memory)
+  ├─ ContentFilter             ← immediate (compiled patterns)
+  ├─ AgentSessionManager       ← immediate
+  ├─ Persistence extension     ← immediate (hooks registered)
+  └─ ready = initAsync()       ← async background init
+       ├─ Shadow repo init     ← git plumbing (~50-200ms)
+       ├─ File watcher start   ← @parcel/watcher subscribe
+       └─ HEAD watcher start   ← .git/HEAD polling (if .git/ exists)
+```
+
+Callers can `await serverInstance.ready` before accepting traffic, but it is not required -- Hocuspocus accepts WebSocket connections immediately and queues document loads until initialization completes.
+
+## Graceful shutdown
+
+`destroy()` tears down the server in five ordered phases. Each phase has independent error handling so a failure in one phase does not skip subsequent phases.
+
+```
+destroy()
+  ├─ await ready               ← wait for init to finish (prevents leaked subscriptions)
+  ├─ Phase 1: Stop watchers    ← file watcher + HEAD watcher unsubscribe
+  ├─ Phase 2: Drain sessions   ← AgentSessionManager.closeAll()
+  ├─ Phase 3: L1 flush         ← flushAllStoresAndWait() — Y.Doc → markdown → disk
+  ├─ Phase 4: L2 flush         ← persistence.flushPendingGitCommit() — disk → git
+  └─ Phase 5: Shadow release   ← destroyShadowRepo() — always runs (finally block)
+```
+
+### Phase ordering rationale
+
+- **Phase 1 before Phase 3:** Watchers must stop before L1 writes hit disk, otherwise the file watcher detects the persistence write as an "external change" and triggers a reconciliation loop.
+- **Phase 2 before Phase 3:** Agent sessions hold DirectConnections to Y.Docs. Closing sessions first ensures no new writes arrive during the drain.
+- **Phase 3 before Phase 4:** L1 (`onStoreDocument`) writes markdown to disk and schedules the L2 git-commit timer. Running L2 before L1 would drain an empty commit queue -- this was the original ordering bug that caused silent data loss.
+- **Phase 5 in finally:** The shadow repo writer lock must be released even if earlier phases throw.
+
+### L1 drain: `flushAllStoresAndWait()`
+
+Hocuspocus's built-in `flushPendingStores()` is fire-and-forget (its return type is `void`). To get an awaitable drain, `flushAllStoresAndWait()` mirrors the pattern used by `@hocuspocus/server`'s internal `Server.destroy()`:
+
+1. Push a one-shot `afterUnloadDocument` extension hook onto `hocuspocus.configuration.extensions`
+2. Close all connections via `hocuspocus.closeConnections()`
+3. Call `hocuspocus.flushPendingStores()` to trigger immediate store execution
+4. Await a promise that resolves when `hocuspocus.getDocumentsCount() === 0`
+
+If no documents are loaded (`hocuspocus.documents.size === 0`), the helper returns immediately.
+
+A `Promise.race` with a configurable timeout (`destroyTimeoutMs`, default 10 seconds) prevents infinite hangs from misbehaving `onStoreDocument` hooks. If the timeout fires, Phase 3 logs an error and continues to Phase 4. Documents that did not drain within the timeout may lose their pending writes.
+
+### Concurrent destroy: idempotency guard
+
+A cached-promise guard (`inflightDestroy`) ensures that concurrent `destroy()` calls -- common when both SIGINT and SIGTERM arrive -- share a single teardown:
+
+```typescript
+let inflightDestroy: Promise<void> | null = null;
+
+async function destroy(): Promise<void> {
+  if (inflightDestroy) return inflightDestroy;
+  inflightDestroy = (async () => { /* ... phases ... */ })();
+  return inflightDestroy;
+}
+```
+
+The second caller awaits the same promise as the first. No phases run twice.
+
+### Shutdown log
+
+Every `destroy()` call emits a structured log entry via `getLogger('server')` after all phases complete:
+
+- **Clean exit:** `log.info` with payload `{ flushedCount, durationMs }` and message `"shutdown flushed N documents in Mms"`.
+- **Partial failure:** `log.warn` with additional `phaseErrors` array, where each entry has `{ phase, error }` identifying which phase failed and why.
+
+Example clean output (structured JSON via pino):
+
+```json
+{"level":"info","msg":"[server] shutdown flushed 3 documents in 247ms","flushedCount":3,"durationMs":247}
+```
+
+### `destroyTimeoutMs` option
+
+`ServerOptions.destroyTimeoutMs` controls how long Phase 3 waits for all pending stores to drain before timing out. Default is `10_000` (10 seconds).
+
+- **Tests** typically pass `500` to reclaim CI wall-time.
+- **Slow-disk or NFS environments** may need a higher value if legitimate L1 flushes (markdown serialization + atomic file write per document) exceed 10 seconds.
+
+This option is on the programmatic `ServerOptions` interface, not the YAML config schema. It is set by the caller of `createServer()` (CLI, Electron main process, test harness).
+
+## Data-loss guarantee boundary
+
+After a successful `destroy()`, all writes that reached the server-side Y.Doc are flushed to disk (L1) and committed to the shadow git repo (L2). The guarantee boundary is:
+
+| Layer | Guaranteed by `destroy()` |
+|-------|---------------------------|
+| Server Y.Doc → markdown on disk (L1) | Yes |
+| Disk → shadow git commit (L2) | Yes |
+| Client WebSocket buffer → server Y.Doc | No -- out of scope |
+
+The client-side transmission buffer (~16ms between a keystroke and its WebSocket flush to the server) is a separate, smaller concern. For CLI users, this residual window is an order of magnitude smaller than the 2--10 second server-side window this fix closed. For Electron, the client-side drain barrier is handled by the desktop app's `ProviderPool.flushAllProviders()`.
