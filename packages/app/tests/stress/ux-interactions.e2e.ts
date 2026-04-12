@@ -8,17 +8,14 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
 
 /** Wait for the active provider to be connected and synced */
 async function waitForProvider(page: Page) {
-  await page.waitForFunction(
-    () => Boolean(window.__activeProvider?.isSynced),
-    { timeout: 15_000 },
-  );
+  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
 }
 
 /** Get the current Y.Text content from the provider */
@@ -44,10 +41,8 @@ test.beforeEach(async ({ page }) => {
 // as role="radio" (not "button") and carry aria-label="Visual editor" / "Markdown source".
 // PR #35 restructured the header; these helpers centralize the selector so a future
 // redesign only needs one update site.
-const sourceToggle = (page: Page) =>
-  page.getByRole('radio', { name: 'Markdown source' });
-const visualToggle = (page: Page) =>
-  page.getByRole('radio', { name: 'Visual editor' });
+const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
+const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
 
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
   // Type in WYSIWYG mode
@@ -84,10 +79,7 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   // Wait for Y.Text to have the content
   await page.waitForFunction(
     () =>
-      window.__activeProvider?.document
-        ?.getText('source')
-        ?.toString()
-        ?.includes('Source Heading'),
+      window.__activeProvider?.document?.getText('source')?.toString()?.includes('Source Heading'),
     { timeout: 10_000 },
   );
 
@@ -114,10 +106,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   // Wait for sync
   await page.waitForFunction(
     () =>
-      window.__activeProvider?.document
-        ?.getText('source')
-        ?.toString()
-        ?.includes('WYSIWYG edit'),
+      window.__activeProvider?.document?.getText('source')?.toString()?.includes('WYSIWYG edit'),
     { timeout: 10_000 },
   );
 
@@ -163,11 +152,7 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
 
   // Wait for user content to sync
   await page.waitForFunction(
-    () =>
-      window.__activeProvider?.document
-        ?.getText('source')
-        ?.toString()
-        ?.includes('User typing'),
+    () => window.__activeProvider?.document?.getText('source')?.toString()?.includes('User typing'),
     { timeout: 10_000 },
   );
 
@@ -182,10 +167,7 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   // Wait for agent content to propagate
   await page.waitForFunction(
     () =>
-      window.__activeProvider?.document
-        ?.getText('source')
-        ?.toString()
-        ?.includes('Agent Section'),
+      window.__activeProvider?.document?.getText('source')?.toString()?.includes('Agent Section'),
     { timeout: 10_000 },
   );
 

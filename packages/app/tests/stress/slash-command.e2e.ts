@@ -10,7 +10,7 @@
  * `playwright.config.ts` `webServer` on VITE_PORT (or default 5173).
  */
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;

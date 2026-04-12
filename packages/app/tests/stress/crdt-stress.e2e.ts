@@ -53,8 +53,7 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
     // Wait for content to propagate to Y.Text
     await page.waitForFunction(
       (expected: number) =>
-        window.__activeProvider?.document?.getText('source')?.toString()?.length >=
-        expected,
+        window.__activeProvider?.document?.getText('source')?.toString()?.length >= expected,
       FIXTURE.length - 200, // tolerance for whitespace normalization
       { timeout: 30_000 },
     );
@@ -79,8 +78,7 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
 
     // Wait for Observer A to sync user typing to Y.Text
     await page.waitForFunction(
-      (m: string) =>
-        window.__activeProvider?.document?.getText('source')?.toString()?.includes(m),
+      (m: string) => window.__activeProvider?.document?.getText('source')?.toString()?.includes(m),
       marker,
       { timeout: 10_000 },
     );

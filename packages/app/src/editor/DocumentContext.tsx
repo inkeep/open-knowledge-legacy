@@ -57,11 +57,11 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     p.setOnChange(() => setSnapshot(takeSnapshot(p)));
 
     // Expose pool on window for E2E test access
-      window.__providerPool = p;
-      Object.defineProperty(window, '__activeProvider', {
-        get: () => p.getActive()?.provider ?? null,
-        configurable: true,
-      });
+    window.__providerPool = p;
+    Object.defineProperty(window, '__activeProvider', {
+      get: () => p.getActive()?.provider ?? null,
+      configurable: true,
+    });
 
     return () => {
       p.setOnChange(null);
