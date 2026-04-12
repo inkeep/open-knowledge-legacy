@@ -475,7 +475,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
-      json(res, 200, { ok: true, docName, links: backlinkIndex.getForwardLinks(docName) });
+      json(res, 200, {
+        ok: true,
+        docName,
+        forwardLinks: backlinkIndex.getForwardLinks(docName),
+      });
     } catch (e) {
       console.error('[forward-links]', e);
       json(res, 500, { ok: false, error: 'Failed to read forward links' });

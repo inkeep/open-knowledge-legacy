@@ -76,16 +76,17 @@ export function BacklinksPanel({
             : `${backlinks.length} ${backlinks.length === 1 ? 'page' : 'pages'} link here`}
         </p>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-busy={loading}>
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : backlinks.length === 0 && !loading ? (
           <p className="text-sm text-muted-foreground">No pages link here yet.</p>
         ) : (
           <div className="space-y-2">
-            {backlinks.map((backlink) => (
+            {backlinks.map((backlink, index) => (
               <button
-                key={backlink.source}
+                // biome-ignore lint/suspicious/noArrayIndexKey: rows are stable per poll; source may repeat if API adds multiple edges per source
+                key={`${backlink.source}-${index}`}
                 type="button"
                 className="block w-full rounded-lg border border-border bg-background/80 px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
                 onClick={() => {

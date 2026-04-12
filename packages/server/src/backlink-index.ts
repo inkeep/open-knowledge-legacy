@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { getWikiLinkText, sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
@@ -233,9 +233,14 @@ export class BacklinkIndex {
   }
 
   updateDocumentFromMarkdown(docName: string, markdown: string, branch = this.activeBranch): void {
-    const { body } = stripFrontmatter(markdown);
-    const json = mdManager.parse(body) as PMNodeJson;
-    this.updateDocument(docName, extractWikiLinksFromProsemirrorJson(json), branch);
+    try {
+      const { body } = stripFrontmatter(markdown);
+      const json = mdManager.parse(body) as PMNodeJson;
+      this.updateDocument(docName, extractWikiLinksFromProsemirrorJson(json), branch);
+    } catch (err) {
+      console.warn(`[backlinks] Failed to parse ${docName} for link extraction:`, err);
+      this.deleteDocument(docName, branch);
+    }
   }
 
   deleteDocument(docName: string, branch = this.activeBranch): void {
@@ -320,7 +325,14 @@ export class BacklinkIndex {
   }
 
   private rebuildFileList(dir: string, docs: string[]): void {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      console.warn(`[backlinks] Failed to read directory ${dir}:`, err);
+      return;
+    }
+    for (const entry of entries) {
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
         const relDir = relative(this.contentDir, fullPath);
