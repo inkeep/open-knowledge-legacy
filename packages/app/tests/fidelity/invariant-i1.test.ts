@@ -10,12 +10,18 @@ import * as fc from 'fast-check';
 import {
   blockquote,
   bulletList,
+  bulletListPlus,
+  bulletListStar,
   codeBlock,
+  codeBlockTilde,
   heading,
   orderedList,
+  orderedListParen,
   paragraph,
   paragraphWithFidelityChars,
   paragraphWithMarks,
+  thematicBreakStar,
+  thematicBreakUnderscore,
 } from './arbitraries';
 import { mdRoundTrip, NUM_RUNS, normalize } from './helpers';
 
@@ -86,6 +92,61 @@ describe('I1 — identity: serialize(parse(md)) === md', () => {
   test('paragraph with inline marks (R19)', () => {
     fc.assert(
       fc.property(paragraphWithMarks, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  // Non-default delimiter forms — exercises fidelity extension preservation
+  test('code block with tilde fence (~)', () => {
+    fc.assert(
+      fc.property(codeBlockTilde, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('bullet list with * marker', () => {
+    fc.assert(
+      fc.property(bulletListStar, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('bullet list with + marker', () => {
+    fc.assert(
+      fc.property(bulletListPlus, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('ordered list with ) delimiter', () => {
+    fc.assert(
+      fc.property(orderedListParen, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('thematic break with ***', () => {
+    fc.assert(
+      fc.property(thematicBreakStar, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('thematic break with ___', () => {
+    fc.assert(
+      fc.property(thematicBreakUnderscore, (md) => {
         expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
       }),
       { numRuns: NUM_RUNS, seed: 42 },

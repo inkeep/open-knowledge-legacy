@@ -47,9 +47,16 @@ function pathYDoc(md: string): string {
   return result;
 }
 
-/** Path 3: md → Y.Text → parse from text → serialize (text-first path). */
-function pathYText(md: string): string {
-  // Simulate source-mode: write to Y.Text, parse to JSON, serialize
+/**
+ * Path 3: md → parse → serialize (mdManager re-parse path).
+ *
+ * NOTE: This exercises the same mdManager round-trip as pathMdManager.
+ * A true Y.Text path (write to Y.Text → Observer B fires → XmlFragment
+ * → serialize) requires async debounce wiring that is impractical in PBT.
+ * The actual text→tree path is covered by integration tests
+ * (bridge-matrix.test.ts V2) rather than PBT invariants.
+ */
+function pathMdManagerReparse(md: string): string {
   const json = mdManager.parse(md);
   return mdManager.serialize(json);
 }
@@ -82,12 +89,12 @@ describe('I7 — cross-path consistency', () => {
     );
   });
 
-  test('all three paths equivalent for paragraphs', () => {
+  test('mdManager path === Y.Doc path === mdManager re-parse for paragraphs', () => {
     fc.assert(
       fc.property(paragraph, (md) => {
         const a = normalize(pathMdManager(md));
         const b = normalize(pathYDoc(md));
-        const c = normalize(pathYText(md));
+        const c = normalize(pathMdManagerReparse(md));
         expect(a).toBe(b);
         expect(b).toBe(c);
       }),

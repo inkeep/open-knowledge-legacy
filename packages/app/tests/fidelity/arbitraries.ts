@@ -36,7 +36,7 @@ export const paragraph = phrase;
 /** Paragraph with fidelity-sensitive characters. */
 export const paragraphWithFidelityChars = fidelityText;
 
-/** Fenced code block. */
+/** Fenced code block (backtick). */
 export const codeBlock = fc
   .tuple(
     fc.constantFrom('', 'js', 'typescript', 'python', 'markdown'),
@@ -44,29 +44,64 @@ export const codeBlock = fc
   )
   .map(([lang, body]) => `\`\`\`${lang}\n${body}\n\`\`\``);
 
+/** Fenced code block (tilde — non-default delimiter). */
+export const codeBlockTilde = fc
+  .tuple(
+    fc.constantFrom('', 'js'),
+    fc.array(safeWord, { minLength: 1, maxLength: 3 }).map((ws) => ws.join(' = ')),
+  )
+  .map(([lang, body]) => `~~~${lang}\n${body}\n~~~`);
+
 /** Blockquote. */
 export const blockquote = phrase.map((text) => `> ${text}`);
 
-/** Bullet list (2-4 items). */
+/** Bullet list with default marker (-). */
 export const bulletList = fc
   .array(phrase, { minLength: 2, maxLength: 4 })
   .map((items) => items.map((item) => `- ${item}`).join('\n'));
 
-/** Ordered list (2-4 items). */
+/** Bullet list with * marker (non-default). */
+export const bulletListStar = fc
+  .array(phrase, { minLength: 2, maxLength: 4 })
+  .map((items) => items.map((item) => `* ${item}`).join('\n'));
+
+/** Bullet list with + marker (non-default). */
+export const bulletListPlus = fc
+  .array(phrase, { minLength: 2, maxLength: 4 })
+  .map((items) => items.map((item) => `+ ${item}`).join('\n'));
+
+/** Ordered list with default delimiter (.). */
 export const orderedList = fc
   .array(phrase, { minLength: 2, maxLength: 4 })
   .map((items) => items.map((item, i) => `${i + 1}. ${item}`).join('\n'));
 
-/** Thematic break. */
+/** Ordered list with ) delimiter (non-default). */
+export const orderedListParen = fc
+  .array(phrase, { minLength: 2, maxLength: 4 })
+  .map((items) => items.map((item, i) => `${i + 1}) ${item}`).join('\n'));
+
+/** Thematic break (default). */
 export const thematicBreak = fc.constant('---');
+
+/** Thematic break with * (non-default). */
+export const thematicBreakStar = fc.constant('***');
+
+/** Thematic break with _ (non-default). */
+export const thematicBreakUnderscore = fc.constant('___');
 
 // ─── Inline marks (R19) ───
 
-/** Bold text. */
+/** Bold text (default **). */
 const bold = phrase.map((text) => `**${text}**`);
 
-/** Italic text. */
+/** Bold text with underscore delimiter (non-default __). */
+const boldUnderscore = phrase.map((text) => `__${text}__`);
+
+/** Italic text (default *). */
 const italic = phrase.map((text) => `*${text}*`);
+
+/** Italic text with underscore delimiter (non-default _). */
+const italicUnderscore = phrase.map((text) => `_${text}_`);
 
 /** Inline code. */
 const inlineCode = safeWord.map((text) => `\`${text}\``);
@@ -76,8 +111,16 @@ const link = fc
   .tuple(phrase, safeWord)
   .map(([text, slug]) => `[${text}](https://example.com/${slug})`);
 
-/** Inline content: text or marked text. */
-const inlineContent = fc.oneof(phrase, bold, italic, inlineCode, link);
+/** Inline content: text or marked text (includes non-default delimiters). */
+const inlineContent = fc.oneof(
+  phrase,
+  bold,
+  boldUnderscore,
+  italic,
+  italicUnderscore,
+  inlineCode,
+  link,
+);
 
 /** Paragraph with inline marks — tests mark boundary serialization (R19). */
 export const paragraphWithMarks = fc
@@ -99,16 +142,22 @@ export const listWithMarks = fc
 
 // ─── Composite ───
 
-/** Any supported block construct. */
+/** Any supported block construct (includes non-default delimiter forms). */
 export const block = fc.oneof(
   heading,
   paragraph,
   paragraphWithFidelityChars,
   codeBlock,
+  codeBlockTilde,
   blockquote,
   bulletList,
+  bulletListStar,
+  bulletListPlus,
   orderedList,
+  orderedListParen,
   thematicBreak,
+  thematicBreakStar,
+  thematicBreakUnderscore,
   paragraphWithMarks,
   headingWithMarks,
 );

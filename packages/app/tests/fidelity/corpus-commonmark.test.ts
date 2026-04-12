@@ -40,8 +40,14 @@ const NORMALIZE_SECTIONS = new Set([
   'Autolinks', // Angle-bracket autolinks
 ]);
 
+// Track crashes to detect regressions — if fidelity extension changes introduce
+// new parsing crashes, the test fails even though individual examples are skipped.
+// Update this count only when a known @tiptap/markdown upstream crash is resolved.
+const KNOWN_CRASH_CEILING = 50;
+
 describe('CommonMark corpus — round-trip stability', () => {
   let idx = 0;
+  let crashCount = 0;
   for (const example of commonmark) {
     if (SKIP_SECTIONS.has(example.section)) continue;
     idx++;
@@ -53,6 +59,7 @@ describe('CommonMark corpus — round-trip stability', () => {
       } catch {
         // Pre-existing crash in @tiptap/markdown on edge-case inputs
         // (e.g., empty list items). Tracked, not blocking.
+        crashCount++;
         return;
       }
 
@@ -63,4 +70,8 @@ describe('CommonMark corpus — round-trip stability', () => {
       }
     });
   }
+
+  test('crash count does not exceed known ceiling', () => {
+    expect(crashCount).toBeLessThanOrEqual(KNOWN_CRASH_CEILING);
+  });
 });

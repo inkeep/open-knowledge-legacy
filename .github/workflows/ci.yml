@@ -37,6 +37,7 @@ jobs:
           - test
           - test:integration
           - test:conversion
+          - test:fidelity
           - test:stress:s1-s8-s9
           - test:stress:s2
           - test:stress:s4

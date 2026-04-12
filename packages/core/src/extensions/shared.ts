@@ -44,13 +44,16 @@ export const sharedExtensions = [
   HardBreakFidelity,
   StarterKit.configure({
     undoRedo: false,
-    link: {
-      openOnClick: false,
-      HTMLAttributes: {
-        target: '_blank',
-        rel: 'noopener noreferrer',
-      },
-    },
+    bulletList: false,
+    orderedList: false,
+    listItem: false,
+    italic: false,
+    bold: false,
+    codeBlock: false,
+    heading: false,
+    horizontalRule: false,
+    hardBreak: false,
+    link: false,
   }),
   Table.configure({
     resizable: true,

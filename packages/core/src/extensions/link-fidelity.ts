@@ -52,19 +52,21 @@ export const LinkFidelity = Mark.create({
     let linkStyle = 'inline';
     let refLabel: string | null = null;
 
-    // Full reference: [text][label]
-    const fullRefMatch = raw.match(/\]\[([^\]]*)\]\s*$/);
-    if (fullRefMatch) {
-      linkStyle = 'full';
-      refLabel = fullRefMatch[1];
-    }
     // Collapsed reference: [text][]
-    else if (raw.match(/\]\[\]\s*$/)) {
+    if (raw.match(/\]\[\]\s*$/)) {
       linkStyle = 'collapsed';
     }
-    // Shortcut reference: [text] (no brackets after)
-    else if (!raw.includes('](') && !raw.includes('][')) {
-      linkStyle = 'shortcut';
+    // Full reference: [text][label] (non-empty label)
+    else {
+      const fullRefMatch = raw.match(/\]\[([^\]]+)\]\s*$/);
+      if (fullRefMatch) {
+        linkStyle = 'full';
+        refLabel = fullRefMatch[1];
+      }
+      // Shortcut reference: [text] (no brackets after)
+      else if (!raw.includes('](') && !raw.includes('][')) {
+        linkStyle = 'shortcut';
+      }
     }
 
     return helpers.applyMark('link', helpers.parseInline(token.tokens || []), {
