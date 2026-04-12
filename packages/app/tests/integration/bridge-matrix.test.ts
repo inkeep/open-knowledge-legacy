@@ -590,3 +590,30 @@ describe('multi-client sync', () => {
     assertClientsConverged(clientA, clientB);
   });
 });
+
+// ─── V2: External-write convergence window (R11) ───
+
+describe('V2: external-write convergence window', () => {
+  test('agent write via API → content arrives during debounce window (R11)', async () => {
+    const client = await createTestClient(server.port);
+    try {
+      // Write via agent API (uses client's unique docName)
+      await agentWriteMd(server.port, '# V2 Test\n\nAgent content here.', {
+        docName: client.docName,
+      });
+
+      // Poll until content arrives — during Observer A debounce window,
+      // content may be in raw or canonical form (both acceptable)
+      await pollUntil(() => client.ytext.toString().includes('V2 Test'), 5000);
+
+      const textContent = normalizeMarkdown(client.ytext.toString());
+      expect(textContent).toContain('V2 Test');
+      expect(textContent).toContain('Agent content');
+
+      // Bridge invariant should hold after convergence
+      assertBridgeInvariant(client.ytext, client.fragment);
+    } finally {
+      await client.cleanup();
+    }
+  });
+});

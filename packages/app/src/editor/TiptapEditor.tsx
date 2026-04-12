@@ -1,5 +1,6 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import {
+  sharedExtensions as coreExtensions,
   deriveIconColor,
   evictStaleEntries,
   FLASH_DEBOUNCE_MS,
@@ -8,6 +9,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Extension } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
+import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef } from 'react';
@@ -80,10 +82,21 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const identity = useIdentity();
 
+  // Always-parse text/plain paste as markdown (R18, Archetype D).
+  // All text/plain clipboard data is parsed as markdown — no detection heuristic.
+  // Cmd+Shift+V remains the browser-level plain-text escape hatch.
+  const mdManagerRef = useRef(new MarkdownManager({ extensions: coreExtensions }));
+
   const editor = useEditor({
     editorProps: {
       attributes: {
         class: 'pt-10 pb-16 h-full',
+      },
+      clipboardTextParser: (text, _context, _plain, view) => {
+        const json = mdManagerRef.current.parse(text);
+        const node = view.state.schema.nodeFromJSON(json);
+        // biome-ignore lint/suspicious/noExplicitAny: ProseMirror Slice type not directly importable from @tiptap/core
+        return node.content as any;
       },
     },
     extensions: [
