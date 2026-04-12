@@ -10,7 +10,10 @@ import StarterKit from '@tiptap/starter-kit';
 import { BulletListFidelity } from './bullet-list-fidelity.ts';
 import { CodeBlockFidelity } from './code-block-fidelity.ts';
 import { BoldFidelity, ItalicFidelity } from './emphasis-fidelity.ts';
+import { HeadingFidelity } from './heading-fidelity.ts';
+import { HorizontalRuleFidelity } from './horizontal-rule-fidelity.ts';
 import { JsxComponent } from './jsx-component.ts';
+import { LinkFidelity } from './link-fidelity.ts';
 import { ListItemFidelity } from './list-item-fidelity.ts';
 import { OrderedListFidelity } from './ordered-list-fidelity.ts';
 import { WikiLink } from './wiki-link.ts';
@@ -30,6 +33,9 @@ export const sharedExtensions = [
   ItalicFidelity,
   BoldFidelity,
   CodeBlockFidelity,
+  HeadingFidelity,
+  HorizontalRuleFidelity,
+  LinkFidelity,
   StarterKit.configure({
     undoRedo: false,
     link: {

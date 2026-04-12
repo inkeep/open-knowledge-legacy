@@ -13,6 +13,8 @@ export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { BoldFidelity, ItalicFidelity } from './extensions/emphasis-fidelity.ts';
 // Extensions
 export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
+export { HeadingFidelity } from './extensions/heading-fidelity.ts';
+export { HorizontalRuleFidelity } from './extensions/horizontal-rule-fidelity.ts';
 export { fenceFor, JsxComponent } from './extensions/jsx-component.ts';
 export {
   createJsxBlockExtension,
@@ -23,6 +25,7 @@ export {
   jsxTokenizerC,
   type TokenizerVersion,
 } from './extensions/jsx-tokenizer.ts';
+export { LinkFidelity } from './extensions/link-fidelity.ts';
 export { ListItemFidelity } from './extensions/list-item-fidelity.ts';
 export { OrderedListFidelity } from './extensions/ordered-list-fidelity.ts';
 export { sharedExtensions } from './extensions/shared.ts';
