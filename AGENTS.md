@@ -463,6 +463,37 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 - `reports/onboarding-multiproject-ux/` — Onboarding multiproject UX
 - `reports/crdt-observer-bridge-latency-analysis/` — CRDT observer bridge latency analysis
 
+## Storage-layer fidelity contract
+
+**Storage never sanitizes; render-time layers do.** Raw HTML, backslash escapes, and all literal characters pass through the storage layer unchanged. XSS mitigation is a render-layer concern (DOMPurify in docs site, not in the CRDT/persistence pipeline).
+
+### Seven fidelity invariants
+
+| ID | Invariant | Description |
+|---|---|---|
+| I1 | Identity | `serialize(parse(md)) === md` for supported constructs |
+| I2 | Character preservation | Every literal char in input appears in output — no entity encoding |
+| I3 | Normalization canonicality | `f(f(x)) === f(x)` — double round-trip equals single round-trip |
+| I4 | Idempotence | `serialize(parse(X))` applied twice produces identical output |
+| I5 | Layer A === Layer B | mdManager path and Y.Doc path produce the same output |
+| I6 | Multi-client preservation | Content survives Y.Doc state sync between clients |
+| I7 | Cross-path consistency | All write paths produce equivalent serialized output |
+
+### Irreducible gaps (by design)
+
+- **NG1:** Blank-line count between blocks normalizes (ProseMirror schema limitation)
+- **NG2:** GFM table column widths normalize
+- **NG3:** Constructs outside our extension set (math `$$`, footnotes, alerts) are NOT semantically preserved
+- **NG4:** No storage-layer HTML sanitization — raw HTML passes through unchanged
+- **NG5:** HTML entity references (`&amp;` `&lt;` `&gt;`) in source markdown are decoded to literal characters on first parse and remain as literals — the entity form is not preserved
+
+### @tiptap/markdown version discipline
+
+- `@tiptap/markdown` is pinned to exact version `3.22.3` (no caret) across all three packages
+- A `bun patch` in `patches/` modifies `encodeTextForMarkdown` (entity bypass) and `parseInlineTokens` (escape handler)
+- **Upgrade protocol:** Before bumping the version, re-run the 118-case fidelity probe and full invariant suite (`bun run test:fidelity`). Verify the patch still applies cleanly.
+- Failed patch surfaces at install time (fail-loud via `patchedDependencies`)
+
 ## Changesets
 
 ```bash
