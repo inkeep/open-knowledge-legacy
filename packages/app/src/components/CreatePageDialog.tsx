@@ -83,7 +83,7 @@ export function CreatePageDialog({ open, target, onOpenChange, onCreated }: Crea
               }}
             />
             {error && (
-              <p id={errorId} className="mt-1.5 text-xs text-red-600">
+              <p id={errorId} className="mt-1.5 text-xs text-red-600 dark:text-red-400">
                 {error}
               </p>
             )}
