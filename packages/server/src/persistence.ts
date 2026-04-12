@@ -208,9 +208,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes('unknown revision') || msg.includes('bad revision')) {
-          console.log('[persistence] Empty repo — starting with empty index');
+          log.info({}, '[persistence] Empty repo — starting with empty index');
         } else {
-          console.error('[persistence] Failed to read HEAD tree, falling back to empty index:', e);
+          log.error(
+            { err: e },
+            '[persistence] Failed to read HEAD tree, falling back to empty index',
+          );
         }
       }
 
@@ -233,12 +236,19 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const commitSha = (await sg.raw(...args)).trim();
       await sg.raw('update-ref', wipRef, commitSha);
       consecutiveGitFailures = 0;
-      console.log(`[persistence] Git commit: ${commitSha.slice(0, 8)} on ${wipRef}`);
+      log.info(
+        { sha: commitSha.slice(0, 8), wipRef },
+        `[persistence] Git commit: ${commitSha.slice(0, 8)} on ${wipRef}`,
+      );
     } catch (e) {
       consecutiveGitFailures++;
-      console.error(`[persistence] Git commit failed (attempt ${consecutiveGitFailures}):`, e);
+      log.error(
+        { err: e, attempt: consecutiveGitFailures },
+        `[persistence] Git commit failed (attempt ${consecutiveGitFailures})`,
+      );
       if (consecutiveGitFailures >= 3) {
-        console.error(
+        log.error(
+          { attempt: consecutiveGitFailures },
           '[persistence] CRITICAL: Git auto-save has failed 3+ times. Version history is NOT being recorded.',
         );
       }
@@ -296,7 +306,8 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
-      console.log(
+      log.info(
+        { documentName, connections: document.getConnectionsCount?.() ?? '?' },
         `[persistence] onLoadDocument called for ${documentName} (connections: ${document.getConnectionsCount?.() ?? '?'})`,
       );
       const filePath = safeContentPath(documentName, contentDir);
@@ -314,7 +325,8 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const json = mdManager.parse(body);
       if (json) {
         const xmlFragment = document.getXmlFragment('default');
-        console.log(
+        log.info(
+          { documentName, fragmentLength: xmlFragment.length },
           `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
         );
         if (xmlFragment.length === 0) {
@@ -323,17 +335,20 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             mapping: new Map(),
             isOMark: new Map(),
           });
-          console.log(
+          log.info(
+            { filePath, children: xmlFragment.length },
             `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
           );
           // Watch for unexpected mutations
           xmlFragment.observeDeep(() => {
-            console.log(
+            log.info(
+              { documentName, fragmentLength: xmlFragment.length },
               `[persistence] MUTATION on ${documentName}: fragment.length=${xmlFragment.length}`,
             );
           });
         } else {
-          console.log(
+          log.info(
+            { documentName, children: xmlFragment.length },
             `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
           );
         }
@@ -366,10 +381,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       // Debug: detect duplication before writing
       const currentBase = getReconciledBase(documentName);
       if (currentBase && markdown.length > currentBase.length * 1.5) {
-        console.warn(
+        log.warn(
+          { documentName, markdownLength: markdown.length, baseLength: currentBase.length },
           `[persistence] WARNING: serialized content is ${markdown.length} bytes vs base ${currentBase.length} bytes for ${documentName} — possible duplication`,
         );
-        console.warn(
+        log.warn(
+          { documentName, children: document.getXmlFragment('default').length },
           `[persistence] Fragment children: ${document.getXmlFragment('default').length}`,
         );
       }
@@ -388,10 +405,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         } catch {
           /* cleanup best-effort */
         }
-        console.error(`[persistence] Failed to save ${documentName}:`, e);
+        log.error({ err: e, documentName }, `[persistence] Failed to save ${documentName}`);
         throw e;
       }
-      console.log(`[persistence] Wrote ${filePath} (${markdown.length} bytes)`);
+      log.info(
+        { filePath, bytes: markdown.length },
+        `[persistence] Wrote ${filePath} (${markdown.length} bytes)`,
+      );
 
       // Update reconciled base after successful store
       setReconciledBase(documentName, markdown);
