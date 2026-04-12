@@ -5,6 +5,7 @@
  * In WYSIWYG, renders as raw source text (Q1 parked — no rich preview).
  */
 
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import { Node } from '@tiptap/core';
 
 export const HtmlBlockFidelity = Node.create({
@@ -29,7 +30,7 @@ export const HtmlBlockFidelity = Node.create({
 
   markdownTokenName: 'html',
 
-  parseMarkdown(token: any, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     // Only handle block-level HTML tokens (not inline HTML)
     if (token.type !== 'html' || token.block === false) {
       return [];
@@ -41,7 +42,7 @@ export const HtmlBlockFidelity = Node.create({
     return helpers.createNode('htmlBlock', { content: raw });
   },
 
-  renderMarkdown(node: any) {
+  renderMarkdown(node: Record<string, any>) {
     return node.attrs?.content ?? '';
   },
 });

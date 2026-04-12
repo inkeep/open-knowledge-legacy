@@ -6,6 +6,7 @@
  * at the document position where they appear.
  */
 
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import { Node } from '@tiptap/core';
 
 export const LinkRefDefFidelity = Node.create({
@@ -34,7 +35,7 @@ export const LinkRefDefFidelity = Node.create({
 
   markdownTokenName: 'def',
 
-  parseMarkdown(token: any, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     if (token.type !== 'def') return [];
     return helpers.createNode('linkRefDef', {
       label: token.tag ?? '',
@@ -43,7 +44,7 @@ export const LinkRefDefFidelity = Node.create({
     });
   },
 
-  renderMarkdown(node: any) {
+  renderMarkdown(node: Record<string, any>) {
     const { label, href, title } = node.attrs ?? {};
     if (title) {
       return `[${label}]: ${href} "${title}"`;

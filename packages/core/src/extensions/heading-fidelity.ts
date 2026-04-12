@@ -6,7 +6,7 @@
  * attribute to distinguish ATX (# ...) from setext (underline) headings.
  */
 
-import type { MarkdownToken } from '@tiptap/core';
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import Heading from '@tiptap/extension-heading';
 
 export const HeadingFidelity = Heading.extend({
@@ -19,7 +19,7 @@ export const HeadingFidelity = Heading.extend({
     };
   },
 
-  parseMarkdown(token: MarkdownToken, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     const raw = (token as any).raw ?? '';
     const isSetext = /\n[=-]+\s*$/.test(raw);
     return helpers.createNode(
@@ -29,7 +29,7 @@ export const HeadingFidelity = Heading.extend({
     );
   },
 
-  renderMarkdown(node: any, h: any) {
+  renderMarkdown(node: Record<string, any>, h: Record<string, any>) {
     const level = node.attrs?.level ? Number.parseInt(node.attrs.level, 10) : 1;
     if (!node.content) {
       return '';

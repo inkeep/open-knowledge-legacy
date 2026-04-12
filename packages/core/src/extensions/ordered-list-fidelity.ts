@@ -6,7 +6,7 @@
  * list marker delimiter (. or )) and tight/loose list structure.
  */
 
-import type { JSONContent, MarkdownToken } from '@tiptap/core';
+import type { JSONContent, MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import OrderedList from '@tiptap/extension-ordered-list';
 
 export const OrderedListFidelity = OrderedList.extend({
@@ -22,7 +22,7 @@ export const OrderedListFidelity = OrderedList.extend({
 
   markdownTokenName: 'list',
 
-  parseMarkdown(token: MarkdownToken, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     if (token.type !== 'list' || !(token as any).ordered) {
       return [];
     }
@@ -42,7 +42,7 @@ export const OrderedListFidelity = OrderedList.extend({
     } as JSONContent;
   },
 
-  renderMarkdown(node: any, h: any) {
+  renderMarkdown(node: Record<string, any>, h: Record<string, any>) {
     if (!node.content) {
       return '';
     }

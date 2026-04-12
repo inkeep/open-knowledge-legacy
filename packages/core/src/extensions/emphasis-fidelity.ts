@@ -6,6 +6,7 @@
  * and adds delimiter-choice attributes extracted from token.raw.
  */
 
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import Bold from '@tiptap/extension-bold';
 import Italic from '@tiptap/extension-italic';
 
@@ -21,7 +22,7 @@ export const ItalicFidelity = Italic.extend({
 
   markdownTokenName: 'em',
 
-  parseMarkdown(token: any, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     const raw = token.raw ?? '';
     const delim = raw.startsWith('_') ? '_' : '*';
     return helpers.applyMark('italic', helpers.parseInline(token.tokens || []), {
@@ -29,7 +30,7 @@ export const ItalicFidelity = Italic.extend({
     });
   },
 
-  renderMarkdown(node: any, h: any) {
+  renderMarkdown(node: Record<string, any>, h: Record<string, any>) {
     const d = node.attrs?.emphDelimiter ?? '*';
     return `${d}${h.renderChildren(node)}${d}`;
   },
@@ -47,7 +48,7 @@ export const BoldFidelity = Bold.extend({
 
   markdownTokenName: 'strong',
 
-  parseMarkdown(token: any, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     const raw = token.raw ?? '';
     const delim = raw.startsWith('__') ? '__' : '**';
     return helpers.applyMark('bold', helpers.parseInline(token.tokens || []), {
@@ -55,7 +56,7 @@ export const BoldFidelity = Bold.extend({
     });
   },
 
-  renderMarkdown(node: any, h: any) {
+  renderMarkdown(node: Record<string, any>, h: Record<string, any>) {
     const d = node.attrs?.strongDelimiter ?? '**';
     return `${d}${h.renderChildren(node)}${d}`;
   },

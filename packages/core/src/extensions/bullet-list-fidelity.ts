@@ -6,7 +6,7 @@
  * bullet marker character (-, *, +) and tight/loose list structure.
  */
 
-import type { JSONContent, MarkdownToken } from '@tiptap/core';
+import type { JSONContent, MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import BulletList from '@tiptap/extension-bullet-list';
 
 export const BulletListFidelity = BulletList.extend({
@@ -22,7 +22,7 @@ export const BulletListFidelity = BulletList.extend({
 
   markdownTokenName: 'list',
 
-  parseMarkdown(token: MarkdownToken, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     if (token.type !== 'list' || (token as any).ordered) {
       return [];
     }
@@ -41,7 +41,7 @@ export const BulletListFidelity = BulletList.extend({
     } as JSONContent;
   },
 
-  renderMarkdown(node: any, h: any) {
+  renderMarkdown(node: Record<string, any>, h: Record<string, any>) {
     if (!node.content) {
       return '';
     }

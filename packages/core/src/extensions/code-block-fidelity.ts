@@ -7,7 +7,7 @@
  * fence length.
  */
 
-import type { MarkdownToken } from '@tiptap/core';
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import CodeBlock from '@tiptap/extension-code-block';
 
 export const CodeBlockFidelity = CodeBlock.extend({
@@ -23,7 +23,7 @@ export const CodeBlockFidelity = CodeBlock.extend({
 
   markdownTokenName: 'code',
 
-  parseMarkdown(token: MarkdownToken, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     const raw = (token as any).raw ?? '';
     // Skip indented code blocks and jsx-component (handled by JsxComponent)
     if (!raw.startsWith('```') && !raw.startsWith('~~~')) {
@@ -47,7 +47,7 @@ export const CodeBlockFidelity = CodeBlock.extend({
     );
   },
 
-  renderMarkdown(node: any, h: any) {
+  renderMarkdown(node: Record<string, any>, h: Record<string, any>) {
     const language = node.attrs?.language || '';
     const delim = node.attrs?.fenceDelimiter ?? '`';
     const len = node.attrs?.fenceLength ?? 3;

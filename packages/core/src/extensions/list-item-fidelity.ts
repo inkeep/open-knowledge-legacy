@@ -6,6 +6,7 @@
  * listMarkerDelimiter attribute to use the correct prefix when rendering markdown.
  */
 
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import { renderNestedMarkdownContent } from '@tiptap/core';
 import ListItem from '@tiptap/extension-list-item';
 
@@ -14,7 +15,7 @@ export const ListItemFidelity = ListItem.extend({
 
   markdownTokenName: 'list_item',
 
-  parseMarkdown(token: any, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     if (token.type !== 'list_item') {
       return [];
     }
@@ -49,7 +50,7 @@ export const ListItemFidelity = ListItem.extend({
     return { type: 'listItem', content };
   },
 
-  renderMarkdown(node: any, h: any, ctx: any) {
+  renderMarkdown(node: Record<string, any>, h: any, ctx: any) {
     return renderNestedMarkdownContent(
       node,
       h,

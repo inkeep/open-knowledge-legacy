@@ -6,6 +6,7 @@
  * attribute to preserve the exact source form of the thematic break.
  */
 
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import HorizontalRule from '@tiptap/extension-horizontal-rule';
 
 export const HorizontalRuleFidelity = HorizontalRule.extend({
@@ -20,12 +21,12 @@ export const HorizontalRuleFidelity = HorizontalRule.extend({
 
   markdownTokenName: 'hr',
 
-  parseMarkdown(token: any, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     const raw = (token.raw ?? '---').trim();
     return helpers.createNode('horizontalRule', { horizontalRuleRaw: raw });
   },
 
-  renderMarkdown(node: any) {
+  renderMarkdown(node: Record<string, any>) {
     return node.attrs?.horizontalRuleRaw ?? '---';
   },
 });

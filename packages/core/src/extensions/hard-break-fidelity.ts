@@ -6,6 +6,7 @@
  * distinguish backslash from two-space hard breaks.
  */
 
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import HardBreak from '@tiptap/extension-hard-break';
 
 export const HardBreakFidelity = HardBreak.extend({
@@ -20,13 +21,13 @@ export const HardBreakFidelity = HardBreak.extend({
 
   markdownTokenName: 'br',
 
-  parseMarkdown(token: any, helpers: any) {
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
     const raw = token.raw ?? '';
     const style = raw.startsWith('\\') ? 'backslash' : 'spaces';
     return helpers.createNode('hardBreak', { hardBreakStyle: style });
   },
 
-  renderMarkdown(node: any) {
+  renderMarkdown(node: Record<string, any>) {
     const style = node.attrs?.hardBreakStyle ?? 'backslash';
     return style === 'backslash' ? '\\\n' : '  \n';
   },
