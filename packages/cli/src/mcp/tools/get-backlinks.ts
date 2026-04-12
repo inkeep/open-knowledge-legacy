@@ -7,7 +7,7 @@ export const DESCRIPTION = [
   'Returns source page names, resolved titles, and context snippets as JSON.',
   '',
   '**Parameters:**',
-  '- `page` — Target page docName (for example, "articles/project-alpha")',
+  '- `docName` — Target page docName (for example, "articles/project-alpha")',
 ].join('\n');
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {
@@ -15,13 +15,13 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     'get_backlinks',
     DESCRIPTION,
     {
-      page: z.string().describe('Target page docName'),
+      docName: z.string().describe('Target page docName'),
     },
-    async (args: { page: string }) => {
+    async (args: { docName: string }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const result = await httpGet(
         serverUrl,
-        `/api/backlinks?docName=${encodeURIComponent(args.page)}`,
+        `/api/backlinks?docName=${encodeURIComponent(args.docName)}`,
       );
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...data } = result;

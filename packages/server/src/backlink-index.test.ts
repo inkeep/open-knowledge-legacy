@@ -55,6 +55,79 @@ describe('extractWikiLinksFromProsemirrorJson', () => {
 });
 
 describe('BacklinkIndex', () => {
+  test('deleteDocument removes outbound links and incoming backlinks', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-del-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.updateDocumentFromMarkdown('alpha', 'See [[beta]].\n');
+      expect(index.getBacklinks('beta')).toEqual([{ source: 'alpha', snippet: 'See beta.' }]);
+      index.deleteDocument('alpha');
+      expect(index.getBacklinks('beta')).toEqual([]);
+      expect(index.getForwardLinks('alpha')).toEqual([]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('renameDocument moves edges from old doc name to new', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-rename-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.updateDocumentFromMarkdown('alpha', 'See [[beta]].\n');
+      expect(index.getBacklinks('beta')).toEqual([{ source: 'alpha', snippet: 'See beta.' }]);
+      index.renameDocument('alpha', 'gamma', '# Gamma\n\nSee [[beta]].\n');
+      expect(index.getBacklinks('beta')).toEqual([{ source: 'gamma', snippet: 'See beta.' }]);
+      expect(index.getForwardLinks('alpha')).toEqual([]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('switchBranch isolates graph state per branch', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-branch-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.updateDocumentFromMarkdown('alpha', '[[beta]]\n', 'main');
+      expect(index.getBacklinks('beta', 'main')).toEqual([{ source: 'alpha', snippet: 'beta' }]);
+
+      index.switchBranch('feature');
+      expect(index.getBacklinks('beta')).toEqual([]);
+
+      index.updateDocumentFromMarkdown('gamma', '[[beta]]\n', 'feature');
+      expect(index.getBacklinks('beta', 'feature')).toEqual([{ source: 'gamma', snippet: 'beta' }]);
+
+      index.switchBranch('main');
+      expect(index.getBacklinks('beta')).toEqual([{ source: 'alpha', snippet: 'beta' }]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('updateDocument replaces forward links when content changes', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-update-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      const links1: ExtractedWikiLink[] = [{ target: 'beta', snippet: 'one' }];
+      index.updateDocument('alpha', links1);
+      expect(index.getBacklinks('beta')).toEqual([{ source: 'alpha', snippet: 'one' }]);
+
+      const links2: ExtractedWikiLink[] = [{ target: 'gamma', snippet: 'two' }];
+      index.updateDocument('alpha', links2);
+      expect(index.getBacklinks('beta')).toEqual([]);
+      expect(index.getBacklinks('gamma')).toEqual([{ source: 'alpha', snippet: 'two' }]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test('rebuilds from disk and persists cache per branch', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-project-'));
     const contentDir = join(projectDir, 'content');

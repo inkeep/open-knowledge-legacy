@@ -7,7 +7,7 @@ export const DESCRIPTION = [
   'Returns forward links as JSON.',
   '',
   '**Parameters:**',
-  '- `page` — Source page docName',
+  '- `docName` — Source page docName',
 ].join('\n');
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {
@@ -15,13 +15,13 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     'get_forward_links',
     DESCRIPTION,
     {
-      page: z.string().describe('Source page docName'),
+      docName: z.string().describe('Source page docName'),
     },
-    async (args: { page: string }) => {
+    async (args: { docName: string }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const result = await httpGet(
         serverUrl,
-        `/api/forward-links?docName=${encodeURIComponent(args.page)}`,
+        `/api/forward-links?docName=${encodeURIComponent(args.docName)}`,
       );
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...data } = result;

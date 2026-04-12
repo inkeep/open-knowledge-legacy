@@ -287,8 +287,8 @@ await backlinkIndex.saveToDisk(branch);  // async, non-blocking
 
 ```typescript
 // Must-have
-tool('get_backlinks', 'Find all pages that link to a given page', { page: z.string() }, ...)
-tool('get_forward_links', 'Find all pages that a given page links to', { page: z.string() }, ...)
+tool('get_backlinks', 'Find all pages that link to a given page', { docName: z.string() }, ...)
+tool('get_forward_links', 'Find all pages that a given page links to', { docName: z.string() }, ...)
 tool('get_orphans', 'Find pages with no incoming links', {}, ...)
 tool('get_hubs', 'Find most-referenced pages', { limit: z.number().default(20) }, ...)
 

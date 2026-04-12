@@ -125,11 +125,8 @@ export function extractWikiLinksFromProsemirrorJson(json: PMNodeJson): Extracted
   function walk(node: PMNodeJson): void {
     const children = node.content ?? [];
     const hasDirectInlineWikiLink = children.some((child) => child.type === 'wikiLink');
-    const hasDirectInlineText = children.some(
-      (child) => child.type === 'text' || child.type === 'hardBreak',
-    );
 
-    if (hasDirectInlineWikiLink || (hasDirectInlineText && hasDirectInlineWikiLink)) {
+    if (hasDirectInlineWikiLink) {
       links.push(...collectInlineWikiLinks(node));
     }
 

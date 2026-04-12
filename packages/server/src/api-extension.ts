@@ -515,8 +515,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const url = new URL(req.url ?? '', 'http://localhost');
       const rawLimit = url.searchParams.get('limit');
-      const limit = rawLimit ? Number.parseInt(rawLimit, 10) : 20;
-      const hubs = backlinkIndex.getHubs(Number.isFinite(limit) ? limit : 20).map((hub) => ({
+      const parsed = rawLimit ? Number.parseInt(rawLimit, 10) : 20;
+      const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 20;
+      const hubs = backlinkIndex.getHubs(limit).map((hub) => ({
         docName: hub.docName,
         title: readPageTitleForDocName(hub.docName),
         count: hub.count,
@@ -763,7 +764,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       writeFileSync(filePath, '', 'utf-8');
       if (backlinkIndex) {
         backlinkIndex.deleteDocument(docName);
-        void backlinkIndex.saveToDisk().catch(() => {});
+        void backlinkIndex.saveToDisk().catch((err) => {
+          console.warn(`[backlinks] Failed to persist cache after test-reset for ${docName}:`, err);
+        });
       }
       json(res, 200, { ok: true });
     } catch (e) {

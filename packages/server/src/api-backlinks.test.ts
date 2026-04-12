@@ -104,6 +104,14 @@ describe('graph endpoints', () => {
         (await callRoute(contentDir, '/api/hubs?limit=1', fileIndex, backlinkIndex)).body,
       ) as { hubs: Array<{ docName: string; title: string; count: number }> };
       expect(hubs.hubs).toEqual([{ docName: 'beta', title: 'Beta', count: 1 }]);
+
+      const hubsNegativeLimit = JSON.parse(
+        (await callRoute(contentDir, '/api/hubs?limit=-3', fileIndex, backlinkIndex)).body,
+      ) as { hubs: Array<{ docName: string; title: string; count: number }> };
+      const hubsDefault = JSON.parse(
+        (await callRoute(contentDir, '/api/hubs', fileIndex, backlinkIndex)).body,
+      ) as { hubs: Array<{ docName: string; title: string; count: number }> };
+      expect(hubsNegativeLimit.hubs).toEqual(hubsDefault.hubs);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
