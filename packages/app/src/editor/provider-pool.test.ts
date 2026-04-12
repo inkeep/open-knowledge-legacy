@@ -189,8 +189,9 @@ describe('ProviderPool disconnect recycling', () => {
     expect(pool.getActive()?.provider).toBe(originalProvider);
   });
 
-  test('recycles the active provider after disconnect when no unsynced changes remain', () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+  test('recycles the active provider after disconnect when no unsynced changes remain', async () => {
+    // Use recycleDebounceMs: 50 for fast test execution
+    pool = new ProviderPool(3, DUMMY_WS, 50);
     const entry = pool.open('doc1');
     pool.setActive('doc1');
 
@@ -199,6 +200,12 @@ describe('ProviderPool disconnect recycling', () => {
     originalProvider.emit('disconnect', {
       event: { code: 1006, reason: 'server restart', wasClean: false },
     });
+
+    // Recycle is debounced — entry still exists with a pending timer
+    expect(entry.pendingRecycleTimer).not.toBeNull();
+
+    // Wait for debounce to fire
+    await new Promise((r) => setTimeout(r, 100));
 
     const recycled = pool.getActive();
     expect(recycled).not.toBeNull();
@@ -285,8 +292,9 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
     expect(loggedMessage).toContain('synthetic getXmlFragment failure');
   });
 
-  test('non-active background doc disconnect triggers destroy without re-open', () => {
-    pool = new ProviderPool(3, DUMMY_WS);
+  test('non-active background doc disconnect triggers debounced destroy without re-open', async () => {
+    // Use recycleDebounceMs: 50 for fast test execution
+    pool = new ProviderPool(3, DUMMY_WS, 50);
     let onChangeCalls = 0;
     pool.setOnChange(() => onChangeCalls++);
 
@@ -300,12 +308,19 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
     entry2.provider.emit('synced', { state: true });
     entry2.provider.unsyncedChanges = 0;
 
-    // Disconnect doc2 — triggers recycleDisconnectedEntry for non-active branch
+    // Disconnect doc2 — schedules a debounced recycle
     entry2.provider.emit('disconnect', {
       event: { code: 1006, reason: 'server restart', wasClean: false },
     });
 
-    // doc2 is removed from the pool
+    // Immediately after disconnect, the recycle timer is pending — entry still exists
+    expect(entry2.pendingRecycleTimer).not.toBeNull();
+    expect(pool.has('doc2')).toBe(true);
+
+    // Wait for the debounce to fire
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Now doc2 is removed from the pool
     expect(pool.has('doc2')).toBe(false);
 
     // doc1 remains active and unaffected
@@ -318,5 +333,38 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
 
     // onChange was called (from notify() in the non-active branch)
     expect(onChangeCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  test('recycle debounce is cancelled when provider reconnects (onSynced)', () => {
+    pool = new ProviderPool(3, DUMMY_WS, 200);
+    const entry = pool.open('doc1');
+    pool.setActive('doc1');
+
+    // Pre-set observerCleanup so onSynced skips setupObservers (which would
+    // throw on a dummy provider with no real server). We're testing the
+    // debounce-cancel lifecycle, not the observer setup.
+    entry.observerCleanup = () => {};
+
+    // Simulate initial sync
+    entry.hasSynced = true;
+    entry.syncState = 'synced';
+    entry.provider.unsyncedChanges = 0;
+
+    // Disconnect — starts the debounce timer
+    entry.provider.emit('disconnect', {
+      event: { code: 1006, reason: 'server restart', wasClean: false },
+    });
+    expect(entry.pendingRecycleTimer).not.toBeNull();
+    const originalTimer = entry.pendingRecycleTimer;
+
+    // Provider reconnects before the debounce fires — onSynced cancels the timer
+    entry.provider.emit('synced', { state: true });
+    expect(entry.pendingRecycleTimer).toBeNull();
+
+    // Entry was NOT recycled — still in the pool, same object identity
+    // (synchronous check, no need to wait — the timer was cleared)
+    expect(pool.has('doc1')).toBe(true);
+    expect(pool.getActive()?.provider).toBe(entry.provider);
+    expect(entry.syncState).toBe('synced');
   });
 });
