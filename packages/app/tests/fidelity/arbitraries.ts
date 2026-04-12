@@ -10,10 +10,7 @@ import * as fc from 'fast-check';
 // ─── Atoms ───
 
 /** Plain text: alphanumeric words (no markdown-special chars). */
-const safeWord = fc.stringOf(
-  fc.constantFrom(...'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'.split('')),
-  { minLength: 1, maxLength: 12 },
-);
+const safeWord = fc.stringMatching(/^[a-zA-Z0-9]{1,12}$/);
 
 /** A phrase of 1-5 safe words. */
 const phrase = fc.array(safeWord, { minLength: 1, maxLength: 5 }).map((words) => words.join(' '));
