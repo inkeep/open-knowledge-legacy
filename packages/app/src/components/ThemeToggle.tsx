@@ -39,8 +39,8 @@ export const ThemeToggle: FC = () => {
       <DropdownMenuContent align="end">
         <DropdownMenuRadioGroup value={theme} onValueChange={setTheme}>
           {themes.map(({ value, label, icon: Icon }) => (
-            <DropdownMenuRadioItem key={value} value={value} className="capitalize gap-4">
-              <Icon />
+            <DropdownMenuRadioItem key={value} value={value} className="capitalize">
+              <Icon className="text-muted-foreground" />
               {label}
             </DropdownMenuRadioItem>
           ))}
