@@ -1250,6 +1250,16 @@ describe('Observer A: remote transaction baseline refresh', () => {
 // divergence patterns: user-adds, user-deletes, user-modifies — each
 // with pre-existing agent content that must survive.
 //
+// Assumption sharpening from PR #38: these tests were originally framed
+// as "simulated scenarios" using the agent-write origin as a convenient
+// stand-in for any external Y.Text mutation. PR #43's multi-client test
+// matrix proved these are a real production trigger — a remote peer's
+// WYSIWYG edit arrives as a Y.Text-only transaction during the local
+// user's mid-sync on XmlFragment, creating exactly the divergence state
+// these tests exercise. The agent-write origin remains a valid test
+// proxy because the divergence path depends on content mismatch, not
+// origin identity.
+//
 // Mechanism: write to Y.Text with the 'agent-write' origin to create
 // divergence, then mutate the XmlFragment to represent a user edit.
 // Critically, we MUST call markUserTyping to defer Observer B during the

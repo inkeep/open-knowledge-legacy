@@ -21,7 +21,7 @@ export function startCommand(getConfig: () => Config): Command {
       const { default: sirv } = await import('sirv');
       const { WebSocketServer } = await import('ws');
       const { renderBanner } = await import('../ui/banner.ts');
-      const { dim, error, info } = await import('../ui/colors.ts');
+      const { dim, error, info, warning } = await import('../ui/colors.ts');
 
       const { mkdirSync } = await import('node:fs');
 
@@ -55,7 +55,7 @@ export function startCommand(getConfig: () => Config): Command {
 
       mkdirSync(resolve(contentDir, config.content.uploadsDir), { recursive: true });
 
-      const { hocuspocus, destroy } = createServer({
+      const { hocuspocus, destroy, ready, degraded } = createServer({
         contentDir,
         projectDir: cwd,
         contentRoot: config.content.dir,
@@ -181,6 +181,30 @@ export function startCommand(getConfig: () => Config): Command {
             `  ${dim('Tip: Run `open-knowledge init` to register MCP tools for Claude Code')}\n`,
           );
         }
+
+        // Surface degraded-boot warnings after the banner. The ready promise
+        // resolves when all subsystem init attempts complete — each failed
+        // subsystem is recorded in the degraded array.
+        const DEGRADED_IMPACTS: Record<string, string> = {
+          'shadow-repo': 'Version history and branch-switch safety unavailable',
+          'file-watcher': 'External file changes will not sync to the editor',
+          'head-watcher': 'Git branch switches may cause document inconsistency',
+        };
+        ready
+          .then(() => {
+            if (degraded.length === 0) return;
+            console.log();
+            for (const id of degraded) {
+              const impact = DEGRADED_IMPACTS[id] ?? `${id} (check server logs for details)`;
+              console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
+            }
+            console.log();
+          })
+          .catch((err) => {
+            console.error(
+              `  ${error('Server initialization failed:')} ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       });
 
       if (opts.open) {

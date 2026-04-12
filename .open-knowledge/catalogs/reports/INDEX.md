@@ -77,3 +77,4 @@ schema_version: 1
 - **[worktree-orchestration-landscape](.open-knowledge/catalogs/reports/worktree-orchestration-landscape/INDEX.md)** (10 articles)
 - **[yjs-constrained-observer-sync](.open-knowledge/catalogs/reports/yjs-constrained-observer-sync/INDEX.md)** (8 articles)
 - **[yjs-dual-key-shimmer-analysis](.open-knowledge/catalogs/reports/yjs-dual-key-shimmer-analysis/INDEX.md)** (6 articles)
+- **[zero-config-bunx-cli-packaging](.open-knowledge/catalogs/reports/zero-config-bunx-cli-packaging/INDEX.md)** (7 articles)

@@ -40,7 +40,7 @@ const FileTreeNode: FC<{
   const content = (
     <>
       <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
-      <span className="min-w-0 flex-1 truncate text-sm text-gray-700 dark:text-white/70">
+      <span className="min-w-0 flex-1 truncate text-sm text-sidebar-foreground/70">
         {node.name}
         {isFile && '.md'}
       </span>

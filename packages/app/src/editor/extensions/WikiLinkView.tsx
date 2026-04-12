@@ -58,9 +58,9 @@ export function WikiLinkView({ node, updateAttributes }: NodeViewProps) {
         className={cn(
           'mx-0.5 inline-flex max-w-full select-none items-center rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
           resolved
-            ? 'border-sky-200 bg-sky-50 text-sky-900'
+            ? 'border-sky-200 bg-sky-50 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
             : unresolved
-              ? 'cursor-pointer border-red-300 bg-red-50 text-red-700 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-1'
+              ? 'cursor-pointer border-red-300 bg-red-50 text-red-700 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-1 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60'
               : 'border-border bg-muted/60 text-muted-foreground',
         )}
         contentEditable={false}

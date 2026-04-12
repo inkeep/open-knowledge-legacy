@@ -6,6 +6,7 @@ import { AgentUndoButton } from '@/presence/AgentUndoButton';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
+import { ThemeToggle } from './ThemeToggle';
 
 interface EditorHeaderProps {
   isSourceMode: boolean;
@@ -34,7 +35,7 @@ export function EditorHeader({ isSourceMode, onSourceModeChange }: EditorHeaderP
         variant="segmented"
         size="sm"
         spacing={1}
-        className="bg-muted p-0.5 rounded-lg shrink-0"
+        className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
         disabled={!activeDocName}
       >
         <ToggleGroupItem value="visual" aria-label="Visual editor" className="gap-1.5 text-xs">
@@ -47,6 +48,7 @@ export function EditorHeader({ isSourceMode, onSourceModeChange }: EditorHeaderP
         </ToggleGroupItem>
       </ToggleGroup>
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
+        <ThemeToggle />
         <PresenceBar />
         <AgentUndoButton />
       </div>
