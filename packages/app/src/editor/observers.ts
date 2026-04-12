@@ -295,7 +295,6 @@ export function setupObservers(deps: ObserverDeps): () => void {
       const md = prependFrontmatter(frontmatter, body);
 
       if (lastSyncedXmlMd === md) {
-        console.log('[Observer A] skip: xml unchanged since last sync');
         return;
       }
 
@@ -316,12 +315,10 @@ export function setupObservers(deps: ObserverDeps): () => void {
       //    Observer A would re-propagate the external content as a "user delta"
       //    on its next firing, duplicating it in Y.Text.
       if (currentText === md) {
-        console.log('[Observer A] skip: text already matches xml');
         lastSyncedXmlMd = md;
         return;
       }
 
-      console.log('[Observer A] sync tree→text');
       doc.transact(() => {
         if (currentText === lastSyncedXmlMd) {
           applyIncrementalDiff(ytext, currentText, md);
@@ -340,7 +337,6 @@ export function setupObservers(deps: ObserverDeps): () => void {
   const observerA = (_events: Y.YEvent<Y.XmlFragment>[], transaction: Y.Transaction) => {
     if (transaction.origin === ORIGIN_TEXT_TO_TREE) return;
     if (!transaction.local) {
-      console.log('[Observer A] remote XmlFragment change — updating baseline, skipping sync');
       // Remote XmlFragment change (server agent write, peer, cross-tab).
       // Server-side writes update Y.Text + XmlFragment together, but peer WYSIWYG edits
       // arrive as tree-only changes first and rely on the remote client's Observer A to
@@ -367,7 +363,6 @@ export function setupObservers(deps: ObserverDeps): () => void {
       }
       return;
     }
-    console.log('[Observer A] local XmlFragment change — scheduling sync');
     if (debounceA) clearTimeout(debounceA);
     debounceA = setTimeout(runObserverASync, DEBOUNCE_MS);
   };
@@ -436,7 +431,6 @@ export function setupObservers(deps: ObserverDeps): () => void {
       const parsedJson = mdManager.parse(body);
       const pmNode = schema.nodeFromJSON(parsedJson);
 
-      console.log('[Observer B] sync text→tree');
       doc.transact(() => {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, xmlFragment, pmNode, meta);

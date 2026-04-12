@@ -368,22 +368,6 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
           });
       };
 
-      // Debug: catch Backspace at the document level to see if it reaches the DOM at all
-      const debugBackspace = (e: KeyboardEvent) => {
-        if (e.key !== 'Backspace') return;
-        const pluginState = wikiLinkSuggestionKey.getState(editor.state) as
-          | WikiLinkSuggestionState
-          | undefined;
-        if (!pluginState?.active) return;
-        console.log('[wiki-suggestion] document Backspace (suggestion active)', {
-          target: (e.target as HTMLElement)?.tagName,
-          targetClass: (e.target as HTMLElement)?.className?.slice(0, 60),
-          targetContentEditable: (e.target as HTMLElement)?.contentEditable,
-          defaultPrevented: e.defaultPrevented,
-        });
-      };
-      document.addEventListener('keydown', debugBackspace, { capture: true });
-
       return {
         update(view: EditorView) {
           const state = wikiLinkSuggestionKey.getState(view.state) as
@@ -505,7 +489,6 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
         },
 
         destroy() {
-          document.removeEventListener('keydown', debugBackspace, { capture: true });
           destroy();
         },
       };
