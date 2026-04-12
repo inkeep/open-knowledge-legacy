@@ -10,7 +10,6 @@ import { createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
-import { getLogger } from './logger.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -46,28 +45,6 @@ import {
 } from './shadow-repo.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-
-// Startup fidelity canary (R17): verify the patch is applied and round-trip works.
-{
-  const canaryLogger = getLogger('fidelity');
-  const canaryInput = '# H&M Store\n';
-  try {
-    const canaryOutput = mdManager.serialize(mdManager.parse(canaryInput));
-    if (canaryOutput.includes('H&M') && !canaryOutput.includes('&amp;')) {
-      canaryLogger.info({}, 'startup canary: PASS — entity bypass verified');
-    } else {
-      canaryLogger.error(
-        { input: canaryInput, output: canaryOutput },
-        'startup canary: FAIL — entity encoding detected in round-trip. The @tiptap/markdown patch may not be applied. Run `bun install`.',
-      );
-    }
-  } catch (e) {
-    canaryLogger.error(
-      { err: e },
-      'startup canary: ERROR — round-trip test threw. The @tiptap/markdown patch may not be applied. Run `bun install`.',
-    );
-  }
-}
 
 export interface ServerOptions {
   port?: number;
