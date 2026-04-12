@@ -140,8 +140,7 @@ export class ProviderPool {
           });
         } catch (err) {
           this.close(docName);
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[ProviderPool] setupObservers init failed for ${docName}: ${msg}`);
+          console.error(`[ProviderPool] setupObservers init failed for ${docName}:`, err);
         }
       }
     };

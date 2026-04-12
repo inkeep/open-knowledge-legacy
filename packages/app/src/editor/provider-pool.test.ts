@@ -285,11 +285,13 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
     // onChange was called at least once (from notify() in the catch)
     expect(onChangeCalls).toBeGreaterThanOrEqual(1);
 
-    // Error was logged via console.error with the expected prefix
+    // Error was logged via console.error with the expected prefix + full error object
     expect(errorSpy).toHaveBeenCalledTimes(1);
-    const loggedMessage = errorSpy.mock.calls[0]?.[0] as string;
-    expect(loggedMessage).toContain('[ProviderPool] setupObservers init failed for doc1:');
-    expect(loggedMessage).toContain('synthetic getXmlFragment failure');
+    const loggedPrefix = errorSpy.mock.calls[0]?.[0] as string;
+    const loggedError = errorSpy.mock.calls[0]?.[1] as Error;
+    expect(loggedPrefix).toContain('[ProviderPool] setupObservers init failed for doc1:');
+    expect(loggedError).toBeInstanceOf(Error);
+    expect(loggedError.message).toContain('synthetic getXmlFragment failure');
   });
 
   test('non-active background doc disconnect triggers debounced destroy without re-open', async () => {
@@ -355,7 +357,7 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
       event: { code: 1006, reason: 'server restart', wasClean: false },
     });
     expect(entry.pendingRecycleTimer).not.toBeNull();
-    const originalTimer = entry.pendingRecycleTimer;
+    const _originalTimer = entry.pendingRecycleTimer;
 
     // Provider reconnects before the debounce fires — onSynced cancels the timer
     entry.provider.emit('synced', { state: true });

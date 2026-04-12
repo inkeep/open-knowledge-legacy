@@ -178,15 +178,21 @@ export function startCommand(getConfig: () => Config): Command {
           'file-watcher': 'External file changes will not sync to the editor',
           'head-watcher': 'Git branch switches may cause document inconsistency',
         };
-        ready.then(() => {
-          if (degraded.length === 0) return;
-          console.log();
-          for (const id of degraded) {
-            const impact = DEGRADED_IMPACTS[id] ?? id;
-            console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
-          }
-          console.log();
-        });
+        ready
+          .then(() => {
+            if (degraded.length === 0) return;
+            console.log();
+            for (const id of degraded) {
+              const impact = DEGRADED_IMPACTS[id] ?? `${id} (check server logs for details)`;
+              console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
+            }
+            console.log();
+          })
+          .catch((err) => {
+            console.error(
+              `  ${error('Server initialization failed:')} ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       });
 
       if (opts.open) {
