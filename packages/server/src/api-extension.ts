@@ -717,8 +717,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           // Clean up expired rescue buffers
           try {
             unlinkSync(filePath);
-          } catch {
-            // ignore cleanup failure
+          } catch (e) {
+            console.debug('[rescue] cleanup failed (non-critical):', e);
           }
           continue;
         }
