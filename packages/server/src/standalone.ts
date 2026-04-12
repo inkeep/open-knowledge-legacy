@@ -337,10 +337,17 @@ export function createServer(options: ServerOptions): ServerInstance {
           if (isDirty && shadowRef.current) {
             const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
             if (rescuePath) {
-              mkdirSync(dirname(rescuePath), { recursive: true });
-              writeFileSync(rescuePath, ours, 'utf-8');
-              incrementRescueBuffer();
-              log.info({ docName }, `[reconcile] rescue buffer saved: ${docName}`);
+              try {
+                mkdirSync(dirname(rescuePath), { recursive: true });
+                writeFileSync(rescuePath, ours, 'utf-8');
+                incrementRescueBuffer();
+                log.info({ docName }, `[reconcile] rescue buffer saved: ${docName}`);
+              } catch (e) {
+                log.error(
+                  { docName, err: e },
+                  `[reconcile] rescue buffer write failed: ${docName}`,
+                );
+              }
             }
           }
 
@@ -782,13 +789,20 @@ export function createServer(options: ServerOptions): ServerInstance {
                   if (isDirty && shadowRef.current) {
                     const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
                     if (rescuePath) {
-                      mkdirSync(dirname(rescuePath), { recursive: true });
-                      writeFileSync(rescuePath, ours, 'utf-8');
-                      incrementRescueBuffer();
-                      log.info(
-                        { docName },
-                        `[reconcile] rescue buffer saved on branch switch: ${docName}`,
-                      );
+                      try {
+                        mkdirSync(dirname(rescuePath), { recursive: true });
+                        writeFileSync(rescuePath, ours, 'utf-8');
+                        incrementRescueBuffer();
+                        log.info(
+                          { docName },
+                          `[reconcile] rescue buffer saved on branch switch: ${docName}`,
+                        );
+                      } catch (e) {
+                        log.error(
+                          { docName, err: e },
+                          `[reconcile] rescue buffer write failed: ${docName}`,
+                        );
+                      }
                     }
                   }
 
