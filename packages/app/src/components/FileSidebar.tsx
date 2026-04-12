@@ -59,13 +59,17 @@ const FileTreeNode: FC<{
         </ButtonToUse>
       ) : (
         <div>
-          <ButtonToUse className="w-full pr-8">{content}</ButtonToUse>
+          <ButtonToUse
+            className="w-full cursor-pointer pr-8"
+            aria-expanded={!collapsed}
+            onClick={() => setCollapsed((v) => !v)}
+          >
+            {content}
+          </ButtonToUse>
           <SidebarMenuAction
-            className={cn('top-1', !collapsed && 'rotate-90')}
-            onClick={(e) => {
-              e.preventDefault();
-              setCollapsed((v) => !v);
-            }}
+            className={cn('top-1 pointer-events-none', !collapsed && 'rotate-90')}
+            aria-hidden
+            tabIndex={-1}
           >
             <ChevronRight className="size-4" />
           </SidebarMenuAction>
