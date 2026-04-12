@@ -18,43 +18,35 @@ export function EditorHeader({ isSourceMode, onSourceModeChange }: EditorHeaderP
   const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
 
   return (
-    <header className="relative flex h-12 shrink-0 items-center border-b">
-      <div className="flex items-center gap-1 px-3">
-        <SidebarTrigger className="-ml-1" />
-        <Separator orientation="vertical" className="mr-1 h-4 data-vertical:self-center" />
-        <span className="font-mono text-sm text-muted-foreground">{displayName}</span>
+    <header className="flex h-12 shrink-0 items-center border-b">
+      <div className="flex flex-1 items-center gap-1 px-3 min-w-0">
+        <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
+        <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
+        <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
       </div>
-      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <div className="pointer-events-auto">
-          <ToggleGroup
-            type="single"
-            value={isSourceMode ? 'source' : 'visual'}
-            onValueChange={(v) => {
-              if (v) onSourceModeChange(v === 'source');
-            }}
-            aria-label="Editor mode"
-            variant="segmented"
-            size="sm"
-            spacing={1}
-            className="bg-muted p-0.5 rounded-lg"
-            disabled={!activeDocName}
-          >
-            <ToggleGroupItem value="visual" aria-label="Visual editor" className="gap-1.5 text-xs">
-              <Textbox className="size-4 text-muted-foreground" />
-              Visual
-            </ToggleGroupItem>
-            <ToggleGroupItem
-              value="source"
-              aria-label="Markdown source"
-              className="gap-1.5 text-xs"
-            >
-              <Markdown className="size-4 text-muted-foreground" />
-              Markdown
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-      </div>
-      <div className="ml-auto flex items-center gap-2 px-3">
+      <ToggleGroup
+        type="single"
+        value={isSourceMode ? 'source' : 'visual'}
+        onValueChange={(v) => {
+          if (v) onSourceModeChange(v === 'source');
+        }}
+        aria-label="Editor mode"
+        variant="segmented"
+        size="sm"
+        spacing={1}
+        className="bg-muted p-0.5 rounded-lg shrink-0"
+        disabled={!activeDocName}
+      >
+        <ToggleGroupItem value="visual" aria-label="Visual editor" className="gap-1.5 text-xs">
+          <Textbox className="size-4 text-muted-foreground" />
+          Visual
+        </ToggleGroupItem>
+        <ToggleGroupItem value="source" aria-label="Markdown source" className="gap-1.5 text-xs">
+          <Markdown className="size-4 text-muted-foreground" />
+          Markdown
+        </ToggleGroupItem>
+      </ToggleGroup>
+      <div className="flex flex-1 items-center justify-end gap-2 px-3">
         <PresenceBar />
         <AgentUndoButton />
       </div>
