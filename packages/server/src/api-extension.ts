@@ -73,6 +73,39 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+/**
+ * Handle syncTextToFragment failure after an undo/redo CRDT operation by
+ * attempting compensation (reverse the operation) and responding with a
+ * structured error. Shared between the undo and redo handlers so the
+ * compensation protocol stays in sync.
+ */
+function handleCompensationError(
+  res: ServerResponse,
+  syncErr: unknown,
+  compensateFn: () => void,
+  label: string,
+): void {
+  let compensationFailed = false;
+  try {
+    compensateFn();
+  } catch (compensateErr) {
+    compensationFailed = true;
+    console.error(`[${label}] Compensation also failed:`, compensateErr);
+  }
+  console.error(`[${label}]`, syncErr);
+  json(res, 500, {
+    ok: false,
+    error: `Sync failed after ${label.replace('agent-', '')}`,
+    compensationFailed,
+    ...(compensationFailed
+      ? {
+          warning:
+            'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
+        }
+      : {}),
+  });
+}
+
 function json(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, {
     'Content-Type': 'application/json',
@@ -186,8 +219,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       console.error('[agent-write]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -267,8 +299,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       console.error('[agent-write-md]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -286,8 +317,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, docName, content });
     } catch (e) {
       console.error('[document-read]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -306,7 +336,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         try {
           safeSubdir(contentDir, dir);
         } catch {
-          json(res, 400, { ok: false, error: `Invalid directory: ${dir}` });
+          json(res, 400, { ok: false, error: 'Invalid directory parameter' });
           return;
         }
       }
@@ -330,8 +360,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, documents });
     } catch (e) {
       console.error('[document-list]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -407,8 +436,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       console.error('[agent-patch]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -433,8 +461,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[agent-undo-status]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -471,39 +498,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
-        // Compensate: restore pre-undo state so bridge invariant holds.
-        // Track compensation success explicitly — if both the sync AND the
-        // compensation fail, the Y.Doc is in an inconsistent state and the
-        // caller needs a distinct signal so they can surface a corruption
-        // warning to the user instead of silently retrying.
-        let compensationFailed = false;
-        try {
-          um.redo();
-        } catch (compensateErr) {
-          compensationFailed = true;
-          console.error('[agent-undo] Compensation also failed:', compensateErr);
-        }
-        const message = syncErr instanceof Error ? syncErr.message : String(syncErr);
-        console.error('[agent-undo]', syncErr);
-        json(res, 500, {
-          ok: false,
-          error: message,
-          compensationFailed,
-          ...(compensationFailed
-            ? {
-                warning:
-                  'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
-              }
-            : {}),
-        });
+        handleCompensationError(res, syncErr, () => um.redo(), 'agent-undo');
         return;
       }
       console.log('[agent-undo] Undo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
       console.error('[agent-undo]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -540,38 +542,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
-        // Compensate: restore pre-redo state so bridge invariant holds.
-        // Track compensation success explicitly — see agent-undo handler for
-        // the full rationale. Callers receiving compensationFailed=true must
-        // surface a corruption warning rather than silently retrying.
-        let compensationFailed = false;
-        try {
-          um.undo();
-        } catch (compensateErr) {
-          compensationFailed = true;
-          console.error('[agent-redo] Compensation also failed:', compensateErr);
-        }
-        const message = syncErr instanceof Error ? syncErr.message : String(syncErr);
-        console.error('[agent-redo]', syncErr);
-        json(res, 500, {
-          ok: false,
-          error: message,
-          compensationFailed,
-          ...(compensationFailed
-            ? {
-                warning:
-                  'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
-              }
-            : {}),
-        });
+        handleCompensationError(res, syncErr, () => um.undo(), 'agent-redo');
         return;
       }
       console.log('[agent-redo] Redo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
     } catch (e) {
       console.error('[agent-redo]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -622,8 +600,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -690,8 +667,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
     } catch (e) {
       console.error('[save-version]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { ok: false, error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
