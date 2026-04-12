@@ -7,11 +7,10 @@ export {
   hasNewEntries,
 } from './constants/activity.ts';
 
-// Extensions — Tier 2 fidelity overrides
+// Extensions
 export { BulletListFidelity } from './extensions/bullet-list-fidelity.ts';
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { BoldFidelity, ItalicFidelity } from './extensions/emphasis-fidelity.ts';
-// Extensions
 export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
 export { HardBreakFidelity } from './extensions/hard-break-fidelity.ts';
 export { HeadingFidelity } from './extensions/heading-fidelity.ts';

@@ -15,7 +15,7 @@
 import { expect, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
-const BASE = `http://localhost:${port}`;
+const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
 
 /** Wait for the active provider to be connected and synced */
 async function waitForProvider(page: import('@playwright/test').Page) {
@@ -72,46 +72,52 @@ test.describe('V1 paste baseline — text/plain content through WYSIWYG', () => 
 
   test('plain text paste survives round-trip', async ({ page }) => {
     await pasteText(page, 'Hello world');
-    await page.waitForTimeout(500);
-    const content = await getYText(page);
-    expect(content).toContain('Hello world');
+    await expect(async () => {
+      const content = await getYText(page);
+      expect(content).toContain('Hello world');
+    }).toPass({ timeout: 5_000 });
   });
 
   test('markdown with heading paste', async ({ page }) => {
     await pasteText(page, '# Pasted Heading');
-    await page.waitForTimeout(500);
-    const content = await getYText(page);
     // With always-parse (R18), heading should be parsed as structured content
-    expect(content).toContain('Pasted Heading');
+    await expect(async () => {
+      const content = await getYText(page);
+      expect(content).toContain('Pasted Heading');
+    }).toPass({ timeout: 5_000 });
   });
 
   test('markdown with emphasis paste', async ({ page }) => {
     await pasteText(page, 'This is **bold** and *italic* text');
-    await page.waitForTimeout(500);
-    const content = await getYText(page);
-    expect(content).toContain('bold');
-    expect(content).toContain('italic');
+    await expect(async () => {
+      const content = await getYText(page);
+      expect(content).toContain('bold');
+      expect(content).toContain('italic');
+    }).toPass({ timeout: 5_000 });
   });
 
   test('markdown with code block paste', async ({ page }) => {
     await pasteText(page, '```js\nconst x = 1;\n```');
-    await page.waitForTimeout(500);
-    const content = await getYText(page);
-    expect(content).toContain('const x = 1');
+    await expect(async () => {
+      const content = await getYText(page);
+      expect(content).toContain('const x = 1');
+    }).toPass({ timeout: 5_000 });
   });
 
   test('markdown with link paste', async ({ page }) => {
     await pasteText(page, 'Visit [example](https://example.com) for more');
-    await page.waitForTimeout(500);
-    const content = await getYText(page);
-    expect(content).toContain('example');
+    await expect(async () => {
+      const content = await getYText(page);
+      expect(content).toContain('example');
+    }).toPass({ timeout: 5_000 });
   });
 
   test('markdown with list paste', async ({ page }) => {
     await pasteText(page, '- Item 1\n- Item 2\n- Item 3');
-    await page.waitForTimeout(500);
-    const content = await getYText(page);
-    expect(content).toContain('Item 1');
-    expect(content).toContain('Item 2');
+    await expect(async () => {
+      const content = await getYText(page);
+      expect(content).toContain('Item 1');
+      expect(content).toContain('Item 2');
+    }).toPass({ timeout: 5_000 });
   });
 });

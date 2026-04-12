@@ -15,18 +15,10 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import * as fc from 'fast-check';
 import * as Y from 'yjs';
 import { block, heading, paragraph, paragraphWithFidelityChars } from './arbitraries';
-import { NUM_RUNS } from './helpers';
+import { NUM_RUNS, normalize } from './helpers';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-function normalize(s: string): string {
-  return s
-    .split('\n')
-    .map((l) => l.trimEnd())
-    .join('\n')
-    .replace(/\n+$/, '');
-}
 
 /** Path 1: md → parse → serialize (mdManager only). */
 function pathMdManager(md: string): string {
