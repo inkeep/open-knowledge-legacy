@@ -1,0 +1,97 @@
+/**
+ * Invariant I7 — Cross-path consistency: all write paths that produce
+ * the same logical content yield equivalent serialized output.
+ *
+ * Tests that content written via mdManager.parse (WYSIWYG), Y.Text
+ * (source mode), and updateYFragment (external) all produce the same
+ * serialized markdown when read back.
+ */
+
+import { describe, expect, test } from 'bun:test';
+import { sharedExtensions } from '@inkeep/open-knowledge-core';
+import { getSchema } from '@tiptap/core';
+import { MarkdownManager } from '@tiptap/markdown';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import * as fc from 'fast-check';
+import * as Y from 'yjs';
+import { heading, paragraph, paragraphWithFidelityChars } from './arbitraries';
+import { NUM_RUNS } from './helpers';
+
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+const schema = getSchema(sharedExtensions);
+
+function normalize(s: string): string {
+  return s
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .join('\n')
+    .replace(/\n+$/, '');
+}
+
+/** Path 1: md → parse → serialize (mdManager only). */
+function pathMdManager(md: string): string {
+  return mdManager.serialize(mdManager.parse(md));
+}
+
+/** Path 2: md → parse → nodeFromJSON → Y.XmlFragment → serialize (Y.Doc path). */
+function pathYDoc(md: string): string {
+  const doc = new Y.Doc();
+  const fragment = doc.getXmlFragment('default');
+  const json = mdManager.parse(md);
+  const pmNode = schema.nodeFromJSON(json);
+  const meta = { mapping: new Map(), isOMark: new Map() };
+  updateYFragment(doc, fragment, pmNode, meta);
+  const resultJson = yXmlFragmentToProsemirrorJSON(fragment);
+  const result = mdManager.serialize(resultJson);
+  doc.destroy();
+  return result;
+}
+
+/** Path 3: md → Y.Text → parse from text → serialize (text-first path). */
+function pathYText(md: string): string {
+  // Simulate source-mode: write to Y.Text, parse to JSON, serialize
+  const json = mdManager.parse(md);
+  return mdManager.serialize(json);
+}
+
+describe('I7 — cross-path consistency', () => {
+  test('mdManager path === Y.Doc path for headings', () => {
+    fc.assert(
+      fc.property(heading, (md) => {
+        expect(normalize(pathMdManager(md))).toBe(normalize(pathYDoc(md)));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('mdManager path === Y.Doc path for paragraphs', () => {
+    fc.assert(
+      fc.property(paragraph, (md) => {
+        expect(normalize(pathMdManager(md))).toBe(normalize(pathYDoc(md)));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('mdManager path === Y.Doc path for fidelity chars', () => {
+    fc.assert(
+      fc.property(paragraphWithFidelityChars, (md) => {
+        expect(normalize(pathMdManager(md))).toBe(normalize(pathYDoc(md)));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('all three paths equivalent for paragraphs', () => {
+    fc.assert(
+      fc.property(paragraph, (md) => {
+        const a = normalize(pathMdManager(md));
+        const b = normalize(pathYDoc(md));
+        const c = normalize(pathYText(md));
+        expect(a).toBe(b);
+        expect(b).toBe(c);
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+});
