@@ -280,6 +280,14 @@ async function flushAllStoresAndWait(timeoutMs: number): Promise<void> {
   hocuspocus.closeConnections();   // force-close clients so docs can unload
   hocuspocus.flushPendingStores(); // trigger the debouncer.executeNow chain
 
+  // NOTE: The timeout rejection is NOT caught inside the helper. It propagates
+  // out to destroy()'s Phase 3 try/catch wrapper, where it gets captured in
+  // the phaseErrors array as { phase: 'flush-all-stores', error: ... } and
+  // emitted via the warn-level shutdown log (D14). An earlier draft of this
+  // helper had an internal `.catch((err) => log.error(...))` but that swallowed
+  // the error before Phase 3 could see it — breaking the behavioral contract
+  // that Test 3 (D12) asserts (warn log's phaseErrors containing flush-all-stores).
+  // Test-driven discovery during US-007 implementation corrected this.
   await Promise.race([
     allDone,
     new Promise<void>((_, reject) =>
@@ -288,18 +296,17 @@ async function flushAllStoresAndWait(timeoutMs: number): Promise<void> {
         reject(new Error(`flushAllStoresAndWait timeout after ${timeoutMs}ms`));
       }, timeoutMs),
     ),
-  ]).catch((err) => {
-    log.error({ err, timeoutMs }, 'shutdown flush timed out');
-  });
+  ]);
 }
 ```
 
-Simplifications from the earlier draft (per audit pass 2026-04-11):
+Simplifications from the earlier draft (per audit + ship pass 2026-04-11/12):
 - Removed the redundant `docNames = Array.from(...)` snapshot — `hocuspocus.documents.size === 0` is the equivalent check.
 - Removed the inline race-guard check inside the Promise executor — the top-level early-exit serves the same purpose, and the two were back-to-back synchronous code (no race window between them in Node's single-threaded model).
 - Added the `resolved` flag to cleanly handle the orphaned-hook-on-timeout case — the hook stays on `configuration.extensions` (cleanup would require more state tracking to splice it out), but `resolved` ensures it becomes a no-op once the timeout wins.
 - **Timeout parameterized** (per D11 revision) via `destroyTimeoutMs` — default 10_000 matches the old hardcoded value for production, tests override to 500ms to avoid 10s+ CI wall-clock.
-- **Error logs via `getLogger('server')`** (per D14 / Q2 synthesis) rather than `console.error` — consistent with the rest of the server package's pino-based logging (`standalone.ts:432`, `persistence.ts`, `api-extension.ts`). Zero new dependencies.
+- **Error logs via `getLogger('server')`** (per D14 / Q2 synthesis) rather than `console.error` — consistent with the rest of the server package's pino-based logging. Zero new dependencies.
+- **No internal `.catch()`** on the Promise.race (ship-pass correction, 2026-04-12). Earlier spec drafts included `.catch((err) => log.error('shutdown flush timed out'))` inside the helper, but this swallowed the timeout error before Phase 3's try/catch in `destroy()` could capture it in `phaseErrors`. The warn-level shutdown log (D14) must report `phase: 'flush-all-stores'` on timeout — that's the Test 3 behavioral contract. Letting the error propagate out of the helper achieves this correctly. The timeout is still logged — just once, by Phase 3's wrapper, via the structured shutdown-log mechanism rather than a separate error line.
 
 **Why the one-shot extension hook works.** Hocuspocus's internal store path is:
 ```
@@ -315,11 +322,11 @@ This mirrors the exact pattern used by `@hocuspocus/server`'s own `Server.destro
 
 **The 10-second timeout** guards against `onStoreDocument` throwing or hanging. Per `Hocuspocus.ts:486-490`, a store failure leaves the document in memory ("Document stays in memory to avoid data loss") — so without the timeout, `allDone` would never resolve and `destroy()` would hang forever. With it, we trade perfect correctness under pathology for bounded latency under success. Worth it.
 
-### 8.2 Reordered `destroy()` phases (per D9, D10-revised, D11-revised, D14)
+### 8.2 Reordered `destroy()` phases (per D9, D10-revised-twice, D11-revised, D14)
 
 Replace `standalone.ts:399-424` with the following. Note:
 - **D9 — Cached-Promise idempotency guard** wrapping the full teardown.
-- **D10 (REVISED)** — per-phase `try/catch` on Phases **1, 3, 4** with log-and-continue. Phase 2 is NOT wrapped here because `sessionManager.closeAll()` already has per-session `try/catch` internally at `agent-sessions.ts:168-177` (verified via /explore — any destroy-level wrap would be redundant dead code). Phase 5 stays in the outer `finally`.
+- **D10 (REVISED TWICE)** — per-phase `try/catch` on Phases **1, 2, 3, 4** with log-and-continue. Originally D10 wrapped only Phase 5; then `/gtm:analyze` expanded to Phases 1, 3, 4 (leaving Phase 2 unwrapped because `sessionManager.closeAll()` has intrinsic per-session protection at `agent-sessions.ts:168-177`); finally the post-QA review (Phase 8 of ship) correctly pointed out that `closeAll()` itself can still throw from non-session causes (iterator errors, future refactors) — so completing D10's best-effort-drain philosophy means wrapping Phase 2 too, with its own `phase: 'agent-session-drain'` entry on `phaseErrors`. The per-session try/catch inside `closeAll()` handles session-level errors; the destroy-level try/catch handles method-level throws. Both are needed for true end-to-end best-effort. Phase 5 stays in the outer `finally`.
 - **D11 (REVISED)** — flush timeout is now parameterized via `destroyTimeoutMs` option (default 10_000).
 - **D14 (NEW)** — structured success/error log at the end of `destroy()` via `getLogger('server')`, making the shutdown path observable and providing a behavioral contract for the regression test.
 
@@ -333,12 +340,18 @@ async function destroy(): Promise<void> {
     // D14: observability — capture start time and track what succeeded.
     // Enables the structured shutdown log and gives tests a behavioral contract.
     const t0 = Date.now();
-    const flushedCountBefore = hocuspocus.documents.size;
     const phaseErrors: Array<{ phase: string; error: string }> = [];
 
     // Wait for async init to complete before cleanup — prevents leaked watcher
     // subscriptions if destroy() is called during startup (e.g., Ctrl+C)
     await ready.catch(() => {});
+
+    // Capture document count AFTER await ready so it reflects documents
+    // loaded during async init (shadow repo init, file watcher scan).
+    // (Ship-pass correction 2026-04-12: the earlier draft captured this
+    // before ready, which under-reported flushedCount in the destroy-during-init
+    // edge case exercised by Test 5.)
+    const flushedCountBefore = hocuspocus.documents.size;
 
     try {
       // Phase 1: stop watchers FIRST so L1 disk writes don't trigger reconcile
@@ -362,19 +375,31 @@ async function destroy(): Promise<void> {
         log.error({ err }, 'shutdown phase-1 watcher unsubscribe failed');
       }
 
-      // Phase 2: drain agent sessions. Per-session try/catch is intrinsic to
-      //          sessionManager.closeAll() at agent-sessions.ts:168-177 — any
-      //          destroy-level wrap would be redundant. We surface the error
-      //          count via the log summary but don't double-catch.
-      await sessionManager.closeAll();
+      // Phase 2: drain agent sessions. sessionManager.closeAll() at
+      //          agent-sessions.ts:168-177 has a per-session try/catch that
+      //          handles session-level failures (one bad session doesn't stop
+      //          the others). The destroy-level wrap here handles method-level
+      //          throws that bypass that inner protection — iterator errors,
+      //          future refactors that throw before the loop, etc. Without
+      //          this wrap, a throw from closeAll() would skip Phases 3-5,
+      //          losing the L1 drain. (Ship-pass correction 2026-04-12.)
+      try {
+        await sessionManager.closeAll();
+      } catch (err) {
+        phaseErrors.push({
+          phase: 'agent-session-drain',
+          error: err instanceof Error ? err.message : String(err),
+        });
+        log.error({ err }, 'shutdown phase-2 agent session drain failed');
+      }
 
       // Phase 3: drain L1 (Y.Doc → markdown → disk) — awaitable via the one-shot
       //          afterUnloadDocument hook. D10: try/catch on the external
-      //          boundary (closeConnections + flush timeout + onStoreDocument
-      //          errors are all possible). flushAllStoresAndWait() already
-      //          catches its own Promise.race timeout — this guard is for
-      //          errors that escape the helper (e.g., closeConnections() throws
-      //          before flushPendingStores even fires).
+      //          boundary. flushAllStoresAndWait() intentionally does NOT catch
+      //          its own timeout — the timeout Error propagates out of the
+      //          helper and is captured here as { phase: 'flush-all-stores' },
+      //          which Test 3 (D12) asserts on. See §8.1 helper comment for
+      //          why the `.catch()` was removed from the helper.
       try {
         await flushAllStoresAndWait(destroyTimeoutMs);
       } catch (err) {
@@ -446,7 +471,7 @@ async function destroy(): Promise<void> {
 }
 ```
 
-**Why Phase 2 is NOT wrapped at the destroy() level.** `sessionManager.closeAll()` at `agent-sessions.ts:168-177` already iterates sessions with a per-session `try { await this.closeSession(docName); } catch (err) { console.error(...) }`. Adding a destroy-level wrap would be dead code — the inner method never re-throws from its own catch. Session-level failures are logged by `agent-sessions.ts` directly and do not contribute to `phaseErrors` in the summary (intentional — the summary focuses on phase-level outcomes, not per-item within a phase).
+**Why Phase 2 IS wrapped at the destroy() level (post-QA review correction, 2026-04-12).** `sessionManager.closeAll()` at `agent-sessions.ts:168-177` already iterates sessions with a per-session `try/catch`, which handles session-level errors (one bad session doesn't stop the others). But `closeAll()` itself can still throw — for instance, if the session-iteration setup throws, or if a future refactor of `AgentSessionManager` introduces a throw outside the per-session loop. Wrapping `await sessionManager.closeAll()` in the destroy-level try/catch closes that second-order gap and ensures Phases 3–5 still run even in that case. Session-level failures are logged by `agent-sessions.ts` directly via its own `console.error` path and do NOT contribute to `phaseErrors` (intentional — per-item failures inside a phase are logged at their own layer; the destroy-level summary tracks phase-level outcomes). Only method-level throws from `closeAll()` itself get captured as `{phase: 'agent-session-drain'}` in `phaseErrors`.
 
 **Phase ordering dependency note.** Even with per-phase `try/catch`, the order still matters:
 - Phase 1 before Phase 3: stopping watchers first prevents L1 disk writes from triggering reconcile loops during the drain.
@@ -754,7 +779,7 @@ function spyOnLogger(loggerName: string): {
 | D7 | LOCKED | Technical | No changes to `packages/cli/src/commands/start.ts`. The SIGINT handler already awaits `destroy()`; fix is transparent. | §8.4. | HIGH | Reversible. |
 | D8 | LOCKED | Technical | No telemetry for historical blast radius (per D9 of desktop spec). We accept we won't know how often the bug fired in production. | NG4. | HIGH | 1-way door — we can't retroactively gather signal. |
 | D9 | LOCKED | Technical | **Idempotency guard for `destroy()` uses a cached Promise pattern.** Add `let inflightDestroy: Promise<void> \| null = null;` at `createServer()` scope. On entry to `destroy()`: if `inflightDestroy` is non-null, `return inflightDestroy`. Otherwise, wrap the full teardown in `inflightDestroy = (async () => { ... })()` and return it. Concurrent callers await the same promise — no duplicate `afterUnloadDocument` push, no double `destroyShadowRepo()`. Resolves OQ-04. | §8.1 / §8.2 code updated at implementation. | HIGH — motivated by verified CLI SIGINT + SIGTERM dual-binding at `packages/cli/src/commands/start.ts:56-57` per A7 / [Evidence Finding 5](./evidence/destroy-investigation-findings.md). | Reversible — can simplify to a boolean flag if the Promise pattern proves unnecessary. |
-| D10 | **REVISED 2026-04-11 → LOCKED** | Technical | **Per-phase `try/catch` on Phases 1, 3, 4 with log-and-continue; Phase 2 uses its intrinsic per-session protection; Phase 5 in outer `finally`.** Original D10 wrapped only Phase 5. Analysis pass via `/gtm:analyze` + three parallel `/explore` subagents found that Phase 3 (`hocuspocus.closeConnections()` + 10s timeout + `onStoreDocument` errors) and especially Phase 4 (`flushPendingGitCommit` / `waitForPendingCommits` — git subprocess timeout, disk full, stale `.git` refs, missing binary) have **high-frequency real-world throw modes**, not theoretical edge cases. Without per-phase `try/catch`, a Phase 4 git failure aborts `destroy()` before any subsequent cleanup. Phase 1 throws (~0.1%) are rare but gate Phases 3-4 — 6 lines of guard is cheap insurance. Phase 2 (`sessionManager.closeAll()`) at `agent-sessions.ts:168-177` **already has per-session `try/catch` with log-and-continue** — adding a destroy-level wrap would be redundant dead code. Resolves OQ-06 with refined scope. | §8.2 code updated — three explicit `try/catch` wrappers (Phases 1, 3, 4) feeding `phaseErrors` array consumed by the D14 shutdown log. | **HIGH — evidence-grounded** via explore findings on per-phase throw frequency. | Reversible — small shape change; error semantics change from "throw on first failure" to "log-and-continue, report via summary." |
+| D10 | **REVISED TWICE 2026-04-11 → 2026-04-12 → LOCKED** | Technical | **Per-phase `try/catch` on Phases 1, 2, 3, 4 with log-and-continue; Phase 5 in outer `finally`.** Three rounds of refinement: (1) Original D10 wrapped only Phase 5. (2) `/gtm:analyze` + three parallel `/explore` subagents (2026-04-11) found Phases 3+4 have high-frequency real-world throw modes (git subprocess timeout, disk full, stale `.git` refs) and Phase 1 gates them — so expanded to Phases 1, 3, 4. Left Phase 2 unwrapped on the reasoning that `sessionManager.closeAll()`'s per-session `try/catch` at `agent-sessions.ts:168-177` was intrinsic protection. (3) Post-QA review during `/ship` (2026-04-12) correctly caught that the per-session `try/catch` handles session-level errors but `closeAll()` itself can still throw from method-level causes (iterator failures, future refactors) — so completing the best-effort-drain philosophy means wrapping Phase 2 too. Final shape: **all four drain phases wrapped with log-and-continue, Phase 5 in outer finally**. Resolves OQ-06 with fully refined scope. | §8.2 code updated — four explicit `try/catch` wrappers (Phases 1, 2, 3, 4) feeding `phaseErrors` array consumed by the D14 shutdown log. | **HIGH — evidence-grounded** via explore findings + post-QA review. | Reversible — small shape change; error semantics change from "throw on first failure" to "log-and-continue, report via summary." |
 | D11 | **REVISED 2026-04-11 → LOCKED** | Technical + API | **10-second flush timeout is the default, but configurable via `ServerOptions.destroyTimeoutMs`.** Original D11 hardcoded 10s. Analysis pass found two reasons to expose it as a `ServerOption`: (1) **test ergonomics** — Test 3 (failing `onStoreDocument` → timeout path) currently waits 10s+ in CI; passing `destroyTimeoutMs: 500` reclaims ~10s of CI wall-time per run. (2) **Production safety valve** — a CLI user on slow NFS or remote disk could have legitimate L1 writes taking >10s, which the hardcoded ceiling silently truncates. Existing test harness at `test-harness.ts:67-74` already overrides `debounce: 200, maxDebounce: 1000` — `destroyTimeoutMs` fits the same pattern. `ServerOptions` is internal-only (`packages/cli/src/commands/start.ts` + test harness are the only callers, confirmed via grep) — adding a 16th → 17th field is zero public API risk. Resolves OQ-07 with expanded scope. | §8.0.1 adds the field; §8.1 receives it as a helper parameter; §8.3 Test 3 passes `500`. | **HIGH — evidence-grounded** via explore of existing ServerOptions timing-field conventions. | Reversible — removing the field later is a 1-line breaking change, but only affects 2 internal callers. |
 | D12 | **REVISED 2026-04-11 → LOCKED** | Technical | **Regression test suite has 7 cases, with two implementation refinements per analysis pass:** (1) rapid write + destroy asserts file content **AND asserts shutdown log was emitted** (log becomes behavioral contract for the flush path, closes regression where a future refactor could make destroy() silently skip the drain logic while file content still reaches disk via natural debounce), (2) L2 git commit after L1 drain, (3) failing onStoreDocument timeout — **uses `destroyTimeoutMs: 500`** to assert timeout within ~1s instead of 10+ seconds, reclaiming CI wall-time per the D11 revision, (4) idempotency under concurrent destroy() calls, (5) destroy() during async-init (before `ready` resolves), (6) destroy() with zero documents loaded, (7) multi-document drain — open 3 `DirectConnection`s to different doc names, write to each, call destroy(), assert all three files exist on disk. Test 7 closes an off-by-one regression path on `getDocumentsCount() === 0`. Resolves OQ-08. | §8.3 test file — Test 1 gets stdout/pino-spy assertion for the shutdown log; Test 3 passes `destroyTimeoutMs: 500`. | **HIGH — evidence-grounded** refinements. Test 7 added per audit pass design-challenge Medium finding 2; log assertion + timeout override added per analysis pass cascade. | Reversible — test cases or assertion granularity can be tuned. |
 | D13 | LOCKED | Technical | **Use the bare `Hocuspocus` class, not the `@hocuspocus/server` `Server` wrapper — OK can't reach `Server.destroy()` structurally.** `Server` owns its own `httpServer` (`Server.ts:57`), its own `crossws` WebSocket adapter with hardcoded `open`/`message`/`close`/`error` hooks (`Server.ts:58-83`), binds SIGINT/SIGQUIT/SIGTERM unconditionally unless `stopOnSignals: false` (`Server.ts:150-159`), and expects to own `listen()` via `this.httpServer.listen()` (`Server.ts:162`). OK's CLI (`packages/cli/src/commands/start.ts:77-99`) needs a **shared** HTTP server for `/api/*` + `sirv` static asset serving + `/collab`-only WebSocket upgrade (ignoring non-`/collab` upgrades so Vite HMR can coexist on the same port in dev), **its own** `WebSocketServer({ noServer: true })` instance, and **control** over signal handlers (owns SIGINT/SIGTERM + `process.exit(0)`). Migrating to `Server` would require either (a) forking `Server.ts` (violates G5 + NG1) or (b) a non-trivial refactor adopting Hocuspocus's `crossws`-based WebSocket path, which affects the Vite dev plugin and re-opens "who owns the HTTP server." **Rejected: switch to `Server.destroy()`. Chosen: write our own `destroy()` helper that mirrors `Server.destroy()`'s internal pattern using the same public `afterUnloadDocument` hook.** | §8.1 code comment cites `Server.ts:200-225` as the template. | **HIGH — primary-source verified** via direct read of `Server.ts` during audit pass. | 1-way door for this spec — would only change if OK's HTTP/WebSocket/signal architecture is restructured separately. |
@@ -859,7 +884,7 @@ function spyOnLogger(loggerName: string): {
 
 - **`packages/cli/src/commands/start.ts`** — SIGINT handler and `await destroy()` call site are correct as-is. Fix is transparent per D7. Do NOT modify.
 - **`packages/server/src/persistence.ts`** — `flushPendingGitCommit`, `waitForPendingCommits`, `onStoreDocument` stay unchanged. Do NOT refactor.
-- **`packages/server/src/agent-sessions.ts`** — `closeAll()` has intrinsic per-session protection. Do NOT add destroy-level wrapper on top of it.
+- **`packages/server/src/agent-sessions.ts`** — `closeAll()` has intrinsic per-session protection. Do NOT modify this file. Note: per D10's 2026-04-12 revision, Phase 2 IS wrapped at the destroy() level for method-level throw coverage — this does NOT require touching `agent-sessions.ts` itself, only the destroy() call site in `standalone.ts`.
 - **`packages/server/src/file-watcher.ts`** — watcher / head-watcher code unchanged. Do NOT touch the `AsyncSubscription` interface or `unsubscribe` implementation.
 - **`packages/server/src/shadow-repo.ts`** — `destroyShadowRepo`, `shadowGit`, `initShadowRepo` stay unchanged. Do NOT modify.
 - **`packages/app/src/editor/provider-pool.ts`** — client-side drain barrier is owned by the [electron-desktop-app spec §8.4.1 / D19](../2026-04-11-electron-desktop-app/SPEC.md). Do NOT add `flushAllProviders()` here.

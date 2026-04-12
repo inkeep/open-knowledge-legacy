@@ -113,3 +113,22 @@ Append-only record of process events.
   - D11 10s timeout value (default) — legitimate L1 stores are 100-500ms; 10s is pathology-only.
   - R7 "ship before desktop" gating direction — not reversible via inline desktop fix.
   - SCR framing — both complication and resolution are tightly coupled; neither manufactured.
+
+## 2026-04-12 — Post-ship spec refinement (during /eng:ship run)
+
+During the `/eng:ship` workflow's iteration + review loops, two legitimate spec deviations surfaced. Both were architectural improvements over the spec's original text. This entry records the updates made to §8.1, §8.2, D10, and §15 so the spec matches the implemented shape.
+
+- **§8.1 `.catch()` removal.** Earlier spec had an internal `.catch((err) => log.error('shutdown flush timed out'))` inside `flushAllStoresAndWait()`'s Promise.race. Test-driven discovery during US-007 implementation showed this swallowed the timeout error before Phase 3's try/catch in `destroy()` could capture it in `phaseErrors[]`, breaking Test 3's behavioral contract (which asserts the warn log's `phaseErrors` contains a `phase: 'flush-all-stores'` entry). The `.catch()` is now removed from the helper; the timeout error propagates out and is captured by Phase 3's wrapper. The spec now documents this inline.
+- **§8.2 Phase 2 try/catch addition.** Earlier spec explicitly said Phase 2 (`sessionManager.closeAll()`) should NOT be wrapped at the destroy() level because `agent-sessions.ts:168-177` has intrinsic per-session try/catch. Post-QA review in Phase 8 of ship correctly identified that this handles session-level errors but `closeAll()` itself can still throw from method-level causes (iterator failures, future refactors). Wrapping Phase 2 at the destroy() level completes D10's best-effort-drain philosophy across all four phases. The spec now shows `try { await sessionManager.closeAll(); } catch { phaseErrors.push({phase: 'agent-session-drain', ...}) }`.
+- **§8.2 `flushedCountBefore` positioning.** Moved the `const flushedCountBefore = hocuspocus.documents.size` capture to AFTER `await ready.catch(() => {})` so it reflects documents loaded during async init (shadow repo init, file watcher scan). Improves Test 5's destroy-during-init edge case accuracy.
+- **D10 marked "REVISED TWICE"** with full three-round refinement history (Phase-5-only → 1+3+4 → 1+2+3+4).
+- **§15 EXCLUDE** updated to clarify that Phase 2's new try/catch wrap is added at the destroy() call site in `standalone.ts`, not in `agent-sessions.ts` itself (which remains untouched).
+
+Ship verdict (2026-04-12):
+- 15 commits on branch `worktree-ship-server-destroy-flush-fix` (12 implementation + 1 docs + 2 review auto-fixes).
+- Both review gates (Phase 5 pre-QA + Phase 8 post-QA) converged at APPROVE (recommendation HIGH, risk Low, blocking false).
+- 187/187 server tests pass (180 baseline + 7 new regression tests).
+- All 16 QA scenarios validated via bun test + code inspection.
+- Zero deferred scope. Two surfaced opportunities — both resolved in this entry.
+- Greenfield cleanups landed: 32 console.* → 0 in standalone.ts; CaptureLogger via loggerFactory.configure replaces spec's monkey-patching spyOnLogger.
+- Docs added: `docs/content/internals/server-lifecycle.mdx` + changeset at `.changeset/server-destroy-flush-fix.md` (patch bump for `@inkeep/open-knowledge`).
