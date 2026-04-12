@@ -25,12 +25,10 @@ bun run build                        # Build all packages via turbo (cli, app, d
 ### Quality gates
 
 ```bash
-bun run check                        # Full gate: typecheck (turbo) + lint (biome) + test (turbo)
-bun run check:fast                   # Typecheck + lint only (skips tests)
-bun run typecheck                    # Typecheck all packages via turbo
+bun run check                        # THE gate — run after every iteration (~20-30s warm)
+bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel, ~2 min warm)
 bun run lint                         # Biome check (lint + format + imports) across workspace
 bun run format                       # Biome check --write (auto-fix lint + format + imports)
-bun run test                         # Run tests across workspace via turbo
 ```
 
 ### Agent simulator (requires dev server running)
@@ -89,7 +87,7 @@ Hocuspocus Server
 ├── API Extension (onRequest hook — reads file index from watcher)
 ├── Agent Sessions (DirectConnection + UndoManager per agent)
 ├── Content Filter (gitignore + config exclude/include filtering)
-├── File Watcher (@parcel/watcher — owns in-memory file index)
+├── File Watcher (@parcel/watcher → chokidar fallback — owns in-memory file index)
 ├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
 ├── Shadow Repo (.git/openknowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)
@@ -293,7 +291,7 @@ Y.Doc
 
 | Layer | Type | Location | Command |
 |---|---|---|---|
-| A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.test.ts` | `bun run test` |
+| A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` | `bun run test` (unit), `bun run test:stress:*` (per-shard) |
 | B | HTTP + server-side CRDT | `packages/app/tests/stress/stress-api.ts` | `bun run tests/stress/stress-api.ts` (needs dev server) |
 | C | Playwright E2E | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts` | `bunx playwright test` |
 | D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |

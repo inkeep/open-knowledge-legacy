@@ -115,7 +115,7 @@
       "dependencies": {
         "@hocuspocus/provider": "4.0.0-rc.1",
         "@modelcontextprotocol/sdk": "^1.28.0",
-        "@parcel/watcher": "^2.5.6",
+        "chokidar": "^5.0.0",
         "cli-boxes": "^4.0.1",
         "commander": "^14.0.0",
         "picocolors": "^1.1.1",
@@ -130,8 +130,12 @@
         "@inkeep/open-knowledge-server": "workspace:*",
         "@types/node": "^22.16.0",
         "@types/ws": "^8.18.1",
+        "open-knowledge-app": "workspace:*",
         "tsdown": "^0.21.7",
         "typescript": "^5.9.3",
+      },
+      "optionalDependencies": {
+        "@parcel/watcher": "^2.5.6",
       },
     },
     "packages/core": {
@@ -152,16 +156,19 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/plugin": {
+      "name": "open-knowledge-plugin",
+    },
     "packages/server": {
       "name": "@inkeep/open-knowledge-server",
       "version": "0.0.1",
       "dependencies": {
         "@hocuspocus/server": "4.0.0-rc.1",
         "@inkeep/open-knowledge-core": "workspace:*",
-        "@parcel/watcher": "^2.5.6",
         "@tiptap/core": "^3.22.3",
         "@tiptap/markdown": "^3.22.3",
         "@tiptap/y-tiptap": "^3.0.3",
+        "chokidar": "^5.0.0",
         "ignore": "^5.3.2",
         "picomatch": "^4.0.4",
         "pino": "^10.3.1",
@@ -175,6 +182,9 @@
         "@types/pino-pretty": "^5.0.0",
         "@types/ws": "^8.18.1",
         "typescript": "^5.9.3",
+      },
+      "optionalDependencies": {
+        "@parcel/watcher": "^2.5.6",
       },
     },
   },
@@ -1864,6 +1874,8 @@
     "open": ["open@11.0.0", "", { "dependencies": { "default-browser": "^5.4.0", "define-lazy-prop": "^3.0.0", "is-in-ssh": "^1.0.0", "is-inside-container": "^1.0.0", "powershell-utils": "^0.1.0", "wsl-utils": "^0.3.0" } }, "sha512-smsWv2LzFjP03xmvFoJ331ss6h+jixfA4UUV/Bsiyuu4YJPfN+FIQGOIiv4w9/+MoHkfkJ22UIaQWRVFRfH6Vw=="],
 
     "open-knowledge-app": ["open-knowledge-app@workspace:packages/app"],
+
+    "open-knowledge-plugin": ["open-knowledge-plugin@workspace:packages/plugin"],
 
     "ora": ["ora@8.2.0", "", { "dependencies": { "chalk": "^5.3.0", "cli-cursor": "^5.0.0", "cli-spinners": "^2.9.2", "is-interactive": "^2.0.0", "is-unicode-supported": "^2.0.0", "log-symbols": "^6.0.0", "stdin-discarder": "^0.2.2", "string-width": "^7.2.0", "strip-ansi": "^7.1.0" } }, "sha512-weP+BZ8MVNnlCm8c0Qdc1WSWq4Qn7I+9CJGm7Qali6g44e/PUzbjNqJX5NJ9ljlNMosfJvg1fKEGILklK9cwnw=="],
 

@@ -68,6 +68,20 @@ This directory was scaffolded by running `open-knowledge init` (or `npx @inkeep/
 
 If you're onboarding a new project and `.open-knowledge/` doesn't exist yet, run `open-knowledge init` from a terminal.
 
+## Running the editor
+
+To start the collaborative editor (optional -- agents work without it):
+
+```bash
+open-knowledge start
+```
+
+This runs the Hocuspocus CRDT server at `http://localhost:3000` (configurable via `server.port` in `.open-knowledge/config.yml`). When running, the MCP server's document tools (write, edit, undo, redo) operate through the CRDT layer for real-time sync with the browser editor.
+
+Without `start`, the MCP server operates in disk-only mode -- workflow tools still work, and agents use native file I/O for reads and edits.
+
+Each project runs its own server instance. There is no global daemon.
+
 ## MCP Server config
 
 Your `.mcp.json` at the repo root should look like this after running `init`:

@@ -164,14 +164,14 @@ export class AgentSessionManager {
     }
   }
 
-  /** Close all agent sessions. Used during test reset. */
-  async closeAll(): Promise<void> {
-    const entries = [...this.sessions.keys()];
-    for (const docName of entries) {
+  /** Close agent sessions. When docName is provided, only that session is closed. */
+  async closeAll(docName?: string): Promise<void> {
+    const entries = docName ? [docName] : [...this.sessions.keys()];
+    for (const name of entries) {
       try {
-        await this.closeSession(docName);
+        await this.closeSession(name);
       } catch (err) {
-        console.error(`[agent-session] Failed to close session for ${docName}:`, err);
+        console.error(`[agent-session] Failed to close session for ${name}:`, err);
       }
     }
   }

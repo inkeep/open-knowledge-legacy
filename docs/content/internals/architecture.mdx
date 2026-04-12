@@ -3,6 +3,10 @@ title: Architecture
 description: Foundation architecture validated through the init spike -- TipTap, Hocuspocus, Yjs, CodeMirror, and git auto-persistence.
 ---
 
+<Callout type="warn" title="Init spike architecture">
+This page describes the architecture as validated during the init spike (March 2026). The codebase has evolved since -- shadow repo, ContentFilter, branch parking, and page CRUD APIs have been added. For the current production topology, see [Service Topology](/internals/service-topology).
+</Callout>
+
 The architecture was validated through a structured spike with seven targeted validations (V1--V7). Six passed, one failed (V7 -- Yjs v14 delta protocol), which confirmed the expected fallback path.
 
 ## System overview
@@ -64,6 +68,8 @@ Two-mode toggle between WYSIWYG (TipTap) and source (CodeMirror 6):
 - **From source:** Three-way merge (`three-way-merge.ts`) compares the snapshot, the user's edits, and the current Y.Doc. Agent-added paragraphs (those beyond the snapshot's block count) are appended to the user's edits. The merged result applies via `updateYFragment()`.
 
 **Live agent writes in source mode:** When source mode is active, a Y.XmlFragment observer detects changes to the Y.Doc (from agent writes via `/api/agent-write-md`) and serializes the updated content into CodeMirror via React state. The observer is unsubscribed before toggle-back to prevent interference with the merge.
+
+**Typing coordination:** Both editors register DOM listeners (keydown, paste, drop, cut) that signal the observer system to defer background sync while the user is actively typing. This applies symmetrically -- source-mode typing receives the same protection from observer-driven tree replacement as WYSIWYG typing.
 
 **Conflict handling:** If both the user and an agent modified the same paragraph, the user's version wins. Conflicts are logged to the console with the paragraph index.
 

@@ -1,18 +1,12 @@
 # Research Reports Catalogue
 
 > Auto-generated on 2026-04-11 by `generate-catalogue.ts`
-> 63 valid reports indexed
+> 57 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
-| [Electron Desktop App Operations: Versioning, Signing, …](electron-desktop-app-operations-2025/REPORT.md) | 2026-04-11 | 5 files | electron operations, desktop app r… | Electron, electron-builder, electr… |
-| [OSS Licensing Strategies for Open-Core Companies: Lice…](oss-licensing-strategies-open-core/REPORT.md) | 2026-04-11 | 6 files | open source licensing, open core s… | MIT License, Apache 2.0, AGPL-3.0,… |
-| [Permissive Licenses and Compiled-Only Distribution: Ca…](permissive-licenses-compiled-distribution/REPORT.md) | 2026-04-11 | 1 files | permissive licensing, compiled dis… | MIT License, Apache 2.0, BSD, ISC,… |
-| [Can Compiled Code Be Distributed Under AGPL Without Re…](agpl-compiled-code-source-requirements/REPORT.md) | 2026-04-11 | 1 files | GPL source requirements, compiled … | AGPL-3.0, GPLv3, JavaScript, npm |
-| [Wrapping a Web App as a Native macOS Desktop App in 20…](web-to-macos-desktop-wrapping-2025/REPORT.md) | 2026-04-11 | 4 files | desktop app wrapping, macOS native… | Electron, Tauri, SwiftUI WebView, … |
-| [Open-Core Split Licensing Engineering Patterns: ee/ Di…](open-core-split-licensing-engineering/REPORT.md) | 2026-04-11 | 5 files | open core engineering, split licen… | Cal.com, Formbricks, Infisical, Gi… |
 | [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus C…](vite-6-to-8-migration/REPORT.md) | 2026-04-09 | 4 files | framework migration, bundler archi… | Vite 8, Vite 7, Rolldown, Oxc, @vi… |
 | [agent-browser vs Playwright for CRDT Integration Testi…](agent-browser-vs-playwright-crdt-testing/REPORT.md) | 2026-04-09 | 6 files | CRDT integration testing, browser … | Playwright, Vercel agent-browser, … |
 | [CRDT Observer Bridge Latency Analysis — Architecture R…](crdt-observer-bridge-latency-analysis/REPORT.md) | 2026-04-09 | 2 files | CRDT latency analysis, observer br… | Yjs, TipTap, Hocuspocus, ProseMirr… |
@@ -74,63 +68,6 @@
 ---
 
 ## Report Details
-
-### [Electron Desktop App Operations: Versioning, Signing, Updates, CI, and Release Discipline (2025/2026)](electron-desktop-app-operations-2025/REPORT.md)
-
-> Operational playbook for shipping and maintaining an Electron desktop app alongside an existing npm package. Covers Electron release cadence, code signing economics, auto-update infrastructure, CI/CD pipelines, security hardening (fuses, ASAR integrity), release lifecycle, telemetry, and known fail…
-
-- **Created:** 2026-04-11
-- **Topics:** electron operations, desktop app release pipeline, code signing, auto-update infrastructure
-- **Subjects:** Electron, electron-builder, electron-vite, electron-updater, Sentry, GitHub Actions, Apple Developer Program, Azure Trusted Signing, Open Knowledge
-- **Evidence files:** 5
-- **Warnings:** 2
-
-### [OSS Licensing Strategies for Open-Core Companies: License Selection, Community Dynamics, and Business Model Interplay](oss-licensing-strategies-open-core/REPORT.md)
-
-> Comprehensive analysis of how open-core companies choose between MIT, Apache 2.0, AGPL, and source-available licenses. Covers 22 company case studies, community perception data from HN/Reddit, anti-commercialization strategies using OSI-approved licenses, the relicensing pattern and fork dynamics, …
-
-- **Created:** 2026-04-11
-- **Topics:** open source licensing, open core strategy, community perception, dual licensing
-- **Subjects:** MIT License, Apache 2.0, AGPL-3.0, BSL, SSPL, Cal.com, Infisical, Supabase, PostHog, Lago, MinIO, GitLab, Sentry, Redis, Elastic, HashiCorp, MongoDB, n8n, Penpot, NocoDB, Twenty, Formbricks, CockroachDB
-- **Evidence files:** 6
-- **Warnings:** 1
-
-### [Permissive Licenses and Compiled-Only Distribution: Can MIT/Apache npm Packages Ship Without Source?](permissive-licenses-compiled-distribution/REPORT.md)
-
-> Whether MIT, Apache 2.0, BSD, and ISC licenses allow distributing compiled/minified npm packages without providing readable source code. Short answer: yes — permissive licenses have zero source distribution requirements. This opens a simpler architecture for open-core split licensing than proprieta…
-
-- **Created:** 2026-04-11
-- **Topics:** permissive licensing, compiled distribution, source requirements
-- **Subjects:** MIT License, Apache 2.0, BSD, ISC, MPL 2.0, npm
-- **Evidence files:** 1
-
-### [Can Compiled Code Be Distributed Under AGPL Without Readable Source?](agpl-compiled-code-source-requirements/REPORT.md)
-
-> Whether compiled/minified JavaScript can be distributed under AGPL while keeping source private. Covers GPLv3 'Corresponding Source' requirements, what counts as 'object code' for interpreted languages, the written offer provision, obfuscation strategies, and enforcement precedents. Short answer: n…
-
-- **Created:** 2026-04-11
-- **Topics:** GPL source requirements, compiled code licensing, open source compliance
-- **Subjects:** AGPL-3.0, GPLv3, JavaScript, npm
-- **Evidence files:** 1
-
-### [Wrapping a Web App as a Native macOS Desktop App in 2025/2026](web-to-macos-desktop-wrapping-2025/REPORT.md)
-
-> Comprehensive analysis of desktop app frameworks (Electron, Tauri v2, Wails, SwiftUI WebView, native Swift) for wrapping a TypeScript/React web app as a native macOS desktop app. Includes primary-source tech stack investigations of 20 popular apps (Claude Desktop, ChatGPT, Codex, Obsidian, Figma, N…
-
-- **Created:** 2026-04-11
-- **Topics:** desktop app wrapping, macOS native apps, web to desktop, electron vs tauri
-- **Subjects:** Electron, Tauri, SwiftUI WebView, Claude Desktop, ChatGPT Desktop, Codex, Obsidian, Figma, Notion, Linear, VS Code, Cursor, Raycast, Warp Terminal, electron-vite, ToDesktop
-- **Evidence files:** 4
-
-### [Open-Core Split Licensing Engineering Patterns: ee/ Directories, AGPL Linking Exceptions, and npm IP Protection](open-core-split-licensing-engineering/REPORT.md)
-
-> How open-core companies architecturally implement split licensing — structuring proprietary code alongside open-source code, building/distributing compiled-only npm packages, handling contributor boundaries, and using AGPL linking exceptions. 13 company code-first case studies, legal mechanics, npm…
-
-- **Created:** 2026-04-11
-- **Topics:** open core engineering, split licensing, npm obfuscation, AGPL linking exceptions
-- **Subjects:** Cal.com, Formbricks, Infisical, GitLab, Grafana, Documenso, Dub.co, Twenty, Appsmith, Mastra, Activepieces, n8n, Tldraw, Liveblocks, Firecrawl, napi-rs, terser, javascript-obfuscator
-- **Evidence files:** 5
-- **Warnings:** 1
 
 ### [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus CRDT Editor](vite-6-to-8-migration/REPORT.md)
 
@@ -232,7 +169,7 @@
 - **Topics:** CRDT migration assessment, Peritext rich text model, dual-view editor architecture, collaborative editor infrastructure
 - **Subjects:** Automerge, automerge-prosemirror, automerge-repo, automerge-codemirror, Yjs, TipTap, ProseMirror, Hocuspocus, Peritext, CodeMirror 6
 - **Evidence files:** 9
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Yjs Dual-Key Shimmer Analysis: Will Bidirectional Observer Sync Between Y.XmlFragment and Y.Text Actually Cascade?](yjs-dual-key-shimmer-analysis/REPORT.md)
 
@@ -251,7 +188,6 @@
 - **Topics:** source toggle architecture, CRDT dual representation, collaborative markdown editing, editor mode switching
 - **Subjects:** Yjs, TipTap, ProseMirror, CodeMirror 6, y-prosemirror, y-codemirror.next, Hocuspocus, Obsidian, AFFiNE, Automerge, Peritext
 - **Evidence files:** 5
-- **Warnings:** 1
 
 ### [KB Index and Navigation Patterns for AI Agents: How Agents Orient in Document Collections (2025-2026)](kb-index-navigation-patterns-for-agents/REPORT.md)
 
@@ -262,7 +198,6 @@
 - **Topics:** agent navigation, knowledge base indexing, progressive disclosure, context engineering, repo-map, CLAUDE.md, AGENTS.md, graph traversal, frontmatter metadata
 - **Subjects:** Claude Code, OpenAI Codex, Cursor, Aider, Augment Code, Windsurf, Devin, Context7, Obsidian, Andrej Karpathy, Dust.tt, LightRAG, GraphRAG, Anthropic
 - **Evidence files:** 9
-- **Warnings:** 1
 
 ### [Compiled Truth + Timeline: Content Conventions for Agent-Authored Knowledge Entries](compiled-truth-timeline-content-conventions/REPORT.md)
 
@@ -418,7 +353,6 @@
 - **Created:** 2026-04-04
 - **Topics:** wiki-link formats, backlink index architecture, knowledge graph navigation, CRDT collaboration, agent-native knowledge
 - **Subjects:** Obsidian, Logseq, Outline, AFFiNE, Foam, Dendron, Marksman, remark-wiki-link, TipTap, ProseMirror, Hocuspocus, Yjs, GraphRAG, Orama
-- **Warnings:** 1
 
 ### [Search Engine Decision: Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector for a CRDT-Backed Branchable Knowledge Platform](search-engine-decision/REPORT.md)
 
@@ -428,7 +362,6 @@
 - **Topics:** search engine selection, CRDT search integration, per-branch index caching, contentless search indexing, local-to-cloud migration
 - **Subjects:** Orama, SQLite FTS5, sqlite-vec, better-sqlite3, PGlite, pgvector, pg_textsearch, Yjs, Hocuspocus
 - **Evidence files:** 6
-- **Warnings:** 1
 
 ### [TipTap in 2026: Product Direction, Platform Ambitions, and Overlap with Agent-Native Knowledge Platforms](tiptap-2026-direction-overlap/REPORT.md)
 
@@ -447,7 +380,7 @@
 - **Topics:** component inventory comparison, block type analysis, editing feature gap analysis, knowledge platform architecture, component distribution
 - **Subjects:** Obsidian, Fumadocs, fumadocs-ui, fumadocs-core, shadcn/ui, Radix UI, MDX
 - **Evidence files:** 5
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Bun vs Node.js as Server Runtime for an Agent-Native Knowledge Platform](bun-vs-node-runtime/REPORT.md)
 
@@ -476,7 +409,7 @@
 - **Topics:** component prop extraction, visual editor prop panels, TypeScript to UI control mapping, auto-generated editing interfaces
 - **Subjects:** react-docgen-typescript, Storybook, Webstudio, Builder.io, Plasmic, TypeScript Compiler API
 - **Evidence files:** 6
-- **Warnings:** 3
+- **Warnings:** 2
 
 ### [MDX Round-Trip Fidelity Through CRDT-Backed Visual Editors](mdx-crdt-roundtrip-fidelity/REPORT.md)
 
@@ -561,7 +494,7 @@
 - **Topics:** MCP tool design, agent tool interfaces, filesystem vs semantic tools, progressive disclosure, tool explosion problem, agent performance benchmarks
 - **Subjects:** Claude Code, Cursor, Mintlify, Context7, Anthropic, SWE-agent, SocratiCode, Microsoft Research, MCP-Bench, Mem0, GitHub MCP Server, Notion MCP Server
 - **Evidence files:** 7
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Orama Deep Dive: A Source-Code-Level Assessment for Agent-Native Knowledge Platforms](orama-deep-dive/REPORT.md)
 
@@ -571,7 +504,7 @@
 - **Topics:** hybrid search internals, in-memory search engine, TypeScript search library, vector search implementation, search engine gap analysis
 - **Subjects:** Orama, OramaSearch Inc, Orama Cloud, OramaCore, Fumadocs
 - **Evidence files:** 11
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Fumadocs as Infrastructure for the Karpathy LLM Knowledge Base Workflow](fumadocs-karpathy-workflow-deep-dive/REPORT.md)
 
@@ -600,7 +533,7 @@
 - **Topics:** virtual filesystem MCP, agent tool surface overlap, filesystem abstraction backends, MCP tool design patterns, content search MCP tools, remote filesystem MCP tools
 - **Subjects:** Model Context Protocol, Claude Code, Mintlify ChromaFs, E2B, Daytona, Desktop Commander MCP, mcp-ripgrep, GitHub MCP Server, Replit MCP, Obsidian MCP, CodeSandbox MCP, filesystem-mcp-rs
 - **Evidence files:** 8
-- **Warnings:** 5
+- **Warnings:** 4
 
 ### [Git Worktrees as Draft Isolation for Knowledge Platforms: Lessons from Claude Code and the AI Coding Agent Landscape](claude-code-worktree-git-isolation/REPORT.md)
 
@@ -638,7 +571,7 @@
 - **Topics:** virtual filesystem for agents, custom filesystem backends, shell environment TypeScript, agent-native knowledge platform, MCP server architecture, MCP tool count agent performance, exec tool vs semantic tools, CRDT filesystem implementation
 - **Subjects:** just-bash, Vercel Labs, Mintlify ChromaFs, bash-tool, IFileSystem, just-bash-mcp, MCP structuredContent
 - **Evidence files:** 14
-- **Warnings:** 4
+- **Warnings:** 3
 
 ### [Fumadocs vs Mintlify: Architecture Deep Dive for Agent-Native Knowledge Platforms](fumadocs-vs-mintlify-architecture/REPORT.md)
 
@@ -667,7 +600,6 @@
 - **Topics:** knowledge consolidation, factual fidelity, multi-document synthesis, claim-level verification, information preservation, consensus mechanisms, multi-agent voting, incremental consolidation, cost-fidelity tradeoffs, production systems, recomposition patterns, outline-first generation, nuance preservation, confidence inflation, claim-to-document generation
 - **Subjects:** FActScore, MiniCheck, LLMxMapReduce, LangChain, LangGraph, AutoGen, CrewAI, Agent Zero, NEXUSSUM, GraphRAG, Perplexity, Elicit, Consensus, NotebookLM, Mem0, Zep/Graphiti, MemGPT, MetaFaith, FiC, WritingPath, PlanGen
 - **Evidence files:** 13
-- **Warnings:** 1
 
 ### [AI Coding Agent Tool Surfaces: How Agents Interface with Codebases](ai-coding-agent-tool-surfaces/REPORT.md)
 

@@ -25,7 +25,49 @@ export default defineConfig({
   ],
   resolve: {
     tsconfigPaths: true,
-    dedupe: ['prosemirror-view'],
+    // Force all prosemirror core packages to resolve to a single instance.
+    // Bun's hoisted install produces two physical copies of several prosemirror
+    // packages (one at `node_modules/<pkg>`, one inside `.bun/<pkg>@*/`) and
+    // Vite's dep pre-bundle lands each in its own chunk. Without dedupe, two
+    // failure modes reliably break the editor:
+    //
+    //   1. `instanceof DecorationSet` checks in prosemirror-view's
+    //      `DecorationGroup.from()` return false across chunks, so a
+    //      `members.reduce(... concat((m as DecorationGroup).members))` pass
+    //      adds `undefined` to the result array. That surfaces as
+    //      `TypeError: Cannot read properties of undefined (reading 'localsInner')`
+    //      inside `DecorationGroup.locals()` when a DOM change triggers
+    //      `iterDeco` — breaks any plugin emitting decorations (suggestion,
+    //      placeholder, focus, etc.).
+    //
+    //   2. Selection-type registration via `Selection.jsonID(id, Class)` is a
+    //      global side effect on prosemirror-state's Selection class. Two
+    //      copies of prosemirror-gapcursor each call `jsonID('gapcursor', ...)`
+    //      against the (possibly already-deduped) Selection, producing
+    //      `Error: Duplicate use of selection JSON ID gapcursor`.
+    //
+    // Deduping every prosemirror-* package + yjs here is the canonical fix.
+    dedupe: [
+      'prosemirror-changeset',
+      'prosemirror-collab',
+      'prosemirror-commands',
+      'prosemirror-dropcursor',
+      'prosemirror-gapcursor',
+      'prosemirror-history',
+      'prosemirror-inputrules',
+      'prosemirror-keymap',
+      'prosemirror-markdown',
+      'prosemirror-menu',
+      'prosemirror-model',
+      'prosemirror-schema-basic',
+      'prosemirror-schema-list',
+      'prosemirror-state',
+      'prosemirror-tables',
+      'prosemirror-trailing-node',
+      'prosemirror-transform',
+      'prosemirror-view',
+      'yjs',
+    ],
   },
   server: {
     port: vitePort ?? 5173,

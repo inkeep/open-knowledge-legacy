@@ -1,0 +1,75 @@
+---
+title: Configuration
+description: Config schema, YAML hierarchy, environment variables, and CLI flag overrides.
+---
+
+Open Knowledge uses hierarchical YAML configuration stored in `.open-knowledge/config.yml` files. Both config files are optional -- sensible defaults cover everything.
+
+## Config hierarchy
+
+<Mermaid chart={`graph LR
+  A[Zod defaults] --> B["~/.open-knowledge/config.yml"]
+  B --> C["./.open-knowledge/config.yml"]
+  C --> D[Environment variables]
+  D --> E[CLI flags]
+`} />
+
+Each layer overrides the previous, from left to right. The merge is a deep merge: leaf values override, but arrays replace (not concatenate). There is no walk-up-tree discovery -- the loader checks exactly two fixed paths:
+
+1. **User config** -- `~/.open-knowledge/config.yml`
+2. **Workspace config** -- `./.open-knowledge/config.yml` (relative to the working directory)
+
+## Schema reference
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `content.dir` | `string` | `"."` | Content directory relative to project root |
+| `content.include` | `string[]` | `["**/*.md"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern. |
+| `content.exclude` | `string[]` | `[]` | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore) |
+| `server.port` | `number` | `3000` | HTTP/WebSocket server port |
+| `server.host` | `string` | `"localhost"` | Server bind address |
+| `persistence.debounceMs` | `number` | `2000` | Quiet period before CRDT changes flush to disk (ms) |
+| `persistence.maxDebounceMs` | `number` | `10000` | Maximum wait before forced flush to disk (ms) |
+
+## Example configs
+
+<Tabs items={["User config", "Workspace config"]}>
+<Tab value="User config">
+Set a different default port for all projects:
+
+```yaml title="~/.open-knowledge/config.yml"
+server:
+  port: 4000
+```
+</Tab>
+<Tab value="Workspace config">
+Point at a subdirectory and exclude drafts:
+
+```yaml title="./.open-knowledge/config.yml"
+content:
+  dir: docs
+  exclude:
+    - "drafts/**"
+    - "archive/**"
+```
+</Tab>
+</Tabs>
+
+## Environment variables
+
+Two environment variables are supported:
+
+| Variable | Overrides |
+|----------|-----------|
+| `PORT` | `server.port` |
+| `HOST` | `server.host` |
+
+These take precedence over both YAML config files but are overridden by CLI flags.
+
+## CLI flags
+
+`--port` and `--host` are the highest-precedence overrides. They take effect regardless of what YAML files or environment variables specify.
+
+```bash
+npx @inkeep/open-knowledge start --port 8080
+```

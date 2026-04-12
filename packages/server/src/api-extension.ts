@@ -26,6 +26,7 @@ import {
 } from './agent-sessions.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
+import { safeContentPath } from './persistence.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
@@ -311,6 +312,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content = dc.document.getText('source').toString();
       json(res, 200, { ok: true, docName, content });
     } catch (e) {
+      console.error('[document-read]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -478,7 +480,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
             if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
           } catch {
-            console.warn('[agent-undo] Invalid JSON body — using default docName');
+            json(res, 400, { ok: false, error: 'Invalid JSON body' });
+            return;
           }
         }
       } catch {
@@ -496,8 +499,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
         // Compensate: restore pre-undo state so bridge invariant holds.
-        um.redo();
-        throw syncErr;
+        // Track compensation success explicitly — if both the sync AND the
+        // compensation fail, the Y.Doc is in an inconsistent state and the
+        // caller needs a distinct signal so they can surface a corruption
+        // warning to the user instead of silently retrying.
+        let compensationFailed = false;
+        try {
+          um.redo();
+        } catch (compensateErr) {
+          compensationFailed = true;
+          console.error('[agent-undo] Compensation also failed:', compensateErr);
+        }
+        const message = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        console.error('[agent-undo]', syncErr);
+        json(res, 500, {
+          ok: false,
+          error: message,
+          compensationFailed,
+          ...(compensationFailed
+            ? {
+                warning:
+                  'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
+              }
+            : {}),
+        });
+        return;
       }
       console.log('[agent-undo] Undo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
@@ -523,7 +549,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
             if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
           } catch {
-            console.warn('[agent-redo] Invalid JSON body — using default docName');
+            json(res, 400, { ok: false, error: 'Invalid JSON body' });
+            return;
           }
         }
       } catch {
@@ -541,8 +568,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
         // Compensate: restore pre-redo state so bridge invariant holds.
-        um.undo();
-        throw syncErr;
+        // Track compensation success explicitly — see agent-undo handler for
+        // the full rationale. Callers receiving compensationFailed=true must
+        // surface a corruption warning rather than silently retrying.
+        let compensationFailed = false;
+        try {
+          um.undo();
+        } catch (compensateErr) {
+          compensationFailed = true;
+          console.error('[agent-redo] Compensation also failed:', compensateErr);
+        }
+        const message = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        console.error('[agent-redo]', syncErr);
+        json(res, 500, {
+          ok: false,
+          error: message,
+          compensationFailed,
+          ...(compensationFailed
+            ? {
+                warning:
+                  'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
+              }
+            : {}),
+        });
+        return;
       }
       console.log('[agent-redo] Redo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
@@ -560,20 +609,43 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      await sessionManager.closeAll();
-      hocuspocus.closeConnections('test-doc');
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') ?? 'test-doc';
+
+      // Path traversal guard — reuse the canonical validator from persistence.ts.
+      // Throws `Invalid document name: ${docName}` for names that escape contentDir;
+      // we translate that to a 400 response. Keeping the guard in one place (not
+      // re-implementing the startsWith check inline) ensures handleTestReset stays
+      // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
+      let filePath: string;
+      try {
+        filePath = safeContentPath(docName, contentDir);
+      } catch (err) {
+        // Log the original error (safeContentPath produces messages like
+        // `Invalid document name: ${docName}` which are useful for diagnosing
+        // unexpected failures beyond the standard path-traversal case — e.g.,
+        // encoding errors from resolve(), null-byte truncation, etc.) but
+        // still return a sanitized, uniform 400 message to the client so
+        // filesystem details never leak through the API boundary.
+        console.error('[test-reset] safeContentPath rejected docName:', docName, err);
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+
+      await sessionManager.closeAll(docName);
+      hocuspocus.closeConnections(docName);
 
       // D18: Force-flush any pending onStoreDocument debounced work before unload.
       // Without this, unloadDocument silently no-ops if the debouncer is active
       // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
-      const debounceId = 'onStoreDocument-test-doc';
+      const debounceId = `onStoreDocument-${docName}`;
       if (hocuspocus.debouncer.isDebounced(debounceId)) {
         await hocuspocus.debouncer.executeNow(debounceId);
       }
 
-      const doc = hocuspocus.documents.get('test-doc');
+      const doc = hocuspocus.documents.get(docName);
       if (doc) await hocuspocus.unloadDocument(doc);
-      writeFileSync(resolve(contentDir, 'test-doc.md'), '', 'utf-8');
+      writeFileSync(filePath, '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);

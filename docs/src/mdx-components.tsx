@@ -1,4 +1,5 @@
 import { Accordion, Accordions } from 'fumadocs-ui/components/accordion';
+import { Card, Cards } from 'fumadocs-ui/components/card';
 import { ImageZoom } from 'fumadocs-ui/components/image-zoom';
 import { Step, Steps } from 'fumadocs-ui/components/steps';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
@@ -12,6 +13,8 @@ export function getMDXComponents(): MDXComponents {
     ...defaultMdxComponents,
     Accordion,
     Accordions,
+    Card,
+    Cards,
     Image: ImageZoom,
     Mermaid,
     Step,
