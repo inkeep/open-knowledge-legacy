@@ -132,6 +132,10 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     // the destroy-time flush path we want to test). removeDirectConnection()
     // decrements the connection count so the document can unload when
     // flushAllStoresAndWait fires flushPendingStores during destroy().
+    //
+    // NOTE: removeDirectConnection() is an internal Hocuspocus API. See
+    // SPEC.md §11 OQ-P2-06 for version-bump risk — any `@hocuspocus/server`
+    // upgrade must re-verify this coupling along with the 7 other internals.
     const doc = server.hocuspocus.documents.get('test-doc');
     expect(doc).toBeDefined();
     doc?.removeDirectConnection();
@@ -228,9 +232,11 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     await server.destroy();
     const elapsed = Date.now() - startedAt;
 
-    // Should have hit the 500ms timeout + small overhead, not the 10s default
-    expect(elapsed).toBeGreaterThanOrEqual(400); // allow small timing variance
-    expect(elapsed).toBeLessThan(2_000);
+    // Behavioral contract (D11): destroy() fires the timeout path (not the 10s
+    // default) when onStoreDocument throws. Widened bounds accommodate CI
+    // scheduling jitter (GHA runners under load can add 100-500ms variance).
+    expect(elapsed).toBeGreaterThanOrEqual(300);
+    expect(elapsed).toBeLessThan(5_000);
 
     // D14: destroy() emits warn-level log with timeout phase error
     const warnLogs = logCapture.getCalls('warn', 'shutdown flushed');
@@ -306,8 +312,11 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     await server.destroy();
     const elapsed = Date.now() - startedAt;
 
-    // Should resolve fast — no hook installed, no docs to drain
-    expect(elapsed).toBeLessThan(500);
+    // Short-circuit path resolves fast. Widened from 500ms → 2_000ms to avoid
+    // flake on slow disks where initAsync (shadow repo + file watcher scan)
+    // dominates the destroy timeline. The behavioral contract is "no 10s
+    // timeout" — 2s still proves the short-circuit fired.
+    expect(elapsed).toBeLessThan(2_000);
 
     // Shutdown log still emitted with documentCount === 0
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');

@@ -456,8 +456,10 @@ export function createServer(options: ServerOptions): ServerInstance {
       const phaseErrors: Array<{ phase: string; error: string }> = [];
 
       // Wait for async init to complete before cleanup — prevents leaked watcher
-      // subscriptions if destroy() is called during startup (e.g., Ctrl+C)
-      await ready.catch(() => {});
+      // subscriptions if destroy() is called during startup (e.g., Ctrl+C).
+      // Log init errors at debug level so operators investigating a shutdown
+      // issue can confirm whether the server ever reached ready.
+      await ready.catch((err) => log.debug({ err }, '[server] init incomplete during shutdown'));
 
       // Capture after ready so the count reflects documents loaded during init
       const documentCount = hocuspocus.documents.size;
