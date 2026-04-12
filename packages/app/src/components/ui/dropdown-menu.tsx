@@ -1,4 +1,4 @@
-import { Check, CheckIcon, ChevronRight, Circle } from 'lucide-react';
+import { Check, CheckIcon, ChevronRight } from 'lucide-react';
 import { DropdownMenu } from 'radix-ui';
 import type * as React from 'react';
 

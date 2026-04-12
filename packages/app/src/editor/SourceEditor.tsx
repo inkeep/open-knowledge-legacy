@@ -1,6 +1,5 @@
 import { markdown } from '@codemirror/lang-markdown';
 import { Compartment, EditorState } from '@codemirror/state';
-import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { githubDarkInit } from '@uiw/codemirror-theme-github';
