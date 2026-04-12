@@ -1,33 +1,16 @@
 /**
  * ListItem extension override for source-text fidelity.
  *
- * Reads the parent node's bulletMarker or listMarkerDelimiter attribute
- * to use the correct prefix when rendering markdown.
+ * Extends @tiptap/extension-list-item (preserving Tab/Shift+Tab indent/dedent
+ * and Enter split behavior) and reads the parent node's bulletMarker or
+ * listMarkerDelimiter attribute to use the correct prefix when rendering markdown.
  */
 
-import { Node, renderNestedMarkdownContent } from '@tiptap/core';
+import { renderNestedMarkdownContent } from '@tiptap/core';
+import ListItem from '@tiptap/extension-list-item';
 
-export const ListItemFidelity = Node.create({
-  name: 'listItem',
-  content: 'paragraph block*',
-  defining: true,
+export const ListItemFidelity = ListItem.extend({
   priority: 60,
-
-  addOptions() {
-    return {
-      HTMLAttributes: {},
-      bulletListTypeName: 'bulletList',
-      orderedListTypeName: 'orderedList',
-    };
-  },
-
-  parseHTML() {
-    return [{ tag: 'li' }];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ['li', HTMLAttributes, 0];
-  },
 
   markdownTokenName: 'list_item',
 

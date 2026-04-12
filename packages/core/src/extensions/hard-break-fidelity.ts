@@ -1,43 +1,21 @@
 /**
  * HardBreak extension override for source-text fidelity.
  *
- * Preserves the hard break form (backslash vs two spaces) via
- * hardBreakStyle attribute extracted from token.raw.
+ * Extends @tiptap/extension-hard-break (preserving setHardBreak command
+ * and Shift+Enter shortcut) and adds the hardBreakStyle attribute to
+ * distinguish backslash from two-space hard breaks.
  */
 
-import { Node } from '@tiptap/core';
+import HardBreak from '@tiptap/extension-hard-break';
 
-export const HardBreakFidelity = Node.create({
-  name: 'hardBreak',
-  inline: true,
-  group: 'inline',
-  selectable: false,
-  linebreakReplacement: true,
+export const HardBreakFidelity = HardBreak.extend({
   priority: 60,
-
-  addOptions() {
-    return {
-      keepMarks: true,
-      HTMLAttributes: {},
-    };
-  },
 
   addAttributes() {
     return {
+      ...this.parent?.(),
       hardBreakStyle: { default: 'backslash' },
     };
-  },
-
-  parseHTML() {
-    return [{ tag: 'br' }];
-  },
-
-  renderHTML({ HTMLAttributes }: any) {
-    return ['br', HTMLAttributes];
-  },
-
-  renderText() {
-    return '\n';
   },
 
   markdownTokenName: 'br',

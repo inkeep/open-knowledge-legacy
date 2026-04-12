@@ -1,52 +1,30 @@
 /**
  * Heading extension override for source-text fidelity.
  *
- * Preserves ATX vs setext heading style via headingStyle attribute.
- * Setext headings use = (level 1) or - (level 2) underlines.
+ * Extends @tiptap/extension-heading (preserving setHeading/toggleHeading
+ * commands, input rules, and keyboard shortcuts) and adds the headingStyle
+ * attribute to distinguish ATX (# ...) from setext (underline) headings.
  */
 
-import { Node } from '@tiptap/core';
+import type { MarkdownToken } from '@tiptap/core';
+import Heading from '@tiptap/extension-heading';
 
-export const HeadingFidelity = Node.create({
-  name: 'heading',
-  group: 'block',
-  content: 'inline*',
-  defining: true,
+export const HeadingFidelity = Heading.extend({
   priority: 60,
-
-  addOptions() {
-    return {
-      levels: [1, 2, 3, 4, 5, 6],
-      HTMLAttributes: {},
-    };
-  },
 
   addAttributes() {
     return {
-      level: { default: 1 },
+      ...this.parent?.(),
       headingStyle: { default: 'atx' },
     };
   },
 
-  parseHTML() {
-    return this.options.levels.map((level: number) => ({
-      tag: `h${level}`,
-      attrs: { level },
-    }));
-  },
-
-  renderHTML({ node, HTMLAttributes }: any) {
-    const hasLevel = this.options.levels.includes(node.attrs.level);
-    const level = hasLevel ? node.attrs.level : this.options.levels[0];
-    return [`h${level}`, HTMLAttributes, 0];
-  },
-
-  parseMarkdown(token: any, helpers: any) {
-    const raw = token.raw ?? '';
+  parseMarkdown(token: MarkdownToken, helpers: any) {
+    const raw = (token as any).raw ?? '';
     const isSetext = /\n[=-]+\s*$/.test(raw);
     return helpers.createNode(
       'heading',
-      { level: token.depth || 1, headingStyle: isSetext ? 'setext' : 'atx' },
+      { level: (token as any).depth || 1, headingStyle: isSetext ? 'setext' : 'atx' },
       helpers.parseInline(token.tokens || []),
     );
   },

@@ -1,53 +1,30 @@
 /**
  * CodeBlock extension override for source-text fidelity.
  *
- * Preserves the fence delimiter character (` vs ~) and fence length
- * via fenceDelimiter and fenceLength attributes extracted from token.raw.
+ * Extends @tiptap/extension-code-block (preserving setCodeBlock/toggleCodeBlock
+ * commands, input rules, Tab indentation, and exit-on-triple-enter behavior)
+ * and adds fidelity attributes for fence delimiter character (` vs ~) and
+ * fence length.
  */
 
-import { Node } from '@tiptap/core';
+import type { MarkdownToken } from '@tiptap/core';
+import CodeBlock from '@tiptap/extension-code-block';
 
-export const CodeBlockFidelity = Node.create({
-  name: 'codeBlock',
-  group: 'block',
-  content: 'text*',
-  marks: '',
-  code: true,
-  defining: true,
+export const CodeBlockFidelity = CodeBlock.extend({
   priority: 60,
-
-  addOptions() {
-    return {
-      languageClassPrefix: 'language-',
-      HTMLAttributes: {},
-    };
-  },
 
   addAttributes() {
     return {
-      language: { default: null },
+      ...this.parent?.(),
       fenceDelimiter: { default: '`' },
       fenceLength: { default: 3 },
     };
   },
 
-  parseHTML() {
-    return [
-      {
-        tag: 'pre',
-        preserveWhitespace: 'full' as const,
-      },
-    ];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ['pre', HTMLAttributes, ['code', {}, 0]];
-  },
-
   markdownTokenName: 'code',
 
-  parseMarkdown(token: any, helpers: any) {
-    const raw = token.raw ?? '';
+  parseMarkdown(token: MarkdownToken, helpers: any) {
+    const raw = (token as any).raw ?? '';
     // Skip indented code blocks and jsx-component (handled by JsxComponent)
     if (!raw.startsWith('```') && !raw.startsWith('~~~')) {
       return [];
@@ -62,11 +39,11 @@ export const CodeBlockFidelity = Node.create({
     return helpers.createNode(
       'codeBlock',
       {
-        language: token.lang || null,
+        language: (token as any).lang || null,
         fenceDelimiter,
         fenceLength,
       },
-      token.text ? [helpers.createTextNode(token.text)] : [],
+      (token as any).text ? [helpers.createTextNode((token as any).text)] : [],
     );
   },
 

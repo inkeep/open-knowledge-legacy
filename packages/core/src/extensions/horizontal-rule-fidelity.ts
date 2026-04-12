@@ -1,34 +1,21 @@
 /**
  * HorizontalRule extension override for source-text fidelity.
  *
- * Preserves the exact source form of the thematic break (---, ***, ___, etc.)
- * via the horizontalRuleRaw attribute extracted from token.raw.
+ * Extends @tiptap/extension-horizontal-rule (preserving setHorizontalRule
+ * command and input rules for ---, ___, ***) and adds the horizontalRuleRaw
+ * attribute to preserve the exact source form of the thematic break.
  */
 
-import { Node } from '@tiptap/core';
+import HorizontalRule from '@tiptap/extension-horizontal-rule';
 
-export const HorizontalRuleFidelity = Node.create({
-  name: 'horizontalRule',
-  group: 'block',
-  atom: true,
+export const HorizontalRuleFidelity = HorizontalRule.extend({
   priority: 60,
-
-  addOptions() {
-    return { HTMLAttributes: {} };
-  },
 
   addAttributes() {
     return {
+      ...this.parent?.(),
       horizontalRuleRaw: { default: '---' },
     };
-  },
-
-  parseHTML() {
-    return [{ tag: 'hr' }];
-  },
-
-  renderHTML({ HTMLAttributes }: any) {
-    return ['hr', HTMLAttributes];
   },
 
   markdownTokenName: 'hr',

@@ -1,32 +1,22 @@
 /**
  * Emphasis (italic/bold) mark overrides for source-text fidelity.
  *
- * Preserves the delimiter choice (* vs _) via emphDelimiter/strongDelimiter
- * attributes extracted from token.raw.
+ * Extends @tiptap/extension-italic and @tiptap/extension-bold (preserving
+ * toggleItalic/toggleBold commands, Cmd+I/Cmd+B shortcuts, and input rules)
+ * and adds delimiter-choice attributes extracted from token.raw.
  */
 
-import { Mark } from '@tiptap/core';
+import Bold from '@tiptap/extension-bold';
+import Italic from '@tiptap/extension-italic';
 
-export const ItalicFidelity = Mark.create({
-  name: 'italic',
+export const ItalicFidelity = Italic.extend({
   priority: 60,
-
-  addOptions() {
-    return { HTMLAttributes: {} };
-  },
 
   addAttributes() {
     return {
+      ...this.parent?.(),
       emphDelimiter: { default: '*' },
     };
-  },
-
-  parseHTML() {
-    return [{ tag: 'em' }, { tag: 'i' }, { style: 'font-style=italic' }];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ['em', HTMLAttributes, 0];
   },
 
   markdownTokenName: 'em',
@@ -45,34 +35,14 @@ export const ItalicFidelity = Mark.create({
   },
 });
 
-export const BoldFidelity = Mark.create({
-  name: 'bold',
+export const BoldFidelity = Bold.extend({
   priority: 60,
-
-  addOptions() {
-    return { HTMLAttributes: {} };
-  },
 
   addAttributes() {
     return {
+      ...this.parent?.(),
       strongDelimiter: { default: '**' },
     };
-  },
-
-  parseHTML() {
-    return [
-      { tag: 'strong' },
-      { tag: 'b', getAttrs: (node: HTMLElement) => node.style.fontWeight !== 'normal' && null },
-      { style: 'font-weight=400', clearMark: (mark: any) => mark.type.name === 'bold' },
-      {
-        style: 'font-weight',
-        getAttrs: (value: string) => /^(bold(er)?|[5-9]\d{2,})$/.test(value) && null,
-      },
-    ];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ['strong', HTMLAttributes, 0];
   },
 
   markdownTokenName: 'strong',

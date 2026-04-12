@@ -1,61 +1,43 @@
 /**
  * BulletList extension override for source-text fidelity.
  *
- * Preserves the bullet marker character (-, *, +) from the source markdown
- * via the `bulletMarker` attribute extracted from token.items[0].raw.
- * Also preserves tight/loose list structure via the `loose` attribute.
+ * Extends @tiptap/extension-bullet-list (preserving toggleBulletList command,
+ * input rules, and keyboard shortcuts) and adds fidelity attributes for
+ * bullet marker character (-, *, +) and tight/loose list structure.
  */
 
-import { type JSONContent, Node } from '@tiptap/core';
+import type { JSONContent, MarkdownToken } from '@tiptap/core';
+import BulletList from '@tiptap/extension-bullet-list';
 
-export const BulletListFidelity = Node.create({
-  name: 'bulletList',
-  group: 'block list',
-  content: 'listItem+',
+export const BulletListFidelity = BulletList.extend({
   priority: 60,
-
-  addOptions() {
-    return {
-      itemTypeName: 'listItem',
-      HTMLAttributes: {},
-      keepMarks: false,
-      keepAttributes: false,
-    };
-  },
 
   addAttributes() {
     return {
+      ...this.parent?.(),
       bulletMarker: { default: '-' },
       loose: { default: false },
     };
   },
 
-  parseHTML() {
-    return [{ tag: 'ul' }];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ['ul', HTMLAttributes, 0];
-  },
-
   markdownTokenName: 'list',
 
-  parseMarkdown(token: any, helpers: any) {
-    if (token.type !== 'list' || token.ordered) {
+  parseMarkdown(token: MarkdownToken, helpers: any) {
+    if (token.type !== 'list' || (token as any).ordered) {
       return [];
     }
 
     // Extract bullet marker from first item's raw content
-    const firstRaw = token.items?.[0]?.raw ?? '';
+    const firstRaw = (token as any).items?.[0]?.raw ?? '';
     const marker = firstRaw.match(/^([*+-])/)?.[1] ?? '-';
 
     // Extract tight/loose from token
-    const loose = token.loose === true;
+    const loose = (token as any).loose === true;
 
     return {
       type: 'bulletList',
       attrs: { bulletMarker: marker, loose },
-      content: token.items ? helpers.parseChildren(token.items) : [],
+      content: (token as any).items ? helpers.parseChildren((token as any).items) : [],
     } as JSONContent;
   },
 

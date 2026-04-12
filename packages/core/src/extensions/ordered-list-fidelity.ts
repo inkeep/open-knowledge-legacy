@@ -1,71 +1,44 @@
 /**
  * OrderedList extension override for source-text fidelity.
  *
- * Preserves the list marker delimiter (. or )) via `listMarkerDelimiter`
- * attribute extracted from token.raw. Also preserves tight/loose.
+ * Extends @tiptap/extension-ordered-list (preserving toggleOrderedList command,
+ * input rules, and keyboard shortcuts) and adds fidelity attributes for
+ * list marker delimiter (. or )) and tight/loose list structure.
  */
 
-import { type JSONContent, Node } from '@tiptap/core';
+import type { JSONContent, MarkdownToken } from '@tiptap/core';
+import OrderedList from '@tiptap/extension-ordered-list';
 
-export const OrderedListFidelity = Node.create({
-  name: 'orderedList',
-  group: 'block list',
-  content: 'listItem+',
+export const OrderedListFidelity = OrderedList.extend({
   priority: 60,
-
-  addOptions() {
-    return {
-      itemTypeName: 'listItem',
-      HTMLAttributes: {},
-      keepMarks: false,
-      keepAttributes: false,
-    };
-  },
 
   addAttributes() {
     return {
-      start: { default: 1 },
+      ...this.parent?.(),
       listMarkerDelimiter: { default: '.' },
       loose: { default: false },
     };
   },
 
-  parseHTML() {
-    return [
-      {
-        tag: 'ol',
-        getAttrs: (element: HTMLElement) => ({
-          start: element.getAttribute('start')
-            ? Number.parseInt(element.getAttribute('start')!, 10)
-            : 1,
-        }),
-      },
-    ];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return ['ol', HTMLAttributes, 0];
-  },
-
   markdownTokenName: 'list',
 
-  parseMarkdown(token: any, helpers: any) {
-    if (token.type !== 'list' || !token.ordered) {
+  parseMarkdown(token: MarkdownToken, helpers: any) {
+    if (token.type !== 'list' || !(token as any).ordered) {
       return [];
     }
 
     // Extract delimiter from raw: look for digit followed by . or )
-    const delim = token.raw?.match(/^\d+([.)])/m)?.[1] ?? '.';
-    const loose = token.loose === true;
+    const delim = (token as any).raw?.match(/^\d+([.)])/m)?.[1] ?? '.';
+    const loose = (token as any).loose === true;
 
     return {
       type: 'orderedList',
       attrs: {
-        start: token.start ?? 1,
+        start: (token as any).start ?? 1,
         listMarkerDelimiter: delim,
         loose,
       },
-      content: token.items ? helpers.parseChildren(token.items) : [],
+      content: (token as any).items ? helpers.parseChildren((token as any).items) : [],
     } as JSONContent;
   },
 
