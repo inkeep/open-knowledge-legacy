@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -195,12 +196,22 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(refSha).toBeTruthy();
   });
 
-  test('destroy() completes within destroyTimeoutMs when onStoreDocument throws', async () => {
+  test('destroy() completes within destroyTimeoutMs AND rescues hung docs when onStoreDocument throws', async () => {
+    // Pre-construct shadow handle so the test can assert the D15 rescue-buffer
+    // file exists on disk post-destroy. Mirrors Test 2's layout.
+    const { mkdirSync } = await import('node:fs');
+    const projectDir = tmpDir;
+    const contentDir = join(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const shadowHandle = await initShadowRepo(projectDir);
+
     const server = createServer({
-      contentDir: tmpDir,
-      projectDir: tmpDir,
+      contentDir,
+      projectDir,
+      contentRoot: 'content',
       quiet: true,
       destroyTimeoutMs: 500, // D11: fast timeout for CI — not the 10s default
+      shadowRepo: shadowHandle,
     });
     await server.ready;
 
@@ -247,6 +258,27 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
         error: expect.stringContaining('timeout'),
       }),
     );
+
+    // D15 / OQ-P2-02: rescue-buffer dump on flush timeout. The in-memory Y.Doc
+    // state was preserved to <shadow-gitDir>/rescue/<docName>.md so the user
+    // can recover via the existing /api/rescue endpoints.
+    const rescuePath = join(shadowHandle.gitDir, 'rescue', 'pathological-doc.md');
+    expect(existsSync(rescuePath)).toBe(true);
+    expect(readFileSync(rescuePath, 'utf-8')).toContain('will not be flushed');
+
+    // The timeout error should name the rescued doc so operators can correlate
+    // the warn log's phaseErrors payload with on-disk rescue files.
+    const phaseError = warnLogs[0].payload.phaseErrors as Array<{
+      phase: string;
+      error: string;
+    }>;
+    const flushErr = phaseError.find((e) => e.phase === 'flush-all-stores');
+    expect(flushErr?.error).toContain('rescued [pathological-doc]');
+
+    // Structured rescue log was emitted via the [rescue] category
+    const rescueLogs = logCapture.getCalls('info', '[rescue]');
+    expect(rescueLogs.length).toBeGreaterThanOrEqual(1);
+    expect(rescueLogs[0].payload.docName).toBe('pathological-doc');
   });
 
   test('destroy() is idempotent under concurrent calls', async () => {

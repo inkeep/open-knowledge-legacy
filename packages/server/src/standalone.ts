@@ -432,7 +432,8 @@ export function createServer(options: ServerOptions): ServerInstance {
 
     // Capture doc names before the race so the timeout error can name the
     // documents that failed to unload — actionable context for operators
-    // debugging hung flushes (and a hint for future rescue-buffer UX, OQ-P2-02).
+    // debugging hung flushes, and the target list for the rescue-buffer
+    // dump below (D15 / OQ-P2-02).
     const pendingDocNames = Array.from(hocuspocus.documents.keys());
 
     hocuspocus.closeConnections();
@@ -443,9 +444,57 @@ export function createServer(options: ServerOptions): ServerInstance {
       timeoutId = setTimeout(() => {
         resolved = true;
         const stillLoaded = Array.from(hocuspocus.documents.keys());
+
+        // D15 / OQ-P2-02: rescue-buffer dump on flush timeout. onStoreDocument
+        // did not complete for these docs, so the in-memory Y.Doc state IS the
+        // data-of-record — dump it to the shadow rescue/ tree so the user can
+        // recover via the existing /api/rescue endpoints. Best-effort per doc
+        // so one serialization failure doesn't block the others. Unconditional
+        // (no isDirty check like the reconcile-path rescue uses) because the
+        // hang semantic means diff-vs-reconciled-base is not the right gate.
+        const rescued: string[] = [];
+        const rescueFailed: string[] = [];
+        if (shadowRef.current) {
+          for (const docName of stillLoaded) {
+            try {
+              const ours = serializeDoc(docName);
+              if (ours === null) {
+                rescueFailed.push(docName);
+                continue;
+              }
+              const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
+              if (!rescuePath) {
+                rescueFailed.push(docName);
+                continue;
+              }
+              mkdirSync(dirname(rescuePath), { recursive: true });
+              writeFileSync(rescuePath, ours, 'utf-8');
+              incrementRescueBuffer();
+              rescued.push(docName);
+              log.info({ docName }, `[rescue] rescue buffer saved on flush timeout: ${docName}`);
+            } catch (e) {
+              rescueFailed.push(docName);
+              log.error(
+                { err: e, docName },
+                `[rescue] failed to write rescue buffer for ${docName}`,
+              );
+            }
+          }
+        } else {
+          // Shadow repo unavailable (init failed earlier) — nothing to write into.
+          rescueFailed.push(...stillLoaded);
+        }
+
+        const rescueSummary =
+          rescued.length > 0 || rescueFailed.length > 0
+            ? ` — rescued [${rescued.join(', ')}]${
+                rescueFailed.length > 0 ? `, lost [${rescueFailed.join(', ')}]` : ''
+              }`
+            : '';
+
         reject(
           new Error(
-            `flushAllStoresAndWait timeout after ${timeoutMs}ms — ${stillLoaded.length}/${pendingDocNames.length} docs did not unload: [${stillLoaded.join(', ')}]`,
+            `flushAllStoresAndWait timeout after ${timeoutMs}ms — ${stillLoaded.length}/${pendingDocNames.length} docs did not unload: [${stillLoaded.join(', ')}]${rescueSummary}`,
           ),
         );
       }, timeoutMs);

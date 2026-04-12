@@ -44,7 +44,7 @@ Ship either as a standalone CLI patch release (low risk, high value — fixes th
 ## 2) Goals
 
 - **G1 — Zero data loss from `createServer().destroy()` in the happy path *for writes that have reached the server's Y.Doc*.** Graceful shutdown flushes all pending L1 markdown writes to disk and all pending L2 git commits to the shadow repo before `destroy()` resolves. This scope is intentional: client-side transmission buffers (e.g., the ~16ms between a keystroke and its WebSocket flush) are a separate, smaller concern addressed by the Electron desktop spec's client-side drain barrier (see [2026-04-11-electron-desktop-app §8.4.1 / D19](../2026-04-11-electron-desktop-app/SPEC.md)). For CLI users, a residual ~16ms client-buffering loss window remains — an order-of-magnitude smaller than the 2–10 second server-side window this fix closes, and cross-package scope to address it is not worth the architectural cost (see NG3).
-- **G2 — Bounded data loss budget under pathological conditions.** If `onStoreDocument` throws or hangs during flush, `destroy()` times out at 10 seconds and exits with a warning log. Future work can add rescue-buffer dump UX; this spec just prevents an infinite hang.
+- **G2 — Bounded data loss budget under pathological conditions.** If `onStoreDocument` throws or hangs during flush, `destroy()` times out at `destroyTimeoutMs` (default 10s) and dumps each still-loaded document's in-memory Y.Doc to `<shadow-gitDir>/rescue/<docName>.md` (D15 / OQ-P2-02) before continuing to Phase 4, so pending edits remain recoverable via the existing `/api/rescue` endpoints.
 - **G3 — Regression test that asserts zero-loss.** An integration test exercises the exact scenario (rapid writes → immediate shutdown) and fails if the bug re-appears on any future destroy() refactor.
 - **G4 — Minimal blast radius.** The fix is isolated to `packages/server/src/standalone.ts` and the new `packages/server/src/standalone.test.ts`. No changes to `persistence.ts`, no changes to the Hocuspocus extension contract, no changes to the CLI, no changes to the React app, no changes to `.open-knowledge/` on-disk format.
 - **G5 — Use public Hocuspocus API only.** No monkey-patching, no access to private internals, no fork of the `@hocuspocus/server` package. The fix uses the same `afterUnloadDocument` extension hook that Hocuspocus's own `Server.destroy()` uses internally.
@@ -55,7 +55,7 @@ Ship either as a standalone CLI patch release (low risk, high value — fixes th
 - **[NOT NOW] NG2: Upstream PR to Hocuspocus for an awaitable `flushPendingStores()`.** R2 noted the upstream fix is mechanically trivial, but it doesn't couple to our local fix (we're using public API, not monkey-patching), so there's no blocker. Filed as Future Work.
 - **[NOT NOW] NG3: Renderer-side `ProviderPool.flushAllProviders()` drain barrier.** This is the client-side mirror of `flushAllStoresAndWait()`. Already owned by the [2026-04-11-electron-desktop-app SPEC §8.4.1 / D19](../2026-04-11-electron-desktop-app/SPEC.md) because its only caller is the Electron main process. The web app has no current caller for graceful pool teardown. Moving it here would cross package boundaries (`packages/server` → `packages/app`) without a corresponding consumer.
 - **[NEVER] NG4: Instrumentation / telemetry for "how often did the bug fire historically."** Physically impossible — you cannot retroactively measure a bug that's being fixed in this spec. Separately, ongoing production telemetry is bound by D9 of the desktop spec (zero telemetry, Obsidian model). We accept we will never know the historical blast radius. The new shutdown log (D14) gives us forward observability starting with the next release.
-- **[NOT NOW] NG5: Rescue-buffer dump UX on flush timeout.** If `flushAllStoresAndWait()` hits the 10s timeout, we log a warning and exit. A future enhancement can dump the in-memory Y.Doc to a rescue file so the user can recover — out of scope for this spec.
+- **~~[NOT NOW] NG5: Rescue-buffer dump UX on flush timeout~~ ✅ PROMOTED TO IN SCOPE 2026-04-12 → D15.** When `flushAllStoresAndWait()` hits `destroyTimeoutMs`, each still-loaded document's in-memory Y.Doc is dumped to `<shadow-gitDir>/rescue/<docName>.md` before the timeout error propagates to Phase 3's `phaseErrors`. Reuses `safeRescuePath`, `serializeDoc`, and `incrementRescueBuffer` helpers already in scope from the reconcile-path and branch-switch rescue sites. See §8.1, §10 D15, §11 OQ-P2-02.
 - **[NOT NOW] NG6: Performance optimization of the shutdown path.** The fix adds up to ~500ms per pending doc to shutdown *flush latency* in the worst case (L1 markdown serialize + file write + L2 git commit), but only when there are pending writes. This is *flush latency* — how long `destroy()` blocks — and is distinct from the *stranded-write window* of up to 10s mentioned in §1 (how much user input could have accumulated before `destroy()` was called). The upper bound on flush latency is `destroyTimeoutMs` (10s default, configurable via `ServerOptions` per D11) — slow-disk / NFS environments can raise it if legitimate flushes exceed the default. Acceptable — the alternative is silent data loss. Future work could parallelize L1 and L2 drains if measured latency becomes a complaint.
   > **Footnote — "stranded-write window" vs "flush latency".** These are different concepts and should not be conflated. The **stranded-write window** (§1: up to 2–10 seconds) is how much user typing accumulates in the debouncer between the last flushed store and the shutdown signal. The **flush latency** (NG6/J2/J3: ~500ms per pending doc) is how long `destroy()` takes to write that stranded content out. A longer stranded window → more work for flush latency to drain → longer shutdown. Both are bounded by `maxDebounce=10_000ms` for the window and the `flushAllStoresAndWait` 10s timeout for the flush. In the happy path, flush latency is sub-second regardless of window size.
 - **[NOT NOW] NG7: Agent-session shutdown semantics refactor.** `sessionManager.closeAll()` is called before L1 flush in the patched sequence. If agent sessions hold pending writes, those are drained through the regular document update path, not via an explicit "agent flush." If this proves insufficient, revisit — but not in this spec.
@@ -132,10 +132,10 @@ Silent bug fix — there are no user-facing UX changes. The journeys describe th
 1. User's project has some pathological document that causes `onStoreDocument` to throw or hang (e.g., disk full, permission error).
 2. User triggers shutdown.
 3. `flushAllStoresAndWait()` waits on the `afterUnloadDocument` hook, which never fires because the store errored out or the document is still "loading."
-4. After 10 seconds, the `Promise.race` timeout wins. `destroy()` logs `[shutdown] flush timed out` and continues to L2 flush → shadow repo release.
-5. Server exits cleanly (no infinite hang) but the pathological document's last edits **are** lost. Other documents' writes are **not** lost (they drained before the timeout).
+4. After `destroyTimeoutMs` (default 10s), the `Promise.race` timeout wins. Before the error propagates, `flushAllStoresAndWait()` dumps each still-loaded document's in-memory Y.Doc to `<shadow-gitDir>/rescue/<docName>.md` (best-effort per doc; `[rescue]` log category). The timeout error names which docs were rescued versus lost. Phase 3 records the error in `phaseErrors`, the D14 warn-level shutdown log surfaces it, and `destroy()` continues to L2 flush → shadow repo release.
+5. Server exits cleanly (no infinite hang). The user can recover the pathological document's last edits from `<shadow-gitDir>/rescue/<docName>.md` via the existing `GET /api/rescue` + `GET /api/rescue/:docName` endpoints (24h expiry). Other documents' writes are preserved either via normal flush (if they unloaded before the timeout) or via the same rescue buffer (if they didn't).
 
-Rescue-buffer dump UX for this path is NG5 (Future Work). The guarantee here is bounded, not perfect.
+If the shadow repo failed to initialize earlier in `initAsync()`, the rescue loop is skipped and all still-loaded docs are reported as lost in the timeout error message. See §10 D15 and §11 OQ-P2-02.
 
 ## 7) Current state (the buggy code, verbatim)
 
@@ -277,6 +277,10 @@ async function flushAllStoresAndWait(timeoutMs: number): Promise<void> {
     });
   });
 
+  // Capture doc names before the race so the timeout error can name docs that
+  // failed to unload, and so the rescue loop below has the target list.
+  const pendingDocNames = Array.from(hocuspocus.documents.keys());
+
   hocuspocus.closeConnections();   // force-close clients so docs can unload
   hocuspocus.flushPendingStores(); // trigger the debouncer.executeNow chain
 
@@ -288,12 +292,51 @@ async function flushAllStoresAndWait(timeoutMs: number): Promise<void> {
   // the error before Phase 3 could see it — breaking the behavioral contract
   // that Test 3 (D12) asserts (warn log's phaseErrors containing flush-all-stores).
   // Test-driven discovery during US-007 implementation corrected this.
+  //
+  // D15 / OQ-P2-02: before the timeout error propagates, dump each still-loaded
+  // doc's in-memory Y.Doc to <shadow-gitDir>/rescue/<docName>.md (best-effort
+  // per doc) so the user can recover via /api/rescue. Unconditional — timeout
+  // means onStoreDocument did not complete, so in-memory state IS the record.
   await Promise.race([
     allDone,
     new Promise<void>((_, reject) =>
       setTimeout(() => {
         resolved = true; // neutralize any subsequent hook fire
-        reject(new Error(`flushAllStoresAndWait timeout after ${timeoutMs}ms`));
+        const stillLoaded = Array.from(hocuspocus.documents.keys());
+
+        const rescued: string[] = [];
+        const rescueFailed: string[] = [];
+        if (shadowRef.current) {
+          for (const docName of stillLoaded) {
+            try {
+              const ours = serializeDoc(docName);
+              if (ours === null) { rescueFailed.push(docName); continue; }
+              const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
+              if (!rescuePath) { rescueFailed.push(docName); continue; }
+              mkdirSync(dirname(rescuePath), { recursive: true });
+              writeFileSync(rescuePath, ours, 'utf-8');
+              incrementRescueBuffer();
+              rescued.push(docName);
+              log.info({ docName }, `[rescue] rescue buffer saved on flush timeout: ${docName}`);
+            } catch (e) {
+              rescueFailed.push(docName);
+              log.error({ err: e, docName }, `[rescue] failed to write rescue buffer for ${docName}`);
+            }
+          }
+        } else {
+          rescueFailed.push(...stillLoaded);
+        }
+
+        const rescueSummary =
+          rescued.length > 0 || rescueFailed.length > 0
+            ? ` — rescued [${rescued.join(', ')}]${rescueFailed.length > 0 ? `, lost [${rescueFailed.join(', ')}]` : ''}`
+            : '';
+
+        reject(
+          new Error(
+            `flushAllStoresAndWait timeout after ${timeoutMs}ms — ${stillLoaded.length}/${pendingDocNames.length} docs did not unload: [${stillLoaded.join(', ')}]${rescueSummary}`,
+          ),
+        );
       }, timeoutMs),
     ),
   ]);
@@ -783,6 +826,7 @@ function spyOnLogger(loggerName: string): {
 | D11 | **REVISED 2026-04-11 → LOCKED** | Technical + API | **10-second flush timeout is the default, but configurable via `ServerOptions.destroyTimeoutMs`.** Original D11 hardcoded 10s. Analysis pass found two reasons to expose it as a `ServerOption`: (1) **test ergonomics** — Test 3 (failing `onStoreDocument` → timeout path) currently waits 10s+ in CI; passing `destroyTimeoutMs: 500` reclaims ~10s of CI wall-time per run. (2) **Production safety valve** — a CLI user on slow NFS or remote disk could have legitimate L1 writes taking >10s, which the hardcoded ceiling silently truncates. Existing test harness at `test-harness.ts:67-74` already overrides `debounce: 200, maxDebounce: 1000` — `destroyTimeoutMs` fits the same pattern. `ServerOptions` is internal-only (`packages/cli/src/commands/start.ts` + test harness are the only callers, confirmed via grep) — adding a 16th → 17th field is zero public API risk. Resolves OQ-07 with expanded scope. | §8.0.1 adds the field; §8.1 receives it as a helper parameter; §8.3 Test 3 passes `500`. | **HIGH — evidence-grounded** via explore of existing ServerOptions timing-field conventions. | Reversible — removing the field later is a 1-line breaking change, but only affects 2 internal callers. |
 | D12 | **REVISED 2026-04-11 → LOCKED** | Technical | **Regression test suite has 7 cases, with two implementation refinements per analysis pass:** (1) rapid write + destroy asserts file content **AND asserts shutdown log was emitted** (log becomes behavioral contract for the flush path, closes regression where a future refactor could make destroy() silently skip the drain logic while file content still reaches disk via natural debounce), (2) L2 git commit after L1 drain, (3) failing onStoreDocument timeout — **uses `destroyTimeoutMs: 500`** to assert timeout within ~1s instead of 10+ seconds, reclaiming CI wall-time per the D11 revision, (4) idempotency under concurrent destroy() calls, (5) destroy() during async-init (before `ready` resolves), (6) destroy() with zero documents loaded, (7) multi-document drain — open 3 `DirectConnection`s to different doc names, write to each, call destroy(), assert all three files exist on disk. Test 7 closes an off-by-one regression path on `getDocumentsCount() === 0`. Resolves OQ-08. | §8.3 test file — Test 1 gets stdout/pino-spy assertion for the shutdown log; Test 3 passes `destroyTimeoutMs: 500`. | **HIGH — evidence-grounded** refinements. Test 7 added per audit pass design-challenge Medium finding 2; log assertion + timeout override added per analysis pass cascade. | Reversible — test cases or assertion granularity can be tuned. |
 | D13 | LOCKED | Technical | **Use the bare `Hocuspocus` class, not the `@hocuspocus/server` `Server` wrapper — OK can't reach `Server.destroy()` structurally.** `Server` owns its own `httpServer` (`Server.ts:57`), its own `crossws` WebSocket adapter with hardcoded `open`/`message`/`close`/`error` hooks (`Server.ts:58-83`), binds SIGINT/SIGQUIT/SIGTERM unconditionally unless `stopOnSignals: false` (`Server.ts:150-159`), and expects to own `listen()` via `this.httpServer.listen()` (`Server.ts:162`). OK's CLI (`packages/cli/src/commands/start.ts:77-99`) needs a **shared** HTTP server for `/api/*` + `sirv` static asset serving + `/collab`-only WebSocket upgrade (ignoring non-`/collab` upgrades so Vite HMR can coexist on the same port in dev), **its own** `WebSocketServer({ noServer: true })` instance, and **control** over signal handlers (owns SIGINT/SIGTERM + `process.exit(0)`). Migrating to `Server` would require either (a) forking `Server.ts` (violates G5 + NG1) or (b) a non-trivial refactor adopting Hocuspocus's `crossws`-based WebSocket path, which affects the Vite dev plugin and re-opens "who owns the HTTP server." **Rejected: switch to `Server.destroy()`. Chosen: write our own `destroy()` helper that mirrors `Server.destroy()`'s internal pattern using the same public `afterUnloadDocument` hook.** | §8.1 code comment cites `Server.ts:200-225` as the template. | **HIGH — primary-source verified** via direct read of `Server.ts` during audit pass. | 1-way door for this spec — would only change if OK's HTTP/WebSocket/signal architecture is restructured separately. |
+| D15 | **LOCKED 2026-04-12** | Technical | **Rescue-buffer dump on flush timeout (OQ-P2-02 promoted from Future Work → In Scope).** When `flushAllStoresAndWait()` hits `destroyTimeoutMs`, each still-loaded document's in-memory Y.Doc is serialized via `serializeDoc()` and written to `<shadow-gitDir>/rescue/<docName>.md` via `safeRescuePath()` + `writeFileSync()` + `incrementRescueBuffer()` before the timeout error propagates to Phase 3's `phaseErrors`. Reuses helpers already in scope inside `createServer()` from the reconcile-path (`standalone.ts:323-335`) and branch-switch (`standalone.ts:677-692`) rescue sites — destroy-timeout becomes the third and final call-site, completing the "rescue on any pathological save" invariant. Best-effort per doc (per-doc try/catch, one failure doesn't block others). Unconditional write — no `isDirty` check like the reconcile path uses — because a store-hook hang means the in-memory state IS the data-of-record, not a diff vs. reconciled base. The timeout error message names `rescued [...]` and `lost [...]` doc lists so operators can correlate on-disk rescue files with the D14 warn-level shutdown log. Logs under `[rescue]` category (consistent with `api-extension.ts:757` rescue-API logs). Recovery UX surfaces via the existing `GET /api/rescue` + `GET /api/rescue/:docName` endpoints with 24h expiry — no new API work required. If `shadowRef.current` is nullish (init failed earlier), the rescue loop is skipped and all docs are reported as lost. Closes NG5 (formerly [NOT NOW]) and OQ-P2-02. | §8.1 helper updated with rescue loop inside the Promise.race timeout branch; §8.3 Test 3 adds shadow-handle construction + rescue file existence assertion + rescue-log emission assertion. | **HIGH — evidence-grounded** via the two existing rescue-write call sites sharing the same helpers, plus verified availability of `/api/rescue` endpoints in `api-extension.ts:710-811`. | Reversible — removing the rescue loop is a ~30-line revert; the infrastructure used (safeRescuePath, serializeDoc, incrementRescueBuffer, `/api/rescue` API, 24h expiry) stays in place for the other two call-sites and would not be affected. |
 | D14 | LOCKED | Technical | **Structured shutdown log via `getLogger('server')` at the end of `destroy()`, always emitted (success or partial failure).** Uses the existing pino-based logger that's already a dep and actively used across the server package (`standalone.ts:432`, `persistence.ts`, `api-extension.ts`). Emits `info` on clean shutdown (`[server] shutdown flushed N documents in Mms`) and `warn` with a `phaseErrors` payload on partial failure. Original framing in OQ-P2-07 treated this as "only observability we'll ever have" given NG4 (zero telemetry), but analysis pass surfaced a stronger rationale: **`destroy()` is currently the only unlogged lifecycle path in the server package** — every other event (shadow repo init, watcher start, file events, document store) uses structured logging. Silent `destroy()` is an outlier, not a policy choice. Promoting to in-scope is parity with the rest of the package, not scope creep. Under D10's best-effort drain, the log is also **load-bearing** — it's the only signal that distinguishes "fully clean shutdown" from "partial shutdown with phase errors." Test 1 (D12) additionally asserts the log was emitted via stdout capture, making it a behavioral contract for the regression test. Resolves OQ-P2-07 (promoted from Future Work → In Scope). | §8.2 destroy() adds stopwatch + `phaseErrors` tracking + structured log at end; §8.3 Test 1 adds log-emission assertion. | **HIGH — evidence-grounded** via /explore finding that pino is already in use. | Reversible — removing the log is ~10 lines. |
 
 ## 11) Open questions (backlog)
@@ -804,7 +848,7 @@ function spyOnLogger(loggerName: string): {
 ### P2 — Future Work / Noted
 
 - **OQ-P2-01** — Upstream PR to Hocuspocus making `flushPendingStores()` return a Promise. Maturity: **Identified**. Trigger: capacity for an upstream contribution with review cycle.
-- **OQ-P2-02** — Rescue-buffer dump UX when `flushAllStoresAndWait()` hits the 10s timeout. Write the in-memory Y.Doc to a `.open-knowledge/rescue/<timestamp>-<docname>.md` file so the user can recover. Maturity: **Identified** — rescue-buffer infrastructure already exists.
+- **~~OQ-P2-02~~** ✅ **PROMOTED TO IN SCOPE 2026-04-12 → D15.** Rescue-buffer dump UX on flush timeout. Implemented inline in `flushAllStoresAndWait()` at §8.1 — when the timeout fires, each still-loaded doc's in-memory Y.Doc is written to `<shadow-gitDir>/rescue/<docName>.md` via the existing `safeRescuePath` + `serializeDoc` + `incrementRescueBuffer` helpers (already used by the reconcile and branch-switch paths). Best-effort per doc, logged under `[rescue]`, timeout error message names `rescued` vs. `lost` docs. Recoverable via existing `GET /api/rescue` + `GET /api/rescue/:docName` endpoints with 24h expiry. Test 3 asserts the rescue file exists on disk with expected content.
 - **OQ-P2-03** — Parallelize L1 and L2 drains for faster shutdown latency. Current sequence is strictly serial for correctness. Revisit if measured shutdown latency becomes a user complaint.
 - **OQ-P2-04** — Extend the integration test pattern to cover other `createServer()` lifecycle transitions (startup race conditions, watcher-to-destroy handoff, shutdown-during-reconciliation). Maturity: **Noted**.
 - **OQ-P2-05** — Apply the same fix pattern to `packages/app/src/server/hocuspocus-plugin.ts` (Vite dev plugin). The dev plugin uses raw `new Hocuspocus(...)` (line 88) and doesn't call `createServer()`, so it doesn't inherit this fix. HMR-only shutdown, low stakes, but the same bug shape applies. Maturity: **Identified**. Trigger: dev-mode data-loss complaint or if the plugin surface grows. [Evidence Finding 6](./evidence/destroy-investigation-findings.md).
@@ -831,7 +875,7 @@ function spyOnLogger(loggerName: string): {
 ### Tensions
 
 - **T1 — Zero loss (G1) vs zero telemetry (NG4).** Without telemetry, we can't monitor the fix's effectiveness in production. We rely on the regression test and user reports. Accepted trade-off; D9 of the desktop spec binds us.
-- **T2 — Bounded shutdown latency (G2) vs data preservation under pathology.** The 10-second timeout trades perfect correctness for bounded latency. If `onStoreDocument` is hung, writes for the hung document are lost regardless of whether we wait 10s or 10min. The rescue-buffer UX (OQ-P2-02) would close this gap later.
+- **T2 — Bounded shutdown latency (G2) vs data preservation under pathology.** The `destroyTimeoutMs` ceiling trades perfect correctness for bounded latency. As of D15 (2026-04-12), the rescue-buffer UX (OQ-P2-02) closes the data-preservation gap: when the timeout fires, each still-loaded doc's in-memory Y.Doc is dumped to `<shadow-gitDir>/rescue/<docName>.md` before the error propagates, so edits are recoverable even when `onStoreDocument` itself is hung. The bounded-latency property is preserved — the rescue loop runs synchronously inside the timeout callback before `reject` and completes in tens of milliseconds per doc (markdown serialize + file write, no git involvement).
 - **T3 — Comprehensive test coverage vs minimal CI wall-time.** Each integration test spins up a real server + watcher + shadow repo. Six tests (after OQ-08 promotion) is probably ~30s of CI time. Acceptable.
 - **T4 — Test with real shadow repo vs test with mocked persistence.** The proposed test uses real components because a mock would pass while the bug persists. This is slower but correct.
 
@@ -851,7 +895,7 @@ function spyOnLogger(loggerName: string): {
 ## 13) Future work (Out of Scope)
 
 - **OQ-P2-01** — Upstream PR to Hocuspocus (Identified)
-- **OQ-P2-02** — Rescue-buffer dump on flush timeout (Identified)
+- **~~OQ-P2-02~~** ✅ Rescue-buffer dump on flush timeout — **Done** (2026-04-12 → D15)
 - **OQ-P2-03** — Parallelize L1/L2 drains (Noted)
 - **OQ-P2-04** — Integration test expansion for other server-lifecycle transitions (Noted)
 - **NG3** — `ProviderPool.flushAllProviders()` client-side drain barrier (owned by [desktop spec D19](../2026-04-11-electron-desktop-app/SPEC.md))
