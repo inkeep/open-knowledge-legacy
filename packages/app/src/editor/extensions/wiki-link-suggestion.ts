@@ -1,3 +1,4 @@
+import type { HeadingEntry } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
@@ -11,12 +12,6 @@ export const wikiLinkSuggestionKey = new PluginKey('wikiLinkSuggestion');
 export interface PageItem {
   docName: string;
   title: string;
-}
-
-export interface HeadingEntry {
-  level: number;
-  text: string;
-  slug: string;
 }
 
 export type WikiLinkSuggestionItem =
