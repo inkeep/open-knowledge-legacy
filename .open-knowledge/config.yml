@@ -19,9 +19,11 @@
 # include/exclude: glob patterns for tracked content files. Relative to the
 # project root.
 #
+# uploadsDir: subdirectory of content.dir where uploaded images are stored.
+#
 # content:
 #   dir: .
-#   uploadsDir: uploads   # subdirectory of content.dir where uploaded images are stored
+#   uploadsDir: uploads
 #   include:
 #     - "**/*.md"
 #   exclude: []
