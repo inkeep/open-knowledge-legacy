@@ -8,8 +8,8 @@
  * Git commit debounced separately: 30s idle after last disk write (L2)
  */
 import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { rename, writeFile } from 'node:fs/promises';
-import { relative, resolve } from 'node:path';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { dirname, relative, resolve } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
   prependFrontmatter,
@@ -39,6 +39,9 @@ const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
 export function safeContentPath(documentName: string, contentDir: string): string {
+  if (documentName.includes('\x00')) {
+    throw new Error(`Invalid document name: ${documentName}`);
+  }
   const filePath = resolve(contentDir, `${documentName}.md`);
   if (!filePath.startsWith(`${contentDir}/`)) {
     throw new Error(`Invalid document name: ${documentName}`);
@@ -326,10 +329,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
             `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
           );
         }
+        // Use normalized serialization as the base so onStoreDocument doesn't
+        // false-positive on the first store after load. Raw file content may
+        // differ from TipTap's output (blank lines, trailing newlines, list
+        // formatting) without any actual content change.
+        const normalizedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+        setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
+      } else {
+        // Unparseable body (empty file etc.) — fall back to raw so reconciliation
+        // has a base to work with if a watcher event fires later.
+        setReconciledBase(documentName, raw);
       }
-
-      // Initialize reconciled base
-      setReconciledBase(documentName, raw);
     },
 
     async onStoreDocument({ document, documentName }) {
@@ -360,6 +370,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const tmpPath = `${filePath}.tmp`;
 
       try {
+        await mkdir(dirname(filePath), { recursive: true });
         await writeFile(tmpPath, markdown, 'utf-8');
         await rename(tmpPath, filePath);
         registerWrite(filePath, contentHash(markdown));

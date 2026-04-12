@@ -1,0 +1,5 @@
+{
+  "title": "Guides",
+  "icon": "LuBookText",
+  "pages": ["getting-started", "configuration", "mcp-integration", "content-filtering"]
+}

@@ -11,25 +11,17 @@
  * Env vars: STRESS_FUZZ_SEED, STRESS_FUZZ_MAX_ITER, STRESS_FUZZ_VERBOSE
  */
 
-import { beforeEach, describe, test } from 'bun:test';
+import { describe, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
-import {
-  __resetCoordinationState,
-  markUserTyping,
-  setupObservers,
-} from '../../src/editor/observers';
+import { markUserTyping, setupObservers } from '../../src/editor/observers';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
-
-beforeEach(() => {
-  __resetCoordinationState();
-});
 
 // ---------- seeded PRNG ----------
 
@@ -172,8 +164,8 @@ const mutators: Array<{ name: string; fn: Mutator }> = [
   },
   {
     name: 'markTyping',
-    fn: (_ctx) => {
-      markUserTyping();
+    fn: (ctx) => {
+      markUserTyping(ctx.doc);
     },
   },
 ];
@@ -274,9 +266,8 @@ describe('Layer D: fuzz harness', () => {
 
   test('fuzz 50 iterations (baseline)', () => runFuzz(50, 0xcafebabe), 30_000);
 
-  test('fuzz 200 iterations (deep)', () => runFuzz(200, 0x12345678), 120_000);
-
-  // 500-iteration nightly probe — opt-in via env var
-  const run500 = process.env.STRESS_FUZZ_NIGHTLY === '1' ? test : test.todo;
-  run500('fuzz 500 iterations (nightly probe)', () => runFuzz(500, 0xfeedface), 300_000);
+  // 200+ iteration probes — opt-in via STRESS_FUZZ_NIGHTLY=1
+  const runNightly = process.env.STRESS_FUZZ_NIGHTLY === '1' ? test : test.todo;
+  runNightly('fuzz 200 iterations (deep)', () => runFuzz(200, 0x12345678), 120_000);
+  runNightly('fuzz 500 iterations (nightly probe)', () => runFuzz(500, 0xfeedface), 300_000);
 });

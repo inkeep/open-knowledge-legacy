@@ -9,7 +9,7 @@ import { startMcpServer } from '../mcp/server.ts';
 
 export function mcpCommand(getConfig: () => Config): Command {
   const cmd = new Command('mcp')
-    .description('Start MCP stdio server for project wiki')
+    .description('Start MCP stdio server for project knowledge base')
     .action(async () => {
       try {
         const config = getConfig();

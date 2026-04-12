@@ -262,15 +262,39 @@
   opacity: 0.3;
 }
 
+/* Editor layout — grid on wrapper; content column max 1024px (lg), side rails minmax(gutter, 1fr) */
+.tiptap-editor {
+  --content-max-width: 1024px;
+  --margin-width: 3rem;
+  display: grid;
+  width: 100%;
+  grid-template-columns:
+    [full-start] minmax(var(--margin-left-width, var(--margin-width)), 1fr)
+    [content-start] minmax(0, min(var(--content-max-width), 100%))
+    [content-end] minmax(var(--margin-right-width, var(--margin-width)), 1fr)
+    [full-end];
+  @apply lg:[--margin-width:8rem];
+}
+
+.tiptap-editor > div {
+  grid-column: content;
+}
+
 /* Editor polish */
 .ProseMirror {
   outline: none;
   min-height: 200px;
   line-height: 1.7;
+  @apply text-gray-800 dark:text-white/80;
 }
 
 .ProseMirror p {
   margin-bottom: 0.5em;
+}
+
+.ProseMirror mark {
+  color: inherit;
+  @apply py-0.5 px-1 rounded-sm bg-amber-100 dark:bg-amber-900/50;
 }
 
 .ProseMirror h1,
@@ -283,12 +307,15 @@
 
 .ProseMirror h1 {
   font-size: 1.5em;
+  @apply tracking-tighter;
 }
 .ProseMirror h2 {
   font-size: 1.25em;
+  @apply tracking-tight;
 }
 .ProseMirror h3 {
   font-size: 1.1em;
+  @apply tracking-tight;
 }
 
 /* Lists */
@@ -377,6 +404,14 @@
 
 .ProseMirror ul[data-type="taskList"] li > div {
   flex: 1;
+}
+
+.ProseMirror ul[data-type="taskList"] li > div p {
+  margin-bottom: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] li {
+  margin-bottom: 0.1em;
 }
 
 .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
@@ -513,12 +548,12 @@
   cursor: col-resize;
 }
 
-.ProseMirror p.is-editor-empty:first-child::before {
-  content: "Start writing...";
-  color: var(--color-muted-foreground);
+.ProseMirror p.is-empty::before {
+  content: attr(data-placeholder);
   pointer-events: none;
   float: left;
   height: 0;
+  @apply text-muted-foreground/60;
 }
 
 /* CodeMirror polish */

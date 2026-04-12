@@ -15,15 +15,51 @@ import {
 } from 'lucide-react';
 import { uploadAndInsert } from '../image-upload';
 
+/**
+ * A slash command menu item.
+ *
+ * Items are grouped by category in the menu. The extension handles trigger
+ * detection, range deletion, and keyboard navigation — item commands only
+ * need to insert/toggle the desired content.
+ */
 export interface SlashCommandItem {
+  /** Unique identifier (used as React key) */
   name: string;
+
+  /** Display label shown in the menu */
   label: string;
+
+  /** Lucide icon component */
   icon: React.ComponentType<{ className?: string }>;
-  category: 'basic' | 'insert';
+
+  /**
+   * Category key for grouping. Built-in categories: `basic`, `insert`.
+   * Downstream consumers can add custom categories by registering labels
+   * via `SlashCommand.configure({ categoryLabels: {...} })`.
+   */
+  category: string;
+
+  /**
+   * Command to execute when the item is selected. The extension deletes
+   * the trigger range (`/query`) before calling this, so commands can
+   * directly insert or toggle content without worrying about cleanup.
+   */
   command: (editor: Editor) => void;
+
+  /** Alternative search terms (e.g., `['h1']` for "Heading 1") */
   aliases?: string[];
+
+  /**
+   * Optional description for future UI enhancements (not currently displayed).
+   * Reserved for tooltips or expanded menu views.
+   */
+  description?: string;
 }
 
+/**
+ * Built-in slash command items — headings, lists, quote, code, table, separator.
+ * Organized into two categories: `basic` (formatting blocks) and `insert` (special blocks).
+ */
 export const slashCommandItems: SlashCommandItem[] = [
   // Basic blocks
   {
@@ -130,6 +166,11 @@ export const slashCommandItems: SlashCommandItem[] = [
   },
 ];
 
+/**
+ * Filter items by search query. Matches against label, name, and aliases.
+ * Used by the slash command extension; exported for reuse by custom menus
+ * (e.g., block-editor-ux "+" button).
+ */
 export function filterItems(items: SlashCommandItem[], query: string): SlashCommandItem[] {
   if (!query) return items;
   const lower = query.toLowerCase();
@@ -137,6 +178,6 @@ export function filterItems(items: SlashCommandItem[], query: string): SlashComm
     (item) =>
       item.label.toLowerCase().includes(lower) ||
       item.name.toLowerCase().includes(lower) ||
-      item.aliases?.some((a) => a.includes(lower)),
+      item.aliases?.some((a) => a.toLowerCase().includes(lower)),
   );
 }

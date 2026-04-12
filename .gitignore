@@ -29,3 +29,14 @@ tmp/
 
 # Runtime content file — accumulates test artifacts from dev/agent-sim runs
 init_spike/content/test-doc.md
+
+# Wiki/content runtime directory (pre-wiki→content rename on main)
+packages/content/
+
+# Playwright generated artifacts (test runs + stored traces + last-run manifest)
+# These directories are created by `node_modules/@playwright/test/cli.js test` and
+# must be excluded from biome/lint and git alike.
+test-results/
+packages/app/test-results/
+playwright-report/
+blob-report/

@@ -1,4 +1,5 @@
 import type { Editor } from '@tiptap/react';
+import { useEditorState } from '@tiptap/react';
 import {
   ChevronDown,
   Code2,
@@ -97,27 +98,41 @@ const blockTypes: BlockType[] = [
   },
 ];
 
-function getCurrentBlockType(editor: Editor): BlockType {
-  return blockTypes.find((bt) => bt.isActive(editor)) ?? blockTypes[0];
-}
-
 export function BlockTypeSelector({ editor }: { editor: Editor }) {
-  const current = getCurrentBlockType(editor);
+  const { current, activeStates } = useEditorState({
+    editor,
+    selector: (ctx) => {
+      const activeStates = Object.fromEntries(
+        blockTypes.map((bt) => [bt.name, bt.isActive(ctx.editor)]),
+      );
+      const current = blockTypes.find((bt) => activeStates[bt.name]) ?? blockTypes[0];
+      return { current, activeStates };
+    },
+  });
   const CurrentIcon = current.icon;
 
   return (
     <DropdownMenuRoot>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-1 px-2 text-xs font-normal">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-1 px-2 text-sm font-medium text-accent-foreground/80"
+        >
           <CurrentIcon className="size-3.5" />
           <span>{current.label}</span>
           <ChevronDown className="size-3 opacity-50" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={8} portal={false} className="w-44">
+      <DropdownMenuContent
+        align="start"
+        sideOffset={8}
+        portal={false}
+        className="w-44 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto subtle-scrollbar"
+      >
         {blockTypes.map((bt) => {
           const Icon = bt.icon;
-          const active = bt.isActive(editor);
+          const active = activeStates[bt.name];
           return (
             <DropdownMenuItem
               key={bt.name}

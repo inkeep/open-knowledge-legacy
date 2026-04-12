@@ -14,10 +14,11 @@ import {
   readFileSync,
   statSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { extname, resolve } from 'node:path';
+import { dirname, extname, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import { ALLOWED_IMAGE_MIME_TYPES } from '@inkeep/open-knowledge-core';
 import busboy from 'busboy';
@@ -28,7 +29,9 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
+import { safeContentPath } from './persistence.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
@@ -146,10 +149,24 @@ function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadR
   });
 }
 
+/**
+ * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
+ * Throws if the resolved path escapes the base directory.
+ */
+export function safeSubdir(baseDir: string, subdir: string): string {
+  const resolved = resolve(baseDir, subdir);
+  if (resolved !== baseDir && !resolved.startsWith(`${baseDir}/`)) {
+    throw new Error(`Invalid directory: ${subdir}`);
+  }
+  return resolved;
+}
+
 export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
+  getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   /**
    * When true, register test-only routes (currently `/api/test-reset`).
    * Defaults to `false` — these routes allow any client to destroy document
@@ -176,8 +193,49 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
 }
 
 function json(res: ServerResponse, status: number, data: unknown): void {
-  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'X-Content-Type-Options': 'nosniff',
+  });
   res.end(JSON.stringify(data));
+}
+
+/**
+ * Extract a human-readable title from a markdown file's content.
+ *
+ * Priority:
+ *  1. `title:` field in YAML frontmatter (between leading `---` delimiters)
+ *  2. First `# heading` line in the file
+ *  3. filename (without extension, as provided by the caller)
+ */
+export function extractPageTitle(content: string, filename: string): string {
+  // 1. Frontmatter title — only if the file starts with ---
+  if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
+    const closingIdx = content.indexOf('\n---', 3);
+    if (closingIdx !== -1) {
+      const frontmatter = content.slice(0, closingIdx + 4);
+      const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
+      if (titleMatch) {
+        let title = titleMatch[1].trim();
+        if (
+          (title.startsWith('"') && title.endsWith('"')) ||
+          (title.startsWith("'") && title.endsWith("'"))
+        ) {
+          title = title.slice(1, -1);
+        }
+        return title;
+      }
+    }
+  }
+
+  // 2. First # heading
+  const headingMatch = content.match(/^# (.+)$/m);
+  if (headingMatch) {
+    return headingMatch[1].trim();
+  }
+
+  // 3. Filename fallback
+  return filename;
 }
 
 export function createApiExtension(options: ApiExtensionOptions): Extension {
@@ -185,6 +243,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     hocuspocus,
     sessionManager,
     contentDir,
+    getFileIndex,
     enableTestRoutes = false,
     shadowRef,
     projectRoot,
@@ -345,6 +404,51 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const content = dc.document.getText('source').toString();
       json(res, 200, { ok: true, docName, content });
     } catch (e) {
+      console.error('[document-read]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleDocumentList(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const dir = url.searchParams.get('dir');
+
+      // Validate dir parameter (reject traversal attempts)
+      if (dir) {
+        try {
+          safeSubdir(contentDir, dir);
+        } catch {
+          json(res, 400, { ok: false, error: `Invalid directory: ${dir}` });
+          return;
+        }
+      }
+
+      // Read from the watcher's in-memory file index (instant, no filesystem scan)
+      const index = getFileIndex();
+      const documents: { docName: string; size: number; modified: string }[] = [];
+
+      for (const [docName, entry] of index) {
+        // Filter by dir prefix if specified
+        if (dir && !docName.startsWith(`${dir}/`) && docName !== dir) continue;
+
+        documents.push({
+          docName,
+          size: entry.size,
+          modified: entry.modified,
+        });
+      }
+
+      documents.sort((a, b) => a.docName.localeCompare(b.docName));
+      json(res, 200, { ok: true, documents });
+    } catch (e) {
+      console.error('[document-list]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
     }
@@ -468,7 +572,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
             if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
           } catch {
-            console.warn('[agent-undo] Invalid JSON body — using default docName');
+            json(res, 400, { ok: false, error: 'Invalid JSON body' });
+            return;
           }
         }
       } catch {
@@ -486,8 +591,31 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
         // Compensate: restore pre-undo state so bridge invariant holds.
-        um.redo();
-        throw syncErr;
+        // Track compensation success explicitly — if both the sync AND the
+        // compensation fail, the Y.Doc is in an inconsistent state and the
+        // caller needs a distinct signal so they can surface a corruption
+        // warning to the user instead of silently retrying.
+        let compensationFailed = false;
+        try {
+          um.redo();
+        } catch (compensateErr) {
+          compensationFailed = true;
+          console.error('[agent-undo] Compensation also failed:', compensateErr);
+        }
+        const message = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        console.error('[agent-undo]', syncErr);
+        json(res, 500, {
+          ok: false,
+          error: message,
+          compensationFailed,
+          ...(compensationFailed
+            ? {
+                warning:
+                  'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
+              }
+            : {}),
+        });
+        return;
       }
       console.log('[agent-undo] Undo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
@@ -513,7 +641,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
             if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
           } catch {
-            console.warn('[agent-redo] Invalid JSON body — using default docName');
+            json(res, 400, { ok: false, error: 'Invalid JSON body' });
+            return;
           }
         }
       } catch {
@@ -531,8 +660,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         syncTextToFragment(dc.document);
       } catch (syncErr) {
         // Compensate: restore pre-redo state so bridge invariant holds.
-        um.undo();
-        throw syncErr;
+        // Track compensation success explicitly — see agent-undo handler for
+        // the full rationale. Callers receiving compensationFailed=true must
+        // surface a corruption warning rather than silently retrying.
+        let compensationFailed = false;
+        try {
+          um.undo();
+        } catch (compensateErr) {
+          compensationFailed = true;
+          console.error('[agent-redo] Compensation also failed:', compensateErr);
+        }
+        const message = syncErr instanceof Error ? syncErr.message : String(syncErr);
+        console.error('[agent-redo]', syncErr);
+        json(res, 500, {
+          ok: false,
+          error: message,
+          compensationFailed,
+          ...(compensationFailed
+            ? {
+                warning:
+                  'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
+              }
+            : {}),
+        });
+        return;
       }
       console.log('[agent-redo] Redo performed');
       json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
@@ -550,21 +701,43 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      await sessionManager.closeAll();
-      hocuspocus.closeConnections('test-doc');
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+      const docName = url.searchParams.get('docName') ?? 'test-doc';
+
+      // Path traversal guard — reuse the canonical validator from persistence.ts.
+      // Throws `Invalid document name: ${docName}` for names that escape contentDir;
+      // we translate that to a 400 response. Keeping the guard in one place (not
+      // re-implementing the startsWith check inline) ensures handleTestReset stays
+      // in lock-step with persistence's onLoadDocument / onStoreDocument validators.
+      let filePath: string;
+      try {
+        filePath = safeContentPath(docName, contentDir);
+      } catch (err) {
+        // Log the original error (safeContentPath produces messages like
+        // `Invalid document name: ${docName}` which are useful for diagnosing
+        // unexpected failures beyond the standard path-traversal case — e.g.,
+        // encoding errors from resolve(), null-byte truncation, etc.) but
+        // still return a sanitized, uniform 400 message to the client so
+        // filesystem details never leak through the API boundary.
+        console.error('[test-reset] safeContentPath rejected docName:', docName, err);
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+
+      await sessionManager.closeAll(docName);
+      hocuspocus.closeConnections(docName);
 
       // D18: Force-flush any pending onStoreDocument debounced work before unload.
       // Without this, unloadDocument silently no-ops if the debouncer is active
       // (Hocuspocus.shouldUnloadDocument returns false when isDebounced is true).
-      const debounceId = 'onStoreDocument-test-doc';
+      const debounceId = `onStoreDocument-${docName}`;
       if (hocuspocus.debouncer.isDebounced(debounceId)) {
         await hocuspocus.debouncer.executeNow(debounceId);
       }
 
-      const doc = hocuspocus.documents.get('test-doc');
+      const doc = hocuspocus.documents.get(docName);
       if (doc) await hocuspocus.unloadDocument(doc);
-      const { writeFileSync } = await import('node:fs');
-      writeFileSync(resolve(contentDir, 'test-doc.md'), '', 'utf-8');
+      writeFileSync(filePath, '', 'utf-8');
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);
@@ -749,7 +922,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const content = readFileSync(filePath, 'utf-8');
-    res.writeHead(200, { 'Content-Type': 'text/markdown' });
+    res.writeHead(200, {
+      'Content-Type': 'text/markdown',
+      'X-Content-Type-Options': 'nosniff',
+    });
     res.end(content);
   }
 
@@ -802,8 +978,104 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleCreatePage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+      const { path: filePath } = body as Record<string, unknown>;
+      if (!filePath || typeof filePath !== 'string' || filePath.length === 0) {
+        json(res, 400, { ok: false, error: 'path is required' });
+        return;
+      }
+      if (!filePath.endsWith('.md')) {
+        json(res, 400, { ok: false, error: 'path must end with .md' });
+        return;
+      }
+      if (
+        filePath.includes('..') ||
+        filePath.startsWith('/') ||
+        filePath.includes('\x00') ||
+        filePath.includes('\\')
+      ) {
+        json(res, 400, { ok: false, error: 'path must not contain .. or start with /' });
+        return;
+      }
+      const resolvedContentDir = resolve(contentDir);
+      const fullPath = resolve(resolvedContentDir, filePath);
+      if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
+        json(res, 400, { ok: false, error: 'path must not escape content directory' });
+        return;
+      }
+      mkdirSync(dirname(fullPath), { recursive: true });
+      try {
+        writeFileSync(fullPath, '', { encoding: 'utf-8', flag: 'wx' });
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          json(res, 409, { ok: false, error: 'File already exists' });
+          return;
+        }
+        throw err;
+      }
+      const docName = filePath.slice(0, -3);
+      json(res, 200, { ok: true, docName });
+    } catch (e) {
+      console.error('[create-page]', e);
+      json(res, 500, { ok: false, error: 'Failed to create page' });
+    }
+  }
+
+  async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const index = getFileIndex();
+      const pages: { docName: string; title: string }[] = [];
+      for (const [docName] of index) {
+        let title = docName;
+        try {
+          const filePath = resolve(contentDir, `${docName}.md`);
+          const content = readFileSync(filePath, 'utf-8');
+          title = extractPageTitle(content, docName);
+        } catch (err) {
+          console.warn(`[pages] Failed to read title for ${docName}:`, err);
+        }
+        pages.push({ docName, title });
+      }
+      pages.sort((a, b) => a.docName.localeCompare(b.docName));
+      json(res, 200, { ok: true, pages });
+    } catch (e) {
+      console.error('[pages]', e);
+      json(res, 500, { ok: false, error: 'Failed to list pages' });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
+    '/api/documents': handleDocumentList,
+    '/api/pages': handlePages,
+    '/api/create-page': handleCreatePage,
     '/api/agent-write': handleAgentWrite,
     '/api/upload-image': handleUploadImage,
     '/api/agent-write-md': handleAgentWriteMd,

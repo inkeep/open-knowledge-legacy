@@ -12,6 +12,9 @@
  *   - debounce: 200 for fast disk tests (D8)
  *   - Real @parcel/watcher for full production path
  *   - Content-based polling with timeout for disk assertions (D4)
+ *   - Per-test docName via randomUUID() for test isolation (R1/R5)
+ *   - Client lifecycle in test body via try/finally — NOT via beforeEach/afterEach
+ *     (required for test.concurrent() correctness per R8a)
  */
 
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -29,7 +32,7 @@ import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
-import { __resetCoordinationState, setupObservers } from '../../src/editor/observers';
+import { setupObservers } from '../../src/editor/observers';
 
 // ─── Shared instances (created once, reused across all tests) ───
 
@@ -64,7 +67,7 @@ export async function createTestServer(): Promise<TestServer> {
   writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
 
   const port = await getFreePort();
-  const { hocuspocus, destroy } = createServer({
+  const srv = createServer({
     contentDir,
     quiet: true,
     debounce: 200,
@@ -73,12 +76,16 @@ export async function createTestServer(): Promise<TestServer> {
     enableTestRoutes: true,
   });
 
+  // R19: await file watcher readiness before returning so test.concurrent()
+  // doesn't race the watcher startup
+  await srv.ready;
+
   // Wire up HTTP server + WebSocket (same pattern as packages/cli/src/commands/start.ts)
   const httpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
     if (url?.startsWith('/api/')) {
       // biome-ignore lint/suspicious/noExplicitAny: HTTP server types don't match Hocuspocus hook signature
-      hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
+      srv.hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
         if (!res.writableEnded) {
           res.writeHead(500);
           res.end('Internal server error');
@@ -94,7 +101,7 @@ export async function createTestServer(): Promise<TestServer> {
   httpServer.on('upgrade', (req, socket, head) => {
     if (req.url?.startsWith('/collab')) {
       wss.handleUpgrade(req, socket, head, (ws) => {
-        const clientConnection = hocuspocus.handleConnection(
+        const clientConnection = srv.hocuspocus.handleConnection(
           ws as unknown as WebSocket,
           req as unknown as Request,
         );
@@ -121,7 +128,7 @@ export async function createTestServer(): Promise<TestServer> {
     port,
     contentDir,
     cleanup: async () => {
-      await destroy();
+      await srv.destroy();
       wss.close();
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
       rmSync(contentDir, { recursive: true, force: true });
@@ -136,11 +143,12 @@ export interface TestClient {
   ytext: Y.Text;
   fragment: Y.XmlFragment;
   provider: HocuspocusProvider;
-  cleanup: () => void;
+  cleanup: () => Promise<void>;
+  docName: string;
 }
 
-export async function createTestClient(port: number): Promise<TestClient> {
-  __resetCoordinationState();
+export async function createTestClient(port: number, docName?: string): Promise<TestClient> {
+  const resolvedDocName = docName ?? `test-${crypto.randomUUID()}`;
 
   const doc = new Y.Doc();
   const ytext = doc.getText('source');
@@ -148,7 +156,7 @@ export async function createTestClient(port: number): Promise<TestClient> {
 
   const provider = new HocuspocusProvider({
     url: `ws://localhost:${port}/collab`,
-    name: 'test-doc',
+    name: resolvedDocName,
     document: doc,
     connect: true,
   });
@@ -168,8 +176,20 @@ export async function createTestClient(port: number): Promise<TestClient> {
     ytext,
     fragment,
     provider,
-    cleanup: () => {
+    docName: resolvedDocName,
+    cleanup: async () => {
       observerCleanup();
+      // R9: unload the per-test doc on the server to prevent memory growth.
+      // Best-effort — if the server is already shutting down or the network
+      // fails during test.concurrent() teardown, a failed testReset must not
+      // throw out of cleanup(). provider.destroy() + doc.destroy() are the
+      // critical local-state cleanups and must still run.
+      try {
+        await testReset(port, resolvedDocName);
+      } catch {
+        // Cleanup is best-effort — the server-side doc will be reaped on
+        // next onStoreDocument or process exit.
+      }
       provider.destroy();
       doc.destroy();
     },
@@ -223,46 +243,81 @@ export function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment): v
   }
 }
 
-/** Read test-doc.md from the content directory */
-export function readTestDoc(contentDir: string): string {
-  return readFileSync(join(contentDir, 'test-doc.md'), 'utf-8');
+/** Read a document's .md file from the content directory */
+export function readTestDoc(contentDir: string, docName = 'test-doc'): string {
+  try {
+    return readFileSync(join(contentDir, `${docName}.md`), 'utf-8');
+  } catch (err) {
+    if (err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return '';
+    }
+    throw err;
+  }
 }
 
 /** POST to agent-write-md endpoint */
 export async function agentWriteMd(
   port: number,
   markdown: string,
-  position: 'append' | 'prepend' | 'replace' = 'append',
+  opts?: { docName?: string; position?: 'append' | 'prepend' | 'replace' },
 ): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown, position }),
+    body: JSON.stringify({
+      markdown,
+      position: opts?.position ?? 'append',
+      docName: opts?.docName,
+    }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
 
+/** POST to agent-patch endpoint (find-and-replace) */
+export async function agentPatch(
+  port: number,
+  find: string,
+  replace: string,
+  docName?: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const res = await fetch(`http://localhost:${port}/api/agent-patch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ find, replace, docName }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return { ok: false, status: res.status, error: body.error ?? 'unknown' };
+  }
+  return { ok: true };
+}
+
 /** POST to agent-undo endpoint */
-export async function agentUndo(port: number): Promise<void> {
+export async function agentUndo(port: number, docName?: string): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-undo`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ docName }),
   });
   if (!res.ok) throw new Error(`agent-undo failed: ${res.status}`);
 }
 
 /** POST to agent-redo endpoint */
-export async function agentRedo(port: number): Promise<void> {
+export async function agentRedo(port: number, docName?: string): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-redo`, {
     method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ docName }),
   });
   if (!res.ok) throw new Error(`agent-redo failed: ${res.status}`);
 }
 
 /** POST to test-reset endpoint */
-export async function testReset(port: number): Promise<void> {
-  const res = await fetch(`http://localhost:${port}/api/test-reset`, {
-    method: 'POST',
-  });
+export async function testReset(port: number, docName?: string): Promise<void> {
+  const url = docName
+    ? `http://localhost:${port}/api/test-reset?docName=${encodeURIComponent(docName)}`
+    : `http://localhost:${port}/api/test-reset`;
+  const res = await fetch(url, { method: 'POST' });
   if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
 }
 

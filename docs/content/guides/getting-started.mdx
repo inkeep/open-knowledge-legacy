@@ -1,0 +1,113 @@
+---
+title: Getting started
+description: Initialize Open Knowledge on an existing project, start the editor, and connect AI agents.
+---
+
+## Prerequisites
+
+- **Bun >= 1.3.11** or **Node.js >= 22**
+- **Git** installed and initialized in your project
+
+## Initialize your project
+
+<Steps>
+
+<Step>
+### Navigate to your project
+
+```bash
+cd your-project
+```
+</Step>
+
+<Step>
+### Run the init command
+
+```bash
+npx @inkeep/open-knowledge init
+```
+
+This scaffolds the `.open-knowledge/` directory structure and registers the MCP server in your project's `.mcp.json`.
+
+The `.mcp.json` entry that gets written:
+
+```json
+{
+  "mcpServers": {
+    "open-knowledge": {
+      "command": "npx",
+      "args": ["@inkeep/open-knowledge", "mcp"]
+    }
+  }
+}
+```
+
+The command is idempotent -- safe to run again without side effects. Pass `--force` to overwrite an existing `.mcp.json` entry, or `--no-mcp` to skip writing `.mcp.json` entirely.
+</Step>
+
+</Steps>
+
+## Start the editor
+
+```bash
+npx @inkeep/open-knowledge start
+```
+
+This starts the collaborative editor at `http://localhost:3000`. The port is configurable via `.open-knowledge/config.yml`.
+
+<Callout type="info">
+Starting the editor is optional. AI agents work without it -- the MCP server operates in disk-only mode when no editor is running.
+</Callout>
+
+## Connect AI agents
+
+<Steps>
+
+<Step>
+### Open your project in an MCP-compatible editor
+
+Claude Code, Cursor, Windsurf, or Codex all support MCP servers.
+</Step>
+
+<Step>
+### Approve the MCP server
+
+When prompted, approve the `open-knowledge` MCP server. The editor reads the `.mcp.json` entry created during init.
+</Step>
+
+<Step>
+### Use the workflow tools
+
+The agent now has access to three workflow tools:
+
+- **`init-content`** -- Bootstrap articles from your existing codebase
+- **`ingest`** -- Capture external sources as reference material
+- **`research`** -- Gather sources and write structured findings
+</Step>
+
+</Steps>
+
+## What got created
+
+```
+.open-knowledge/
+  articles/          — Canonical knowledge articles
+  external-sources/  — Ingested reference material
+  research/          — Exploratory findings
+  cache/             — Derived data (gitignored)
+  catalogs/          — Auto-generated indexes (created when agents connect)
+  AGENTS.md          — Navigation guide for AI agents
+  config.yml         — Workspace configuration overrides
+  .gitignore         — Excludes cache/
+```
+
+## Next steps
+
+<Cards>
+  <Card title="Configuration" href="/guides/configuration">
+    Customize ports, content directory, and file patterns.
+  </Card>
+  <Card title="MCP integration" href="/guides/mcp-integration">
+    Understand disk-only vs connected mode and all available tools.
+  </Card>
+</Cards>

@@ -1,23 +1,20 @@
-import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { Activity, useRef } from 'react';
+import { useDocumentContext } from '@/editor/DocumentContext';
 import { SourceEditor } from '@/editor/SourceEditor';
-import type { TiptapEditorHandle } from '@/editor/TiptapEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 
 interface EditorAreaProps {
   isSourceMode: boolean;
-  onProviderReady: (provider: HocuspocusProvider) => void;
 }
 
-export function EditorArea({ isSourceMode, onProviderReady }: EditorAreaProps) {
-  'use no memo'; // todo remove this and fix react compiler warning
-  const editorRef = useRef<TiptapEditorHandle | null>(null);
+export function EditorArea({ isSourceMode }: EditorAreaProps) {
+  const { activeDocName, activeProvider } = useDocumentContext();
 
-  function editorCallbackRef(handle: TiptapEditorHandle | null) {
-    editorRef.current = handle;
-    if (handle) {
-      onProviderReady(handle.getProvider());
-    }
+  if (!activeProvider || !activeDocName) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <span className="select-none text-sm text-muted-foreground">No document open</span>
+      </div>
+    );
   }
 
   return (
@@ -25,17 +22,19 @@ export function EditorArea({ isSourceMode, onProviderReady }: EditorAreaProps) {
     // viewport (e.g. agent prepends). Browser default, but set explicitly to document
     // intent and guard against future overrides.
     <div className="flex-1 overflow-y-auto subtle-scrollbar" style={{ overflowAnchor: 'auto' }}>
-      {editorRef.current && (
-        <Activity mode={isSourceMode ? 'visible' : 'hidden'}>
-          <SourceEditor
-            ytext={editorRef.current.getYText()}
-            provider={editorRef.current.getProvider()}
-          />
-        </Activity>
-      )}
-      <Activity mode={isSourceMode ? 'hidden' : 'visible'}>
-        <TiptapEditor ref={editorCallbackRef} />
-      </Activity>
+      {/* CSS-based show/hide — React Activity runs effect cleanup on 'hidden' which destroys
+          the CodeMirror/TipTap views. display:none keeps DOM in document without triggering
+          React's effect lifecycle, so both editors stay alive across mode switches. */}
+      <div className={isSourceMode ? 'h-full' : 'hidden'}>
+        <SourceEditor
+          key={activeDocName}
+          ytext={activeProvider.document.getText('source')}
+          provider={activeProvider}
+        />
+      </div>
+      <div className={isSourceMode ? 'hidden' : 'h-full'}>
+        <TiptapEditor key={activeDocName} provider={activeProvider} />
+      </div>
     </div>
   );
 }
