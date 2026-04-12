@@ -177,9 +177,9 @@ describe('markdown round-trip: serialize(parse(md))', () => {
       } else {
         // Construct may normalize but must preserve semantic content
         // Extract meaningful text content (strip markdown syntax)
-        const words = normalized.match(/\w{3,}/g) ?? [];
-        for (const word of words) {
-          expect(output).toContain(word);
+        const tokens = normalized.match(/[\w&<>]+/g) ?? [];
+        for (const token of tokens) {
+          expect(output).toContain(token);
         }
       }
     });

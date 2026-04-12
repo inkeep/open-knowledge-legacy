@@ -99,6 +99,16 @@
         "../server/src/**/*.ts"
       ]
     },
+    "test:fidelity": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "tests/fidelity/**/*.ts",
+        "tests/fidelity/**/*.json",
+        "src/editor/**/*.ts",
+        "../core/src/**/*.ts"
+      ]
+    },
     "test:e2e": {
       "dependsOn": ["^build"],
       "cache": false

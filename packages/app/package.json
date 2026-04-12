@@ -17,6 +17,7 @@
     "test:stress:s2": "bun test tests/stress/observers.stress.s2.test.ts",
     "test:stress:s4": "bun test tests/stress/observers.stress.s4.test.ts",
     "test:stress:s5-s6": "bun test tests/stress/observers.stress.s5-s6.test.ts",
+    "test:fidelity": "bun test tests/fidelity/",
     "test:fuzz": "bun test tests/stress/observers.fuzz.test.ts",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
     "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts"
@@ -70,17 +71,19 @@
     "yjs": "^13.6.30"
   },
   "devDependencies": {
-    "@rolldown/plugin-babel": "^0.2.2",
     "@biomejs/biome": "^2.4.10",
     "@hocuspocus/server": "4.0.0-rc.1",
     "@playwright/test": "^1.59.1",
+    "@rolldown/plugin-babel": "^0.2.2",
     "@types/diff": "^7.0.2",
     "@types/diff-match-patch": "^1.0.36",
-    "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.1",
+    "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
+    "commonmark.json": "^0.31.0",
+    "fast-check": "^4.6.0",
     "typescript": "^5.9.3",
     "vite": "^8.0.0"
   }
