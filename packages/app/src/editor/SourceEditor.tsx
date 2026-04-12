@@ -1,8 +1,24 @@
 import { markdown } from '@codemirror/lang-markdown';
 import { Compartment, EditorState } from '@codemirror/state';
-import { oneDark } from '@codemirror/theme-one-dark';
 import { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
+import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
+
+// Customize the dark editor surface colors here.
+const darkTheme = basicDarkInit({
+  settings: {
+    background: 'var(--background)',
+    gutterBackground: 'var(--muted)',
+  },
+});
+
+const lightTheme = basicLightInit({
+  settings: {
+    background: 'var(--background)',
+    gutterBackground: 'var(--muted)',
+  },
+});
+
 import { basicSetup } from 'codemirror';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef } from 'react';
@@ -44,7 +60,8 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         markdown(),
         yCollab(ytext, provider.awareness),
         createAgentFlashSourceExtension(provider.document),
-        themeCompartment.of(resolvedTheme === 'dark' ? oneDark : []),
+        themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
+        EditorView.lineWrapping,
         EditorView.theme({
           '&': {
             height: '100%',
@@ -81,7 +98,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
   useEffect(() => {
     if (!viewRef.current) return;
     viewRef.current.dispatch({
-      effects: themeCompartment.reconfigure(resolvedTheme === 'dark' ? oneDark : []),
+      effects: themeCompartment.reconfigure(resolvedTheme === 'dark' ? darkTheme : lightTheme),
     });
   }, [resolvedTheme]);
 
