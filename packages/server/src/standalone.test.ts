@@ -311,4 +311,57 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(shutdownLogs).toHaveLength(1);
     expect(shutdownLogs[0].payload.flushedCount).toBe(0);
   });
+
+  test('destroy() flushes multiple documents before resolving (multi-doc drain)', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+      debounce: 60_000,
+    });
+    await server.ready;
+
+    // Open 3 independent DirectConnections to different docs
+    const conn1 = await server.hocuspocus.openDirectConnection('doc-a');
+    const conn2 = await server.hocuspocus.openDirectConnection('doc-b');
+    const conn3 = await server.hocuspocus.openDirectConnection('doc-c');
+
+    await conn1.transact((doc) => {
+      const frag = doc.getXmlFragment('default');
+      const p = new Y.XmlElement('paragraph');
+      p.insert(0, [new Y.XmlText('content A')]);
+      frag.insert(0, [p]);
+    });
+    await conn2.transact((doc) => {
+      const frag = doc.getXmlFragment('default');
+      const p = new Y.XmlElement('paragraph');
+      p.insert(0, [new Y.XmlText('content B')]);
+      frag.insert(0, [p]);
+    });
+    await conn3.transact((doc) => {
+      const frag = doc.getXmlFragment('default');
+      const p = new Y.XmlElement('paragraph');
+      p.insert(0, [new Y.XmlText('content C')]);
+      frag.insert(0, [p]);
+    });
+
+    // Release all DirectConnection holds
+    for (const name of ['doc-a', 'doc-b', 'doc-c']) {
+      const doc = server.hocuspocus.documents.get(name);
+      expect(doc).toBeDefined();
+      doc?.removeDirectConnection();
+    }
+
+    await server.destroy();
+
+    // All three files should be on disk with their distinctive content
+    expect(await readFile(join(tmpDir, 'doc-a.md'), 'utf-8')).toContain('content A');
+    expect(await readFile(join(tmpDir, 'doc-b.md'), 'utf-8')).toContain('content B');
+    expect(await readFile(join(tmpDir, 'doc-c.md'), 'utf-8')).toContain('content C');
+
+    // Shutdown log reports flushedCount === 3 (all docs drained)
+    const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
+    expect(shutdownLogs).toHaveLength(1);
+    expect(shutdownLogs[0].payload.flushedCount).toBe(3);
+  });
 });
