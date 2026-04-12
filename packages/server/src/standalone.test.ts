@@ -273,4 +273,42 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     // A third serial call after completion also resolves without throwing
     await server.destroy();
   });
+
+  test('destroy() during async init — before ready resolves', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    // DON'T await ready — call destroy() while initAsync is still running.
+    // The `await ready.catch(() => {})` at the top of destroy() handles this.
+    await server.destroy();
+
+    // Should resolve cleanly without throwing and still emit a shutdown log
+    const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
+    expect(shutdownLogs).toHaveLength(1);
+  });
+
+  test('destroy() with zero documents loaded (short-circuit path)', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    await server.ready;
+
+    // No DirectConnections opened — hocuspocus.documents is empty.
+    // flushAllStoresAndWait short-circuits on documents.size === 0.
+    const startedAt = Date.now();
+    await server.destroy();
+    const elapsed = Date.now() - startedAt;
+
+    // Should resolve fast — no hook installed, no docs to drain
+    expect(elapsed).toBeLessThan(500);
+
+    // Shutdown log still emitted with flushedCount === 0
+    const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
+    expect(shutdownLogs).toHaveLength(1);
+    expect(shutdownLogs[0].payload.flushedCount).toBe(0);
+  });
 });
