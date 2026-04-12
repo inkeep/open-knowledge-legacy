@@ -40,5 +40,8 @@
   "overrides": {
     "@codemirror/state": "$@codemirror/state",
     "@codemirror/view": "$@codemirror/view"
+  },
+  "patchedDependencies": {
+    "@tiptap/markdown@3.22.3": "patches/@tiptap%2Fmarkdown@3.22.3.patch"
   }
 }
