@@ -9,7 +9,7 @@ description: Startup initialization, graceful shutdown phases, and the data-loss
 
 `createServer()` returns synchronously. Heavy initialization runs in the background and resolves through the `ready` promise.
 
-```
+```text
 createServer(options)          ← synchronous, returns ServerInstance
   ├─ Hocuspocus instance       ← immediate (in-memory)
   ├─ ContentFilter             ← immediate (compiled patterns)
@@ -28,7 +28,7 @@ Callers can `await serverInstance.ready` before accepting traffic, but it is not
 
 `destroy()` tears down the server in five ordered phases. Each phase has independent error handling so a failure in one phase does not skip subsequent phases.
 
-```
+```text
 destroy()
   ├─ await ready               ← wait for init to finish (prevents leaked subscriptions)
   ├─ Phase 1: Stop watchers    ← file watcher + HEAD watcher unsubscribe
@@ -78,7 +78,7 @@ The second caller awaits the same promise as the first. No phases run twice.
 
 Every `destroy()` call emits a structured log entry via `getLogger('server')` after all phases complete:
 
-- **Clean exit:** `log.info` with payload `{ documentCount, durationMs }` and message `"shutdown flushed N documents in Mms"`.
+- **Clean exit:** `log.info` with payload `{ documentCount, durationMs }` and message `"[server] shutdown flushed N documents in Mms"`.
 - **Partial failure:** `log.warn` with additional `phaseErrors` array, where each entry has `{ phase, error }` identifying which phase failed and why.
 
 Example clean output (structured JSON via pino):
@@ -106,4 +106,4 @@ After a successful `destroy()`, all writes that reached the server-side Y.Doc ar
 | Disk → shadow git commit (L2) | Yes |
 | Client WebSocket buffer → server Y.Doc | No -- out of scope |
 
-The client-side transmission buffer (~16ms between a keystroke and its WebSocket flush to the server) is a separate, smaller concern. For CLI users, this residual window is an order of magnitude smaller than the 2--10 second server-side window this fix closed. For Electron, the client-side drain barrier is handled by the desktop app's `ProviderPool.flushAllProviders()`.
+The client-side transmission buffer (~16ms between a keystroke and its WebSocket flush to the server) is a separate, smaller concern. For CLI users, this residual window is an order of magnitude smaller than the 2--10 second server-side window this fix closed. For Electron, a client-side drain barrier (e.g., flushing all active providers before closing the window) would need to be implemented separately -- this is not yet built.

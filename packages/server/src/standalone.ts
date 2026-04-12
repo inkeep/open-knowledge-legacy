@@ -453,12 +453,14 @@ export function createServer(options: ServerOptions): ServerInstance {
 
     inflightDestroy = (async () => {
       const t0 = Date.now();
-      const documentCount = hocuspocus.documents.size;
       const phaseErrors: Array<{ phase: string; error: string }> = [];
 
       // Wait for async init to complete before cleanup — prevents leaked watcher
       // subscriptions if destroy() is called during startup (e.g., Ctrl+C)
       await ready.catch(() => {});
+
+      // Capture after ready so the count reflects documents loaded during init
+      const documentCount = hocuspocus.documents.size;
 
       try {
         // Phase 1: stop watchers FIRST so L1 disk writes don't trigger reconcile loops
@@ -480,7 +482,15 @@ export function createServer(options: ServerOptions): ServerInstance {
         }
 
         // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
-        await sessionManager.closeAll();
+        try {
+          await sessionManager.closeAll();
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'agent-session-drain',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-2 agent session drain failed');
+        }
 
         // Phase 3: drain L1 (Y.Doc → markdown → disk) via afterUnloadDocument hook
         try {
