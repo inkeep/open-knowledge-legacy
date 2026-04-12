@@ -15,6 +15,9 @@ import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
+import { getLogger } from './logger.ts';
+
+const log = getLogger('agent-sessions');
 
 /**
  * The DirectConnection class exposes `.document` at runtime but the exported
@@ -65,10 +68,14 @@ export function syncTextToFragment(document: Document): void {
     const metaMap = document.getMap('metadata');
     metaMap.set('frontmatter', frontmatter);
   } catch (err) {
-    console.error(
-      `[syncTextToFragment] Failed for '${document.name}':`,
-      { textLength: fullText.length, preview: fullText.slice(0, 100) },
-      err,
+    log.error(
+      {
+        err,
+        docName: document.name,
+        textLength: fullText.length,
+        preview: fullText.slice(0, 100),
+      },
+      `[syncTextToFragment] failed for '${document.name}'`,
     );
     throw err;
   }
@@ -105,7 +112,7 @@ export class AgentSessionManager {
         captureTimeout: 0,
       });
       this.undoManagers.set(docName, um);
-      console.log(`[agent-undo] Created UndoManager for: ${docName}`);
+      log.info({ docName }, `[agent-undo] Created UndoManager for: ${docName}`);
     }
     return um;
   }
@@ -130,7 +137,7 @@ export class AgentSessionManager {
       });
       this.sessions.set(docName, dc);
       this.getUndoManager(dc);
-      console.log(`[agent-session] Created persistent session for: ${docName}`);
+      log.info({ docName }, `[agent-session] Created persistent session for: ${docName}`);
     }
     return dc;
   }
@@ -155,12 +162,12 @@ export class AgentSessionManager {
       if (um) {
         um.destroy();
         this.undoManagers.delete(docName);
-        console.log(`[agent-undo] Destroyed UndoManager for: ${docName}`);
+        log.info({ docName }, `[agent-undo] Destroyed UndoManager for: ${docName}`);
       }
       dc.document.awareness.setLocalState(null);
       await dc.disconnect();
       this.sessions.delete(docName);
-      console.log(`[agent-session] Closed session for: ${docName}`);
+      log.info({ docName }, `[agent-session] Closed session for: ${docName}`);
     }
   }
 
@@ -171,7 +178,7 @@ export class AgentSessionManager {
       try {
         await this.closeSession(name);
       } catch (err) {
-        console.error(`[agent-session] Failed to close session for ${name}:`, err);
+        log.error({ err, docName: name }, `[agent-session] Failed to close session for ${name}`);
       }
     }
   }

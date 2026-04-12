@@ -1,5 +1,11 @@
 {
   "title": "Internals",
   "icon": "LuCpu",
-  "pages": ["service-topology", "architecture", "agent-write-path", "validations"]
+  "pages": [
+    "service-topology",
+    "server-lifecycle",
+    "architecture",
+    "agent-write-path",
+    "validations"
+  ]
 }

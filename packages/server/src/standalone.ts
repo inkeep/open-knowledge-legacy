@@ -10,6 +10,7 @@ import { createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import { getLogger } from './logger.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -71,6 +72,14 @@ export interface ServerOptions {
   includePatterns?: string[];
   /** Glob patterns for files to explicitly exclude. */
   excludePatterns?: string[];
+  /**
+   * Maximum time (ms) `destroy()` waits for all pending stores to drain
+   * before giving up and continuing with the rest of the shutdown sequence.
+   * Defaults to 10_000. Tune lower in tests (e.g., 500) to reclaim CI wall-time.
+   * Tune higher on slow-disk / NFS environments where a legitimate L1 flush
+   * could take more than 10s.
+   */
+  destroyTimeoutMs?: number;
 }
 
 export interface ServerInstance {
@@ -103,7 +112,10 @@ export function createServer(options: ServerOptions): ServerInstance {
     contentRoot,
     includePatterns = ['**/*.md'],
     excludePatterns = [],
+    destroyTimeoutMs = 10_000,
   } = options;
+
+  const log = getLogger('server');
 
   // Create content filter — unified exclusion logic (gitignore + config.content.exclude)
   const contentFilter = createContentFilter({
@@ -188,7 +200,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     try {
       switch (event.kind) {
         case 'create': {
-          console.log(`[reconcile] Create: ${event.docName}`);
+          log.info({ docName: event.docName }, `[reconcile] create: ${event.docName}`);
           break;
         }
 
@@ -206,7 +218,8 @@ export function createServer(options: ServerOptions): ServerInstance {
           const baseH = contentHash(base).slice(0, 6);
           const oursH = contentHash(ours).slice(0, 6);
           const theirsH = contentHash(theirs).slice(0, 6);
-          console.log(
+          log.info(
+            { docName, base: baseH, ours: oursH, theirs: theirsH, result: result.kind },
             `[reconcile] ${docName} base=${baseH} ours=${oursH} theirs=${theirsH} result=${result.kind}`,
           );
 
@@ -220,9 +233,9 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
               } catch (e) {
-                console.error(
-                  `[reconcile] Failed to apply clean content to Y.Doc for ${docName}:`,
-                  e,
+                log.error(
+                  { err: e, docName },
+                  `[reconcile] failed to apply clean content to Y.Doc for ${docName}`,
                 );
               }
               break;
@@ -233,9 +246,9 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
               } catch (e) {
-                console.error(
-                  `[reconcile] Failed to apply merged content to Y.Doc for ${docName}:`,
-                  e,
+                log.error(
+                  { err: e, docName },
+                  `[reconcile] failed to apply merged content to Y.Doc for ${docName}`,
                 );
               }
               break;
@@ -257,9 +270,9 @@ export function createServer(options: ServerOptions): ServerInstance {
                   });
                 }
               } catch (e) {
-                console.error(
-                  `[reconcile] Failed to apply conflict content to Y.Doc for ${docName}:`,
-                  e,
+                log.error(
+                  { err: e, docName },
+                  `[reconcile] failed to apply conflict content to Y.Doc for ${docName}`,
                 );
               }
               break;
@@ -291,7 +304,7 @@ export function createServer(options: ServerOptions): ServerInstance {
               mkdirSync(dirname(rescuePath), { recursive: true });
               writeFileSync(rescuePath, ours, 'utf-8');
               incrementRescueBuffer();
-              console.log(`[reconcile] Rescue buffer saved: ${docName}`);
+              log.info({ docName }, `[reconcile] rescue buffer saved: ${docName}`);
             }
           }
 
@@ -299,7 +312,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           lifecycleMap.set('status', 'deleted-upstream');
 
           deleteReconciledBase(docName);
-          console.log(`[reconcile] Delete: ${docName} (dirty=${isDirty})`);
+          log.info({ docName, isDirty }, `[reconcile] delete: ${docName} (dirty=${isDirty})`);
 
           // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
@@ -320,7 +333,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             lifecycleMap.set('newPath', newDocName);
           }
 
-          console.log(`[reconcile] Rename: ${oldDocName} → ${newDocName}`);
+          log.info({ oldDocName, newDocName }, `[reconcile] rename: ${oldDocName} → ${newDocName}`);
           break;
         }
 
@@ -332,14 +345,14 @@ export function createServer(options: ServerOptions): ServerInstance {
           const lifecycleMap = document.getMap('lifecycle');
           lifecycleMap.set('status', 'conflict');
           lifecycleMap.set('reason', 'conflict-markers');
-          console.log(`[reconcile] Conflict markers detected: ${docName}`);
+          log.info({ docName }, `[reconcile] conflict markers detected: ${docName}`);
           break;
         }
       }
     } catch (err) {
-      console.error(
-        `[reconcile] Failed to handle ${event.kind} for ${diskEventDocName(event)}:`,
-        err,
+      log.error(
+        { err, kind: event.kind, docName: diskEventDocName(event) },
+        `[reconcile] failed to handle ${event.kind} for ${diskEventDocName(event)}`,
       );
     }
   }
@@ -369,32 +382,223 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
+  let inflightDestroy: Promise<void> | null = null;
+
+  // This helper mirrors @hocuspocus/server's internal Server.destroy() pattern
+  // at node_modules/@hocuspocus/server/src/Server.ts:200-225. We can't use
+  // Server.destroy() directly because Server owns its own httpServer + crossws
+  // WebSocket adapter + signal binding, which conflicts with OK's shared HTTP
+  // server + /api/* routing + static asset serving + /collab-only upgrade.
+  async function flushAllStoresAndWait(timeoutMs: number): Promise<void> {
+    if (hocuspocus.documents.size === 0) return;
+
+    let resolved = false;
+    const allDone = new Promise<void>((resolve) => {
+      hocuspocus.configuration.extensions.push({
+        async afterUnloadDocument({ instance }) {
+          if (!resolved && instance.getDocumentsCount() === 0) {
+            resolved = true;
+            resolve();
+          }
+        },
+      });
+    });
+
+    // Capture doc names before the race so the timeout error can name the
+    // documents that failed to unload — actionable context for operators
+    // debugging hung flushes, and the target list for the rescue-buffer
+    // dump below (D15 / OQ-P2-02).
+    const pendingDocNames = Array.from(hocuspocus.documents.keys());
+
+    hocuspocus.closeConnections();
+    hocuspocus.flushPendingStores();
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        resolved = true;
+        const stillLoaded = Array.from(hocuspocus.documents.keys());
+
+        // D15 / OQ-P2-02: rescue-buffer dump on flush timeout. onStoreDocument
+        // did not complete for these docs, so the in-memory Y.Doc state IS the
+        // data-of-record — dump it to the shadow rescue/ tree so the user can
+        // recover via the existing /api/rescue endpoints. Best-effort per doc
+        // so one serialization failure doesn't block the others. Unconditional
+        // (no isDirty check like the reconcile-path rescue uses) because the
+        // hang semantic means diff-vs-reconciled-base is not the right gate.
+        const rescued: string[] = [];
+        const rescueFailed: string[] = [];
+        if (shadowRef.current) {
+          for (const docName of stillLoaded) {
+            try {
+              const ours = serializeDoc(docName);
+              if (ours === null) {
+                // Doc was removed from hocuspocus.documents between the
+                // stillLoaded snapshot and this loop — race during teardown.
+                log.warn(
+                  { docName },
+                  `[rescue] skipping ${docName} — document dropped from map mid-rescue`,
+                );
+                rescueFailed.push(docName);
+                continue;
+              }
+              const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
+              if (!rescuePath) {
+                // Path-traversal guard fired — docName tried to escape the
+                // rescue/ directory. Log at warn level since this is
+                // security-relevant, not just a write failure.
+                log.warn(
+                  { docName, gitDir: shadowRef.current.gitDir },
+                  `[rescue] path-traversal guard rejected docName: ${docName}`,
+                );
+                rescueFailed.push(docName);
+                continue;
+              }
+              mkdirSync(dirname(rescuePath), { recursive: true });
+              writeFileSync(rescuePath, ours, 'utf-8');
+              incrementRescueBuffer();
+              rescued.push(docName);
+              log.info({ docName }, `[rescue] rescue buffer saved on flush timeout: ${docName}`);
+            } catch (e) {
+              rescueFailed.push(docName);
+              log.error(
+                { err: e, docName },
+                `[rescue] failed to write rescue buffer for ${docName}`,
+              );
+            }
+          }
+        } else {
+          // Shadow repo unavailable (initAsync failed earlier) — nothing to
+          // write into. Warn rather than fail silently so operators seeing a
+          // `lost [...]` array in the timeout error can distinguish "no shadow
+          // repo" from per-doc write failures.
+          log.warn(
+            { stillLoadedCount: stillLoaded.length },
+            `[rescue] shadow repo unavailable at flush timeout — ${stillLoaded.length} doc(s) will be lost: [${stillLoaded.join(', ')}]`,
+          );
+          rescueFailed.push(...stillLoaded);
+        }
+
+        const rescueSummary =
+          rescued.length > 0 || rescueFailed.length > 0
+            ? ` — rescued [${rescued.join(', ')}]${
+                rescueFailed.length > 0 ? `, lost [${rescueFailed.join(', ')}]` : ''
+              }`
+            : '';
+
+        reject(
+          new Error(
+            `flushAllStoresAndWait timeout after ${timeoutMs}ms — ${stillLoaded.length}/${pendingDocNames.length} docs did not unload: [${stillLoaded.join(', ')}]${rescueSummary}`,
+          ),
+        );
+      }, timeoutMs);
+    });
+
+    try {
+      await Promise.race([allDone, timeout]);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
+  }
 
   async function destroy(): Promise<void> {
-    // Wait for async init to complete before cleanup — prevents leaked watcher
-    // subscriptions if destroy() is called during startup (e.g., Ctrl+C)
-    await ready.catch(() => {});
+    if (inflightDestroy) return inflightDestroy;
 
-    // Flush pending git commit before stopping watchers
-    await persistence.flushPendingGitCommit();
-    await persistence.waitForPendingCommits();
+    inflightDestroy = (async () => {
+      const t0 = Date.now();
+      const phaseErrors: Array<{ phase: string; error: string }> = [];
 
-    if (headWatcher) {
-      await headWatcher.unsubscribe();
-      headWatcher = null;
-    }
-    if (watcher) {
-      await watcher.unsubscribe();
-      watcher = null;
-    }
-    await sessionManager.closeAll();
-    hocuspocus.flushPendingStores();
-    await persistence.waitForPendingCommits();
-    hocuspocus.closeConnections();
-    // Release shadow-root writer lock
-    if (shadowRef.current) {
-      destroyShadowRepo(shadowRef.current);
-    }
+      // Wait for async init to complete before cleanup — prevents leaked watcher
+      // subscriptions if destroy() is called during startup (e.g., Ctrl+C).
+      // Log init errors at debug level so operators investigating a shutdown
+      // issue can confirm whether the server ever reached ready.
+      await ready.catch((err) => log.debug({ err }, '[server] init incomplete during shutdown'));
+
+      // Capture after ready so the count reflects documents loaded during init
+      const documentCount = hocuspocus.documents.size;
+
+      try {
+        // Phase 1: stop watchers FIRST so L1 disk writes don't trigger reconcile loops
+        try {
+          if (headWatcher) {
+            await headWatcher.unsubscribe();
+            headWatcher = null;
+          }
+          if (watcher) {
+            await watcher.unsubscribe();
+            watcher = null;
+          }
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'watcher-unsubscribe',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
+        }
+
+        // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
+        try {
+          await sessionManager.closeAll();
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'agent-session-drain',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-2 agent session drain failed');
+        }
+
+        // Phase 3: drain L1 (Y.Doc → markdown → disk) via afterUnloadDocument hook
+        try {
+          await flushAllStoresAndWait(destroyTimeoutMs);
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'flush-all-stores',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-3 flush failed');
+        }
+
+        // Phase 4: drain L2 (disk → git) — only meaningful AFTER L1 has run
+        try {
+          await persistence.flushPendingGitCommit();
+          await persistence.waitForPendingCommits();
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'git-commit-flush',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-4 git commit flush failed');
+        }
+      } finally {
+        // Phase 5: shadow repo release — ALWAYS runs
+        if (shadowRef.current) {
+          try {
+            destroyShadowRepo(shadowRef.current);
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'shadow-repo-release',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown phase-5 destroyShadowRepo failed');
+          }
+        }
+
+        const durationMs = Date.now() - t0;
+        if (phaseErrors.length === 0) {
+          log.info(
+            { documentCount, durationMs },
+            `[server] shutdown flushed ${documentCount} documents in ${durationMs}ms`,
+          );
+        } else {
+          log.warn(
+            { documentCount, durationMs, phaseErrors },
+            `[server] shutdown flushed ${documentCount} documents in ${durationMs}ms with ${phaseErrors.length} phase error(s)`,
+          );
+        }
+      }
+    })();
+
+    return inflightDestroy;
   }
 
   /** Subsystems that failed during initAsync — populated on catch, read after `await ready`. */
@@ -406,9 +610,12 @@ export function createServer(options: ServerOptions): ServerInstance {
     if (!shadowRef.current) {
       try {
         shadowRef.current = await initShadowRepo(projectDir);
-        console.log(`[server] Shadow repo initialized at ${shadowRef.current.gitDir}`);
+        log.info(
+          { gitDir: shadowRef.current.gitDir },
+          `[server] shadow repo initialized at ${shadowRef.current.gitDir}`,
+        );
       } catch (e) {
-        console.error('[server] Shadow repo init failed:', e);
+        log.error({ err: e }, '[server] shadow repo init failed');
         degraded.push('shadow-repo');
       }
     }
@@ -421,16 +628,16 @@ export function createServer(options: ServerOptions): ServerInstance {
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.includes('not a git repository') || msg.includes('invalid object')) {
-          console.warn('[server] Shadow repo appears corrupted — reinitializing');
+          log.warn({}, '[server] shadow repo appears corrupted — reinitializing');
           try {
             shadowRef.current = await initShadowRepo(projectDir);
           } catch (e2) {
-            console.error('[server] Shadow repo reinit failed:', e2);
+            log.error({ err: e2 }, '[server] shadow repo reinit failed');
             shadowRef.current = undefined;
             if (!degraded.includes('shadow-repo')) degraded.push('shadow-repo');
           }
         } else {
-          console.error('[server] Shadow repo check failed (transient?):', e);
+          log.error({ err: e }, '[server] shadow repo check failed (transient?)');
         }
       }
     }
@@ -439,7 +646,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     try {
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
     } catch (err) {
-      console.error('[server] Disk bridge watcher failed to start:', err);
+      log.error({ err }, '[server] disk bridge watcher failed to start');
       degraded.push('file-watcher');
     }
 
@@ -449,7 +656,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         projectDir,
         // onBatchBegin — park current branch context before git modifies working tree
         async ({ trigger }) => {
-          console.log(`[batch] begin trigger=${trigger}`);
+          log.info({ trigger }, `[batch] begin trigger=${trigger}`);
           incrementBatch();
           hocuspocus.flushPendingStores();
           await persistence.flushPendingGitCommit();
@@ -469,12 +676,13 @@ export function createServer(options: ServerOptions): ServerInstance {
                 const sha = await parkBranch(shadowRef.current, currentBranch, 'server', docs);
                 if (sha) {
                   incrementPark();
-                  console.log(
+                  log.info(
+                    { count: docs.length, branch: currentBranch, sha: sha.slice(0, 8) },
                     `[shadow] parked ${docs.length} docs on ${currentBranch} → ${sha.slice(0, 8)}`,
                   );
                 }
               } catch (e) {
-                console.error('[shadow] park failed:', e);
+                log.error({ err: e }, '[shadow] park failed');
               }
             }
           }
@@ -488,7 +696,13 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           setBatchInProgress(false);
 
-          console.log(
+          log.info(
+            {
+              kind: info.batchKind,
+              headMoved: info.headMoved,
+              docs: bufferedCount,
+              timeout: !!info.timeout,
+            },
             `[batch] end kind=${info.batchKind} headMoved=${info.headMoved} docs=${bufferedCount}${info.timeout ? ' timeout' : ''}`,
           );
 
@@ -519,13 +733,19 @@ export function createServer(options: ServerOptions): ServerInstance {
                       mkdirSync(dirname(rescuePath), { recursive: true });
                       writeFileSync(rescuePath, ours, 'utf-8');
                       incrementRescueBuffer();
-                      console.log(`[reconcile] Rescue buffer saved on branch switch: ${docName}`);
+                      log.info(
+                        { docName },
+                        `[reconcile] rescue buffer saved on branch switch: ${docName}`,
+                      );
                     }
                   }
 
                   const lifecycleMap = document.getMap('lifecycle');
                   lifecycleMap.set('status', 'deleted-upstream');
-                  console.log(`[branch-switch] tombstone: ${docName} (not on ${newBranch})`);
+                  log.info(
+                    { docName, branch: newBranch },
+                    `[branch-switch] tombstone: ${docName} (not on ${newBranch})`,
+                  );
                   continue;
                 }
 
@@ -533,13 +753,14 @@ export function createServer(options: ServerOptions): ServerInstance {
                 const diskContent = readFileSync(filePath, 'utf-8');
                 applyToDoc(docName, diskContent);
                 setReconciledBase(docName, diskContent);
-                console.log(`[branch-switch] reset: ${docName}`);
+                log.info({ docName }, `[branch-switch] reset: ${docName}`);
               } catch (e) {
-                console.error(`[branch-switch] failed to reset ${docName}:`, e);
+                log.error({ err: e, docName }, `[branch-switch] failed to reset ${docName}`);
               }
             }
 
-            console.log(
+            log.info(
+              { branch: newBranch, docCount: hocuspocus.documents.size },
               `[branch-switch] loaded branch ${newBranch} (${hocuspocus.documents.size} docs)`,
             );
 
@@ -600,11 +821,15 @@ export function createServer(options: ServerOptions): ServerInstance {
                       break;
                   }
                 } catch (e) {
-                  console.error(`[branch-switch] restore WIP failed for ${docName}:`, e);
+                  log.error(
+                    { err: e, docName },
+                    `[branch-switch] restore WIP failed for ${docName}`,
+                  );
                 }
               }
               if (restoredCount > 0) {
-                console.log(
+                log.info(
+                  { count: restoredCount, branch: newBranch },
                   `[branch-switch] restored ${restoredCount} parked docs on ${newBranch}`,
                 );
               }
@@ -624,10 +849,13 @@ export function createServer(options: ServerOptions): ServerInstance {
                       await sg.raw('update-ref', '-d', ref);
                     }
                   }
-                  console.log(`[branch-switch] cleaned up detached context ${info.oldBranch}`);
+                  log.info(
+                    { context: info.oldBranch },
+                    `[branch-switch] cleaned up detached context ${info.oldBranch}`,
+                  );
                 }
               } catch (e) {
-                console.error(`[branch-switch] detached cleanup failed:`, e);
+                log.error({ err: e }, '[branch-switch] detached cleanup failed');
               }
             }
           }
@@ -648,17 +876,22 @@ export function createServer(options: ServerOptions): ServerInstance {
                 newBranch,
               );
               incrementUpstreamImport();
-              console.log(
+              log.info(
+                {
+                  oldHead: info.oldHead?.slice(0, 8) ?? 'null',
+                  newHead: info.newHead.slice(0, 8),
+                  sha: sha.slice(0, 8),
+                },
                 `[shadow] upstream-import from ${info.oldHead?.slice(0, 8) ?? 'null'}..${info.newHead.slice(0, 8)} → ${sha.slice(0, 8)}`,
               );
             } catch (e) {
-              console.error('[shadow] upstream-import failed:', e);
+              log.error({ err: e }, '[shadow] upstream-import failed');
             }
           }
         },
       );
     } catch (err) {
-      console.error('[server] HEAD watcher failed to start:', err);
+      log.error({ err }, '[server] HEAD watcher failed to start');
       degraded.push('head-watcher');
     }
   }
