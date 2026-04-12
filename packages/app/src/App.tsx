@@ -25,13 +25,12 @@ function NavigationHandler() {
 
   useEffect(() => {
     // Open initial doc on mount
-    const initial = docNameFromHash();
-    if (initial) openDocument(initial);
+    onHashChange();
 
-    const onHashChange = () => {
+    function onHashChange() {
       const docName = docNameFromHash();
       if (docName) openDocument(docName);
-    };
+    }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, [openDocument]);
