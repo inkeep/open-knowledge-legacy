@@ -32,6 +32,7 @@ const PROJECT_ROOT = resolve(PLUGIN_DIR, '../../../..');
 
 interface ContentConfig {
   dir: string;
+  uploadsDir: string;
   include: string[];
   exclude: string[];
 }
@@ -42,7 +43,12 @@ interface ContentConfig {
  * config exists or fields are unspecified.
  */
 function resolveContentConfig(): ContentConfig {
-  const defaults: ContentConfig = { dir: PROJECT_ROOT, include: ['**/*.md'], exclude: [] };
+  const defaults: ContentConfig = {
+    dir: PROJECT_ROOT,
+    uploadsDir: 'uploads',
+    include: ['**/*.md'],
+    exclude: [],
+  };
   const configPath = resolve(PROJECT_ROOT, '.open-knowledge/config.yml');
   if (existsSync(configPath)) {
     try {
@@ -51,6 +57,9 @@ function resolveContentConfig(): ContentConfig {
       const content = parsed?.content as Record<string, unknown> | undefined;
       if (typeof content?.dir === 'string') {
         defaults.dir = resolve(PROJECT_ROOT, content.dir);
+      }
+      if (typeof content?.uploadsDir === 'string') {
+        defaults.uploadsDir = content.uploadsDir;
       }
       if (Array.isArray(content?.include)) {
         const valid = (content.include as unknown[]).filter(
@@ -84,7 +93,7 @@ const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
-mkdirSync(join(CONTENT_DIR, 'uploads'), { recursive: true });
+mkdirSync(join(CONTENT_DIR, contentConfig.uploadsDir), { recursive: true });
 
 console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 
@@ -133,6 +142,7 @@ hocuspocus.configuration.extensions.push(
     hocuspocus,
     sessionManager,
     contentDir: CONTENT_DIR,
+    uploadsDir: contentConfig.uploadsDir,
     getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
     enableTestRoutes: true,
     // Mirror persistence's test-isolation handling so shadow-repo path calculation
@@ -183,8 +193,8 @@ export function hocuspocusPlugin(): Plugin {
       });
 
       // Serve uploaded images
-      const uploadsServe = sirv(join(CONTENT_DIR, 'uploads'), { dev: true });
-      server.middlewares.use('/uploads', (req, res, next) => {
+      const uploadsServe = sirv(join(CONTENT_DIR, contentConfig.uploadsDir), { dev: true });
+      server.middlewares.use(`/${contentConfig.uploadsDir}`, (req, res, next) => {
         res.setHeader('X-Content-Type-Options', 'nosniff');
         uploadsServe(req, res, next);
       });

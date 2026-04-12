@@ -19,11 +19,12 @@
 # include/exclude: glob patterns for tracked content files. Relative to the
 # project root.
 #
-# content:
-#   dir: .
-#   include:
-#     - "**/*.md"
-#   exclude: []
+content:
+  dir: ./packages/app/src/content
+  # uploadsDir: uploads   # subdirectory of content.dir where uploaded images are stored
+  include:
+    - "**/*.md"
+  exclude: []
 
 
 # --- Persistence -----------------------------------------------------------

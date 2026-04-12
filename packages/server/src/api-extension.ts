@@ -165,6 +165,8 @@ export interface ApiExtensionOptions {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   contentDir: string;
+  /** Subdirectory of contentDir where uploaded files are stored. Defaults to 'uploads'. */
+  uploadsDir?: string;
   /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
   /**
@@ -243,6 +245,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     hocuspocus,
     sessionManager,
     contentDir,
+    uploadsDir = 'uploads',
     getFileIndex,
     enableTestRoutes = false,
     shadowRef,
@@ -964,13 +967,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const sanitized = sanitizeFilename(filename);
-    const uploadsDir = resolve(contentDir, 'uploads');
-    mkdirSync(uploadsDir, { recursive: true });
+    const uploadsAbsDir = resolve(contentDir, uploadsDir);
+    mkdirSync(uploadsAbsDir, { recursive: true });
 
     try {
-      const destFilename = writeUploadAtomic(uploadsDir, sanitized, buffer);
+      const destFilename = writeUploadAtomic(uploadsAbsDir, sanitized, buffer);
       console.log(`[upload] ok ${destFilename} ${buffer.length}`);
-      json(res, 200, { ok: true, src: `uploads/${destFilename}` });
+      json(res, 200, { ok: true, src: `${uploadsDir}/${destFilename}` });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`[upload] error ${sanitized} ${buffer.length} ${message}`);

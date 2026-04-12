@@ -73,6 +73,8 @@ export interface ServerOptions {
   shadowRepo?: ShadowHandle;
   /** Content root relative to project dir. */
   contentRoot?: string;
+  /** Subdirectory of contentDir where uploaded files are stored. Defaults to 'uploads'. */
+  uploadsDir?: string;
   /** Glob patterns for files to include (default: ['**\/*.md']). */
   includePatterns?: string[];
   /** Glob patterns for files to explicitly exclude. */
@@ -100,6 +102,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
+    uploadsDir = 'uploads',
     includePatterns = ['**/*.md'],
     excludePatterns = [],
   } = options;
@@ -144,6 +147,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus,
     sessionManager,
     contentDir,
+    uploadsDir,
     getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
     enableTestRoutes,
     shadowRef,

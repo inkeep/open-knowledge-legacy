@@ -4,11 +4,13 @@ export const ConfigSchema = z.object({
   content: z
     .object({
       dir: z.string().default('.'),
+      uploadsDir: z.string().default('uploads'),
       include: z.array(z.string()).min(1).default(['**/*.md']),
       exclude: z.array(z.string()).default([]),
     })
     .default({
       dir: '.',
+      uploadsDir: 'uploads',
       include: ['**/*.md'],
       exclude: [],
     }),

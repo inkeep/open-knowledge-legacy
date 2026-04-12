@@ -53,12 +53,13 @@ export function startCommand(getConfig: () => Config): Command {
         log.info({ contentDir }, 'Created content directory');
       }
 
-      mkdirSync(resolve(contentDir, 'uploads'), { recursive: true });
+      mkdirSync(resolve(contentDir, config.content.uploadsDir), { recursive: true });
 
       const { hocuspocus, destroy } = createServer({
         contentDir,
         projectDir: cwd,
         contentRoot: config.content.dir,
+        uploadsDir: config.content.uploadsDir,
         port: config.server.port,
         host: config.server.host,
         quiet: false,
@@ -90,7 +91,7 @@ export function startCommand(getConfig: () => Config): Command {
         ? sirv(assetDir, { single: true, gzip: true, immutable: true })
         : null;
 
-      const uploadsHandler = sirv(resolve(contentDir, 'uploads'), { dev: false });
+      const uploadsHandler = sirv(resolve(contentDir, config.content.uploadsDir), { dev: false });
 
       if (assetDir) {
         log.info({ assetDir }, 'Serving static assets');
@@ -114,7 +115,7 @@ export function startCommand(getConfig: () => Config): Command {
         }
 
         // Priority 2: Uploaded images
-        if (url?.startsWith('/uploads/')) {
+        if (url?.startsWith(`/${config.content.uploadsDir}/`)) {
           res.setHeader('X-Content-Type-Options', 'nosniff');
           uploadsHandler(req, res);
           return;
