@@ -206,3 +206,22 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   expect(sourceContent).toContain('Agent Section');
   expect(sourceContent).toContain('Agent content here');
 });
+
+test('sidebar folder row: clicking anywhere on the row toggles expand/collapse', async ({
+  page,
+}) => {
+  const folderRow = page.getByRole('button', { name: 'sidebar-folder' });
+  const nestedFile = page.getByText('nested-doc.md');
+
+  // Starts collapsed — nested child is not visible
+  await expect(folderRow).toBeVisible();
+  await expect(nestedFile).toHaveCount(0);
+
+  // Click the label (not the chevron) — the whole row should be the hit target
+  await folderRow.click();
+  await expect(nestedFile).toBeVisible();
+
+  // Click the row again to collapse
+  await folderRow.click();
+  await expect(nestedFile).toHaveCount(0);
+});
