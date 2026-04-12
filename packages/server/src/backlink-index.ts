@@ -204,7 +204,7 @@ export class BacklinkIndex {
   }
 
   private cachePath(branch = this.activeBranch): string {
-    return resolve(this.projectDir, '.openknowledge', 'cache', branch, 'backlinks.json');
+    return resolve(this.projectDir, '.open-knowledge', 'cache', branch, 'backlinks.json');
   }
 
   updateDocument(docName: string, links: ExtractedWikiLink[], branch = this.activeBranch): void {
