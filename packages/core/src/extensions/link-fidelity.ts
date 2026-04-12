@@ -1,52 +1,51 @@
 /**
  * Link mark override for source-text fidelity.
  *
- * Stores the link style (inline, full, collapsed, shortcut) and reference
- * label from token.raw. Falls back to inline rendering until linkRefDef
- * (US-009) enables full reference-link round-trip.
+ * Extends @tiptap/extension-link (preserving autolink, linkOnPaste,
+ * and click handling plugins) and adds fidelity attributes for link
+ * style (inline, full, collapsed, shortcut) and reference label.
+ *
+ * Falls back to inline rendering until linkRefDef enables full
+ * reference-link round-trip.
  */
 
-import { Mark } from '@tiptap/core';
+import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
+import Link from '@tiptap/extension-link';
 
-export const LinkFidelity = Mark.create({
-  name: 'link',
+export const LinkFidelity = Link.extend({
   priority: 60,
-  inclusive: false,
 
   addOptions() {
     return {
       openOnClick: false,
+      enableClickSelection: false,
+      linkOnPaste: true,
+      autolink: true,
+      protocols: [] as string[],
+      defaultProtocol: 'http',
       HTMLAttributes: {
         target: '_blank',
         rel: 'noopener noreferrer',
+        class: null as string | null,
       },
+      isAllowedUri: () => true,
+      validate: () => true,
+      shouldAutoLink: () => true,
     };
   },
 
   addAttributes() {
     return {
-      href: { default: null },
-      title: { default: null },
-      target: { default: null },
-      rel: { default: null },
-      class: { default: null },
+      ...this.parent?.(),
       linkStyle: { default: 'inline' },
       refLabel: { default: null },
     };
   },
 
-  parseHTML() {
-    return [{ tag: 'a[href]:not([href *= "javascript:" i])' }];
-  },
-
-  renderHTML({ HTMLAttributes }: any) {
-    return ['a', HTMLAttributes, 0];
-  },
-
   markdownTokenName: 'link',
 
-  parseMarkdown(token: any, helpers: any) {
-    const raw = token.raw ?? '';
+  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
+    const raw = (token as Record<string, string>).raw ?? '';
 
     // Detect link style from raw source
     let linkStyle = 'inline';
@@ -70,19 +69,19 @@ export const LinkFidelity = Mark.create({
     }
 
     return helpers.applyMark('link', helpers.parseInline(token.tokens || []), {
-      href: token.href,
-      title: token.title || null,
+      href: (token as Record<string, string>).href,
+      title: (token as Record<string, string>).title || null,
       linkStyle,
       refLabel,
     });
   },
 
-  renderMarkdown(node: any, h: any) {
+  renderMarkdown(node: Record<string, any>, h: Record<string, any>) {
     const href = node.attrs?.href ?? '';
     const title = node.attrs?.title ?? '';
     const text = h.renderChildren(node);
 
-    // For now, all link styles render as inline (reference links need linkRefDef node)
+    // For now, all link styles render as inline (reference links need linkRefDef node coordination)
     return title ? `[${text}](${href} "${title}")` : `[${text}](${href})`;
   },
 });
