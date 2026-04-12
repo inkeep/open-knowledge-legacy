@@ -34,7 +34,7 @@ export class ProviderPool {
 
   constructor(maxSize = 10, wsUrl?: string) {
     this.maxSize = maxSize;
-    this.wsUrl = wsUrl ?? `ws://${globalThis.location?.host ?? 'localhost'}/collab`;
+    this.wsUrl = wsUrl ?? `ws://${location.host ?? 'localhost'}/collab`;
   }
 
   /** Register a callback that fires whenever pool state changes. */

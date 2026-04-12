@@ -8,25 +8,23 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
 
 /** Wait for the active provider to be connected and synced */
-async function waitForProvider(page: import('@playwright/test').Page) {
+async function waitForProvider(page: Page) {
   await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-    () => Boolean((window as any).__activeProvider?.isSynced),
+    () => Boolean(window.__activeProvider?.isSynced),
     { timeout: 15_000 },
   );
 }
 
 /** Get the current Y.Text content from the provider */
-async function getYText(page: import('@playwright/test').Page): Promise<string> {
+async function getYText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-    const provider = (window as any).__activeProvider;
+    const provider = window.__activeProvider;
     return provider?.document?.getText('source')?.toString() ?? '';
   });
 }
@@ -46,9 +44,9 @@ test.beforeEach(async ({ page }) => {
 // as role="radio" (not "button") and carry aria-label="Visual editor" / "Markdown source".
 // PR #35 restructured the header; these helpers centralize the selector so a future
 // redesign only needs one update site.
-const sourceToggle = (page: import('@playwright/test').Page) =>
+const sourceToggle = (page: Page) =>
   page.getByRole('radio', { name: 'Markdown source' });
-const visualToggle = (page: import('@playwright/test').Page) =>
+const visualToggle = (page: Page) =>
   page.getByRole('radio', { name: 'Visual editor' });
 
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
@@ -59,8 +57,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
   // Wait for Observer A to sync to Y.Text
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
+      window.__activeProvider?.document
         ?.getText('source')
         ?.toString()
         ?.includes('Hello from WYSIWYG'),
@@ -87,8 +84,7 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   // Wait for Y.Text to have the content
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
+      window.__activeProvider?.document
         ?.getText('source')
         ?.toString()
         ?.includes('Source Heading'),
@@ -118,8 +114,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   // Wait for sync
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
+      window.__activeProvider?.document
         ?.getText('source')
         ?.toString()
         ?.includes('WYSIWYG edit'),
@@ -137,8 +132,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   // Wait for Y.Text to have both edits
   await page.waitForFunction(
     () => {
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      const txt = (window as any).__activeProvider?.document?.getText('source')?.toString();
+      const txt = window.__activeProvider?.document?.getText('source')?.toString();
       return txt?.includes('WYSIWYG edit') && txt?.includes('Source edit');
     },
     { timeout: 10_000 },
@@ -170,8 +164,7 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   // Wait for user content to sync
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
+      window.__activeProvider?.document
         ?.getText('source')
         ?.toString()
         ?.includes('User typing'),
@@ -189,8 +182,7 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   // Wait for agent content to propagate
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
+      window.__activeProvider?.document
         ?.getText('source')
         ?.toString()
         ?.includes('Agent Section'),
