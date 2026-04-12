@@ -7,6 +7,8 @@ export {
   hasNewEntries,
 } from './constants/activity.ts';
 
+// Extensions — Tier 2 fidelity overrides
+export { BulletListFidelity } from './extensions/bullet-list-fidelity.ts';
 // Extensions
 export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
 export { fenceFor, JsxComponent } from './extensions/jsx-component.ts';
@@ -19,6 +21,8 @@ export {
   jsxTokenizerC,
   type TokenizerVersion,
 } from './extensions/jsx-tokenizer.ts';
+export { ListItemFidelity } from './extensions/list-item-fidelity.ts';
+export { OrderedListFidelity } from './extensions/ordered-list-fidelity.ts';
 export { sharedExtensions } from './extensions/shared.ts';
 export {
   getWikiLinkText,
