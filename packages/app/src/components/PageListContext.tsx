@@ -11,12 +11,7 @@ interface PageListContextValue {
   refetch: () => void;
 }
 
-const PageListContext = createContext<PageListContextValue>({
-  pages: new Set(),
-  loading: true,
-  error: null,
-  refetch: () => {},
-});
+const PageListContext = createContext<PageListContextValue | null>(null);
 
 async function loadPages(): Promise<Set<string>> {
   const r = await fetch('/api/pages');
