@@ -433,11 +433,24 @@ export function createServer(options: ServerOptions): ServerInstance {
             try {
               const ours = serializeDoc(docName);
               if (ours === null) {
+                // Doc was removed from hocuspocus.documents between the
+                // stillLoaded snapshot and this loop — race during teardown.
+                log.warn(
+                  { docName },
+                  `[rescue] skipping ${docName} — document dropped from map mid-rescue`,
+                );
                 rescueFailed.push(docName);
                 continue;
               }
               const rescuePath = safeRescuePath(shadowRef.current.gitDir, docName);
               if (!rescuePath) {
+                // Path-traversal guard fired — docName tried to escape the
+                // rescue/ directory. Log at warn level since this is
+                // security-relevant, not just a write failure.
+                log.warn(
+                  { docName, gitDir: shadowRef.current.gitDir },
+                  `[rescue] path-traversal guard rejected docName: ${docName}`,
+                );
                 rescueFailed.push(docName);
                 continue;
               }
@@ -455,7 +468,14 @@ export function createServer(options: ServerOptions): ServerInstance {
             }
           }
         } else {
-          // Shadow repo unavailable (init failed earlier) — nothing to write into.
+          // Shadow repo unavailable (initAsync failed earlier) — nothing to
+          // write into. Warn rather than fail silently so operators seeing a
+          // `lost [...]` array in the timeout error can distinguish "no shadow
+          // repo" from per-doc write failures.
+          log.warn(
+            { stillLoadedCount: stillLoaded.length },
+            `[rescue] shadow repo unavailable at flush timeout — ${stillLoaded.length} doc(s) will be lost: [${stillLoaded.join(', ')}]`,
+          );
           rescueFailed.push(...stillLoaded);
         }
 
