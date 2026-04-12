@@ -14,12 +14,18 @@ import {
   bulletListStar,
   codeBlock,
   codeBlockTilde,
+  hardBreakBackslash,
+  hardBreakSpaces,
   heading,
+  htmlBlock,
+  linkRefDef,
   orderedList,
   orderedListParen,
   paragraph,
   paragraphWithFidelityChars,
   paragraphWithMarks,
+  setextH1,
+  setextH2,
   thematicBreakStar,
   thematicBreakUnderscore,
 } from './arbitraries';
@@ -147,6 +153,60 @@ describe('I1 — identity: serialize(parse(md)) === md', () => {
   test('thematic break with ___', () => {
     fc.assert(
       fc.property(thematicBreakUnderscore, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('setext heading level 1 (= underline)', () => {
+    fc.assert(
+      fc.property(setextH1, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('setext heading level 2 (- underline)', () => {
+    fc.assert(
+      fc.property(setextH2, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('hard break with backslash', () => {
+    fc.assert(
+      fc.property(hardBreakBackslash, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('hard break with two spaces', () => {
+    fc.assert(
+      fc.property(hardBreakSpaces, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('HTML block', () => {
+    fc.assert(
+      fc.property(htmlBlock, (md) => {
+        expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('link reference definition', () => {
+    fc.assert(
+      fc.property(linkRefDef, (md) => {
         expect(normalize(mdRoundTrip(md))).toBe(normalize(md));
       }),
       { numRuns: NUM_RUNS, seed: 42 },

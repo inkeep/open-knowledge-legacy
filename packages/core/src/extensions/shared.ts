@@ -28,8 +28,8 @@ export const sharedExtensions = [
   // WikiLink also needs to register before StarterKit so its custom tokenizer is
   // part of the shared markdown schema everywhere we parse or serialize markdown.
   WikiLink,
-  // Tier 2 fidelity overrides: must be before StarterKit so they override
-  // the built-in list extensions (higher priority = wins on same token type).
+  // Tier 2 fidelity overrides: StarterKit built-ins are disabled (e.g. bulletList: false)
+  // so these extensions are the active definitions, not overrides.
   BulletListFidelity,
   OrderedListFidelity,
   ListItemFidelity,

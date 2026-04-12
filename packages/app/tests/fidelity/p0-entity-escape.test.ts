@@ -3,7 +3,7 @@
  *
  * Verifies the @tiptap/markdown patch:
  *   R1  — encodeTextForMarkdown bypasses HTML entity encoding
- *   R2  — parseInlineTokens handles 'escape' tokens; encodeTextForMarkdown re-escapes
+ *   R2  — parseInlineTokens handles 'escape' tokens, preserving raw backslash form; encodeTextForMarkdown passes through unchanged
  *   R14 — @tiptap/markdown pinned exact
  *   R20 — Link URL with & preserved
  *

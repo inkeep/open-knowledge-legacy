@@ -89,6 +89,30 @@ export const thematicBreakStar = fc.constant('***');
 /** Thematic break with _ (non-default). */
 export const thematicBreakUnderscore = fc.constant('___');
 
+/** Setext heading level 1 (= underline). */
+export const setextH1 = phrase.map((t) => `${t}\n${'='.repeat(Math.max(t.length, 3))}`);
+
+/** Setext heading level 2 (- underline). */
+export const setextH2 = phrase.map((t) => `${t}\n${'-'.repeat(Math.max(t.length, 3))}`);
+
+/** Hard break with backslash. */
+export const hardBreakBackslash = fc.tuple(phrase, phrase).map(([a, b]) => `${a}\\\n${b}`);
+
+/** Hard break with two trailing spaces. */
+export const hardBreakSpaces = fc.tuple(phrase, phrase).map(([a, b]) => `${a}  \n${b}`);
+
+/** Raw HTML block. */
+export const htmlBlock = fc.constantFrom(
+  '<div>content</div>',
+  '<details><summary>S</summary></details>',
+);
+
+/** Link reference definition. */
+export const linkRefDef = fc.constantFrom(
+  '[example]: https://example.com "Title"',
+  '[ref]: https://example.com',
+);
+
 // ─── Inline marks (R19) ───
 
 /** Bold text (default **). */
@@ -160,6 +184,10 @@ export const block = fc.oneof(
   thematicBreakUnderscore,
   paragraphWithMarks,
   headingWithMarks,
+  setextH1,
+  setextH2,
+  htmlBlock,
+  linkRefDef,
 );
 
 /** A complete markdown document (1-5 blocks separated by blank lines). */

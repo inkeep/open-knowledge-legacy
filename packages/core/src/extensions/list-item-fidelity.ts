@@ -1,7 +1,7 @@
 /**
  * ListItem extension override for source-text fidelity.
  *
- * Reads the parent node's bulletMarker or listMarkerDelim attribute
+ * Reads the parent node's bulletMarker or listMarkerDelimiter attribute
  * to use the correct prefix when rendering markdown.
  */
 
@@ -77,7 +77,7 @@ export const ListItemFidelity = Node.create({
         }
         if (context.parentType === 'orderedList') {
           const start = context.meta?.parentAttrs?.start || 1;
-          const delim = context.meta?.parentAttrs?.listMarkerDelim ?? '.';
+          const delim = context.meta?.parentAttrs?.listMarkerDelimiter ?? '.';
           return `${start + context.index}${delim} `;
         }
         return '- ';

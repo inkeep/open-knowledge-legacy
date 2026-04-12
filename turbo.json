@@ -106,7 +106,8 @@
         "tests/fidelity/**/*.ts",
         "tests/fidelity/**/*.json",
         "src/editor/**/*.ts",
-        "../core/src/**/*.ts"
+        "../core/src/**/*.ts",
+        "../../patches/@tiptap%2Fmarkdown@3.22.3.patch"
       ]
     },
     "test:e2e": {

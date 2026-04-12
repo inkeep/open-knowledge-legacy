@@ -18,7 +18,7 @@ export const JsxComponent = Node.create({
   name: 'jsxComponent',
   group: 'block',
   atom: true,
-  priority: 60, // Higher than codeBlock (default 50) so we intercept jsx-component first
+  priority: 60, // Same priority as CodeBlockFidelity; array position in sharedExtensions determines interception order
 
   addAttributes() {
     return {

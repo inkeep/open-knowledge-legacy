@@ -56,10 +56,16 @@ const mdManager = new MarkdownManager({ extensions: sharedExtensions });
     if (canaryOutput.includes('H&M') && !canaryOutput.includes('&amp;')) {
       canaryLogger.info({}, 'startup canary: PASS — entity bypass verified');
     } else {
-      canaryLogger.warn({}, 'startup canary: FAIL — entity encoding detected in round-trip');
+      canaryLogger.error(
+        { input: canaryInput, output: canaryOutput },
+        'startup canary: FAIL — entity encoding detected in round-trip. The @tiptap/markdown patch may not be applied. Run `bun install`.',
+      );
     }
   } catch (e) {
-    canaryLogger.warn({ err: e }, 'startup canary: ERROR');
+    canaryLogger.error(
+      { err: e },
+      'startup canary: ERROR — round-trip test threw. The @tiptap/markdown patch may not be applied. Run `bun install`.',
+    );
   }
 }
 

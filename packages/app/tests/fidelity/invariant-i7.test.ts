@@ -14,7 +14,7 @@ import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as fc from 'fast-check';
 import * as Y from 'yjs';
-import { heading, paragraph, paragraphWithFidelityChars } from './arbitraries';
+import { block, heading, paragraph, paragraphWithFidelityChars } from './arbitraries';
 import { NUM_RUNS } from './helpers';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
@@ -83,6 +83,15 @@ describe('I7 — cross-path consistency', () => {
   test('mdManager path === Y.Doc path for fidelity chars', () => {
     fc.assert(
       fc.property(paragraphWithFidelityChars, (md) => {
+        expect(normalize(pathMdManager(md))).toBe(normalize(pathYDoc(md)));
+      }),
+      { numRuns: NUM_RUNS, seed: 42 },
+    );
+  });
+
+  test('mdManager path === Y.Doc path for all block constructs (fidelity attrs)', () => {
+    fc.assert(
+      fc.property(block, (md) => {
         expect(normalize(pathMdManager(md))).toBe(normalize(pathYDoc(md)));
       }),
       { numRuns: NUM_RUNS, seed: 42 },

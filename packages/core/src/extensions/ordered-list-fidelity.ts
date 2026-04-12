@@ -1,7 +1,7 @@
 /**
  * OrderedList extension override for source-text fidelity.
  *
- * Preserves the list marker delimiter (. or )) via `listMarkerDelim`
+ * Preserves the list marker delimiter (. or )) via `listMarkerDelimiter`
  * attribute extracted from token.raw. Also preserves tight/loose.
  */
 
@@ -25,7 +25,7 @@ export const OrderedListFidelity = Node.create({
   addAttributes() {
     return {
       start: { default: 1 },
-      listMarkerDelim: { default: '.' },
+      listMarkerDelimiter: { default: '.' },
       loose: { default: false },
     };
   },
@@ -62,7 +62,7 @@ export const OrderedListFidelity = Node.create({
       type: 'orderedList',
       attrs: {
         start: token.start ?? 1,
-        listMarkerDelim: delim,
+        listMarkerDelimiter: delim,
         loose,
       },
       content: token.items ? helpers.parseChildren(token.items) : [],

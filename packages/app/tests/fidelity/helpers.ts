@@ -7,7 +7,7 @@ import { MarkdownManager } from '@tiptap/markdown';
 
 export const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
-/** Serialize then parse markdown — the canonical round-trip. */
+/** Parse then serialize markdown — the canonical round-trip. */
 export function mdRoundTrip(md: string): string {
   const json = mdManager.parse(md);
   return mdManager.serialize(json);
