@@ -1,18 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
-import {
-  prependFrontmatter,
-  sharedExtensions,
-  stripFrontmatter,
-} from '@inkeep/open-knowledge-core';
-import { getSchema } from '@tiptap/core';
+import { prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { MarkdownManager } from '@tiptap/markdown';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { createContentFilter } from './content-filter.ts';
+import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import {
@@ -50,7 +45,6 @@ import {
 } from './shadow-repo.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
 
 export interface ServerOptions {
   port?: number;
@@ -173,36 +167,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     return prependFrontmatter(frontmatter, body);
   }
 
-  /** Apply markdown content to Y.Doc with skipStoreHooks. */
-  function applyToDoc(docName: string, content: string): void {
-    const document = hocuspocus.documents.get(docName);
-    if (!document) return;
-    const { frontmatter, body } = stripFrontmatter(content);
-    const parsedJson = mdManager.parse(body);
-    const pmNode = schema.nodeFromJSON(parsedJson);
-    const xmlFragment = document.getXmlFragment('default');
-
-    document.transact(
-      () => {
-        const meta = { mapping: new Map(), isOMark: new Map() };
-        updateYFragment(document, xmlFragment, pmNode, meta);
-        const metaMap = document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
-
-        const ytext = document.getText('source');
-        const currentText = ytext.toString();
-        if (currentText !== content) {
-          ytext.delete(0, currentText.length);
-          ytext.insert(0, content);
-        }
-      },
-      {
-        source: 'local',
-        skipStoreHooks: true,
-        context: { origin: 'file-watcher' },
-      } satisfies LocalTransactionOrigin,
-    );
-  }
+  /** Apply markdown content to Y.Doc — delegates to the shared throwing helper. */
+  const applyToDoc = (docName: string, content: string): void =>
+    applyExternalChange(hocuspocus, docName, content);
 
   /** Helper to extract docName from any DiskEvent variant. */
   function diskEventDocName(event: DiskEvent): string {
