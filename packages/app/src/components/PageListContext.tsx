@@ -11,12 +11,7 @@ interface PageListContextValue {
   refetch: () => void;
 }
 
-const PageListContext = createContext<PageListContextValue>({
-  pages: new Set(),
-  loading: true,
-  error: null,
-  refetch: () => {},
-});
+const PageListContext = createContext<PageListContextValue | null>(null);
 
 async function loadPages(): Promise<Set<string>> {
   const r = await fetch('/api/pages');
@@ -35,7 +30,7 @@ function logLoadPagesError(err: unknown) {
 }
 
 export function PageListProvider({ children }: { children: ReactNode }) {
-  const [pages, setPages] = useState<Set<string>>(new Set());
+  const [pages, setPages] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,7 +41,7 @@ export function PageListProvider({ children }: { children: ReactNode }) {
         setPages(p);
         setError(null);
       })
-      .catch((err: unknown) => {
+      .catch((err) => {
         logLoadPagesError(err);
         setError(err instanceof Error ? err.message : 'Failed to load pages');
       })
@@ -55,25 +50,18 @@ export function PageListProvider({ children }: { children: ReactNode }) {
       });
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: run only on mount
   useEffect(() => {
-    setLoading(true);
-    void loadPages()
-      .then((p) => {
-        setPages(p);
-        setError(null);
-      })
-      .catch((err: unknown) => {
-        logLoadPagesError(err);
-        setError(err instanceof Error ? err.message : 'Failed to load pages');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
+    void refetch();
   }, []);
 
   return <PageListContext value={{ pages, loading, error, refetch }}>{children}</PageListContext>;
 }
 
 export function usePageList(): PageListContextValue {
-  return use(PageListContext);
+  const ctx = use(PageListContext);
+  if (!ctx) {
+    throw new Error('usePageList must be used within <PageListProvider />');
+  }
+  return ctx;
 }
