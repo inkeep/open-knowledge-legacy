@@ -25,6 +25,7 @@ export default defineConfig({
   ],
   resolve: {
     tsconfigPaths: true,
+    dedupe: ['prosemirror-view'],
   },
   server: {
     port: vitePort ?? 5173,

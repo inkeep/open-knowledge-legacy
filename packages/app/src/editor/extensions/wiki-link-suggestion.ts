@@ -63,7 +63,7 @@ export function parseQuery(query: string): ParsedQuery {
 
 export function filterPages(pages: PageItem[], query: string): PageItem[] {
   if (!query) return pages.slice(0, MAX_ITEMS);
-  const results = fuzzysort.go(query, pages, { key: 'title', threshold: -10000 });
+  const results = fuzzysort.go(query, pages, { keys: ['title', 'docName'], threshold: -10000 });
   return results.map((r) => r.obj).slice(0, MAX_ITEMS);
 }
 
@@ -183,7 +183,40 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
 
   function handleSuggestionKeyDown(view: EditorView, event: KeyboardEvent): boolean {
     const state = wikiLinkSuggestionKey.getState(view.state) as WikiLinkSuggestionState | undefined;
-    if (!state?.active) return false;
+
+    // Delete the adjacent wikiLink atom when the suggestion menu is not active.
+    // addKeyboardShortcuts() creates a separate TipTap-managed keymap plugin that
+    // interferes with TipTap's built-in handleBackspace chain for normal text
+    // deletion. Handling it here, in the same handleKeyDown prop already used for
+    // Enter/Escape/Arrow, falls through naturally when the atom check fails —
+    // identical to origin/main behaviour.
+    if (!state?.active) {
+      if (event.key === 'Backspace') {
+        const { selection } = view.state;
+        if (selection.empty) {
+          const nodeBefore = selection.$from.nodeBefore;
+          if (nodeBefore?.type.name === 'wikiLink') {
+            view.dispatch(
+              view.state.tr.delete(selection.from - nodeBefore.nodeSize, selection.from),
+            );
+            return true;
+          }
+        }
+      }
+      if (event.key === 'Delete') {
+        const { selection } = view.state;
+        if (selection.empty) {
+          const nodeAfter = selection.$from.nodeAfter;
+          if (nodeAfter?.type.name === 'wikiLink') {
+            view.dispatch(
+              view.state.tr.delete(selection.from, selection.from + nodeAfter.nodeSize),
+            );
+            return true;
+          }
+        }
+      }
+      return false;
+    }
 
     const count = currentFiltered.length;
 
@@ -335,6 +368,22 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
           });
       };
 
+      // Debug: catch Backspace at the document level to see if it reaches the DOM at all
+      const debugBackspace = (e: KeyboardEvent) => {
+        if (e.key !== 'Backspace') return;
+        const pluginState = wikiLinkSuggestionKey.getState(editor.state) as
+          | WikiLinkSuggestionState
+          | undefined;
+        if (!pluginState?.active) return;
+        console.log('[wiki-suggestion] document Backspace (suggestion active)', {
+          target: (e.target as HTMLElement)?.tagName,
+          targetClass: (e.target as HTMLElement)?.className?.slice(0, 60),
+          targetContentEditable: (e.target as HTMLElement)?.contentEditable,
+          defaultPrevented: e.defaultPrevented,
+        });
+      };
+      document.addEventListener('keydown', debugBackspace, { capture: true });
+
       return {
         update(view: EditorView) {
           const state = wikiLinkSuggestionKey.getState(view.state) as
@@ -456,6 +505,7 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
         },
 
         destroy() {
+          document.removeEventListener('keydown', debugBackspace, { capture: true });
           destroy();
         },
       };

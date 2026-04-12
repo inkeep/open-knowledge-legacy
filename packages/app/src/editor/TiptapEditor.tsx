@@ -284,16 +284,13 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
   }, [editor, provider.document]);
 
   // Scroll to a heading anchor after navigating from a wiki link.
-  // WikiLinkView stores the target anchor slug in sessionStorage (namespaced by
-  // docName) before setting the hash; this effect picks it up once the provider
-  // syncs the document. TiptapEditor is keyed by docName (see EditorArea), so
-  // this runs once per doc.
+  // The anchor slug is encoded in the URL as ?anchor=<slug>. TiptapEditor is
+  // keyed by docName (see EditorArea), so this effect runs once per doc mount.
   useEffect(() => {
-    const hashMatch = window.location.hash.match(/^#\/([^?#/]+)/);
-    const docName = hashMatch ? decodeURIComponent(hashMatch[1]) : null;
-    const anchorRaw = docName ? sessionStorage.getItem(`pendingAnchor:${docName}`) : null;
-    if (!anchorRaw || !docName) return;
-    sessionStorage.removeItem(`pendingAnchor:${docName}`);
+    const hash = window.location.hash;
+    const qmark = hash.indexOf('?');
+    const anchorRaw = qmark >= 0 ? new URLSearchParams(hash.slice(qmark + 1)).get('anchor') : null;
+    if (!anchorRaw) return;
     const anchor = anchorRaw; // narrowed to string for closure
 
     let attempts = 0;
@@ -307,7 +304,8 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         scrolled = true;
         provider.off('synced', tryScroll);
-      } else if (attempts++ < 20) {
+      } else if (attempts < 20) {
+        attempts += 1;
         timeoutId = window.setTimeout(tryScroll, 100);
       }
     }

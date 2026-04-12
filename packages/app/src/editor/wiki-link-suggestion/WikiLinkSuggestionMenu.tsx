@@ -44,11 +44,18 @@ export function WikiLinkSuggestionMenu({
     if (selected) selected.scrollIntoView({ block: 'nearest' });
   }, [selectedIndex]);
 
+  // Prevent any click on the popup (buttons or empty space) from stealing focus
+  // from the editor — without this, Backspace events go to the popup instead.
+  const preventFocusSteal = (e: React.MouseEvent) => e.preventDefault();
+
   if (loading) {
     return (
       <div
         ref={containerRef}
+        role="status"
+        aria-live="polite"
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
+        onMouseDown={preventFocusSteal}
       >
         {mode === 'anchor' ? `Loading headings for ${pageTarget}…` : 'Loading pages…'}
       </div>
@@ -69,7 +76,10 @@ export function WikiLinkSuggestionMenu({
     return (
       <div
         ref={containerRef}
+        role="status"
+        aria-live="polite"
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
+        onMouseDown={preventFocusSteal}
       >
         {emptyMsg}
       </div>
@@ -83,6 +93,7 @@ export function WikiLinkSuggestionMenu({
       aria-label={mode === 'anchor' ? 'Heading suggestions' : 'Wiki link suggestions'}
       aria-activedescendant={activeDescendant}
       tabIndex={-1}
+      onMouseDown={preventFocusSteal}
       className="w-64 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
     >
       {error && <div className="rounded-md px-2 py-1.5 text-xs text-amber-700">{error}</div>}

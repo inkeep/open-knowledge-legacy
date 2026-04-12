@@ -468,6 +468,13 @@
   color: var(--color-azure-600);
 }
 
+/* Wiki-link chips contain an <a> for status-bar URL display — reset link styles
+   so the chip's own color/decoration styling isn't overridden by .ProseMirror a */
+.ProseMirror [data-resolution-state] a {
+  color: inherit;
+  text-decoration: none;
+}
+
 /* Horizontal rule */
 .ProseMirror hr {
   border: none;

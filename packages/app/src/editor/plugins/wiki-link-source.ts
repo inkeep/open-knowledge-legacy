@@ -4,8 +4,8 @@
  * 1. Mark decorations — highlights [[...]] patterns so they're visually
  *    distinct from surrounding text.
  *
- * 2. Ctrl/Cmd+click navigation — follows the link (same sessionStorage +
- *    window.location.hash flow used by the WYSIWYG WikiLinkView).
+ * 2. Ctrl/Cmd+click navigation — follows the link (same ?anchor= URL scheme
+ *    used by the WYSIWYG WikiLinkView).
  *
  * 3. Completion source — registered via markdownLanguage.data so it
  *    hooks into basicSetup's autocompletion() without adding a second
@@ -123,8 +123,9 @@ const wikiLinkClickHandler = EditorView.domEventHandlers({
         const anchor = m[2]?.trim() || null;
         if (target) {
           event.preventDefault();
-          if (anchor) sessionStorage.setItem(`pendingAnchor:${target}`, anchor);
-          window.location.hash = `#/${target}`;
+          window.location.hash = anchor
+            ? `#/${target}?anchor=${encodeURIComponent(anchor)}`
+            : `#/${target}`;
         }
         return true;
       }
