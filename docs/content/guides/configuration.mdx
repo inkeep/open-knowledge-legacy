@@ -24,8 +24,8 @@ Each layer overrides the previous, from left to right. The merge is a deep merge
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `content.dir` | `string` | `"."` | Content directory relative to project root |
-| `content.include` | `string[]` | `["**/*.md"]` | Glob patterns for files to include in the document system |
-| `content.exclude` | `string[]` | `[]` | Glob patterns to explicitly exclude (combined with .gitignore) |
+| `content.include` | `string[]` | `["**/*.md"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern. |
+| `content.exclude` | `string[]` | `[]` | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore) |
 | `server.port` | `number` | `3000` | HTTP/WebSocket server port |
 | `server.host` | `string` | `"localhost"` | Server bind address |
 | `persistence.debounceMs` | `number` | `2000` | Quiet period before CRDT changes flush to disk (ms) |

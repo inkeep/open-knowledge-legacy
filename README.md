@@ -4,8 +4,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.3.11
-- [Node.js](https://nodejs.org) >= 22
+- [Bun](https://bun.sh) >= 1.3.11 **or** [Node.js](https://nodejs.org) >= 22
 - Git
 
 ## Quick Start

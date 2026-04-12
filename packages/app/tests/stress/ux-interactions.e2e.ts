@@ -42,6 +42,15 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.ProseMirror');
 });
 
+// Editor mode toggle is a Radix ToggleGroup with type="single" — items render
+// as role="radio" (not "button") and carry aria-label="Visual editor" / "Markdown source".
+// PR #35 restructured the header; these helpers centralize the selector so a future
+// redesign only needs one update site.
+const sourceToggle = (page: import('@playwright/test').Page) =>
+  page.getByRole('radio', { name: 'Markdown source' });
+const visualToggle = (page: import('@playwright/test').Page) =>
+  page.getByRole('radio', { name: 'Visual editor' });
+
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
   // Type in WYSIWYG mode
   await page.locator('.ProseMirror').focus();
@@ -59,7 +68,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
   );
 
   // Switch to Source mode
-  await page.getByRole('button', { name: 'Source' }).click();
+  await sourceToggle(page).click();
 
   // Verify CodeMirror shows the typed content
   const cmContent = await page.locator('.cm-content').textContent();
@@ -68,7 +77,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
 
 test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ page }) => {
   // Switch to Source mode
-  await page.getByRole('button', { name: 'Source' }).click();
+  await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
 
   // Type markdown in CodeMirror
@@ -87,7 +96,7 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   );
 
   // Switch back to WYSIWYG
-  await page.getByRole('button', { name: 'WYSIWYG' }).click();
+  await visualToggle(page).click();
 
   // Wait for ProseMirror to render the synced content
   await page.waitForFunction(
@@ -118,7 +127,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   );
 
   // Switch to Source, type there
-  await page.getByRole('button', { name: 'Source' }).click();
+  await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
   await page.locator('.cm-content').focus();
   // Move to end before typing
@@ -136,7 +145,7 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   );
 
   // Switch back to WYSIWYG
-  await page.getByRole('button', { name: 'WYSIWYG' }).click();
+  await visualToggle(page).click();
 
   // Wait for ProseMirror to render both edits
   await page.waitForFunction(
@@ -189,11 +198,42 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   );
 
   // Switch to Source to see both
-  await page.getByRole('button', { name: 'Source' }).click();
+  await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
 
   const sourceContent = await getYText(page);
   expect(sourceContent).toContain('User typing');
   expect(sourceContent).toContain('Agent Section');
   expect(sourceContent).toContain('Agent content here');
+});
+
+test('sidebar folder row: clicking anywhere on the row toggles expand/collapse', async ({
+  page,
+}) => {
+  const folderRow = page.getByRole('button', { name: 'sidebar-folder' });
+  // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
+  // EditorHeader's `${activeDocName}.md` label after navigating into the file,
+  // causing toHaveCount(0) to fail on collapse even though the sidebar entry is
+  // correctly hidden.
+  const sidebar = page.locator('[data-slot="sidebar-container"]');
+  const nestedFile = sidebar.getByText('nested-doc.md');
+
+  // Starts collapsed — nested child is not visible, aria-expanded reflects state
+  await expect(folderRow).toBeVisible();
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
+  await expect(nestedFile).toHaveCount(0);
+
+  // Click the label (not the chevron) — the whole row should be the hit target
+  await folderRow.click();
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'true');
+  await expect(nestedFile).toBeVisible();
+
+  // Nested file click still navigates (not shadowed by folder toggle)
+  await nestedFile.click();
+  await expect(page).toHaveURL(/#\/sidebar-folder\/nested-doc$/);
+
+  // Click the row again to collapse
+  await folderRow.click();
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
+  await expect(nestedFile).toHaveCount(0);
 });

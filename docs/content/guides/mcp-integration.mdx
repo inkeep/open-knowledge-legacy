@@ -15,7 +15,7 @@ Active when `open-knowledge start` is **not** running. This is the default exper
 
 - Workflow tools work normally -- agents use their native file I/O (Read, Edit, Grep) alongside the instructional workflow tools
 - Auto-generated catalogs in `.open-knowledge/catalogs/` are still maintained
-- Document tools (`write-document`, `edit-document`, etc.) are not available since there is no CRDT layer to route through
+- Document tools (`write_document`, `edit_document`, etc.) are not available since there is no CRDT layer to route through
 </Tab>
 <Tab value="Hocuspocus-connected mode">
 Active when `open-knowledge start` **is** running.
@@ -33,11 +33,11 @@ Active when `open-knowledge start` **is** running.
 | `init-content` | Both | Bootstrap knowledge articles from the codebase |
 | `ingest` | Both | Capture an external source (URL or file) as raw reference material |
 | `research` | Both | Gather sources and write provisional research findings |
-| `write-document` | Connected | Write content to a document through the CRDT |
-| `edit-document` | Connected | Edit an existing document through the CRDT |
-| `list-documents` | Connected | List all documents in the knowledge base |
-| `undo-agent-edit` | Connected | Undo the last agent edit |
-| `redo-agent-edit` | Connected | Redo the last undone agent edit |
+| `write_document` | Connected | Write content to a document through the CRDT |
+| `edit_document` | Connected | Edit an existing document through the CRDT |
+| `list_documents` | Connected | List all documents in the knowledge base |
+| `undo_agent_edit` | Connected | Undo the last agent edit |
+| `redo_agent_edit` | Connected | Redo the last undone agent edit |
 
 <Callout type="info">
 Workflow tools (`init-content`, `ingest`, `research`) return instructional text that guides the agent through the workflow. The real work -- reading files, editing content, fetching URLs -- happens via the agent's native tools.

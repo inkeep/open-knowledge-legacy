@@ -167,7 +167,7 @@ const CONSTRUCTS: Array<{ name: string; input: string; stable?: boolean; note?: 
 
 describe('markdown round-trip: serialize(parse(md))', () => {
   for (const { name, input, stable } of CONSTRUCTS) {
-    test(name, () => {
+    test.concurrent(name, () => {
       const output = stripTrailingWhitespace(mdRoundTrip(input));
       const normalized = stripTrailingWhitespace(input);
 
@@ -190,7 +190,7 @@ describe('markdown round-trip: serialize(parse(md))', () => {
 
 describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemirrorJSON → serialize', () => {
   for (const { name, input } of CONSTRUCTS) {
-    test(name, () => {
+    test.concurrent(name, () => {
       const output = stripTrailingWhitespace(treeRoundTrip(input));
       const normalized = stripTrailingWhitespace(input);
 
@@ -207,7 +207,7 @@ describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemir
 
 describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observer B → XmlFragment', () => {
   for (const { name, input } of CONSTRUCTS) {
-    test(name, async () => {
+    test.concurrent(name, async () => {
       const doc = new Y.Doc();
       const fragment = doc.getXmlFragment('default');
       const ytext = doc.getText('source');
@@ -221,8 +221,15 @@ describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observe
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, fragment, pmNode, meta);
 
-        // Wait for Observer A (tree→text) + Observer B (text→tree) to settle
-        await wait(500);
+        // Poll until Observer A (tree→text) + Observer B (text→tree) settle —
+        // the bridge is converged when both sides are equal and non-empty.
+        await pollUntil(() => {
+          const t = stripTrailingWhitespace(ytext.toString());
+          const f = stripTrailingWhitespace(
+            mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
+          );
+          return t === f && t.length > 0;
+        }, 5000);
 
         // Verify bridge invariant holds
         const textContent = stripTrailingWhitespace(ytext.toString());
@@ -248,7 +255,7 @@ describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observe
 
 describe('full-stack chain: md → parse → XmlFragment → Observer A → Y.Text → Observer B → XmlFragment → serialize → md', () => {
   for (const { name, input } of CONSTRUCTS) {
-    test(name, async () => {
+    test.concurrent(name, async () => {
       const doc = new Y.Doc();
       const fragment = doc.getXmlFragment('default');
       const ytext = doc.getText('source');
@@ -262,8 +269,14 @@ describe('full-stack chain: md → parse → XmlFragment → Observer A → Y.Te
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, fragment, pmNode, meta);
 
-        // Wait for full observer cycle to settle
-        await wait(500);
+        // Poll until the full observer cycle settles (bridge converged + non-empty)
+        await pollUntil(() => {
+          const t = stripTrailingWhitespace(ytext.toString());
+          const f = stripTrailingWhitespace(
+            mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
+          );
+          return t === f && t.length > 0;
+        }, 5000);
 
         // Final output: serialize back to markdown
         const finalMd = stripTrailingWhitespace(
@@ -308,7 +321,7 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
       await wait(300);
 
       // Connect client and write content via WYSIWYG (XmlFragment)
-      const client = await createTestClient(server.port);
+      const client = await createTestClient(server.port, 'test-doc');
       try {
         const json = mdManager.parse(input);
         const pmNode = schema.nodeFromJSON(json);
@@ -330,7 +343,7 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
           expect(diskContent).toContain(word);
         }
       } finally {
-        client.cleanup();
+        await client.cleanup();
       }
 
       // Now test reload: reset doc, write content to disk, reconnect client
@@ -338,7 +351,7 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
       await wait(300);
       writeFileSync(join(server.contentDir, 'test-doc.md'), input, 'utf-8');
 
-      const client2 = await createTestClient(server.port);
+      const client2 = await createTestClient(server.port, 'test-doc');
       try {
         // Wait for onLoadDocument + Observer A to populate Y.Text
         const words = stripTrailingWhitespace(input).match(/\w{3,}/g) ?? [];
@@ -352,7 +365,7 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
         }
         assertBridgeInvariant(client2.ytext, client2.fragment);
       } finally {
-        client2.cleanup();
+        await client2.cleanup();
       }
     });
   }
@@ -405,7 +418,7 @@ describe('agent-as-file-editor fidelity', () => {
 
     // Connect client and wait for file watcher to propagate
     await wait(500);
-    const client = await createTestClient(server.port);
+    const client = await createTestClient(server.port, 'test-doc');
     try {
       await pollUntil(() => client.ytext.toString().includes('Agent File Edit'), 10_000);
 
@@ -426,14 +439,19 @@ describe('agent-as-file-editor fidelity', () => {
         updateYFragment(client.doc, client.fragment, userNode, meta);
       });
 
-      await wait(500);
+      // Poll until bridge converges after user XmlFragment edit
+      await pollUntil(() => {
+        const t = stripTrailingWhitespace(client.ytext.toString());
+        const f = stripTrailingWhitespace(serializeFragment(client.fragment));
+        return t === f && t.length > 0;
+      }, 5000);
 
       // Both agent and user content should coexist
       // (updateYFragment replaces tree, but user content replaces agent content in this test)
       // The key assertion: bridge invariant still holds
       assertBridgeInvariant(client.ytext, client.fragment);
     } finally {
-      client.cleanup();
+      await client.cleanup();
     }
   });
 
@@ -441,17 +459,17 @@ describe('agent-as-file-editor fidelity', () => {
     await testReset(server.port);
     await wait(300);
 
-    const client = await createTestClient(server.port);
+    const client = await createTestClient(server.port, 'test-doc');
     try {
       // User types first (via Y.Text, simulating source mode)
       client.doc.transact(() => {
         client.ytext.insert(0, '# User Content\n\nTyped by user.');
       });
-      await wait(500);
+      await pollUntil(() => serializeFragment(client.fragment).includes('User Content'), 5000);
 
       // Agent writes via API
       await agentWriteMd(server.port, '## Agent Content\n\nWritten by agent.');
-      await wait(500);
+      await pollUntil(() => client.ytext.toString().includes('Agent Content'), 5000);
 
       // Both should coexist in Y.Text
       expect(client.ytext.toString()).toContain('User Content');
@@ -465,7 +483,7 @@ describe('agent-as-file-editor fidelity', () => {
         return disk.includes('User Content') && disk.includes('Agent Content');
       }, 5000);
     } finally {
-      client.cleanup();
+      await client.cleanup();
     }
   });
 });

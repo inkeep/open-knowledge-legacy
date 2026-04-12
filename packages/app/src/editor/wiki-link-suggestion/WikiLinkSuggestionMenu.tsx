@@ -67,7 +67,11 @@ export function WikiLinkSuggestionMenu({
       tabIndex={-1}
       className="w-64 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
     >
-      {error && <div className="rounded-md px-2 py-1.5 text-xs text-amber-700">{error}</div>}
+      {error && (
+        <div className="rounded-md px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300">
+          {error}
+        </div>
+      )}
       {items.map((item, idx) => {
         const isSelected = idx === selectedIndex;
         return (

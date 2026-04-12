@@ -83,7 +83,7 @@ export interface ServerInstance {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   destroy: () => Promise<void>;
-  /** Promise that resolves when async init (shadow repo, watchers) is complete. */
+  /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
 }
 

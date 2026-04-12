@@ -175,6 +175,53 @@ describe('ProviderPool onChange', () => {
   });
 });
 
+describe('ProviderPool disconnect recycling', () => {
+  test('does not recycle a provider that disconnects before first sync', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc1');
+    pool.setActive('doc1');
+
+    const originalProvider = entry.provider;
+    originalProvider.emit('disconnect', {
+      event: { code: 1006, reason: 'startup offline', wasClean: false },
+    });
+
+    expect(pool.getActive()?.provider).toBe(originalProvider);
+  });
+
+  test('recycles the active provider after disconnect when no unsynced changes remain', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc1');
+    pool.setActive('doc1');
+
+    const originalProvider = entry.provider;
+    originalProvider.emit('synced', { state: true });
+    originalProvider.emit('disconnect', {
+      event: { code: 1006, reason: 'server restart', wasClean: false },
+    });
+
+    const recycled = pool.getActive();
+    expect(recycled).not.toBeNull();
+    expect(recycled?.provider).not.toBe(originalProvider);
+    expect(recycled?.docName).toBe('doc1');
+  });
+
+  test('keeps the provider when disconnect occurs with unsynced local changes', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+    const entry = pool.open('doc1');
+    pool.setActive('doc1');
+
+    const originalProvider = entry.provider;
+    originalProvider.emit('synced', { state: true });
+    originalProvider.unsyncedChanges = 1;
+    originalProvider.emit('disconnect', {
+      event: { code: 1006, reason: 'offline', wasClean: false },
+    });
+
+    expect(pool.getActive()?.provider).toBe(originalProvider);
+  });
+});
+
 describe('ProviderPool dispose', () => {
   test('dispose clears all entries and state', () => {
     pool = new ProviderPool(3, DUMMY_WS);

@@ -8,11 +8,13 @@ schema_version: 1
 ## Articles
 
 - **[CATALOGUE](reports/CATALOGUE.md)**
+- **[TypeScript Open-Core Reference Library](reports/typescript-open-core-reference.md)** — Verified list of 44 TypeScript-first (frontend + backend both in TS) open-source companies with 10K+ GitHub stars following an open-core business model. Licenses verified from actual LICENSE files. Use as prior-art inspiration.
 
 ## Subfolders
 
 - **[agent-browser-vs-playwright-crdt-testing](.open-knowledge/catalogs/reports/agent-browser-vs-playwright-crdt-testing/INDEX.md)** (7 articles)
 - **[agent-knowledge-retrieval-paradigms-2025-2026](.open-knowledge/catalogs/reports/agent-knowledge-retrieval-paradigms-2025-2026/INDEX.md)** (54 articles)
+- **[agpl-compiled-code-source-requirements](.open-knowledge/catalogs/reports/agpl-compiled-code-source-requirements/INDEX.md)** (2 articles)
 - **[ai-coding-agent-tool-surfaces](.open-knowledge/catalogs/reports/ai-coding-agent-tool-surfaces/INDEX.md)** (10 articles)
 - **[ai-coding-tools-embedded-browsers](.open-knowledge/catalogs/reports/ai-coding-tools-embedded-browsers/INDEX.md)** (8 articles)
 - **[anthropic-knowledge-infrastructure-positioning](.open-knowledge/catalogs/reports/anthropic-knowledge-infrastructure-positioning/INDEX.md)** (8 articles)
@@ -26,6 +28,7 @@ schema_version: 1
 - **[crdt-branching-namespacing-prior-art](.open-knowledge/catalogs/reports/crdt-branching-namespacing-prior-art/INDEX.md)** (10 articles)
 - **[crdt-mcp-filesystem-bridge](.open-knowledge/catalogs/reports/crdt-mcp-filesystem-bridge/INDEX.md)** (12 articles)
 - **[crdt-observer-bridge-latency-analysis](.open-knowledge/catalogs/reports/crdt-observer-bridge-latency-analysis/INDEX.md)** (3 articles)
+- **[electron-desktop-app-operations-2025](.open-knowledge/catalogs/reports/electron-desktop-app-operations-2025/INDEX.md)** (6 articles)
 - **[frontmatter-schema-conventions-for-agent-readable-docs](.open-knowledge/catalogs/reports/frontmatter-schema-conventions-for-agent-readable-docs/INDEX.md)** (9 articles)
 - **[fumadocs-full-pipeline](.open-knowledge/catalogs/reports/fumadocs-full-pipeline/INDEX.md)** (12 articles)
 - **[fumadocs-karpathy-workflow-deep-dive](.open-knowledge/catalogs/reports/fumadocs-karpathy-workflow-deep-dive/INDEX.md)** (14 articles)
@@ -50,22 +53,28 @@ schema_version: 1
 - **[obsidian-karpathy-workflow-deep-dive](.open-knowledge/catalogs/reports/obsidian-karpathy-workflow-deep-dive/INDEX.md)** (49 articles)
 - **[obsidian-vs-fumadocs-component-inventory](.open-knowledge/catalogs/reports/obsidian-vs-fumadocs-component-inventory/INDEX.md)** (6 articles)
 - **[onboarding-multiproject-ux](.open-knowledge/catalogs/reports/onboarding-multiproject-ux/INDEX.md)** (6 articles)
+- **[open-core-split-licensing-engineering](.open-knowledge/catalogs/reports/open-core-split-licensing-engineering/INDEX.md)** (6 articles)
 - **[open-knowledge-prior-art-eight-sources](.open-knowledge/catalogs/reports/open-knowledge-prior-art-eight-sources/INDEX.md)** (11 articles)
 - **[openknowledge-competitive-landscape](.open-knowledge/catalogs/reports/openknowledge-competitive-landscape/INDEX.md)** (77 articles)
 - **[orama-deep-dive](.open-knowledge/catalogs/reports/orama-deep-dive/INDEX.md)** (12 articles)
 - **[orama-vs-ripgrep-indexed-grep](.open-knowledge/catalogs/reports/orama-vs-ripgrep-indexed-grep/INDEX.md)** (9 articles)
+- **[oss-licensing-strategies-open-core](.open-knowledge/catalogs/reports/oss-licensing-strategies-open-core/INDEX.md)** (8 articles)
 - **[otel-local-dev-viewers](.open-knowledge/catalogs/reports/otel-local-dev-viewers/INDEX.md)** (5 articles)
 - **[parcel-watcher-crdt-disk-bridge](.open-knowledge/catalogs/reports/parcel-watcher-crdt-disk-bridge/INDEX.md)** (7 articles)
 - **[peritext-on-yjs-feasibility](.open-knowledge/catalogs/reports/peritext-on-yjs-feasibility/INDEX.md)** (8 articles)
+- **[permissive-licenses-compiled-distribution](.open-knowledge/catalogs/reports/permissive-licenses-compiled-distribution/INDEX.md)** (2 articles)
 - **[react-types-as-editor-schema](.open-knowledge/catalogs/reports/react-types-as-editor-schema/INDEX.md)** (7 articles)
 - **[search-engine-advanced-capabilities](.open-knowledge/catalogs/reports/search-engine-advanced-capabilities/INDEX.md)** (8 articles)
 - **[search-engine-decision](.open-knowledge/catalogs/reports/search-engine-decision/INDEX.md)** (7 articles)
 - **[source-toggle-architecture](.open-knowledge/catalogs/reports/source-toggle-architecture/INDEX.md)** (8 articles)
 - **[tiptap-2026-direction-overlap](.open-knowledge/catalogs/reports/tiptap-2026-direction-overlap/INDEX.md)** (8 articles)
+- **[ts-monorepo-ci-test-pipeline-patterns](.open-knowledge/catalogs/reports/ts-monorepo-ci-test-pipeline-patterns/INDEX.md)** (1 article)
 - **[vec1-vs-sqlite-vec-ecosystem](.open-knowledge/catalogs/reports/vec1-vs-sqlite-vec-ecosystem/INDEX.md)** (7 articles)
 - **[virtualized-mcp-filesystem-servers](.open-knowledge/catalogs/reports/virtualized-mcp-filesystem-servers/INDEX.md)** (10 articles)
 - **[vite-6-to-8-migration](.open-knowledge/catalogs/reports/vite-6-to-8-migration/INDEX.md)** (5 articles)
+- **[web-to-macos-desktop-wrapping-2025](.open-knowledge/catalogs/reports/web-to-macos-desktop-wrapping-2025/INDEX.md)** (5 articles)
 - **[wiki-links-backlinks-architecture](.open-knowledge/catalogs/reports/wiki-links-backlinks-architecture/INDEX.md)** (30 articles)
 - **[worktree-orchestration-landscape](.open-knowledge/catalogs/reports/worktree-orchestration-landscape/INDEX.md)** (10 articles)
 - **[yjs-constrained-observer-sync](.open-knowledge/catalogs/reports/yjs-constrained-observer-sync/INDEX.md)** (8 articles)
 - **[yjs-dual-key-shimmer-analysis](.open-knowledge/catalogs/reports/yjs-dual-key-shimmer-analysis/INDEX.md)** (6 articles)
+- **[zero-config-bunx-cli-packaging](.open-knowledge/catalogs/reports/zero-config-bunx-cli-packaging/INDEX.md)** (7 articles)

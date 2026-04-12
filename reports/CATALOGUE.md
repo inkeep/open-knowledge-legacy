@@ -1,7 +1,7 @@
 # Research Reports Catalogue
 
 > Auto-generated on 2026-04-12 by `generate-catalogue.ts`
-> 66 valid reports indexed
+> 68 valid reports indexed
 
 ---
 
@@ -14,10 +14,12 @@
 | [Permissive Licenses and Compiled-Only Distribution: Ca…](permissive-licenses-compiled-distribution/REPORT.md) | 2026-04-11 | 1 files | permissive licensing, compiled dis… | MIT License, Apache 2.0, BSD, ISC,… |
 | [Mintlify Strategic Deep Dive: Tier-1 Stress Test, Writ…](mintlify-strategic-deep-dive/REPORT.md) | 2026-04-11 | 5 files | competitive stress test, write-pat… | Mintlify, Trieve, Helicone, Dayton… |
 | [AFFiNE Strategic Deep Dive: Pivot Execution, BlockSuit…](affine-strategic-deep-dive/REPORT.md) | 2026-04-11 | 7 files | competitive analysis, CRDT editor … | AFFiNE, BlockSuite, y-octo, toever… |
+| [Zero-Config bunx CLI Packaging: Making open-knowledge …](zero-config-bunx-cli-packaging/REPORT.md) | 2026-04-11 | 6 files | CLI packaging, embedded frontend, … | open-knowledge, bunx, npx, Claude … |
 | [Can Compiled Code Be Distributed Under AGPL Without Re…](agpl-compiled-code-source-requirements/REPORT.md) | 2026-04-11 | 1 files | GPL source requirements, compiled … | AGPL-3.0, GPLv3, JavaScript, npm |
 | [Competitive Landscape for an Agent-Native Knowledge Pl…](openknowledge-competitive-landscape/REPORT.md) | 2026-04-11 | 8 files | competitive landscape, knowledge m… | Notion, Confluence, Obsidian, Mint… |
 | [Wrapping a Web App as a Native macOS Desktop App in 20…](web-to-macos-desktop-wrapping-2025/REPORT.md) | 2026-04-11 | 4 files | desktop app wrapping, macOS native… | Electron, Tauri, SwiftUI WebView, … |
 | [Open-Core Split Licensing Engineering Patterns: ee/ Di…](open-core-split-licensing-engineering/REPORT.md) | 2026-04-11 | 5 files | open core engineering, split licen… | Cal.com, Formbricks, Infisical, Gi… |
+| [CI Test Pipeline Patterns in TypeScript OSS Monorepos](ts-monorepo-ci-test-pipeline-patterns/REPORT.md) | 2026-04-11 | — | CI pipeline patterns, conditional … | n8n, Supabase, Strapi, AFFiNE, Cal… |
 | [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus C…](vite-6-to-8-migration/REPORT.md) | 2026-04-09 | 4 files | framework migration, bundler archi… | Vite 8, Vite 7, Rolldown, Oxc, @vi… |
 | [agent-browser vs Playwright for CRDT Integration Testi…](agent-browser-vs-playwright-crdt-testing/REPORT.md) | 2026-04-09 | 6 files | CRDT integration testing, browser … | Playwright, Vercel agent-browser, … |
 | [CRDT Observer Bridge Latency Analysis — Architecture R…](crdt-observer-bridge-latency-analysis/REPORT.md) | 2026-04-09 | 2 files | CRDT latency analysis, observer br… | Yjs, TipTap, Hocuspocus, ProseMirr… |
@@ -146,6 +148,15 @@
 - **Subjects:** AFFiNE, BlockSuite, y-octo, toeverything, Obsidian, obsidian-skills
 - **Evidence files:** 7
 
+### [Zero-Config bunx CLI Packaging: Making open-knowledge 'Just Work' from Claude Code Desktop](zero-config-bunx-cli-packaging/REPORT.md)
+
+> How to make `bunx @inkeep/open-knowledge` a single zero-config command that starts the collaboration server, file watcher, and serves the React editor — with embedded frontend distribution, native addon portability, and Claude Code Desktop MCP integration.
+
+- **Created:** 2026-04-11
+- **Topics:** CLI packaging, embedded frontend, zero-config developer tools, native addon portability
+- **Subjects:** open-knowledge, bunx, npx, Claude Code Desktop, MCP, Storybook, Prisma Studio
+- **Evidence files:** 6
+
 ### [Can Compiled Code Be Distributed Under AGPL Without Readable Source?](agpl-compiled-code-source-requirements/REPORT.md)
 
 > Whether compiled/minified JavaScript can be distributed under AGPL while keeping source private. Covers GPLv3 'Corresponding Source' requirements, what counts as 'object code' for interpreted languages, the written offer provision, obfuscation strategies, and enforcement precedents. Short answer: n…
@@ -183,6 +194,14 @@
 - **Subjects:** Cal.com, Formbricks, Infisical, GitLab, Grafana, Documenso, Dub.co, Twenty, Appsmith, Mastra, Activepieces, n8n, Tldraw, Liveblocks, Firecrawl, napi-rs, terser, javascript-obfuscator
 - **Evidence files:** 5
 - **Warnings:** 1
+
+### [CI Test Pipeline Patterns in TypeScript OSS Monorepos](ts-monorepo-ci-test-pipeline-patterns/REPORT.md)
+
+> How 26 top TypeScript-first OSS companies structure CI test pipelines — change detection, conditional execution, test tier organization, E2E strategy, caching, and nightly runs. Evidence from n8n, Supabase, Strapi, AFFiNE, Cal.com, PostHog, tldraw, and 19 others.
+
+- **Created:** 2026-04-11
+- **Topics:** CI pipeline patterns, conditional test execution, monorepo test sharding, GitHub Actions
+- **Subjects:** n8n, Supabase, Strapi, AFFiNE, Cal.com, PostHog, tldraw, Twenty, Directus, Medusa, Nango, Liveblocks, Formbricks
 
 ### [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus CRDT Editor](vite-6-to-8-migration/REPORT.md)
 

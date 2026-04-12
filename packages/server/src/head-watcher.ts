@@ -10,7 +10,6 @@
 
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -237,25 +236,38 @@ export async function startHeadWatcher(
     resetQuietWindow();
   }
 
-  let subscription: AsyncSubscription;
+  let unsubscribeFn: () => Promise<void>;
+  let parcel: typeof import('@parcel/watcher');
   try {
-    subscription = await subscribe(gitDir, (err, events) => {
+    parcel = await import('@parcel/watcher');
+  } catch (err) {
+    console.warn(
+      '[head-watcher] @parcel/watcher unavailable — HEAD watching disabled:',
+      err instanceof Error ? err.message : err,
+    );
+    // Read initial branch state so callers get valid context even in degraded mode
+    lastKnownBranch = readBranchFromHead(gitDir);
+    return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
+  }
+
+  try {
+    const subscription = await parcel.subscribe(gitDir, (err, events) => {
       if (err) {
         console.error('[head-watcher]', err);
         return;
       }
 
       for (const event of events) {
-        // Extract filename from path (last segment)
         const fileName = event.path.split('/').pop() ?? '';
         if (WATCHED_FILES.has(fileName)) {
           void handleGitEvent(fileName);
-          break; // One event per batch is enough to trigger
+          break;
         }
       }
     });
-  } catch (e) {
-    console.error('[head-watcher] Failed to start watcher on', gitDir, e);
+    unsubscribeFn = () => subscription.unsubscribe();
+  } catch (err) {
+    console.warn('[head-watcher] @parcel/watcher subscribe failed — HEAD watching disabled:', err);
     return { unsubscribe: async () => {}, getLastKnownBranch: () => lastKnownBranch };
   }
 
@@ -273,7 +285,7 @@ export async function startHeadWatcher(
       }
       if (quietTimer) clearTimeout(quietTimer);
       if (timeoutTimer) clearTimeout(timeoutTimer);
-      await subscription.unsubscribe();
+      await unsubscribeFn();
     },
     getLastKnownBranch: () => lastKnownBranch,
   };

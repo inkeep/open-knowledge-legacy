@@ -49,6 +49,8 @@ When the user is in source mode (CodeMirror), agent writes are still visible in 
 3. The markdown is pushed to CodeMirror via React state (`setSourceContent`)
 4. The observer is unsubscribed before toggle-back to prevent the merge from triggering the observer
 
+The bidirectional observer sync coordinates with user typing in both editors. When the user is actively typing in source mode, Observer B (text-to-tree sync) defers its tree replacement until typing pauses. This prevents keystroke loss during rapid source-mode editing, including when agent writes arrive concurrently.
+
 Current limitation: the full CodeMirror content is replaced on each change, so the cursor may jump. This is acceptable for P0; cursor preservation is a future refinement.
 
 ## Three-way merge on toggle-back

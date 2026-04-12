@@ -24,11 +24,15 @@ cd packages/cli && bun run build     # Build CLI (tsdown → dist/)
 ### Quality gates
 
 ```bash
-bun run lint                         # Biome lint across all packages
-bun run format                       # Biome format across all packages
+bun run check                        # THE gate — lint + typecheck + unit + integration + fidelity (~20-30s warm)
+bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel, ~2 min warm)
+bun run lint                         # Biome lint only
+bun run format                       # Biome format (auto-fix)
 cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
 cd packages/<pkg> && bun test           # Unit tests per package
 ```
+
+**`bun run check` is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion` — lint, typecheck, unit tests, integration (bridge-matrix), and conversion fidelity. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is <50ms.
 
 ### Agent simulator (requires dev server running)
 
@@ -80,12 +84,14 @@ Hocuspocus Server
 
 | Method | Path | Purpose |
 |--------|------|---------|
+| GET | `/api/document` | Read document content (`?docName=` param) |
 | POST | `/api/agent-write` | Agent write via Y.Text |
 | POST | `/api/agent-write-md` | Agent markdown write via Y.Text |
+| POST | `/api/agent-patch` | Find-and-replace patch via Y.Text |
 | POST | `/api/agent-undo` | Undo last agent edit |
 | POST | `/api/agent-redo` | Redo last undone agent edit |
 | GET | `/api/agent-undo-status` | Check canUndo/canRedo |
-| POST | `/api/test-reset` | Reset document (E2E test isolation) |
+| POST | `/api/test-reset` | Reset document (E2E test isolation, `?docName=` param) |
 
 ### Key files
 
@@ -147,6 +153,16 @@ Observer B: Text → XmlFragment (parse + updateYFragment, origin: 'sync-from-te
 - Per-origin undo via server-side UndoManager
 - Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
 
+### Theming
+
+Dark/light/system theme via `next-themes` (class strategy). Key pieces:
+
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
+- `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
+- `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
+- `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
 ### Dev mode
 
 The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173.
@@ -156,8 +172,35 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
 - `src/editor/observers.ts` — Bidirectional observer sync
+- `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
+
+## Architecture deep-dive
+
+See `AGENTS.md` in the repo root for extended architecture documentation: CRDT bridge internals, origin-guard truth table, propagation matrix, known pitfalls (STOP/WARN rules), and debug tooling.
+
+## Testing — per-test docName isolation
+
+Integration tests use per-test docNames via `createTestClient(port)` which auto-generates `test-${randomUUID()}`. Tests are safe to run concurrently (`test.concurrent()`, multiple `bun test` processes in the same worktree) because:
+
+1. Each test's Y.Doc is uniquely named and independent.
+2. Observer A's typing-defer state is per-doc (`WeakMap<Y.Doc, TypingState>`).
+3. `/api/test-reset` is scoped to a specific docName via `?docName=` query param.
+
+**Exception:** tests that verify shared-state behavior (initial sync, test-reset semantics) explicitly pass `'test-doc'` and do not run concurrently with each other.
+
+Client lifecycle is inside the test body via `try/finally` — NOT via `beforeEach/afterEach`. This is required for `test.concurrent()` correctness (the shared `let client` pattern races under concurrent mode).
+
+## Concurrent Development — multi-agent local workflows
+
+This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:
+
+- **Two agents, same worktree:** Each bun process gets its own port (`getFreePort`), its own Hocuspocus tmpdir (`mkdtempSync`), its own Y.Docs, and its own module state.
+- **Two agents, separate worktrees:** Stronger isolation via filesystem separation.
+- **Agent running Playwright + developer running `bun run dev`:** Playwright config sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; the manual dev server uses the default `packages/content/`. No contention.
+
+No environment variables must be set by hand for any of these scenarios.
 
 ## Research reports
 
