@@ -72,7 +72,7 @@ export function BacklinksPanel({
         <h2 className="text-sm font-semibold tracking-tight text-foreground">Backlinks</h2>
         <p className="mt-1 text-xs text-muted-foreground">
           {loading
-            ? 'Refreshing link graph…'
+            ? 'Loading…'
             : `${backlinks.length} ${backlinks.length === 1 ? 'page' : 'pages'} link here`}
         </p>
       </div>
