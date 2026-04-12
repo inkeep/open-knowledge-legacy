@@ -42,6 +42,41 @@ describe('stripFrontmatter', () => {
     expect(frontmatter).toBe('---\ntitle: No Trailing\n---');
     expect(body).toBe('');
   });
+
+  test('handles CRLF line endings', () => {
+    const input = '---\r\ntitle: CRLF\r\n---\r\n# Body';
+    const { frontmatter, body } = stripFrontmatter(input);
+    expect(frontmatter).toBe('---\r\ntitle: CRLF\r\n---\r\n');
+    expect(body).toBe('# Body');
+  });
+
+  test('handles mixed CRLF/LF line endings', () => {
+    const input = '---\r\ntitle: Mixed\n---\r\n# Body';
+    const { frontmatter, body } = stripFrontmatter(input);
+    expect(frontmatter).toBe('---\r\ntitle: Mixed\n---\r\n');
+    expect(body).toBe('# Body');
+  });
+
+  test('handles empty frontmatter block ---\\n---\\n', () => {
+    const input = '---\n---\n# Body';
+    const { frontmatter, body } = stripFrontmatter(input);
+    expect(frontmatter).toBe('---\n---\n');
+    expect(body).toBe('# Body');
+  });
+
+  test('handles empty frontmatter block without trailing newline', () => {
+    const input = '---\n---';
+    const { frontmatter, body } = stripFrontmatter(input);
+    expect(frontmatter).toBe('---\n---');
+    expect(body).toBe('');
+  });
+
+  test('handles empty CRLF frontmatter block', () => {
+    const input = '---\r\n---\r\n# Body';
+    const { frontmatter, body } = stripFrontmatter(input);
+    expect(frontmatter).toBe('---\r\n---\r\n');
+    expect(body).toBe('# Body');
+  });
 });
 
 describe('prependFrontmatter', () => {
@@ -58,6 +93,20 @@ describe('prependFrontmatter', () => {
 describe('round-trip', () => {
   test('strip then prepend is identity', () => {
     const original = '---\ntitle: Test\ndate: 2026-01-01\n---\n# Content\n\nParagraph here.\n';
+    const { frontmatter, body } = stripFrontmatter(original);
+    const reassembled = prependFrontmatter(frontmatter, body);
+    expect(reassembled).toBe(original);
+  });
+
+  test('CRLF round-trip is identity', () => {
+    const original = '---\r\ntitle: CRLF Test\r\n---\r\n# Content\r\n';
+    const { frontmatter, body } = stripFrontmatter(original);
+    const reassembled = prependFrontmatter(frontmatter, body);
+    expect(reassembled).toBe(original);
+  });
+
+  test('empty block round-trip is identity', () => {
+    const original = '---\n---\n# Content\n';
     const { frontmatter, body } = stripFrontmatter(original);
     const reassembled = prependFrontmatter(frontmatter, body);
     expect(reassembled).toBe(original);
