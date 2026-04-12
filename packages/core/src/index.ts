@@ -9,6 +9,8 @@ export {
 
 // Extensions — Tier 2 fidelity overrides
 export { BulletListFidelity } from './extensions/bullet-list-fidelity.ts';
+export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
+export { BoldFidelity, ItalicFidelity } from './extensions/emphasis-fidelity.ts';
 // Extensions
 export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
 export { fenceFor, JsxComponent } from './extensions/jsx-component.ts';

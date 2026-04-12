@@ -8,6 +8,8 @@ import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
 import { BulletListFidelity } from './bullet-list-fidelity.ts';
+import { CodeBlockFidelity } from './code-block-fidelity.ts';
+import { BoldFidelity, ItalicFidelity } from './emphasis-fidelity.ts';
 import { JsxComponent } from './jsx-component.ts';
 import { ListItemFidelity } from './list-item-fidelity.ts';
 import { OrderedListFidelity } from './ordered-list-fidelity.ts';
@@ -25,6 +27,9 @@ export const sharedExtensions = [
   BulletListFidelity,
   OrderedListFidelity,
   ListItemFidelity,
+  ItalicFidelity,
+  BoldFidelity,
+  CodeBlockFidelity,
   StarterKit.configure({
     undoRedo: false,
     link: {
