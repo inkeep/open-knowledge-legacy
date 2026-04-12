@@ -6,7 +6,9 @@ import { toWikiLinkSlug } from '@/editor/extensions/wiki-link-helpers';
 
 function getSuggestedPath(target: string): string {
   const hash = window.location.hash;
-  const currentDoc = hash.startsWith('#/') ? hash.slice(2) : '';
+  const rest = hash.startsWith('#/') ? hash.slice(2) : '';
+  const qmark = rest.indexOf('?');
+  const currentDoc = qmark >= 0 ? rest.slice(0, qmark) : rest;
   const lastSlash = currentDoc.lastIndexOf('/');
   const dir = lastSlash > 0 ? currentDoc.slice(0, lastSlash + 1) : '';
   return `${dir}${toWikiLinkSlug(target)}.md`;
@@ -83,7 +85,7 @@ export function CreatePageDialog({ open, target, onOpenChange, onCreated }: Crea
               }}
             />
             {error && (
-              <p id={errorId} className="mt-1.5 text-xs text-red-600">
+              <p id={errorId} className="mt-1.5 text-xs text-red-600 dark:text-red-400">
                 {error}
               </p>
             )}

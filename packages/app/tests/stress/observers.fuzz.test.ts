@@ -266,9 +266,8 @@ describe('Layer D: fuzz harness', () => {
 
   test('fuzz 50 iterations (baseline)', () => runFuzz(50, 0xcafebabe), 30_000);
 
-  test('fuzz 200 iterations (deep)', () => runFuzz(200, 0x12345678), 120_000);
-
-  // 500-iteration nightly probe — opt-in via env var
-  const run500 = process.env.STRESS_FUZZ_NIGHTLY === '1' ? test : test.todo;
-  run500('fuzz 500 iterations (nightly probe)', () => runFuzz(500, 0xfeedface), 300_000);
+  // 200+ iteration probes — opt-in via STRESS_FUZZ_NIGHTLY=1
+  const runNightly = process.env.STRESS_FUZZ_NIGHTLY === '1' ? test : test.todo;
+  runNightly('fuzz 200 iterations (deep)', () => runFuzz(200, 0x12345678), 120_000);
+  runNightly('fuzz 500 iterations (nightly probe)', () => runFuzz(500, 0xfeedface), 300_000);
 });

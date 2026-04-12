@@ -13,7 +13,7 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
   if (!activeProvider || !activeDocName) {
     return (
       <div className="flex flex-1 items-center justify-center">
-        <span className="select-none text-sm text-muted-foreground">No document open</span>
+        <span className="select-none text-sm text-muted-foreground">Select a document to edit</span>
       </div>
     );
   }

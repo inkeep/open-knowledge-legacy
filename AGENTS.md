@@ -20,18 +20,21 @@ bun install                          # Install all workspace dependencies
 cd packages/app && bun run dev       # Start dev server (Vite + Hocuspocus on port 5173)
 cd docs && bun run dev               # Start docs dev server (Next.js + Fumadocs)
 bun run build                        # Build all packages via turbo (cli, app, docs)
+cd packages/cli && bun run build     # Build CLI only (tsdown → dist/)
 ```
 
 ### Quality gates
 
 ```bash
-bun run check                        # Full gate: typecheck (turbo) + lint (biome) + test (turbo)
-bun run check:fast                   # Typecheck + lint only (skips tests)
-bun run typecheck                    # Typecheck all packages via turbo
+bun run check                        # THE gate — lint + typecheck + unit + integration + fidelity (~20-30s warm)
+bun run check:full:parallel          # Full suite: check + stress + fuzz + e2e (turbo parallel, ~2 min warm)
 bun run lint                         # Biome check (lint + format + imports) across workspace
 bun run format                       # Biome check --write (auto-fix lint + format + imports)
-bun run test                         # Run tests across workspace via turbo
+cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
+cd packages/<pkg> && bun test           # Unit tests per package
 ```
+
+**`bun run check` is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion` — lint, typecheck, unit tests, integration (bridge-matrix), and conversion fidelity. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is <50ms.
 
 ### Agent simulator (requires dev server running)
 
@@ -89,7 +92,7 @@ Hocuspocus Server
 ├── API Extension (onRequest hook — reads file index from watcher)
 ├── Agent Sessions (DirectConnection + UndoManager per agent)
 ├── Content Filter (gitignore + config exclude/include filtering)
-├── File Watcher (@parcel/watcher — owns in-memory file index)
+├── File Watcher (@parcel/watcher → chokidar fallback — owns in-memory file index)
 ├── HEAD Watcher (.git/HEAD → BatchBegin/BatchEnd lifecycle)
 ├── Shadow Repo (.git/openknowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)
@@ -112,14 +115,14 @@ The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/api/document` | Read live Y.Text state (bypasses persistence debounce) |
+| GET | `/api/document` | Read live Y.Text state (bypasses persistence debounce; `?docName=` param) |
 | POST | `/api/agent-write` | Agent write via Y.Text |
 | POST | `/api/agent-write-md` | Agent markdown write via Y.Text (append/prepend/replace) |
 | POST | `/api/agent-patch` | Targeted find/replace on live Y.Text — only matched span mutated |
 | POST | `/api/agent-undo` | Undo last agent edit (agent-write origin only) |
 | POST | `/api/agent-redo` | Redo last undone agent edit |
 | GET | `/api/agent-undo-status` | Check canUndo/canRedo |
-| POST | `/api/test-reset` | Reset document (E2E test isolation) |
+| POST | `/api/test-reset` | Reset document (E2E test isolation, `?docName=` param) |
 | POST | `/api/save-version` | Save Version — project repo commit + shadow checkpoint |
 | GET | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park) |
 | GET | `/api/rescue` | List rescue buffers (dirty docs from deleted/branch-switched files) |
@@ -136,6 +139,7 @@ The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
 - `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park
+- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
 - `src/agent-sessions.ts` — `AgentSessionManager` class
 - `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, and metrics endpoints
 
@@ -148,7 +152,8 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 | Command | Description |
 |---------|-------------|
 | `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app |
-| `open-knowledge mcp` | Start MCP stdio server (connects to running server) |
+| `open-knowledge init` | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json` |
+| `open-knowledge mcp` | Start MCP stdio server (disk-only or connects to running Hocuspocus) |
 
 ### Config system
 
@@ -198,6 +203,16 @@ Observer B: Text → XmlFragment (parse + updateYFragment, origin: 'sync-from-te
 - Per-origin undo via server-side UndoManager
 - Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
 
+### Theming
+
+Dark/light/system theme via `next-themes` (class strategy). Key pieces:
+
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
+- `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
+- `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
+- `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
 ### Dev mode
 
 The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173.
@@ -207,6 +222,7 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
 - `src/editor/observers.ts` — Bidirectional observer sync
+- `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
@@ -238,7 +254,7 @@ Y.Doc
 | W1: WYSIWYG (XmlFragment) | Observer A | (direct) | Persistence debounce |
 | W2: Source (Y.Text) | (direct) | Observer B | Persistence debounce |
 | W3: Agent API | CRDT sync (WebSocket) | syncTextToFragment on server | Persistence debounce |
-| W4: Disk (file watcher) | handleExternalChange | handleExternalChange | (direct) |
+| W4: Disk (file watcher) | applyExternalChange | applyExternalChange | (direct) |
 | Undo/Redo | UndoManager + syncTextToFragment | syncTextToFragment | Persistence debounce |
 
 ### transaction.local semantics
@@ -293,7 +309,7 @@ Y.Doc
 
 | Layer | Type | Location | Command |
 |---|---|---|---|
-| A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.test.ts` | `bun run test` |
+| A | Unit + stress | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` | `bun run test` (unit), `bun run test:stress:*` (per-shard) |
 | B | HTTP + server-side CRDT | `packages/app/tests/stress/stress-api.ts` | `bun run tests/stress/stress-api.ts` (needs dev server) |
 | C | Playwright E2E | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts` | `bunx playwright test` |
 | D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |
@@ -333,6 +349,18 @@ test('my propagation test', async () => {
 });
 ```
 
+### Per-test docName isolation
+
+Integration tests use per-test docNames via `createTestClient(port)` which auto-generates `test-${randomUUID()}`. Tests are safe to run concurrently (`test.concurrent()`, multiple `bun test` processes in the same worktree) because:
+
+1. Each test's Y.Doc is uniquely named and independent.
+2. Observer A's typing-defer state is per-doc (`WeakMap<Y.Doc, TypingState>`).
+3. `/api/test-reset` is scoped to a specific docName via `?docName=` query param.
+
+**Exception:** tests that verify shared-state behavior (initial sync, test-reset semantics) explicitly pass `'test-doc'` and do not run concurrently with each other.
+
+Client lifecycle is inside the test body via `try/finally` — NOT via `beforeEach/afterEach`. This is required for `test.concurrent()` correctness (the shared `let client` pattern races under concurrent mode).
+
 ### Fuzz replay
 
 ```bash
@@ -366,6 +394,16 @@ lsof -i :5173                     # Check what's using default port
 ### Worktree isolation
 
 Each worktree has its own content directory. The test harness creates a fresh `tmpDir` per test run — no shared state between worktrees.
+
+### Multi-agent local workflows
+
+This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:
+
+- **Two agents, same worktree:** Each bun process gets its own port (`getFreePort`), its own Hocuspocus tmpdir (`mkdtempSync`), its own Y.Docs, and its own module state.
+- **Two agents, separate worktrees:** Stronger isolation via filesystem separation.
+- **Agent running Playwright + developer running `bun run dev`:** Playwright config sets `OK_TEST_CONTENT_DIR` to an isolated tmpdir; the manual dev server uses the default `packages/content/`. No contention.
+
+No environment variables must be set by hand for any of these scenarios.
 
 ## Known Pitfalls
 
@@ -417,7 +455,7 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 
 ## Research references
 
-See `reports/CATALOGUE.md` for the full index. Key reports:
+`reports/` contains ~55 prior-art research reports on the tech stack, editor architecture, CRDT collaboration, search engines, MCP tool design, competitive landscape, and related topics. Each report has a `REPORT.md` synthesis and `evidence/` files. See `reports/CATALOGUE.md` for the full index. Key reports:
 
 - `reports/npm-global-cli-packaging/` — CLI packaging research (7 dimensions)
 - `reports/auto-persistence-version-history-patterns/` — Auto-persistence and version history

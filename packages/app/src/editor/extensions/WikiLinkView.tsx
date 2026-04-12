@@ -220,7 +220,7 @@ function EditWikiLinkDialog({
 
 // ── WikiLinkView ──────────────────────────────────────────────────────────────
 
-export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewProps) {
+export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: NodeViewProps) {
   const target = String(node.attrs.target ?? '');
   const alias = normalizeNullableString(node.attrs.alias);
   const anchor = normalizeNullableString(node.attrs.anchor);
@@ -247,27 +247,20 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
       return;
     }
     if (anchor) {
-      // Robust hash parsing — handles trailing slashes/query params
       const hashMatch = window.location.hash.match(/^#\/([^?#/]+)/);
-      const currentDoc = hashMatch ? hashMatch[1] : null;
+      const currentDoc = hashMatch ? decodeURIComponent(hashMatch[1]) : null;
       if (currentDoc === target) {
         const el = document.getElementById(anchor);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          window.location.hash = `#/${target}?anchor=${encodeURIComponent(anchor)}`;
           return;
         }
       }
-      // Namespaced key prevents stale anchors from polluting other pages
-      sessionStorage.setItem(`pendingAnchor:${target}`, anchor);
+      window.location.hash = `#/${target}?anchor=${encodeURIComponent(anchor)}`;
+      return;
     }
     window.location.hash = `#/${target}`;
-  }
-
-  function handlePrimaryKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      handlePrimaryClick();
-    }
   }
 
   function handleCreated(docName: string) {
@@ -286,17 +279,19 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
     <>
       <NodeViewWrapper as="span" contentEditable={false}>
         <DropdownMenuRoot>
-          {/* Chip — primary click action + group for hover-reveal of the ⋯ trigger */}
-          <button
-            type="button"
+          {/*
+           * Chip — a <span> wrapper (not <button>) groups the primary click button
+           * and the ⋯ trigger as siblings. Nesting <button> inside <button> is
+           * invalid HTML and causes React hydration warnings.
+           */}
+          <span
             className={cn(
-              'group mx-0.5 inline-flex max-w-full cursor-pointer select-none items-center gap-0.5 rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+              'group mx-0.5 inline-flex max-w-full select-none items-center gap-0.5 rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
               resolved
-                ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 focus-visible:ring-sky-300'
+                ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
                 : unresolved
-                  ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 focus-visible:ring-red-300'
-                  : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted focus-visible:ring-ring',
+                  ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60'
+                  : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted',
             )}
             data-target={target}
             data-alias={alias ?? ''}
@@ -304,31 +299,64 @@ export function WikiLinkView({ node, updateAttributes, deleteNode }: NodeViewPro
             data-resolved={resolved ? 'true' : 'false'}
             data-resolution-state={resolutionState}
             title={source}
-            onClick={handlePrimaryClick}
-            onKeyDown={handlePrimaryKeyDown}
           >
-            <span className="truncate">{label}</span>
+            {/* Primary action — <a> so browsers show the URL in the status bar on hover.
+                onMouseDown prevents the <a> from stealing focus from the editor
+                (focus fires on mousedown, before click), so Backspace keeps working. */}
+            <a
+              href={anchor ? `#/${target}?anchor=${encodeURIComponent(anchor)}` : `#/${target}`}
+              className={cn(
+                'cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+                resolved
+                  ? 'focus-visible:ring-sky-300'
+                  : unresolved
+                    ? 'focus-visible:ring-red-300'
+                    : 'focus-visible:ring-ring',
+              )}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={(e) => {
+                e.preventDefault();
+                handlePrimaryClick();
+              }}
+            >
+              {label}
+            </a>
 
-            {/* ⋯ menu trigger — visible on chip hover/focus-within, stops click propagation */}
+            {/* ⋯ menu trigger — shown on chip hover/focus-within, hidden (no space) otherwise.
+                data-[state=open]:inline-flex keeps it in layout while Radix measures
+                the trigger position — without this the menu appears at 0,0.
+                onMouseDown preventDefault stops the button from stealing editor focus. */}
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
                 className={cn(
-                  'invisible ml-0.5 inline-flex shrink-0 items-center rounded-sm p-0.5',
-                  'group-hover:visible group-focus-within:visible',
-                  'hover:bg-black/10 focus-visible:visible focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current',
+                  'hidden ml-0.5 shrink-0 items-center rounded-sm p-0.5',
+                  'group-hover:inline-flex group-focus-within:inline-flex data-[state=open]:inline-flex',
+                  'hover:bg-black/10 focus-visible:inline-flex focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current',
                 )}
                 aria-label="Link options"
                 onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => e.stopPropagation()}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
                 onKeyDown={(e) => e.stopPropagation()}
               >
                 <Ellipsis className="size-3" />
               </button>
             </DropdownMenuTrigger>
-          </button>
+          </span>
 
-          <DropdownMenuContent align="start" className="w-36">
+          <DropdownMenuContent
+            align="start"
+            className="w-36"
+            onCloseAutoFocus={(e) => {
+              // Radix would return focus to the trigger button, which may be hidden.
+              // Redirect back to the editor so Backspace keeps working after close.
+              e.preventDefault();
+              editor.commands.focus();
+            }}
+          >
             <DropdownMenuItem onSelect={() => setEditDialogOpen(true)}>
               <Pencil />
               Edit link

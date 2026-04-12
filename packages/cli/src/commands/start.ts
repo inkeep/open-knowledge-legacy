@@ -11,6 +11,7 @@ export function startCommand(getConfig: () => Config): Command {
     .option('-p, --port <port>', 'Server port', undefined)
     .option('-H, --host <host>', 'Server host', undefined)
     .option('--open', 'Open browser after start')
+    .option('--no-init', 'Skip auto-scaffolding of .open-knowledge/')
     .action(async (opts) => {
       // Lazy imports — avoids loading TipTap/Hocuspocus for other commands
       const { existsSync } = await import('node:fs');
@@ -20,21 +21,39 @@ export function startCommand(getConfig: () => Config): Command {
       const { default: sirv } = await import('sirv');
       const { WebSocketServer } = await import('ws');
       const { renderBanner } = await import('../ui/banner.ts');
-      const { dim, error, info } = await import('../ui/colors.ts');
+      const { dim, error, info, warning } = await import('../ui/colors.ts');
+
+      const { mkdirSync } = await import('node:fs');
 
       const log = getLogger('start');
       const config = getConfig();
       const cwd = process.cwd();
 
-      const contentDir = resolve(cwd, config.content.dir);
-
-      if (!existsSync(contentDir)) {
-        console.error(`\n  ${error('Error:')} Content directory not found: ${info(contentDir)}\n`);
-        console.error(`  ${dim('Create the directory:')} mkdir ${config.content.dir}\n`);
-        process.exit(1);
+      // Auto-init: scaffold .open-knowledge/ on first run (unless --no-init)
+      let didAutoInit = false;
+      const okDir = resolve(cwd, '.open-knowledge');
+      if (!existsSync(okDir) && opts.init !== false) {
+        try {
+          const { runInit } = await import('./init.ts');
+          const result = runInit({ cwd, mcp: false });
+          if (result.mcpAction === 'failed') {
+            console.warn(`Auto-init: ${result.mcpError ?? 'unknown error'}`);
+          } else {
+            didAutoInit = true;
+          }
+        } catch (err) {
+          console.warn('Auto-init failed:', err instanceof Error ? err.message : err);
+        }
       }
 
-      const { hocuspocus, destroy } = createServer({
+      // Ensure content directory exists (for non-default content.dir)
+      const contentDir = resolve(cwd, config.content.dir);
+      if (!existsSync(contentDir)) {
+        mkdirSync(contentDir, { recursive: true });
+        log.info({ contentDir }, 'Created content directory');
+      }
+
+      const { hocuspocus, destroy, ready, degraded } = createServer({
         contentDir,
         projectDir: cwd,
         contentRoot: config.content.dir,
@@ -56,13 +75,13 @@ export function startCommand(getConfig: () => Config): Command {
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
 
-      // Static asset serving — locate built React app relative to CLI package.
-      // The app is always a sibling package in the open-knowledge monorepo,
-      // never in the user's cwd (which is their project repo).
+      // Static asset serving — locate built React app.
+      // Priority: (1) dist/public/ for npm-installed CLI, (2-3) monorepo dev paths.
       const cliDir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
       const assetPaths = [
-        resolve(cliDir, '../../app/dist'), // from src: packages/cli/src → packages/app/dist
-        resolve(cliDir, '../../../app/dist'), // from dist: packages/cli/dist → packages/app/dist
+        resolve(cliDir, 'public'), // npm install: dist/public/ (bundled assets)
+        resolve(cliDir, '../../app/dist'), // monorepo dev from src/
+        resolve(cliDir, '../../../app/dist'), // monorepo dev from dist/
       ];
       const assetDir = assetPaths.find((p) => existsSync(p));
       const staticHandler = assetDir
@@ -71,6 +90,8 @@ export function startCommand(getConfig: () => Config): Command {
 
       if (assetDir) {
         log.info({ assetDir }, 'Serving static assets');
+      } else {
+        log.warn({}, 'No React app assets found — browser UI will not be available');
       }
 
       // Create HTTP server and wire up Hocuspocus
@@ -142,6 +163,36 @@ export function startCommand(getConfig: () => Config): Command {
             networkUrl,
           }),
         );
+        if (didAutoInit) {
+          console.log(`  ${info('\u2713')} Scaffolded .open-knowledge/ (first run)`);
+          console.log(
+            `  ${dim('Tip: Run `open-knowledge init` to register MCP tools for Claude Code')}\n`,
+          );
+        }
+
+        // Surface degraded-boot warnings after the banner. The ready promise
+        // resolves when all subsystem init attempts complete — each failed
+        // subsystem is recorded in the degraded array.
+        const DEGRADED_IMPACTS: Record<string, string> = {
+          'shadow-repo': 'Version history and branch-switch safety unavailable',
+          'file-watcher': 'External file changes will not sync to the editor',
+          'head-watcher': 'Git branch switches may cause document inconsistency',
+        };
+        ready
+          .then(() => {
+            if (degraded.length === 0) return;
+            console.log();
+            for (const id of degraded) {
+              const impact = DEGRADED_IMPACTS[id] ?? `${id} (check server logs for details)`;
+              console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
+            }
+            console.log();
+          })
+          .catch((err) => {
+            console.error(
+              `  ${error('Server initialization failed:')} ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
       });
 
       if (opts.open) {

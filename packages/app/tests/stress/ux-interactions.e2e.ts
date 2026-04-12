@@ -8,25 +8,20 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = `http://localhost:${port}`;
 
 /** Wait for the active provider to be connected and synced */
-async function waitForProvider(page: import('@playwright/test').Page) {
-  await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-    () => Boolean((window as any).__activeProvider?.isSynced),
-    { timeout: 15_000 },
-  );
+async function waitForProvider(page: Page) {
+  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), { timeout: 15_000 });
 }
 
 /** Get the current Y.Text content from the provider */
-async function getYText(page: import('@playwright/test').Page): Promise<string> {
+async function getYText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-    const provider = (window as any).__activeProvider;
+    const provider = window.__activeProvider;
     return provider?.document?.getText('source')?.toString() ?? '';
   });
 }
@@ -42,6 +37,13 @@ test.beforeEach(async ({ page }) => {
   await page.waitForSelector('.ProseMirror');
 });
 
+// Editor mode toggle is a Radix ToggleGroup with type="single" — items render
+// as role="radio" (not "button") and carry aria-label="Visual editor" / "Markdown source".
+// PR #35 restructured the header; these helpers centralize the selector so a future
+// redesign only needs one update site.
+const sourceToggle = (page: Page) => page.getByRole('radio', { name: 'Markdown source' });
+const visualToggle = (page: Page) => page.getByRole('radio', { name: 'Visual editor' });
+
 test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ page }) => {
   // Type in WYSIWYG mode
   await page.locator('.ProseMirror').focus();
@@ -50,8 +52,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
   // Wait for Observer A to sync to Y.Text
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
+      window.__activeProvider?.document
         ?.getText('source')
         ?.toString()
         ?.includes('Hello from WYSIWYG'),
@@ -59,7 +60,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
   );
 
   // Switch to Source mode
-  await page.getByRole('button', { name: 'Source' }).click();
+  await sourceToggle(page).click();
 
   // Verify CodeMirror shows the typed content
   const cmContent = await page.locator('.cm-content').textContent();
@@ -68,7 +69,7 @@ test('WYSIWYG→Source: typing in ProseMirror appears in CodeMirror', async ({ p
 
 test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ page }) => {
   // Switch to Source mode
-  await page.getByRole('button', { name: 'Source' }).click();
+  await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
 
   // Type markdown in CodeMirror
@@ -78,16 +79,12 @@ test('Source→WYSIWYG: typing in CodeMirror renders in ProseMirror', async ({ p
   // Wait for Y.Text to have the content
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
-        ?.getText('source')
-        ?.toString()
-        ?.includes('Source Heading'),
+      window.__activeProvider?.document?.getText('source')?.toString()?.includes('Source Heading'),
     { timeout: 10_000 },
   );
 
   // Switch back to WYSIWYG
-  await page.getByRole('button', { name: 'WYSIWYG' }).click();
+  await visualToggle(page).click();
 
   // Wait for ProseMirror to render the synced content
   await page.waitForFunction(
@@ -109,16 +106,12 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   // Wait for sync
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
-        ?.getText('source')
-        ?.toString()
-        ?.includes('WYSIWYG edit'),
+      window.__activeProvider?.document?.getText('source')?.toString()?.includes('WYSIWYG edit'),
     { timeout: 10_000 },
   );
 
   // Switch to Source, type there
-  await page.getByRole('button', { name: 'Source' }).click();
+  await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
   await page.locator('.cm-content').focus();
   // Move to end before typing
@@ -128,15 +121,14 @@ test('round-trip: edits in both modes survive toggle cycle', async ({ page }) =>
   // Wait for Y.Text to have both edits
   await page.waitForFunction(
     () => {
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      const txt = (window as any).__activeProvider?.document?.getText('source')?.toString();
+      const txt = window.__activeProvider?.document?.getText('source')?.toString();
       return txt?.includes('WYSIWYG edit') && txt?.includes('Source edit');
     },
     { timeout: 10_000 },
   );
 
   // Switch back to WYSIWYG
-  await page.getByRole('button', { name: 'WYSIWYG' }).click();
+  await visualToggle(page).click();
 
   // Wait for ProseMirror to render both edits
   await page.waitForFunction(
@@ -160,12 +152,7 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
 
   // Wait for user content to sync
   await page.waitForFunction(
-    () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
-        ?.getText('source')
-        ?.toString()
-        ?.includes('User typing'),
+    () => window.__activeProvider?.document?.getText('source')?.toString()?.includes('User typing'),
     { timeout: 10_000 },
   );
 
@@ -180,20 +167,47 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   // Wait for agent content to propagate
   await page.waitForFunction(
     () =>
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      (window as any).__activeProvider?.document
-        ?.getText('source')
-        ?.toString()
-        ?.includes('Agent Section'),
+      window.__activeProvider?.document?.getText('source')?.toString()?.includes('Agent Section'),
     { timeout: 10_000 },
   );
 
   // Switch to Source to see both
-  await page.getByRole('button', { name: 'Source' }).click();
+  await sourceToggle(page).click();
   await page.waitForSelector('.cm-content');
 
   const sourceContent = await getYText(page);
   expect(sourceContent).toContain('User typing');
   expect(sourceContent).toContain('Agent Section');
   expect(sourceContent).toContain('Agent content here');
+});
+
+test('sidebar folder row: clicking anywhere on the row toggles expand/collapse', async ({
+  page,
+}) => {
+  const folderRow = page.getByRole('button', { name: 'sidebar-folder' });
+  // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
+  // EditorHeader's `${activeDocName}.md` label after navigating into the file,
+  // causing toHaveCount(0) to fail on collapse even though the sidebar entry is
+  // correctly hidden.
+  const sidebar = page.locator('[data-slot="sidebar-container"]');
+  const nestedFile = sidebar.getByText('nested-doc.md');
+
+  // Starts collapsed — nested child is not visible, aria-expanded reflects state
+  await expect(folderRow).toBeVisible();
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
+  await expect(nestedFile).toHaveCount(0);
+
+  // Click the label (not the chevron) — the whole row should be the hit target
+  await folderRow.click();
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'true');
+  await expect(nestedFile).toBeVisible();
+
+  // Nested file click still navigates (not shadowed by folder toggle)
+  await nestedFile.click();
+  await expect(page).toHaveURL(/#\/sidebar-folder\/nested-doc$/);
+
+  // Click the row again to collapse
+  await folderRow.click();
+  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
+  await expect(nestedFile).toHaveCount(0);
 });

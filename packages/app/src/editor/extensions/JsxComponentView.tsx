@@ -27,17 +27,9 @@ export function JsxComponentView({ node }: NodeViewProps) {
       {parsed.component === 'Callout' ? (
         <Callout type={parsed.type}>{parsed.children}</Callout>
       ) : (
-        <div
-          style={{
-            padding: '12px 16px',
-            borderRadius: '6px',
-            backgroundColor: '#f0f0f0',
-            fontFamily: 'monospace',
-            fontSize: '13px',
-          }}
-        >
+        <div className="bg-muted dark:bg-muted/40 p-3 px-4 rounded-md font-mono text-[13px]">
           <strong>&lt;{parsed.component}&gt;</strong>
-          <pre style={{ margin: '8px 0 0', whiteSpace: 'pre-wrap' }}>{content}</pre>
+          <pre className="mt-2 whitespace-pre-wrap">{content}</pre>
         </div>
       )}
     </NodeViewWrapper>
