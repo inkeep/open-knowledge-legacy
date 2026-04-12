@@ -49,16 +49,17 @@ const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
 // Startup fidelity canary (R17): verify the patch is applied and round-trip works.
 {
+  const canaryLogger = getLogger('fidelity');
   const canaryInput = '# H&M Store\n';
   try {
     const canaryOutput = mdManager.serialize(mdManager.parse(canaryInput));
     if (canaryOutput.includes('H&M') && !canaryOutput.includes('&amp;')) {
-      console.log('[fidelity] startup canary: PASS — entity bypass verified');
+      canaryLogger.info({}, 'startup canary: PASS — entity bypass verified');
     } else {
-      console.warn('[fidelity] startup canary: FAIL — entity encoding detected in round-trip');
+      canaryLogger.warn({}, 'startup canary: FAIL — entity encoding detected in round-trip');
     }
   } catch (e) {
-    console.warn('[fidelity] startup canary: ERROR —', e);
+    canaryLogger.warn({ err: e }, 'startup canary: ERROR');
   }
 }
 

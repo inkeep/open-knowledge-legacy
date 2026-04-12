@@ -195,9 +195,9 @@ describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemir
       const normalized = stripTrailingWhitespace(input);
 
       // Tree round-trip should preserve content (may normalize whitespace)
-      const words = normalized.match(/\w{3,}/g) ?? [];
-      for (const word of words) {
-        expect(output).toContain(word);
+      const tokens = normalized.match(/[\w&<>]+/g) ?? [];
+      for (const token of tokens) {
+        expect(output).toContain(token);
       }
     });
   }
@@ -238,10 +238,10 @@ describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observe
         );
         expect(textContent).toBe(fragSerialized);
 
-        // Verify content is preserved
-        const words = stripTrailingWhitespace(input).match(/\w{3,}/g) ?? [];
-        for (const word of words) {
-          expect(textContent).toContain(word);
+        // Verify content is preserved (strict: includes &<> fidelity chars)
+        const tokens = stripTrailingWhitespace(input).match(/[\w&<>]+/g) ?? [];
+        for (const token of tokens) {
+          expect(textContent).toContain(token);
         }
       } finally {
         cleanup();
@@ -283,10 +283,10 @@ describe('full-stack chain: md → parse → XmlFragment → Observer A → Y.Te
           mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
         );
 
-        // Content must be preserved (normalization is acceptable)
-        const words = stripTrailingWhitespace(input).match(/\w{3,}/g) ?? [];
-        for (const word of words) {
-          expect(finalMd).toContain(word);
+        // Content must be preserved (strict: includes &<> fidelity chars)
+        const tokens = stripTrailingWhitespace(input).match(/[\w&<>]+/g) ?? [];
+        for (const token of tokens) {
+          expect(finalMd).toContain(token);
         }
 
         // Bridge invariant must hold
@@ -328,19 +328,19 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(client.doc, client.fragment, pmNode, meta);
 
-        // Wait for persistence to write to disk
-        const words = stripTrailingWhitespace(input).match(/\w{3,}/g) ?? [];
-        if (words.length > 0) {
+        // Wait for persistence to write to disk (strict: includes &<> fidelity chars)
+        const tokens = stripTrailingWhitespace(input).match(/[\w&<>]+/g) ?? [];
+        if (tokens.length > 0) {
           await pollUntil(
-            () => words.every((w) => readTestDoc(server.contentDir).includes(w)),
+            () => tokens.every((t) => readTestDoc(server.contentDir).includes(t)),
             5000,
           );
         }
 
         // Verify disk content preserves the construct
         const diskContent = readTestDoc(server.contentDir);
-        for (const word of words) {
-          expect(diskContent).toContain(word);
+        for (const token of tokens) {
+          expect(diskContent).toContain(token);
         }
       } finally {
         await client.cleanup();
@@ -353,15 +353,15 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
 
       const client2 = await createTestClient(server.port, 'test-doc');
       try {
-        // Wait for onLoadDocument + Observer A to populate Y.Text
-        const words = stripTrailingWhitespace(input).match(/\w{3,}/g) ?? [];
-        if (words.length > 0) {
-          await pollUntil(() => words.every((w) => client2.ytext.toString().includes(w)), 5000);
+        // Wait for onLoadDocument + Observer A to populate Y.Text (strict: includes &<> fidelity chars)
+        const tokens = stripTrailingWhitespace(input).match(/[\w&<>]+/g) ?? [];
+        if (tokens.length > 0) {
+          await pollUntil(() => tokens.every((t) => client2.ytext.toString().includes(t)), 5000);
         }
 
         // Verify content round-tripped through disk
-        for (const word of words) {
-          expect(client2.ytext.toString()).toContain(word);
+        for (const token of tokens) {
+          expect(client2.ytext.toString()).toContain(token);
         }
         assertBridgeInvariant(client2.ytext, client2.fragment);
       } finally {
