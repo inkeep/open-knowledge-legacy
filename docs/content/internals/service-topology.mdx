@@ -60,6 +60,8 @@ Scheduled after Layer 1 writes complete to capture the change in version history
 Two mechanisms prevent write loops between the file watcher and persistence. Content-hash tracking ensures the watcher skips its own persistence writes. The `skipStoreHooks` flag ensures external changes loaded from disk do not trigger a re-write.
 </Callout>
 
+On graceful shutdown, `destroy()` drains both layers in order -- L1 first, then L2 -- to guarantee all pending writes reach disk and git before the process exits. See [Server Lifecycle](/internals/server-lifecycle) for the full shutdown phase sequence.
+
 ## Shadow repo
 
 Located at `.git/openknowledge/` (when the project has a `.git/`) or `.openknowledge/` (standalone). The shadow repo provides auto-save history and attribution without touching the project's own git state.
