@@ -227,6 +227,119 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
+## Markdown Pipeline — System Design
+
+### Overview
+
+The editor maintains two parallel representations of the same content — a ProseMirror tree (for WYSIWYG) and a markdown string (for source editing) — synchronized through a Y.js CRDT document. Four write surfaces (WYSIWYG editor, source editor, agent API, external file changes) feed into the same CRDT, and bidirectional observers keep both representations consistent.
+
+The markdown processing engine (`@tiptap/markdown` + our `bun patch` + 12 fidelity extensions) is the single parse/serialize layer used by every path.
+
+### System diagram
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│                          WRITE SURFACES                                   │
+│                                                                          │
+│  ┌───────────┐  ┌────────────┐  ┌────────────┐  ┌────────────────────┐  │
+│  │ WYSIWYG   │  │ Source     │  │ Agent API  │  │ Disk (VS Code,     │  │
+│  │ (TipTap)  │  │ (CodeMirr) │  │ (HTTP)     │  │ file watcher)      │  │
+│  └─────┬─────┘  └─────┬──────┘  └─────┬──────┘  └─────┬──────────────┘  │
+│        │               │               │               │                  │
+│   Collaboration    yCollab ext    Y.Text.insert    applyExternalChange   │
+│   extension        (y-codemirror) + syncTextTo     (paired XmlFrag +    │
+│   (y-tiptap)                      Fragment()        Y.Text update)       │
+│        │               │               │               │                  │
+│        ▼               ▼               ▼               ▼                  │
+│  ┌────────────────────────────────────────────────────────────────────┐   │
+│  │                     Y.Doc (Hocuspocus CRDT)                        │   │
+│  │                                                                    │   │
+│  │  Y.XmlFragment('default')  ◄════════════►  Y.Text('source')      │   │
+│  │  ProseMirror tree            Observer A →   Markdown source       │   │
+│  │  TipTap binding              ← Observer B   CodeMirror binding    │   │
+│  │                                                                    │   │
+│  │  Y.Map('metadata')  ← frontmatter cache                          │   │
+│  │  Y.Map('activity')  ← agent write attribution                    │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+│                              │                                            │
+│                    WebSocket sync (all clients)                           │
+│                              │                                            │
+│  ┌───────────────────────────▼────────────────────────────────────────┐   │
+│  │                   PERSISTENCE (Server)                              │   │
+│  │                                                                    │   │
+│  │  L1: CRDT → Disk (2–10s debounce)                                │   │
+│  │    serialize(XmlFragment) → prepend(frontmatter) → .md file       │   │
+│  │    registerWrite(path, hash) ← prevents self-watcher feedback     │   │
+│  │                                                                    │   │
+│  │  L2: Disk → Git (30s idle debounce)                               │   │
+│  │    Shadow repo commit: "WIP auto-save"                            │   │
+│  └────────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│                   MARKDOWN PROCESSING ENGINE                              │
+│                                                                          │
+│  MarkdownManager (@tiptap/markdown + bun patch)                         │
+│                                                                          │
+│  parse(markdown) ─────────────────────────► ProseMirror JSON            │
+│    1. marked tokenizer → token stream                                   │
+│    2. Dispatch each token to ext by markdownTokenName                   │
+│    3. ext.parseMarkdown(token, helpers) → node/mark with attrs          │
+│    4. [PATCH] escape handler: \* → { text: '\*' } (raw preserved)      │
+│                                                                          │
+│  serialize(json) ─────────────────────────► Markdown string             │
+│    1. Walk ProseMirror node tree                                        │
+│    2. Dispatch each node/mark to ext by name                            │
+│    3. ext.renderMarkdown(node, helpers) → markdown fragment             │
+│    4. [PATCH] encodeTextForMarkdown: return text unchanged (no &amp;)   │
+│                                                                          │
+│  Extensions (registered in sharedExtensions):                           │
+│    JsxComponent, WikiLink ← custom tokenizers, BEFORE StarterKit       │
+│    12 fidelity extensions ← extend @tiptap/extension-* originals       │
+│    StarterKit (bulletList:false, heading:false, etc.)                   │
+│    Table, Image, TaskList, Highlight                                    │
+│                                                                          │
+│  Fidelity pattern: marked token { type:'em', raw:'_text_' }            │
+│    → ext.parseMarkdown extracts delimiter from raw                      │
+│    → stores { emphDelimiter: '_' } as mark attribute                    │
+│    → ext.renderMarkdown reads attr, outputs _text_ not *text*           │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### Data flows by scenario
+
+**User edits in WYSIWYG (TipTap):**
+TipTap keystroke → Collaboration plugin mutates `Y.XmlFragment` → Observer A fires (debounced 50ms) → serializes tree to markdown via `mdManager.serialize()` → computes incremental diff against `lastSyncedXmlMd` → applies delta to `Y.Text` with origin `'sync-from-tree'` → Observer B sees origin, skips → persistence writes `.md` file (debounced 2–10s) → file watcher sees self-write hash, skips.
+
+**User edits in Source mode (CodeMirror):**
+CodeMirror keystroke → `yCollab` mutates `Y.Text` → Observer B fires (debounced 50ms, deferred 300ms if WYSIWYG user is typing) → parses markdown via `mdManager.parse()` → early-exits if XmlFragment already matches → otherwise `updateYFragment()` replaces tree with origin `'sync-from-text'` → Observer A sees origin, skips → persistence writes `.md` file.
+
+**Agent writes via HTTP API:**
+`POST /api/agent-write-md` → server inserts content into `Y.Text` → calls `syncTextToFragment()` which parses → `updateYFragment()` → canonicalizes `Y.Text` to match XmlFragment serialization (bridge invariant enforcement) → Hocuspocus broadcasts to clients → clients' Observer A/B see remote transaction, skip → TipTap and CodeMirror update from CRDT.
+
+**External file change (VS Code, git checkout):**
+File system event → `@parcel/watcher` detects change → self-write detection: check hash against `writeTracker` queue, skip if match → three-way reconcile (base, ours=current CRDT, theirs=disk) → `applyExternalChange()`: updates BOTH `Y.XmlFragment` + `Y.Text` in one transaction with `skipStoreHooks: true` → clients see paired update, stay in sync.
+
+### Five invariant guards
+
+| Guard | What it prevents | Mechanism |
+|---|---|---|
+| **Origin guards** | Infinite Observer A→B→A→B loops | Observer A writes with origin `'sync-from-tree'`; Observer B skips that origin. Vice versa. |
+| **Typing defer** | `updateYFragment` obliterating in-flight WYSIWYG edits | Observer B waits 300ms after last `markUserTyping()` before replacing tree |
+| **Remote grace window** | Observer B rebuilding from stale source when a peer's XmlFragment change arrives before the paired Y.Text sync | Observer B waits 150ms after a remote tree-only change |
+| **Self-write detection** | Persistence → disk → watcher → persistence feedback loop | `registerWrite(path, contentHash)` queue; watcher checks incoming events against queue |
+| **Bridge invariant** | Content duplication from stale Observer A baselines after agent writes | After `updateYFragment()`, Y.Text is canonicalized to match serialized XmlFragment |
+
+### The bun patch
+
+`@tiptap/markdown@3.22.3` has two bugs that corrupt round-trips. Our `bun patch` in `patches/` fixes both in `MarkdownManager.ts`:
+
+1. **`encodeTextForMarkdown`** (serialize path): Was calling `encodeHtmlEntities()` which converted `&` → `&amp;`, `<` → `&lt;`, `>` → `&gt;`. This assumed serialized output goes to `innerHTML` — but in Open Knowledge, markdown goes to `Y.Text` (CodeMirror plain text) and `.md` files (`writeFileSync`). Neither renders HTML. Patch: `return text` unchanged.
+
+2. **`parseInlineTokens`** (parse path): Had no handler for `escape` token type. When `marked` tokenizes `\*`, it produces `{ type: 'escape', raw: '\\*', text: '*' }`. Without the handler, the token was silently dropped — backslash escapes lost. Patch: adds `case 'escape'` that preserves `token.raw`.
+
+The patch auto-applies on `bun install` via `patchedDependencies` in `package.json`. If the patch fails to apply (version bumped without re-verification), install fails loudly.
+
 ## CRDT Bridge Architecture
 
 The editor uses a **dual-representation** CRDT model: Y.XmlFragment (WYSIWYG via TipTap) and Y.Text (source mode via CodeMirror), connected by bidirectional observers.
