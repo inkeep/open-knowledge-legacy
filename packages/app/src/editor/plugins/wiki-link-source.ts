@@ -23,6 +23,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
+import type { HeadingEntry } from '@inkeep/open-knowledge-core';
 import fuzzysort from 'fuzzysort';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -32,19 +33,13 @@ interface PageItem {
   title: string;
 }
 
-interface HeadingEntry {
-  level: number;
-  text: string;
-  slug: string;
-}
-
 // ── Data fetching (module-level cache with TTL) ───────────────────────────────
 
 const PAGES_CACHE_TTL_MS = 5_000;
 
 let pagesCache: PageItem[] | null = null;
 let pagesCacheTime = 0;
-const headingsCache = new Map<string, HeadingEntry[]>();
+const headingsCache = new Map<string, { headings: HeadingEntry[]; time: number }>();
 
 async function getPages(): Promise<PageItem[]> {
   const now = Date.now();
@@ -58,12 +53,20 @@ async function getPages(): Promise<PageItem[]> {
 }
 
 async function getHeadings(docName: string): Promise<HeadingEntry[]> {
+  const now = Date.now();
   const cached = headingsCache.get(docName);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined && now - cached.time < PAGES_CACHE_TTL_MS) {
+    return cached.headings;
+  }
   const r = await fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`);
+  if (!r.ok) {
+    console.warn(`[wiki-link-source] /api/page-headings returned ${r.status}`);
+    headingsCache.set(docName, { headings: [], time: now });
+    return [];
+  }
   const data = (await r.json()) as { ok: boolean; headings?: HeadingEntry[] };
   const h = data.ok && Array.isArray(data.headings) ? data.headings : [];
-  headingsCache.set(docName, h);
+  headingsCache.set(docName, { headings: h, time: now });
   return h;
 }
 
