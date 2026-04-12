@@ -33,6 +33,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
     };
   }, [provider]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resolvedTheme is intentionally excluded — the second effect (below) reconfigures the theme Compartment on change. Adding it here would trigger a full editor remount on every theme switch, which is exactly what Compartment is designed to avoid (per spec D6/D16).
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -75,7 +76,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
       view.destroy();
       viewRef.current = null;
     };
-  }, [ytext, provider, resolvedTheme]);
+  }, [ytext, provider]);
 
   useEffect(() => {
     if (!viewRef.current) return;
