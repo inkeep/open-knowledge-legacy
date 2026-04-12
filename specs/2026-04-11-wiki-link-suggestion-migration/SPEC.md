@@ -2,21 +2,22 @@
 
 **Status:** Draft
 **Created:** 2026-04-11
-**Baseline commit:** 0e5c31d (origin/main head)
+**Rebased:** 2026-04-12 — baseline moved from `0e5c31d` → `39fcd87` to incorporate PR #53 (anchor mode) and PR #71 (backlink panel)
+**Baseline commit:** 39fcd87 (origin/main head)
 **Implementer:** AI coding agent (Claude Code)
-**Location:** `packages/app/src/editor/` only — `extensions/wiki-link-suggestion.ts`, `wiki-link-suggestion/WikiLinkSuggestionMenu.tsx`, `extensions/wiki-link.ts` (registration change)
-**Nature:** Architectural refactor to unify suggestion systems. Migrates the wiki-link `[[` suggestion from a custom ProseMirror Plugin to `@tiptap/suggestion`, matching the pattern established by PR #51 (slash command generalization). Pure view-layer change with zero user-visible behavior regression.
-**Target PR:** Direct to main. Small, focused, reviewable in one sitting.
+**Location:** `packages/app/src/editor/` only — `extensions/wiki-link-suggestion.ts`, `extensions/wiki-link-suggestion.test.ts`, `wiki-link-suggestion/WikiLinkSuggestionMenu.tsx`, `extensions/wiki-link.ts` (registration change)
+**Nature:** Architectural refactor to unify suggestion systems. Migrates the wiki-link `[[` suggestion from a custom ProseMirror Plugin to `@tiptap/suggestion`, matching the pattern established by PR #51 (slash command generalization). Preserves all functionality added by PR #53 — anchor mode (`[[page#heading]]`), per-mode loading, per-mode empty states. Pure view-layer change with zero user-visible behavior regression.
+**Target PR:** Direct to main. Moderate size — bigger than originally scoped due to anchor mode, but still a single-sitting review.
 
-**Pace:** Fast. Single-phase refactor. Same pattern as PR #51 but smaller scope.
+**Pace:** Fast. Single-phase refactor. Same pattern as PR #51.
 
 ---
 
 ## 1. Problem Statement (SCR)
 
-**Situation:** The editor has two suggestion systems: slash commands (`/`) using `@tiptap/suggestion` (migrated in PR #51), and wiki-links (`[[`) using a custom ProseMirror Plugin + PluginKey state machine (added in PR #42). The slash command migration established `@tiptap/suggestion` as the canonical pattern — community-proven, collaborative-safe, with Floating UI positioning via the established `computePosition` + `autoUpdate` pattern.
+**Situation:** The editor has two suggestion systems: slash commands (`/`) using `@tiptap/suggestion` (migrated in PR #51), and wiki-links (`[[`) using a custom ProseMirror Plugin + PluginKey state machine (originally from PR #42, expanded by PR #53 to 492 lines with anchor mode). The slash command migration established `@tiptap/suggestion` as the canonical pattern — community-proven, collaborative-safe, with Floating UI positioning via the established `computePosition` + `autoUpdate` pattern.
 
-**Complication:** The wiki-link suggestion (338 lines) duplicates every facility that `@tiptap/suggestion` provides:
+**Complication:** The wiki-link suggestion (492 lines) duplicates every facility that `@tiptap/suggestion` provides:
 - Trigger detection via regex in `Plugin.state.apply()` (Suggestion handles this internally)
 - Keyboard handling via `handleKeyDown` in `Plugin.props` (Suggestion exposes `render().onKeyDown`)
 - Popup lifecycle via custom `view()` + `ReactRenderer` (Suggestion exposes `render()` callbacks)
@@ -28,30 +29,48 @@ The custom plugin also **lacks** what the slash command gained from migration:
 - No error boundary on `insertWikiLink` (editor chain can throw on invalid state)
 - Inconsistent Escape handling — fires at ProseMirror plugin priority instead of through Suggestion's internal lifecycle
 
-**Resolution:** Migrate to `@tiptap/suggestion` with a **custom `findSuggestionMatch` function** (not the built-in `char`-based matching). The built-in regex doesn't support paired delimiters — `[[query]]` needs to stop matching at the first `]`, which the built-in `char` parameter can't express. `@tiptap/suggestion` exposes `findSuggestionMatch` as a configurable override (confirmed from source at line 80), so the custom function uses the existing `/\[\[([^\]]*)$/` regex while gaining all of Suggestion's lifecycle benefits.
+**Resolution:** Migrate to `@tiptap/suggestion` with a **custom `findSuggestionMatch` function** (not the built-in `char`-based matching). The built-in regex doesn't support paired delimiters — `[[query]]` needs to stop matching at the first `]`, which the built-in `char` parameter can't express. Additionally, anchor mode (`[[page#heading]]`) uses `#` inside the query but must NOT stop matching at `#`. `@tiptap/suggestion` exposes `findSuggestionMatch` as a configurable override (confirmed from source at line 80), so the custom function uses the existing `/\[\[([^\]]*)$/` regex while gaining all of Suggestion's lifecycle benefits. The regex already accommodates `#` (excludes only `]`), so anchor mode works transparently.
 
 ---
 
 ## 2. Success Criteria
 
 ### Primary: Zero user-visible behavior change
+
+**Page mode** (existing, unchanged):
 - `[[` triggers the suggestion menu (at start of block, mid-line, mid-word — no prefix restriction)
-- Typing narrows results via fuzzysort
+- Typing narrows results via fuzzysort on `title` + `docName`
 - Pages from `/api/pages` appear with title + docName
-- Loading spinner while fetching
-- Error state with graceful fallback message
+- Loading state: "Loading pages…" while fetching
+- Error state with fallback message, unresolved-link option still available
 - "Insert unresolved link" option when no pages match
 - Enter/Tab inserts selected wiki-link
 - Escape closes menu
 - Mouse click inserts selected item
 - `]]` typed manually closes the menu (first `]` breaks the match)
 
+**Anchor mode** (preserved from PR #53):
+- Typing `#` inside `[[page` transitions to anchor mode (e.g., `[[release-notes#ch`)
+- On first entry to anchor mode, fetches `/api/page-headings?docName=<pageTarget>`
+- Menu header shows the `pageTarget` in uppercase tracking-wide style
+- Items render as `H<level>` + heading text with indent proportional to level (`padding-left: (level-1)*10+8px`)
+- fuzzysort filtering on heading `text` via `anchorQuery` (text after `#`)
+- Loading state: "Loading headings for <pageTarget>…"
+- Empty state: `No headings match "<anchorQuery>"` or `No headings in <pageTarget>`
+- Selecting an anchor item inserts wiki-link with `{ target: docName, anchor: slug }`
+- Fallback: Enter with no item selected inserts wiki-link with `{ target: pageTarget, anchor: anchorQuery.trim() || null }`
+
+**Atom deletion** (preserved from PR #53):
+- Backspace deletes adjacent wiki-link atom when suggestion is inactive
+- Delete key deletes wiki-link atom on the right when suggestion is inactive
+
 ### Secondary: Architectural alignment
 - Uses `@tiptap/suggestion` with custom `findSuggestionMatch`
 - Floating UI positioning via `computePosition` + `autoUpdate` + `flip` + `offset` + `size` (matching `slash-command.ts` pattern)
 - `--suggestion-menu-max-height` CSS variable driven by `size` middleware
 - Error boundary on wiki-link insertion (`try/catch` on `editor.chain()`)
-- Net line reduction (338 → ~180 estimated)
+- Net line reduction (492 → ~280 estimated; savings smaller than initial plan because anchor mode's two-phase fetch and per-mode state add real complexity that Suggestion doesn't abstract away)
+- Existing test file `wiki-link-suggestion.test.ts` keeps passing (tests `buildSuggestionItems` which remains a pure function)
 
 ---
 
@@ -112,28 +131,64 @@ function wikiLinkMatcher(config: {
 
 This preserves the exact same trigger behavior as the current custom plugin — `/\[\[([^\]]*)$/` is the identical regex used at `wiki-link-suggestion.ts:182`.
 
-### 3.3 Async items with loading/error states
+### 3.3 Async items with per-mode loading (page + anchor)
 
-**Current behavior:** Menu opens immediately with `loading: true`, then fetches `/api/pages` async. On resolve, items update. On error, shows fallback message + "insert unresolved link" option.
+**Current behavior (post-PR #53):**
+- Page mode: first fetch is `/api/pages`; filtered via fuzzysort → `buildSuggestionItems(cachedPages, query)`.
+- Anchor mode: when `query` contains `#` with non-empty left side, the plugin calls `ensureHeadings(pageTarget)` which fetches `/api/page-headings?docName=<pageTarget>`; filtered via fuzzysort on `text` → `buildAnchorItems(docName, headings, anchorQuery)`.
+- Loading flag: `isLoading(query)` checks mode-specific fetch state (`!pagesLoaded` in page mode, `anchorFetchingFor === pageTarget` in anchor mode).
 
-**Target:** Suggestion's `items` callback supports `async` natively (`await items(...)` at source line 196). The render callback manages loading state via closure variables:
+**Target:** Suggestion's `items` callback supports `async` natively (`await items(...)` at source line 196). Both page-mode pages and anchor-mode headings are fetched lazily from the same callback. Closure state lives outside the `Suggestion()` config, shared between `items` and the `render` callbacks.
 
 ```ts
+// Closure state — declared inside addProseMirrorPlugins() but outside Suggestion()
+let cachedPages: PageItem[] = [];
+let pagesLoaded = false;
+let cachedHeadings = new Map<string, HeadingEntry[]>();
+let anchorFetchingFor: string | null = null;
+let fetchError: string | null = null;
+
 items: async ({ query }) => {
-  // cachedPages populated on first fetch, reused on subsequent queries
-  if (cachedPages.length === 0 && !fetchError) {
+  const { mode, pageTarget, anchorQuery } = parseQuery(query);
+
+  if (mode === 'anchor') {
+    // Lazy-fetch headings for this pageTarget (cache per-docName)
+    if (!cachedHeadings.has(pageTarget) && anchorFetchingFor !== pageTarget) {
+      anchorFetchingFor = pageTarget;
+      try {
+        const headings = await fetchHeadings(pageTarget);
+        cachedHeadings.set(pageTarget, headings);
+      } catch (err) {
+        console.error('[wiki-link-suggestion] Failed to fetch headings:', err);
+        cachedHeadings.set(pageTarget, []);  // treat as empty so we don't retry
+      } finally {
+        anchorFetchingFor = null;
+      }
+    }
+    const headings = cachedHeadings.get(pageTarget) ?? [];
+    return buildAnchorItems(pageTarget, headings, anchorQuery);
+  }
+
+  // Page mode
+  if (!pagesLoaded && !fetchError) {
     try {
       cachedPages = await fetchPages();
+      pagesLoaded = true;
     } catch (err) {
-      fetchError = 'Failed to load pages.';
-      console.error('[wiki-link-suggestion] fetch error:', err);
+      pagesLoaded = true;
+      fetchError = 'Failed to load pages. You can still insert an unresolved link.';
+      console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
     }
   }
   return buildSuggestionItems(cachedPages, query);
 },
 ```
 
-**Loading state:** Suggestion's actual lifecycle (verified from source lines 189-209) is: `onBeforeStart` → `await items()` → `onStart`/`onUpdate`. The `onBeforeStart` callback fires BEFORE items are fetched — this is where we mount the menu with `loading: true`. When `items()` resolves, `onStart` fires with `props.items` already populated — this is where we transition to `loading: false`. If the query changes while the menu is open, `onUpdate` fires (also with resolved items).
+**Loading state:** Suggestion's lifecycle (verified from source lines 189-209) is: `onBeforeStart` → `await items()` → `onStart`/`onUpdate`. The `onBeforeStart` callback fires BEFORE items are fetched — this is where we mount the menu with `loading: true`. When `items()` resolves, `onStart` fires with `props.items` already populated — this is where we transition to `loading: false`. Same pattern applies when `onUpdate` fires on query changes: Suggestion re-awaits `items()` for each query change before firing `onUpdate`, so we render `loading: true` before the call and update props to `loading: false` when the callback returns.
+
+**Per-mode loading label:** The menu component already branches on `mode` for the loading label ("Loading pages…" vs "Loading headings for <pageTarget>…"). The render lifecycle passes `mode`, `pageTarget`, `anchorQuery` as props before items resolve, using `parseQuery(state.query)` from `pluginKey.getState(view.state)`.
+
+**Helper reuse:** Keep `parseQuery`, `filterPages`, `filterHeadings`, `buildSuggestionItems`, `buildAnchorItems`, `fetchPages`, `fetchHeadings` as top-level exported functions. They are pure (except the fetchers) and already unit-testable — the existing test file stays valid.
 
 ### 3.4 Floating UI positioning (matching slash-command.ts pattern)
 
@@ -171,38 +226,98 @@ const doPosition = () => {
 
 This gives: menu flips above when near viewport bottom, tracks scroll via `autoUpdate`, dynamic max-height.
 
-### 3.5 Error boundary on insertion
+### 3.5 Command handler — three item kinds + fallback + error boundary
+
+Current `insertWikiLink()` handles four insertion paths. All must be preserved in the new `command` callback:
 
 ```ts
 command: ({ editor, range, props: item }) => {
-  const attrs = item.kind === 'page'
-    ? { target: item.docName, alias: null, anchor: null }
-    : buildUnresolvedWikiLinkAttrs(item.title);
+  let attrs: { target: string; alias: string | null; anchor: string | null } | null = null;
+
+  if (item?.kind === 'page') {
+    attrs = { target: item.docName, alias: null, anchor: null };
+  } else if (item?.kind === 'anchor') {
+    attrs = { target: item.docName, alias: null, anchor: item.slug };
+  } else if (item?.kind === 'create') {
+    attrs = buildUnresolvedWikiLinkAttrs(item.title);
+  } else {
+    // Fallback: Enter with no item selected — derive attrs from the raw query
+    // (this preserves PR #53 behaviour: [[release-notes#ch + Enter with no
+    // item selected inserts { target: 'release-notes', anchor: 'ch' }).
+    // The query comes from the plugin state, not `range.text`.
+    const state = wikiLinkSuggestionKey.getState(editor.state);
+    const query = state?.query ?? '';
+    const { mode, pageTarget, anchorQuery } = parseQuery(query);
+    if (mode === 'anchor' && pageTarget) {
+      attrs = { target: pageTarget, alias: null, anchor: anchorQuery.trim() || null };
+    } else {
+      attrs = buildUnresolvedWikiLinkAttrs(query);
+    }
+  }
+
   if (!attrs) return;
 
   editor.chain().focus().deleteRange(range).run();
   try {
     editor.chain().focus().insertContent({ type: 'wikiLink', attrs }).run();
   } catch (err) {
-    console.error(`WikiLink: insert command threw an error`, err);
+    console.error('WikiLink: insert command threw an error', err);
   }
 },
 ```
 
-### 3.6 Preserve WikiLinkSuggestionMenu component
+The fallback path (Enter with no item selected) depends on reading the plugin's own state. Since we pass `pluginKey: wikiLinkSuggestionKey` to Suggestion, `wikiLinkSuggestionKey.getState(editor.state)` returns Suggestion's internal state shape — verify the shape exposes `query` at the same key (it does — Suggestion's state interface at source line 60 includes `query: string`).
 
-The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it's already a pure render function receiving `items`, `query`, `selectedIndex`, `onSelect`, `loading`, `error` as props. The `query` prop is kept (unlike the slash command menu which dropped it) because the wiki-link empty state uses it for a contextual message: `No pages found for "${query.trim()}"`. Add the Floating UI CSS var: `style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}`.
+### 3.6 Atom deletion (Backspace/Delete when suggestion inactive)
+
+PR #53 added Backspace/Delete handlers that delete adjacent wiki-link atoms when the suggestion menu is NOT active. These handlers currently live in the same `handleKeyDown` as the suggestion navigation:
+
+```ts
+// Current wiki-link-suggestion.ts:188-213 — inactive-state handler
+if (!state?.active) {
+  if (event.key === 'Backspace') { /* delete nodeBefore if wikiLink */ }
+  if (event.key === 'Delete')    { /* delete nodeAfter if wikiLink */ }
+  return false;
+}
+```
+
+**Target:** `@tiptap/suggestion`'s `render().onKeyDown` only fires when a suggestion is active — it cannot handle keys when the menu is closed. So the atom-deletion logic moves into a **separate ProseMirror plugin** (or `addKeyboardShortcuts` on the wiki-link extension itself) registered alongside Suggestion:
+
+```ts
+// In wiki-link.ts addProseMirrorPlugins():
+return [
+  Suggestion<WikiLinkSuggestionItem>({ /* ... */ }),
+  wikiLinkAtomDeletionPlugin,  // new: handles Backspace/Delete when suggestion inactive
+];
+```
+
+The atom-deletion plugin is a ~30-line ProseMirror plugin with a `handleKeyDown` prop that checks for a wiki-link atom at the cursor boundary and deletes it. Keep the comment from the current implementation explaining why this lives in `handleKeyDown` rather than `addKeyboardShortcuts` (the latter creates a separate keymap plugin that interferes with TipTap's built-in handleBackspace chain).
+
+### 3.7 Preserve WikiLinkSuggestionMenu component
+
+The menu component (`WikiLinkSuggestionMenu.tsx`) stays unchanged. It's already a pure render function receiving `items`, `query`, `selectedIndex`, `onSelect`, `loading`, `error`, `mode`, `pageTarget`, `anchorQuery` as props. All of these must be passed from the render lifecycle:
+
+- `query`, `mode`, `pageTarget`, `anchorQuery` — derived from `parseQuery(props.query)` at each render callback
+- `items`, `selectedIndex`, `onSelect` — from Suggestion's `props` directly
+- `loading` — closure state (see §3.3)
+- `error` — closure state; passed only in page mode (`mode === 'page' ? fetchError : null`)
+
+Add the Floating UI CSS var to the listbox container: the component already uses `max-h-80` — change to `style={{ maxHeight: 'var(--suggestion-menu-max-height, 20rem)' }}` (20rem = 80 * 0.25rem to match the Tailwind default). Apply to both the listbox container and the loading/empty status containers so all render paths respect the constraint.
+
+**No prop removal.** Unlike the slash-command migration which removed `query`, wiki-link needs every existing prop for anchor mode's per-mode rendering.
 
 ---
 
 ## 4. Implementation Order
 
-1. Write the custom `wikiLinkMatcher` function (§3.2)
-2. Rewrite `wiki-link-suggestion.ts` using `Suggestion<WikiLinkSuggestionItem>()` with custom matcher + async items + Floating UI render lifecycle (§3.1, §3.3, §3.4, §3.5)
-3. Update `WikiLinkSuggestionMenu.tsx` — remove `query` prop, add `style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}` inline style (§3.6)
-4. Update `wiki-link.ts` registration — change from `createWikiLinkSuggestionPlugin(this.editor)` to the Suggestion call
-5. Verify quality gates: typecheck + lint + test
-6. Manual QA: `[[` triggers menu, pages filter, Enter/Tab inserts, Escape closes, `]]` stops matching
+1. Extract pure helpers to keep existing tests green: `parseQuery`, `filterPages`, `filterHeadings`, `buildSuggestionItems`, `buildAnchorItems` — these are already exported and unit-tested; ensure they remain top-level exports in the new module.
+2. Write the custom `wikiLinkMatcher` function (§3.2).
+3. Write the atom-deletion plugin (§3.6) — small, standalone, can be tested independently.
+4. Rewrite `wiki-link-suggestion.ts` using `Suggestion<WikiLinkSuggestionItem>()` with: custom matcher, per-mode async items (page + anchor), command handler with three kinds + fallback, Floating UI render lifecycle (§3.1, §3.3, §3.4, §3.5).
+5. Update `WikiLinkSuggestionMenu.tsx` — swap `max-h-80` for Floating UI CSS var on all three render paths (listbox, loading, empty) (§3.7).
+6. Update `wiki-link.ts` registration — return `[Suggestion(...), wikiLinkAtomDeletionPlugin]` from `addProseMirrorPlugins`.
+7. Verify quality gates: `bun run check` (typecheck + lint + unit + integration + fidelity) — existing `wiki-link-suggestion.test.ts` must still pass since `buildSuggestionItems` is unchanged.
+8. Manual QA (see §7 scenarios): page mode (R01-R14), anchor mode (R15-R20), atom deletion (R21-R22).
 
 ---
 
@@ -220,36 +335,38 @@ The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it
 ## 6. Scope Boundaries
 
 ### In Scope
-- Rewrite `wiki-link-suggestion.ts` to use `@tiptap/suggestion`
-- Update `WikiLinkSuggestionMenu.tsx` props + add Floating UI CSS var
-- Update `wiki-link.ts` registration
+- Rewrite `wiki-link-suggestion.ts` to use `@tiptap/suggestion` + a small atom-deletion plugin
+- Update `WikiLinkSuggestionMenu.tsx` — add Floating UI CSS var (no prop changes)
+- Update `wiki-link.ts` registration — return two plugins from `addProseMirrorPlugins`
 - Add error boundary on insertion
-- Preserve all existing behavior: trigger, filter, insert, loading, error states
+- Preserve all existing behavior from PR #42 + PR #53: page trigger, fuzzy filter, insert, loading, error, anchor mode, per-mode loading, per-mode empty state, atom deletion, fallback insertion from raw query
 
 ### Out of Scope
-- Changes to `wiki-link.ts` mark extension (schema, serialization)
-- Changes to `wiki-link-helpers.ts` (buildUnresolvedWikiLinkAttrs, parseWikiLink)
+- Changes to `wiki-link.ts` mark extension (schema, serialization, NodeView)
+- Changes to `wiki-link-helpers.ts` (`buildUnresolvedWikiLinkAttrs`, `toWikiLinkSlug`, `isResolvedWikiLinkTarget`)
 - Changes to `packages/core/` WikiLink extension
-- Changes to `packages/server/` (the `/api/pages` endpoint)
-- Adding new wiki-link features
-- Changing the fuzzysort filtering logic
+- Changes to `packages/server/` (the `/api/pages`, `/api/page-headings` endpoints)
+- Changes to the backlink panel or page-headings types added by PR #71
+- Adding new wiki-link features (section anchors, mentions, etc.)
+- Changing the fuzzysort filtering logic or keys
+- Changing the menu's visual design or per-mode rendering branches
 
 ---
 
 ## 7. Test Scenarios
 
-### Regression (P0 — must pass after refactor)
+### Page-mode regression (P0 — all must pass)
 
 | ID | Scenario | Expected |
 |----|----------|----------|
-| R01 | Type `[[` in an empty paragraph | Menu opens with loading spinner, then populates with pages from /api/pages |
-| R02 | Type `[[my` | Menu filters to pages matching "my" via fuzzysort |
+| R01 | Type `[[` in an empty paragraph | Menu opens with "Loading pages…", then populates with pages from /api/pages |
+| R02 | Type `[[my` | Menu filters to pages matching "my" via fuzzysort on title + docName |
 | R03 | Type `[[My Page` then Enter | Wiki-link inserted with target=matching page docName, `[[My Page` trigger text removed |
-| R04 | Type `[[nonexistent` | "Insert unresolved link" option appears |
+| R04 | Type `[[nonexistent` | "Insert unresolved link" option appears with action label `Insert unresolved link "nonexistent"` |
 | R05 | Type `[[` then Escape | Menu closes, `[[` text remains |
 | R06 | Type `[[` then click an item | Wiki-link inserted, trigger text removed |
 | R07 | Type `word[[page` (mid-word trigger) | Menu opens — no prefix restriction for wiki-links |
-| R08 | Type `[[Done]]` (close with `]]`) | Menu closes when first `]` is typed (match stops at `]`) |
+| R08 | Type `[[Done]]` (close with `]]`) | Menu closes when first `]` is typed (regex excludes `]`, match fails) |
 | R09 | Arrow Down/Up navigation in menu | Selection moves through items |
 | R10 | Tab inserts selected item (same as Enter) | Wiki-link inserted |
 | R11 | /api/pages returns error | Error message shown, "insert unresolved link" still available |
@@ -257,17 +374,44 @@ The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it
 | R13 | Menu positions below `[[` trigger with ~4px offset | Floating UI `offset(4)` middleware |
 | R14 | Menu near viewport bottom | Flips above the trigger (Floating UI `flip()`) |
 
+### Anchor-mode regression (P0 — preserved from PR #53)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| R15 | Type `[[release-notes#` | Menu switches to anchor mode; shows "Loading headings for release-notes…" then lists H1-H6 items from /api/page-headings?docName=release-notes |
+| R16 | Type `[[release-notes#ch` | Headings filter to fuzzy match on heading `text` against `ch` |
+| R17 | Anchor item select (click or Enter) | Wiki-link inserted with `{ target: 'release-notes', anchor: <slug>, alias: null }` |
+| R18 | Type `[[unknown-page#` | Menu shows "No headings in unknown-page" (empty headings array, treated as empty to avoid retry) |
+| R19 | Type `[[foo#bar` then Enter with no item selected | Fallback inserts wiki-link with `{ target: 'foo', anchor: 'bar', alias: null }` |
+| R20 | Menu header in anchor mode | Shows `pageTarget` in uppercase tracking-wide style; items render as `H<level>` + text with indent based on level |
+
+### Atom deletion regression (P0 — preserved from PR #53)
+
+| ID | Scenario | Expected |
+|----|----------|----------|
+| R21 | Cursor after wikiLink atom, Backspace (suggestion inactive) | wikiLink atom deleted |
+| R22 | Cursor before wikiLink atom, Delete (suggestion inactive) | wikiLink atom deleted |
+| R23 | Cursor after wikiLink atom, Backspace while suggestion ACTIVE | Suggestion navigation — no atom deletion (handled by Suggestion's onKeyDown, which falls through for Backspace) |
+
+### Unit tests (P0 — must not regress)
+
+- `buildSuggestionItems` tests (`wiki-link-suggestion.test.ts`) — keep passing. Extract + re-export preserves the pure-function surface.
+- Add new unit tests for `parseQuery`, `buildAnchorItems` (both pure functions, easy to test).
+
 ---
 
 ## 8. Decision Log
 
 | # | Decision | Resolution | Status | Confidence |
 |---|----------|-----------|--------|------------|
-| D1 | Foundation: custom `findSuggestionMatch` vs built-in `char` | **Custom matcher.** Built-in regex doesn't support paired delimiters — `[[query]]` needs to stop at first `]`. Custom function uses the existing `/\[\[([^\]]*)$/` regex. Verified: `findSuggestionMatch` is a configurable option (source line 80). | LOCKED | HIGH |
-| D2 | Async items: Suggestion native vs manual fetch-in-render | **Suggestion native.** `items()` callback supports async (`await` at source line 196). Simpler than manual fetch-in-view(). | LOCKED | HIGH |
+| D1 | Foundation: custom `findSuggestionMatch` vs built-in `char` | **Custom matcher.** Built-in regex doesn't support paired delimiters — `[[query]]` needs to stop at first `]`. Custom function uses the existing `/\[\[([^\]]*)$/` regex. Verified: `findSuggestionMatch` is a configurable option (source line 80). Regex allows `#` inside query so anchor mode works transparently. | LOCKED | HIGH |
+| D2 | Async items: Suggestion native vs manual fetch-in-render | **Suggestion native for both modes.** `items()` callback supports async (`await` at source line 196). Both `/api/pages` and `/api/page-headings` fetched inside the same `items()` callback, branching on `parseQuery(query).mode`. | LOCKED | HIGH |
 | D3 | Prefix restriction: `allowedPrefixes: null` vs `[' ']` | **`null` (no restriction).** Wiki-links trigger anywhere including mid-word (`word[[page`). Unlike slash commands where mid-word trigger is a regression, mid-word `[[` is valid wiki-link syntax. | LOCKED | HIGH |
 | D4 | Floating UI: match slash-command.ts pattern | **Yes.** Same `computePosition` + `autoUpdate` + `flip` + `offset(4)` + `size` middleware. Consistent positioning across all suggestion menus. | DIRECTED | HIGH |
-| D5 | Menu component: rewrite or update | **Update.** Keep `query` prop (needed for contextual empty state message). Add inline `maxHeight` CSS var style. Keep everything else. | DIRECTED | HIGH |
+| D5 | Menu component: rewrite or update | **Update, no prop removal.** All existing props (`items`, `query`, `selectedIndex`, `onSelect`, `loading`, `error`, `mode`, `pageTarget`, `anchorQuery`) are load-bearing for per-mode rendering. Only add Floating UI CSS var. | DIRECTED | HIGH |
+| D6 | Atom deletion: keep in Suggestion's handleKeyDown or extract to separate plugin | **Extract to separate plugin.** Suggestion's `render().onKeyDown` only fires when a suggestion is active. Atom deletion must work when the menu is closed. Register as a second plugin alongside Suggestion. ~30-line ProseMirror plugin preserves the exact current behavior (including the `handleBackspace` interference comment from PR #53). | LOCKED | HIGH |
+| D7 | Anchor-mode fallback (Enter with no item selected) | **Read plugin state from `editor.state` inside `command`.** `wikiLinkSuggestionKey.getState(editor.state).query` gives the raw query. `parseQuery(query)` yields `{ mode, pageTarget, anchorQuery }`. Insert `{ target: pageTarget, anchor: anchorQuery.trim() || null }` when `mode === 'anchor'`. Preserves PR #53 fallback behaviour. | LOCKED | HIGH |
+| D8 | Per-mode loading label | **Pass `mode` + `pageTarget` as render-lifecycle props even in `onBeforeStart`.** Menu component already branches on mode for "Loading pages…" vs "Loading headings for <pageTarget>…" — requires these props before `items()` resolves. Derive from `parseQuery(state.query)` at each render callback. | LOCKED | HIGH |
 
 ---
 
@@ -276,8 +420,11 @@ The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it
 | # | Assumption | Confidence | Verification |
 |---|-----------|------------|-------------|
 | A1 | Custom `findSuggestionMatch` receives `$position` and its return type is `{ range, query, text } \| null` | **VERIFIED** | Read from source — the config parameter includes `$position` and the return matches our function signature. |
-| A2 | Suggestion's lifecycle callbacks (`onStart`, `onUpdate`, `onKeyDown`, `onExit`) work the same with a custom matcher | HIGH | The custom matcher only replaces the match detection. Lifecycle is independent of how the match was found. |
-| A3 | Loading state can be communicated via the render lifecycle | HIGH | `onStart` fires before `items()` resolves (items is async). Render with `loading: true` in `onStart`, transition to `loading: false` in `onUpdate` when items arrive. |
+| A2 | Suggestion's lifecycle callbacks (`onBeforeStart`, `onStart`, `onUpdate`, `onKeyDown`, `onExit`) work the same with a custom matcher | HIGH | The custom matcher only replaces the match detection. Lifecycle is independent of how the match was found. |
+| A3 | Loading state is communicated via `onBeforeStart` (loading=true) → `onStart`/`onUpdate` (loading=false, items populated) | **VERIFIED** | Source lines 189-209: `onBeforeStart` fires BEFORE `await items()`, `onStart`/`onUpdate` fire AFTER. |
+| A4 | `wikiLinkSuggestionKey.getState(editor.state)` returns Suggestion's state with `query: string` | HIGH | Suggestion's state interface (source line ~60) includes `query: string`. Verify once at implementation time by reading Suggestion's exported types. |
+| A5 | `items()` callback is re-awaited on every query change (not just initial open) | **VERIFIED** | Source line 196: `props.items = await items({ editor, query: state.query });` — called whenever `handleChange` or `handleStart` is true, i.e., on query change or open. |
+| A6 | Registering two plugins from `addProseMirrorPlugins` is supported and preserves priority | HIGH | TipTap/ProseMirror standard pattern. Order determines priority within a single extension's plugin set. |
 
 ---
 
@@ -287,16 +434,21 @@ The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it
 |---|------|-----------|--------|------------|
 | R1 | Custom `findSuggestionMatch` receives different parameters than expected | Low | High | Verified from source. Type assertion at call site. |
 | R2 | Suggestion's Escape handling conflicts with wiki-link's current behavior | Low | Medium | Suggestion handles Escape internally. Current behavior is the same (close menu). |
-| R3 | Loading state timing: `onStart` fires before items resolve but menu renders empty | Medium | Low | Render with `loading: true` in `onStart`. If items resolve instantly (cached), `onUpdate` fires immediately after. |
+| R3 | Backspace while suggestion ACTIVE: Suggestion's `onKeyDown` returning `false` for Backspace — does ProseMirror then run the atom-deletion plugin's Backspace handler? | Medium | Low | Both active and inactive paths must be preserved. When active: suggestion `onKeyDown` should return false for Backspace (passing through to default edit), atom-deletion plugin is registered but its handler returns false when suggestion is active (guard via `wikiLinkSuggestionKey.getState(view.state)?.active`). Test with R23. |
+| R4 | Anchor-mode fetch invalidation: user types `[[release-notes#`, fetch starts, then deletes back to `[[release-notes` — stale fetch resolves and sets `cachedHeadings.set('release-notes', ...)`. Benign (cache hit on re-entry). | Low | Low | No action needed — caching is per-docName and idempotent. |
+| R5 | Menu rendering `loading: true` with undefined `mode` before `onBeforeStart` resolves `parseQuery` | Low | Low | Always call `parseQuery(props.query)` at the start of each render callback and pass `mode`/`pageTarget`/`anchorQuery` before items resolve. |
+| R6 | Suggestion's `items()` rerun on every query change causes anchor fetch to fire in the `items` callback and also from the `onUpdate` side — race condition | Low | Medium | Fetch is guarded by `!cachedHeadings.has(pageTarget) && anchorFetchingFor !== pageTarget`. Second concurrent call short-circuits. The anchor fetch only lives in `items()` (not duplicated in render lifecycle like the current implementation). |
+| R7 | The 492-line custom plugin has subtle behaviours (e.g., `selectedIndex` clamping on items change, menu destroy-on-coordsAtPos-error) that aren't captured in test scenarios | Medium | Medium | Manual QA against current behaviour before/after. Compare screencasts side-by-side. The atom-deletion plugin extraction preserves the exact keyboard behaviour. |
 
 ---
 
 ## 11. Agent Constraints
 
 **SCOPE:**
-- `packages/app/src/editor/extensions/wiki-link-suggestion.ts`
-- `packages/app/src/editor/wiki-link-suggestion/WikiLinkSuggestionMenu.tsx`
-- `packages/app/src/editor/extensions/wiki-link.ts` (registration change only — `addProseMirrorPlugins`)
+- `packages/app/src/editor/extensions/wiki-link-suggestion.ts` — rewrite
+- `packages/app/src/editor/extensions/wiki-link-suggestion.test.ts` — extend with `parseQuery` / `buildAnchorItems` tests (keep existing `buildSuggestionItems` tests passing)
+- `packages/app/src/editor/wiki-link-suggestion/WikiLinkSuggestionMenu.tsx` — minimal (Floating UI CSS var only)
+- `packages/app/src/editor/extensions/wiki-link.ts` — registration change only (`addProseMirrorPlugins` returns two plugins)
 
 **EXCLUDE:** All other files. Specifically:
 - No changes to `packages/core/` WikiLink extension
@@ -306,8 +458,10 @@ The menu component (`WikiLinkSuggestionMenu.tsx`) stays largely unchanged — it
 
 **STOP_IF:**
 - The custom `findSuggestionMatch` doesn't receive `$position` (API mismatch)
-- Wiki-link tests break with the migration
+- `wiki-link-suggestion.test.ts` breaks with the migration
 - `]]` no longer closes the menu (paired delimiter regression)
+- Anchor mode (`[[page#heading]]`) regresses — wrong items, wrong fetch, wrong attrs, wrong menu header
+- Atom deletion (Backspace/Delete on wikiLink) regresses — different keyboard handling when suggestion is active vs inactive
 
 **ASK_FIRST:**
 - If the loading state requires a fundamentally different approach than the render lifecycle
