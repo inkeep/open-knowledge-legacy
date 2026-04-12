@@ -124,7 +124,12 @@ export function BlockTypeSelector({ editor }: { editor: Editor }) {
           <ChevronDown className="size-3 opacity-50" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" sideOffset={8} portal={false} className="w-44">
+      <DropdownMenuContent
+        align="start"
+        sideOffset={8}
+        portal={false}
+        className="w-44 max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-y-auto subtle-scrollbar"
+      >
         {blockTypes.map((bt) => {
           const Icon = bt.icon;
           const active = activeStates[bt.name];

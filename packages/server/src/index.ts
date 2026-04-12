@@ -11,7 +11,7 @@ export {
   type ContentFilterOptions,
   createContentFilter,
 } from './content-filter.ts';
-export { createExternalChangeHandler } from './external-change.ts';
+export { applyExternalChange, createExternalChangeHandler } from './external-change.ts';
 export {
   type AsyncSubscription,
   classifyEvents,

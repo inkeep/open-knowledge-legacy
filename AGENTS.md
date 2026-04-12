@@ -139,6 +139,7 @@ The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
 - `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park
+- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
 - `src/agent-sessions.ts` — `AgentSessionManager` class
 - `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, and metrics endpoints
 
@@ -202,6 +203,16 @@ Observer B: Text → XmlFragment (parse + updateYFragment, origin: 'sync-from-te
 - Per-origin undo via server-side UndoManager
 - Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
 
+### Theming
+
+Dark/light/system theme via `next-themes` (class strategy). Key pieces:
+
+- `index.html` inline script reads `localStorage('ok-theme-v1')` and sets `.dark` before React hydrates (FOUC prevention)
+- `main.tsx` wraps the app in `<ThemeProvider>` (attribute `class`, default `system`)
+- `src/components/ThemeToggle.tsx` — dropdown toggle in the editor header
+- `SourceEditor.tsx` uses a CodeMirror `Compartment` to hot-swap `oneDark` theme on `resolvedTheme` change
+- `globals.css` defines dark overrides via Tailwind's `.dark` selector for ProseMirror content, callouts, and custom components
+
 ### Dev mode
 
 The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173.
@@ -211,6 +222,7 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
 - `src/editor/observers.ts` — Bidirectional observer sync
+- `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
@@ -242,7 +254,7 @@ Y.Doc
 | W1: WYSIWYG (XmlFragment) | Observer A | (direct) | Persistence debounce |
 | W2: Source (Y.Text) | (direct) | Observer B | Persistence debounce |
 | W3: Agent API | CRDT sync (WebSocket) | syncTextToFragment on server | Persistence debounce |
-| W4: Disk (file watcher) | handleExternalChange | handleExternalChange | (direct) |
+| W4: Disk (file watcher) | applyExternalChange | applyExternalChange | (direct) |
 | Undo/Redo | UndoManager + syncTextToFragment | syncTextToFragment | Persistence debounce |
 
 ### transaction.local semantics

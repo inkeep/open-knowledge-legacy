@@ -31,6 +31,7 @@ schema_version: 1
 - **[2026-04-10-undo-architecture](.open-knowledge/catalogs/specs/2026-04-10-undo-architecture/INDEX.md)** (4 articles)
 - **[2026-04-10-wiki-links-backlinks](.open-knowledge/catalogs/specs/2026-04-10-wiki-links-backlinks/INDEX.md)** (5 articles)
 - **[2026-04-11-content-config-unification](.open-knowledge/catalogs/specs/2026-04-11-content-config-unification/INDEX.md)** (2 articles)
+- **[2026-04-11-dark-mode](.open-knowledge/catalogs/specs/2026-04-11-dark-mode/INDEX.md)** (9 articles)
 - **[2026-04-11-electron-desktop-app](.open-knowledge/catalogs/specs/2026-04-11-electron-desktop-app/INDEX.md)** (4 articles)
 - **[2026-04-11-exclude-gitignored-files](.open-knowledge/catalogs/specs/2026-04-11-exclude-gitignored-files/INDEX.md)** (1 article)
 - **[2026-04-11-sidebar-realtime-updates](.open-knowledge/catalogs/specs/2026-04-11-sidebar-realtime-updates/INDEX.md)** (1 article)
