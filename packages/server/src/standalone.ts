@@ -10,6 +10,7 @@ import { createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import { getLogger } from './logger.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -306,7 +307,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                 incrementRescueBuffer();
                 log.info({ docName }, `[reconcile] rescue buffer saved: ${docName}`);
               } catch (e) {
-                log.error({ docName, err: e }, `[reconcile] rescue buffer write failed: ${docName}`);
+                log.error(
+                  { docName, err: e },
+                  `[reconcile] rescue buffer write failed: ${docName}`,
+                );
               }
             }
           }
@@ -742,7 +746,10 @@ export function createServer(options: ServerOptions): ServerInstance {
                           `[reconcile] rescue buffer saved on branch switch: ${docName}`,
                         );
                       } catch (e) {
-                        log.error({ docName, err: e }, `[reconcile] rescue buffer write failed: ${docName}`);
+                        log.error(
+                          { docName, err: e },
+                          `[reconcile] rescue buffer write failed: ${docName}`,
+                        );
                       }
                     }
                   }
