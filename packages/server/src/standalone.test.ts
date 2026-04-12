@@ -239,4 +239,38 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
       expect.objectContaining({ phase: 'flush-all-stores' }),
     );
   });
+
+  test('destroy() is idempotent under concurrent calls', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+      debounce: 60_000,
+    });
+    await server.ready;
+
+    // Write content so there's a non-trivial shutdown to exercise
+    const conn = await server.hocuspocus.openDirectConnection('test-idempotent');
+    await conn.transact((doc) => {
+      const xmlFragment = doc.getXmlFragment('default');
+      const paragraph = new Y.XmlElement('paragraph');
+      paragraph.insert(0, [new Y.XmlText('idempotent content')]);
+      xmlFragment.insert(0, [paragraph]);
+    });
+    const doc = server.hocuspocus.documents.get('test-idempotent');
+    expect(doc).toBeDefined();
+    doc?.removeDirectConnection();
+
+    // D9: fire two destroys in parallel — both should resolve, neither should throw.
+    // The cached-Promise guard collapses them into one teardown.
+    await Promise.all([server.destroy(), server.destroy()]);
+
+    // Key assertion: only ONE shutdown log emitted (not two), proving the
+    // cached-Promise guard prevented duplicate teardown.
+    const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
+    expect(shutdownLogs).toHaveLength(1);
+
+    // A third serial call after completion also resolves without throwing
+    await server.destroy();
+  });
 });
