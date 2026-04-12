@@ -79,6 +79,13 @@ export interface ServerInstance {
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
+  /**
+   * Names of subsystems that failed to initialize during boot.
+   * Read AFTER `await ready` for a stable list; reads before may return a partial result.
+   * Empty array means all subsystems initialized successfully.
+   * Possible values: `'shadow-repo'`, `'file-watcher'`, `'head-watcher'`.
+   */
+  readonly degraded: readonly string[];
 }
 
 export function createServer(options: ServerOptions): ServerInstance {
@@ -390,6 +397,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
   }
 
+  /** Subsystems that failed during initAsync — populated on catch, read after `await ready`. */
+  const degraded: string[] = [];
+
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
     // Auto-initialize shadow repo if not provided
@@ -399,6 +409,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         console.log(`[server] Shadow repo initialized at ${shadowRef.current.gitDir}`);
       } catch (e) {
         console.error('[server] Shadow repo init failed:', e);
+        degraded.push('shadow-repo');
       }
     }
 
@@ -416,6 +427,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           } catch (e2) {
             console.error('[server] Shadow repo reinit failed:', e2);
             shadowRef.current = undefined;
+            if (!degraded.includes('shadow-repo')) degraded.push('shadow-repo');
           }
         } else {
           console.error('[server] Shadow repo check failed (transient?):', e);
@@ -428,6 +440,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
     } catch (err) {
       console.error('[server] Disk bridge watcher failed to start:', err);
+      degraded.push('file-watcher');
     }
 
     // Start HEAD watcher (only if project .git/ exists)
@@ -646,10 +659,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       );
     } catch (err) {
       console.error('[server] HEAD watcher failed to start:', err);
+      degraded.push('head-watcher');
     }
   }
 
   const ready = initAsync();
 
-  return { hocuspocus, sessionManager, destroy, ready };
+  return { hocuspocus, sessionManager, destroy, ready, degraded };
 }
