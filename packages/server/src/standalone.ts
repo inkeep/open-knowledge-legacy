@@ -433,15 +433,19 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus.closeConnections();
     hocuspocus.flushPendingStores();
 
-    await Promise.race([
-      allDone,
-      new Promise<void>((_, reject) =>
-        setTimeout(() => {
-          resolved = true;
-          reject(new Error(`flushAllStoresAndWait timeout after ${timeoutMs}ms`));
-        }, timeoutMs),
-      ),
-    ]);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        resolved = true;
+        reject(new Error(`flushAllStoresAndWait timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+    });
+
+    try {
+      await Promise.race([allDone, timeout]);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
   }
 
   async function destroy(): Promise<void> {
@@ -449,7 +453,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
     inflightDestroy = (async () => {
       const t0 = Date.now();
-      const flushedCountBefore = hocuspocus.documents.size;
+      const documentCount = hocuspocus.documents.size;
       const phaseErrors: Array<{ phase: string; error: string }> = [];
 
       // Wait for async init to complete before cleanup — prevents leaked watcher
@@ -515,16 +519,15 @@ export function createServer(options: ServerOptions): ServerInstance {
         }
 
         const durationMs = Date.now() - t0;
-        const flushedCount = flushedCountBefore;
         if (phaseErrors.length === 0) {
           log.info(
-            { flushedCount, durationMs },
-            `[server] shutdown flushed ${flushedCount} documents in ${durationMs}ms`,
+            { documentCount, durationMs },
+            `[server] shutdown flushed ${documentCount} documents in ${durationMs}ms`,
           );
         } else {
           log.warn(
-            { flushedCount, durationMs, phaseErrors },
-            `[server] shutdown flushed ${flushedCount} documents in ${durationMs}ms with ${phaseErrors.length} phase error(s)`,
+            { documentCount, durationMs, phaseErrors },
+            `[server] shutdown flushed ${documentCount} documents in ${durationMs}ms with ${phaseErrors.length} phase error(s)`,
           );
         }
       }

@@ -15,10 +15,11 @@ createServer(options)          ← synchronous, returns ServerInstance
   ├─ ContentFilter             ← immediate (compiled patterns)
   ├─ AgentSessionManager       ← immediate
   ├─ Persistence extension     ← immediate (hooks registered)
+  ├─ API extension             ← immediate (HTTP routes registered)
   └─ ready = initAsync()       ← async background init
        ├─ Shadow repo init     ← git plumbing (~50-200ms)
        ├─ File watcher start   ← @parcel/watcher subscribe
-       └─ HEAD watcher start   ← .git/HEAD polling (if .git/ exists)
+       └─ HEAD watcher start   ← @parcel/watcher subscribe on .git/ (if .git/ exists)
 ```
 
 Callers can `await serverInstance.ready` before accepting traffic, but it is not required -- Hocuspocus accepts WebSocket connections immediately and queues document loads until initialization completes.
@@ -33,7 +34,7 @@ destroy()
   ├─ Phase 1: Stop watchers    ← file watcher + HEAD watcher unsubscribe
   ├─ Phase 2: Drain sessions   ← AgentSessionManager.closeAll()
   ├─ Phase 3: L1 flush         ← flushAllStoresAndWait() — Y.Doc → markdown → disk
-  ├─ Phase 4: L2 flush         ← persistence.flushPendingGitCommit() — disk → git
+  ├─ Phase 4: L2 flush         ← flushPendingGitCommit() + waitForPendingCommits() — disk → git
   └─ Phase 5: Shadow release   ← destroyShadowRepo() — always runs (finally block)
 ```
 
@@ -77,13 +78,13 @@ The second caller awaits the same promise as the first. No phases run twice.
 
 Every `destroy()` call emits a structured log entry via `getLogger('server')` after all phases complete:
 
-- **Clean exit:** `log.info` with payload `{ flushedCount, durationMs }` and message `"shutdown flushed N documents in Mms"`.
+- **Clean exit:** `log.info` with payload `{ documentCount, durationMs }` and message `"shutdown flushed N documents in Mms"`.
 - **Partial failure:** `log.warn` with additional `phaseErrors` array, where each entry has `{ phase, error }` identifying which phase failed and why.
 
 Example clean output (structured JSON via pino):
 
 ```json
-{"level":"info","msg":"[server] shutdown flushed 3 documents in 247ms","flushedCount":3,"durationMs":247}
+{"level":"info","msg":"[server] shutdown flushed 3 documents in 247ms","documentCount":3,"durationMs":247}
 ```
 
 ### `destroyTimeoutMs` option

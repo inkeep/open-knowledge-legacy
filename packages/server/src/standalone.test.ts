@@ -141,10 +141,10 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const onDisk = await readFile(join(tmpDir, 'test-doc.md'), 'utf-8');
     expect(onDisk).toContain('hello world');
 
-    // D14: behavioral contract — shutdown log emitted with flushedCount >= 1
+    // D14: behavioral contract — shutdown log emitted with documentCount >= 1
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.flushedCount).toBeGreaterThanOrEqual(1);
+    expect(shutdownLogs[0].payload.documentCount).toBeGreaterThanOrEqual(1);
 
     // No warn-level shutdown log means zero phaseErrors
     const warnShutdownLogs = logCapture.getCalls('warn', 'shutdown');
@@ -236,7 +236,10 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     const warnLogs = logCapture.getCalls('warn', 'shutdown flushed');
     expect(warnLogs).toHaveLength(1);
     expect(warnLogs[0].payload.phaseErrors).toContainEqual(
-      expect.objectContaining({ phase: 'flush-all-stores' }),
+      expect.objectContaining({
+        phase: 'flush-all-stores',
+        error: expect.stringContaining('timeout'),
+      }),
     );
   });
 
@@ -306,10 +309,10 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     // Should resolve fast — no hook installed, no docs to drain
     expect(elapsed).toBeLessThan(500);
 
-    // Shutdown log still emitted with flushedCount === 0
+    // Shutdown log still emitted with documentCount === 0
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.flushedCount).toBe(0);
+    expect(shutdownLogs[0].payload.documentCount).toBe(0);
   });
 
   test('destroy() flushes multiple documents before resolving (multi-doc drain)', async () => {
@@ -359,9 +362,9 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(await readFile(join(tmpDir, 'doc-b.md'), 'utf-8')).toContain('content B');
     expect(await readFile(join(tmpDir, 'doc-c.md'), 'utf-8')).toContain('content C');
 
-    // Shutdown log reports flushedCount === 3 (all docs drained)
+    // Shutdown log reports documentCount === 3 (all docs drained)
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.flushedCount).toBe(3);
+    expect(shutdownLogs[0].payload.documentCount).toBe(3);
   });
 });
