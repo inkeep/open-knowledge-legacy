@@ -42,7 +42,7 @@ destroy()
 
 - **Phase 1 before Phase 3:** Watchers must stop before L1 writes hit disk, otherwise the file watcher detects the persistence write as an "external change" and triggers a reconciliation loop.
 - **Phase 2 before Phase 3:** Agent sessions hold DirectConnections to Y.Docs. Closing sessions first ensures no new writes arrive during the drain.
-- **Phase 3 before Phase 4:** L1 (`onStoreDocument`) writes markdown to disk and schedules the L2 git-commit timer. Running L2 before L1 would drain an empty commit queue -- this was the original ordering bug that caused silent data loss.
+- **Phase 3 before Phase 4:** L1 (`onStoreDocument`) writes markdown to disk and schedules the L2 git-commit timer. Running L2 before L1 would drain an empty commit queue, causing silent data loss.
 - **Phase 5 in finally:** The shadow repo writer lock must be released even if earlier phases throw.
 
 ### L1 drain: `flushAllStoresAndWait()`
@@ -106,4 +106,4 @@ After a successful `destroy()`, all writes that reached the server-side Y.Doc ar
 | Disk → shadow git commit (L2) | Yes |
 | Client WebSocket buffer → server Y.Doc | No -- out of scope |
 
-The client-side transmission buffer (~16ms between a keystroke and its WebSocket flush to the server) is a separate, smaller concern. For CLI users, this residual window is an order of magnitude smaller than the 2--10 second server-side window this fix closed. For Electron, a client-side drain barrier (e.g., flushing all active providers before closing the window) would need to be implemented separately -- this is not yet built.
+The client-side transmission buffer (~16ms between a keystroke and its WebSocket flush to the server) is a separate, smaller concern. For CLI users, this client-side residual window is negligible compared to the server-side guarantees above. For Electron, a client-side drain barrier (e.g., flushing all active providers before closing the window) would need to be implemented separately -- this is not yet built.
