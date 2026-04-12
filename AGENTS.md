@@ -76,6 +76,7 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/shared.ts` — sharedExtensions array (THE schema source of truth)
 - `src/extensions/frontmatter.ts` — strip/prepend frontmatter for markdown round-trip
 - `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (schema + markdown, no React NodeView)
+- `src/extensions/*-fidelity.ts` — 12 source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (loaded via `shared.ts`)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
@@ -314,6 +315,7 @@ Y.Doc
 | C | Playwright E2E | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts` | `bunx playwright test` |
 | D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |
 | Integration | Tier 1 bridge matrix | `packages/app/tests/integration/bridge-matrix.test.ts` | `bun run test` |
+| Fidelity | PBT invariants (I1-I7) + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/` | `bun run test:fidelity` (also in `bun run check`) |
 
 ### Tier 1 integration harness
 
