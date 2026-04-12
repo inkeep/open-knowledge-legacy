@@ -134,6 +134,7 @@ The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
 - `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park
+- `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
 - `src/agent-sessions.ts` — `AgentSessionManager` class
 - `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, and metrics endpoints
 
@@ -236,7 +237,7 @@ Y.Doc
 | W1: WYSIWYG (XmlFragment) | Observer A | (direct) | Persistence debounce |
 | W2: Source (Y.Text) | (direct) | Observer B | Persistence debounce |
 | W3: Agent API | CRDT sync (WebSocket) | syncTextToFragment on server | Persistence debounce |
-| W4: Disk (file watcher) | handleExternalChange | handleExternalChange | (direct) |
+| W4: Disk (file watcher) | applyExternalChange | applyExternalChange | (direct) |
 | Undo/Redo | UndoManager + syncTextToFragment | syncTextToFragment | Persistence debounce |
 
 ### transaction.local semantics
