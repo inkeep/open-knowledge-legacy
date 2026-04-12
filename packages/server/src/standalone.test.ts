@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import * as Y from 'yjs';
 import { loggerFactory, type PinoLogger } from './logger.ts';
 import { initShadowRepo, shadowGit } from './shadow-repo.ts';
 import { createServer } from './standalone.ts';
@@ -106,5 +107,87 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     await rm(tmpDir, { recursive: true, force: true });
   });
 
-  // Tests will be added by US-006 through US-010
+  test('flushes L1 markdown writes before destroy() resolves + emits shutdown log', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+      debounce: 60_000, // Prevent natural debounce from firing — proves destroy-time flush
+    });
+    await server.ready;
+
+    const conn = await server.hocuspocus.openDirectConnection('test-doc');
+    // Write to XmlFragment('default') — the Y.Doc shape the persistence layer
+    // reads from in onStoreDocument. getText('source') is synced to XmlFragment
+    // by browser-side observers that don't exist in server-only tests.
+    await conn.transact((doc) => {
+      const xmlFragment = doc.getXmlFragment('default');
+      const paragraph = new Y.XmlElement('paragraph');
+      paragraph.insert(0, [new Y.XmlText('hello world')]);
+      xmlFragment.insert(0, [paragraph]);
+    });
+
+    // Release the DirectConnection's hold on the document WITHOUT triggering an
+    // immediate store (conn.disconnect() would store with debounce=0, bypassing
+    // the destroy-time flush path we want to test). removeDirectConnection()
+    // decrements the connection count so the document can unload when
+    // flushAllStoresAndWait fires flushPendingStores during destroy().
+    const doc = server.hocuspocus.documents.get('test-doc');
+    expect(doc).toBeDefined();
+    doc?.removeDirectConnection();
+
+    await server.destroy();
+
+    const onDisk = await readFile(join(tmpDir, 'test-doc.md'), 'utf-8');
+    expect(onDisk).toContain('hello world');
+
+    // D14: behavioral contract — shutdown log emitted with flushedCount >= 1
+    const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
+    expect(shutdownLogs).toHaveLength(1);
+    expect(shutdownLogs[0].payload.flushedCount).toBeGreaterThanOrEqual(1);
+
+    // No warn-level shutdown log means zero phaseErrors
+    const warnShutdownLogs = logCapture.getCalls('warn', 'shutdown');
+    expect(warnShutdownLogs).toHaveLength(0);
+  });
+
+  test('flushes L2 git commit after L1 drain', async () => {
+    // Shadow repo needs contentDir to be a subdirectory of projectDir so
+    // `git add <contentRoot>` has a valid pathspec. Mirror real-world layout.
+    const { mkdirSync } = await import('node:fs');
+    const projectDir = tmpDir;
+    const contentDir = join(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const shadowHandle = await initShadowRepo(projectDir);
+
+    const server = createServer({
+      contentDir,
+      projectDir,
+      contentRoot: 'content',
+      quiet: true,
+      debounce: 60_000,
+      shadowRepo: shadowHandle,
+    });
+    await server.ready;
+
+    const conn = await server.hocuspocus.openDirectConnection('test-doc-2');
+    await conn.transact((doc) => {
+      const xmlFragment = doc.getXmlFragment('default');
+      const paragraph = new Y.XmlElement('paragraph');
+      paragraph.insert(0, [new Y.XmlText('commit me')]);
+      xmlFragment.insert(0, [paragraph]);
+    });
+
+    // Release DirectConnection hold — same pattern as Test 1
+    const doc = server.hocuspocus.documents.get('test-doc-2');
+    expect(doc).toBeDefined();
+    doc?.removeDirectConnection();
+
+    await server.destroy();
+
+    // Verify L2 git commit landed in shadow repo
+    const sg = shadowGit(shadowHandle);
+    const refSha = (await sg.raw('rev-parse', 'refs/wip/main/server')).trim();
+    expect(refSha).toBeTruthy();
+  });
 });
