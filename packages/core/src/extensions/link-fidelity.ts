@@ -28,7 +28,15 @@ export const LinkFidelity = Link.extend({
         rel: 'noopener noreferrer',
         class: null as string | null,
       },
-      isAllowedUri: () => true,
+      isAllowedUri: (url: string) => {
+        try {
+          const parsed = new URL(url, 'https://placeholder.invalid');
+          const scheme = parsed.protocol.toLowerCase();
+          return !['javascript:', 'data:', 'vbscript:'].includes(scheme);
+        } catch {
+          return false;
+        }
+      },
       validate: () => true,
       shouldAutoLink: () => true,
     };
