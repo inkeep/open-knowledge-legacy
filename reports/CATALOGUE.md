@@ -1,16 +1,21 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-11 by `generate-catalogue.ts`
-> 63 valid reports indexed
+> Auto-generated on 2026-04-12 by `generate-catalogue.ts`
+> 66 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [Markdown Folder Vault Opening Behavior: Obsidian, AFFi…](markdown-folder-vault-opening-behavior/REPORT.md) | 2026-04-12 | 7 files | folder vault semantics, markdown m… | Obsidian, AFFiNE, Logseq, Foam, De… |
+| [Source Toggle Architecture: WYSIWYG ↔ Raw Markdown in …](source-toggle-architecture/REPORT.md) | 2026-04-12 | 6 files | source toggle architecture, CRDT d… | Yjs, TipTap, ProseMirror, CodeMirr… |
 | [Electron Desktop App Operations: Versioning, Signing, …](electron-desktop-app-operations-2025/REPORT.md) | 2026-04-11 | 5 files | electron operations, desktop app r… | Electron, electron-builder, electr… |
 | [OSS Licensing Strategies for Open-Core Companies: Lice…](oss-licensing-strategies-open-core/REPORT.md) | 2026-04-11 | 6 files | open source licensing, open core s… | MIT License, Apache 2.0, AGPL-3.0,… |
 | [Permissive Licenses and Compiled-Only Distribution: Ca…](permissive-licenses-compiled-distribution/REPORT.md) | 2026-04-11 | 1 files | permissive licensing, compiled dis… | MIT License, Apache 2.0, BSD, ISC,… |
+| [Mintlify Strategic Deep Dive: Tier-1 Stress Test, Writ…](mintlify-strategic-deep-dive/REPORT.md) | 2026-04-11 | 5 files | competitive stress test, write-pat… | Mintlify, Trieve, Helicone, Dayton… |
+| [AFFiNE Strategic Deep Dive: Pivot Execution, BlockSuit…](affine-strategic-deep-dive/REPORT.md) | 2026-04-11 | 7 files | competitive analysis, CRDT editor … | AFFiNE, BlockSuite, y-octo, toever… |
 | [Can Compiled Code Be Distributed Under AGPL Without Re…](agpl-compiled-code-source-requirements/REPORT.md) | 2026-04-11 | 1 files | GPL source requirements, compiled … | AGPL-3.0, GPLv3, JavaScript, npm |
+| [Competitive Landscape for an Agent-Native Knowledge Pl…](openknowledge-competitive-landscape/REPORT.md) | 2026-04-11 | 8 files | competitive landscape, knowledge m… | Notion, Confluence, Obsidian, Mint… |
 | [Wrapping a Web App as a Native macOS Desktop App in 20…](web-to-macos-desktop-wrapping-2025/REPORT.md) | 2026-04-11 | 4 files | desktop app wrapping, macOS native… | Electron, Tauri, SwiftUI WebView, … |
 | [Open-Core Split Licensing Engineering Patterns: ee/ Di…](open-core-split-licensing-engineering/REPORT.md) | 2026-04-11 | 5 files | open core engineering, split licen… | Cal.com, Formbricks, Infisical, Gi… |
 | [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus C…](vite-6-to-8-migration/REPORT.md) | 2026-04-09 | 4 files | framework migration, bundler archi… | Vite 8, Vite 7, Rolldown, Oxc, @vi… |
@@ -25,12 +30,10 @@
 | [Bridging AI Coding Agents and CRDT-Authoritative Editi…](crdt-mcp-filesystem-bridge/REPORT.md) | 2026-04-07 | 10 files | CRDT filesystem bridge, agent tool… | Hocuspocus, Yjs, MCP, Replit Crosi… |
 | [Automerge as Alternative CRDT Stack: Migration Assessm…](automerge-prosemirror-migration-assessment/REPORT.md) | 2026-04-07 | 9 files | CRDT migration assessment, Peritex… | Automerge, automerge-prosemirror, … |
 | [Yjs Dual-Key Shimmer Analysis: Will Bidirectional Obse…](yjs-dual-key-shimmer-analysis/REPORT.md) | 2026-04-07 | 5 files | shimmer dampening analysis, round-… | Yjs, @tiptap/markdown, marked, y-p… |
-| [Source Toggle Architecture: WYSIWYG ↔ Raw Markdown in …](source-toggle-architecture/REPORT.md) | 2026-04-07 | 5 files | source toggle architecture, CRDT d… | Yjs, TipTap, ProseMirror, CodeMirr… |
 | [KB Index and Navigation Patterns for AI Agents: How Ag…](kb-index-navigation-patterns-for-agents/REPORT.md) | 2026-04-07 | 9 files | agent navigation, knowledge base i… | Claude Code, OpenAI Codex, Cursor,… |
 | [Compiled Truth + Timeline: Content Conventions for Age…](compiled-truth-timeline-content-conventions/REPORT.md) | 2026-04-07 | 6 files | knowledge entry conventions, compi… | GBrain, ByteRover, Andrej Karpathy… |
 | [One-Way Y.XmlFragment to Y.Text Observer Sync with y-c…](yjs-constrained-observer-sync/REPORT.md) | 2026-04-07 | 7 files | CRDT observer patterns, collaborat… | y-codemirror.next, y-prosemirror, … |
 | [Markdown Round-Trip Fidelity Through @tiptap/markdown](markdown-roundtrip-fidelity-tiptap/REPORT.md) | 2026-04-07 | 7 files | markdown round-trip fidelity, docu… | @tiptap/markdown, prosemirror-mark… |
-| [Competitive Landscape for an Agent-Native Knowledge Pl…](openknowledge-competitive-landscape/REPORT.md) | 2026-04-07 | 8 files | competitive landscape, knowledge m… | Notion, Confluence, Obsidian, Mint… |
 | [MDX Text Editor + Live Preview: Architecture, Prior Ar…](mdx-text-editor-preview-approach/REPORT.md) | 2026-04-07 | 11 files | MDX editing, live preview architec… | CodeMirror 6, MDX, Yjs, y-codemirr… |
 | [Peritext-on-Yjs Feasibility: Can the Peritext Rich Tex…](peritext-on-yjs-feasibility/REPORT.md) | 2026-04-07 | 7 files | Peritext CRDT rich text, Y.Text fo… | Yjs, Peritext, ProseMirror, TipTap… |
 | [@parcel/watcher for Bidirectional Disk-CRDT Sync: Sour…](parcel-watcher-crdt-disk-bridge/REPORT.md) | 2026-04-07 | 6 files | bidirectional file sync, CRDT disk… | @parcel/watcher, Hocuspocus, Yjs, … |
@@ -75,13 +78,34 @@
 
 ## Report Details
 
-### [Electron Desktop App Operations: Versioning, Signing, Updates, CI, and Release Discipline (2025/2026)](electron-desktop-app-operations-2025/REPORT.md)
+### [Markdown Folder Vault Opening Behavior: Obsidian, AFFiNE, Logseq, Foam, Dendron, SilverBullet](markdown-folder-vault-opening-behavior/REPORT.md)
 
-> Operational playbook for shipping and maintaining an Electron desktop app alongside an existing npm package. Covers Electron release cadence, code signing economics, auto-update infrastructure, CI/CD pipelines, security hardening (fuses, ASAR integrity), release lifecycle, telemetry, and known fail…
+> Does pointing a markdown editor at an existing folder of .md files require conversion or mutation? Compares Obsidian, AFFiNE, Logseq (both file-mode and DB-mode), Foam, Dendron, and SilverBullet on folder-as-vault semantics, sidecar directories written on first open, whether existing .md files are …
+
+- **Created:** 2026-04-12
+- **Topics:** folder vault semantics, markdown mutation, sidecar directories, storage source of truth
+- **Subjects:** Obsidian, AFFiNE, Logseq, Foam, Dendron, SilverBullet, BlockSuite, OctoBase, Datascript
+- **Evidence files:** 7
+- **Warnings:** 1
+
+### [Source Toggle Architecture: WYSIWYG ↔ Raw Markdown in a TipTap + Yjs CRDT Editor](source-toggle-architecture/REPORT.md)
+
+> Complete technical assessment of all viable architectures for a source toggle (WYSIWYG ↔ raw markdown) in a TipTap + Yjs CRDT editor. Evaluates 9 options across collaboration, agent visibility, performance, and round-trip fidelity. Recommends serialize-on-toggle with awareness-based mode locking. I…
+
+- **Created:** 2026-04-07
+- **Updated:** 2026-04-12
+- **Topics:** source toggle architecture, CRDT dual representation, collaborative markdown editing, editor mode switching
+- **Subjects:** Yjs, TipTap, ProseMirror, CodeMirror 6, y-prosemirror, y-codemirror.next, Hocuspocus, Obsidian, AFFiNE, Automerge, Peritext
+- **Evidence files:** 6
+- **Warnings:** 1
+
+### [Electron Desktop App Operations: Versioning, Signing, Updates, CI, and Security (2025/2026)](electron-desktop-app-operations-2025/REPORT.md)
+
+> Factual reference for the operational surface of shipping an Electron desktop app in 2025/2026. Covers Electron release cadence, code signing economics, auto-update infrastructure, CI/CD pipelines, distribution channels, security hardening (fuses, ASAR integrity), release lifecycle, telemetry, bund…
 
 - **Created:** 2026-04-11
 - **Topics:** electron operations, desktop app release pipeline, code signing, auto-update infrastructure
-- **Subjects:** Electron, electron-builder, electron-vite, electron-updater, Sentry, GitHub Actions, Apple Developer Program, Azure Trusted Signing, Open Knowledge
+- **Subjects:** Electron, electron-builder, electron-vite, electron-updater, Sentry, GitHub Actions, Apple Developer Program, Azure Trusted Signing
 - **Evidence files:** 5
 - **Warnings:** 2
 
@@ -104,6 +128,24 @@
 - **Subjects:** MIT License, Apache 2.0, BSD, ISC, MPL 2.0, npm
 - **Evidence files:** 1
 
+### [Mintlify Strategic Deep Dive: Tier-1 Stress Test, Write-Path Architecture, and the Convenience-Bundling Moat](mintlify-strategic-deep-dive/REPORT.md)
+
+> Adversarial stress test of Mintlify's Tier-1 #1 competitive ranking, applying the same audit posture that downgraded AFFiNE from Tier 1 to Tier 3. Covers business execution (funding, runway, acquisitions), post-April-2026 shipping reality, write-path architecture and bidirectional MCP feasibility, …
+
+- **Created:** 2026-04-11
+- **Topics:** competitive stress test, write-path architecture, bidirectional MCP feasibility, agent co-creation primitives, agent-format distribution, business execution audit
+- **Subjects:** Mintlify, Trieve, Helicone, Daytona, OpenCode, Anthropic, Agent Skills
+- **Evidence files:** 5
+
+### [AFFiNE Strategic Deep Dive: Pivot Execution, BlockSuite Substrate, and the Missing Agent Layer](affine-strategic-deep-dive/REPORT.md)
+
+> Deep investigation of AFFiNE's announced AI knowledge base pivot, BlockSuite/y-octo as alternative editor substrates, MCP tool surface, and the absence of a SKILL.md-style agent distribution strategy. Ground truth for calibrating AFFiNE's competitive position against an agent-native knowledge platf…
+
+- **Created:** 2026-04-11
+- **Topics:** competitive analysis, CRDT editor substrate, MCP agent surface, agent co-creation primitives, OSS knowledge platform
+- **Subjects:** AFFiNE, BlockSuite, y-octo, toeverything, Obsidian, obsidian-skills
+- **Evidence files:** 7
+
 ### [Can Compiled Code Be Distributed Under AGPL Without Readable Source?](agpl-compiled-code-source-requirements/REPORT.md)
 
 > Whether compiled/minified JavaScript can be distributed under AGPL while keeping source private. Covers GPLv3 'Corresponding Source' requirements, what counts as 'object code' for interpreted languages, the written offer provision, obfuscation strategies, and enforcement precedents. Short answer: n…
@@ -112,6 +154,16 @@
 - **Topics:** GPL source requirements, compiled code licensing, open source compliance
 - **Subjects:** AGPL-3.0, GPLv3, JavaScript, npm
 - **Evidence files:** 1
+
+### [Competitive Landscape for an Agent-Native Knowledge Platform](openknowledge-competitive-landscape/REPORT.md)
+
+> Deep competitive analysis of 7 primary competitors (Notion, Confluence, Obsidian, Mintlify, Chroma, Outline, AFFiNE) and 12+ secondary players across editing experience, AI/agent story, storage model, collaboration, licensing, strategic direction, and developer extensibility. Maps white space for a…
+
+- **Created:** 2026-04-02
+- **Updated:** 2026-04-11
+- **Topics:** competitive landscape, knowledge management, agent-native, MCP integration, collaborative editing
+- **Subjects:** Notion, Confluence, Obsidian, Mintlify, Chroma, Outline, AFFiNE, obsidian-skills, kepano
+- **Evidence files:** 8
 
 ### [Wrapping a Web App as a Native macOS Desktop App in 2025/2026](web-to-macos-desktop-wrapping-2025/REPORT.md)
 
@@ -243,16 +295,6 @@
 - **Subjects:** Yjs, @tiptap/markdown, marked, y-prosemirror, ProseMirror, CodeMirror 6
 - **Evidence files:** 5
 
-### [Source Toggle Architecture: WYSIWYG ↔ Raw Markdown in a TipTap + Yjs CRDT Editor](source-toggle-architecture/REPORT.md)
-
-> Complete technical assessment of all viable architectures for a source toggle (WYSIWYG ↔ raw markdown) in a TipTap + Yjs CRDT editor. Evaluates 9 options across collaboration, agent visibility, performance, and round-trip fidelity. Recommends serialize-on-toggle with awareness-based mode locking.
-
-- **Created:** 2026-04-07
-- **Topics:** source toggle architecture, CRDT dual representation, collaborative markdown editing, editor mode switching
-- **Subjects:** Yjs, TipTap, ProseMirror, CodeMirror 6, y-prosemirror, y-codemirror.next, Hocuspocus, Obsidian, AFFiNE, Automerge, Peritext
-- **Evidence files:** 5
-- **Warnings:** 1
-
 ### [KB Index and Navigation Patterns for AI Agents: How Agents Orient in Document Collections (2025-2026)](kb-index-navigation-patterns-for-agents/REPORT.md)
 
 > Comprehensive analysis of how AI agents navigate and index knowledge bases, codebases, and document collections — covering index-first navigation, AI-generated metadata/catalogs, enriched file trees, and graph traversal approaches. Maps the full spectrum from Claude Code's real-time exploration to …
@@ -291,16 +333,6 @@
 - **Subjects:** @tiptap/markdown, prosemirror-markdown, ProseMirror, TipTap, marked, markdown-it, remark-prosemirror, Yjs
 - **Evidence files:** 7
 - **Warnings:** 1
-
-### [Competitive Landscape for an Agent-Native Knowledge Platform](openknowledge-competitive-landscape/REPORT.md)
-
-> Deep competitive analysis of 7 primary competitors (Notion, Confluence, Obsidian, Mintlify, Chroma, Outline, AFFiNE) and 12+ secondary players across editing experience, AI/agent story, storage model, collaboration, licensing, strategic direction, and developer extensibility. Maps white space for a…
-
-- **Created:** 2026-04-02
-- **Updated:** 2026-04-07
-- **Topics:** competitive landscape, knowledge management, agent-native, MCP integration, collaborative editing
-- **Subjects:** Notion, Confluence, Obsidian, Mintlify, Chroma, Outline, AFFiNE, obsidian-skills, kepano
-- **Evidence files:** 8
 
 ### [MDX Text Editor + Live Preview: Architecture, Prior Art, and Comparison to WYSIWYG](mdx-text-editor-preview-approach/REPORT.md)
 

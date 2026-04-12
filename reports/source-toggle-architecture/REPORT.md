@@ -1,8 +1,8 @@
 ---
 title: "Source Toggle Architecture: WYSIWYG ↔ Raw Markdown in a TipTap + Yjs CRDT Editor"
-description: "Complete technical assessment of all viable architectures for a source toggle (WYSIWYG ↔ raw markdown) in a TipTap + Yjs CRDT editor. Evaluates 9 options across collaboration, agent visibility, performance, and round-trip fidelity. Recommends serialize-on-toggle with awareness-based mode locking."
+description: "Complete technical assessment of all viable architectures for a source toggle (WYSIWYG ↔ raw markdown) in a TipTap + Yjs CRDT editor. Evaluates 9 options across collaboration, agent visibility, performance, and round-trip fidelity. Recommends serialize-on-toggle with awareness-based mode locking. Includes D8: 10 concrete editing capabilities that structurally require ProseMirror's tree model and cannot be achieved with CM6 decorations (evidence from ProseMirror docs, CM6 docs, and Obsidian forum)."
 createdAt: 2026-04-07
-updatedAt: 2026-04-07
+updatedAt: 2026-04-12
 subjects:
   - Yjs
   - TipTap
@@ -60,6 +60,7 @@ Only 3 of the 9 options are viable for a shipping product:
 | D5 | Competitor implementations | Moderate | P0 |
 | D6 | Yjs ecosystem trajectory | Moderate | P0 |
 | D7 | Performance characteristics | Deep | P0 |
+| D8 | Block-canonical editing capabilities ceiling | Deep | P0 |
 
 **Non-goals:** General TipTap architecture, MDX-specific round-trip, branch switching, MCP write path (all covered by existing reports).
 
@@ -276,6 +277,40 @@ All within a single frame at 60fps. The performance concern was overweighted in 
 
 ---
 
+### D8: Block-Canonical Editing Capabilities Ceiling
+
+**Finding: Ten concrete editing capabilities structurally require ProseMirror's tree-based document model and cannot be replicated with CM6 decorations/widgets. Each is confirmed from primary sources (ProseMirror docs, CM6 docs, Obsidian forum).**
+
+**Evidence:** [evidence/block-editing-capabilities-ceiling.md](evidence/block-editing-capabilities-ceiling.md)
+
+The architectural difference is foundational: CM6's document is a flat string with view-layer decorations; ProseMirror's document is a typed tree with model-layer nodes. Decorations can make text *look* structured, but the model cannot *behave* structurally. The ten capabilities below are not missing CM6 features — they are structural impossibilities given a flat-string model.
+
+| # | Capability | ProseMirror (tree model) | CM6 (flat text + decorations) | Obsidian real-world evidence |
+|---|---|---|---|---|
+| 1 | **Table cell editing** — click into cell, tab between, resize columns, merge/split, rectangular CellSelection | `prosemirror-tables`: `CellSelection`, `TableMap`, `mergeCells`, `splitCell`, column resize | Widget overlay only; no cell merge, no column resize, no rectangular selection | v1.5 shipped cell-by-cell editing as overlay; column resize and merge still unresolved feature requests |
+| 2 | **NodeViews** — interactive blocks with editable regions (React components as document nodes where typing flows into the model) | `NodeView` with `contentDOM`; TipTap `ReactNodeViewRenderer` — selection, undo, collab all work inside the node | Widgets are `contenteditable=false` islands; typing inside does not flow into CM6's document model | Plugin devs confirm: "does not give the ability to completely prevent or override rendering actions" |
+| 3 | **Block drag-and-drop** — grab a paragraph/table/image and drag to reorder | `draggable: true` + `data-drag-handle`; serializes node as `Slice`, moves via transaction | Not supported; Alt+Up/Down swaps single lines only | 40+ upvote thread requesting Notion-style block dragging; no staff response |
+| 4 | **Selection beyond text** — NodeSelection (whole-node), CellSelection (rectangular), GapCursor (between non-text blocks) | `NodeSelection`, `CellSelection`, `GapCursor`, `AllSelection` | Character ranges only; widgets are atomic (skipped or selected as unit, not enterable) | Selecting across rendered callouts breaks Live Preview rendering |
+| 5 | **Schema-enforced structure** — content expressions prevent invalid nesting (`table > row > cell > paragraph`) | `Schema` with `NodeSpec.content`, `ContentMatch` validation on every edit | No structural validation; any character sequence is valid | N/A (not a user-facing feature, but underpins all structural operations) |
+| 6 | **Structural transforms** — wrap in blockquote, lift from list, join/split blocks, change nesting depth | `ReplaceAroundStep`, `Transform.lift()`, `.wrap()`, `.join()`, `.split()` | Indent/dedent via character insertion only; no model-level wrap/lift | N/A |
+| 7 | **Collaborative editing within blocks** — multiple cursors editing different cells of the same table simultaneously | y-prosemirror maps Y.XmlFragment tree CRDT to PM tree; concurrent cell edits resolve as independent subtrees | `@codemirror/collab` syncs text changes only; cannot sync widget-internal state | No real-time collab in Obsidian; oldest request (2020) has 2,200+ views, no staff response |
+| 8 | **Schema-aware clipboard** — paste table from Excel → proper table node; paste HTML → schema-conformant tree | `DOMParser` maps `<table>/<tr>/<td>` to table/row/cell nodes via schema parse rules | Paste HTML → markdown pipe syntax via text conversion; multiline cells flatten; spreadsheet paste historically plain text | Users report paste inferior to Typora; multiline cell content lost |
+| 9 | **Structural undo/redo** — undo "merge cells" restores original cell structure; history tracks `Step` objects, not text diffs | `prosemirror-history` records inverted `Step` objects with position remapping | History tracks `ChangeSet` on flat text; widget-internal mutations invisible to history | N/A |
+| 10 | **Nested block structures** — blockquote containing list containing code block, with schema-validated nesting at each level | Content expressions as tree grammar; `wrap()`/`lift()` change nesting depth | No model-level nesting; replace decorations do not compose/nest | N/A |
+
+**Decision triggers:**
+
+- If the product roadmap requires any of capabilities 1-4 or 7-8 (table editing, interactive custom blocks, drag-drop, cross-widget selection, collaboration, rich paste), the tree model is non-negotiable — CM6 decorations cannot provide them.
+- If the product only needs rendered preview with cursor-enter-to-edit-source (Obsidian's model), CM6 is sufficient and eliminates the roundtrip conversion cost.
+- The roundtrip cost (serialization, observer bridges, fidelity challenges) is the **price of the tree model**. These ten capabilities are what the price buys.
+
+**Remaining uncertainty:**
+
+- Whether any CM6-based editor has achieved collaborative editing inside widgets via the `sharedEffects` escape hatch — no production evidence found, but the mechanism exists.
+- Obsidian's v1.5 table editor internals are closed-source; the specific CM6 techniques used are inferred from behavior.
+
+---
+
 ## Limitations & Open Questions
 
 ### Dimensions Not Fully Covered
@@ -305,6 +340,7 @@ A side-by-side split view (WYSIWYG leader + read-only source follower, continuou
 - [evidence/competitor-implementations.md](evidence/competitor-implementations.md) — Obsidian, AFFiNE, Outline, Milkdown, BlockNote, Zettlr, HedgeDoc
 - [evidence/yjs-ecosystem-trajectory.md](evidence/yjs-ecosystem-trajectory.md) — Peritext model, Automerge, Loro, Yjs roadmap
 - [evidence/performance-characteristics.md](evidence/performance-characteristics.md) — Serialize/deserialize benchmarks, updateYFragment analysis, cursor mapping
+- [evidence/block-editing-capabilities-ceiling.md](evidence/block-editing-capabilities-ceiling.md) — 10 capabilities requiring tree model; ProseMirror/TipTap APIs, CM6 limits, Obsidian real-world constraints
 
 ### External Sources
 - [Peritext (Ink & Switch)](https://www.inkandswitch.com/peritext/) — Rich text annotations on flat text CRDTs

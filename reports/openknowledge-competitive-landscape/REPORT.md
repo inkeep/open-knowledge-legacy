@@ -2,7 +2,7 @@
 title: "Competitive Landscape for an Agent-Native Knowledge Platform"
 description: "Deep competitive analysis of 7 primary competitors (Notion, Confluence, Obsidian, Mintlify, Chroma, Outline, AFFiNE) and 12+ secondary players across editing experience, AI/agent story, storage model, collaboration, licensing, strategic direction, and developer extensibility. Maps white space for an agent-native knowledge platform."
 createdAt: 2026-04-02
-updatedAt: 2026-04-07
+updatedAt: 2026-04-11
 subjects:
   - Notion
   - Confluence
@@ -70,7 +70,7 @@ Notion leads on rich content breadth with 50+ block types, best-in-class relatio
 
 Confluence's editor remains a persistent weakness despite heavy investment. The mandatory ADF-based cloud editor (April 2026) has not silenced endemic community complaints about sluggishness with complex documents and formatting issues.
 
-AFFiNE demonstrates that CRDT-native editing is viable at scale. BlockSuite's document-centric architecture (CRDT as data layer, editors attach/detach) and its Hyper Fused Platform mixing documents, whiteboards, and databases in one page represents the most architecturally ambitious editor in the landscape.
+AFFiNE demonstrates that CRDT-native editing is viable at scale. BlockSuite's document-centric architecture (CRDT as data layer, editors attach/detach) and its Hyper Fused Platform mixing documents, whiteboards, and databases in one page represent an architecturally ambitious editor *within the AFFiNE product* — but a 2026-04-11 re-audit (see [`../affine-strategic-deep-dive/`](../affine-strategic-deep-dive/)) found the "reusable toolkit" framing is aspirational: `toeverything/blocksuite`'s `main` branch has had zero commits since 2025-07-07, `@blocksuite/blocks` was last published 2024-12-19 (~16 months stale), zero credible non-AFFiNE production adopters exist, and the Web Components / Lit architecture is not substitutable for ProseMirror/TipTap ecosystems.
 
 Outline offers clean ProseMirror-based editing with ~20 block types and mature Y.js CRDT collaboration, but is consistently described as "very basic" versus Notion and deliberately avoids database or advanced view features.
 
@@ -90,7 +90,7 @@ Every primary competitor now has an AI story, but they cluster into three archit
 
 **Retrieval infrastructure (machine-facing only):** Chroma occupies a distinct category as an embedding database with an MCP server for agent memory, not knowledge management. Its Context-1 (20B parameter retrieval model) separates retrieval from generation. Package Search MCP provides semantic search over six package registries.
 
-The most significant cross-cutting finding: **no competitor supports agent co-creation**. In every product with MCP write access, agent edits appear as the authenticated user -- no attribution, no audit trail, no review workflow. No product offers a staging area where agent-generated changes can be reviewed before going live. No product allows agents to subscribe to content change events. Mintlify, the most vocal about the "agent era," ships a read-only MCP server (Search and Get Page only). Its own Mintlify Agent (Workflows) is the sole writer, running on Mintlify's LLM compute in proprietary sandboxed environments.
+The most significant cross-cutting finding: **no competitor supports agent co-creation**. In every product with MCP write access, agent edits appear as the authenticated user -- no attribution, no audit trail, no review workflow. No product offers a staging area where agent-generated changes can be reviewed before going live. No product allows agents to subscribe to content change events. Mintlify, the most vocal about the "agent era," ships a read-only MCP server (Search and Get Page only). Its own Mintlify Agent (Workflows) is the sole writer, running on Mintlify's LLM compute in proprietary sandboxed environments. AFFiNE sits at the opposite edge of the same gap: no first-party MCP server at all; the sole production implementation is the single-maintainer community project `DAWNCR0W/affine-mcp-server` (v1.13.0, ~36 canonical tools R+W) that exposes broad CRUD via the human user's personal access token but ships none of the agent-native primitives. A 2026-04-11 deep-dive (see [`../affine-strategic-deep-dive/`](../affine-strategic-deep-dive/)) confirms six of seven co-creation primitives absent in AFFiNE — official first-party MCP, agent identity, per-edit attribution, staging/draft/review, event subscription, scoped permissions — with only CRUD present.
 
 _Detailed evidence: [evidence/d2-ai-agent-story.md](evidence/d2-ai-agent-story.md)_
 
@@ -148,9 +148,9 @@ Each competitor is heading in a distinct direction, and none is converging on th
 
 **Obsidian** will not add collaboration, embedded AI, enterprise features, or venture capital. The tagline "A second brain, for you, forever" is doing precise work: singular, personal, durable. The CEO's approach to AI (teach agents formats via skills files) is deliberate philosophy, not inaction. The 18-person bootstrapped team cannot pursue collaboration, AI, enterprise, and developer experience simultaneously.
 
-**Mintlify** is the most aggressive AI infrastructure play. The Trieve (RAG) and Helicone (LLM observability) acquisitions signal ambition to become the "Cloudflare of AI knowledge." However, its product surface remains narrowly focused on developer documentation. The broader "knowledge platform" positioning is aspirational, not shipped.
+**Mintlify** is shipping fast and aggressively — passing the same execution test AFFiNE failed. A 2026-04-11 re-audit ([`../mintlify-strategic-deep-dive/`](../mintlify-strategic-deep-dive/)) found Mintlify shipped 20+ product improvements in a 9-day window (April 2–11), two acquisitions in 18 months (Trieve July 2025, Helicone March 2026), and a production-grade internal write pipeline (Daytona + OpenCode + Claude Opus 4.6) running Workflows, KB Agent, and the Enterprise Agent Job API. The "read-only MCP" framing is a **business moat choice, not a structural lock-in** — engineering distance to basic bidirectional MCP is **4–8 weeks**, to full co-creation MCP is **3–6 months**. The three-constraint profile (capital MODERATE, architecture NEGLIGIBLE, strategy MODERATE-HIGH) is fundamentally different from AFFiNE's tight-on-all-three shape, which is why Mintlify holds Tier 1 and AFFiNE does not. The "knowledge platform" positioning remains aspirational — the shipped product is a fast-improving docs-as-code SaaS, not an agent-native knowledge infrastructure. Cash runway is the binding constraint: ~$4–10M remaining with Series B likely needed in 2026.
 
-**AFFiNE** has explicitly announced a pivot to "AI knowledge base product" (v0.25.0), but execution so far is LLM-assisted editing, not agent-native knowledge management. The CRDT architecture could technically support agents as Yjs peers, but nothing in the product or communications suggests this direction.
+**AFFiNE** announced a pivot to "AI knowledge base product" at v0.25.0 (2025-10-13), but ~6 months later the execution picture is clear. A 2026-04-11 re-audit ([`../affine-strategic-deep-dive/`](../affine-strategic-deep-dive/)) found v0.26.0–v0.26.3 (Feb 2026) shipped **zero** new AI features, **one** MCP bug fix ("Fix MCP token cannot display"), and **four** infrastructure/self-host features (S3 compat, admin panel redesign, blob lazy-load, server sync); daily canary builds through April 10, 2026 continue the pattern. The de facto product direction is **enterprise self-host consolidation with LLM-assisted editing**, not agent-native knowledge management. Three mutually reinforcing constraints sustain this: **capital** (17+ months post-seed, ~21-person team, no Series A, enterprise tier incomplete), **architecture** (CRDT-binary canonical + documented-lossy markdown adapter + dormant BlockSuite downstream mirror), and **strategy** (product-bundled LLM suppresses ecosystem externalization — no SKILL.md-style distribution, no D8 equivalent, see D9). Each would be hard to unwind; together they are nearly locked.
 
 **Outline** is incrementally adding AI features (MCP shipped February 2026) but is structurally constrained by its one-person core team, BSL license, and no extensibility model.
 
@@ -164,7 +164,7 @@ Obsidian's plugin ecosystem is the deepest moat in the landscape. 2,736 communit
 
 Notion has no plugin model. The only extension point is the external API, which is constrained by the 3 req/s rate limit. Confluence is transitioning from Connect (deprecated, EOL December 2026) to Forge (serverless on Atlassian infra, 25-second runtime limit), creating developer churn.
 
-AFFiNE offers the most architecturally interesting extensibility story: BlockSuite is explicitly designed as a reusable toolkit (MIT-licensed npm packages) with custom block development via `defineBlockSchema`. However, the documentation has gaps and the ecosystem is nascent.
+AFFiNE was initially presented as offering the most architecturally interesting extensibility story: BlockSuite was marketed as a reusable toolkit (MIT-licensed npm packages) with custom block development via `defineBlockSchema`. A 2026-04-11 re-audit ([`../affine-strategic-deep-dive/`](../affine-strategic-deep-dive/)) found the "reusable toolkit" framing is aspirational in practice: `toeverything/blocksuite`'s `main` branch has had **zero commits since 2025-07-07**, published packages are version-fragmented (`@blocksuite/store@0.22.4` ~9 months stale, `@blocksuite/blocks@0.19.5` ~16 months stale), 1337+ pre-1.0 versions with no semver majors and no CHANGELOG tracking breaking changes, and zero non-AFFiNE production adopters exist. The `defineBlockSchema` API is CRDT-native and functional but lacks the versioning discipline an external consumer needs. BlockSuite is operationally a dormant downstream mirror of AFFiNE rather than a living framework.
 
 Outline and Mintlify have no plugin or extension models. Outline's maintainer has not signaled interest in building one. Mintlify allows custom MDX components in-repo but has no marketplace or extension system.
 
@@ -220,6 +220,66 @@ This is the structural gap that defines open-knowledge's positioning. obsidian-s
 
 _Detailed evidence: [evidence/d8-obsidian-skills-agent-strategy.md](evidence/d8-obsidian-skills-agent-strategy.md)_
 
+### D9: AFFiNE's Agent-Distribution Audit (2026-04-11)
+
+Symmetric to the D8 deep-dive of Obsidian's agent-skills strategy, a 2026-04-11 audit asked whether AFFiNE has a structurally equivalent play — a SKILL.md-based, cross-agent-compatible format-teaching repo distributed via `npx skills add`, Claude Code plugin marketplace, and git clone.
+
+**Finding: NOT FOUND.** Confirmed via negative searches across all plausible distribution surfaces: no SKILL.md in the toeverything org, no `.claude-plugin/` directory in AFFiNE or BlockSuite repos, no `affine`/`blocksuite` entry in the `skills` npm registry or agentskills.io, no cursor-rules, no community repos for "affine agent skills" at meaningful scale.
+
+**Scale comparison:**
+
+| Project | Stars (2026-04-11) |
+|---|---|
+| `kepano/obsidian-skills` | 22,662 |
+| `DAWNCR0W/affine-mcp-server` (largest AFFiNE-AI community repo) | 140 |
+| `tomohiro-owada/affine-cli` | 9 |
+
+AFFiNE's agent-integration community is ~0.6% the scale of Obsidian's — roughly 162× smaller.
+
+**Why the gap is structural, not incidental:**
+
+1. **CRDT-binary canonical format is not agent-friendly.** `obsidian-skills` works because agents can `read` and `write` Obsidian's markdown files directly. AFFiNE agents need MCP orchestration through a documented-lossy adapter — no "open this file and edit it" path exists.
+2. **Product-bundled LLM strategy is ecosystem-suppressing.** AFFiNE sells in-product AI (BYOK + bundled models). Externalizing format intelligence via `SKILL.md` competes with in-product LLM-revenue capture. Same structural dynamic that prevents Notion from externalizing.
+3. **No CEO-scale distribution figure.** Obsidian has Steph Ango (`@kepano`) with a personal brand and a now-22.6K-star repo authority. AFFiNE's founder-CEO has no comparable community distribution engine, and community has not organically produced a substitute.
+
+**Implications for landscape positioning:**
+
+- The agent-format-distribution layer is owned by Obsidian. AFFiNE does not contest this surface and — per the structural constraints above — will not contest it organically.
+- This finding is the main driver of AFFiNE's re-classification from Tier 1 (Medium overlap) to Tier 3 (Low overlap) in Section 6 below. "Most technically capable potential entrant" overweighted technical capability; the updated analysis surfaces execution, economic, and ecosystem constraints that flip the threat framing.
+
+_Detailed evidence: [`../affine-strategic-deep-dive/`](../affine-strategic-deep-dive/) — particularly `evidence/d4-distribution-strategy.md` for the negative-search methodology and `REPORT.md` Section 4 (Synthesis) for the three-constraint framework._
+
+### D10: Mintlify's Agent-Distribution — The "Third Position" (2026-04-11)
+
+Symmetric to D8 (Obsidian) and D9 (AFFiNE), a 2026-04-11 audit ([`../mintlify-strategic-deep-dive/`](../mintlify-strategic-deep-dive/)) asked whether Mintlify has a SKILL.md-style centralized agent-format-distribution play. It does not — but for a different reason than AFFiNE.
+
+**Finding:** Mintlify occupies a **structurally different position** from both Obsidian (centralized 22,662-star curation) and AFFiNE (total absence). It distributes agent-readable formats via **decentralized auto-generation on top of standards it did not author**.
+
+Every Mintlify-hosted docs site auto-generates a `skill.md` conforming to [Anthropic's Agent Skills specification](https://agentskills.io), served at `/.well-known/skills/default/skill.md`. Content is product-specific (decision tables, capabilities, constraints) — not boilerplate. Discoverable by 35+ agents via the agentskills.io standard; installable via `npx skills add <docs-url>`. Regenerates on every deploy, customer-overridable.
+
+**But there is no centralized `mintlify-skills` repo.** The closest Mintlify-authored agent integration (`mintlify-claude-plugin`) has **1 GitHub star** — 22,662× smaller than `kepano/obsidian-skills`. Mintlify's largest community ecosystem repo (`remorses/holocron`, 535 stars) is an **OSS replacement**, not an extension — adversarial community energy rather than extensional.
+
+**Three-way distribution comparison:**
+
+| Dimension | Obsidian | Mintlify | AFFiNE |
+|---|---|---|---|
+| Distribution model | Centralized curation (1 repo, 5 skills) | Decentralized auto-generation (N per-site) | None |
+| What agents learn | Obsidian's proprietary format (universal) | Each customer's product/API (per-site) | Nothing |
+| Top ecosystem repo stars | 22,662 (kepano/obsidian-skills) | 1 (mintlify-claude-plugin); 535 (holocron — OSS replacement) | 140 (DAWNCR0W/affine-mcp-server) |
+| Standards authored | 0 (adopts Agent Skills) | 0 (adopts all four: llms.txt, CN, MCP, Skills) | 0 |
+| Community energy | Extensional (plugins, skills, themes) | Adversarial (OSS replacements) | Fragmentary |
+
+**Mintlify's moat is convenience bundling — and it is time-bound.** Mintlify is the **only platform auto-bundling all four "agents reading docs" standards** at deploy time. But it authored zero of them — llms.txt is [Jeremy Howard / Answer.AI](https://llmstxt.org), content negotiation is [IETF RFC 7763](https://datatracker.ietf.org/doc/html/rfc7763), MCP is [Anthropic](https://modelcontextprotocol.io), and Agent Skills is [Anthropic](https://github.com/anthropics/skills). Competitors are closing: [GitBook](https://www.gitbook.com/blog/new-in-gitbook-september-2025) matches on llms.txt + MCP auto-generation; Docusaurus community plugins cover llms.txt + MCP + content negotiation.
+
+**Implications for landscape positioning:**
+
+- Mintlify owns the "zero-config agents-reading-docs layer" *for now* — not by standards authorship, by faster integration.
+- The advantage compounds each week competitors fail to match the four-standard bundle, but erodes each week they do.
+- This is a materially different competitive posture than Obsidian's (format-authorship moat via centralized curation) or AFFiNE's (absent). All three occupy distinct positions in the distribution layer — the landscape now has three strategic shapes, not two.
+- Mintlify's Tier-1 #1 ranking (see Section 6) is partially supported by this distribution moat, but the moat's time-bound nature means the ranking is vulnerable to competitor standards adoption.
+
+_Detailed evidence: [`../mintlify-strategic-deep-dive/`](../mintlify-strategic-deep-dive/) — particularly `evidence/d3-distribution-strategy.md` for standards-authorship audit and `REPORT.md` Section 3 D3 for the full three-way comparison._
+
 ---
 
 ## 4. Competitive Positioning Matrix
@@ -235,7 +295,7 @@ _Detailed evidence: [evidence/d8-obsidian-skills-agent-strategy.md](evidence/d8-
 | **OSS License** | Proprietary | Proprietary | Proprietary (free to use) | Proprietary | BSL 1.1 (source-available) | MIT | Apache 2.0 |
 | **Self-Hosted** | No | DC (EOL 2029) | Yes (local app) | No | Yes (Docker) | Yes (Docker) | Yes |
 | **Plugin Ecosystem** | None | Forge (transitioning) | 2,736 plugins | None | None | Nascent (BlockSuite) | Framework integrations |
-| **MCP Server** | Official (22 tools, R+W) | Official (11 tools, R+W) | Community (12+ servers) | Auto-generated (2 tools, R only) | First-party (R+W) | Community (76 tools, R+W) | Official (12 tools, R+W) |
+| **MCP Server** | Official (22 tools, R+W) | Official (11 tools, R+W) | Community (12+ servers) | Auto-generated R-only externally; 1P write pipeline internally (4–8wk to bidirectional) | First-party (R+W) | Community single-maintainer (~36 tools, R+W, no co-creation) | Official (12 tools, R+W) |
 | **Agent Identity / Attribution** | No | No | No | N/A | No | No | N/A |
 | **Zero LLM Compute** | No ($10/1K credits) | No (Rovo bundled) | Yes (no AI in product) | No (Claude, Trieve) | No (OpenAI) | No (multi-model) | No (Context-1) |
 
@@ -263,9 +323,9 @@ Ranked by likelihood and ability to compete in the agent-native knowledge platfo
 
 **Tier 1: Highest Threat (strategic proximity, resources to act)**
 
-1. **Mintlify** -- The most credible near-term threat. Already investing aggressively in AI infrastructure (Trieve, Helicone acquisitions), shipping auto-generated MCP and llms.txt on every site, and publicly positioning as "infrastructure for the agentic future." The gap: read-only MCP, docs-only product surface, no real-time collaboration, closed source. If Mintlify adds bidirectional MCP and broadens beyond docs, it becomes a direct competitor. Probability of overlap: **Medium-High**.
+1. **Mintlify** -- The most credible near-term threat. *Ranking re-grounded 2026-04-11 via [`../mintlify-strategic-deep-dive/`](../mintlify-strategic-deep-dive/)*. Already shipping aggressively (20+ product improvements in a 9-day April audit window), has absorbed two seed-stage YC acquisitions (Trieve July 2025, Helicone March 2026), and operates a production-grade internal write pipeline (Daytona + OpenCode + Claude Opus 4.6) through Workflows, KB Agent, and the Enterprise Agent Job API. **Key re-framing:** the original "if Mintlify adds bidirectional MCP" framing understated proximity — the engineering delta from existing read-only MCP to basic bidirectional MCP is **4–8 weeks**, and 6 of 7 agent co-creation primitives already score PARTIAL or better (contrast AFFiNE: NOT FOUND on 6 of 7). The genuine gate is business-case friction (customer docs are high-stakes; exclusive-writer positioning is a deliberate moat choice), not architecture. Persistent gaps: docs-only product surface, closed source, cash runway dependency (~$4–10M remaining, Series B likely in 2026), ecosystem ownership is *convenience bundling* of four standards Mintlify did not author (llms.txt, content negotiation, MCP, Agent Skills — see D10). Probability of overlap: **Medium-High** (holds — same ranking, different justification). Primary decision triggers: (a) if Mintlify ships bidirectional MCP externally, threat hardens; (b) if Series B downsized or delayed past Q3 2026, capital constraint tightens toward AFFiNE territory.
 
-2. **AFFiNE** -- The most technically capable potential entrant. Has CRDT infrastructure (BlockSuite/y-octo), MIT license, 67K GitHub stars, and an announced pivot to "AI knowledge base." The gap: CRDT binary (not markdown) is canonical, no agent-native primitives, underdocumented API, no new funding since October 2023. If AFFiNE exposed agents as Yjs peers with identity and attribution, and added a markdown serialization layer, it would be the closest competitor architecturally. Probability of overlap: **Medium**.
+2. **AFFiNE** -- *Downgraded to Tier 3 per 2026-04-11 re-audit (see new item #9 below and [`../affine-strategic-deep-dive/`](../affine-strategic-deep-dive/)). The original ranking ("most technically capable potential entrant," **Medium** probability) overweighted technical capability and announced pivot; the updated analysis weights execution, economics, and ecosystem structure — all of which flip the threat framing. Current probability of overlap:* **Low**.
 
 **Tier 2: Moderate Threat (partial overlap, significant barriers)**
 
@@ -282,6 +342,8 @@ Ranked by likelihood and ability to compete in the agent-native knowledge platfo
 7. **Outline** -- Has collaboration maturity (Y.js CRDT) and MCP. But ProseMirror JSON canonical format, BSL license, no extensibility model, and one-person core team constrain its trajectory. Probability of overlap: **Low**.
 
 8. **Chroma** -- Different category entirely (retrieval infrastructure, not knowledge platform). Would need to build an entirely new product surface to compete. More likely to be complementary infrastructure. Probability of overlap: **Very Low**.
+
+9. **AFFiNE** -- *Reclassified from Tier 1 on 2026-04-11.* The original Tier 1 framing ("most technically capable potential entrant") was load-bearing on claims that do not hold in 2026: BlockSuite is a dormant downstream mirror (zero commits on `main` since 2025-07-07, zero non-AFFiNE production adopters), the AI-KB pivot announced at v0.25.0 (2025-10-13) has shipped zero new AI features through v0.26.3 (Feb 2026), the sole MCP integration is a single-maintainer community server (`DAWNCR0W/affine-mcp-server`) with six of seven co-creation primitives absent, and there is no D8-equivalent agent-distribution play (see D9). Structurally constrained by 17+ months without new funding (~$18M seed total, ~21-person team, enterprise tier incomplete), a CRDT-binary canonical format that is not agent-friendly, and a product-bundled LLM strategy that suppresses ecosystem externalization. AFFiNE's axis of competition is enterprise self-host + rich collaborative editing, not agent-native knowledge management. Probability of overlap: **Low**. See [`../affine-strategic-deep-dive/`](../affine-strategic-deep-dive/) for full analysis.
 
 ---
 

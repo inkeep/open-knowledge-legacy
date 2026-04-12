@@ -1,0 +1,69 @@
+---
+title: MCP integration
+description: How the MCP server connects AI agents to your knowledge base — disk-only mode, Hocuspocus-connected mode, and available tools.
+---
+
+The Open Knowledge MCP server gives AI agents structured access to your knowledge base. It runs over stdio and works with any MCP-compatible editor.
+
+## Two operating modes
+
+The MCP server adapts its behavior based on whether the collaboration server is running. On startup, it probes `GET /api/agent-undo-status` with a 2-second timeout to detect the server.
+
+<Tabs items={["Disk-only mode", "Hocuspocus-connected mode"]}>
+<Tab value="Disk-only mode">
+Active when `open-knowledge start` is **not** running. This is the default experience after running `open-knowledge init`.
+
+- Workflow tools work normally -- agents use their native file I/O (Read, Edit, Grep) alongside the instructional workflow tools
+- Auto-generated catalogs in `.open-knowledge/catalogs/` are still maintained
+- Document tools (`write-document`, `edit-document`, etc.) are not available since there is no CRDT layer to route through
+</Tab>
+<Tab value="Hocuspocus-connected mode">
+Active when `open-knowledge start` **is** running.
+
+- All document tools become available -- writes go through the CRDT layer for real-time sync with the browser editor
+- Agents and humans can co-edit the same document simultaneously
+- Undo/redo tracks agent edits separately from human edits
+</Tab>
+</Tabs>
+
+## Tools reference
+
+| Tool | Mode | Description |
+|------|------|-------------|
+| `init-content` | Both | Bootstrap knowledge articles from the codebase |
+| `ingest` | Both | Capture an external source (URL or file) as raw reference material |
+| `research` | Both | Gather sources and write provisional research findings |
+| `write-document` | Connected | Write content to a document through the CRDT |
+| `edit-document` | Connected | Edit an existing document through the CRDT |
+| `list-documents` | Connected | List all documents in the knowledge base |
+| `undo-agent-edit` | Connected | Undo the last agent edit |
+| `redo-agent-edit` | Connected | Redo the last undone agent edit |
+
+<Callout type="info">
+Workflow tools (`init-content`, `ingest`, `research`) return instructional text that guides the agent through the workflow. The real work -- reading files, editing content, fetching URLs -- happens via the agent's native tools.
+</Callout>
+
+## Transport
+
+The MCP server uses stdio transport. stdout carries JSON-RPC messages; all diagnostics go to stderr. Each MCP client session spawns its own process:
+
+```bash
+npx @inkeep/open-knowledge mcp
+```
+
+## Mirrored catalogs
+
+The MCP server maintains auto-generated `INDEX.md` files in `.open-knowledge/catalogs/` that mirror the project's directory structure. These are rebuilt when content files change (500ms quiet period, 2s max debounce).
+
+Agents use these catalogs for navigation -- the MCP server's connect instructions tell agents to start with `.open-knowledge/catalogs/INDEX.md`.
+
+## Supported clients
+
+The MCP server works with any editor that supports the MCP standard:
+
+- Claude Code
+- Cursor
+- Windsurf
+- VS Code (with MCP extension)
+- Codex
+- Any editor implementing the MCP protocol
