@@ -102,18 +102,24 @@ export class ProviderPool {
 
       // Set up bidirectional observers once after first sync
       if (!entry.observerCleanup) {
-        const doc = provider.document;
-        const mdMgr = new MarkdownManager({ extensions: sharedExtensions });
-        entry.observerCleanup = setupObservers({
-          doc,
-          xmlFragment: doc.getXmlFragment('default'),
-          ytext: doc.getText('source'),
-          mdManager: mdMgr,
-          schema: editorSchema,
-          onSyncError: (direction, error) => {
-            console.warn(`[Sync] ${direction} failed for ${docName}:`, error.message);
-          },
-        });
+        try {
+          const doc = provider.document;
+          const mdMgr = new MarkdownManager({ extensions: sharedExtensions });
+          entry.observerCleanup = setupObservers({
+            doc,
+            xmlFragment: doc.getXmlFragment('default'),
+            ytext: doc.getText('source'),
+            mdManager: mdMgr,
+            schema: editorSchema,
+            onSyncError: (direction, error) => {
+              console.warn(`[Sync] ${direction} failed for ${docName}:`, error.message);
+            },
+          });
+        } catch (err) {
+          this.close(docName);
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`[ProviderPool] setupObservers init failed for ${docName}: ${msg}`);
+        }
       }
     };
     const onDisconnect = () => {
