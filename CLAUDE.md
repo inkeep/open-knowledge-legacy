@@ -181,6 +181,14 @@ Integration tests use per-test docNames via `createTestClient(port)` which auto-
 
 Client lifecycle is inside the test body via `try/finally` — NOT via `beforeEach/afterEach`. This is required for `test.concurrent()` correctness (the shared `let client` pattern races under concurrent mode).
 
+### Observer bridge coverage
+
+Changes to `observers.ts` (Observer A / Observer B / `applyUserDelta`) require **multi-client test coverage**, not just single-client tests. A remote peer's WYSIWYG edit can arrive as a Y.Text-only transaction during a local user's mid-sync on XmlFragment — this creates divergence states that single-client tests cannot reproduce. PR #43's multi-client test matrix proved this is a real production trigger. See the `applyUserDelta` JSDoc in `observers.ts` for the full explanation.
+
+### Playwright policy
+
+Playwright E2E tests run on every PR. The Playwright suite covers DOM-binding and user-interaction regressions that unit/integration tests cannot reach (e.g., TipTap NodeView rendering, CodeMirror key bindings, presence UI). Do not skip Playwright in CI; do not add Playwright tests for pure bridge-logic changes — those belong in `bridge-matrix.test.ts` and `observers.test.ts`.
+
 ## Concurrent Development — multi-agent local workflows
 
 This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:
