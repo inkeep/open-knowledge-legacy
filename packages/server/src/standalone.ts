@@ -430,6 +430,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       });
     });
 
+    // Capture doc names before the race so the timeout error can name the
+    // documents that failed to unload — actionable context for operators
+    // debugging hung flushes (and a hint for future rescue-buffer UX, OQ-P2-02).
+    const pendingDocNames = Array.from(hocuspocus.documents.keys());
+
     hocuspocus.closeConnections();
     hocuspocus.flushPendingStores();
 
@@ -437,7 +442,12 @@ export function createServer(options: ServerOptions): ServerInstance {
     const timeout = new Promise<void>((_, reject) => {
       timeoutId = setTimeout(() => {
         resolved = true;
-        reject(new Error(`flushAllStoresAndWait timeout after ${timeoutMs}ms`));
+        const stillLoaded = Array.from(hocuspocus.documents.keys());
+        reject(
+          new Error(
+            `flushAllStoresAndWait timeout after ${timeoutMs}ms — ${stillLoaded.length}/${pendingDocNames.length} docs did not unload: [${stillLoaded.join(', ')}]`,
+          ),
+        );
       }, timeoutMs);
     });
 

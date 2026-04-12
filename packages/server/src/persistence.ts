@@ -20,8 +20,11 @@ import { getSchema } from '@tiptap/core';
 import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { contentHash, registerWrite } from './file-watcher.ts';
+import { getLogger } from './logger.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import { commitWip, shadowGit } from './shadow-repo.ts';
+
+const log = getLogger('persistence');
 
 export interface PersistenceOptions {
   contentDir: string;
@@ -168,14 +171,19 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           `WIP auto-save ${new Date().toISOString()}`,
         );
         consecutiveGitFailures = 0;
-        console.log(
+        log.info(
+          { sha: sha.slice(0, 8), writer: defaultWriter.id },
           `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${defaultWriter.id}`,
         );
       } catch (e) {
         consecutiveGitFailures++;
-        console.error(`[persistence] Shadow commit failed (attempt ${consecutiveGitFailures}):`, e);
+        log.error(
+          { err: e, attempt: consecutiveGitFailures },
+          `[persistence] Shadow commit failed (attempt ${consecutiveGitFailures})`,
+        );
         if (consecutiveGitFailures >= 3) {
-          console.error(
+          log.error(
+            { attempt: consecutiveGitFailures },
             '[persistence] CRITICAL: Git auto-save has failed 3+ times. Version history is NOT being recorded.',
           );
         }
