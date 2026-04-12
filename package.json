@@ -40,8 +40,5 @@
   "overrides": {
     "@codemirror/state": "$@codemirror/state",
     "@codemirror/view": "$@codemirror/view"
-  },
-  "dependencies": {
-    "@uiw/codemirror-theme-github": "^4.25.9"
   }
 }
