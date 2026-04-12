@@ -4,6 +4,7 @@ import { buildSuggestionItems, type PageItem } from './wiki-link-suggestion';
 const pages: PageItem[] = [
   { docName: 'test-doc', title: 'Test Document' },
   { docName: 'release-notes', title: 'Release Notes' },
+  { docName: 'qa-source', title: 'QA Source File' },
 ];
 
 describe('buildSuggestionItems', () => {
@@ -13,6 +14,16 @@ describe('buildSuggestionItems', () => {
         kind: 'page',
         docName: 'test-doc',
         title: 'Test Document',
+      },
+    ]);
+  });
+
+  test('matches by docName when title differs', () => {
+    expect(buildSuggestionItems(pages, 'qa-source')).toEqual([
+      {
+        kind: 'page',
+        docName: 'qa-source',
+        title: 'QA Source File',
       },
     ]);
   });

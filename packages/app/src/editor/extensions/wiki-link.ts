@@ -9,6 +9,10 @@ import { WikiLinkView } from './WikiLinkView';
 import { createWikiLinkSuggestionPlugin } from './wiki-link-suggestion';
 
 export const WikiLink = BaseWikiLink.extend({
+  // Higher priority ensures the suggestion plugin's handleKeyDown fires before
+  // TipTap's base keymap (Enter → split block), so Enter completes a suggestion.
+  priority: 200,
+
   addNodeView() {
     return ReactNodeViewRenderer(WikiLinkView);
   },

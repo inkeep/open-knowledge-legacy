@@ -299,7 +299,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
       const frontmatter = getFrontmatter(doc);
       const md = prependFrontmatter(frontmatter, body);
 
-      if (lastSyncedXmlMd === md) return; // No change since last sync
+      if (lastSyncedXmlMd === md) {
+        return;
+      }
 
       const currentText = ytext.toString();
 
@@ -322,7 +324,6 @@ export function setupObservers(deps: ObserverDeps): () => void {
         return;
       }
 
-      console.log('[Observer A] sync tree→text');
       doc.transact(() => {
         if (currentText === lastSyncedXmlMd) {
           applyIncrementalDiff(ytext, currentText, md);
@@ -435,7 +436,6 @@ export function setupObservers(deps: ObserverDeps): () => void {
       const parsedJson = mdManager.parse(body);
       const pmNode = schema.nodeFromJSON(parsedJson);
 
-      console.log('[Observer B] sync text→tree');
       doc.transact(() => {
         const meta = { mapping: new Map(), isOMark: new Map() };
         updateYFragment(doc, xmlFragment, pmNode, meta);

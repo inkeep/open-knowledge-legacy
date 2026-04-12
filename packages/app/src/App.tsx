@@ -7,14 +7,17 @@ import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
 export function docNameFromHash(): string | null {
   const hash = window.location.hash;
   if (hash.startsWith('#/')) {
-    const docName = hash.slice(2);
+    const rest = hash.slice(2);
+    const qmark = rest.indexOf('?');
+    const docName = qmark >= 0 ? rest.slice(0, qmark) : rest;
     return docName || null;
   }
   return null;
 }
 
-export function hashFromDocName(docName: string): string {
-  return `#/${docName}`;
+export function hashFromDocName(docName: string, anchor?: string | null): string {
+  const base = `#/${docName}`;
+  return anchor ? `${base}?anchor=${encodeURIComponent(anchor)}` : base;
 }
 
 /** Syncs window.location.hash ↔ DocumentContext.openDocument, unidirectionally:

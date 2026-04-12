@@ -1,10 +1,6 @@
-export function toWikiLinkSlug(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
+
+export { toWikiLinkSlug };
 
 export function buildUnresolvedWikiLinkAttrs(query: string): {
   target: string;

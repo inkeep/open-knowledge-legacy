@@ -283,6 +283,42 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     };
   }, [editor, provider.document]);
 
+  // Scroll to a heading anchor after navigating from a wiki link.
+  // The anchor slug is encoded in the URL as ?anchor=<slug>. TiptapEditor is
+  // keyed by docName (see EditorArea), so this effect runs once per doc mount.
+  useEffect(() => {
+    const hash = window.location.hash;
+    const qmark = hash.indexOf('?');
+    const anchorRaw = qmark >= 0 ? new URLSearchParams(hash.slice(qmark + 1)).get('anchor') : null;
+    if (!anchorRaw) return;
+    const anchor = anchorRaw; // narrowed to string for closure
+
+    let attempts = 0;
+    let timeoutId: number | undefined;
+    let scrolled = false;
+
+    function tryScroll() {
+      if (scrolled) return;
+      const el = document.getElementById(anchor);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        scrolled = true;
+        provider.off('synced', tryScroll);
+      } else if (attempts < 20) {
+        attempts += 1;
+        timeoutId = window.setTimeout(tryScroll, 100);
+      }
+    }
+
+    // Try immediately (already synced) and again after sync if needed.
+    tryScroll();
+    provider.on('synced', tryScroll);
+    return () => {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      provider.off('synced', tryScroll);
+    };
+  }, [provider]);
+
   // Read frontmatter from Y.Doc metadata map (set by server persistence on load)
   useEffect(() => {
     const metaMap = provider.document.getMap('metadata');
