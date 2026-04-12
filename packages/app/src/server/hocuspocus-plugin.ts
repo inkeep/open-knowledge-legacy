@@ -199,8 +199,9 @@ export function hocuspocusPlugin(): Plugin {
         try {
           if (activeWatcher) {
             console.log('[hocuspocus] Unsubscribing previous file watcher (HMR restart)');
-            await activeWatcher.unsubscribe();
+            const prev = activeWatcher;
             activeWatcher = null;
+            await prev.unsubscribe();
           }
           activeWatcher = await startWatcher(
             CONTENT_DIR,

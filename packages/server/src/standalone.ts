@@ -1,18 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { Hocuspocus } from '@hocuspocus/server';
-import {
-  prependFrontmatter,
-  sharedExtensions,
-  stripFrontmatter,
-} from '@inkeep/open-knowledge-core';
-import { getSchema } from '@tiptap/core';
+import { prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { MarkdownManager } from '@tiptap/markdown';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { createContentFilter } from './content-filter.ts';
+import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { getLogger } from './logger.ts';
@@ -51,7 +46,6 @@ import {
 } from './shadow-repo.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
 
 export interface ServerOptions {
   port?: number;
@@ -94,6 +88,13 @@ export interface ServerInstance {
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
+  /**
+   * Names of subsystems that failed to initialize during boot.
+   * Read AFTER `await ready` for a stable list; reads before may return a partial result.
+   * Empty array means all subsystems initialized successfully.
+   * Possible values: `'shadow-repo'`, `'file-watcher'`, `'head-watcher'`.
+   */
+  readonly degraded: readonly string[];
 }
 
 export function createServer(options: ServerOptions): ServerInstance {
@@ -185,36 +186,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     return prependFrontmatter(frontmatter, body);
   }
 
-  /** Apply markdown content to Y.Doc with skipStoreHooks. */
-  function applyToDoc(docName: string, content: string): void {
-    const document = hocuspocus.documents.get(docName);
-    if (!document) return;
-    const { frontmatter, body } = stripFrontmatter(content);
-    const parsedJson = mdManager.parse(body);
-    const pmNode = schema.nodeFromJSON(parsedJson);
-    const xmlFragment = document.getXmlFragment('default');
-
-    document.transact(
-      () => {
-        const meta = { mapping: new Map(), isOMark: new Map() };
-        updateYFragment(document, xmlFragment, pmNode, meta);
-        const metaMap = document.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
-
-        const ytext = document.getText('source');
-        const currentText = ytext.toString();
-        if (currentText !== content) {
-          ytext.delete(0, currentText.length);
-          ytext.insert(0, content);
-        }
-      },
-      {
-        source: 'local',
-        skipStoreHooks: true,
-        context: { origin: 'file-watcher' },
-      } satisfies LocalTransactionOrigin,
-    );
-  }
+  /** Apply markdown content to Y.Doc — delegates to the shared throwing helper. */
+  const applyToDoc = (docName: string, content: string): void =>
+    applyExternalChange(hocuspocus, docName, content);
 
   /** Helper to extract docName from any DiskEvent variant. */
   function diskEventDocName(event: DiskEvent): string {
@@ -607,6 +581,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     return inflightDestroy;
   }
 
+  /** Subsystems that failed during initAsync — populated on catch, read after `await ready`. */
+  const degraded: string[] = [];
+
   /** Async initialization: shadow repo, file watcher, HEAD watcher. */
   async function initAsync(): Promise<void> {
     // Auto-initialize shadow repo if not provided
@@ -619,6 +596,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         );
       } catch (e) {
         log.error({ err: e }, '[server] shadow repo init failed');
+        degraded.push('shadow-repo');
       }
     }
 
@@ -636,6 +614,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           } catch (e2) {
             log.error({ err: e2 }, '[server] shadow repo reinit failed');
             shadowRef.current = undefined;
+            if (!degraded.includes('shadow-repo')) degraded.push('shadow-repo');
           }
         } else {
           log.error({ err: e }, '[server] shadow repo check failed (transient?)');
@@ -648,6 +627,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
     } catch (err) {
       log.error({ err }, '[server] disk bridge watcher failed to start');
+      degraded.push('file-watcher');
     }
 
     // Start HEAD watcher (only if project .git/ exists)
@@ -892,10 +872,11 @@ export function createServer(options: ServerOptions): ServerInstance {
       );
     } catch (err) {
       log.error({ err }, '[server] HEAD watcher failed to start');
+      degraded.push('head-watcher');
     }
   }
 
   const ready = initAsync();
 
-  return { hocuspocus, sessionManager, destroy, ready };
+  return { hocuspocus, sessionManager, destroy, ready, degraded };
 }

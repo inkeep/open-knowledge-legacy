@@ -20,7 +20,6 @@ import { existsSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { type AsyncSubscription, subscribe } from '@parcel/watcher';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
 import { isTrackedContent, rebuildMirroredCatalogs } from '../content/mirror-catalog.ts';
@@ -143,31 +142,70 @@ async function startCatalogWatcher(
 
   const { include, exclude } = config.content;
 
-  const subscription: AsyncSubscription = await subscribe(
-    projectDir,
-    (_err, events) => {
-      if (_err) {
-        console.error('[content-watcher]', _err);
-        return;
-      }
-      const hasRelevantChange = events.some((e) => {
-        const rel = relative(projectDir, e.path);
-        return isTrackedContent(rel, include, exclude);
-      });
-      if (hasRelevantChange) {
-        scheduleRebuild();
-      }
-    },
-    {
-      ignore: ['node_modules', '.git', '.claude'],
-    },
-  );
+  function onEvents(events: Array<{ path: string }>): void {
+    const hasRelevantChange = events.some((e) => {
+      const rel = relative(projectDir, e.path);
+      return isTrackedContent(rel, include, exclude);
+    });
+    if (hasRelevantChange) {
+      scheduleRebuild();
+    }
+  }
+
+  // Try @parcel/watcher, fall back to chokidar
+  let stopFn!: () => Promise<void>;
+  let parcel: typeof import('@parcel/watcher') | null = null;
+  try {
+    parcel = await import('@parcel/watcher');
+  } catch (err) {
+    console.warn(
+      '[content-watcher] @parcel/watcher import failed:',
+      err instanceof Error ? err.message : err,
+    );
+  }
+
+  if (parcel) {
+    try {
+      const subscription = await parcel.subscribe(
+        projectDir,
+        (_err, events) => {
+          if (_err) {
+            console.error('[content-watcher]', _err);
+            return;
+          }
+          onEvents(events);
+        },
+        { ignore: ['node_modules', '.git', '.claude'] },
+      );
+      stopFn = () => subscription.unsubscribe();
+    } catch (err) {
+      console.warn(
+        '[content-watcher] @parcel/watcher subscribe failed, using chokidar fallback:',
+        err,
+      );
+      parcel = null;
+    }
+  }
+
+  if (!parcel) {
+    const { watch } = await import('chokidar');
+    console.warn('[content-watcher] @parcel/watcher unavailable, using chokidar fallback');
+    const watcher = watch(projectDir, {
+      ignoreInitial: true,
+      ignored: ['**/node_modules/**', '**/.git/**', '**/.claude/**'],
+    });
+    watcher.on('error', (err) => console.error('[content-watcher] chokidar error:', err));
+    watcher.on('add', (path) => onEvents([{ path }]));
+    watcher.on('change', (path) => onEvents([{ path }]));
+    watcher.on('unlink', (path) => onEvents([{ path }]));
+    stopFn = () => watcher.close();
+  }
 
   return {
     stop: async () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       if (maxWaitTimer) clearTimeout(maxWaitTimer);
-      await subscription.unsubscribe();
+      await stopFn();
     },
   };
 }

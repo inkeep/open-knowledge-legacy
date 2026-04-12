@@ -169,7 +169,12 @@ function applyByPrefixSuffix(ytext: Y.Text, currentText: string, newText: string
 /**
  * Apply ONLY the user's delta to Y.Text, when Y.Text has diverged from the last
  * synced XmlFragment state. This is used in the race-condition path where another
- * source (agent, peer, file watcher) wrote to Y.Text between Observer A syncs.
+ * source wrote to Y.Text between Observer A syncs. Known triggers: agent writes
+ * (via `agent-write` origin), file-watcher disk events (via `file-watcher` origin),
+ * and — critically — a remote peer's WYSIWYG edit arriving as a Y.Text-only
+ * transaction while the local user is mid-sync on XmlFragment. This last trigger
+ * was observed empirically during PR #43's multi-client test matrix merge and is
+ * the reason single-client test coverage is insufficient for observer bridge changes.
  *
  * Strategy: compute the line-level diff between the old XmlFragment md and the new
  * XmlFragment md. For each added line, insert it at the corresponding line index in
