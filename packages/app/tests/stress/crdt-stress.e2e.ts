@@ -33,8 +33,7 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
   // 3. Navigate + open test-doc from sidebar (multi-doc arch requires explicit selection)
   await page.goto(BASE);
   await page.getByText('test-doc.md').click({ timeout: 10_000 });
-  // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-  await page.waitForFunction(() => Boolean((window as any).__activeProvider), {
+  await page.waitForFunction(() => Boolean(window.__activeProvider), {
     timeout: 15_000,
   });
   await page.waitForSelector('.ProseMirror');
@@ -54,17 +53,14 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
     // Wait for content to propagate to Y.Text
     await page.waitForFunction(
       (expected: number) =>
-        // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-        (window as any).__activeProvider?.document?.getText('source')?.toString()?.length >=
-        expected,
+        window.__activeProvider?.document?.getText('source')?.toString()?.length >= expected,
       FIXTURE.length - 200, // tolerance for whitespace normalization
       { timeout: 30_000 },
     );
 
     // Diagnostic: capture pre-undo state
     const preUndoState = await page.evaluate(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      const provider = (window as any).__activeProvider;
+      const provider = window.__activeProvider;
       const ytext = provider?.document?.getText('source');
       const frag = provider?.document?.getXmlFragment('default');
       return {
@@ -82,9 +78,7 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
 
     // Wait for Observer A to sync user typing to Y.Text
     await page.waitForFunction(
-      (m: string) =>
-        // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-        (window as any).__activeProvider?.document?.getText('source')?.toString()?.includes(m),
+      (m: string) => window.__activeProvider?.document?.getText('source')?.toString()?.includes(m),
       marker,
       { timeout: 10_000 },
     );
@@ -102,8 +96,7 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
     // Length-based check is robust: after undo, most agent content is removed.
     await page.waitForFunction(
       ([m, fixtureLen]: [string, number]) => {
-        // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-        const txt = (window as any).__activeProvider?.document?.getText('source')?.toString();
+        const txt = window.__activeProvider?.document?.getText('source')?.toString();
         // After undo: agent content should be substantially reduced.
         // Mixed-origin fragments (Observer A's diffLines creates sync-from-tree
         // items at line granularity that survive um.undo()) can leave residue.
@@ -117,8 +110,7 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
 
     // Diagnostic: capture post-undo state
     const postUndoState = await page.evaluate(() => {
-      // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-      const provider = (window as any).__activeProvider;
+      const provider = window.__activeProvider;
       const ytext = provider?.document?.getText('source');
       const frag = provider?.document?.getXmlFragment('default');
       return {
@@ -140,8 +132,7 @@ test('S6: multi-turn stress — large content + user edits + undos', async ({ pa
   expect(criticalErrors).toEqual([]);
 
   const finalState = await page.evaluate(() => {
-    // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-    const provider = (window as any).__activeProvider;
+    const provider = window.__activeProvider;
     return {
       ytext: provider.document.getText('source').toString(),
     };

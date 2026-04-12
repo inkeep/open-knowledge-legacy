@@ -10,7 +10,7 @@
  * `playwright.config.ts` `webServer` on VITE_PORT (or default 5173).
  */
 
-import { expect, test } from '@playwright/test';
+import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
@@ -19,7 +19,7 @@ const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
 // Helpers — thin wrappers around the editor's observable surface
 // ---------------------------------------------------------------------------
 
-async function resetEditor(page: import('@playwright/test').Page) {
+async function resetEditor(page: Page) {
   const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
   if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
   await page.reload({ waitUntil: 'networkidle' });
@@ -34,7 +34,7 @@ async function resetEditor(page: import('@playwright/test').Page) {
   });
 }
 
-async function getEditorState(page: import('@playwright/test').Page) {
+async function getEditorState(page: Page) {
   return page.evaluate(() => {
     const pm = document.querySelector('.ProseMirror');
     return {
@@ -48,7 +48,7 @@ async function getEditorState(page: import('@playwright/test').Page) {
   });
 }
 
-async function getMenuState(page: import('@playwright/test').Page) {
+async function getMenuState(page: Page) {
   return page.evaluate(() => {
     const menu = document.querySelector('[role="listbox"][aria-label="Slash commands"]');
     if (!menu) return { open: false } as const;
@@ -70,7 +70,7 @@ async function getMenuState(page: import('@playwright/test').Page) {
 }
 
 /** Walks up from the menu to the body-attached fixed-position popup div. */
-async function getPopupInfo(page: import('@playwright/test').Page) {
+async function getPopupInfo(page: Page) {
   return page.evaluate(() => {
     const menu = document.querySelector('[role="listbox"][aria-label="Slash commands"]');
     if (!menu) return null;
@@ -88,7 +88,7 @@ async function getPopupInfo(page: import('@playwright/test').Page) {
   });
 }
 
-async function getCursorRect(page: import('@playwright/test').Page) {
+async function getCursorRect(page: Page) {
   return page.evaluate(() => {
     const pm = document.querySelector('.ProseMirror');
     if (!pm) return null;

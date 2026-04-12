@@ -50,7 +50,7 @@ export class ProviderPool {
 
   constructor(maxSize = 10, wsUrl?: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
-    this.wsUrl = wsUrl ?? `ws://${globalThis.location?.host ?? 'localhost'}/collab`;
+    this.wsUrl = wsUrl ?? `ws://${location.host ?? 'localhost'}/collab`;
     this.recycleDebounceMs = recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
   }
 
