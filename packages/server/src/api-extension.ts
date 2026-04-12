@@ -24,6 +24,7 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import type { BacklinkIndex } from './backlink-index.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
@@ -58,6 +59,7 @@ export interface ApiExtensionOptions {
   shadowRef?: ShadowRef;
   projectRoot?: string;
   contentRoot?: string;
+  backlinkIndex?: BacklinkIndex;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -145,6 +147,15 @@ export function extractPageTitle(content: string, filename: string): string {
   return filename;
 }
 
+function isSafeDocName(docName: string): boolean {
+  return !(
+    docName.includes('..') ||
+    docName.startsWith('/') ||
+    docName.includes('\x00') ||
+    docName.includes('\\')
+  );
+}
+
 export function createApiExtension(options: ApiExtensionOptions): Extension {
   const {
     hocuspocus,
@@ -155,7 +166,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     shadowRef,
     projectRoot,
     contentRoot,
+    backlinkIndex,
   } = options;
+
+  function resolveDocPath(docName: string): string | null {
+    if (!isSafeDocName(docName)) return null;
+    const resolvedContentDir = resolve(contentDir);
+    const filePath = resolve(resolvedContentDir, `${docName}.md`);
+    if (!filePath.startsWith(`${resolvedContentDir}/`) && filePath !== resolvedContentDir) {
+      return null;
+    }
+    return filePath;
+  }
+
+  function readPageTitleForDocName(docName: string): string {
+    const filePath = resolveDocPath(docName);
+    if (!filePath || !existsSync(filePath)) return docName;
+    try {
+      return extractPageTitle(readFileSync(filePath, 'utf-8'), docName);
+    } catch {
+      return docName;
+    }
+  }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
@@ -357,6 +389,111 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       console.error('[document-list]', e);
       const message = e instanceof Error ? e.message : String(e);
       json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  async function handleBacklinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const docName = url.searchParams.get('docName');
+      if (!docName) {
+        json(res, 400, { ok: false, error: 'Missing docName parameter' });
+        return;
+      }
+      if (!isSafeDocName(docName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
+        source: entry.source,
+        title: readPageTitleForDocName(entry.source),
+        snippet: entry.snippet,
+      }));
+      json(res, 200, { ok: true, docName, backlinks });
+    } catch (e) {
+      console.error('[backlinks]', e);
+      json(res, 500, { ok: false, error: 'Failed to read backlinks' });
+    }
+  }
+
+  async function handleForwardLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const docName = url.searchParams.get('docName');
+      if (!docName) {
+        json(res, 400, { ok: false, error: 'Missing docName parameter' });
+        return;
+      }
+      if (!isSafeDocName(docName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      json(res, 200, { ok: true, docName, links: backlinkIndex.getForwardLinks(docName) });
+    } catch (e) {
+      console.error('[forward-links]', e);
+      json(res, 500, { ok: false, error: 'Failed to read forward links' });
+    }
+  }
+
+  async function handleOrphans(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const orphans = backlinkIndex.getOrphans([...getFileIndex().keys()]).map((docName) => ({
+        docName,
+        title: readPageTitleForDocName(docName),
+      }));
+      json(res, 200, { ok: true, orphans });
+    } catch (e) {
+      console.error('[orphans]', e);
+      json(res, 500, { ok: false, error: 'Failed to read orphan pages' });
+    }
+  }
+
+  async function handleHubs(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const rawLimit = url.searchParams.get('limit');
+      const limit = rawLimit ? Number.parseInt(rawLimit, 10) : 20;
+      const hubs = backlinkIndex.getHubs(Number.isFinite(limit) ? limit : 20).map((hub) => ({
+        docName: hub.docName,
+        title: readPageTitleForDocName(hub.docName),
+        count: hub.count,
+      }));
+      json(res, 200, { ok: true, hubs });
+    } catch (e) {
+      console.error('[hubs]', e);
+      json(res, 500, { ok: false, error: 'Failed to read hub pages' });
     }
   }
 
@@ -574,6 +711,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const doc = hocuspocus.documents.get('test-doc');
       if (doc) await hocuspocus.unloadDocument(doc);
       writeFileSync(resolve(contentDir, 'test-doc.md'), '', 'utf-8');
+      if (backlinkIndex) {
+        backlinkIndex.deleteDocument('test-doc');
+        void backlinkIndex.saveToDisk().catch(() => {});
+      }
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);
@@ -843,18 +984,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Missing docName parameter' });
         return;
       }
-      if (
-        docName.includes('..') ||
-        docName.startsWith('/') ||
-        docName.includes('\x00') ||
-        docName.includes('\\')
-      ) {
+      if (!isSafeDocName(docName)) {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
-      const resolvedContentDir = resolve(contentDir);
-      const filePath = resolve(resolvedContentDir, `${docName}.md`);
-      if (!filePath.startsWith(`${resolvedContentDir}/`) && filePath !== resolvedContentDir) {
+      const filePath = resolveDocPath(docName);
+      if (!filePath) {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
@@ -901,6 +1036,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
+    '/api/backlinks': handleBacklinks,
+    '/api/forward-links': handleForwardLinks,
+    '/api/orphans': handleOrphans,
+    '/api/hubs': handleHubs,
     '/api/pages': handlePages,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,

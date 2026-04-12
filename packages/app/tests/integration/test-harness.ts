@@ -64,7 +64,7 @@ export async function createTestServer(): Promise<TestServer> {
   writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
 
   const port = await getFreePort();
-  const { hocuspocus, destroy } = createServer({
+  const { hocuspocus, destroy, ready } = createServer({
     contentDir,
     quiet: true,
     debounce: 200,
@@ -116,6 +116,7 @@ export async function createTestServer(): Promise<TestServer> {
   await new Promise<void>((resolve) => {
     httpServer.listen(port, () => resolve());
   });
+  await ready;
 
   return {
     port,
@@ -231,11 +232,12 @@ export async function agentWriteMd(
   port: number,
   markdown: string,
   position: 'append' | 'prepend' | 'replace' = 'append',
+  docName = 'test-doc',
 ): Promise<void> {
   const res = await fetch(`http://localhost:${port}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown, position }),
+    body: JSON.stringify({ markdown, position, docName }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }

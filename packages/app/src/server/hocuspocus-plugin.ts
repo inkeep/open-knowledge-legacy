@@ -10,6 +10,7 @@ import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
+  BacklinkIndex,
   createApiExtension,
   createContentFilter,
   createExternalChangeHandler,
@@ -84,6 +85,11 @@ const contentFilter = createContentFilter({
   includePatterns: contentConfig.include,
   excludePatterns: contentConfig.exclude,
 });
+const backlinkIndex = new BacklinkIndex({
+  projectDir: PROJECT_ROOT,
+  contentDir: CONTENT_DIR,
+  contentFilter,
+});
 
 export const hocuspocus = new Hocuspocus({
   quiet: true,
@@ -94,6 +100,7 @@ export const hocuspocus = new Hocuspocus({
       contentDir: CONTENT_DIR,
       projectDir: PROJECT_ROOT,
       contentRoot: CONTENT_ROOT,
+      backlinkIndex,
     }).extension,
   ],
 });
@@ -113,6 +120,7 @@ hocuspocus.configuration.extensions.push(
     enableTestRoutes: true,
     projectRoot: PROJECT_ROOT,
     contentRoot: CONTENT_ROOT,
+    backlinkIndex,
   }),
 );
 
@@ -181,11 +189,25 @@ export function hocuspocusPlugin(): Plugin {
             CONTENT_DIR,
             async (event) => {
               if (event.kind === 'update' || event.kind === 'create') {
+                backlinkIndex.updateDocumentFromMarkdown(event.docName, event.content);
                 await handleExternalChange(event.docName, event.content);
+              } else if (event.kind === 'delete') {
+                backlinkIndex.deleteDocument(event.docName);
+              } else if (event.kind === 'rename') {
+                backlinkIndex.renameDocument(event.oldDocName, event.newDocName, event.content);
+              } else if (event.kind === 'conflict') {
+                backlinkIndex.updateDocumentFromMarkdown(event.docName, event.content);
               }
+              void backlinkIndex.saveToDisk().catch((err: unknown) => {
+                console.warn('[hocuspocus] Failed to persist backlink cache:', err);
+              });
             },
             contentFilter,
           );
+          backlinkIndex.rebuildFromDisk();
+          void backlinkIndex.saveToDisk().catch((err: unknown) => {
+            console.warn('[hocuspocus] Failed to persist startup backlink cache:', err);
+          });
           server.httpServer?.on('close', async () => {
             if (activeWatcher) {
               await activeWatcher.unsubscribe();

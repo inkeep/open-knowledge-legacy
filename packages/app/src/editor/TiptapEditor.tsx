@@ -307,7 +307,8 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
         el.scrollIntoView({ behavior: 'smooth', block: 'start' });
         scrolled = true;
         provider.off('synced', tryScroll);
-      } else if (attempts++ < 20) {
+      } else if (attempts < 20) {
+        attempts += 1;
         timeoutId = window.setTimeout(tryScroll, 100);
       }
     }
