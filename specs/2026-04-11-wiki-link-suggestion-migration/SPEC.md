@@ -69,7 +69,7 @@ The custom plugin also **lacks** what the slash command gained from migration:
 - Floating UI positioning via `computePosition` + `autoUpdate` + `flip` + `offset` + `size` (matching `slash-command.ts` pattern)
 - `--suggestion-menu-max-height` CSS variable driven by `size` middleware
 - Error boundary on wiki-link insertion (`try/catch` on `editor.chain()`)
-- Net line reduction (492 → ~280 estimated; savings smaller than initial plan because anchor mode's two-phase fetch and per-mode state add real complexity that Suggestion doesn't abstract away)
+- Modest line reduction (492 → ~375-400 estimated; ~20% savings). Arithmetic: remove state machine (`state.init`/`state.apply` ~40 lines), remove `rebuildFiltered`/`isLoading` helpers (~10 lines), compress `view()` mount plumbing (~45 lines saved against slash-command.ts's ~130-line render body; wiki-link has more per-mode branching + two fetchers + fallback handler + `onBeforeUpdate` for the mode-switch loading state, so savings are smaller). The architectural wins (Floating UI, error boundary, consistency) stand regardless of LOC.
 - Existing test file `wiki-link-suggestion.test.ts` keeps passing (tests `buildSuggestionItems` which remains a pure function)
 
 ---
@@ -141,9 +141,12 @@ This preserves the exact same trigger behavior as the current custom plugin — 
 **Target:** Suggestion's `items` callback supports `async` natively (`await items(...)` at source line 196). Both page-mode pages and anchor-mode headings are fetched lazily from the same callback. Closure state lives outside the `Suggestion()` config, shared between `items` and the `render` callbacks.
 
 ```ts
-// Closure state — declared inside addProseMirrorPlugins() but outside Suggestion()
+// Closure state — declared inside addProseMirrorPlugins() at the outer scope
+// enclosing both `items` and the factory passed to `render`. Both close over
+// the same frame so mutations in `items()` are visible to render callbacks.
 let cachedPages: PageItem[] = [];
 let pagesLoaded = false;
+let pagesInFlight: Promise<PageItem[]> | null = null;       // dedupe concurrent fetches
 let cachedHeadings = new Map<string, HeadingEntry[]>();
 let anchorFetchingFor: string | null = null;
 let fetchError: string | null = null;
@@ -152,7 +155,9 @@ items: async ({ query }) => {
   const { mode, pageTarget, anchorQuery } = parseQuery(query);
 
   if (mode === 'anchor') {
-    // Lazy-fetch headings for this pageTarget (cache per-docName)
+    // Lazy-fetch headings for this pageTarget (cache per-docName).
+    // `anchorFetchingFor` dedupes concurrent fetches for the same docName —
+    // matches the current implementation's ensureHeadings() guard.
     if (!cachedHeadings.has(pageTarget) && anchorFetchingFor !== pageTarget) {
       anchorFetchingFor = pageTarget;
       try {
@@ -169,24 +174,50 @@ items: async ({ query }) => {
     return buildAnchorItems(pageTarget, headings, anchorQuery);
   }
 
-  // Page mode
+  // Page mode — Promise-dedupe so fast keystrokes share one in-flight fetch.
+  // `pagesLoaded` only flips AFTER await resolves, so it cannot block concurrent
+  // invocations during the first fetch. Storing the Promise itself lets every
+  // caller await the same request.
   if (!pagesLoaded && !fetchError) {
-    try {
-      cachedPages = await fetchPages();
-      pagesLoaded = true;
-    } catch (err) {
-      pagesLoaded = true;
-      fetchError = 'Failed to load pages. You can still insert an unresolved link.';
-      console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
+    if (!pagesInFlight) {
+      pagesInFlight = fetchPages()
+        .then((pages) => {
+          cachedPages = pages;
+          pagesLoaded = true;
+          return pages;
+        })
+        .catch((err) => {
+          pagesLoaded = true;  // don't retry on error
+          fetchError = 'Failed to load pages. You can still insert an unresolved link.';
+          console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
+          return [];
+        })
+        .finally(() => {
+          pagesInFlight = null;
+        });
     }
+    await pagesInFlight;
   }
   return buildSuggestionItems(cachedPages, query);
 },
 ```
 
-**Loading state:** Suggestion's lifecycle (verified from source lines 189-209) is: `onBeforeStart` → `await items()` → `onStart`/`onUpdate`. The `onBeforeStart` callback fires BEFORE items are fetched — this is where we mount the menu with `loading: true`. When `items()` resolves, `onStart` fires with `props.items` already populated — this is where we transition to `loading: false`. Same pattern applies when `onUpdate` fires on query changes: Suggestion re-awaits `items()` for each query change before firing `onUpdate`, so we render `loading: true` before the call and update props to `loading: false` when the callback returns.
+**Loading state lifecycle:** Suggestion's full lifecycle (verified from source lines 189-209) is:
 
-**Per-mode loading label:** The menu component already branches on `mode` for the loading label ("Loading pages…" vs "Loading headings for <pageTarget>…"). The render lifecycle passes `mode`, `pageTarget`, `anchorQuery` as props before items resolve, using `parseQuery(state.query)` from `pluginKey.getState(view.state)`.
+1. `onBeforeStart(props)` fires on menu open (before the initial `items()` await)
+2. `onBeforeUpdate(props)` fires on every query change (before the re-running `items()` await)
+3. `await items({ editor, query })` — same callback runs for both open and change
+4. `onExit(props)` fires on exit (if `handleExit`)
+5. `onUpdate(props)` fires on query change (after `items()` resolves)
+6. `onStart(props)` fires on open (after `items()` resolves)
+
+The render callback therefore implements SIX hooks: `onBeforeStart`, `onBeforeUpdate`, `onStart`, `onUpdate`, `onKeyDown`, `onExit`.
+
+**Per-mode loading label:** The menu component branches on `mode` for the loading label ("Loading pages…" vs "Loading headings for <pageTarget>…"). Both `onBeforeStart` AND `onBeforeUpdate` must push `{loading, mode, pageTarget, anchorQuery}` into the renderer before `items()` resolves:
+
+- `onBeforeStart` — mount popup + ReactRenderer with `loading: true` (or `false` if already cached). Derive mode from `parseQuery(props.query)`.
+- `onBeforeUpdate` — mode switch path (page → anchor when user types `#`). Compute `loading` as: `mode === 'anchor' ? !cachedHeadings.has(pageTarget) : !pagesLoaded`. This matches the current `isLoading()` helper. Without this hook, the "Loading headings for <pageTarget>…" label would not render during the anchor-mode fetch — regressing R15.
+- `onStart` / `onUpdate` — items have resolved; update renderer with `loading: false` (or still `loading: true` if `fetchError` is set for page mode). `query`, `mode`, `pageTarget`, `anchorQuery` derived from `parseQuery(props.query)`.
 
 **Helper reuse:** Keep `parseQuery`, `filterPages`, `filterHeadings`, `buildSuggestionItems`, `buildAnchorItems`, `fetchPages`, `fetchHeadings` as top-level exported functions. They are pure (except the fetchers) and already unit-testable — the existing test file stays valid.
 
@@ -266,7 +297,7 @@ command: ({ editor, range, props: item }) => {
 },
 ```
 
-The fallback path (Enter with no item selected) depends on reading the plugin's own state. Since we pass `pluginKey: wikiLinkSuggestionKey` to Suggestion, `wikiLinkSuggestionKey.getState(editor.state)` returns Suggestion's internal state shape — verify the shape exposes `query` at the same key (it does — Suggestion's state interface at source line 60 includes `query: string`).
+The fallback path (Enter with no item selected) depends on reading the plugin's own state. Since we pass `pluginKey: wikiLinkSuggestionKey` to Suggestion, `wikiLinkSuggestionKey.getState(editor.state)` returns Suggestion's internal state shape. Verified shape (`node_modules/@tiptap/suggestion/dist/index.js` lines 221-234): `{ active: boolean, range: {from,to}, query: string | null, text: string | null, composing: boolean, dismissedRange, decorationId }`. `query` is `null` when inactive (lines 311-315), so always null-coalesce via `?? ''` before passing to `parseQuery`. The code snippet above already does this (`state?.query ?? ''`).
 
 ### 3.6 Atom deletion (Backspace/Delete when suggestion inactive)
 
@@ -295,11 +326,11 @@ The atom-deletion plugin is a ~30-line ProseMirror plugin with a `handleKeyDown`
 
 ### 3.7 Preserve WikiLinkSuggestionMenu component
 
-The menu component (`WikiLinkSuggestionMenu.tsx`) stays unchanged. It's already a pure render function receiving `items`, `query`, `selectedIndex`, `onSelect`, `loading`, `error`, `mode`, `pageTarget`, `anchorQuery` as props. All of these must be passed from the render lifecycle:
+The menu component (`WikiLinkSuggestionMenu.tsx`) stays unchanged. It's already a pure render function receiving `items`, `query`, `selectedIndex`, `onSelect`, `loading`, `error`, `mode`, `pageTarget`, `anchorQuery` as props. All of these must be passed from the render lifecycle (all six hooks: `onBeforeStart`, `onBeforeUpdate`, `onStart`, `onUpdate`, `onKeyDown`, `onExit`):
 
-- `query`, `mode`, `pageTarget`, `anchorQuery` — derived from `parseQuery(props.query)` at each render callback
-- `items`, `selectedIndex`, `onSelect` — from Suggestion's `props` directly
-- `loading` — closure state (see §3.3)
+- `query`, `mode`, `pageTarget`, `anchorQuery` — derived from `parseQuery(props.query ?? '')` at each render callback (null-guard because Suggestion's state `query` is null when inactive, though during render callbacks it should always be a string)
+- `items`, `selectedIndex`, `onSelect` — from Suggestion's `props` directly (empty items list in `onBeforeStart`/`onBeforeUpdate` before the `items()` await resolves)
+- `loading` — computed per-mode: `onBeforeStart`/`onBeforeUpdate` push `loading: true` when target cache is empty (`!pagesLoaded` for page mode, `!cachedHeadings.has(pageTarget)` for anchor mode); `onStart`/`onUpdate` push `loading: false`
 - `error` — closure state; passed only in page mode (`mode === 'page' ? fetchError : null`)
 
 Add the Floating UI CSS var to the listbox container: the component already uses `max-h-80` — change to `style={{ maxHeight: 'var(--suggestion-menu-max-height, 20rem)' }}` (20rem = 80 * 0.25rem to match the Tailwind default). Apply to both the listbox container and the loading/empty status containers so all render paths respect the constraint.
@@ -313,7 +344,7 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 1. Extract pure helpers to keep existing tests green: `parseQuery`, `filterPages`, `filterHeadings`, `buildSuggestionItems`, `buildAnchorItems` — these are already exported and unit-tested; ensure they remain top-level exports in the new module.
 2. Write the custom `wikiLinkMatcher` function (§3.2).
 3. Write the atom-deletion plugin (§3.6) — small, standalone, can be tested independently.
-4. Rewrite `wiki-link-suggestion.ts` using `Suggestion<WikiLinkSuggestionItem>()` with: custom matcher, per-mode async items (page + anchor), command handler with three kinds + fallback, Floating UI render lifecycle (§3.1, §3.3, §3.4, §3.5).
+4. Rewrite `wiki-link-suggestion.ts` using `Suggestion<WikiLinkSuggestionItem>()` with: custom matcher, per-mode async items (page + anchor) with `pagesInFlight` Promise-dedupe, command handler with three kinds + fallback, Floating UI render lifecycle with all six hooks — `onBeforeStart` (mount + loading state), `onBeforeUpdate` (mode-switch loading state), `onStart`/`onUpdate` (items resolved), `onKeyDown`, `onExit` (§3.1, §3.3, §3.4, §3.5).
 5. Update `WikiLinkSuggestionMenu.tsx` — swap `max-h-80` for Floating UI CSS var on all three render paths (listbox, loading, empty) (§3.7).
 6. Update `wiki-link.ts` registration — return `[Suggestion(...), wikiLinkAtomDeletionPlugin]` from `addProseMirrorPlugins`.
 7. Verify quality gates: `bun run check` (typecheck + lint + unit + integration + fidelity) — existing `wiki-link-suggestion.test.ts` must still pass since `buildSuggestionItems` is unchanged.
@@ -339,7 +370,9 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 - Update `WikiLinkSuggestionMenu.tsx` — add Floating UI CSS var (no prop changes)
 - Update `wiki-link.ts` registration — return two plugins from `addProseMirrorPlugins`
 - Add error boundary on insertion
-- Preserve all existing behavior from PR #42 + PR #53: page trigger, fuzzy filter, insert, loading, error, anchor mode, per-mode loading, per-mode empty state, atom deletion, fallback insertion from raw query
+- Preserve all existing behavior:
+  - **From PR #42 (original suggestion):** page trigger, fuzzy filter, insert, page-mode loading, page-mode error
+  - **From PR #53 (anchor mode):** anchor mode, per-mode loading label, per-mode empty state, atom deletion (Backspace/Delete on wikiLink), fallback insertion from raw query
 
 ### Out of Scope
 - Changes to `wiki-link.ts` mark extension (schema, serialization, NodeView)
@@ -411,7 +444,8 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 | D5 | Menu component: rewrite or update | **Update, no prop removal.** All existing props (`items`, `query`, `selectedIndex`, `onSelect`, `loading`, `error`, `mode`, `pageTarget`, `anchorQuery`) are load-bearing for per-mode rendering. Only add Floating UI CSS var. | DIRECTED | HIGH |
 | D6 | Atom deletion: keep in Suggestion's handleKeyDown or extract to separate plugin | **Extract to separate plugin.** Suggestion's `render().onKeyDown` only fires when a suggestion is active. Atom deletion must work when the menu is closed. Register as a second plugin alongside Suggestion. ~30-line ProseMirror plugin preserves the exact current behavior (including the `handleBackspace` interference comment from PR #53). | LOCKED | HIGH |
 | D7 | Anchor-mode fallback (Enter with no item selected) | **Read plugin state from `editor.state` inside `command`.** `wikiLinkSuggestionKey.getState(editor.state).query` gives the raw query. `parseQuery(query)` yields `{ mode, pageTarget, anchorQuery }`. Insert `{ target: pageTarget, anchor: anchorQuery.trim() || null }` when `mode === 'anchor'`. Preserves PR #53 fallback behaviour. | LOCKED | HIGH |
-| D8 | Per-mode loading label | **Pass `mode` + `pageTarget` as render-lifecycle props even in `onBeforeStart`.** Menu component already branches on mode for "Loading pages…" vs "Loading headings for <pageTarget>…" — requires these props before `items()` resolves. Derive from `parseQuery(state.query)` at each render callback. | LOCKED | HIGH |
+| D8 | Per-mode loading label on initial open AND mode switch | **Push `{loading, mode, pageTarget, anchorQuery}` in BOTH `onBeforeStart` (initial open) and `onBeforeUpdate` (mode switch when user types `#`).** Menu component already branches on mode for "Loading pages…" vs "Loading headings for <pageTarget>…" — requires these props before `items()` resolves. Derive from `parseQuery(props.query ?? '')` at each render callback. Without `onBeforeUpdate`, the loading label would not render during an anchor-mode fetch triggered mid-session (regressing R15). | LOCKED | HIGH |
+| D9 | Page-fetch concurrency: `pagesLoaded` flag vs Promise-dedupe | **Promise-dedupe via `pagesInFlight: Promise<PageItem[]> \| null`.** The current implementation calls `fetchPages()` exactly once in `view().update`'s `if (!renderer)` first-mount branch — guaranteed one fetch per menu open. The migration moves the fetch inside `items()`, which re-runs on every keystroke. A simple `!pagesLoaded` guard doesn't prevent concurrent fetches because the flag only flips after `await` resolves. Storing the Promise itself lets every in-flight caller share the same fetch. Anchor-mode fetch already uses `anchorFetchingFor` guard (parallel pattern). | LOCKED | HIGH |
 
 ---
 
@@ -420,11 +454,11 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 | # | Assumption | Confidence | Verification |
 |---|-----------|------------|-------------|
 | A1 | Custom `findSuggestionMatch` receives `$position` and its return type is `{ range, query, text } \| null` | **VERIFIED** | Read from source — the config parameter includes `$position` and the return matches our function signature. |
-| A2 | Suggestion's lifecycle callbacks (`onBeforeStart`, `onStart`, `onUpdate`, `onKeyDown`, `onExit`) work the same with a custom matcher | HIGH | The custom matcher only replaces the match detection. Lifecycle is independent of how the match was found. |
-| A3 | Loading state is communicated via `onBeforeStart` (loading=true) → `onStart`/`onUpdate` (loading=false, items populated) | **VERIFIED** | Source lines 189-209: `onBeforeStart` fires BEFORE `await items()`, `onStart`/`onUpdate` fire AFTER. |
-| A4 | `wikiLinkSuggestionKey.getState(editor.state)` returns Suggestion's state with `query: string` | HIGH | Suggestion's state interface (source line ~60) includes `query: string`. Verify once at implementation time by reading Suggestion's exported types. |
-| A5 | `items()` callback is re-awaited on every query change (not just initial open) | **VERIFIED** | Source line 196: `props.items = await items({ editor, query: state.query });` — called whenever `handleChange` or `handleStart` is true, i.e., on query change or open. |
-| A6 | Registering two plugins from `addProseMirrorPlugins` is supported and preserves priority | HIGH | TipTap/ProseMirror standard pattern. Order determines priority within a single extension's plugin set. |
+| A2 | Suggestion's lifecycle callbacks (`onBeforeStart`, `onBeforeUpdate`, `onStart`, `onUpdate`, `onKeyDown`, `onExit`) work the same with a custom matcher | HIGH | The custom matcher only replaces the match detection. Lifecycle is independent of how the match was found. |
+| A3 | Loading state is communicated via `onBeforeStart`/`onBeforeUpdate` (loading=true) → `await items()` → `onStart`/`onUpdate` (loading=false, items populated) | **VERIFIED** | Source lines 189-209: `onBeforeStart` fires BEFORE `await items()` on open, `onBeforeUpdate` fires BEFORE `await items()` on query change, `onStart`/`onUpdate` fire AFTER. All six hooks implemented. |
+| A4 | `wikiLinkSuggestionKey.getState(editor.state)` returns Suggestion's state shape `{ active, range, query: string \| null, text: string \| null, composing, dismissedRange, decorationId }` | **VERIFIED** | Source lines 221-234 (init) and 311-315 (apply). `query` is `string` when `active === true`, `null` when inactive. Always null-guard via `?? ''` before passing to `parseQuery`. |
+| A5 | `items()` callback is re-awaited on every query change (not just initial open) | **VERIFIED** | Source line 195-200: `props.items = await items({ editor, query: state.query });` — called whenever `handleChange` or `handleStart` is true, i.e., on query change or open. |
+| A6 | Registering two plugins from `addProseMirrorPlugins` is supported and preserves priority | **VERIFIED** | `@tiptap/core/dist/index.js` lines 3706-3708: `const proseMirrorPlugins = addProseMirrorPlugins(); plugins.push(...proseMirrorPlugins);` — Plugin[] spread preserves all. Extension `priority: 200` applies to all plugins returned. |
 
 ---
 
@@ -436,9 +470,10 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 | R2 | Suggestion's Escape handling conflicts with wiki-link's current behavior | Low | Medium | Suggestion handles Escape internally. Current behavior is the same (close menu). |
 | R3 | Backspace while suggestion ACTIVE: Suggestion's `onKeyDown` returning `false` for Backspace — does ProseMirror then run the atom-deletion plugin's Backspace handler? | Medium | Low | Both active and inactive paths must be preserved. When active: suggestion `onKeyDown` should return false for Backspace (passing through to default edit), atom-deletion plugin is registered but its handler returns false when suggestion is active (guard via `wikiLinkSuggestionKey.getState(view.state)?.active`). Test with R23. |
 | R4 | Anchor-mode fetch invalidation: user types `[[release-notes#`, fetch starts, then deletes back to `[[release-notes` — stale fetch resolves and sets `cachedHeadings.set('release-notes', ...)`. Benign (cache hit on re-entry). | Low | Low | No action needed — caching is per-docName and idempotent. |
-| R5 | Menu rendering `loading: true` with undefined `mode` before `onBeforeStart` resolves `parseQuery` | Low | Low | Always call `parseQuery(props.query)` at the start of each render callback and pass `mode`/`pageTarget`/`anchorQuery` before items resolve. |
+| R5 | Menu rendering `loading: true` with undefined `mode` before items resolve | Low | Low | Always call `parseQuery(props.query ?? '')` at the start of each render callback (`onBeforeStart`, `onBeforeUpdate`, `onStart`, `onUpdate`) and pass `mode`/`pageTarget`/`anchorQuery` before items resolve. Loading-state transition on query change uses `onBeforeUpdate`, not `onUpdate` (see D8). |
 | R6 | Suggestion's `items()` rerun on every query change causes anchor fetch to fire in the `items` callback and also from the `onUpdate` side — race condition | Low | Medium | Fetch is guarded by `!cachedHeadings.has(pageTarget) && anchorFetchingFor !== pageTarget`. Second concurrent call short-circuits. The anchor fetch only lives in `items()` (not duplicated in render lifecycle like the current implementation). |
 | R7 | The 492-line custom plugin has subtle behaviours (e.g., `selectedIndex` clamping on items change, menu destroy-on-coordsAtPos-error) that aren't captured in test scenarios | Medium | Medium | Manual QA against current behaviour before/after. Compare screencasts side-by-side. The atom-deletion plugin extraction preserves the exact keyboard behaviour. |
+| R8 | Page-mode `fetchPages()` concurrent invocations on fast keystrokes | Medium | Low | `items()` re-runs on every query change; before `pagesLoaded` flips, multiple invocations can fire `fetchPages()` simultaneously. Mitigation: `pagesInFlight: Promise<PageItem[]> \| null` (see §3.3) — every in-flight caller awaits the same Promise. Matches the anchor-mode `anchorFetchingFor` guard pattern. Resolves D9. |
 
 ---
 

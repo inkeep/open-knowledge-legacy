@@ -44,3 +44,23 @@
 **Net line reduction revised:** 492 → ~280 (was 338 → ~180). Savings smaller because anchor mode's two-phase fetch and per-mode state add real complexity that Suggestion doesn't abstract away.
 
 **All decisions remain HIGH confidence, LOCKED or DIRECTED.** No ASSUMED items.
+
+## 2026-04-12 (later) — Audit + assess-findings pass on rebased spec
+
+**Trigger:** Re-ran `/audit` + `/assess-findings` after the rebase to verify the anchor-mode scope, new decisions (D6-D8), and new risks (R3-R7) hold against the current codebase @ `39fcd87`.
+
+**Audit results:** 8 findings (2 H, 3 M, 3 L), written to `meta/audit-findings-rebase.md`.
+
+**Assess-findings:** All 8 classified **Act** — none declined. Rationale: greenfield spec, all findings HIGH-confidence valid per source verification and algorithmic reasoning.
+
+**Resolutions applied:**
+- **H1 + M3 — `onBeforeUpdate` hook added.** Source line 192-193 shows `onBeforeUpdate` fires before `await items()` on query change (mode switches). Without it, typing `#` to enter anchor mode would drop the "Loading headings for <pageTarget>…" label — regressing R15. Added as the sixth lifecycle hook in §3.3, §3.7, §4 implementation order, A2, A3, D8, R5.
+- **H2 + D9 — Promise-dedupe for page fetch.** Current impl fires `fetchPages()` exactly once in `view().update`'s first-mount branch. Migration moves it inside `items()` which re-runs per keystroke. `!pagesLoaded` guard can't prevent concurrent fetches (flag only flips after await resolves). Added `pagesInFlight: Promise<PageItem[]> | null` to §3.3. New D9 decision. New R8 risk.
+- **M1 — `query: string | null`.** Suggestion's state has `query: null` when inactive (source lines 311-315). Updated A4 with full state shape. Sharpened §3.5 citation and removed wrong "source line 60" reference (L1).
+- **M2 — Line estimate revised 492 → ~375-400** (was ~280). Honest arithmetic in §2 Secondary.
+- **L2 — PR attribution tightened** in §6 In Scope: PR #42 original features separated from PR #53 additions.
+- **L3 — Evidence version-pinned** to `@tiptap/suggestion@3.22.3` (caret→exact), making future drift easier to catch.
+
+**Evidence updates:** Extended `evidence/suggestion-api-compatibility.md` with full six-hook lifecycle breakdown and a concrete timeline showing the concurrent-fetch race.
+
+**Spec is ready to ship.** All decisions HIGH confidence, LOCKED or DIRECTED. No ASSUMED items. No open audit findings.

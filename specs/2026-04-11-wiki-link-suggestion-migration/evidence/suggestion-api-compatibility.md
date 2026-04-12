@@ -1,10 +1,10 @@
 # Evidence: @tiptap/suggestion API compatibility with `[[` trigger
 
 **Date:** 2026-04-11
-**Updated:** 2026-04-12 — extended for PR #53 anchor-mode preservation
+**Updated:** 2026-04-12 — extended for PR #53 anchor-mode preservation + audit findings
 **Sources:**
-- `node_modules/@tiptap/suggestion/dist/index.js` (installed version matches `@tiptap/core@3.22.3`)
-- `packages/app/src/editor/extensions/wiki-link-suggestion.ts` @ `39fcd87` (492 lines, post-PR #53)
+- `node_modules/@tiptap/suggestion/dist/index.js` — **pinned version `@tiptap/suggestion@3.22.3`** (from `packages/app/package.json`). Line numbers below are valid for this exact version; minor version bumps may shift them.
+- `packages/app/src/editor/extensions/wiki-link-suggestion.ts` @ commit `39fcd87` (492 lines, post-PR #53)
 
 ## Finding: Built-in `char: '[[''` does NOT work for wiki-links
 
@@ -92,22 +92,29 @@ export function parseQuery(query: string): ParsedQuery {
 
 **Key point for the matcher:** `#` must NOT break the match. The regex `/\[\[([^\]]*)$/` excludes only `]` — it accepts `#` as part of the query. So `[[release-notes#ch` matches with `query = "release-notes#ch"`, which `parseQuery` then splits into `{ mode: 'anchor', pageTarget: 'release-notes', anchorQuery: 'ch' }`. No regex change needed.
 
-## Finding: Lifecycle order is `onBeforeStart` → `await items()` → `onStart`/`onUpdate`
+## Finding: Full lifecycle is `onBeforeStart`/`onBeforeUpdate` → `await items()` → `onExit` → `onUpdate` → `onStart`
 
 **Confidence:** CONFIRMED (source reading lines 189-209)
 
 ```js
-// Line 189-191: onBeforeStart called BEFORE items fetch
+// Line 189-191: onBeforeStart called BEFORE items fetch (open only)
 if (handleStart) {
   (_c = renderer?.onBeforeStart)?.call(renderer, props);
 }
+// Line 192-194: onBeforeUpdate called BEFORE items fetch (query change only)
+if (handleChange) {
+  (_d = renderer?.onBeforeUpdate)?.call(renderer, props);
+}
 
-// Lines 195-200: items() is awaited
+// Lines 195-200: items() is awaited (both open and change)
 if (handleChange || handleStart) {
   props.items = await items({ editor, query: state.query });
 }
 
-// Lines 204-209: onUpdate/onStart called AFTER items resolve
+// Lines 201-209: onExit/onUpdate/onStart called AFTER items resolve
+if (handleExit) {
+  (_e = renderer?.onExit)?.call(renderer, props);
+}
 if (handleChange) {
   (_f = renderer?.onUpdate)?.call(renderer, props);
 }
@@ -116,13 +123,35 @@ if (handleStart) {
 }
 ```
 
-This drives the loading-state design: mount popup in `onBeforeStart` with `loading: true`, swap to `loading: false` in `onStart`/`onUpdate` once items are available.
+This drives the loading-state design:
+- **Initial open:** `onBeforeStart` mounts popup with `loading: true`; `onStart` swaps to `loading: false`.
+- **Query change within same mode:** `onBeforeUpdate` pushes `loading: true` (if target cache is empty); `onUpdate` swaps to `loading: false`.
+- **Mode switch (page → anchor):** Triggered by typing `#`. `onBeforeUpdate` pushes `loading: true` with the new mode/pageTarget; `onUpdate` swaps to `loading: false` when headings resolve. **Without `onBeforeUpdate`, the "Loading headings for <pageTarget>…" label would not render during the fetch — regressing PR #53 behaviour.**
+
+The `onExit` call at line 201-203 fires only when `handleExit` is true (plugin state transitioned from active to inactive on this transaction). Used to tear down the popup + renderer.
 
 ## Finding: `items()` fires on every query change
 
 **Confidence:** CONFIRMED (source line 196)
 
 `await items({ editor, query: state.query })` runs whenever `handleChange || handleStart` is true — i.e., on open AND every subsequent query change. Anchor-mode fetching can live entirely inside `items()` because the callback re-fires as the user types `#`.
+
+## Finding: Page-mode `fetchPages` needs a Promise-dedupe guard in the migrated design
+
+**Confidence:** CONFIRMED (algorithmic reasoning + T1 reading current implementation lines 417-421)
+
+The current implementation fires `fetchPages()` exactly once per menu open — it lives inside `view().update`'s `if (!renderer)` first-mount branch (line 417). After the first fetch resolves, `pagesLoaded = true` is set and subsequent `view.update()` calls skip re-fetching.
+
+When the migration moves this fetch inside `items()`, the single-fetch guarantee is lost. Consider the timeline:
+
+- `t=0`: user types `[[`, `items()` call #1 starts. Sees `!pagesLoaded`. Fires `fetchPages()` → Promise P1.
+- `t=1ms`: user types `a`, Suggestion fires new transaction → `items()` call #2 starts. Sees `!pagesLoaded` (P1 hasn't resolved yet). Fires `fetchPages()` → Promise P2.
+- `t=150ms`: P1 resolves. `cachedPages = P1_result`, `pagesLoaded = true`.
+- `t=155ms`: P2 resolves. `cachedPages = P2_result`, `pagesLoaded = true` (already).
+
+Two network requests; second overwrites cache. Not catastrophic (both return the same data) but redundant and a regression from current behaviour.
+
+**Mitigation:** `let pagesInFlight: Promise<PageItem[]> | null = null;` — every concurrent call awaits the same Promise. Set `pagesInFlight = fetchPages().then(...).finally(() => { pagesInFlight = null; })` on first call; subsequent calls short-circuit to `await pagesInFlight`. This matches how anchor-mode fetch is already dedup'd via `anchorFetchingFor`.
 
 ## Finding: Existing closure state maps 1:1 to new architecture
 
