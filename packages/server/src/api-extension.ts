@@ -27,7 +27,7 @@ import {
   syncTextToFragment,
 } from './agent-sessions.ts';
 import type { BacklinkIndex } from './backlink-index.ts';
-import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher';
+import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
 import { deleteReconciledBase, safeContentPath } from './persistence.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
@@ -60,7 +60,7 @@ export function isValidRelativeContentPath(path: string): boolean {
 
   return path
     .split('/')
-    .every((segment) => segment.length > 0 && segment !== '.' && segment !== '..');
+    .every((segment) => segment && segment !== '.' && segment !== '..');
 }
 
 export function listAffectedDocNames(

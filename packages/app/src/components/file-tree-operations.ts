@@ -17,9 +17,7 @@ export function normalizeRenameValue(kind: TreeNode['kind'], value: string): str
 
 export function isValidNodeName(value: string): boolean {
   return (
-    value.length > 0 &&
-    value !== '.' &&
-    value !== '..' &&
+    !['', '.', '..'].includes(value) &&
     !value.includes('/') &&
     !value.includes('\\') &&
     !value.includes('\x00')
