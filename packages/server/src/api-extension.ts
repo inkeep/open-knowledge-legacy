@@ -20,13 +20,13 @@ import {
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
-<<<<<<< HEAD
-import { ALLOWED_IMAGE_MIME_TYPES } from '@inkeep/open-knowledge-core';
+import {
+  ALLOWED_IMAGE_MIME_TYPES,
+  type HeadingEntry,
+  toWikiLinkSlug,
+} from '@inkeep/open-knowledge-core';
 import busboy from 'busboy';
 import { fileTypeFromBuffer } from 'file-type';
-=======
-import { type HeadingEntry, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
->>>>>>> 47e858b0e76d45976d560bf5a6a5c9741b0d399c
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
