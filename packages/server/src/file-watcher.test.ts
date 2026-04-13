@@ -635,4 +635,59 @@ describe('startWatcher symlink handling', () => {
 
     expect(isSelfWrite(targetPath, hash)).toBe(true);
   });
+
+  test('classifyEvents live-resolves symlink created post-startup and updates aliasMap', async () => {
+    // Simulate a symlink that appears AFTER the watcher's startup walk — i.e.
+    // the aliasMap is empty but the path on disk is a live symlink. The watcher
+    // should lstat, realpath, populate the aliasMap, and emit the canonical
+    // docName on the resulting DiskEvent.
+    const targetPath = resolve(contentDir, 'new-target.md');
+    const linkPath = resolve(contentDir, 'new-link.md');
+    writeFileSync(targetPath, '# Target\n');
+    symlinkSync(targetPath, linkPath);
+
+    const aliasMap = new Map<string, string>();
+
+    const events = await classifyEvents(
+      [{ type: 'create', path: linkPath }],
+      contentDir,
+      undefined,
+      aliasMap,
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('create');
+    if (events[0].kind === 'create') {
+      expect(events[0].docName).toBe('new-target');
+    }
+    expect(aliasMap.get('new-link')).toBe('new-target');
+  });
+
+  test('classifyEvents re-resolves a repointed symlink and updates aliasMap', async () => {
+    // Symlink was originally pointing to old-target.md; now it's been repointed
+    // to fresh-target.md. The watcher should detect the change on the next
+    // event and update its aliasMap entry.
+    const oldTargetPath = resolve(contentDir, 'old-target.md');
+    const newTargetPath = resolve(contentDir, 'fresh-target.md');
+    const aliasPath = resolve(contentDir, 'alias.md');
+    writeFileSync(oldTargetPath, '# Old\n');
+    writeFileSync(newTargetPath, '# Fresh\n');
+    symlinkSync(newTargetPath, aliasPath);
+
+    // aliasMap is stale — still points to the old canonical
+    const aliasMap = new Map<string, string>([['alias', 'old-target']]);
+
+    const events = await classifyEvents(
+      [{ type: 'update', path: aliasPath }],
+      contentDir,
+      undefined,
+      aliasMap,
+    );
+
+    expect(events).toHaveLength(1);
+    if (events[0].kind === 'update') {
+      expect(events[0].docName).toBe('fresh-target');
+    }
+    expect(aliasMap.get('alias')).toBe('fresh-target');
+  });
 });

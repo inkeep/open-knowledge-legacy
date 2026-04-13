@@ -144,7 +144,7 @@ export async function classifyEvents(
   rawEvents: RawFileEvent[],
   contentDir: string,
   contentFilter?: ContentFilter,
-  aliasMap?: ReadonlyMap<string, string>,
+  aliasMap?: Map<string, string>,
 ): Promise<DiskEvent[]> {
   const deletes: RawFileEvent[] = [];
   const creates: RawFileEvent[] = [];
@@ -203,7 +203,43 @@ export async function classifyEvents(
 
   function resolveDocName(rawPath: string): string {
     const raw = pathToDocName(rawPath, contentDir);
-    return aliasMap?.get(raw) ?? raw;
+    if (!aliasMap) return raw;
+
+    // Live lstat + realpath for unknown paths (new symlinks post-startup)
+    // or repointed aliases (existing alias whose target changed).
+    let lst: ReturnType<typeof lstatSync> | null = null;
+    try {
+      lst = lstatSync(rawPath);
+    } catch {
+      // Path gone — fall back to known-alias lookup
+      return aliasMap.get(raw) ?? raw;
+    }
+
+    if (!lst.isSymbolicLink()) {
+      // Regular file: if it was previously an alias that got replaced, clear the stale entry
+      if (aliasMap.has(raw)) aliasMap.delete(raw);
+      return raw;
+    }
+
+    // Symlink: resolve canonical, update aliasMap (handles both new and repointed)
+    let canonical: string;
+    try {
+      canonical = realpathSync(rawPath);
+    } catch {
+      // Broken symlink — drop the stale alias if any and return raw
+      aliasMap.delete(raw);
+      return raw;
+    }
+
+    if (!isWithinContentDir(canonical, contentDir)) {
+      aliasMap.delete(raw);
+      return raw;
+    }
+
+    const canonicalDocName = pathToDocName(canonical, contentDir);
+    if (canonicalDocName === raw) return raw;
+    aliasMap.set(raw, canonicalDocName);
+    return canonicalDocName;
   }
 
   const results: DiskEvent[] = [];
@@ -514,7 +550,7 @@ async function handleRawEvents(
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
-  aliasMap?: ReadonlyMap<string, string>,
+  aliasMap?: Map<string, string>,
 ): Promise<void> {
   const mdEvents = rawEvents.filter((e) => e.path.endsWith('.md'));
   if (mdEvents.length === 0) return;
@@ -555,7 +591,7 @@ async function startParcelWatcher(
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
-  aliasMap: ReadonlyMap<string, string>,
+  aliasMap: Map<string, string>,
 ): Promise<AsyncSubscription | null> {
   let parcel: typeof import('@parcel/watcher');
   try {
@@ -610,7 +646,7 @@ async function startChokidarWatcher(
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
-  aliasMap: ReadonlyMap<string, string>,
+  aliasMap: Map<string, string>,
 ): Promise<AsyncSubscription> {
   const { watch } = await import('chokidar');
   console.warn('[file-watcher] @parcel/watcher unavailable, using chokidar fallback');
