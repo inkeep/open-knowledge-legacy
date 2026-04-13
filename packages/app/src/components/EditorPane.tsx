@@ -1,6 +1,7 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
 import { PageListProvider } from './PageListContext';
@@ -17,6 +18,7 @@ export function EditorPane() {
   const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
+  const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -113,10 +115,13 @@ export function EditorPane() {
         restoreError={restoreError}
         onExitPreview={handleExitPreview}
         onRestore={handleRestore}
+        diffLayout={diffLayout}
+        onDiffLayoutChange={setDiffLayout}
       />
       <EditorArea
         editorMode={editorMode}
         previewEntry={previewEntry}
+        diffLayout={diffLayout}
         onNoDiff={handleExitPreview}
       />
       <TimelinePanel

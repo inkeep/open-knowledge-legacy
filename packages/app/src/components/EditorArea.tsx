@@ -1,4 +1,4 @@
-import type { DiffLine, TimelineEntry } from '@inkeep/open-knowledge-core';
+import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
@@ -9,27 +9,33 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
+import type { DiffLayout } from './DiffView';
+import { DiffView } from './DiffView';
 import type { EditorMode } from './EditorPane';
-import { PreviewEditor } from './PreviewEditor';
 
 interface EditorAreaProps {
   editorMode: EditorMode;
   previewEntry: TimelineEntry | null;
+  diffLayout: DiffLayout;
   onNoDiff?: () => void;
 }
 
-export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaProps) {
+export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
   const { activeDocName, activeProvider } = useDocumentContext();
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const [diffLines, setDiffLines] = useState<DiffLine[] | null>(null);
+  // FUTURE: The diff is a snapshot fetched once. If the document changes while
+  // the user is in diff mode (e.g., agent writes), the diff view becomes stale.
+  // @codemirror/merge supports incremental updates via Chunk.updateA()/updateB()
+  // — a future iteration could subscribe to Y.Text changes and live-update the
+  // "current" side of the diff. For v0 (solo + AI) this is acceptable as-is.
+  const [oldContent, setOldContent] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
-  // Fetch diff when previewEntry changes — always show the diff view.
   useEffect(() => {
     if (!previewEntry?.sha || !activeDocName) {
-      setDiffLines(null);
+      setOldContent(null);
       return;
     }
 
@@ -37,44 +43,42 @@ export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaPro
     const sha = previewEntry.sha;
     const docName = activeDocName;
     setPreviewLoading(true);
-    setDiffLines(null);
+    setOldContent(null);
 
-    async function fetchDiff() {
+    async function fetchHistoricalContent() {
       try {
-        const res = await fetch(`/api/diff?docName=${encodeURIComponent(docName)}&to=${sha}`);
+        const res = await fetch(`/api/history/${sha}?docName=${encodeURIComponent(docName)}`);
         if (cancelled) return;
         if (!res.ok) {
-          setDiffLines([{ type: 'unchanged' as const, text: '(Failed to load diff)' }]);
+          setOldContent(null);
           setPreviewLoading(false);
           return;
         }
-        const data = (await res.json()) as {
-          lines: DiffLine[];
-          additions: number;
-          deletions: number;
-        };
+        const data = (await res.json()) as { content: string };
         if (!cancelled) {
-          if (data.additions === 0 && data.deletions === 0) {
+          const historical = data.content ?? '';
+          const current = activeProvider?.document.getText('source').toString() ?? '';
+          if (historical === current) {
             setPreviewLoading(false);
             onNoDiff?.();
             return;
           }
-          setDiffLines(data.lines ?? []);
+          setOldContent(historical);
           setPreviewLoading(false);
         }
       } catch {
         if (!cancelled) {
-          setDiffLines([{ type: 'unchanged' as const, text: '(Failed to load diff)' }]);
+          setOldContent(null);
           setPreviewLoading(false);
         }
       }
     }
 
-    fetchDiff();
+    fetchHistoricalContent();
     return () => {
       cancelled = true;
     };
-  }, [previewEntry?.sha, activeDocName, onNoDiff]);
+  }, [previewEntry?.sha, activeDocName, activeProvider, onNoDiff]);
 
   if (!activeProvider || !activeDocName) {
     return (
@@ -86,6 +90,7 @@ export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaPro
 
   const isDiffMode = editorMode === 'diff';
   const isSourceMode = editorMode === 'source';
+  const newContent = activeProvider.document.getText('source').toString();
 
   return (
     // Wrapper div takes flex-1 in the flex-col SidebarInset, giving ResizablePanelGroup
@@ -108,8 +113,8 @@ export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaPro
                   <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
                 </div>
               )}
-              {isDiffMode && !previewLoading && diffLines !== null && (
-                <PreviewEditor lines={diffLines} />
+              {isDiffMode && !previewLoading && oldContent !== null && (
+                <DiffView oldContent={oldContent} newContent={newContent} layout={diffLayout} />
               )}
 
               {/* CSS-based show/hide — display:none keeps DOM alive without triggering

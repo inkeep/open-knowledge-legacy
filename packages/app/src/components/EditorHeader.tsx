@@ -1,5 +1,5 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { Clock, Save } from 'lucide-react';
+import { Clock, Columns2, Rows2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -7,6 +7,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { PresenceBar } from '@/presence/PresenceBar';
+import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
@@ -24,6 +25,8 @@ interface EditorHeaderProps {
   restoreError: string | null;
   onExitPreview: () => void;
   onRestore: () => void;
+  diffLayout: DiffLayout;
+  onDiffLayoutChange: (layout: DiffLayout) => void;
 }
 
 export function EditorHeader({
@@ -37,6 +40,8 @@ export function EditorHeader({
   restoreError,
   onExitPreview,
   onRestore,
+  diffLayout,
+  onDiffLayoutChange,
 }: EditorHeaderProps) {
   const { activeDocName } = useDocumentContext();
 
@@ -88,7 +93,7 @@ export function EditorHeader({
         </ToggleGroup>
       )}
 
-      {/* Diff mode: version label + controls */}
+      {/* Diff mode: version label + layout toggle + controls */}
       {isDiffMode && previewEntry && !confirmingRestore && (
         <div className="flex items-center gap-2 shrink-0">
           <span
@@ -97,6 +102,31 @@ export function EditorHeader({
             {restoreError ||
               `Viewing: ${formatRelativeTime(previewEntry.timestamp)} — ${displayAuthor(previewEntry)}`}
           </span>
+          <ToggleGroup
+            type="single"
+            value={diffLayout}
+            onValueChange={(v) => {
+              if (v) onDiffLayoutChange(v as DiffLayout);
+            }}
+            aria-label="Diff layout"
+            variant="segmented"
+            size="sm"
+            spacing={1}
+            className="bg-muted dark:bg-background p-0.5 rounded-lg shrink-0"
+          >
+            <ToggleGroupItem
+              value="unified"
+              aria-label="Unified diff"
+              className="gap-1 text-xs px-2"
+            >
+              <Rows2 className="size-3.5" />
+              Unified
+            </ToggleGroupItem>
+            <ToggleGroupItem value="split" aria-label="Split diff" className="gap-1 text-xs px-2">
+              <Columns2 className="size-3.5" />
+              Split
+            </ToggleGroupItem>
+          </ToggleGroup>
           <Button variant="ghost" size="xs" onClick={() => setConfirmingRestore(true)}>
             Restore
           </Button>
