@@ -292,3 +292,117 @@ export const markdownDoc = fc
 export const markdownDocExtended = fc
   .array(blockExtended, { minLength: 1, maxLength: 5 })
   .map((blocks) => blocks.join('\n\n'));
+
+// ─── Combinatorial / structural edge cases ───
+// These generators produce NESTED and HALF-FORMED inputs that test feature
+// interactions — the class of bugs that live at the boundary between the
+// guard's flat-string view and the parser's structural view.
+
+/** Dangerous inline fragments: patterns that trigger guard logic. */
+export const dangerousInline = fc.oneof(
+  fc.constant('<'),
+  fc.constant('{'),
+  fc.constant('</'),
+  fc.constant('{{'),
+  fc.constant('<br>'),
+  fc.constant('<https://example.com>'),
+  fc.constant('[[Page]]'),
+  fc.constant('{expression}'),
+  fc.constant('{/* comment */}'),
+  safeWord.map((w) => `<${w}`), // unclosed lowercase tag
+  safeWord.map((w) => `{${w}`), // unclosed brace
+  safeWord.map((w) => `<${w.charAt(0).toUpperCase()}${w.slice(1)}`), // unclosed uppercase
+  phrase.map((p) => `<${p}>`), // closed but prose-like
+);
+
+/** Dangerous inline INSIDE a mark (emphasis, strong, strikethrough, code). */
+export const wrappedDangerous = fc
+  .tuple(
+    fc.constantFrom(
+      ['*', '*'],
+      ['**', '**'],
+      ['~~', '~~'],
+      ['`', '`'],
+    ),
+    dangerousInline,
+  )
+  .map(([[open, close], inner]) => `${open}${inner}${close}`);
+
+/** Dangerous inline adjacent to valid inline content. */
+export const mixedInlineDangerous = fc
+  .array(
+    fc.oneof(
+      { weight: 2, arbitrary: fc.oneof(phrase, bold, italic, inlineCode, link) },
+      { weight: 1, arbitrary: dangerousInline },
+      { weight: 1, arbitrary: wrappedDangerous },
+    ),
+    { minLength: 2, maxLength: 5 },
+  )
+  .map((parts) => parts.join(' '));
+
+/** Dangerous content inside a container (blockquote or list). */
+export const containerWithDangerous = fc
+  .tuple(
+    fc.constantFrom('> ', '- ', '1. '),
+    fc.array(
+      fc.oneof(dangerousInline, wrappedDangerous, phrase),
+      { minLength: 1, maxLength: 3 },
+    ),
+  )
+  .map(([prefix, parts]) => parts.map((p) => `${prefix}${p}`).join('\n'));
+
+/** Truncated constructs — half-typed patterns that a user would create mid-edit. */
+export const truncatedConstruct = fc.oneof(
+  // Unclosed paired JSX with body content
+  fc.tuple(
+    safeWord.map((n) => n.charAt(0).toUpperCase() + n.slice(1)),
+    phrase,
+  ).map(([name, body]) => `<${name}>${body}`),
+  // Unclosed code fence
+  fc.constantFrom('js', 'ts', 'python').chain((lang) =>
+    phrase.map((code) => `\`\`\`${lang}\n${code}`),
+  ),
+  // Unclosed container directive
+  safeWord.chain((name) => phrase.map((body) => `:::${name}\n${body}`)),
+  // Truncated link
+  phrase.map((text) => `[${text}](https://`),
+  // Truncated wiki link
+  safeWord.map((page) => `[[${page}`),
+  // Unclosed frontmatter followed by body
+  phrase.map((body) => `---\ntitle: test\n\n${body}`),
+  // Unclosed emphasis/strong
+  phrase.map((text) => `**${text}`),
+  phrase.map((text) => `*${text}`),
+);
+
+/** MDX component containing dangerous inline content. */
+export const mdxWithDangerousContent = fc
+  .tuple(
+    safeWord.map((n) => n.charAt(0).toUpperCase() + n.slice(1)),
+    fc.array(
+      fc.oneof(dangerousInline, phrase, bold, autolink, wikiLink),
+      { minLength: 1, maxLength: 3 },
+    ),
+  )
+  .map(([name, parts]) => `<${name}>\n\n${parts.join(' ')}\n\n</${name}>`);
+
+/** Interleaved constructs — valid blocks interspersed with dangerous/truncated ones. */
+export const interleavedDoc = fc
+  .array(
+    fc.oneof(
+      { weight: 2, arbitrary: block },
+      { weight: 1, arbitrary: truncatedConstruct },
+      { weight: 1, arbitrary: containerWithDangerous },
+      { weight: 1, arbitrary: mixedInlineDangerous },
+      { weight: 1, arbitrary: mdxWithDangerousContent },
+    ),
+    { minLength: 2, maxLength: 6 },
+  )
+  .map((blocks) => blocks.join('\n\n'));
+
+/** Deeply nested: blockquote containing list containing marks containing dangerous chars. */
+export const deeplyNested = fc
+  .tuple(dangerousInline, phrase, dangerousInline)
+  .map(
+    ([d1, text, d2]) => `> - **${text} ${d1}**\n> - *${d2} ${text}*`,
+  );
