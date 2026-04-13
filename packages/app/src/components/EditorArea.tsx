@@ -1,22 +1,30 @@
-import { lazy, Suspense, useState } from 'react';
+import { CornerDownLeft, CornerUpRight, ListTree } from 'lucide-react';
+import { useState } from 'react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
+import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
+import { OutlinePanel } from '@/components/OutlinePanel';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
+import { cn } from '@/lib/utils';
 
-const GraphView = lazy(() =>
-  import('@/components/GraphView').then((m) => ({ default: m.GraphView })),
-);
+type PanelTab = 'outline' | 'backlinks' | 'forward-links';
+
+const TABS: { id: PanelTab; label: string; Icon: typeof ListTree }[] = [
+  { id: 'outline', label: 'Outline', Icon: ListTree },
+  { id: 'backlinks', label: 'Backlinks', Icon: CornerDownLeft },
+  { id: 'forward-links', label: 'Forward Links', Icon: CornerUpRight },
+];
 
 interface EditorAreaProps {
   isSourceMode: boolean;
 }
 
-type SidebarTab = 'backlinks' | 'graph';
-
 export function EditorArea({ isSourceMode }: EditorAreaProps) {
   const { activeDocName, activeProvider } = useDocumentContext();
-  const [sidebarTab, setSidebarTab] = useState<SidebarTab>('backlinks');
+  const [activeTab, setActiveTab] = useState<PanelTab>('outline');
 
   if (!activeProvider || !activeDocName) {
     return (
@@ -29,7 +37,7 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
   return (
     <div className="flex min-h-0 flex-1">
       <div
-        className="min-h-0 flex-1 overflow-y-auto subtle-scrollbar"
+        className="subtle-scrollbar min-h-0 flex-1 overflow-y-auto"
         style={{ overflowAnchor: 'auto' }}
       >
         {/* CSS-based show/hide — React Activity runs effect cleanup on 'hidden' which destroys
@@ -46,45 +54,40 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
           <TiptapEditor key={activeDocName} provider={activeProvider} />
         </div>
       </div>
-      <aside className="hidden w-80 shrink-0 border-l border-border/60 bg-muted/20 lg:flex lg:flex-col">
-        <div className="flex shrink-0 border-b border-border/60" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebarTab === 'backlinks'}
-            onClick={() => setSidebarTab('backlinks')}
-            className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-              sidebarTab === 'backlinks'
-                ? 'bg-background text-foreground'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Backlinks
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={sidebarTab === 'graph'}
-            onClick={() => setSidebarTab('graph')}
-            className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
-              sidebarTab === 'graph'
-                ? 'bg-background text-foreground'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Graph
-          </button>
+
+      <aside className="hidden w-72 shrink-0 border-l border-border/60 bg-muted/20 lg:flex lg:flex-col">
+        <div
+          className="flex shrink-0 border-b border-border/60"
+          role="tablist"
+          aria-label="Document panels"
+        >
+          {TABS.map(({ id, label, Icon }) => (
+            <Tooltip key={id}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  role="tab"
+                  aria-selected={activeTab === id}
+                  aria-label={label}
+                  onClick={() => setActiveTab(id)}
+                  className={cn(
+                    'flex-1 rounded-none',
+                    activeTab === id ? 'bg-background text-foreground' : 'text-muted-foreground',
+                  )}
+                >
+                  <Icon className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">{label}</TooltipContent>
+            </Tooltip>
+          ))}
         </div>
+
         <div className="min-h-0 flex-1">
-          {sidebarTab === 'backlinks' ? (
-            <BacklinksPanel docName={activeDocName} />
-          ) : (
-            <Suspense
-              fallback={<div className="p-4 text-sm text-muted-foreground">Loading graph…</div>}
-            >
-              <GraphView activeDocName={activeDocName} />
-            </Suspense>
-          )}
+          {activeTab === 'outline' && <OutlinePanel docName={activeDocName} />}
+          {activeTab === 'backlinks' && <BacklinksPanel docName={activeDocName} />}
+          {activeTab === 'forward-links' && <ForwardLinksPanel docName={activeDocName} />}
         </div>
       </aside>
     </div>
