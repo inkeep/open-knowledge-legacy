@@ -48,6 +48,8 @@ export default defineConfig({
     //
     // Deduping every prosemirror-* package + yjs here is the canonical fix.
     dedupe: [
+      'react',
+      'react-dom',
       'prosemirror-changeset',
       'prosemirror-collab',
       'prosemirror-commands',
