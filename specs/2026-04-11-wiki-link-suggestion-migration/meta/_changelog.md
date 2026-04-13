@@ -64,3 +64,23 @@
 **Evidence updates:** Extended `evidence/suggestion-api-compatibility.md` with full six-hook lifecycle breakdown and a concrete timeline showing the concurrent-fetch race.
 
 **Spec is ready to ship.** All decisions HIGH confidence, LOCKED or DIRECTED. No ASSUMED items. No open audit findings.
+
+## 2026-04-12 (final) — Challenger pass on rebased spec + resolutions applied
+
+**Trigger:** Ran `/challenger` (design-challenge pass) + `/assess-findings` on the post-rebase spec. Prior challenger (pre-rebase) had flagged the "migrate vs incremental Floating UI" question; the rebase changed the LOC math so the question needed re-evaluation.
+
+**Challenger results:** 7 findings (2 H, 3 M, 2 L), written to `meta/design-challenge-rebase.md`.
+
+**Key finding (R1 + R2):** Prior H1 re-opened with sharper evidence — post-rebase savings 19-24% (was 47%), with 800 lines of churn on an actively-contributed file. Presented three options to user: (A) Floating UI only, (B) split into two PRs, (C) full migration as specced. **User chose Option C** — proceed with full migration, document the evaluation explicitly in a new D0 decision.
+
+**Resolutions applied:**
+- **R1 + R2 → D0 added:** "Whether to migrate at all" decision now explicitly recorded in §8 with the quantitative three-option comparison. Status: DIRECTED (user). Acknowledges 800 lines of one-PR churn and unsubstantiated "architectural alignment" value. Adds pre-merge coordination protocol to §11 to mitigate merge-conflict risk with mike-inkeep's ongoing wiki-link work.
+- **R3 → D6 changed to "spike then fallback":** Don't lock atom deletion into a separate plugin upfront. Try `addKeyboardShortcuts` on the wiki-link extension first; fall back to separate plugin only if interference reproduces. PR #53's interference rationale was context-specific and may not apply in the migrated world. Updated §4 implementation order to sequence the spike.
+- **R4 → D9 changed to flag-based:** Page-mode fetch dedupe is now `!pagesLoaded && !pagesFetching` (two-flag guard), matching anchor mode's `anchorFetchingFor` pattern. Rejected Promise-dedupe for asymmetry and +10 LOC. Updated §3.3 closure state, items() body, D9 rationale, R8 risk.
+- **R5 → `computeMenuProps` helper:** Added helper signature to §3.3 that all four render hooks (`onBeforeStart`, `onBeforeUpdate`, `onStart`, `onUpdate`) call to avoid duplicating `parseQuery` + mode + loading logic. Updated §4 implementation order.
+- **R6 → D0 covers this:** The "no D0 decision" finding resolved by adding D0.
+- **R7 → D0 rationale acknowledges no third consumer:** D0 explicitly notes architectural alignment is valued here even without a named next consumer on the roadmap.
+
+**Net spec changes:** D0 added, D6 scope changed (spike-first), D9 rationale flipped (Promise → flag), §3.3 body + helper added, §4 implementation order extended, §11 pre-merge coordination added.
+
+**Spec is ready to ship.** All decisions HIGH confidence, LOCKED/DIRECTED. No ASSUMED items. No open audit or challenger findings. All 7 challenger findings routed through `/assess-findings` and resolved in-scope.

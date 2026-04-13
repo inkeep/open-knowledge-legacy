@@ -146,9 +146,9 @@ This preserves the exact same trigger behavior as the current custom plugin — 
 // the same frame so mutations in `items()` are visible to render callbacks.
 let cachedPages: PageItem[] = [];
 let pagesLoaded = false;
-let pagesInFlight: Promise<PageItem[]> | null = null;       // dedupe concurrent fetches
+let pagesFetching = false;                                  // dedupe concurrent page fetches
 let cachedHeadings = new Map<string, HeadingEntry[]>();
-let anchorFetchingFor: string | null = null;
+let anchorFetchingFor: string | null = null;                // dedupe concurrent heading fetches (per docName)
 let fetchError: string | null = null;
 
 items: async ({ query }) => {
@@ -174,29 +174,25 @@ items: async ({ query }) => {
     return buildAnchorItems(pageTarget, headings, anchorQuery);
   }
 
-  // Page mode — Promise-dedupe so fast keystrokes share one in-flight fetch.
-  // `pagesLoaded` only flips AFTER await resolves, so it cannot block concurrent
-  // invocations during the first fetch. Storing the Promise itself lets every
-  // caller await the same request.
-  if (!pagesLoaded && !fetchError) {
-    if (!pagesInFlight) {
-      pagesInFlight = fetchPages()
-        .then((pages) => {
-          cachedPages = pages;
-          pagesLoaded = true;
-          return pages;
-        })
-        .catch((err) => {
-          pagesLoaded = true;  // don't retry on error
-          fetchError = 'Failed to load pages. You can still insert an unresolved link.';
-          console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
-          return [];
-        })
-        .finally(() => {
-          pagesInFlight = null;
-        });
+  // Page mode — flag-based dedupe matching anchor mode's pattern.
+  // Two-flag guard (`!pagesLoaded && !pagesFetching`) prevents concurrent
+  // fetches. A single `!pagesLoaded` guard would fail because the flag only
+  // flips AFTER await resolves, letting fast keystrokes fire multiple fetches.
+  // Second caller sees `pagesFetching === true` and short-circuits to the
+  // current (empty) `cachedPages`; `onBeforeUpdate` renders the loading label,
+  // and the next `items()` invocation after the fetch resolves returns populated data.
+  if (!pagesLoaded && !pagesFetching && !fetchError) {
+    pagesFetching = true;
+    try {
+      cachedPages = await fetchPages();
+      pagesLoaded = true;
+    } catch (err) {
+      pagesLoaded = true;  // don't retry on error
+      fetchError = 'Failed to load pages. You can still insert an unresolved link.';
+      console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
+    } finally {
+      pagesFetching = false;
     }
-    await pagesInFlight;
   }
   return buildSuggestionItems(cachedPages, query);
 },
@@ -218,6 +214,34 @@ The render callback therefore implements SIX hooks: `onBeforeStart`, `onBeforeUp
 - `onBeforeStart` — mount popup + ReactRenderer with `loading: true` (or `false` if already cached). Derive mode from `parseQuery(props.query)`.
 - `onBeforeUpdate` — mode switch path (page → anchor when user types `#`). Compute `loading` as: `mode === 'anchor' ? !cachedHeadings.has(pageTarget) : !pagesLoaded`. This matches the current `isLoading()` helper. Without this hook, the "Loading headings for <pageTarget>…" label would not render during the anchor-mode fetch — regressing R15.
 - `onStart` / `onUpdate` — items have resolved; update renderer with `loading: false` (or still `loading: true` if `fetchError` is set for page mode). `query`, `mode`, `pageTarget`, `anchorQuery` derived from `parseQuery(props.query)`.
+
+**Extract `computeMenuProps` helper** to avoid duplicating the parseQuery + mode + loading logic across all four hooks. Signature:
+
+```ts
+function computeMenuProps(
+  suggestionProps: SuggestionProps<WikiLinkSuggestionItem>,
+  loadingOverride: boolean | null,  // null = compute from cache state
+  onSelect: (item: WikiLinkSuggestionItem) => void,
+): WikiLinkSuggestionMenuProps {
+  const { mode, pageTarget, anchorQuery } = parseQuery(suggestionProps.query ?? '');
+  const loading = loadingOverride ?? (
+    mode === 'anchor' ? !cachedHeadings.has(pageTarget) : !pagesLoaded
+  );
+  return {
+    items: suggestionProps.items,
+    query: suggestionProps.query ?? '',
+    selectedIndex: /* from closure or 0 */ 0,
+    onSelect,
+    loading,
+    error: mode === 'page' ? fetchError : null,
+    mode,
+    pageTarget,
+    anchorQuery,
+  };
+}
+```
+
+All four hooks (`onBeforeStart`, `onBeforeUpdate`, `onStart`, `onUpdate`) call `renderer.updateProps(computeMenuProps(props, loadingOverride, onSelect))` with the appropriate `loadingOverride` (`null` for before-hooks → compute from cache state; `false` for after-hooks → items are populated).
 
 **Helper reuse:** Keep `parseQuery`, `filterPages`, `filterHeadings`, `buildSuggestionItems`, `buildAnchorItems`, `fetchPages`, `fetchHeadings` as top-level exported functions. They are pure (except the fetchers) and already unit-testable — the existing test file stays valid.
 
@@ -343,12 +367,14 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 
 1. Extract pure helpers to keep existing tests green: `parseQuery`, `filterPages`, `filterHeadings`, `buildSuggestionItems`, `buildAnchorItems` — these are already exported and unit-tested; ensure they remain top-level exports in the new module.
 2. Write the custom `wikiLinkMatcher` function (§3.2).
-3. Write the atom-deletion plugin (§3.6) — small, standalone, can be tested independently.
-4. Rewrite `wiki-link-suggestion.ts` using `Suggestion<WikiLinkSuggestionItem>()` with: custom matcher, per-mode async items (page + anchor) with `pagesInFlight` Promise-dedupe, command handler with three kinds + fallback, Floating UI render lifecycle with all six hooks — `onBeforeStart` (mount + loading state), `onBeforeUpdate` (mode-switch loading state), `onStart`/`onUpdate` (items resolved), `onKeyDown`, `onExit` (§3.1, §3.3, §3.4, §3.5).
-5. Update `WikiLinkSuggestionMenu.tsx` — swap `max-h-80` for Floating UI CSS var on all three render paths (listbox, loading, empty) (§3.7).
-6. Update `wiki-link.ts` registration — return `[Suggestion(...), wikiLinkAtomDeletionPlugin]` from `addProseMirrorPlugins`.
-7. Verify quality gates: `bun run check` (typecheck + lint + unit + integration + fidelity) — existing `wiki-link-suggestion.test.ts` must still pass since `buildSuggestionItems` is unchanged.
-8. Manual QA (see §7 scenarios): page mode (R01-R14), anchor mode (R15-R20), atom deletion (R21-R22).
+3. **Spike D6 atom-deletion approach:** try `addKeyboardShortcuts` on the wiki-link extension first with a `wikiLinkSuggestionKey.getState(view.state)?.active` guard. Run R21/R22/R23 against it. If it passes, skip step 4. If Backspace/Delete interferes with plain-text editing, proceed to step 4 (separate plugin).
+4. (Fallback if spike fails) Write the atom-deletion ProseMirror plugin (§3.6) — small, standalone, can be tested independently.
+5. Write the `computeMenuProps(suggestionProps, loadingOverride, onSelect)` helper that all four render hooks call (§3.3 / §3.7).
+6. Rewrite `wiki-link-suggestion.ts` using `Suggestion<WikiLinkSuggestionItem>()` with: custom matcher, per-mode async items (page + anchor) with two-flag `pagesFetching` dedupe, command handler with three kinds + fallback, Floating UI render lifecycle with all six hooks — `onBeforeStart` (mount + loading state), `onBeforeUpdate` (mode-switch loading state), `onStart`/`onUpdate` (items resolved, loading: false), `onKeyDown`, `onExit` (§3.1, §3.3, §3.4, §3.5).
+7. Update `WikiLinkSuggestionMenu.tsx` — swap `max-h-80` for Floating UI CSS var on all three render paths (listbox, loading, empty) (§3.7).
+8. Update `wiki-link.ts` registration — return `[Suggestion(...)]` (if D6 spike succeeded) or `[Suggestion(...), wikiLinkAtomDeletionPlugin]` (if fallback) from `addProseMirrorPlugins`.
+9. Verify quality gates: `bun run check` (typecheck + lint + unit + integration + fidelity) — existing `wiki-link-suggestion.test.ts` must still pass since `buildSuggestionItems` is unchanged.
+10. Manual QA (see §7 scenarios): page mode (R01-R14), anchor mode (R15-R20), atom deletion (R21-R23).
 
 ---
 
@@ -437,15 +463,16 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 
 | # | Decision | Resolution | Status | Confidence |
 |---|----------|-----------|--------|------------|
+| D0 | **Whether to migrate at all** — full migration vs Floating-UI-only vs split PRs | **Full migration, single PR (Option C).** Evaluated three options post-rebase: (A) Floating UI only on custom plugin (~40-60 LOC), (B) Split into two PRs (small Floating UI first, migration later), (C) Full migration in one PR. Chose C despite reduced LOC savings (492 → ~375-400, ~20% vs prior 47%) because: (1) architectural alignment with slash-command standardizes how suggestion menus are implemented in this codebase; (2) bundling avoids a second review cycle on the same file; (3) error boundary + Floating UI + collaborative-lifecycle-safety all land in one reviewable unit; (4) the ~100 lines of ongoing maintenance surface saved compound over time. Acknowledged trade-offs: 800 lines of one-PR churn on a file that received 154 net lines from mike-inkeep in the last 2 weeks (PR #53 + PR #71). Mitigation: no current in-flight wiki-link work at merge time is a prerequisite (see §11 coordination). "Architectural alignment" is valued here even without a third named consumer on the roadmap — two unified suggestion systems is simpler than one unified + one custom. | **DIRECTED (user)** | HIGH |
 | D1 | Foundation: custom `findSuggestionMatch` vs built-in `char` | **Custom matcher.** Built-in regex doesn't support paired delimiters — `[[query]]` needs to stop at first `]`. Custom function uses the existing `/\[\[([^\]]*)$/` regex. Verified: `findSuggestionMatch` is a configurable option (source line 80). Regex allows `#` inside query so anchor mode works transparently. | LOCKED | HIGH |
 | D2 | Async items: Suggestion native vs manual fetch-in-render | **Suggestion native for both modes.** `items()` callback supports async (`await` at source line 196). Both `/api/pages` and `/api/page-headings` fetched inside the same `items()` callback, branching on `parseQuery(query).mode`. | LOCKED | HIGH |
 | D3 | Prefix restriction: `allowedPrefixes: null` vs `[' ']` | **`null` (no restriction).** Wiki-links trigger anywhere including mid-word (`word[[page`). Unlike slash commands where mid-word trigger is a regression, mid-word `[[` is valid wiki-link syntax. | LOCKED | HIGH |
 | D4 | Floating UI: match slash-command.ts pattern | **Yes.** Same `computePosition` + `autoUpdate` + `flip` + `offset(4)` + `size` middleware. Consistent positioning across all suggestion menus. | DIRECTED | HIGH |
 | D5 | Menu component: rewrite or update | **Update, no prop removal.** All existing props (`items`, `query`, `selectedIndex`, `onSelect`, `loading`, `error`, `mode`, `pageTarget`, `anchorQuery`) are load-bearing for per-mode rendering. Only add Floating UI CSS var. | DIRECTED | HIGH |
-| D6 | Atom deletion: keep in Suggestion's handleKeyDown or extract to separate plugin | **Extract to separate plugin.** Suggestion's `render().onKeyDown` only fires when a suggestion is active. Atom deletion must work when the menu is closed. Register as a second plugin alongside Suggestion. ~30-line ProseMirror plugin preserves the exact current behavior (including the `handleBackspace` interference comment from PR #53). | LOCKED | HIGH |
+| D6 | Atom deletion: `addKeyboardShortcuts` spike → separate plugin fallback | **Spike `addKeyboardShortcuts` on the wiki-link extension first; fall back to separate plugin if interference reproduces.** Suggestion's `render().onKeyDown` only fires when a suggestion is active — atom deletion must work when the menu is closed. PR #53's implementation used `handleKeyDown` in the same plugin, citing `addKeyboardShortcuts` interference with TipTap's built-in `handleBackspace` chain. That rationale was context-specific (PR #53's plugin had priority 200 and was not the wiki-link extension itself). In the migrated world, putting atom-deletion shortcuts directly on the wiki-link extension (same priority 200, bound to the mark's own schema) may not have the same interference. Implementation order: (a) spike `addKeyboardShortcuts` with a `wikiLinkSuggestionKey.getState(view.state)?.active` guard; (b) test R21/R22/R23 pass; (c) if any interference manifests (e.g., Backspace on plain text fails), fall back to the separate ProseMirror plugin approach. Both paths preserve behavior. | DIRECTED | HIGH |
 | D7 | Anchor-mode fallback (Enter with no item selected) | **Read plugin state from `editor.state` inside `command`.** `wikiLinkSuggestionKey.getState(editor.state).query` gives the raw query. `parseQuery(query)` yields `{ mode, pageTarget, anchorQuery }`. Insert `{ target: pageTarget, anchor: anchorQuery.trim() || null }` when `mode === 'anchor'`. Preserves PR #53 fallback behaviour. | LOCKED | HIGH |
 | D8 | Per-mode loading label on initial open AND mode switch | **Push `{loading, mode, pageTarget, anchorQuery}` in BOTH `onBeforeStart` (initial open) and `onBeforeUpdate` (mode switch when user types `#`).** Menu component already branches on mode for "Loading pages…" vs "Loading headings for <pageTarget>…" — requires these props before `items()` resolves. Derive from `parseQuery(props.query ?? '')` at each render callback. Without `onBeforeUpdate`, the loading label would not render during an anchor-mode fetch triggered mid-session (regressing R15). | LOCKED | HIGH |
-| D9 | Page-fetch concurrency: `pagesLoaded` flag vs Promise-dedupe | **Promise-dedupe via `pagesInFlight: Promise<PageItem[]> \| null`.** The current implementation calls `fetchPages()` exactly once in `view().update`'s `if (!renderer)` first-mount branch — guaranteed one fetch per menu open. The migration moves the fetch inside `items()`, which re-runs on every keystroke. A simple `!pagesLoaded` guard doesn't prevent concurrent fetches because the flag only flips after `await` resolves. Storing the Promise itself lets every in-flight caller share the same fetch. Anchor-mode fetch already uses `anchorFetchingFor` guard (parallel pattern). | LOCKED | HIGH |
+| D9 | Page-fetch concurrency: 1-flag vs 2-flag vs Promise-dedupe | **Two-flag guard: `!pagesLoaded && !pagesFetching`.** The current implementation calls `fetchPages()` exactly once in `view().update`'s `if (!renderer)` first-mount branch — guaranteed one fetch per menu open. The migration moves the fetch inside `items()`, which re-runs on every keystroke. A single `!pagesLoaded` guard doesn't prevent concurrent fetches because the flag only flips after `await` resolves. A two-flag guard (set `pagesFetching = true` before `await`, `finally { pagesFetching = false }`) blocks concurrent fetches while matching the exact pattern anchor-mode already uses (`anchorFetchingFor: string \| null`). Promise-dedupe was considered and rejected for asymmetry with anchor mode and for adding ~10 more LOC than the flag approach. | LOCKED | HIGH |
 
 ---
 
@@ -473,7 +500,7 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 | R5 | Menu rendering `loading: true` with undefined `mode` before items resolve | Low | Low | Always call `parseQuery(props.query ?? '')` at the start of each render callback (`onBeforeStart`, `onBeforeUpdate`, `onStart`, `onUpdate`) and pass `mode`/`pageTarget`/`anchorQuery` before items resolve. Loading-state transition on query change uses `onBeforeUpdate`, not `onUpdate` (see D8). |
 | R6 | Suggestion's `items()` rerun on every query change causes anchor fetch to fire in the `items` callback and also from the `onUpdate` side — race condition | Low | Medium | Fetch is guarded by `!cachedHeadings.has(pageTarget) && anchorFetchingFor !== pageTarget`. Second concurrent call short-circuits. The anchor fetch only lives in `items()` (not duplicated in render lifecycle like the current implementation). |
 | R7 | The 492-line custom plugin has subtle behaviours (e.g., `selectedIndex` clamping on items change, menu destroy-on-coordsAtPos-error) that aren't captured in test scenarios | Medium | Medium | Manual QA against current behaviour before/after. Compare screencasts side-by-side. The atom-deletion plugin extraction preserves the exact keyboard behaviour. |
-| R8 | Page-mode `fetchPages()` concurrent invocations on fast keystrokes | Medium | Low | `items()` re-runs on every query change; before `pagesLoaded` flips, multiple invocations can fire `fetchPages()` simultaneously. Mitigation: `pagesInFlight: Promise<PageItem[]> \| null` (see §3.3) — every in-flight caller awaits the same Promise. Matches the anchor-mode `anchorFetchingFor` guard pattern. Resolves D9. |
+| R8 | Page-mode `fetchPages()` concurrent invocations on fast keystrokes | Medium | Low | `items()` re-runs on every query change; before `pagesLoaded` flips, multiple invocations can fire `fetchPages()` simultaneously. Mitigation: two-flag guard (`!pagesLoaded && !pagesFetching`, see §3.3 and D9). `pagesFetching` flips to `true` before `await fetchPages()` and `false` in `finally`. Symmetric with anchor-mode's `anchorFetchingFor` pattern. |
 
 ---
 
@@ -497,6 +524,9 @@ Add the Floating UI CSS var to the listbox container: the component already uses
 - `]]` no longer closes the menu (paired delimiter regression)
 - Anchor mode (`[[page#heading]]`) regresses — wrong items, wrong fetch, wrong attrs, wrong menu header
 - Atom deletion (Backspace/Delete on wikiLink) regresses — different keyboard handling when suggestion is active vs inactive
+
+**PRE-MERGE COORDINATION (D0 + R2 mitigation):**
+Before merging, verify no wiki-link-touching PR is open or imminent from mike-inkeep (author of PR #53 / PR #71) or any other contributor. Quick check: `gh pr list --search "wiki" --state open` and scan titles. The migration rewrites the full suggestion file; it will merge-conflict with any concurrent surgical edit. If a conflicting PR is in flight, either wait for it to merge first (and rebase this spec again) or coordinate a landing order.
 
 **ASK_FIRST:**
 - If the loading state requires a fundamentally different approach than the render lifecycle
