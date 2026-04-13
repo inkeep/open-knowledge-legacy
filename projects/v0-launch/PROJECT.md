@@ -515,65 +515,108 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 
 ---
 
-### V0-14: Per-origin undo — basic Cmd+Z (without character-level Observer A refactor)
+### V0-14: Per-origin undo — three-UndoManager architecture with character-level Observer A prerequisite
 
-**What to build.** Wire `Y.UndoManager` on `Y.XmlFragment('default')` for WYSIWYG undo. Enable y-codemirror's native UndoManager for `Y.Text('source')`. Fix observer modal architecture (R7 from undo spec) so undo works across mode switches. Keep the existing server-side agent UndoManager (already works for different-line case).
+**What to build.** Full per-origin undo: three UndoManagers (WYSIWYG Y.XmlFragment + Source y-codemirror native + N× per-agent server-side scoped by `AgentIdentity.connectionId`). Observer A character-level diff refactor as prerequisite (closes R5/R6 — no known-broken edge cases ship). AgentIdentity from MCP connection primitives replaces hardcoded `DEFAULT_AGENT_ID`. Broken undo scaffold (AgentUndoButton, undo endpoints, undo MCP tools) removed pre-PR-#39-merge as part of V0-16.
 
-**What this unlocks (per Miles's audit):**
-- US-3a Cmd+Z in WYSIWYG ✅
-- US-3b Cmd+Z in Source ✅
-- US-3c Cross-mode Cmd+Z ✅
-- US-3d Interleaved (different lines) ✅
-- US-4a/4b/4c agent undo continues working
+**Two parallel tracks (per polished audit §15):**
 
-**Known gap (deferred):** US-3e (same-line simultaneous user+agent edit) requires character-level Observer A refactor. In our batch-rewrite agent pattern (TQ16 LOCKED: agents do file-write or string-replace, both section-level), this is rare. Documented, bounded, reversible when character-level lands.
+| Track | Owner | Items | Coordination |
+|-------|-------|-------|--------------|
+| **Bridge/observer layer** | **Nick** (starting now) | TQ5: Observer A char-level refactor (~60 LOC in `observers.ts:206-249`). TQ6: US-3e stress test. Bridge-matrix undo-invariant tests (TDD groundwork). | Zero coordination with Miles — Nick's files only |
+| **Server + UI + MCP + identity** | **Miles** (after V0-16 ships) | Three-UndoManager wiring. Cmd+Z keyboard in both modes. D12 AgentIdentity (TQ17/TQ18): build from MCP connection primitives; per-agent awareness in PresenceBar; per-agent UM scoping. D9(e) pass-boundary grouping. Optional `session_id?` enrichment on write tools (TQ16). | Depends on Nick's TQ5 landing + Miles's TQ13 scaffold removal in V0-16 |
 
-**Value.** Customer: most fundamental editor operation. Currently a user literally cannot undo their own typo (`StarterKit.configure({ undoRedo: false })` disables native ProseMirror undo, no replacement wired). PROJECT.md S5: "Per-origin undo — Cmd+Z undoes Claude's changes specifically, preserving yours." Today we ship the inverse: you can undo Claude (with a leak) but not yourself.
+**What this unlocks — ALL user scenarios clean, no known gaps:**
+- US-3a/b/c/d/e Cmd+Z for self (WYSIWYG, Source, cross-mode, interleaved, same-line concurrent) ✅
+- US-4a/b/c Agent undo (from button, from MCP, stack behavior) ✅ — with per-agent scoping (multi-agent correct)
+
+**Greenfield directive applied:** Prior framing deferred US-3e (same-line concurrent) as an edge case. Under greenfield directive (§13 of polished audit): "Shipping Cmd+Z — the foundational editor primitive — with a known-broken edge case in the product's core differentiating scenario (human+AI concurrent editing) is deferred tech debt." The refactor is bounded (60 LOC + comprehensive test infra); do it right.
+
+**R7 (observer modal pause/resume) — DROPPED.** Would cause stale-baseline bugs in multi-tab/agent scenarios. Current origin-guard architecture is already correct. See polished audit §3 Area B.
+
+**Value.** Customer: most fundamental editor operation. Currently a user literally cannot undo their own typo (`StarterKit.configure({ undoRedo: false })`). Platform: AgentIdentity (D12) replaces hardcoded `DEFAULT_AGENT_ID = 'claude'` with connection-level identity from MCP primitives — enables per-agent presence, per-agent undo scoping, multi-agent support.
 
 **Constraints.**
-- Reframed path lands US-3a/b/c/d much faster than original "character-level prerequisite" framing suggested (TQ6 in Items table).
-- Existing `AgentUndoButton`, server undo endpoints, MCP undo tools STAY (load-bearing for origin guards via `AGENT_WRITE_ORIGIN`).
-- Character-level Observer A refactor reclassified as Later improvement (US-3e edge case), not prerequisite.
+- Observer A char-level (TQ5) is PREREQUISITE — must land before three-UndoManager wiring (Nick delivers TQ5/TQ6; Miles consumes for UM wiring)
+- Scaffold removed in V0-16 (TQ13) — proper implementation ships here
+- Rollback NOT tracked by any UndoManager (D6(b) — decided in V0-16; coarse action, not fine-grained undo)
+- `AgentIdentity { connectionId, clientInfo, label, displayName, colorSeed }` — generated at MCP `initialize` time; per-agent server-side UndoManager keyed by connectionId
 
-**Lateral.** Coordinates with V0-16 (Timeline + Rollback) on D5 "rollback + undo origin interaction" — Miles's audit L2 decision.
+**Lateral.** V0-16 removes the broken scaffold and establishes typed origins (TQ10) + activity-map schema (TQ11) that V0-14 builds on. Nick's TQ5 is a parallel track that converges.
 
-**Forward.** Character-level Observer A refactor lands later as a correctness improvement; closes US-3e and the R5/R6 leak edge cases.
+**Forward.** Per-agent identity enables future multi-agent UX (different colored cursors per agent, per-agent activity attribution in timeline, per-agent undo buttons).
 
-**Source.** Miles's audit Area B (full reframe in `stories/collaboration-capabilities-audit/STORY.md` §3 Area B). `specs/2026-04-10-undo-architecture/` is the underlying spec but its "blocked on Observer A refactor" framing is superseded.
+**Source.** Polished audit `stories/collaboration-capabilities-audit/STORY.md` §3 Area B + §6 dependency graph + §13 greenfield directive + §15 ownership split. `specs/2026-04-10-undo-architecture/SPEC.md` is the underlying spec (needs update to reflect greenfield reframe — D7 flipped, R7 dropped, AgentIdentity added).
 
-**Status / owner signals.** Not started under reframed path. Spec exists with old framing (5 interlocking failure modes) — needs spec update. Estimate: 1-2 weeks.
+**Status.** Nick's TQ5/TQ6 starting now (zero-coordination, parallel with Miles's V0-16). Miles's UM wiring starts after V0-16 + TQ5 converge. Estimate: Nick's track ~1 week; Miles's UM wiring ~2 weeks after prerequisites land. Total calendar: ~3-4 weeks (parallelized with V0-16).
 
 ---
 
-### V0-16: Timeline + Rollback (close out PR #39)
+### V0-16: Timeline + Rollback — PR #39 expanded scope under greenfield directive
 
-**What to build.** Land Miles's PR #39 (`feat/timeline`): server-side `timeline-query.ts`, 4 HTTP endpoints (`/api/history`, `/api/history/:sha`, `/api/diff`, `/api/rollback`), multi-parent checkpoint commits in `saveVersion()`, standalone-mode checkpoints, client-side `TimelinePanel.tsx` (right-side Sheet, 10s polling), `PreviewEditor.tsx` line-level unified diff, restore flow with confirmation.
+**What to build.** Land Miles's PR #39 (`feat/timeline`) with expanded scope per the greenfield directive (polished audit §13). This is significantly larger than a close-out — it's PR #39 rebase + 17 review comments + 8 architectural-precedent items + decision implementations + flash reconciliation + diff library integration.
 
-**What's needed to ship (per Miles's audit):**
-- Rebase onto main (touches `api-extension.ts`, `shadow-repo.ts`, `standalone.ts` — all changed in PR #62)
-- Address 17 pending review comments (minor: `ok` field consistency, a11y, NaN handling)
-- Resolve L1 — diff view approach: **DECIDED 2026-04-13 (Nick) — Source-mode diff view.** Clicking a timeline entry flips editor to Source mode with diff rendering. Library candidate: `@pierre/diffs`. PreviewEditor.tsx likely folds into SourceEditor.tsx as a "diff mode" capability.
-- Resolve L2 — rollback + undo origin interaction (small, documentable; coordinates with V0-14)
-- Consider folding PreviewEditor.tsx into SourceEditor.tsx per L1 (raise during review)
+**Core PR #39 (original scope):**
+- Server: `timeline-query.ts` (237 + 250 test), 4 HTTP endpoints (`/api/history`, `/api/history/:sha`, `/api/diff`, `/api/rollback`), multi-parent checkpoint commits in `saveVersion()`, standalone-mode checkpoints
+- Client: `TimelinePanel.tsx` (right-side Sheet), restore flow with confirmation
+- Rebase onto main (non-trivial: touches `api-extension.ts`, `shadow-repo.ts`, `standalone.ts` — all changed since PR #39 branched)
+- Address 17 pending review comments
 
-**What this unlocks (per Miles's audit):**
-- US-1a Recent rewind ✅
-- US-1b Checkpoint restore ✅
-- US-1c External overwrite recovery ("upstream" entries) ✅
+**Expanded scope (greenfield directive — "no deferred tech debt"):**
+
+| Item | What | Why not deferred |
+|------|------|-----------------|
+| **TQ8** | Mode-state refactor: `isSourceMode: boolean` → `editorMode: 'wysiwyg' \| 'source' \| 'diff'` | Enum is the correct data model for a 3-state machine. Ships in PR #39. |
+| **TQ9** | Fold `PreviewEditor.tsx` into `SourceEditor.tsx` as a diff-mode capability | No parallel editor components for the same conceptual space. |
+| **TQ10** | Typed origin constants: all origins as `LocalTransactionOrigin` objects | Fix `'rollback-apply'` raw-string smell. Unify under one convention. Nick consulted on shape (5-min conversation). |
+| **TQ11** | Activity-map entry schema refactor: `{ actor: AgentIdentity, timestamp, action: {kind, metadata}, visibility: {flash, feed} }` | Refactor while consumers are few. Generalizes to future coarse actions. |
+| **TQ12** | Shared flash primitive: `computeFlashTargets(activityEntry) → LineRange[]` | Both WYSIWYG and Source consume it. Eliminates divergence-by-copy-paste. **Subsumes V0-15 (activity flash verify + reconcile).** |
+| **TQ13** | Remove broken agent-undo scaffold (AgentUndoButton, undo endpoints, undo MCP tools) | "Better to ship no-undo than confidently-broken undo." `AGENT_WRITE_ORIGIN` constant stays (load-bearing). Proper three-UM ships in V0-14. |
+| **TQ14** | `safetyCheckpoint({ action, context })` generic primitive | Rollback as first caller; future coarse actions (apply-draft, etc.) reuse. Named for extensibility. Figma's two-checkpoints-around-restore pattern. |
+| **TQ15** | `rollback_to_version` MCP tool (ships in PR #39, not follow-up) | Symmetric with existing MCP-exposed history pattern. |
+| **TQ3** | `@pierre/diffs` integration — **ship BOTH inline unified AND side-by-side from day 1** | Don't ship half. Library candidate evaluated in polished audit §11. |
+| **TQ2** | Flash reconciliation — Source's "flash all lines" → targeted pattern matching WYSIWYG's last/first-3-blocks | Zero surveyed products flash the whole document (audit §12.5). |
+| **TQ7** | `prefers-reduced-motion` for flash animations (WCAG SC 2.3.3) | Accessibility baseline. Hours. |
+
+**Decisions landing in V0-16:**
+- **D6(b):** Rollback NOT tracked by any UndoManager (7/8 surveyed products agree — audit §12)
+- **D10(e-generic):** safetyCheckpoint primitive, rollback as first caller
+- **D11(a-structured):** Activity-map broadcast via refactored schema, distinct visual treatment (cool-blue pulse vs warm-orange agent-write flash)
+- **D3:** `rollback_to_version` MCP tool
+- **Q-trigger(b):** Explicit timeline click + post-agent-write affordance
+- **Q-exit(c):** WYSIWYG button disabled in review mode; explicit "Exit preview"
+- **Q-layout:** Both inline unified and side-by-side via `@pierre/diffs`
+- **Q-branch-switch(a):** Re-fetch on branch-change event
+
+**What this unlocks:**
+- US-1a/1b/1c Timeline-based recovery (recent rewind, checkpoint restore, external overwrite recovery) ✅
 - US-2b Per-file diff review ✅
-- US-2c Selective revert ⚠️ partial (whole-version restore only)
-- US-5f Agent pass summary per file ✅ (via Source-mode diff view)
+- US-5f Agent pass summary per file (via Source-mode diff view) ✅
+- US-5d Activity flash verified + reconciled across both modes ✅
 
-**Value.** Customer: recovery from mistakes — "I accidentally ruined my doc" becomes "I scroll back and restore." Trust dimension is load-bearing for production use. The Source-mode diff view also serves the "see what the agent did" scenario (US-5f) — which the audit reframed as the actual product value (cursor rendering dropped as skeuomorphic).
+**V0-15 (activity flash verify) is SUBSUMED by V0-16.** TQ2 (flash reconciliation) + TQ12 (shared primitive) + TQ7 (prefers-reduced-motion) + Playwright E2E verification all ship as part of V0-16's expanded scope. V0-15 as a separate story is redundant.
+
+**Value.** Customer: recovery from mistakes — the trust dimension is load-bearing for production use. Source-mode diff view serves the "see what the agent did" scenario (US-5f). Platform: mode-state enum (TQ8), typed origins (TQ10), activity-map schema (TQ11), shared flash primitive (TQ12), safetyCheckpoint (TQ14) all set architectural precedents future work inherits. The greenfield directive means these precedents are set right, not retrofitted.
 
 **Constraints.**
 - Whole-version restore only in v0; selective revert is post-v0.
-- Polling vs reactive refresh stays acceptable tech debt for now.
+- Polling vs reactive refresh stays acceptable tech debt.
+- Broken undo scaffold removed pre-merge (TQ13) — proper undo ships in V0-14.
 
-**Non-goals (per audit demoted list).**
-- **[NOT NOW]** MCP surface for timeline (additive, add later).
-- **[NOT NOW]** Branch-switch refresh (with branching UX parked, becomes hygiene only).
-- **[NOT NOW]** Rendered WYSIWYG diff (decided to use Source-mode diff instead).
+**Non-goals (per polished audit).**
+- **[NOT NOW]** Cross-doc timeline / activity feed (US-2a) — folds into deferred agent-proposal-review bundle.
+- **[NOT NOW]** Rendered WYSIWYG diff — Source-mode diff serves US-5f.
+- **[NOT NOW]** Selective per-section revert (US-2c partial — whole-version only).
+
+**Lateral.** V0-14 depends on V0-16 (scaffold removal + typed origins + activity-map schema). Nick's TQ5 (Observer A char-level) runs in parallel. TQ10 coordination: one 5-minute conversation between Nick and Miles on where typed origin constants live (`packages/core/`).
+
+**Forward.** Cross-doc activity feed (US-2a — S5's headline scenario) is the first natural extension. SafetyCheckpoint primitive (TQ14) reused by future apply-draft. Activity-map schema (TQ11) consumed by future agent-pass grouping (D9).
+
+**Source.** Polished audit `stories/collaboration-capabilities-audit/STORY.md` §3 Area A + §6 recommended sequence + §13 greenfield items + §15 ownership split.
+
+**Owners.** **Miles** (all of V0-16). Nick consulted on TQ10 (typed origins shape) — one 5-minute conversation then independent.
+
+**Status.** **PR #39 open**, Miles owns delivery. Approved-with-suggestions; needs rebase + 17 review comments + greenfield expanded scope. Estimate: **3-4 weeks** (was 1-2 before greenfield expansion). Includes flash reconciliation, diff library integration, scaffold removal, and 8 architectural-precedent items.
 
 **Lateral.** Coordinates with V0-14 on rollback-undo origin interaction (L2). Coordinates with V0-17 (persistence indicator) — if Timeline ships first, persistence indicator becomes a badge on the Timeline button.
 
@@ -775,21 +818,15 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
-## Stories — Later (5 stories, promote on trigger)
+## Stories — Later (4 stories + 1 subsumed, promote on trigger)
 
 **Phasing rationale:** Polish + gated work. Promote when explicit trigger fires; not on a calendar.
 
 ---
 
-### V0-15: Activity flash verification + WYSIWYG/Source reconciliation
+### ~~V0-15: Activity flash verification + WYSIWYG/Source reconciliation~~ — SUBSUMED BY V0-16
 
-**What.** Verify the existing agent-flash implementation works end-to-end in both editor modes. Reconcile Source mode's "flash all lines" behavior with WYSIWYG's "flash last/first 3 blocks" — pick one or document the divergence intentionally. Add Playwright E2E coverage (dogfood via `agent-sim --rapid 5`).
-
-**Value.** Customer: agent activity becomes reliable + consistent. Internal: closes a "implemented but unverified" gap with zero test coverage today.
-
-**Promote when:** v0 Now ships and dogfood reveals the divergence is user-visible OR before public launch (low-effort polish).
-
-**Source.** Miles's audit Area C (reframed). Estimate: 0.5-1 week.
+**Subsumed 2026-04-13.** Flash reconciliation (TQ2), shared flash primitive (TQ12), `prefers-reduced-motion` (TQ7), and Playwright E2E verification all ship as part of V0-16's expanded scope under greenfield directive. V0-15 as a separate story is no longer needed. See V0-16 §TQ2/TQ12/TQ7.
 
 ---
 
@@ -1065,9 +1102,9 @@ Owner signals where they exist (in-flight PR author or original story author). W
 | V0-11 graph panels | Next | 1-2 wk | **Mike** (adopts Sarah's panel-docking pattern) | Spec → impl | Backend done, pure React |
 | V0-12 slug correctness | Now | 1 wk + migration | **Mike** | Spec → impl | Source story in PR #72 bundle |
 | V0-13 suggest_links | Later | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | Source story in PR #72 bundle |
-| V0-14 per-origin undo basic | Now | 1-2 wk | **Miles** (Nick consulted on observer modal) | Spec update + impl | Spec needs reframe |
-| V0-15 activity flash verify | Later | 0.5-1 wk | **Miles** (Nick consulted on plugin hosts) | Verification + small fix | Existing impl unverified |
-| V0-16 Timeline + Rollback | Now | 1-2 wk close-out | **Miles** (Nick consulted on SourceEditor diff view) | Close out PR #39 | In flight; needs rebase + 17 review comments |
+| V0-14 per-origin undo (three-UM + char-level Observer A) | Now | Nick ~1 wk (TQ5/TQ6 parallel) + Miles ~2 wk (UM wiring after V0-16) | **Nick** (TQ5 Observer A prerequisite) + **Miles** (three-UM wiring + AgentIdentity) | Parallel tracks → converge | Nick starting now; Miles after V0-16 |
+| ~~V0-15 activity flash verify~~ | ~~Later~~ | — | — | — | **SUBSUMED by V0-16** (TQ2/TQ12/TQ7 in expanded scope) |
+| V0-16 Timeline + Rollback (expanded greenfield scope) | Now | **3-4 wk** (was 1-2) | **Miles** (Nick consulted on TQ10 typed origins — 5 min) | PR #39 rebase + expanded | In flight; rebase + 17 comments + 8 architectural-precedent items + diff library + flash reconcile + scaffold removal |
 | V0-17 persistence indicator UI | Next | 0.5-1 wk | **Miles** (Sarah consulted on visual) | Spec → impl | Backend infra shipped (PR #62) |
 | V0-18 find/replace | Later | 1-1.5 wk | **Dima** feature-owns (Nick consulted on CRDT write path; Sarah reviews after) | Spec → impl | Not started |
 | V0-19 sort + word count | Later | 0.5-1 wk | **Dima** (Sarah reviews placement) | Spec → impl | Not started |
