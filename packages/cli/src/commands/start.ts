@@ -56,7 +56,7 @@ export function startCommand(getConfig: () => Config): Command {
         log.info({ contentDir }, 'Created content directory');
       }
 
-      const { hocuspocus, destroy, ready, degraded, lockDir } = createServer({
+      const { hocuspocus, contentFilter, destroy, ready, degraded, lockDir } = createServer({
         contentDir,
         projectDir: cwd,
         contentRoot: config.content.dir,
@@ -113,6 +113,9 @@ export function startCommand(getConfig: () => Config): Command {
         log.warn({}, 'No React app assets found — browser UI will not be available');
       }
 
+      // Filter-aware asset serving over contentDir (D9)
+      const contentSirv = sirv(contentDir, { dotfiles: false });
+
       // Create HTTP server and wire up Hocuspocus
       const httpServer = createHttpServer((req, res) => {
         // Priority 1: API routes via Hocuspocus onRequest extensions
@@ -128,7 +131,23 @@ export function startCommand(getConfig: () => Config): Command {
           return;
         }
 
-        // Priority 2: Static file serving (SPA fallback)
+        // Priority 2: Content assets via filter-aware sirv
+        const rel = decodeURIComponent(url?.replace(/^\//, '') ?? '');
+        if (rel && !contentFilter.isExcluded(rel)) {
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          contentSirv(req, res, () => {
+            // Asset not found on disk — fall through to SPA
+            if (staticHandler) {
+              staticHandler(req, res);
+            } else {
+              res.writeHead(404);
+              res.end('Not found');
+            }
+          });
+          return;
+        }
+
+        // Priority 3: Static file serving (SPA fallback)
         if (staticHandler) {
           staticHandler(req, res);
           return;
