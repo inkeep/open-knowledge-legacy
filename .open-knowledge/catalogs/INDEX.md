@@ -24,4 +24,4 @@ schema_version: 1
 - **[specs](.open-knowledge/catalogs/specs/INDEX.md)** (219 articles)
 - **[stories](.open-knowledge/catalogs/stories/INDEX.md)** (7 articles)
 - **[tech-probes](.open-knowledge/catalogs/tech-probes/INDEX.md)** (2 articles)
-- **[tmp](.open-knowledge/catalogs/tmp/INDEX.md)** (37 articles)
+- **[tmp](.open-knowledge/catalogs/tmp/INDEX.md)** (38 articles)
