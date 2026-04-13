@@ -94,7 +94,12 @@ mkdirSync(CONTENT_DIR, { recursive: true });
 // `configureServer` once Vite tells us what port the dev server bound to.
 // HMR restarts in the same process are idempotent (same pid).
 const LOCK_DIR = resolve(CONTENT_DIR, '.open-knowledge');
-acquireServerLock(LOCK_DIR, { port: 0, worktreeRoot: PROJECT_ROOT });
+try {
+  acquireServerLock(LOCK_DIR, { port: 0, worktreeRoot: PROJECT_ROOT });
+} catch (err) {
+  console.error(`\n[hocuspocus] ${err instanceof Error ? err.message : String(err)}\n`);
+  throw err;
+}
 
 // Release on process exit even if Vite's shutdown path doesn't call the plugin's
 // close hook. `releaseServerLock` is ownership-guarded — only removes our lock.

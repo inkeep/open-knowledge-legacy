@@ -603,4 +603,26 @@ describe('createServer() server-lock integration (V0-1)', () => {
 
     await first.destroy();
   });
+
+  test('destroy() releases server.lock even when a shutdown phase throws (CC8)', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    await server.ready;
+
+    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    expect(existsSync(lockPath)).toBe(true);
+
+    // Inject Phase 2 failure: sessionManager.closeAll throws after normal cleanup
+    const origCloseAll = server.sessionManager.closeAll.bind(server.sessionManager);
+    server.sessionManager.closeAll = async () => {
+      await origCloseAll();
+      throw new Error('Injected Phase 2 failure');
+    };
+
+    await server.destroy();
+    expect(existsSync(lockPath)).toBe(false);
+  });
 });

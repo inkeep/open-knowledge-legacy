@@ -81,7 +81,7 @@ export function startCommand(getConfig: () => Config): Command {
           await destroy();
         } catch (err) {
           console.error(
-            `${error('destroy() failed:')} ${err instanceof Error ? err.message : String(err)}`,
+            `${error('destroy() failed:')} ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
           );
           process.exitCode = 1;
         }

@@ -65,7 +65,12 @@ export function acquireServerLock(
   if (existsSync(lockPath)) {
     let existing: ServerLockMetadata | null = null;
     try {
-      existing = JSON.parse(readFileSync(lockPath, 'utf-8')) as ServerLockMetadata;
+      const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
+      if (parsed && typeof parsed === 'object' && typeof parsed.pid === 'number') {
+        existing = parsed as ServerLockMetadata;
+      } else {
+        console.warn(`[server-lock] Corrupt lock file at ${lockPath} — replacing`);
+      }
     } catch {
       console.warn(`[server-lock] Corrupt lock file at ${lockPath} — replacing`);
     }
@@ -104,13 +109,24 @@ export function acquireServerLock(
 export function updateServerLockPort(lockDir: string, port: number): void {
   const lockPath = lockFileFor(lockDir);
   if (!existsSync(lockPath)) return;
+
+  let existing: ServerLockMetadata;
   try {
-    const existing = JSON.parse(readFileSync(lockPath, 'utf-8')) as ServerLockMetadata;
-    if (existing.pid !== process.pid) return; // Not ours — refuse to overwrite
-    existing.port = port;
-    writeFileSync(lockPath, JSON.stringify(existing, null, 2), 'utf-8');
+    const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.pid !== 'number') return;
+    existing = parsed as ServerLockMetadata;
   } catch {
-    // Corrupt or raced — ignore
+    return; // Corrupt or raced read — nothing to update
+  }
+  if (existing.pid !== process.pid) return; // Not ours — refuse to overwrite
+
+  existing.port = port;
+  try {
+    writeFileSync(lockPath, JSON.stringify(existing, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn(
+      `[server-lock] Failed to update port in ${lockPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }
 
@@ -125,7 +141,9 @@ export function readServerLock(lockDir: string): ServerLockMetadata | null {
 
   let existing: ServerLockMetadata;
   try {
-    existing = JSON.parse(readFileSync(lockPath, 'utf-8')) as ServerLockMetadata;
+    const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.pid !== 'number') return null;
+    existing = parsed as ServerLockMetadata;
   } catch {
     return null;
   }
@@ -155,7 +173,9 @@ export function releaseServerLock(lockDir: string): void {
     const existing = JSON.parse(readFileSync(lockPath, 'utf-8')) as ServerLockMetadata;
     if (existing.pid !== process.pid) return;
     unlinkSync(lockPath);
-  } catch {
-    // Corrupt or already removed — ignore
+  } catch (err) {
+    console.warn(
+      `[server-lock] Failed to release ${lockPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 }

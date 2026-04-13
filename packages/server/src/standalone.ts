@@ -133,57 +133,63 @@ export function createServer(options: ServerOptions): ServerInstance {
     worktreeRoot: projectDir,
   });
 
-  // Create content filter — unified exclusion logic (gitignore + config.content.exclude)
-  const contentFilter = createContentFilter({
-    projectDir,
-    contentDir,
-    includePatterns,
-    excludePatterns,
-  });
-  const backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
+  // Synchronous init — if any constructor throws, release the lock before propagating.
+  let contentFilter: ReturnType<typeof createContentFilter>;
+  let backlinkIndex: BacklinkIndex;
+  let shadowRef: ShadowRef;
+  let persistence: ReturnType<typeof createPersistenceExtension>;
+  let hocuspocus: Hocuspocus;
+  let sessionManager: AgentSessionManager;
+  try {
+    contentFilter = createContentFilter({
+      projectDir,
+      contentDir,
+      includePatterns,
+      excludePatterns,
+    });
+    backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
 
-  // Mutable ref so deferred init (initAsync) propagates to persistence and API
-  const shadowRef: ShadowRef = { current: shadowRepo };
+    shadowRef = { current: shadowRepo };
 
-  const persistenceOpts: PersistenceOptions = {
-    contentDir,
-    projectDir,
-    gitEnabled,
-    commitDebounceMs,
-    wipRef,
-    shadowRef,
-    contentRoot,
-    backlinkIndex,
-  };
+    const persistenceOpts: PersistenceOptions = {
+      contentDir,
+      projectDir,
+      gitEnabled,
+      commitDebounceMs,
+      wipRef,
+      shadowRef,
+      contentRoot,
+      backlinkIndex,
+    };
 
-  const persistence = createPersistenceExtension(persistenceOpts);
+    persistence = createPersistenceExtension(persistenceOpts);
 
-  const hocuspocus = new Hocuspocus({
-    quiet,
-    debounce,
-    maxDebounce,
-    extensions: [persistence.extension],
-  });
+    hocuspocus = new Hocuspocus({
+      quiet,
+      debounce,
+      maxDebounce,
+      extensions: [persistence.extension],
+    });
 
-  const sessionManager = new AgentSessionManager(hocuspocus);
+    sessionManager = new AgentSessionManager(hocuspocus);
 
-  // Add API extension — push directly onto the extensions array rather than
-  // calling hocuspocus.configure({ extensions: [...] }), which uses spread
-  // and would REPLACE the existing persistence extension.
-  // getFileIndex delegates to the watcher once it's ready (watcher starts async in initAsync).
-  const apiExtension = createApiExtension({
-    hocuspocus,
-    sessionManager,
-    contentDir,
-    getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
-    getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
-    enableTestRoutes,
-    shadowRef,
-    projectRoot: projectDir,
-    contentRoot,
-    backlinkIndex,
-  });
-  hocuspocus.configuration.extensions.push(apiExtension);
+    const apiExtension = createApiExtension({
+      hocuspocus,
+      sessionManager,
+      contentDir,
+      getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
+      getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
+      enableTestRoutes,
+      shadowRef,
+      projectRoot: projectDir,
+      contentRoot,
+      backlinkIndex,
+    });
+    hocuspocus.configuration.extensions.push(apiExtension);
+  } catch (err) {
+    releaseServerLock(lockDir);
+    throw err;
+  }
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
