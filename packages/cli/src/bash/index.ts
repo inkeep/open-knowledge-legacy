@@ -29,12 +29,13 @@
  *
  * All helpers scope to `getProjectDir()` (module-level state, set once at init).
  */
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 /** Default maximum stdout/stderr buffer per command (16 MB). */
 const DEFAULT_MAX_BUFFER = 16 * 1024 * 1024;
@@ -137,14 +138,20 @@ export async function cat(path: string): Promise<string> {
  * `since` is optional ISO timestamp — when provided, filters to commits after that time.
  */
 export async function gitLog(path: string, count: number, since?: string): Promise<GitLogEntry[]> {
+  // Use execFile (not exec) to bypass shell parsing entirely — each arg is passed
+  // directly to git as-is, no escaping needed. Avoids any quoting edge cases for
+  // `since` values or paths with spaces.
   const args = ['log', `-${count}`, '--format=%h|%ai|%s'];
   if (since) {
-    args.push(`--since=${shellEscape(since)}`);
+    args.push(`--since=${since}`);
   }
-  args.push('--', shellEscape(path));
-  const cmd = `git ${args.join(' ')}`;
+  args.push('--', path);
   try {
-    const stdout = await runShell(cmd);
+    const { stdout } = await execFileAsync('git', args, {
+      cwd: projectDir,
+      timeout: DEFAULT_TIMEOUT_MS,
+      maxBuffer: DEFAULT_MAX_BUFFER,
+    });
     return stdout
       .split('\n')
       .filter((line) => line.length > 0)
@@ -158,10 +165,10 @@ export async function gitLog(path: string, count: number, since?: string): Promi
       });
   } catch (err) {
     // File outside git repo, or git not installed, or no history — all non-fatal.
-    // Log at debug level (stderr) so operators can diagnose missing history when
-    // it's unexpected; avoid noise for the common "not a git repo" case.
+    // Log to stderr for unexpected errors; stay quiet for the common "not a git
+    // repo" and "ambiguous argument" failures (these happen normally).
     const msg = err instanceof Error ? err.message : String(err);
-    if (!/not a git repository|fatal: ambiguous argument/.test(msg)) {
+    if (!/not a git repository|fatal: ambiguous argument|ENOENT/.test(msg)) {
       process.stderr.write(`[gitLog] ${path}: ${msg}\n`);
     }
     return [];

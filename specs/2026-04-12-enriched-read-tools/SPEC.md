@@ -238,10 +238,10 @@ Tags: auth, architecture
 **Handler:** Returns `textResult(instructional text)` — same pattern as `research.ts`/`ingest.ts`. No server call.
 
 **Instructional text outline:**
-1. Read `research/` articles on the topic (grep for topic, read matches)
-2. Read `external-sources/` materials referenced by those research notes
+1. Read `.open-knowledge/research/` articles on the topic (use `search` to find them, `read_document` to load with metadata + history)
+2. Read `.open-knowledge/external-sources/` materials referenced by those research notes
 3. Synthesize findings into a canonical article — definitive, not provisional
-4. Write to `articles/<topic-folder>/<slug>.md` via `write_document` with frontmatter: `title`, `description`, `tags`, `status: canonical`
+4. Write to `.open-knowledge/articles/<topic-folder>/<slug>.md` via `write_document` with frontmatter: `title`, `description`, `tags`, `status: canonical`
 5. Mirror-catalog will pick it up automatically
 
 ### Supporting primitive 1: shell wrapper

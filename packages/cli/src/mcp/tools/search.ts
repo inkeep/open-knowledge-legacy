@@ -64,7 +64,7 @@ export async function buildSearchResult(
   const matches = await grep(args.query, {
     caseInsensitive: !(args.case_sensitive ?? false),
     include,
-    exclude: [...exclude, 'node_modules', '.git', '.claude', '.changeset'],
+    exclude: [...exclude, 'node_modules', '.git', '.claude', '.changeset', '.open-knowledge'],
     maxResults: maxResults + 1,
   });
 
@@ -81,7 +81,7 @@ export async function buildSearchResult(
   const metaByPath = new Map<string, Awaited<ReturnType<CatalogStore['getArticleMeta']>>>();
   await Promise.all(
     groups.map(async (g) => {
-      const meta = await deps.catalog.getArticleMeta(g.path);
+      const meta = await deps.catalog.getArticleMeta(g.path).catch(() => null);
       metaByPath.set(g.path, meta);
     }),
   );

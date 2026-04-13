@@ -72,6 +72,15 @@ describe('bash wrapper', () => {
       const matches = await grep('match', { maxResults: 3 });
       expect(matches.length).toBeLessThanOrEqual(3);
     });
+
+    it('respects exclude patterns', async () => {
+      mkdirSync(join(root, 'excluded'), { recursive: true });
+      writeFileSync(join(root, 'excluded', 'hidden.txt'), 'should-not-match\n');
+      writeFileSync(join(root, 'visible.txt'), 'should-not-match\n');
+      const matches = await grep('should-not-match', { exclude: ['excluded'] });
+      expect(matches.some((m) => m.path.includes('visible.txt'))).toBe(true);
+      expect(matches.some((m) => m.path.includes('excluded'))).toBe(false);
+    });
   });
 
   describe('gitLog', () => {
@@ -80,5 +89,40 @@ describe('bash wrapper', () => {
       const entries = await gitLog('file.txt', 5);
       expect(entries).toEqual([]);
     });
+  });
+});
+
+describe('gitLog in a real git repo', () => {
+  let root: string;
+
+  beforeAll(async () => {
+    root = join(tmpdir(), `bash-git-test-${Date.now()}`);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(join(root, 'tracked.md'), 'v1\n');
+    setProjectDir(root);
+    // Minimal git repo so we get a real commit to parse.
+    const { execFile } = await import('node:child_process');
+    const { promisify } = await import('node:util');
+    const exec = promisify(execFile);
+    await exec('git', ['init', '--quiet'], { cwd: root });
+    await exec('git', ['config', 'user.email', 'test@example.invalid'], { cwd: root });
+    await exec('git', ['config', 'user.name', 'Test'], { cwd: root });
+    await exec('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
+    await exec('git', ['add', 'tracked.md'], { cwd: root });
+    await exec('git', ['commit', '--quiet', '-m', 'initial commit'], { cwd: root });
+  });
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('parses git log output into entries', async () => {
+    const entries = await gitLog('tracked.md', 5);
+    expect(entries.length).toBe(1);
+    const entry = entries[0];
+    expect(entry).toBeDefined();
+    expect(entry?.hash).toMatch(/^[0-9a-f]{7,}$/);
+    expect(entry?.date).toMatch(/^\d{4}-\d{2}-\d{2}/);
+    expect(entry?.subject).toBe('initial commit');
   });
 });
