@@ -40,7 +40,7 @@ const GUARD_OPEN = '\uE000';
 const GUARD_CLOSE = '\uE001';
 const GUARD_COLON = '\uE002';
 const GUARD_AT = '\uE003';
-const GUARD_OPEN_BRACE = '\uE004';
+export const GUARD_OPEN_BRACE = '\uE004';
 
 /**
  * Autolink pattern: <scheme:uri>

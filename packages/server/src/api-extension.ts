@@ -47,14 +47,14 @@ export function safeSubdir(baseDir: string, subdir: string): string {
   return resolved;
 }
 
-export type ContentEntryKind = 'file' | 'folder';
+type ContentEntryKind = 'file' | 'folder';
 
-export interface RenamedDocMapping {
+interface RenamedDocMapping {
   fromDocName: string;
   toDocName: string;
 }
 
-export function isValidRelativeContentPath(path: string): boolean {
+function isValidRelativeContentPath(path: string): boolean {
   if (!path || path.startsWith('/') || path.includes('\\') || path.includes('\x00')) {
     return false;
   }
@@ -62,7 +62,7 @@ export function isValidRelativeContentPath(path: string): boolean {
   return path.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
 }
 
-export function listAffectedDocNames(
+function listAffectedDocNames(
   index: ReadonlyMap<string, FileIndexEntry>,
   kind: ContentEntryKind,
   path: string,
@@ -74,7 +74,7 @@ export function listAffectedDocNames(
   return docNames;
 }
 
-export function remapDocNameForRename(
+function remapDocNameForRename(
   docName: string,
   kind: ContentEntryKind,
   fromPath: string,
