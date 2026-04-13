@@ -11,6 +11,7 @@
     "docs"
   ],
   "scripts": {
+    "knip": "knip --files --dependencies --fix-type exports --fix-type types --include exports,types",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
@@ -29,6 +30,7 @@
     ]
   },
   "devDependencies": {
+    "knip": "^6.4.1",
     "@biomejs/biome": "^2.4.10",
     "@changesets/cli": "^2.29.7",
     "@codemirror/state": "^6.6.0",
