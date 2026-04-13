@@ -53,9 +53,8 @@ async function getMenuState(page: Page) {
     const menu = document.querySelector('[role="listbox"][aria-label="Slash commands"]');
     if (!menu) return { open: false } as const;
     const items = Array.from(menu.querySelectorAll('[role="option"]'));
-    const legends = Array.from(menu.querySelectorAll('legend')).map(
-      (l) => l.textContent?.trim() ?? '',
-    );
+    const groups = Array.from(menu.querySelectorAll('[role="group"]'));
+    const legends = groups.map((g) => g.getAttribute('aria-label') ?? '');
     return {
       open: true,
       itemCount: items.length,
