@@ -7,7 +7,7 @@ The Open Knowledge MCP server gives AI agents structured access to your knowledg
 
 ## Two operating modes
 
-The MCP server adapts its behavior based on whether the collaboration server is running. On startup, it probes `GET /api/agent-undo-status` with a 2-second timeout to detect the server.
+The MCP server adapts its behavior based on whether the collaboration server is running. On startup it reads `<contentDir>/.open-knowledge/server.lock`; a live lock tells MCP the real port to connect to, no configuration required. If no live lock is found, MCP falls back to disk-only mode.
 
 <Tabs items={["Disk-only mode", "Hocuspocus-connected mode"]}>
 <Tab value="Disk-only mode">
@@ -25,6 +25,18 @@ Active when `open-knowledge start` **is** running.
 - Undo/redo tracks agent edits separately from human edits
 </Tab>
 </Tabs>
+
+### Port auto-discovery
+
+The MCP server discovers the running Hocuspocus port from `<contentDir>/.open-knowledge/server.lock`. No `--port` flag is needed when `open-knowledge start` (or `bun run dev`) is running in the same content directory — MCP connects to whatever port the server actually bound to.
+
+Precedence:
+
+1. `--port <n>` CLI override — bypasses discovery entirely.
+2. Live lock with `port > 0` — connects to `ws://127.0.0.1:<port>`; the `pid` from the lock is logged to stderr for traceability.
+3. No lock, stale lock, or lock with `port: 0` — disk-only mode.
+
+Stale locks (PID no longer alive on the same host) are cleaned up automatically when read.
 
 ## Tools reference
 
