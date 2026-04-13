@@ -682,6 +682,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleLinkGraph(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const { nodes, links } = backlinkIndex.getLinkGraph();
+      const enrichedNodes = nodes.map((id) => ({
+        id,
+        label: readPageTitleForDocName(id),
+      }));
+      json(res, 200, { ok: true, nodes: enrichedNodes, links });
+    } catch (e) {
+      console.error('[link-graph]', e);
+      json(res, 500, { ok: false, error: 'Failed to read link graph' });
+    }
+  }
+
   async function handleOrphans(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -1466,6 +1488,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/documents': handleDocumentList,
     '/api/backlinks': handleBacklinks,
     '/api/forward-links': handleForwardLinks,
+    '/api/link-graph': handleLinkGraph,
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
     '/api/pages': handlePages,

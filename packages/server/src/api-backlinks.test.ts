@@ -112,6 +112,23 @@ describe('graph endpoints', () => {
         (await callRoute(contentDir, '/api/hubs', fileIndex, backlinkIndex)).body,
       ) as { hubs: Array<{ docName: string; title: string; count: number }> };
       expect(hubsNegativeLimit.hubs).toEqual(hubsDefault.hubs);
+
+      const linkGraph = JSON.parse(
+        (await callRoute(contentDir, '/api/link-graph', fileIndex, backlinkIndex)).body,
+      ) as {
+        ok: boolean;
+        nodes: Array<{ id: string; label: string }>;
+        links: Array<{ source: string; target: string }>;
+      };
+
+      expect(linkGraph.ok).toBe(true);
+      // Every scanned doc gets a forward entry (possibly empty), so nodes include pages
+      // with no outbound wikilinks (e.g. gamma) as well as edge endpoints.
+      expect(linkGraph.nodes.map((n) => n.id).sort()).toEqual(['alpha', 'beta', 'gamma']);
+      expect(linkGraph.nodes.find((n) => n.id === 'alpha')?.label).toBe('Alpha');
+      expect(linkGraph.nodes.find((n) => n.id === 'beta')?.label).toBe('Beta');
+      expect(linkGraph.links).toContainEqual({ source: 'alpha', target: 'beta' });
+      expect(linkGraph.links).toHaveLength(1);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }

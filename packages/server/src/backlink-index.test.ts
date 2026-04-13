@@ -289,4 +289,25 @@ describe('BacklinkIndex', () => {
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
+
+  test('getLinkGraph returns sorted nodes and directed edges', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-linkgraph-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.updateDocumentFromMarkdown('alpha', '[[beta]] and [[gamma]]');
+      index.updateDocumentFromMarkdown('beta', '[[gamma]]');
+
+      const { nodes, links } = index.getLinkGraph();
+
+      expect(nodes).toEqual(['alpha', 'beta', 'gamma']);
+      expect(links).toContainEqual({ source: 'alpha', target: 'beta' });
+      expect(links).toContainEqual({ source: 'alpha', target: 'gamma' });
+      expect(links).toContainEqual({ source: 'beta', target: 'gamma' });
+      expect(links).toHaveLength(3);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });
