@@ -18,6 +18,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { Command } from 'commander';
 import { OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
+import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
   EDITOR_TARGETS,
@@ -44,8 +45,8 @@ function readMcpConfig(path: string): Record<string, unknown> {
   if (trimmed === '') return {};
   try {
     const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+    if (isObject(parsed)) {
+      return parsed;
     }
     throw new Error(`${path} root must be a JSON object`);
   } catch (err) {
