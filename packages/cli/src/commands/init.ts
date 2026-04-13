@@ -18,6 +18,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { Command } from 'commander';
 import { OK_DIR } from '../constants.ts';
 import { initContent } from '../content/init.ts';
+import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -93,10 +94,13 @@ export interface InitCommandResult {
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
+  /** Content preview result (undefined if preview failed or was not run). */
+  preview?: PreviewResult;
   // Backward-compat fields (derived from the Claude entry or first editor):
   mcpAction: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
   mcpPath: string;
   mcpError?: string;
+  previewWarning?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +298,15 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
     }
 
+    // Content preview block (between MCP and Next steps)
+    if (result.preview) {
+      lines.push('');
+      lines.push(formatPreviewBlock(result.preview, cwd));
+    } else if (result.previewWarning) {
+      lines.push('');
+      lines.push(`Content preview unavailable: ${result.previewWarning}`);
+    }
+
     // Next steps (only if something was written)
     if (anyWritten) {
       const configuredLabels = result.editors
@@ -398,6 +411,21 @@ export function initCommand(): Command {
         force: opts.force,
         editors,
       });
+
+      try {
+        const { previewContent } = await import('../content/preview.ts');
+        const { loadConfig } = await import('../config/loader.ts');
+        const { config } = loadConfig(cwd);
+        const contentDir = resolve(cwd, config.content.dir);
+        result.preview = previewContent({
+          projectDir: cwd,
+          contentDir,
+          include: config.content.include,
+          exclude: config.content.exclude,
+        });
+      } catch (e) {
+        result.previewWarning = e instanceof Error ? e.message : String(e);
+      }
 
       process.stdout.write(`${formatInitResult(result, cwd)}\n`);
 

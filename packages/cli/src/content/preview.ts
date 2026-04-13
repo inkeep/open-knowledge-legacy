@@ -95,3 +95,32 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
     warnings,
   };
 }
+
+export function formatPreviewBlock(result: PreviewResult, cwd: string): string {
+  const lines: string[] = [];
+  const displayDir = `./${relative(cwd, result.contentDir) || '.'}`;
+
+  lines.push('Content:');
+  lines.push(`  Found ${result.totalCount} markdown files in ${displayDir}`);
+
+  const includeStr = result.include.join(', ');
+  const excludeStr = result.exclude.length > 0 ? result.exclude.join(', ') : '(none)';
+  lines.push(`  Scope: include=${includeStr}  exclude=${excludeStr}`);
+
+  if (result.sample.length > 0) {
+    const sampleStr = result.sample.join(', ');
+    const suffix = result.totalCount > result.sample.length ? ', \u2026' : '';
+    lines.push(`  Sample: ${sampleStr}${suffix}`);
+  }
+
+  lines.push('');
+  lines.push('  To adjust, edit .open-knowledge/config.yml:');
+  lines.push('    content:');
+  lines.push(`      include: ${JSON.stringify(result.include)}`);
+  lines.push(`      exclude: ${JSON.stringify(result.exclude)}`);
+
+  lines.push('');
+  lines.push('  Re-check anytime: open-knowledge preview');
+
+  return lines.join('\n');
+}
