@@ -18,12 +18,20 @@
  *
  * Spec: SPEC.md FR1 + FR4 + FR5 + FR6 + FR8 + FR14 + FR21 + D10 + D21.
  */
+import { stat } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { z } from 'zod';
 import { extractReferencedPaths } from '../../bash/extract-paths.ts';
 import { createBashInstance, execBash, StdoutOverflowError } from '../../bash/index.ts';
 import { diffMtimes, snapshotMtimes } from '../../bash/mtime-scan.ts';
 import { type ErrorCategory, parseCommand, type Stage } from '../../bash/parse-command.ts';
-import { type EnrichedMeta, enrichPath } from '../../content/enrichment.ts';
+import {
+  type DirectoryMeta,
+  type EnrichedEntry,
+  type EnrichedMeta,
+  enrichDirectory,
+  enrichPath,
+} from '../../content/enrichment.ts';
 import type { ServerInstance } from './shared.ts';
 import { textPlusStructured } from './shared.ts';
 
@@ -52,7 +60,7 @@ export interface ExecDeps {
 }
 
 export interface ExecStructuredResult {
-  enrichedPaths: EnrichedMeta[];
+  enrichedPaths: EnrichedEntry[];
   error?: { category: ErrorCategory; message: string };
 }
 
@@ -101,36 +109,87 @@ function detectBinaryArgs(stages: Stage[]): string[] {
   return hits;
 }
 
-function formatEnrichedBlock(enriched: EnrichedMeta[]): string {
+function isDirectoryMeta(e: EnrichedEntry): e is DirectoryMeta {
+  return (e as DirectoryMeta).type === 'directory';
+}
+
+function formatDirectoryEntry(d: DirectoryMeta): string {
+  const parts: string[] = [`**${d.path}/** (directory)`];
+  const counts: string[] = [];
+  counts.push(`${d.recursiveMdCount} md file${d.recursiveMdCount === 1 ? '' : 's'}`);
+  if (d.childDirCount > 0) {
+    counts.push(`${d.childDirCount} subdir${d.childDirCount === 1 ? '' : 's'}`);
+  }
+  parts.push(counts.join(', '));
+  if (d.mostRecentMd) {
+    parts.push(
+      `most recent: ${d.mostRecentMd.title ?? d.mostRecentMd.path} (${d.mostRecentMd.path})`,
+    );
+  }
+  if (d.truncated) parts.push('scan truncated');
+  return `- ${parts.join(' — ')}`;
+}
+
+function formatFileEntry(m: EnrichedMeta): string {
+  const title = m.title ?? m.path;
+  const parts: string[] = [`**${title}** (${m.path})`];
+  if (m.description) parts.push(m.description);
+  if (m.tags.length > 0) parts.push(`tags: ${m.tags.join(', ')}`);
+  if (m.backlinkCount !== null) parts.push(`backlinks: ${m.backlinkCount}`);
+  if (m.history && m.history.length > 0) {
+    const entries = m.history.map((h) => {
+      const who =
+        h.writerClassification === 'agent'
+          ? `agent: ${h.writerName}`
+          : h.writerClassification === 'human'
+            ? `human: ${h.writerName}`
+            : `${h.writerClassification}: ${h.writerName}`;
+      return `${h.hash.slice(0, 7)} [${who}] ${h.message}`;
+    });
+    parts.push(`OK edits: ${entries.join(' · ')}`);
+  }
+  if (m.projectHistory && m.projectHistory.length > 0) {
+    const entries = m.projectHistory.map(
+      (c) => `${c.hash.slice(0, 7)} ${c.authorName}: ${c.subject}`,
+    );
+    parts.push(`commits: ${entries.join(' · ')}`);
+  }
+  return `- ${parts.join(' — ')}`;
+}
+
+function formatEnrichedBlock(enriched: EnrichedEntry[]): string {
   if (enriched.length === 0) return '';
   const lines: string[] = ['', '### Referenced files', ''];
-  for (const m of enriched) {
-    const title = m.title ?? m.path;
-    const parts: string[] = [`**${title}** (${m.path})`];
-    if (m.description) parts.push(m.description);
-    if (m.tags.length > 0) parts.push(`tags: ${m.tags.join(', ')}`);
-    if (m.backlinkCount !== null) parts.push(`backlinks: ${m.backlinkCount}`);
-    if (m.history && m.history.length > 0) {
-      const entries = m.history.map((h) => {
-        const who =
-          h.writerClassification === 'agent'
-            ? `agent: ${h.writerName}`
-            : h.writerClassification === 'human'
-              ? `human: ${h.writerName}`
-              : `${h.writerClassification}: ${h.writerName}`;
-        return `${h.hash.slice(0, 7)} [${who}] ${h.message}`;
-      });
-      parts.push(`OK edits: ${entries.join(' · ')}`);
-    }
-    if (m.projectHistory && m.projectHistory.length > 0) {
-      const entries = m.projectHistory.map(
-        (c) => `${c.hash.slice(0, 7)} ${c.authorName}: ${c.subject}`,
-      );
-      parts.push(`commits: ${entries.join(' · ')}`);
-    }
-    lines.push(`- ${parts.join(' — ')}`);
+  for (const e of enriched) {
+    lines.push(isDirectoryMeta(e) ? formatDirectoryEntry(e) : formatFileEntry(e));
   }
   return lines.join('\n');
+}
+
+/** Classify candidate paths into files vs directories via stat. */
+async function classifyPaths(
+  projectDir: string,
+  paths: string[],
+): Promise<{ files: string[]; dirs: string[] }> {
+  const files: string[] = [];
+  const dirs: string[] = [];
+  await Promise.all(
+    paths.map(async (p) => {
+      try {
+        const st = await stat(resolve(projectDir, p));
+        if (st.isDirectory()) {
+          dirs.push(p);
+        } else if (st.isFile()) {
+          files.push(p);
+        }
+      } catch {
+        // Path doesn't exist (e.g., grep-matched path from stdin, or parse artifact).
+        // Fall back to extension heuristic: .md/.mdx → file, else skip.
+        if (/\.(md|mdx)$/i.test(p)) files.push(p);
+      }
+    }),
+  );
+  return { files, dirs };
 }
 
 function errorCategoryResult(category: ErrorCategory, message: string) {
@@ -191,10 +250,11 @@ export async function buildExecResult(
 
   // 6. Extract referenced wiki paths + enrich
   const paths = extractReferencedPaths(stdout, stages);
+  const { files, dirs } = await classifyPaths(deps.projectDir, paths);
   // Single-path cat enrichment gets rich fields; all others get slim.
-  const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && paths.length === 1;
-  const enriched: EnrichedMeta[] = await Promise.all(
-    paths.map((p) =>
+  const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && files.length === 1;
+  const fileEnriched: EnrichedMeta[] = await Promise.all(
+    files.map((p) =>
       enrichPath(
         p,
         { projectDir: deps.projectDir, serverUrl: deps.serverUrl },
@@ -215,6 +275,33 @@ export async function buildExecResult(
       ),
     ),
   );
+  const dirEnriched: DirectoryMeta[] = await Promise.all(
+    dirs.map((p) =>
+      enrichDirectory(p, { projectDir: deps.projectDir }).catch(
+        (): DirectoryMeta => ({
+          path: p,
+          type: 'directory',
+          directMdCount: 0,
+          recursiveMdCount: 0,
+          childDirCount: 0,
+          truncated: false,
+        }),
+      ),
+    ),
+  );
+  // Preserve stdout order: walk `paths` and pick up the matching entry.
+  const fileByPath = new Map(fileEnriched.map((e) => [e.path, e]));
+  const dirByPath = new Map(dirEnriched.map((e) => [e.path, e]));
+  const enriched: EnrichedEntry[] = [];
+  for (const p of paths) {
+    const f = fileByPath.get(p);
+    if (f) {
+      enriched.push(f);
+      continue;
+    }
+    const d = dirByPath.get(p);
+    if (d) enriched.push(d);
+  }
 
   // 7. Format output
   const binaryHits = detectBinaryArgs(stages);

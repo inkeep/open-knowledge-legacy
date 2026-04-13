@@ -13,8 +13,9 @@
  *
  * See SPEC.md FR7 + FR14 + FR15 + D13 + D19 + D20.
  */
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import type { Dirent } from 'node:fs';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { basename, resolve } from 'node:path';
 import { z } from 'zod';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { parseFrontmatter } from '../utils/frontmatter.ts';
@@ -23,6 +24,24 @@ import { type HistorySource, readShadowLog, type ShadowCommit } from './shadow-l
 
 export type { GitCommit, ProjectHistorySource } from './project-log.ts';
 
+/** Bound on recursive directory scan when computing `DirectoryMeta`. */
+const DIRECTORY_SCAN_CAP = 1000;
+
+/** Dirs skipped when computing DirectoryMeta (same policy as mtime-scan). */
+const DIR_SKIP: ReadonlySet<string> = new Set([
+  '.git',
+  '.open-knowledge',
+  '.openknowledge',
+  'node_modules',
+  '.changeset',
+  '.claude',
+  '.agents',
+  'dist',
+  'build',
+]);
+
+const WIKI_EXT_RE = /\.(md|mdx)$/i;
+
 /** Full backlink entry surfaced in rich enrichment. */
 export interface BacklinkEntry {
   /** docName of the source that links to this path. */
@@ -30,6 +49,37 @@ export interface BacklinkEntry {
   title?: string;
   /** Short excerpt from the source around the link, when the server provides one. */
   snippet?: string | null;
+}
+
+/**
+ * Directory-level enrichment — what a folder contains. Returned for
+ * directory entries in `ls` output so agents get a real folder summary
+ * without opening anything.
+ *
+ * This is the on-demand equivalent of what the old persisted INDEX.md
+ * catalogs used to surface (D26 teardown): recursive file count, child
+ * dirs, most recent wiki file as a content hint. Computed per call; no
+ * storage layer.
+ */
+export interface DirectoryMeta {
+  /** Project-root-relative path to the directory (no trailing slash). */
+  path: string;
+  type: 'directory';
+  /** Number of wiki (.md/.mdx) files directly in this dir (not recursive). */
+  directMdCount: number;
+  /** Number of wiki (.md/.mdx) files in this dir and all descendants (bounded). */
+  recursiveMdCount: number;
+  /** Subdirectories directly in this dir (excluding .git, node_modules, etc.). */
+  childDirCount: number;
+  /** Most recently modified wiki file under this dir — a content hint without opening. */
+  mostRecentMd?: {
+    path: string;
+    title?: string;
+    /** ISO mtime. */
+    updatedAt: string;
+  };
+  /** `true` when the recursive scan hit `DIRECTORY_SCAN_CAP`. */
+  truncated: boolean;
 }
 
 /**
@@ -218,5 +268,104 @@ export async function enrichPath(
     historySource: shadow.source,
     projectHistory: project.commits,
     projectHistorySource: project.source,
+  };
+}
+
+/** Union type surfaced to callers that enrich a mixed list of files and dirs. */
+export type EnrichedEntry = EnrichedMeta | DirectoryMeta;
+
+interface DirScanResult {
+  directMdCount: number;
+  recursiveMdCount: number;
+  childDirCount: number;
+  mostRecent: { absPath: string; relPath: string; mtimeMs: number } | null;
+  truncated: boolean;
+}
+
+async function scanDirectory(absDir: string, projectDir: string): Promise<DirScanResult> {
+  const result: DirScanResult = {
+    directMdCount: 0,
+    recursiveMdCount: 0,
+    childDirCount: 0,
+    mostRecent: null,
+    truncated: false,
+  };
+  let visited = 0;
+  const queue: { path: string; depth: number }[] = [{ path: absDir, depth: 0 }];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) break;
+    if (visited >= DIRECTORY_SCAN_CAP) {
+      result.truncated = true;
+      break;
+    }
+    let entries: Dirent[];
+    try {
+      entries = await readdir(current.path, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (visited >= DIRECTORY_SCAN_CAP) {
+        result.truncated = true;
+        break;
+      }
+      visited++;
+      const name = entry.name;
+      if (entry.isDirectory()) {
+        if (DIR_SKIP.has(name) || name.startsWith('.')) continue;
+        if (current.depth === 0) result.childDirCount++;
+        queue.push({ path: `${current.path}/${name}`, depth: current.depth + 1 });
+      } else if (entry.isFile() && WIKI_EXT_RE.test(name)) {
+        result.recursiveMdCount++;
+        if (current.depth === 0) result.directMdCount++;
+        const absFile = `${current.path}/${name}`;
+        try {
+          const st = await stat(absFile);
+          if (!result.mostRecent || st.mtimeMs > result.mostRecent.mtimeMs) {
+            const relPath = absFile.startsWith(projectDir)
+              ? absFile.slice(projectDir.length).replace(/^\/+/, '')
+              : absFile;
+            result.mostRecent = { absPath: absFile, relPath, mtimeMs: st.mtimeMs };
+          }
+        } catch {}
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Assemble enrichment for a directory path. Returns folder-shape metadata
+ * (counts + most-recent wiki file hint) — the on-demand equivalent of the
+ * old persisted INDEX.md catalogs (D26 teardown).
+ */
+export async function enrichDirectory(
+  relPathInput: string,
+  deps: Pick<EnrichPathDeps, 'projectDir'>,
+): Promise<DirectoryMeta> {
+  const relPath = relPathInput.replace(/^\.\//, '').replace(/^\/+/, '').replace(/\/+$/, '');
+  const absDir = resolve(deps.projectDir, relPath);
+  const scan = await scanDirectory(absDir, deps.projectDir);
+
+  let mostRecentMd: DirectoryMeta['mostRecentMd'];
+  if (scan.mostRecent) {
+    const fm = await readFrontmatter(scan.mostRecent.absPath);
+    mostRecentMd = {
+      path: scan.mostRecent.relPath,
+      title: fm?.title ?? basename(scan.mostRecent.relPath),
+      updatedAt: new Date(scan.mostRecent.mtimeMs).toISOString(),
+    };
+  }
+
+  return {
+    path: relPath,
+    type: 'directory',
+    directMdCount: scan.directMdCount,
+    recursiveMdCount: scan.recursiveMdCount,
+    childDirCount: scan.childDirCount,
+    mostRecentMd,
+    truncated: scan.truncated,
   };
 }

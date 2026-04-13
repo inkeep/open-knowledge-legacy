@@ -72,8 +72,20 @@ async function main(): Promise<void> {
     } else {
       console.log(`\n  [enrichedPaths] ${result.structuredContent.enrichedPaths.length} path(s)`);
       for (const m of result.structuredContent.enrichedPaths) {
-        const rich = m.historySource !== null ? ' (rich)' : '';
-        console.log(`    - ${m.path}${rich}: ${m.title ?? '(no title)'}`);
+        if ((m as { type?: string }).type === 'directory') {
+          const d = m as {
+            path: string;
+            recursiveMdCount: number;
+            childDirCount: number;
+          };
+          console.log(
+            `    - ${d.path}/ (directory): ${d.recursiveMdCount} md, ${d.childDirCount} subdirs`,
+          );
+        } else {
+          const f = m as { path: string; title?: string; historySource: unknown };
+          const rich = f.historySource !== null ? ' (rich)' : '';
+          console.log(`    - ${f.path}${rich}: ${f.title ?? '(no title)'}`);
+        }
       }
     }
   }

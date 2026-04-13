@@ -67,8 +67,12 @@ function extractFromLs(stdout: string, stage: Stage): string[] {
   for (const line of stdout.split('\n')) {
     const name = line.trim();
     if (!name) continue;
+    // Skip entries that are clearly non-wiki files (have a non-md extension).
+    // Entries without an extension are candidate directories — exec.ts stats
+    // them to classify.
+    if (/\.[a-z0-9]+$/i.test(name) && !isWikiPath(name)) continue;
     const path = prefix ? `${prefix}/${name}` : name;
-    if (isWikiPath(path)) out.push(path);
+    out.push(path);
   }
   return out;
 }
@@ -153,4 +157,14 @@ export function extractReferencedPaths(stdout: string, stages: Stage[]): string[
     out.push(n);
   }
   return out;
+}
+
+/** Drop the `isWikiPath` filter inside ls extraction — exec.ts classifies by stat. */
+export function isLsProducer(stages: Stage[]): boolean {
+  for (let i = stages.length - 1; i >= 0; i--) {
+    if (PRODUCER_COMMANDS.has(stages[i].command)) {
+      return stages[i].command === 'ls';
+    }
+  }
+  return false;
 }

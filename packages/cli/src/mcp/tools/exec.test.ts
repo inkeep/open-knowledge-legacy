@@ -5,8 +5,15 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
+import type { EnrichedMeta } from '../../content/enrichment.ts';
 import { buildExecResult, type ExecStructuredResult } from './exec.ts';
 import { buildReadResult } from './read-document.ts';
+
+function fileEntries(s: ExecStructuredResult): EnrichedMeta[] {
+  return s.enrichedPaths.filter(
+    (e): e is EnrichedMeta => (e as { type?: string }).type !== 'directory',
+  );
+}
 
 let tmpDir: string;
 
@@ -62,11 +69,12 @@ describe('exec — happy path', () => {
     expect(result.content[0].text).toContain('Auth');
 
     const s = structured(result);
-    expect(s.enrichedPaths.length).toBe(1);
-    expect(s.enrichedPaths[0].path).toBe('content/auth.md');
-    expect(s.enrichedPaths[0].title).toBe('Auth');
+    const files = fileEntries(s);
+    expect(files.length).toBe(1);
+    expect(files[0].path).toBe('content/auth.md');
+    expect(files[0].title).toBe('Auth');
     // rich shape on single-path cat
-    expect(s.enrichedPaths[0].historySource).toBe('shadow-repo-absent');
+    expect(files[0].historySource).toBe('shadow-repo-absent');
   });
 
   test('ls returns slim enrichment for each matched path', async () => {
@@ -82,9 +90,10 @@ describe('exec — happy path', () => {
     )) as ExecResult;
 
     const s = structured(result);
-    expect(s.enrichedPaths.length).toBe(2);
+    const files = fileEntries(s);
+    expect(files.length).toBe(2);
     // Slim shape: rich fields null
-    for (const m of s.enrichedPaths) {
+    for (const m of files) {
       expect(m.backlinkCount).toBe(null);
       expect(m.history).toBe(null);
       expect(m.historySource).toBe(null);
@@ -110,6 +119,40 @@ describe('exec — happy path', () => {
     expect(paths).toContain('articles/a.md');
     expect(paths).toContain('articles/b.md');
     expect(paths).not.toContain('articles/c.md');
+  });
+
+  test('ls surfaces directory entries with folder metadata', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    const specA = resolve(specs, 'spec-a');
+    const specAEvidence = resolve(specA, 'evidence');
+    mkdirSync(specAEvidence, { recursive: true });
+    writeFileSync(resolve(specA, 'SPEC.md'), '---\ntitle: Spec A\n---\nBody\n');
+    writeFileSync(resolve(specAEvidence, 'e1.md'), '---\ntitle: E1\n---\nBody\n');
+    mkdirSync(resolve(specs, 'spec-b'), { recursive: true });
+    writeFileSync(resolve(specs, 'spec-b', 'SPEC.md'), '---\ntitle: Spec B\n---\nBody\n');
+
+    const result = (await buildExecResult(
+      { command: 'ls specs/' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    const s = structured(result);
+    const dirs = s.enrichedPaths.filter(
+      (e): e is Extract<typeof e, { type: 'directory' }> =>
+        (e as { type?: string }).type === 'directory',
+    );
+    expect(dirs.length).toBe(2);
+    const specAEntry = dirs.find((d) => d.path === 'specs/spec-a');
+    expect(specAEntry).toBeDefined();
+    expect(specAEntry?.directMdCount).toBe(1);
+    expect(specAEntry?.recursiveMdCount).toBe(2);
+    expect(specAEntry?.childDirCount).toBe(1);
+    expect(specAEntry?.mostRecentMd).toBeDefined();
+    // Content block renders folder summary
+    expect(result.content[0].text).toContain('specs/spec-a/');
+    expect(result.content[0].text).toContain('md file');
   });
 });
 
@@ -186,7 +229,7 @@ describe('exec — CC9 parity with read_document', () => {
       { command: 'cat articles/parity.md' },
       { projectDir: project, serverUrl: undefined },
     )) as ExecResult;
-    const execMeta = structured(execResult).enrichedPaths[0];
+    const execMeta = fileEntries(structured(execResult))[0];
 
     // read_document("articles/parity.md") — same data source (enrichPath)
     const readOutput = await buildReadResult(
