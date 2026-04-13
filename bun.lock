@@ -166,6 +166,7 @@
         "yjs": "^13.6.30",
       },
       "devDependencies": {
+        "@types/mdast": "^4.0.4",
         "typescript": "^5.9.3",
       },
     },
@@ -191,8 +192,6 @@
       },
       "devDependencies": {
         "@types/picomatch": "^4.0.3",
-        "@types/pino-pretty": "^5.0.0",
-        "@types/ws": "^8.18.1",
         "typescript": "^5.9.3",
       },
       "optionalDependencies": {
@@ -1115,8 +1114,6 @@
     "@types/node": ["@types/node@22.19.17", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-wGdMcf+vPYM6jikpS/qhg6WiqSV/OhG+jeeHT/KlVqxYfD40iYJf9/AE1uQxVWFvU7MipKRkRv8NSHiCGgPr8Q=="],
 
     "@types/picomatch": ["@types/picomatch@4.0.3", "", {}, "sha512-iG0T6+nYJ9FAPmx9SsUlnwcq1ZVRuCXcVEvWnntoPlrOpwtSTKNDC9uVAxTsC3PUvJ+99n4RpAcNgBbHX3JSnQ=="],
-
-    "@types/pino-pretty": ["@types/pino-pretty@5.0.0", "", { "dependencies": { "pino-pretty": "*" } }, "sha512-N1uzqSzioqz8R3AkDbSJwcfDWeI3YMPNapSQQhnB2ISU4NYgUIcAh+hYT5ygqBM+klX4htpEhXMmoJv3J7GrdA=="],
 
     "@types/prismjs": ["@types/prismjs@1.26.6", "", {}, "sha512-vqlvI7qlMvcCBbVe0AKAb4f97//Hy0EBTaiW8AalRnG/xAN5zOiWWyrNqNXeq8+KAuvRewjCVY1+IPxk4RdNYw=="],
 

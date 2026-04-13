@@ -8,7 +8,11 @@ export default {
     'docs/source.config.ts': ['exports'],
   },
   workspaces: {
-    'packages/app': {
+    'packages/app': {},
+    docs: {
+      ignoreDependencies: [
+        'postcss', // Bundled in Next.js
+      ],
     },
   },
 } satisfies KnipConfig;
