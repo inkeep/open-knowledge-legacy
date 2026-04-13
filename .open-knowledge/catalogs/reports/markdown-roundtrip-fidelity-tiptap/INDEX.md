@@ -11,4 +11,5 @@ schema_version: 1
 
 ## Subfolders
 
-- **[evidence](.open-knowledge/catalogs/reports/markdown-roundtrip-fidelity-tiptap/evidence/INDEX.md)** (7 articles)
+- **[evidence](.open-knowledge/catalogs/reports/markdown-roundtrip-fidelity-tiptap/evidence/INDEX.md)** (8 articles)
+- **[meta](.open-knowledge/catalogs/reports/markdown-roundtrip-fidelity-tiptap/meta/INDEX.md)** (1 article)
