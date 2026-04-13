@@ -105,21 +105,16 @@ function EditWikiLinkDialog({
     if (e.key === 'Enter') handleSave();
   }
 
-  const showHeadings = headings !== null && headings.length > 0;
-
   // Deduplicate heading keys — mirrors heading-anchors.ts so identical heading
   // texts get -1, -2 … suffixes, ensuring stable React keys without array index.
-  const headingsWithKeys = showHeadings
-    ? (() => {
-        const counts = new Map<string, number>();
-        return headings?.map((h) => {
-          const count = counts.get(h.slug) ?? 0;
-          counts.set(h.slug, count + 1);
-          const reactKey = count === 0 ? h.slug : `${h.slug}-${count}`;
-          return { ...h, reactKey };
-        });
-      })()
-    : [];
+  const counts = new Map<string, number>();
+  const headingsWithKeys = headings?.map((h) => {
+    const count = counts.get(h.slug) ?? 0;
+    counts.set(h.slug, count + 1);
+    const reactKey = count === 0 ? h.slug : `${h.slug}-${count}`;
+    return { ...h, reactKey };
+  });
+  const showHeadings = !!headingsWithKeys?.length;
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
