@@ -1,5 +1,9 @@
 // Markdown pipeline (new unified+remark)
 
+// Re-export VFileMessage for Observer B's error classification (instanceof check
+// instead of fragile constructor.name string comparison).
+export { VFileMessage } from 'vfile-message';
+
 // Constants
 export {
   ACTIVITY_TTL_MS,

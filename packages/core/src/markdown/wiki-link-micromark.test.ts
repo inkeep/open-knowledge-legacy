@@ -5,28 +5,30 @@
  * Tests the full parse→serialize round-trip via MarkdownManager.
  */
 import { describe, expect, test } from 'bun:test';
+import type { Nodes, Root } from 'mdast';
 import { fromMarkdown } from 'mdast-util-from-markdown';
 import { toMarkdown } from 'mdast-util-to-markdown';
 import { visit } from 'unist-util-visit';
+import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { wikiLinkFromMarkdown, wikiLinkSyntax, wikiLinkToMarkdown } from './wiki-link-micromark.ts';
 
-function parseMdast(md: string) {
+function parseMdast(md: string): Root {
   return fromMarkdown(md, {
     extensions: [wikiLinkSyntax()],
     mdastExtensions: [wikiLinkFromMarkdown],
   });
 }
 
-function serializeMdast(tree: any): string {
+function serializeMdast(tree: Root): string {
   return toMarkdown(tree, { extensions: [wikiLinkToMarkdown] }).replace(/\n+$/, '');
 }
 
-function findWikiLinks(tree: any): any[] {
-  const links: any[] = [];
+function findWikiLinks(tree: Root): WikiLinkMdast[] {
+  const links: WikiLinkMdast[] = [];
   // Use manual type check — visit(tree, 'wikiLink') double-counts due to
   // unist-util-is checking both node.type and other properties
-  visit(tree, (node: any) => {
-    if (node.type === 'wikiLink') links.push(node);
+  visit(tree, (node: Nodes) => {
+    if (node.type === 'wikiLink') links.push(node as unknown as WikiLinkMdast);
   });
   return links;
 }

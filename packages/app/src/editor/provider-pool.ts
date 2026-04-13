@@ -6,7 +6,15 @@ import { setupObservers } from './observers';
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
-interface PoolEntry {
+function defaultCollabWsUrl(): string {
+  if (typeof location === 'undefined') {
+    return 'ws://localhost/collab';
+  }
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${scheme}://${location.host}/collab`;
+}
+
+export interface PoolEntry {
   provider: HocuspocusProvider;
   observerCleanup: (() => void) | null;
   syncState: SyncState;
@@ -17,7 +25,7 @@ interface PoolEntry {
   pendingRecycleTimer: ReturnType<typeof setTimeout> | null;
 }
 
-type PoolChangeCallback = () => void;
+export type PoolChangeCallback = () => void;
 
 const editorSchema = getSchema(sharedExtensions);
 
@@ -50,7 +58,8 @@ export class ProviderPool {
 
   constructor(maxSize = 10, wsUrl?: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
-    this.wsUrl = wsUrl ?? `ws://${location.host ?? 'localhost'}/collab`;
+    // Match page scheme: ws:// from http dev, wss:// from https (tunnels, reverse proxies).
+    this.wsUrl = wsUrl ?? defaultCollabWsUrl();
     this.recycleDebounceMs = recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
   }
 

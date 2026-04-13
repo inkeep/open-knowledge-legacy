@@ -7,19 +7,20 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
+import type { JSONContent } from '@tiptap/core';
 import { mdRoundTrip, normalize } from './helpers';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
-function findMarkType(node: any, markType: string): boolean {
-  if (node.marks?.some((m: any) => m.type === markType)) return true;
+function findMarkType(node: JSONContent, markType: string): boolean {
+  if (node.marks?.some((m) => m.type === markType)) return true;
   for (const child of node.content ?? []) {
     if (findMarkType(child, markType)) return true;
   }
   return false;
 }
 
-function findNodeType(node: any, nodeType: string): boolean {
+function findNodeType(node: JSONContent, nodeType: string): boolean {
   if (node.type === nodeType) return true;
   for (const child of node.content ?? []) {
     if (findNodeType(child, nodeType)) return true;

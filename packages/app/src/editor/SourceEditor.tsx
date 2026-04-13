@@ -8,14 +8,14 @@ import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 const darkTheme = basicDarkInit({
   settings: {
     background: 'var(--background)',
-    gutterBackground: 'var(--muted)',
+    gutterBackground: 'var(--background)',
   },
 });
 
 const lightTheme = basicLightInit({
   settings: {
     background: 'var(--background)',
-    gutterBackground: 'var(--muted)',
+    gutterBackground: 'var(--background)',
   },
 });
 
@@ -104,5 +104,5 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
     });
   }, [resolvedTheme]);
 
-  return <div ref={containerRef} className="source-editor h-full" />;
+  return <div ref={containerRef} className="source-editor h-full py-3" />;
 }
