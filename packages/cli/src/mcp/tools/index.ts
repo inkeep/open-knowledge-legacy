@@ -105,7 +105,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   });
 
   // Workflow tools — return instructional text, no server connection needed
-  registerInitContent(server);
+  registerInitContent(server, opts.config);
   registerIngest(server, opts.config);
   registerResearch(server, opts.config);
   registerConsolidate(server, opts.config);
