@@ -17,7 +17,6 @@
  * `register(...)` export, then import and call it from here.
  */
 import type { Config } from '../../config/schema.ts';
-import type { CatalogStore } from '../../content/catalog-store.ts';
 import {
   DESCRIPTION as CONSOLIDATE_DESCRIPTION,
   register as registerConsolidate,
@@ -96,7 +95,6 @@ export interface RegisterAllToolsOptions {
   serverUrl?: string;
   projectDir: string;
   config: Config;
-  catalog: CatalogStore;
 }
 
 export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsOptions): void {
@@ -108,9 +106,9 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
 
   // Workflow tools — return instructional text, no server connection needed
   registerInitContent(server);
-  registerIngest(server);
-  registerResearch(server);
-  registerConsolidate(server);
+  registerIngest(server, opts.config);
+  registerResearch(server, opts.config);
+  registerConsolidate(server, opts.config);
 
   // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(server, {

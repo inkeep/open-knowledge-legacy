@@ -18,11 +18,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { parseFrontmatter } from '../utils/frontmatter.ts';
-import {
-  type GitCommit,
-  type ProjectHistorySource,
-  readProjectGitLog,
-} from './project-log.ts';
+import { type GitCommit, type ProjectHistorySource, readProjectGitLog } from './project-log.ts';
 import { type HistorySource, readShadowLog, type ShadowCommit } from './shadow-log.ts';
 
 export type { GitCommit, ProjectHistorySource } from './project-log.ts';

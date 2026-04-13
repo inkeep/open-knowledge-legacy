@@ -70,9 +70,7 @@ async function main(): Promise<void> {
     if (result.structuredContent.error) {
       console.log(`\n  [error.category] ${result.structuredContent.error.category}`);
     } else {
-      console.log(
-        `\n  [enrichedPaths] ${result.structuredContent.enrichedPaths.length} path(s)`,
-      );
+      console.log(`\n  [enrichedPaths] ${result.structuredContent.enrichedPaths.length} path(s)`);
       for (const m of result.structuredContent.enrichedPaths) {
         const rich = m.historySource !== null ? ' (rich)' : '';
         console.log(`    - ${m.path}${rich}: ${m.title ?? '(no title)'}`);
