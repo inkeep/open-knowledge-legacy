@@ -14,7 +14,7 @@ function defaultCollabWsUrl(): string {
   return `${scheme}://${location.host}/collab`;
 }
 
-export interface PoolEntry {
+interface PoolEntry {
   provider: HocuspocusProvider;
   observerCleanup: (() => void) | null;
   syncState: SyncState;
@@ -25,7 +25,7 @@ export interface PoolEntry {
   pendingRecycleTimer: ReturnType<typeof setTimeout> | null;
 }
 
-export type PoolChangeCallback = () => void;
+type PoolChangeCallback = () => void;
 
 const editorSchema = getSchema(sharedExtensions);
 

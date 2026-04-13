@@ -15,11 +15,6 @@ function docNameFromHash(): string | null {
   return null;
 }
 
-function hashFromDocName(docName: string, anchor?: string | null): string {
-  const base = `#/${docName}`;
-  return anchor ? `${base}?anchor=${encodeURIComponent(anchor)}` : base;
-}
-
 /** Syncs window.location.hash ↔ DocumentContext.openDocument, unidirectionally:
  *  hash is the source of truth; all navigation sets the hash; this handler
  *  is the single place that calls openDocument(). */
