@@ -32,8 +32,8 @@
  *   transaction can merge before updateYFragment rebuilds the tree.
  */
 
+import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import type { MarkdownManager } from '@tiptap/markdown';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';

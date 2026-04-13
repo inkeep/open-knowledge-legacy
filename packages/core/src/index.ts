@@ -9,30 +9,19 @@ export {
   hasNewEntries,
 } from './constants/activity.ts';
 // Extensions
-export { BulletListFidelity } from './extensions/bullet-list-fidelity.ts';
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
-export { BoldFidelity, ItalicFidelity } from './extensions/emphasis-fidelity.ts';
+export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';
+export { EscapeMark } from './extensions/escape-mark.ts';
 export { prependFrontmatter, stripFrontmatter } from './extensions/frontmatter.ts';
 export { HardBreakFidelity } from './extensions/hard-break-fidelity.ts';
 export { HeadingFidelity } from './extensions/heading-fidelity.ts';
-export { HorizontalRuleFidelity } from './extensions/horizontal-rule-fidelity.ts';
 export { HtmlBlockFidelity } from './extensions/html-block-fidelity.ts';
-export { fenceFor, JsxComponent } from './extensions/jsx-component.ts';
-export {
-  createJsxBlockExtension,
-  type JsxToken,
-  jsxStart,
-  jsxTokenizerA,
-  jsxTokenizerB,
-  jsxTokenizerC,
-  type TokenizerVersion,
-} from './extensions/jsx-tokenizer.ts';
+export { JsxComponent } from './extensions/jsx-component.ts';
 export { LinkFidelity } from './extensions/link-fidelity.ts';
 export { LinkRefDefFidelity } from './extensions/link-ref-def-fidelity.ts';
 export { List, ListItem, ListItemNode, ListNode } from './extensions/list.ts';
-export { ListItemFidelity } from './extensions/list-item-fidelity.ts';
-export { OrderedListFidelity } from './extensions/ordered-list-fidelity.ts';
 export { sharedExtensions } from './extensions/shared.ts';
+export { ThematicBreakFidelity } from './extensions/thematic-break-fidelity.ts';
 export {
   getWikiLinkText,
   normalizeNullableString,

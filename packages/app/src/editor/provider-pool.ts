@@ -1,6 +1,6 @@
 import { HocuspocusProvider } from '@hocuspocus/provider';
+import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { sharedExtensions } from './extensions/shared.ts';
 import { setupObservers } from './observers';
 

@@ -2,7 +2,7 @@
  * Tests for remark-prosemirror handler table (Tiers A/B/C).
  *
  * Exercises the mdast→PM handler mapping via parse + JSON inspection.
- * Uses CURRENT schema attr names (pre-rename per US-010).
+ * Uses POST-RENAME schema names per D16/D17: emphasis/strong/thematicBreak.
  */
 import { describe, expect, test } from 'bun:test';
 import { sharedExtensions } from '../extensions/shared.ts';
@@ -34,34 +34,34 @@ function findMarkInJson(json: any, markType: string): any {
 }
 
 describe('Tier B fidelity: emphasis delimiter', () => {
-  test('underscore emphasis carries emphDelimiter = "_"', () => {
+  test('underscore emphasis carries sourceDelimiter = "_"', () => {
     const json = mdManager.parse('_word_\n');
-    const emphMark = findMarkInJson(json, 'italic');
+    const emphMark = findMarkInJson(json, 'emphasis');
     expect(emphMark).toBeDefined();
-    expect(emphMark.attrs?.emphDelimiter).toBe('_');
+    expect(emphMark.attrs?.sourceDelimiter).toBe('_');
   });
 
-  test('asterisk emphasis carries emphDelimiter = "*"', () => {
+  test('asterisk emphasis carries sourceDelimiter = "*"', () => {
     const json = mdManager.parse('*word*\n');
-    const emphMark = findMarkInJson(json, 'italic');
+    const emphMark = findMarkInJson(json, 'emphasis');
     expect(emphMark).toBeDefined();
-    expect(emphMark.attrs?.emphDelimiter).toBe('*');
+    expect(emphMark.attrs?.sourceDelimiter).toBe('*');
   });
 });
 
 describe('Tier B fidelity: strong delimiter', () => {
-  test('double-underscore strong carries strongDelimiter = "__"', () => {
+  test('double-underscore strong carries sourceDelimiter = "__"', () => {
     const json = mdManager.parse('__word__\n');
-    const strongMark = findMarkInJson(json, 'bold');
+    const strongMark = findMarkInJson(json, 'strong');
     expect(strongMark).toBeDefined();
-    expect(strongMark.attrs?.strongDelimiter).toBe('__');
+    expect(strongMark.attrs?.sourceDelimiter).toBe('__');
   });
 
-  test('double-asterisk strong carries strongDelimiter = "**"', () => {
+  test('double-asterisk strong carries sourceDelimiter = "**"', () => {
     const json = mdManager.parse('**word**\n');
-    const strongMark = findMarkInJson(json, 'bold');
+    const strongMark = findMarkInJson(json, 'strong');
     expect(strongMark).toBeDefined();
-    expect(strongMark.attrs?.strongDelimiter).toBe('**');
+    expect(strongMark.attrs?.sourceDelimiter).toBe('**');
   });
 });
 
@@ -94,18 +94,18 @@ describe('Tier B fidelity: code block fence', () => {
 });
 
 describe('Tier B fidelity: thematic break', () => {
-  test('--- carries horizontalRuleRaw = "---"', () => {
+  test('--- carries sourceRaw = "---"', () => {
     const json = mdManager.parse('---\n');
-    const hr = findInJson(json, 'horizontalRule');
+    const hr = findInJson(json, 'thematicBreak');
     expect(hr).toBeDefined();
-    expect(hr.attrs.horizontalRuleRaw).toBe('---');
+    expect(hr.attrs.sourceRaw).toBe('---');
   });
 
-  test('*** carries horizontalRuleRaw = "***"', () => {
+  test('*** carries sourceRaw = "***"', () => {
     const json = mdManager.parse('***\n');
-    const hr = findInJson(json, 'horizontalRule');
+    const hr = findInJson(json, 'thematicBreak');
     expect(hr).toBeDefined();
-    expect(hr.attrs.horizontalRuleRaw).toBe('***');
+    expect(hr.attrs.sourceRaw).toBe('***');
   });
 });
 
@@ -121,21 +121,21 @@ describe('Tier B fidelity: hard break', () => {
 describe('Tier B fidelity: list markers', () => {
   test('dash bullet list carries bulletMarker = "-"', () => {
     const json = mdManager.parse('- item\n');
-    const list = findInJson(json, 'bulletList');
+    const list = findInJson(json, 'list');
     expect(list).toBeDefined();
     expect(list.attrs.bulletMarker).toBe('-');
   });
 
   test('plus bullet list carries bulletMarker = "+"', () => {
     const json = mdManager.parse('+ item\n');
-    const list = findInJson(json, 'bulletList');
+    const list = findInJson(json, 'list');
     expect(list).toBeDefined();
     expect(list.attrs.bulletMarker).toBe('+');
   });
 
   test('ordered list with dot carries listMarkerDelimiter = "."', () => {
     const json = mdManager.parse('1. item\n');
-    const list = findInJson(json, 'orderedList');
+    const list = findInJson(json, 'list');
     expect(list).toBeDefined();
     expect(list.attrs.listMarkerDelimiter).toBe('.');
   });

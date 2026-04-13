@@ -7,14 +7,6 @@ export interface WikiLinkAttrs {
   resolved: boolean;
 }
 
-interface WikiLinkToken {
-  type: 'wikilink';
-  raw: string;
-  target: string;
-  alias: string | null;
-  anchor: string | null;
-}
-
 const WIKI_LINK_PATTERN = /^\[\[([^[\]|#]+?)(?:#([^\]|]+?))?(?:\|([^\]]+?))?\]\]/;
 
 export function normalizeNullableString(value: unknown): string | null {
@@ -23,7 +15,13 @@ export function normalizeNullableString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-export function parseWikiLink(src: string): WikiLinkToken | null {
+export function parseWikiLink(src: string): {
+  type: 'wikilink';
+  raw: string;
+  target: string;
+  alias: string | null;
+  anchor: string | null;
+} | null {
   const match = src.match(WIKI_LINK_PATTERN);
   if (!match) return null;
 
@@ -118,33 +116,5 @@ export const WikiLink = Node.create({
       },
       getWikiLinkText({ target, alias, anchor }),
     ];
-  },
-
-  markdownTokenName: 'wikilink',
-
-  markdownTokenizer: {
-    name: 'wikilink',
-    level: 'inline',
-    start: '[[',
-    tokenize(src) {
-      return parseWikiLink(src) ?? undefined;
-    },
-  },
-
-  parseMarkdown(token, helpers) {
-    return helpers.createNode('wikiLink', {
-      target: typeof token.target === 'string' ? token.target : '',
-      alias: normalizeNullableString(token.alias),
-      anchor: normalizeNullableString(token.anchor),
-      resolved: false,
-    });
-  },
-
-  renderMarkdown(node) {
-    return renderWikiLink({
-      target: String(node.attrs?.target ?? ''),
-      alias: normalizeNullableString(node.attrs?.alias),
-      anchor: normalizeNullableString(node.attrs?.anchor),
-    });
   },
 });

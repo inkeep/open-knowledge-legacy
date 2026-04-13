@@ -1,13 +1,16 @@
 /**
- * Autolink + void-HTML guard (R23).
+ * Autolink + HTML guard (R23).
  *
- * Preprocessor that protects autolinks (<https://url>) and void HTML tags
- * (<br>, <hr>, <img>) from remark-mdx's JSX claiming. Uses text markers
- * that MDX won't try to parse.
+ * Preprocessor that protects autolinks (<https://url>), void HTML tags
+ * (<br>, <hr>, <img>), HTML comments (<!-- -->), closing tags (</div>),
+ * and lowercase HTML tags from remark-mdx's JSX claiming.
  *
- * Strategy: replace `<` in autolink/void-HTML patterns with a unique marker
- * before parsing. After parsing, a transformer restores the original patterns
- * in text and html nodes.
+ * MDX/JSX components use UpperCase or dotted names; lowercase `<div>`, `<span>`,
+ * etc. are standard HTML. remark-mdx claims ALL `<` tokens, so we guard
+ * anything that isn't a valid JSX component reference.
+ *
+ * Strategy: replace `<` and `>` in protected patterns with Unicode Private
+ * Use Area characters before parsing. A post-parse transformer restores them.
  */
 import type { Root } from 'mdast';
 import { visit } from 'unist-util-visit';
@@ -24,34 +27,63 @@ const GUARD_CLOSE = '\uE001'; // U+E001 Private Use
 const AUTOLINK_RE = /<([a-zA-Z][a-zA-Z0-9+.-]*:[^\s<>]+)>/g;
 
 /**
- * Void HTML tags that MDX would claim as JSX.
- * Matches with optional attributes and optional self-closing slash.
+ * HTML comment pattern: <!-- ... -->
  */
-const VOID_HTML_RE =
-  /<(br|hr|img|wbr|area|base|col|embed|input|link|meta|source|track)(\s[^>]*)?\/?>/gi;
+const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 /**
- * Protect autolinks and void HTML from MDX claiming.
- * Replaces `<` and `>` in matched patterns with null-byte-wrapped markers.
+ * HTML closing tags: </tag>
+ */
+const HTML_CLOSE_TAG_RE = /<\/[a-zA-Z][a-zA-Z0-9]*\s*>/g;
+
+/**
+ * Lowercase HTML tags (not JSX components).
+ * JSX components start with uppercase or contain dots (member expressions).
+ * Lowercase tags are standard HTML and should not be parsed as JSX.
+ * Matches opening tags with optional attributes and optional self-closing slash.
+ */
+const LOWERCASE_HTML_TAG_RE = /<([a-z][a-z0-9]*)(\s[^>]*)?\/?>/gi;
+
+/**
+ * Protect autolinks and HTML from MDX claiming.
  */
 export function protectFromMdx(source: string): string {
   let result = source;
+
+  // Protect HTML comments first (they can contain < and >)
+  result = result.replace(HTML_COMMENT_RE, (match) => {
+    return match.replace(/</g, GUARD_OPEN).replace(/>/g, GUARD_CLOSE);
+  });
 
   // Protect autolinks: <https://url> → GUARD_LT https://url GUARD_GT
   result = result.replace(AUTOLINK_RE, (_match, uri: string) => {
     return `${GUARD_OPEN}${uri}${GUARD_CLOSE}`;
   });
 
-  // Protect void HTML: <br> → GUARD_LT br GUARD_GT
-  result = result.replace(VOID_HTML_RE, (match) => {
+  // Protect HTML closing tags: </div> → GUARD_LT /div GUARD_GT
+  result = result.replace(HTML_CLOSE_TAG_RE, (match) => {
     return match.replace(/</g, GUARD_OPEN).replace(/>/g, GUARD_CLOSE);
   });
+
+  // Protect lowercase HTML tags (not JSX components)
+  result = result.replace(LOWERCASE_HTML_TAG_RE, (match, tag: string) => {
+    // Only protect if the tag name is lowercase (standard HTML).
+    // Uppercase or dotted names are JSX components — leave for remark-mdx.
+    if (tag[0] === tag[0].toLowerCase() && tag[0] !== tag[0].toUpperCase()) {
+      return match.replace(/</g, GUARD_OPEN).replace(/>/g, GUARD_CLOSE);
+    }
+    return match;
+  });
+
+  // Protect empty angle brackets <> and bare < followed by > in non-JSX contexts
+  // These appear in CommonMark edge cases like ![foo](<>) or bare < in text
+  result = result.replace(/<>/g, `${GUARD_OPEN}${GUARD_CLOSE}`);
 
   return result;
 }
 
 /**
- * Restore protected autolinks and void HTML after parsing.
+ * Restore protected autolinks and HTML after parsing.
  * Runs as a unified transformer on the mdast tree.
  */
 export function restoreFromMdx() {

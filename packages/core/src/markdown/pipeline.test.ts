@@ -16,13 +16,13 @@ describe('MarkdownManager scaffold', () => {
     expect(json).toBeDefined();
     expect(json.type).toBe('doc');
     expect(json.content).toBeDefined();
-    expect(json.content!.length).toBeGreaterThanOrEqual(2);
+    expect(json.content?.length).toBeGreaterThanOrEqual(2);
 
-    const heading = json.content![0];
+    const heading = json.content?.[0];
     expect(heading.type).toBe('heading');
     expect(heading.attrs?.level).toBe(1);
 
-    const para = json.content![1];
+    const para = json.content?.[1];
     expect(para.type).toBe('paragraph');
   });
 

@@ -13,8 +13,8 @@
 
 import { describe, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
+import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';

@@ -7,9 +7,8 @@
  */
 
 import type { Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
-import { sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { MarkdownManager, sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment } from '@tiptap/y-tiptap';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });

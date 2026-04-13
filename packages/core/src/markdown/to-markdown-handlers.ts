@@ -42,8 +42,11 @@ export const toMarkdownHandlers: Record<string, any> = {
       return result;
     }
 
-    // Default: strip `&` and `<` from unsafe list
-    return safeText(state, node.value ?? '', info);
+    // Default: strip `&` and `<` from unsafe list.
+    // Also convert NBSP (U+00A0) back to regular space — the remark-prosemirror
+    // PR #3 patch introduces NBSP to preserve whitespace-only text nodes during
+    // parse, but on serialize we need plain spaces back.
+    return safeText(state, (node.value ?? '').replaceAll('\u00A0', ' '), info);
   },
 
   /**

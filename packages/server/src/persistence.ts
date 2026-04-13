@@ -12,12 +12,12 @@ import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
+  MarkdownManager,
   prependFrontmatter,
   sharedExtensions,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { type BacklinkIndex, extractWikiLinksFromProsemirrorJson } from './backlink-index.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';

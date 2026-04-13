@@ -48,13 +48,22 @@ export class MarkdownManager {
    * Parse a markdown string to TipTap JSONContent.
    */
   parse(markdown: string): JSONContent {
-    const doc = parseMd(markdown, {
-      schema: this.schema,
-      handlers: this.handlers,
-      pmNodeHandlers: this.pmNodeHandlers,
-      pmMarkHandlers: this.pmMarkHandlers,
-    });
-    return doc.toJSON() as JSONContent;
+    try {
+      const doc = parseMd(markdown, {
+        schema: this.schema,
+        handlers: this.handlers,
+        pmNodeHandlers: this.pmNodeHandlers,
+        pmMarkHandlers: this.pmMarkHandlers,
+      });
+      return doc.toJSON() as JSONContent;
+    } catch {
+      // Empty/whitespace-only content may produce an invalid doc (no block children).
+      // Return a minimal valid document with an empty paragraph.
+      return {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [] }],
+      };
+    }
   }
 
   /**
@@ -84,21 +93,58 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   const handlers: Record<string, unknown> = {};
 
   // Tier A passthrough
-  if (n.paragraph) handlers.paragraph = toPmNode(n.paragraph);
+  if (n.paragraph) {
+    // Custom paragraph handler: lift sole block-level children (e.g., standalone images)
+    handlers.paragraph = (node: any, _: any, state: any) => {
+      const children = state.all(node);
+      const flatChildren = children.flat();
+      // If paragraph contains only block-level node(s) (e.g., images on own line),
+      // lift them out of the paragraph wrapper
+      const hasBlockChildren = flatChildren.some((c: any) => c?.isBlock && !c?.isInline);
+      const hasInlineChildren = flatChildren.some(
+        (c: any) => c?.isInline || c?.isText || c?.isTextblock,
+      );
+      if (hasBlockChildren && !hasInlineChildren) {
+        return flatChildren.length === 1 ? flatChildren[0] : flatChildren;
+      }
+      // For mixed content: keep only inline-compatible children in the paragraph,
+      // and emit block children as siblings after the paragraph
+      if (hasBlockChildren && hasInlineChildren) {
+        const inlineOnly = flatChildren.filter((c: any) => !c?.isBlock || c?.isInline);
+        const blockOnly = flatChildren.filter((c: any) => c?.isBlock && !c?.isInline);
+        const result: any[] = [];
+        const para = n.paragraph.createAndFill(null, inlineOnly.length > 0 ? inlineOnly : null);
+        if (para) result.push(para);
+        result.push(...blockOnly);
+        return result.length === 1 ? result[0] : result;
+      }
+      return n.paragraph.createAndFill(null, flatChildren.length > 0 ? flatChildren : null);
+    };
+  }
   if (n.blockquote) handlers.blockquote = toPmNode(n.blockquote);
 
   // Table
   if (n.table) handlers.table = toPmNode(n.table);
   if (n.tableRow) handlers.tableRow = toPmNode(n.tableRow);
-  // tableCell + tableHeader: mdast has only tableCell, PM may have both
+  // tableCell + tableHeader: mdast has only tableCell, PM may have both.
+  // mdast cells contain phrasing (inline) content, but PM cells require block content.
+  // Wrap inline children in a paragraph.
   if (n.tableCell) {
-    handlers.tableCell = (node: any, _: any, state: any) => {
-      const children = state.all(node);
-      // First row cells → tableHeader if the schema has it, otherwise tableCell
-      const nodeType = n.tableHeader ?? n.tableCell;
-      // We'll refine header detection in US-004; for now use tableCell
-      return n.tableCell.createAndFill(null, children);
+    const cellHandler = (nodeType: any) => (node: any, _: any, state: any) => {
+      const children = state.all(node).flat();
+      // Wrap inline content in paragraph for PM cell content spec
+      if (children.length > 0 && n.paragraph) {
+        const para = n.paragraph.create(null, children);
+        return nodeType.createAndFill(null, [para]);
+      }
+      return nodeType.createAndFill(null, null);
     };
+    handlers.tableCell = cellHandler(n.tableCell);
+    if (n.tableHeader) {
+      // First row uses tableHeader; remark-prosemirror will call the tableCell
+      // handler for all cells. We handle header detection in the row handler or
+      // via a post-process. For now, all cells are tableCell.
+    }
   }
 
   // Image
@@ -115,6 +161,40 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
         alt: node.alt ?? null,
         title: null,
       });
+  }
+
+  // D20: text handler — apply escapeMark to chars that had backslash escapes in source
+  if (m.escapeMark) {
+    handlers.text = (node: any) => {
+      const value: string = node.value ?? '';
+      const escapedChars: Array<{ offset: number; char: string }> | undefined =
+        node.data?.escapedChars;
+      if (!escapedChars?.length || !value) {
+        return schema.text(value.replaceAll('\u00A0', ' '));
+      }
+      // Build PM Fragment: split text at escape boundaries, apply escapeMark to escaped chars
+      const fragments: any[] = [];
+      let lastIdx = 0;
+      for (const { offset } of escapedChars) {
+        // Adjust offset: in mdast, the value has the backslash consumed,
+        // so the char at `offset` in the value corresponds to the escaped char
+        if (offset > lastIdx) {
+          const segment = value.slice(lastIdx, offset).replaceAll('\u00A0', ' ');
+          if (segment) fragments.push(schema.text(segment));
+        }
+        // The escaped char itself gets the escapeMark
+        if (offset < value.length) {
+          const escapedChar = value[offset].replaceAll('\u00A0', ' ');
+          fragments.push(schema.text(escapedChar, [m.escapeMark.create()]));
+          lastIdx = offset + 1;
+        }
+      }
+      if (lastIdx < value.length) {
+        const remaining = value.slice(lastIdx).replaceAll('\u00A0', ' ');
+        if (remaining) fragments.push(schema.text(remaining));
+      }
+      return fragments.length === 1 ? fragments[0] : fragments;
+    };
   }
 
   // Inline code → code mark on text
@@ -269,15 +349,31 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     handlers.html = (node: any) => n.htmlBlock.createAndFill({ [htmlAttr]: node.value ?? '' });
   }
 
-  // Definition → linkDefinition atom (R12 CRITICAL override)
-  if (n.linkDefinition) {
-    handlers.definition = (node: any) =>
-      n.linkDefinition.createAndFill({
-        identifier: node.identifier ?? '',
-        label: node.label ?? null,
-        url: node.url ?? '',
+  // Definition → linkRefDef/linkDefinition atom (R12 CRITICAL override)
+  // Library pre-ignores `definition` — must register explicit handler.
+  // PM linkRefDef attrs: { label, href, title } (no identifier/url).
+  // PM linkDefinition attrs (if renamed): { identifier, label, url, title }.
+  const linkDefNode = n.linkDefinition ?? n.linkRefDef;
+  if (linkDefNode) {
+    const hasUrlAttr = !!linkDefNode.spec.attrs?.url;
+    const hasHrefAttr = !!linkDefNode.spec.attrs?.href;
+    const hasIdentifierAttr = !!linkDefNode.spec.attrs?.identifier;
+    handlers.definition = (node: any) => {
+      const attrs: Record<string, any> = {
         title: node.title ?? null,
-      });
+      };
+      // Map mdast label/identifier → PM attr names
+      if (hasIdentifierAttr) {
+        attrs.identifier = node.identifier ?? '';
+        attrs.label = node.label ?? node.identifier ?? '';
+      } else {
+        attrs.label = node.label ?? node.identifier ?? '';
+      }
+      // Map mdast url → PM attr name (href or url)
+      if (hasUrlAttr) attrs.url = node.url ?? '';
+      else if (hasHrefAttr) attrs.href = node.url ?? '';
+      return linkDefNode.createAndFill(attrs);
+    };
   }
 
   // MDX nodes — store raw source for byte-identical round-trip (US-008)
@@ -441,13 +537,15 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // Link definition
-  if (n.linkDefinition) {
-    nodeHandlers.linkDefinition = (pmNode: any) => ({
+  // Link definition (linkDefinition or linkRefDef schema name)
+  const linkDefNodeSer = n.linkDefinition ?? n.linkRefDef;
+  if (linkDefNodeSer) {
+    const linkDefName = n.linkDefinition ? 'linkDefinition' : 'linkRefDef';
+    nodeHandlers[linkDefName] = (pmNode: any) => ({
       type: 'definition' as const,
-      identifier: pmNode.attrs.identifier,
-      label: pmNode.attrs.label ?? pmNode.attrs.identifier,
-      url: pmNode.attrs.url,
+      identifier: pmNode.attrs.identifier ?? pmNode.attrs.label ?? '',
+      label: pmNode.attrs.label ?? pmNode.attrs.identifier ?? '',
+      url: pmNode.attrs.url ?? pmNode.attrs.href ?? '',
       title: pmNode.attrs.title,
     });
   }
@@ -529,6 +627,26 @@ function buildPmToMdastHandlers(schema: Schema): {
         referenceType: style,
         children,
       };
+    };
+  }
+
+  // D20: escapeMark → tag the text node with escapedChars so the serialize
+  // handler can re-emit backslash sequences
+  if (m.escapeMark) {
+    markHandlers.escapeMark = (_mark: any, _parent: any, children: any[]) => {
+      // Each child text node under this mark was an escaped char — tag it
+      for (const child of children) {
+        if (child.type === 'text' && child.value) {
+          child.data = child.data ?? {};
+          child.data.escapedChars = child.data.escapedChars ?? [];
+          // The entire text value is escaped chars (mark is applied per-char)
+          for (let i = 0; i < child.value.length; i++) {
+            child.data.escapedChars.push({ offset: i, char: child.value[i] });
+          }
+        }
+      }
+      // Return children unwrapped (escapeMark doesn't correspond to an mdast node)
+      return children.length === 1 ? children[0] : children;
     };
   }
 

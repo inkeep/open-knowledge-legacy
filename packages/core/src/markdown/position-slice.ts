@@ -114,8 +114,9 @@ export function positionSlicePlugin() {
           if (prefix === '#') {
             node.data.sourceStyle = 'atx';
           } else {
-            // Setext: look for underline (= or -) after the heading text
-            const segment = source.slice(startOff, Math.min(endOff + 20, source.length));
+            // Setext: mdast includes the underline in the heading node's position range.
+            // Check the source slice within the node boundaries for a trailing underline.
+            const segment = source.slice(startOff, endOff);
             if (/\n[=]+\s*$/.test(segment) || /\n[-]+\s*$/.test(segment)) {
               node.data.sourceStyle = 'setext';
             } else {

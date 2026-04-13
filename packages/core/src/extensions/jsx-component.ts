@@ -8,17 +8,11 @@ declare module '@tiptap/core' {
   }
 }
 
-/** Returns a backtick fence that safely wraps `content` — N+1 backticks where N is the longest run in content (minimum 3). */
-export function fenceFor(content: string): string {
-  const maxRun = (content.match(/`+/g) || []).reduce((max, run) => Math.max(max, run.length), 2);
-  return '`'.repeat(maxRun + 1);
-}
-
 export const JsxComponent = Node.create({
   name: 'jsxComponent',
   group: 'block',
   atom: true,
-  priority: 60, // Same priority as CodeBlockFidelity; array position in sharedExtensions determines interception order
+  priority: 60,
 
   addAttributes() {
     return {
@@ -42,23 +36,6 @@ export const JsxComponent = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ['div', { 'data-jsx-component': '', 'data-content': HTMLAttributes.content }];
-  },
-
-  // Use same token name as codeBlock to intercept code tokens
-  markdownTokenName: 'code',
-
-  parseMarkdown(token, helpers) {
-    // Only handle code blocks with jsx-component info string
-    if (token.lang !== 'jsx-component') {
-      return [];
-    }
-    return helpers.createNode('jsxComponent', { content: token.text || '' });
-  },
-
-  renderMarkdown(node) {
-    const content = node.attrs?.content || '';
-    const fence = fenceFor(content);
-    return `${fence}jsx-component\n${content}\n${fence}`;
   },
 
   addCommands() {

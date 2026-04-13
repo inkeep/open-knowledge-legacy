@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
-import { prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
-import { MarkdownManager } from '@tiptap/markdown';
+import { MarkdownManager, prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
