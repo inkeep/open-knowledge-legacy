@@ -159,40 +159,42 @@ Terse matrix. "Works" means a user can complete the scenario end-to-end with mer
 
 ### Area B — Per-origin Undo (Cmd+Z self / others)
 
-**State:** Spike-quality scaffold shipped in an earlier PR (#7). Spec (`specs/2026-04-10-undo-architecture/SPEC.md`, Draft, baseline `cee96da`) documents the scaffold as architecturally broken across 5 interlocking failure modes. Implementation blocked on two prerequisite refactors.
+**State:** Spike-quality scaffold shipped in an earlier PR (#7). Spec (`specs/2026-04-10-undo-architecture/SPEC.md`, Draft, baseline `cee96da`) documents the scaffold as architecturally broken across 5 interlocking failure modes.
 
 **Scenarios served today:** US-4a (with known content-leak bug), US-4b (same), US-4c (same). US-3a–e all ❌.
 
 **What's broken** (per the spec §1):
 1. **R4:** Users cannot undo their own edits — `StarterKit.configure({ undoRedo: false })` disables native ProseMirror undo, no Y.UndoManager replacement wired for the user side.
-2. **R5:** Agent undo leaks ~257 chars of zombie content per cycle — Observer A's line-level `diffLines` merges user+agent on same line item; undo reverses only the `'agent-write'` part.
+2. **R5:** Agent undo leaks ~257 chars of zombie content per cycle — Observer A's serialize→diff→apply cycle origin-launders agent CRDT Items from `'agent-write'` to `'sync-from-tree'`.
 3. **R6:** Sub-line concurrent edits → silent data loss (same root cause as R5).
-4. **R7:** Both observers run unconditionally — no modal architecture during mode switches.
+4. ~~**R7:** Both observers run unconditionally.~~ **DROPPED** — current origin-guard architecture is already correct. See §15 for rationale.
 5. **R8:** Markdown round-trip normalization silently rewrites content on every agent write.
 
-**Reframed 2026-04-13: root causes are not all equal-priority.**
+**DECOUPLED 2026-04-13: Miles's undo does NOT depend on Observer A diff granularity.**
 
-| Root cause | What it breaks | Scenarios affected | Needs character-level Observer A? |
-|---|---|---|---|
-| R4 | User can't Cmd+Z at all | US-3a, 3b, 3c, 3d | **No** — wire `Y.UndoManager` on Y.XmlFragment + leverage y-codemirror's UM |
-| R5 | Agent-undo leaks ~257 chars | US-4a when same-line collision | **Yes** — but only on same-line user+agent collisions |
-| R6 | Sub-line concurrent edits lose content | US-3e | **Yes** — same condition |
-| ~~R7~~ | ~~Both observers run during mode switch~~ | ~~US-3c edge cases~~ | **DROPPED** — pause/resume would cause stale-baseline bugs in multi-tab/agent scenarios. Current origin-guard architecture is already correct. See step 4 below. |
-| R8 | Markdown round-trip silently normalizes | N/A (separate tier) | **No** — separate fix |
+First-principles re-examination of which undo features depend on Observer A:
 
-**Path to ship correct Cmd+Z (updated 2026-04-13 under greenfield directive §13):**
-1. **Observer A character-level diff refactor (TQ5) — PREREQUISITE.** ~60 LOC + strong stress/fuzz/E2E safety net (§12.2). Closes R5/R6. No known-broken edge cases ship. **Owner: Nick (zero-coordination, starting now).**
-2. Wire WYSIWYG UndoManager on Y.XmlFragment → **US-3a, 3d, 3e unblocked**
-3. Enable y-codemirror's native UM for Y.Text → **US-3b unblocked**
-4. ~~Fix observer modal architecture (R7)~~ **DROPPED 2026-04-13 (Nick).** Observer pause/resume would introduce stale-baseline bugs in multi-tab/agent scenarios — paused observers miss remote XmlFragment changes, causing `lastSyncedXmlMd` staleness and content destruction on resume. The current architecture (both observers run, origin guards handle everything, baselines refresh on every transaction regardless of skip) is already correct for single-tab + multi-tab + agent-write scenarios. Concrete problems attributed to R7 are actually R5/R6 (fixed by TQ5). The undo spec (`specs/2026-04-10-undo-architecture/SPEC.md`) still lists R7 — to be updated when Area B implementation begins.
-5. Optional `session_id?` + `parent_session_id?` + `agent_label?` on agent write MCP tools (D9/TQ16) — for pass-boundary enrichment from clients that have turn semantics
-6. Keep server-side agent UM — refactored from singleton `AGENT_WRITE_ORIGIN` to **per-agent UndoManagers scoped by `AgentIdentity.connectionId`** (D12 / TQ18). Under multi-agent, each connected agent gets its own server-side UM so "undo Claude's edit" doesn't undo Cursor's edit. Origin tags become `{ agent: connectionId }` as typed `LocalTransactionOrigin` objects. → **US-4a/b/c clean, multi-agent-correct**
+| Undo feature | Depends on Observer A diff granularity? | Why |
+|---|---|---|
+| FR-1: User Cmd+Z in WYSIWYG | **No** | Y.UndoManager on XmlFragment reverts directly; Observer A propagates the revert to Y.Text — correct at any diff granularity |
+| FR-2: User Cmd+Z in Source | **No** | y-codemirror's native UM on Y.Text; Observer A not in this path |
+| FR-3: Agent undo | **No** | Server-side UM + syncTextToFragment; Observer A skips (origin guard on 'sync-from-text') |
+| **FR-4: Same-line interleaved** | **Yes** | This is R5/R6. But per prior research, char-level diff alone doesn't fix it — root cause is origin-laundering (delete+reinsert overwrites agent Items with 'sync-from-tree' origin). Full fix needs origin-aware diff. |
+| FR-5: Reactive undo state | **No** | Event-driven canUndo/canRedo |
+| FR-6: Cross-mode undo | **No** | UM coordination, not Observer A |
 
-**Why we're NOT shipping fast with US-3e as a gap:** prior recommendation was "accept + measure." Under the greenfield directive, shipping Cmd+Z — the foundational editor primitive — with a known-broken edge case in the product's core differentiating scenario (human+AI concurrent editing, S5) is deferred tech debt. The refactor is bounded (60 LOC + comprehensive test infra); do it right. TQ6 stress test retained as regression prevention + verification of the fix.
+**Miles ships FR-1/FR-2/FR-3/FR-5/FR-6 — the entire core undo architecture — with zero Observer A dependency.** FR-4 (US-3e, same-line interleaved) is the one feature that needs Observer A work, and it needs the deeper origin-aware fix, not just char-level diff.
 
-**Scaffold removal (TQ13, pre-PR-#39-merge per greenfield §13):** Existing `AgentUndoButton`, server undo endpoints (`/api/agent-undo`, `/api/agent-redo`, `/api/agent-undo-status`), and MCP tools (`undo_agent_edit`, `redo_agent_edit`) removed BEFORE PR #39 merges — better to ship no-undo than confidently-broken-undo (precedent #7). `AGENT_WRITE_ORIGIN` constant stays — load-bearing for observer origin guards. Proper three-UndoManager implementation ships in Area B.
+**Path to ship Cmd+Z (Miles, no Observer A dependency):**
+1. Wire WYSIWYG UndoManager on Y.XmlFragment → **US-3a, 3c, 3d unblocked**
+2. Enable y-codemirror's native UM for Y.Text → **US-3b unblocked**
+3. Server-side per-agent UndoManagers scoped by `AgentIdentity.connectionId` (D12/TQ18) → **US-4a/b/c clean, multi-agent-correct**
+4. Optional `session_id?` + `parent_session_id?` + `agent_label?` on agent write MCP tools (D9/TQ16)
+5. **FR-4 / US-3e (same-line interleaved):** Independent correctness track (Nick). Requires origin-aware diff, not just char-level. See §15 for the separate spec.
 
-**Why this still matters (even reframed):** US-3 (Cmd+Z for self) is the most fundamental editor operation. Currently a user literally cannot undo their own typo. PROJECT.md's S5 switching narrative says: *"Per-origin undo — Cmd+Z undoes Claude's changes specifically, preserving yours."* Today we ship the inverse: you can undo Claude (with a leak) but not yourself. The reframed path lands US-3a/b/c/d much faster than the original "character-level-prerequisite" framing suggested.
+**Scaffold removal (TQ13, pre-PR-#39-merge per greenfield §13):** Existing `AgentUndoButton`, server undo endpoints, and MCP tools removed BEFORE PR #39 merges — better to ship no-undo than confidently-broken-undo (precedent #7). `AGENT_WRITE_ORIGIN` constant stays — load-bearing for observer origin guards.
+
+**Why this still matters:** US-3 (Cmd+Z for self) is the most fundamental editor operation. Currently users cannot undo their own typos. The decoupling means Miles can ship Cmd+Z FASTER — no waiting on Observer A work.
 
 ---
 
@@ -293,7 +295,7 @@ The actionable list. Each decision blocks or shapes a chunk of work in §6.
 | **D4** | Is PQ11 ("no suggest mode") still correct? | (a) confirm (b) reopen | **DECIDED 2026-04-13 (Nick):** PQ11 holds. Area D + branching UX parked together. |
 | **D5** | Sequencing path | (A) ship-close-first (B) fix-broken-first (hybrid/parallel) | **DECIDED 2026-04-13 (Nick):** Path A — PR #39 first, then Area B. |
 | **D6** | Rollback + undo origin interaction | (a) rollbacks undoable (b) rollbacks NOT tracked by any UndoManager (c) defer | **Open. Research (§12) strongly backs (b):** 7 of 8 products surveyed (Figma, Notion, VS Code Timeline, Dropbox Paper, Coda, Word, Obsidian) treat restore as coarse action outside per-user Cmd+Z stack. Only Google Docs bridges them. Decide before undo work starts. |
-| **D7** | Observer A character-level refactor timing | (a) prerequisite for undo impl (b) correctness improvement for US-3e edge case only | **FLIPPED 2026-04-13 under greenfield directive (§13): (a) prerequisite.** Prior (b) was "ship fast, accept US-3e gap." That's deferred tech debt in a foundational primitive — Cmd+Z for the product's core co-editing scenario. Refactor is 60 lines + strong test infra (§12.2); do it right. TQ6 stress test role changes from "gap mitigation" to "verification of fix + regression prevention." Folds into Area B prerequisite scope. |
+| **D7** | Observer A diff + origin correctness | (a) prerequisite for undo impl (b) independent correctness track, decoupled from undo (c) not needed | **RE-REVISED 2026-04-13 after first-principles re-examination: (b) independent track.** Prior (a) "prerequisite" conflated "prerequisite to FR-4" with "prerequisite to undo." Core undo features (FR-1/FR-2/FR-3/FR-5/FR-6) do NOT depend on Observer A. Only FR-4 (same-line interleaved, US-3e) does — and per prior research, char-level alone doesn't fix it (root cause is origin-laundering). Nick works on the deeper origin-aware fix independently; Miles ships undo without waiting. |
 | **D8** | Presence investment | (a) cursor + typing + file-level (b) cursor only (c) drop cursor; verify flash; park others | **Reframed 2026-04-13:** (c). Cursor dropped (US-5f supersedes). Near-term: **reconcile Source flash to WYSIWYG's targeted pattern (§12.5: zero products flash whole-doc), extract shared flash primitive (§13), add `prefers-reduced-motion` + E2E verification**. |
 | **D9** | Pass boundary grouping (**UNTANGLED 2026-04-13 from identity**, see D12) | (a) idle-gap heuristic (b) session-id required (c) Yjs captureTimeout (d) user-action-bounded (e) hybrid: product-native default + optional client enrichment | **RE-REVISED 2026-04-13 after MCP harness lifecycle research: (e) hybrid.** Prior (b) "session-id required" was invalidated by research (§14): **MCP sessionId is NOT conversation-turn scoped in any major harness** (Claude Code = per CLI process; Claude Desktop = per app launch; Cursor = per project open). Requiring a session-id parameter asks clients to provide something they can't. **Primary grouping: product-native user-action-bounded** — contiguous `'agent-write'`-origin WIP commits between user edits, grouped by AgentIdentity.connectionId (D12). **Optional enrichment:** `session_id?` + `parent_session_id?` on write tools for clients that DO have turn semantics. Matches greenfield "set the right precedent": use MCP primitives for what they're good at (identity — long-lived, D12) and product-native for what the protocol can't provide (turn boundaries). |
 | **D10** | Pre-rollback safety checkpoint | (a) emit before rollback (b) don't (c) conditional on destructiveness (e) always emit with distinct origin + label | **Recommendation: (e) refined under greenfield directive (§13) to a GENERIC `safetyCheckpoint({ action, context })` primitive, not rollback-specific.** Rollback is the first caller; future coarse actions (apply-draft, etc.) use the same primitive. Matches Figma's two-checkpoints-around-restore pattern (§12.1). Names for extensibility; "sets the right precedent." |
@@ -312,15 +314,14 @@ The actionable list. Each decision blocks or shapes a chunk of work in §6.
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ PARALLEL TRACK: Nick (bridge/observer layer)         │
-│ TQ5: Observer A char-level refactor (PREREQUISITE)   │
-│ TQ6: US-3e stress test                               │
-│ Bridge-matrix undo-invariant tests                   │
-│   → starting now, zero-coordination                  │
+│ INDEPENDENT TRACK: Nick (Observer A correctness)     │
+│ Origin-aware diff for FR-4/US-3e (same-line          │
+│ interleaved). Separate spec. Delivers FR-4 when      │
+│ ready. Does NOT block Miles.                         │
 └──────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────┐
-│ PARALLEL TRACK: Miles (server + UI + MCP)            │
+│ MILES TRACK 1: PR #39 (Area A — Timeline)            │
 │ PR #39 rebase + expanded scope (§13):                │
 │   TQ8 mode enum, TQ9 PreviewEditor fold,             │
 │   TQ10 typed origins, TQ11 activity schema,          │
@@ -332,18 +333,15 @@ The actionable list. Each decision blocks or shapes a chunk of work in §6.
 │   → US-1a, 1b, 1c, 2b, 5f                           │
 └──────────────────────────────────────────────────────┘
 
-          │ Nick's TQ5 + Miles's scaffold removal
-          │ + Miles's TQ17/TQ18 (AgentIdentity)
-          │ converge into:
-          ▼
 ┌──────────────────────────────────────────────────────┐
-│ Area B: Undo (Miles, after prerequisites land)       │
-│ 1. Three-UndoManager wiring (WYSIWYG + Source + N×   │
-│    per-agent server-side, scoped by connectionId)    │
-│ 2. Cmd+Z keyboard wiring in both modes               │
-│ 3. D9(e) pass boundary grouping in timeline queries  │
-│ 4. D12 per-agent awareness in PresenceBar            │
-│   → US-3a/b/c/d/e, US-4a/b/c — all clean            │
+│ MILES TRACK 2: Area B — Undo (NO Observer A dep)     │
+│ 1. Wire WYSIWYG UndoManager on Y.XmlFragment         │
+│ 2. y-codemirror native UM for Y.Text                 │
+│ 3. Per-agent server-side UMs (D12/TQ17/TQ18)         │
+│ 4. Cmd+Z keyboard wiring in both modes               │
+│ 5. D9(e) pass boundary grouping in timeline queries  │
+│   → US-3a/b/c/d, US-4a/b/c — all clean              │
+│   → US-3e (same-line) ships when Nick's track lands  │
 │   → R7 DROPPED (origin guards already correct)       │
 └──────────────────────────────────────────────────────┘
 
@@ -352,7 +350,7 @@ agent-pass view, inline suggestions (Area D), branching/
 draft UX (PQ9, CC4), rendered WYSIWYG diff.
 ```
 
-**Read:** Two parallel tracks (Nick: bridge-layer prerequisites; Miles: PR #39 expanded scope) converge into Area B undo implementation. Observer A char-level (TQ5) is a PREREQUISITE under greenfield directive (D7 flipped). R7 (observer modal pause/resume) DROPPED — would cause stale-baseline regressions.
+**Read:** Nick and Miles are fully decoupled. Miles ships undo (FR-1/FR-2/FR-3/FR-5/FR-6) without waiting on Observer A. Nick's origin-aware diff delivers FR-4/US-3e independently. The prior "prerequisite" framing conflated FR-4 with the entire undo architecture — re-examined 2026-04-13.
 
 ### Recommended sequence — Path A (DECIDED 2026-04-13)
 
@@ -378,11 +376,13 @@ draft UX (PQ9, CC4), rendered WYSIWYG diff.
 - Agent flash reconciliation (TQ2) — targeted pattern in both surfaces via shared primitive
 - `prefers-reduced-motion` (TQ7) + Playwright E2E for flash
 
-**2. Undo (Area B) — Observer A character-level as prerequisite, per D7 flip.** Expanded scope:
-- **TQ5 Observer A character-level refactor** (~60 lines + stress/fuzz/E2E safety net per §12.2) — prerequisite, not follow-up. **Owner: Nick (starting now, zero-coordination with Miles).**
-- **TQ6 stress test** — regression prevention + verification of the fix. **Owner: Nick (companion to TQ5).**
-- **Bridge-matrix undo-invariant tests** — TDD groundwork establishing what correct undo propagation looks like. **Owner: Nick.**
-- ~~Modal observer architecture (R7)~~ **DROPPED** (see §3 Area B note: pause/resume would cause stale-baseline bugs in multi-tab/agent scenarios)
+**2. Undo (Area B) — Miles, NO Observer A dependency.** Core undo ships independently:
+- Wire WYSIWYG UndoManager on Y.XmlFragment → FR-1 (US-3a/3c/3d)
+- Enable y-codemirror's native UM for Y.Text → FR-2 (US-3b)
+- Per-agent server-side UMs (D12/TQ17/TQ18) → FR-3 (US-4a/b/c)
+- Cmd+Z keyboard wiring in both modes
+- ~~Modal observer architecture (R7)~~ **DROPPED**
+- **FR-4 / US-3e (same-line interleaved): NOT in Miles's scope.** Ships when Nick's independent origin-aware diff track lands.
 - Three-UndoManager wiring (WYSIWYG Y.XmlFragment + Source y-codemirror native + server agent)
 - Cmd+Z keyboard wiring in both modes
 - **D12 AgentIdentity** (TQ17/TQ18): build identity from MCP connection primitives; remove hardcoded `DEFAULT_AGENT_ID`; per-agent awareness in PresenceBar; per-agent UndoManager scoping
@@ -423,7 +423,7 @@ These are invariants of the *audit artifact*, not the capabilities themselves. E
 - **[NOT NOW] Multi-human presence.** PROJECT.md S-L1 parks multi-human for "after IC adoption validates the core loop." This audit scopes to human+AI co-editing only.
 - **[NOT NOW] Rendered WYSIWYG diff view.** Source-mode diff view (D2) serves US-5f. Rendered-markdown-both-sides-with-changes-highlighted is a harder problem (ProseMirror tree-diffing or structural-diff-then-render) and belongs to the agent-proposal-review experience above when it kicks off.
 - **[NOT NOW] Agent cursor rendering in editor.** Dropped 2026-04-13 (Nick) as skeuomorphic for agents. Superseded by US-5f served via Area A's Source-mode diff view.
-- ~~[NOT NOW] Observer A character-level diff refactor as a blocker.~~ **REVERSED 2026-04-13 under greenfield directive (§13):** Observer A char-level refactor is back as **prerequisite** for shipping undo. D7 flipped from (b) accept-gap to (a) prerequisite — shipping Cmd+Z with a known US-3e edge case is deferred tech debt in a foundational primitive.
+- **[NOT NOW — for Miles's undo] Observer A origin-aware diff (FR-4/US-3e).** Re-examined 2026-04-13: core undo (FR-1/FR-2/FR-3/FR-5/FR-6) does NOT depend on Observer A. FR-4 (same-line interleaved) does, but requires origin-aware diff (not just char-level) per prior research on CRDT Item origin-laundering. Nick's independent track. Ships FR-4 when ready; does not block Miles.
 
 ---
 
@@ -437,7 +437,7 @@ These are invariants of the *audit artifact*, not the capabilities themselves. E
 | PQ4 | Is PQ11 ("no suggest mode") still correct? | Product | P0 | **Decided** | §5 D4. 2026-04-13 (Nick): PQ11 holds. Area D + branching UX parked together. |
 | PQ5 | Sequencing path | Product | P0 | **Decided** | §5 D5. 2026-04-13 (Nick): Path A — finish PR #39 in flight first, then Area B. |
 | PQ6 | Rollback + undo origin interaction | Product/Tech | P0 | **Open** | §5 D6. Recommendation: (b) rollbacks NOT tracked by any UndoManager. Decide before undo work starts. |
-| PQ7 | Observer A character-level refactor timing | Product/Tech | P0 | **Decided** | §5 D7. 2026-04-13 FLIPPED under greenfield directive (§13): (a) prerequisite for shipping undo. Folds into Area B scope. No deferred tech debt in foundational primitive. |
+| PQ7 | Observer A diff + origin correctness timing | Product/Tech | P0 | **Decided** | §5 D7. RE-REVISED 2026-04-13: (b) independent correctness track, decoupled from Miles's undo. Core undo (FR-1/FR-2/FR-3/FR-5/FR-6) ships without it. FR-4/US-3e needs origin-aware diff (deeper than char-level). Nick's independent spec. |
 | PQ8 | Presence investment level | Product | P0 | **Decided** | §5 D8. 2026-04-13 (Nick): cursor dropped; verify + reconcile flash divergence; typing indicator + file-level parked. |
 | Q-trigger | Diff view activator | Product/Tech | P1 | **Open** | Implementation detail for PR #39 or follow-up. Recommendation: (b) timeline click + post-write affordance. |
 | Q-layout | Source-mode diff layout | Product/Tech | P1 | **Open** | Recommendation: ship (a) inline unified; add (b) side-by-side via `@pierre/diffs` follow-up. |
@@ -451,7 +451,7 @@ These are invariants of the *audit artifact*, not the capabilities themselves. E
 | TQ2 | Agent flash verification + Source/WYSIWYG reconciliation | Tech | P0 | **Open** | Baseline-sufficiency gate for Area C. Research §12.5: zero products flash whole-doc — reconcile Source to WYSIWYG targeted pattern. Add Playwright E2E verification + `prefers-reduced-motion` + doc-size fallback. Hours to 1 day. |
 | TQ3 | `@pierre/diffs` spike for Source-mode diff rendering | Tech | P1 | **Open** | 1–2 day integration spike as follow-up to PR #39. Verifies 5 criteria in §11. |
 | ~~TQ4~~ | ~~PreviewEditor.tsx → SourceEditor.tsx refactor~~ | — | — | **Superseded by TQ9** | TQ9 upgrades this from post-merge to pre-merge under greenfield §13. |
-| TQ5 | Observer A character-level diff refactor | Tech | P0 | **Decided** | §5 D7 FLIPPED under greenfield (§13): prerequisite for shipping undo, NOT standalone story. ~60-line surface + comprehensive stress/fuzz/E2E test infra (§12.2). **Owner: Nick, starting now.** Closes R5/R6/US-3e. |
+| TQ5 | Observer A origin-aware diff (FR-4/US-3e) | Tech | P0 | **Decided** | §5 D7 RE-REVISED: independent correctness track, NOT prerequisite for Miles's undo. Scope expanded from "char-level diff" to "origin-aware diff" per prior research (CRDT Item origin-laundering is root cause, not diff granularity). **Owner: Nick, separate spec.** Delivers FR-4/US-3e when ready. |
 | TQ6 | US-3e frequency stress test | Tech | P0 | **Open** | Mitigation for accepting US-3e gap. Reuses `observers.stress.s4.test.ts` harness to simulate concurrent user+agent same-line writes under load. Turns "we assume rare" into evidence. ~1 day. Scheduled within Area B work. |
 | TQ7 | `prefers-reduced-motion` for flash animations | Tech | P1 | **Open** | Accessibility per WCAG SC 2.3.3 (§12.5). CSS media query + JS fallback. Pairs with TQ2 flash reconciliation. Hours. |
 | TQ8 | Mode-state refactor to enum | Tech | P0 | **Open** | Per §13. `isSourceMode: boolean` → `editorMode: 'wysiwyg' \| 'source' \| 'diff'`. Ships in PR #39. Enum is the correct data model for a 3-state machine. Not deferred debt. |
@@ -478,7 +478,8 @@ These are invariants of the *audit artifact*, not the capabilities themselves. E
   - `projects/server-bridge-hardening/PROJECT.md` — Observer A refactor (TQ3 above) shares the bridge subsystem
 - **Forward:**
   - If PR #39 ships → follow-up story for cross-doc activity feed (US-2a) in the deferred branching/review bundle
-  - Area B undo implementation (Nick's TQ5 prerequisite + Miles's UM wiring + scaffold removal)
+  - Area B undo implementation (Miles — UM wiring + scaffold removal, NO Observer A dependency)
+  - Observer A origin-aware diff (Nick — delivers FR-4/US-3e independently)
   - ~~If Area C gets cursor rendering → follow-up for typing indicator + file-level presence~~ (cursor dropped; US-5f supersedes)
   - If deferred bundle reopens → agent-proposal review experience design sprint (inline suggestions, branching UX, cross-doc, rendered WYSIWYG diff)
 
@@ -692,7 +693,7 @@ Recommend (a) MVP, (b) as evolution when protocol complexity is worth the indust
 | Decision | Before greenfield lens | After greenfield lens |
 |---|---|---|
 | **D6** Rollback + Cmd+Z | (b) not tracked | (b) unchanged — already architecturally correct per Tesler/NO-MODES + 7/8 industry. Minor refinement: `'rollback-apply'` origin becomes typed `LocalTransactionOrigin` object, not raw string |
-| **D7** US-3e acceptance | (a) ship + measure, queue char-level | **(a) FLIPPED → (b) char-level prerequisite.** Ship-with-known-gap is literally deferred tech debt in a foundational primitive (Cmd+Z for the core co-editing scenario). Refactor is bounded (60 LOC + strong test infra); do it right. |
+| **D7** Observer A + undo coupling | (a) prerequisite for undo (b) independent track | **(a) FLIPPED → (b) prerequisite** under greenfield, then **RE-REVISED → (b) independent track** after first-principles re-examination showed core undo (FR-1/FR-2/FR-3/FR-5/FR-6) does NOT depend on Observer A. FR-4/US-3e is the one feature that does — and it needs origin-aware diff (deeper than char-level per prior research). Nick's independent spec. |
 | **D9** Pass boundary grouping | (g) hybrid session-id + idle-gap fallback | **(g) SHIFTED → (b) session-id required** under greenfield, then **RE-REVISED → (e) product-native default + optional enrichment** after MCP harness lifecycle research (§14) showed transport sessionId is NOT conversation-turn-scoped. Identity (D12) is the long-lived concern; pass boundary is the short-lived concern — untangled. |
 | **D12** Agent identity (**NEW**) | N/A (hardcoded DEFAULT_AGENT_ID) | **Build `AgentIdentity` from MCP connection primitives.** connectionId (generated UUID for stdio, `extra.sessionId` for HTTP) + `clientInfo.name/version` + optional `agent_label`. Long-lived is CORRECT — same process = same actor = same identity across all conversations. |
 | **D10** Pre-rollback checkpoint | (e) always emit, distinct origin | (e) refined — name the primitive GENERICALLY: `safetyCheckpoint({ action, context })`. Rollback is first caller; future coarse actions use same primitive. |
@@ -707,7 +708,7 @@ Under the directive, the following items reclassify from "follow-up" to "pre-mer
 | D3 `rollback_to_version` MCP tool | Post-merge follow-up | **Pre-merge in PR #39** (TQ15). Symmetry with MCP-exposed history pattern. |
 | TQ4 PreviewEditor → SourceEditor fold | Post-merge follow-up | **Pre-merge in PR #39** (TQ9). No parallel editor components. |
 | Q-layout — side-by-side diff | "Follow-up after inline unified ships" | **Ship both from day one.** `@pierre/diffs` gives both for free; don't ship half. |
-| TQ5 Observer A char-level | Follow-up correctness story | **Prerequisite to Area B undo shipping** (per D7 flip). |
+| TQ5 Observer A origin-aware diff | "Prerequisite to undo" (was D7 flip) | **Independent correctness track** (D7 re-revised). Core undo ships without it. FR-4/US-3e scope expanded from char-level to origin-aware per prior research. |
 | Flash reconciliation (TQ2) | "Reconcile behaviors" | **Extract shared primitive** (TQ12) — both surfaces consume `computeFlashTargets` from one module; divergence-by-copy-paste becomes impossible |
 | Broken agent-undo scaffold | "Remove when Area B lands" | **Remove pre-PR-#39-merge** (TQ13). Better to ship no-undo than confidently-broken-undo. |
 | Mode state | "Current boolean is fine for now" | **Refactor to enum** (TQ8). Data model should match the state machine. |
@@ -861,17 +862,19 @@ Timeline
 
 ## 15. Ownership split (2026-04-13)
 
-### Nick (bridge / observer / CRDT-invariant layer) — starting now
+### Nick (bridge / observer / CRDT-invariant layer) — independent track
+
+**DECOUPLED from Miles 2026-04-13.** Nick's work delivers FR-4/US-3e (same-line interleaved undo). Does NOT block Miles's undo (FR-1/FR-2/FR-3/FR-5/FR-6).
 
 | Item | Scope | Coordination with Miles |
 |---|---|---|
-| **TQ5** Observer A character-level diff refactor | `observers.ts:206-249`, ~60 LOC. THE prerequisite to correct undo. | None — Nick's files only |
-| **TQ6** US-3e stress test | Extend `observers.stress.s4.test.ts`. Companion to TQ5. | None |
-| **Bridge-matrix undo-invariant tests** | Extend `bridge-matrix.test.ts` with undo propagation scenarios (revert XmlFragment → verify Y.Text propagates). TDD groundwork. | None |
+| **TQ5** Observer A origin-aware diff (FR-4/US-3e) | Scope expanded from "char-level diff" to "origin-aware diff" per prior research (CRDT Item origin-laundering is root cause). Separate spec. | None — Nick's files only. Delivers FR-4 when ready. |
+| **TQ6** US-3e stress test | Extend `observers.stress.s4.test.ts`. Proves the origin-laundering problem + validates the fix. | None |
+| **Bridge-matrix undo-invariant tests** | Extend `bridge-matrix.test.ts` with undo propagation scenarios. TDD groundwork for both Nick's and Miles's work. | None — tests are additive |
 
-### Miles (server + UI + MCP + identity) — starts with PR #39
+### Miles (server + UI + MCP + identity + undo) — starts with PR #39
 
-Everything in §6 Area A expanded scope + remaining Area B items not in Nick's column. Key items:
+Everything in §6 Area A expanded scope + **full Area B undo (no Observer A dependency)**:
 
 | Item | Scope |
 |---|---|
@@ -882,13 +885,15 @@ Everything in §6 Area A expanded scope + remaining Area B items not in Nick's c
 | TQ3, TQ7 | @pierre/diffs spike, prefers-reduced-motion |
 | D6, D10, D11, D12 implementation | Rollback behavior, safety checkpoint, broadcast, identity |
 | Q-trigger, Q-exit, Q-layout, Q-branch-switch | Source-mode diff view mechanics |
-| Area B (post-Nick's prerequisites) | Three-UndoManager wiring, Cmd+Z keyboard, scaffold removal, per-agent UM scoping |
+| **Area B undo (NO Observer A dep)** | Wire WYSIWYG UM on Y.XmlFragment (FR-1), y-codemirror native UM (FR-2), per-agent server-side UMs (FR-3), Cmd+Z keyboard, scaffold removal. Ships US-3a/b/c/d + US-4a/b/c. |
 
-### Coordination points (minimal)
+### Coordination points
 
-1. **TQ10 (typed origin constants):** Nick consumes origins in observer guards; Miles produces them in server-side transactions. Agree on where the constants live (`packages/core/`) and the `LocalTransactionOrigin` type shape. **One 5-minute conversation, then independent.**
-2. **Per-agent origin guards:** Nick updates observer origin-guard truth table after Miles's D12 (AgentIdentity) lands. **Sequential dependency, not coordination — Nick just needs the interface shape.**
+**Zero coordination needed.** Nick and Miles are fully decoupled:
+- Miles ships undo (FR-1/FR-2/FR-3/FR-5/FR-6) without waiting on Nick.
+- Nick ships FR-4/US-3e via origin-aware diff independently.
+- When both land on main, the full undo story (FR-1 through FR-6) is complete.
 
 ### R7 — DROPPED
 
-Observer modal pause/resume is NOT in either track. See §3 Area B note for full rationale. Current architecture (both observers run, origin guards handle everything, baselines refresh on every transaction) is already correct. Implementing pause/resume would cause stale-baseline regressions in multi-tab and agent-write scenarios.
+Observer modal pause/resume is NOT in either track. Current architecture is already correct.
