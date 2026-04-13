@@ -110,6 +110,34 @@ describe('extractWikiLinksFromMarkdown', () => {
       { target: 'guide', snippet: 'See the guide for setup.' },
     ]);
   });
+
+  test('handles combined anchor and alias syntax [[page#section|display]]', () => {
+    const markdown = 'See [[API#auth|Auth Docs]] for setup.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'API', snippet: 'See Auth Docs for setup.' },
+    ]);
+  });
+
+  test('backslash-escaped opening bracket suppresses wiki-link', () => {
+    // \[ escapes the first bracket; the second [ is a standalone char, so [[page]]
+    // appears as literal text in the snippet and is not extracted as a link.
+    const markdown = 'Not a link: \\[[page]] but [[real]] is.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'real', snippet: 'Not a link: [[page]] but real is.' },
+    ]);
+  });
+
+  test('inline code with multi-backtick delimiter: shorter run does not close span', () => {
+    // CommonMark §6.1: closing backtick string must be exactly the same length.
+    // `` `foo``bar` `` — the '``' inside does NOT close the single-backtick span.
+    const markdown = 'See `foo``bar` and [[target]].\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'target', snippet: 'See foo``bar and target.' },
+    ]);
+  });
 });
 
 describe('BacklinkIndex', () => {

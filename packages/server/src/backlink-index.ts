@@ -4,6 +4,9 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { getWikiLinkText, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import type { ContentFilter } from './content-filter.ts';
 
+// Line-oriented variant: excludes \n since lines are pre-split.
+// cf. packages/core/src/extensions/wiki-link.ts WIKI_LINK_PATTERN (no \n exclusion).
+// Sticky flag ('y') enables position-based matching via lastIndex.
 const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
 
 interface InlineWikiLinkOccurrence {
@@ -110,19 +113,35 @@ function leadingMarkdownPrefixLength(line: string): number {
 function readInlineCode(line: string, start: number): { text: string; nextIndex: number } | null {
   let runLength = 0;
   while (line[start + runLength] === '`') runLength++;
-  const delimiter = '`'.repeat(runLength);
-  const close = line.indexOf(delimiter, start + runLength);
-  if (close < 0) return null;
-  return {
-    text: line.slice(start + runLength, close),
-    nextIndex: close + runLength,
-  };
+  if (runLength === 0) return null;
+  const openEnd = start + runLength;
+
+  // CommonMark §6.1: the closing backtick string must be exactly the same length
+  // as the opening string and must not be preceded or followed by a backtick.
+  // indexOf() would match inside a longer run, so we scan for exact-length runs.
+  let i = openEnd;
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      i++;
+      continue;
+    }
+    let closeLen = 0;
+    while (line[i + closeLen] === '`') closeLen++;
+    if (closeLen === runLength) {
+      return { text: line.slice(openEnd, i), nextIndex: i + runLength };
+    }
+    i += closeLen;
+  }
+  return null;
 }
 
 function readWikiLink(
   line: string,
   start: number,
 ): { target: string; alias: string | null; anchor: string | null; nextIndex: number } | null {
+  // Uses sticky flag for position-based matching via lastIndex.
+  // core's parseWikiLink expects the string to start with '[[' (^ anchor) and
+  // cannot be used here where start may be mid-line.
   WIKI_LINK_RE.lastIndex = start;
   const match = WIKI_LINK_RE.exec(line);
   if (!match) return null;
