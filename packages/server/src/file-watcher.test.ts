@@ -486,6 +486,70 @@ describe('startWatcher file index', () => {
   });
 });
 
+// ─── ContentFilter refcount integration ────────────────────────────────────
+
+describe('file-watcher ContentFilter refcount hooks', () => {
+  let tmpDir: string;
+  let contentDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-watcher-refcount-'));
+    contentDir = resolve(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    lastKnownHash.clear();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('.md rename across directories triggers decrement on old dir and increment on new dir', async () => {
+    mkdirSync(resolve(contentDir, 'old-dir'));
+    mkdirSync(resolve(contentDir, 'new-dir'));
+    writeFileSync(resolve(contentDir, 'old-dir', 'doc.md'), '# Doc\n');
+
+    const filter = createContentFilter({
+      projectDir: tmpDir,
+      contentDir,
+      includePatterns: ['**/*.md'],
+      excludePatterns: [],
+    });
+
+    // Before rename: old-dir has an .md, so assets there should be included
+    expect(filter.isExcluded('old-dir/img.png')).toBe(false);
+    expect(filter.isExcluded('new-dir/img.png')).toBe(true);
+
+    // Simulate rename as classifyEvents would produce it
+    const oldPath = resolve(contentDir, 'old-dir', 'doc.md');
+    const newPath = resolve(contentDir, 'new-dir', 'doc.md');
+    updateLastKnownHash(oldPath, contentHash('# Doc\n'));
+    writeFileSync(newPath, '# Doc\n');
+
+    const events = await classifyEvents(
+      [
+        { type: 'delete', path: oldPath },
+        { type: 'create', path: newPath },
+      ],
+      contentDir,
+      filter,
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('rename');
+
+    // Apply filter hooks as handleRawEvents would
+    if (events[0].kind === 'rename') {
+      const { dirname } = await import('node:path');
+      filter.decrementMdDir(dirname(events[0].oldDocName));
+      filter.incrementMdDir(dirname(events[0].newDocName));
+    }
+
+    // After rename: old-dir loses its .md, new-dir gains one
+    expect(filter.isExcluded('old-dir/img.png')).toBe(true);
+    expect(filter.isExcluded('new-dir/img.png')).toBe(false);
+  });
+});
+
 // ─── Symlink-aware watcher ──────────────────────────────────────────────────
 
 describe('startWatcher symlink handling', () => {

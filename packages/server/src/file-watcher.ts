@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { isWithinContentDir } from './persistence.ts';
@@ -616,6 +616,21 @@ async function handleRawEvents(
     }
 
     updateFileIndex(event, fileIndex);
+
+    if (contentFilter) {
+      switch (event.kind) {
+        case 'create':
+          contentFilter.incrementMdDir(dirname(event.docName));
+          break;
+        case 'delete':
+          contentFilter.decrementMdDir(dirname(event.docName));
+          break;
+        case 'rename':
+          contentFilter.decrementMdDir(dirname(event.oldDocName));
+          contentFilter.incrementMdDir(dirname(event.newDocName));
+          break;
+      }
+    }
 
     if (isSelf) {
       console.log(
