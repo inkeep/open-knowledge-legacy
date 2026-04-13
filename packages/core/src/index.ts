@@ -1,3 +1,5 @@
+// Markdown pipeline (new unified+remark)
+
 // Constants
 export {
   ACTIVITY_TTL_MS,
@@ -6,7 +8,6 @@ export {
   FLASH_DURATION_MS,
   hasNewEntries,
 } from './constants/activity.ts';
-
 // Extensions
 export { BulletListFidelity } from './extensions/bullet-list-fidelity.ts';
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
@@ -39,6 +40,7 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+export { MarkdownManager } from './markdown/index.ts';
 
 // Types
 export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';
