@@ -14,6 +14,7 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { CONFIG_FILENAME, OK_DIR } from '../constants.ts';
+import { isObject } from '../utils/is-object.ts';
 import { type Config, ConfigSchema } from './schema.ts';
 
 export interface LoadConfigResult {
@@ -33,19 +34,8 @@ function deepMerge(
   for (const key of Object.keys(override)) {
     const baseVal = base[key];
     const overrideVal = override[key];
-    if (
-      overrideVal !== null &&
-      overrideVal !== undefined &&
-      typeof overrideVal === 'object' &&
-      !Array.isArray(overrideVal) &&
-      typeof baseVal === 'object' &&
-      baseVal !== null &&
-      !Array.isArray(baseVal)
-    ) {
-      result[key] = deepMerge(
-        baseVal as Record<string, unknown>,
-        overrideVal as Record<string, unknown>,
-      );
+    if (isObject(overrideVal) && isObject(baseVal)) {
+      result[key] = deepMerge(baseVal, overrideVal);
     } else if (overrideVal !== undefined) {
       result[key] = overrideVal;
     }
@@ -58,8 +48,8 @@ function loadYamlFile(filePath: string): Record<string, unknown> | null {
   try {
     const raw = readFileSync(filePath, 'utf-8');
     const parsed = parseYaml(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+    if (isObject(parsed)) {
+      return parsed;
     }
     return null;
   } catch (err) {

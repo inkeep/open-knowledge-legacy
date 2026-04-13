@@ -17,6 +17,7 @@
 
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import type { output, ZodType } from 'zod';
+import { isObject } from './is-object.ts';
 
 /** Force TS to fully resolve a type in tooltips instead of showing aliases. */
 type Resolve<T> = { [K in keyof T]: T[K] } & {};
@@ -48,7 +49,7 @@ export function parseFrontmatter<S extends ZodType = ZodType<Record<string, unkn
   if (!match) return null;
   try {
     const parsed = parseYaml(match[1]);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    if (isObject(parsed)) {
       if (schema) {
         const result = schema.safeParse(parsed);
         return result.success ? result.data : null;
