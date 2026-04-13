@@ -3,13 +3,25 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { getWikiLinkText, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import type { ContentFilter } from './content-filter.ts';
-import { mdManager } from './md-manager.ts';
 
 interface PMNodeJson {
   type?: string;
   text?: string;
   attrs?: Record<string, unknown>;
   content?: PMNodeJson[];
+}
+
+const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
+
+interface InlineWikiLinkOccurrence {
+  target: string;
+  start: number;
+  end: number;
+}
+
+interface FenceState {
+  char: '`' | '~';
+  length: number;
 }
 
 export interface ExtractedWikiLink {
@@ -138,6 +150,134 @@ export function extractWikiLinksFromProsemirrorJson(json: PMNodeJson): Extracted
   return links;
 }
 
+function matchFence(line: string): FenceState | null {
+  const match = /^\s{0,3}([`~]{3,})/.exec(line);
+  if (!match) return null;
+  const fence = match[1];
+  const char = fence[0];
+  if (char !== '`' && char !== '~') return null;
+  return { char, length: fence.length };
+}
+
+function isFenceClose(line: string, fence: FenceState): boolean {
+  return new RegExp(`^\\s{0,3}\\${fence.char}{${fence.length},}\\s*$`).test(line);
+}
+
+function leadingMarkdownPrefixLength(line: string): number {
+  const match = /^\s{0,3}(?:#{1,6}\s+|>\s+|(?:[-+*]|\d+[.)])\s+)/.exec(line);
+  return match ? match[0].length : 0;
+}
+
+function readInlineCode(line: string, start: number): { text: string; nextIndex: number } | null {
+  let runLength = 0;
+  while (line[start + runLength] === '`') runLength++;
+  const delimiter = '`'.repeat(runLength);
+  const close = line.indexOf(delimiter, start + runLength);
+  if (close < 0) return null;
+  return {
+    text: line.slice(start + runLength, close),
+    nextIndex: close + runLength,
+  };
+}
+
+function readWikiLink(
+  line: string,
+  start: number,
+): { target: string; alias: string | null; anchor: string | null; nextIndex: number } | null {
+  WIKI_LINK_RE.lastIndex = start;
+  const match = WIKI_LINK_RE.exec(line);
+  if (!match) return null;
+
+  const target = match[1]?.trim();
+  const anchor = match[2]?.trim() || null;
+  const alias = match[3]?.trim() || null;
+  if (!target) return null;
+
+  return {
+    target,
+    alias,
+    anchor,
+    nextIndex: start + match[0].length,
+  };
+}
+
+function extractWikiLinksFromLine(line: string): {
+  text: string;
+  occurrences: InlineWikiLinkOccurrence[];
+} {
+  let flatText = '';
+  const occurrences: InlineWikiLinkOccurrence[] = [];
+  let idx = leadingMarkdownPrefixLength(line);
+
+  while (idx < line.length) {
+    if (line[idx] === '\\' && idx + 1 < line.length) {
+      flatText += line[idx + 1];
+      idx += 2;
+      continue;
+    }
+
+    if (line[idx] === '`') {
+      const inlineCode = readInlineCode(line, idx);
+      if (inlineCode) {
+        flatText += inlineCode.text;
+        idx = inlineCode.nextIndex;
+        continue;
+      }
+    }
+
+    if (line[idx] === '[' && line[idx + 1] === '[') {
+      const wikiLink = readWikiLink(line, idx);
+      if (wikiLink) {
+        const label = getWikiLinkText(wikiLink);
+        const start = flatText.length;
+        flatText += label;
+        occurrences.push({
+          target: wikiLink.target,
+          start,
+          end: start + label.length,
+        });
+        idx = wikiLink.nextIndex;
+        continue;
+      }
+    }
+
+    flatText += line[idx];
+    idx++;
+  }
+
+  return { text: flatText, occurrences };
+}
+
+export function extractWikiLinksFromMarkdown(markdown: string): ExtractedWikiLink[] {
+  const source = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  const lines = source.split('\n');
+  const links: ExtractedWikiLink[] = [];
+  let fence: FenceState | null = null;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex] ?? '';
+
+    if (fence) {
+      if (isFenceClose(line, fence)) fence = null;
+    } else {
+      const nextFence = matchFence(line);
+      if (nextFence) {
+        fence = nextFence;
+      } else {
+        const extracted = extractWikiLinksFromLine(line);
+        links.push(
+          ...extracted.occurrences.map(({ target, start, end }) => ({
+            target,
+            snippet: snippetAround(extracted.text, start, end),
+          })),
+        );
+      }
+    }
+  }
+
+  return links;
+}
+
 function serializeState(state: BranchGraphState): SerializedBranchGraphState {
   return {
     backward: Object.fromEntries(
@@ -233,10 +373,9 @@ export class BacklinkIndex {
   updateDocumentFromMarkdown(docName: string, markdown: string, branch = this.activeBranch): void {
     try {
       const { body } = stripFrontmatter(markdown);
-      const json = mdManager.parse(body) as PMNodeJson;
-      this.updateDocument(docName, extractWikiLinksFromProsemirrorJson(json), branch);
+      this.updateDocument(docName, extractWikiLinksFromMarkdown(body), branch);
     } catch (err) {
-      console.warn(`[backlinks] Failed to parse ${docName} for link extraction:`, err);
+      console.warn(`[backlinks] Failed to scan ${docName} for link extraction:`, err);
       this.deleteDocument(docName, branch);
     }
   }
@@ -360,8 +499,7 @@ export class BacklinkIndex {
       try {
         const markdown = readFileSync(filePath, 'utf-8');
         const { body } = stripFrontmatter(markdown);
-        const json = mdManager.parse(body) as PMNodeJson;
-        const links = extractWikiLinksFromProsemirrorJson(json);
+        const links = extractWikiLinksFromMarkdown(body);
 
         const targets = new Set<string>();
         state.forward.set(docName, targets);

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   BacklinkIndex,
   type ExtractedWikiLink,
+  extractWikiLinksFromMarkdown,
   extractWikiLinksFromProsemirrorJson,
 } from './backlink-index.ts';
 
@@ -50,6 +51,49 @@ describe('extractWikiLinksFromProsemirrorJson', () => {
     expect(extractWikiLinksFromProsemirrorJson(json)).toEqual([
       { target: 'alpha', snippet: 'Alpha and beta#heading' },
       { target: 'beta', snippet: 'Alpha and beta#heading' },
+    ]);
+  });
+});
+
+describe('extractWikiLinksFromMarkdown', () => {
+  test('extracts wiki-link targets with context snippets', () => {
+    expect(extractWikiLinksFromMarkdown('Alpha links to [[beta]] for deployment notes.\n')).toEqual<
+      ExtractedWikiLink[]
+    >([
+      {
+        target: 'beta',
+        snippet: 'Alpha links to beta for deployment notes.',
+      },
+    ]);
+  });
+
+  test('ignores wiki-links inside fenced code blocks and inline code', () => {
+    const markdown = [
+      'See [[alpha]].',
+      '',
+      '```ts',
+      'const example = "[[beta]]";',
+      '```',
+      '',
+      'Inline `[[gamma]]` should not count.',
+    ].join('\n');
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      {
+        target: 'alpha',
+        snippet: 'See alpha.',
+      },
+    ]);
+  });
+
+  test('tolerates colon ranges that remark-directive would claim', () => {
+    const markdown = '**Current (slash-command.ts:108-115):**\n\nSee [[beta]].\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      {
+        target: 'beta',
+        snippet: 'See beta.',
+      },
     ]);
   });
 });
@@ -167,6 +211,33 @@ describe('BacklinkIndex', () => {
       const reloaded = new BacklinkIndex({ projectDir, contentDir });
       expect(await reloaded.loadFromDisk()).toBe(true);
       expect(reloaded.getBacklinks('beta')).toEqual([
+        {
+          source: 'alpha',
+          snippet: 'See beta.',
+        },
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rebuildFromDisk uses raw markdown scanning instead of the full parser', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-rebuild-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      writeFileSync(
+        join(contentDir, 'alpha.md'),
+        '**Current (slash-command.ts:108-115):**\n\nSee [[beta]].\n',
+        'utf-8',
+      );
+      writeFileSync(join(contentDir, 'beta.md'), '# Beta\n', 'utf-8');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.rebuildFromDisk();
+
+      expect(index.getBacklinks('beta')).toEqual([
         {
           source: 'alpha',
           snippet: 'See beta.',
