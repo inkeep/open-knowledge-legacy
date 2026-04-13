@@ -218,18 +218,6 @@ export function protectFromMdx(source: string): string {
 }
 
 /**
- * Protect a single literal `<` at a known source offset.
- *
- * Used by the parse retry path when remark-mdx misclassifies prose like
- * `<50ms` as a JSX opener and aborts the entire document parse.
- */
-export function protectLiteralLtAtOffset(source: string, offset: number): string {
-  if (offset < 0 || offset >= source.length) return source;
-  if (source[offset] !== '<') return source;
-  return `${source.slice(0, offset)}${GUARD_OPEN}${source.slice(offset + 1)}`;
-}
-
-/**
  * Restore protected autolinks and HTML after parsing.
  * Runs as a unified transformer on the mdast tree.
  */
