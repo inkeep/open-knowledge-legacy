@@ -105,4 +105,34 @@ Append-only process history for this spec.
 
 **Status → Approved.** Spec is implementation-ready.
 
+---
+
+## 2026-04-13 — Post-review D9 amendment
+
+**Context:** `/ship` Phase 5 (pre-QA local review) surfaced a genuine a11y finding that wasn't visible when D9 was locked.
+
+**Finding (Review Pass 0, M2):** Partial roving tabindex without `ArrowUp`/`ArrowDown` key handlers is a keyboard accessibility regression — non-active rows become permanently unreachable via keyboard, where default tabindex would leave them Tab-reachable. Full WAI-ARIA Treeview pattern (arrow keys, `role="tree"`) is the correct long-term solution but significantly expands scope beyond reveal-on-activate.
+
+**Decision (user, 2026-04-13, "pragmatic path"):**
+- Drop partial roving tabindex implementation.
+- Keep `aria-current="page"` on the active row.
+- Accept default Tab order for non-active rows (Tab-reachable, document order).
+- Full WAI-ARIA Treeview → Future Work (Identified tier).
+
+**Cascade:**
+- **D9** updated in §10 to reflect amended semantics + amendment rationale.
+- **§6** acceptance criteria: the explicit `tabIndex={0}` / `tabIndex={-1}` requirements for D9 are now implicitly covered by the default Tab order. `aria-current="page"` requirement unchanged.
+- **§15 Future Work — Identified** added entry: Full WAI-ARIA Treeview keyboard navigation.
+- **Tests:** The roving-tabindex Playwright test was replaced during auto-fix with a `userExpanded`-persistence test (addresses Minor m1 from the same review — a legitimate coverage gap). A new `aria-current` exclusivity + change-on-activation test was added in this amendment pass to keep D9's a11y intent tested.
+
+**Implementation state after amendment:**
+- `packages/app/src/components/FileSidebar.tsx` has `aria-current="page"` on the active file row; no explicit `tabIndex` props (default Tab order).
+- `packages/app/tests/stress/reveal-on-activate.e2e.ts` now has: 7 tests — direct URL reveal, hash-nav reveal, manual-collapse honor, D1 override, D4 userExpanded persistence, D9 `aria-current` exclusivity + change-on-activation, no focus steal.
+
+**Other auto-fixes accepted from the same review pass:**
+- **C1 Critical (rebase):** Branch rebased onto current `main` (`cafed34` V0-1 server process safety). Without this, the PR would have silently reverted ~770 lines of server infrastructure.
+- **M1 Major (scrollIntoView timing):** Replaced `useEffect` + `useRef` with a ref callback `(node) => { if (node) node.scrollIntoView({ block: 'nearest' }); }`. The original `useEffect(..., [activeDocName])` had a real bug: on initial URL load, the effect fires when `activeDocName` transitions null→target, but the tree isn't rendered yet (`/api/documents` hasn't returned), `activeRowRef.current` is null, scroll is a no-op, and the effect never re-fires because `activeDocName` is unchanged when the tree arrives. Ref callback fires on DOM attach, handling all timing cases. Relies on React Compiler for stable function identity (repo invariant per CLAUDE.md).
+
+**Unchanged decisions:** D1, D2, D3, D4, D5, D6, D7, D8 all intact.
+
 **Not committed yet:** All artifacts live in the worktree `../open-knowledge-spec-file-tree-reveal` on branch `spec/file-tree-reveal-on-open`. User to review and commit.

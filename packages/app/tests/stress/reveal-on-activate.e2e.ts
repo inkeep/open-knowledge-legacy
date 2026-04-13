@@ -89,6 +89,23 @@ test('roving tabindex: active row has tabIndex=0, others have tabIndex=-1', asyn
   await expect(folderButton(page)).toHaveAttribute('tabindex', '-1');
 });
 
+test('exactly one aria-current="page" row, matching activeDocName (D9)', async ({ page }) => {
+  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+
+  const current = sidebar(page).locator('[aria-current="page"]');
+  await expect(current).toHaveCount(1);
+  await expect(current).toContainText('nested-doc.md');
+
+  await page.evaluate(() => {
+    window.location.hash = '#/test-doc';
+  });
+  await page.getByText('test-doc.md').waitFor({ state: 'visible', timeout: 10_000 });
+
+  await expect(current).toHaveCount(1);
+  await expect(current).toContainText('test-doc.md');
+});
+
 test('activation does not steal focus from the editor', async ({ page }) => {
   await page.goto(`${BASE}/#/test-doc`);
   await page.getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
