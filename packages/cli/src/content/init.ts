@@ -16,17 +16,23 @@ This directory contains a living knowledge base for this project, maintained by 
 
 ## Navigation
 
-1. **Start with catalogs** — Read \`.open-knowledge/catalogs/INDEX.md\` for a top-level overview of all tracked content. Follow links to subdirectory catalogs for deeper navigation.
-2. **Search with grep** — Use grep/ripgrep to find specific topics across all content
-3. **Read specific files** — Once you find the right article, read it for full context
+**Preferred (MCP tools):**
+1. **Search** — Use the \`search\` MCP tool for wiki grep. Matches come grouped by file with article title/description/tags attached, so you can judge relevance without opening each file.
+2. **Read** — Use \`read_document\` for wiki files. One call returns contents + frontmatter + recent git history + backlinks + parent folder catalog context.
+3. **Browse structure** — Read \`.open-knowledge/catalogs/INDEX.md\` for a top-level overview; follow links to subdirectory catalogs for deeper navigation.
+
+**Fallback (native tools, when MCP isn't available):**
+- Native \`Grep\` to search content
+- Native \`Read\` to load specific files
+- Read catalog \`INDEX.md\` files directly for the folder structure
 
 Catalogs are auto-generated inside \`.open-knowledge/catalogs/\` and mirror the project's directory structure. They are never written into the source tree.
 
 ## Content Lifecycle
 
-1. **External sources** (\`external-sources/\`) — Raw content fetched from URLs, PDFs, or other documents. No analysis, just preservation.
-2. **Research** (\`research/\`) — Analysis and synthesis of sources. Provisional findings, trade-offs, open questions.
-3. **Articles** (\`articles/\`) — Canonical knowledge. Architecture decisions, processes, how things work. The source of truth.
+1. **External sources** (\`external-sources/\`) — Raw content fetched from URLs, PDFs, or other documents. No analysis, just preservation. Use the \`ingest\` MCP tool.
+2. **Research** (\`research/\`) — Analysis and synthesis of sources. Provisional findings, trade-offs, open questions. Use the \`research\` MCP tool.
+3. **Articles** (\`articles/\`) — Canonical knowledge. Architecture decisions, processes, how things work. The source of truth. Use the \`consolidate\` MCP tool to promote research → articles once decisions are made.
 
 Knowledge matures through stages: external sources → research → articles.
 

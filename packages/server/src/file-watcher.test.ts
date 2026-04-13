@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -424,7 +424,7 @@ describe('startWatcher file index', () => {
       docName: 'new-file',
       content: '# New File\n',
     };
-    updateFileIndex(event, contentDir, index);
+    updateFileIndex(event, index);
     expect(index.has('new-file')).toBe(true);
     expect(index.get('new-file')?.size).toBe(Buffer.byteLength('# New File\n', 'utf-8'));
     expect(index.get('new-file')?.modified).toBeTruthy();
@@ -438,7 +438,7 @@ describe('startWatcher file index', () => {
       path: resolve(contentDir, 'existing.md'),
       docName: 'existing',
     };
-    updateFileIndex(event, contentDir, index);
+    updateFileIndex(event, index);
     expect(index.has('existing')).toBe(false);
   });
 
@@ -452,7 +452,7 @@ describe('startWatcher file index', () => {
       docName: 'doc',
       content: '# Updated content with more text\n',
     };
-    updateFileIndex(event, contentDir, index);
+    updateFileIndex(event, index);
     expect(index.get('doc')?.size).toBe(
       Buffer.byteLength('# Updated content with more text\n', 'utf-8'),
     );
@@ -470,7 +470,7 @@ describe('startWatcher file index', () => {
       newDocName: 'new-name',
       content: '# Renamed\n',
     };
-    updateFileIndex(event, contentDir, index);
+    updateFileIndex(event, index);
     expect(index.has('old-name')).toBe(false);
     expect(index.has('new-name')).toBe(true);
     expect(index.get('new-name')?.size).toBe(Buffer.byteLength('# Renamed\n', 'utf-8'));
@@ -483,5 +483,211 @@ describe('startWatcher file index', () => {
     } finally {
       await handle.unsubscribe();
     }
+  });
+});
+
+// ─── Symlink-aware watcher ──────────────────────────────────────────────────
+
+describe('startWatcher symlink handling', () => {
+  let tmpDir: string;
+  let contentDir: string;
+
+  beforeEach(async () => {
+    tmpDir = realpathSync(await mkdtemp(resolve(tmpdir(), 'ok-watcher-symlink-')));
+    contentDir = resolve(tmpDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    lastKnownHash.clear();
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('indexes symlinked file with canonical docName and registers alias', async () => {
+    const targetPath = resolve(contentDir, 'target.md');
+    const linkPath = resolve(contentDir, 'link.md');
+    writeFileSync(targetPath, '# Target\n');
+    symlinkSync(targetPath, linkPath);
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      const index = handle.getFileIndex();
+      const aliasMap = handle.getAliasMap();
+
+      expect(index.has('target')).toBe(true);
+      expect(aliasMap.get('link')).toBe('target');
+
+      const entry = index.get('target');
+      expect(entry).toBeTruthy();
+      expect(entry?.canonicalPath).toBe(targetPath);
+      expect(entry?.inode).toBeGreaterThan(0);
+      expect(entry?.aliases).toContain('link');
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('skips broken symlinks during startup walk', async () => {
+    const linkPath = resolve(contentDir, 'broken.md');
+    symlinkSync(resolve(contentDir, 'nonexistent.md'), linkPath);
+    writeFileSync(resolve(contentDir, 'good.md'), '# Good\n');
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      const index = handle.getFileIndex();
+      expect(index.has('good')).toBe(true);
+      expect(index.has('broken')).toBe(false);
+      expect(index.has('nonexistent')).toBe(false);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('skips symlinks escaping contentDir during startup walk', async () => {
+    const outsideDir = resolve(tmpDir, 'outside');
+    mkdirSync(outsideDir, { recursive: true });
+    const outsideFile = resolve(outsideDir, 'secret.md');
+    writeFileSync(outsideFile, '# Secret\n');
+
+    const escapePath = resolve(contentDir, 'escape.md');
+    symlinkSync(outsideFile, escapePath);
+    writeFileSync(resolve(contentDir, 'safe.md'), '# Safe\n');
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      const index = handle.getFileIndex();
+      expect(index.has('safe')).toBe(true);
+      expect(index.has('escape')).toBe(false);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('handles cyclic symlink directories without infinite loop', async () => {
+    const dirA = resolve(contentDir, 'dir-a');
+    const dirB = resolve(contentDir, 'dir-b');
+    mkdirSync(dirA, { recursive: true });
+    mkdirSync(dirB, { recursive: true });
+    writeFileSync(resolve(dirA, 'file.md'), '# File A\n');
+
+    symlinkSync(dirB, resolve(dirA, 'link-to-b'));
+    symlinkSync(dirA, resolve(dirB, 'link-to-a'));
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      const index = handle.getFileIndex();
+      expect(index.has('dir-a/file')).toBe(true);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('FileIndexEntry has canonicalPath, inode, and aliases fields', async () => {
+    writeFileSync(resolve(contentDir, 'regular.md'), '# Regular\n');
+
+    const handle = await startWatcher(contentDir, async () => {});
+    try {
+      const entry = handle.getFileIndex().get('regular');
+      expect(entry).toBeTruthy();
+      expect(entry?.canonicalPath).toBe(resolve(contentDir, 'regular.md'));
+      expect(entry?.inode).toBeGreaterThan(0);
+      expect(entry?.aliases).toEqual([]);
+    } finally {
+      await handle.unsubscribe();
+    }
+  });
+
+  test('classifyEvents resolves alias docName to canonical', async () => {
+    const targetPath = resolve(contentDir, 'target.md');
+    const linkPath = resolve(contentDir, 'link.md');
+    writeFileSync(targetPath, '# Target\n');
+    symlinkSync(targetPath, linkPath);
+
+    const aliasMap = new Map([['link', 'target']]);
+    updateLastKnownHash(linkPath, contentHash('# Target\n'));
+
+    writeFileSync(targetPath, '# Updated\n');
+
+    const events = await classifyEvents(
+      [{ type: 'update', path: linkPath }],
+      contentDir,
+      undefined,
+      aliasMap,
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('update');
+    if (events[0].kind === 'update') {
+      expect(events[0].docName).toBe('target');
+    }
+  });
+
+  test('self-write detection works with canonical path after symlink resolution', async () => {
+    const targetPath = resolve(contentDir, 'target.md');
+    const linkPath = resolve(contentDir, 'link.md');
+    writeFileSync(targetPath, '# Original\n');
+    symlinkSync(targetPath, linkPath);
+
+    const markdown = '# Updated via symlink\n';
+    const hash = contentHash(markdown);
+
+    registerWrite(targetPath, hash);
+
+    expect(isSelfWrite(targetPath, hash)).toBe(true);
+  });
+
+  test('classifyEvents live-resolves symlink created post-startup and updates aliasMap', async () => {
+    // Simulate a symlink that appears AFTER the watcher's startup walk — i.e.
+    // the aliasMap is empty but the path on disk is a live symlink. The watcher
+    // should lstat, realpath, populate the aliasMap, and emit the canonical
+    // docName on the resulting DiskEvent.
+    const targetPath = resolve(contentDir, 'new-target.md');
+    const linkPath = resolve(contentDir, 'new-link.md');
+    writeFileSync(targetPath, '# Target\n');
+    symlinkSync(targetPath, linkPath);
+
+    const aliasMap = new Map<string, string>();
+
+    const events = await classifyEvents(
+      [{ type: 'create', path: linkPath }],
+      contentDir,
+      undefined,
+      aliasMap,
+    );
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe('create');
+    if (events[0].kind === 'create') {
+      expect(events[0].docName).toBe('new-target');
+    }
+    expect(aliasMap.get('new-link')).toBe('new-target');
+  });
+
+  test('classifyEvents re-resolves a repointed symlink and updates aliasMap', async () => {
+    // Symlink was originally pointing to old-target.md; now it's been repointed
+    // to fresh-target.md. The watcher should detect the change on the next
+    // event and update its aliasMap entry.
+    const oldTargetPath = resolve(contentDir, 'old-target.md');
+    const newTargetPath = resolve(contentDir, 'fresh-target.md');
+    const aliasPath = resolve(contentDir, 'alias.md');
+    writeFileSync(oldTargetPath, '# Old\n');
+    writeFileSync(newTargetPath, '# Fresh\n');
+    symlinkSync(newTargetPath, aliasPath);
+
+    // aliasMap is stale — still points to the old canonical
+    const aliasMap = new Map<string, string>([['alias', 'old-target']]);
+
+    const events = await classifyEvents(
+      [{ type: 'update', path: aliasPath }],
+      contentDir,
+      undefined,
+      aliasMap,
+    );
+
+    expect(events).toHaveLength(1);
+    if (events[0].kind === 'update') {
+      expect(events[0].docName).toBe('fresh-target');
+    }
+    expect(aliasMap.get('alias')).toBe('fresh-target');
   });
 });

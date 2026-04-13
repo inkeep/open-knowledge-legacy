@@ -30,11 +30,32 @@ function listDocuments(
 describe('document listing from file index', () => {
   const now = new Date().toISOString();
   const sampleIndex = new Map<string, FileIndexEntry>([
-    ['README', { size: 50, modified: now }],
-    ['docs/guide', { size: 200, modified: now }],
-    ['docs/setup', { size: 150, modified: now }],
-    ['articles/intro', { size: 100, modified: now }],
-    ['articles/nested/deep', { size: 80, modified: now }],
+    [
+      'README',
+      { size: 50, modified: now, canonicalPath: '/test/README.md', inode: 0, aliases: [] },
+    ],
+    [
+      'docs/guide',
+      { size: 200, modified: now, canonicalPath: '/test/docs/guide.md', inode: 0, aliases: [] },
+    ],
+    [
+      'docs/setup',
+      { size: 150, modified: now, canonicalPath: '/test/docs/setup.md', inode: 0, aliases: [] },
+    ],
+    [
+      'articles/intro',
+      { size: 100, modified: now, canonicalPath: '/test/articles/intro.md', inode: 0, aliases: [] },
+    ],
+    [
+      'articles/nested/deep',
+      {
+        size: 80,
+        modified: now,
+        canonicalPath: '/test/articles/nested/deep.md',
+        inode: 0,
+        aliases: [],
+      },
+    ],
   ]);
 
   test('lists all documents from index', () => {

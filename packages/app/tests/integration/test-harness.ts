@@ -24,10 +24,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { sharedExtensions } from '@inkeep/open-knowledge-core';
+import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { createServer } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
@@ -84,7 +83,7 @@ export async function createTestServer(): Promise<TestServer> {
   const httpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
     if (url?.startsWith('/api/')) {
-      // biome-ignore lint/suspicious/noExplicitAny: HTTP server types don't match Hocuspocus hook signature
+      // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
       srv.hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
         if (!res.writableEnded) {
           res.writeHead(500);
@@ -230,10 +229,12 @@ export function stripTrailingWhitespace(s: string): string {
     .replace(/\n+$/, '');
 }
 
-/** Assert bridge invariant: normalized Y.Text === serialized XmlFragment */
+/** Assert bridge invariant: normalized Y.Text === serialized XmlFragment.
+ * Normalization includes NG1: blank-line count between blocks may normalize
+ * (ProseMirror schema limitation). Collapse 3+ consecutive newlines to 2. */
 export function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment): void {
-  const textNorm = stripTrailingWhitespace(ytext.toString());
-  const fragNorm = stripTrailingWhitespace(serializeFragment(fragment));
+  const textNorm = normalizeBridge(ytext.toString());
+  const fragNorm = normalizeBridge(serializeFragment(fragment));
   if (textNorm !== fragNorm) {
     throw new Error(
       `Bridge invariant violated.\n` +
@@ -241,6 +242,18 @@ export function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment): v
         `  Fragment (${fragNorm.length} chars): ${fragNorm.slice(0, 200)}...`,
     );
   }
+}
+
+/** Normalize for bridge invariant comparison: strip trailing whitespace per line,
+ * trailing newlines, and collapse 3+ consecutive newlines to exactly 2
+ * (NG1: blank-line count between blocks normalizes). */
+function normalizeBridge(s: string): string {
+  return s
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\n+$/, '');
 }
 
 /** Read a document's .md file from the content directory */

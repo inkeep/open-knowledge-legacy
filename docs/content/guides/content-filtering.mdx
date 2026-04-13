@@ -7,6 +7,8 @@ Open Knowledge respects your `.gitignore` files and combines them with config-ba
 
 ## How it works
 
+Symlinks inside the content directory are followed transparently -- they participate in the document system like regular files. Cyclic symlinks are detected and skipped; symlinks that resolve outside the content directory are excluded.
+
 Two sources of exclusion are combined:
 
 - **`.gitignore` files** -- root and nested, auto-discovered via a two-pass bootstrap

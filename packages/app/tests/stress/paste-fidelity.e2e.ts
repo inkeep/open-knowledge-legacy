@@ -19,18 +19,15 @@ const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
 
 /** Wait for the active provider to be connected and synced */
 async function waitForProvider(page: import('@playwright/test').Page) {
-  await page.waitForFunction(
-    // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-    () => Boolean((window as any).__activeProvider?.isSynced),
-    { timeout: 15_000 },
-  );
+  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
+    timeout: 15_000,
+  });
 }
 
 /** Get the current Y.Text content from the provider */
 async function getYText(page: import('@playwright/test').Page): Promise<string> {
   return page.evaluate(() => {
-    // biome-ignore lint/suspicious/noExplicitAny: accessing active provider from window
-    const provider = (window as any).__activeProvider;
+    const provider = window.__activeProvider;
     return provider?.document?.getText('source')?.toString() ?? '';
   });
 }

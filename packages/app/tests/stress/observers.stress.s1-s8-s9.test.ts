@@ -8,8 +8,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
@@ -44,7 +44,9 @@ function stabilize(md: string): string {
 }
 
 function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment, label: string) {
-  const textSide = stripTrailingWhitespace(ytext.toString());
+  // NG1 normalization: factor out blank-line-count-between-blocks via stabilize()
+  // so Y.Text and XmlFragment are compared under pipeline-equivalent representation.
+  const textSide = stripTrailingWhitespace(stabilize(ytext.toString()));
   const treeSide = stripTrailingWhitespace(serializeFragment(fragment));
 
   if (textSide !== treeSide) {
@@ -314,9 +316,13 @@ describe('S3: undo chain', () => {
 
           for (let i = 0; i < N; i++) {
             const content = stabilize(generateMarkdown(tier.lines));
+            // Stabilize the composed payload so NG1 (blank-line-count
+            // normalization) does not produce false bridge-invariant diffs
+            // from concatenating stabilized content (trailing \n) with \n\n.
+            const payload = stabilize(`${content}\n\n## Write ${i + 1}\n`);
             doc.transact(() => {
               ytext.delete(0, ytext.length);
-              ytext.insert(0, `${content}\n\n## Write ${i + 1}\n`);
+              ytext.insert(0, payload);
             }, 'agent-write');
             await wait(200);
           }

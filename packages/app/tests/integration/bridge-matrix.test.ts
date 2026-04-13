@@ -16,7 +16,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { updateYFragment } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { markUserTyping } from '../../src/editor/observers';
 
@@ -52,6 +52,21 @@ function appendParagraphToFragment(client: TestClient, text: string): void {
   const ytext = new Y.XmlText();
   ytext.applyDelta([{ insert: text }]);
   paragraph.insert(0, [ytext]);
+  client.fragment.push([paragraph]);
+}
+
+function appendWikiLinkToFragment(
+  client: TestClient,
+  target: string,
+  anchor?: string | null,
+  alias?: string | null,
+): void {
+  const paragraph = new Y.XmlElement('paragraph');
+  const wikiLink = new Y.XmlElement('wikiLink');
+  wikiLink.setAttribute('target', target);
+  if (anchor) wikiLink.setAttribute('anchor', anchor);
+  if (alias) wikiLink.setAttribute('alias', alias);
+  paragraph.insert(0, [wikiLink]);
   client.fragment.push([paragraph]);
 }
 
@@ -523,7 +538,8 @@ describe('multi-client sync', () => {
     await pollUntil(() => clientA.ytext.toString().includes('CLIENT-B-SOURCE-MARKER'), 5000);
     await pollUntil(() => clientB.ytext.toString().includes('CLIENT-A-WYSIWYG-MARKER'), 5000);
     // Wait for observer debounces (50ms each) + remote-tree grace window (150ms) to settle.
-    await wait(400);
+    // Increased from 400ms to 800ms to account for unified pipeline serialize latency.
+    await wait(800);
 
     expect(clientA.ytext.toString()).toContain('CLIENT-A-WYSIWYG-MARKER');
     expect(clientA.ytext.toString()).toContain('CLIENT-B-SOURCE-MARKER');
@@ -546,7 +562,7 @@ describe('multi-client sync', () => {
       clientB.ytext.insert(clientB.ytext.length, '\n\nCLIENT-B-REMOTE-SOURCE\n');
     }, 'user-edit');
 
-    await wait(400);
+    await wait(800);
     clearInterval(typingInterval);
     await pollUntil(() => clientA.ytext.toString().includes('CLIENT-B-REMOTE-SOURCE'), 5000);
 
@@ -587,6 +603,69 @@ describe('multi-client sync', () => {
     expect(clientB.ytext.toString()).toContain('CLIENT-A-WYSIWYG-EDIT');
     expect(clientB.ytext.toString()).toContain('CLIENT-B-SOURCE-EDIT');
     expect(clientB.ytext.toString()).toContain('SERVER-AGENT-CONTENT');
+    assertClientsConverged(clientA, clientB);
+  });
+
+  test('wiki-link atom node inserted by client A converges on client B', async () => {
+    appendWikiLinkToFragment(clientA, 'test-page', 'Heading', 'Display');
+
+    await pollUntil(() => clientB.ytext.toString().includes('[[test-page#Heading|Display]]'), 5000);
+
+    expect(clientB.ytext.toString()).toContain('[[test-page#Heading|Display]]');
+    assertClientsConverged(clientA, clientB);
+  });
+
+  test('wiki-link atom node mixed with text in same paragraph converges across clients', async () => {
+    const paragraph = new Y.XmlElement('paragraph');
+    const before = new Y.XmlText();
+    before.applyDelta([{ insert: 'See ' }]);
+    const wikiLink = new Y.XmlElement('wikiLink');
+    wikiLink.setAttribute('target', 'Page');
+    wikiLink.setAttribute('anchor', 'Section');
+    wikiLink.setAttribute('alias', 'here');
+    const after = new Y.XmlText();
+    after.applyDelta([{ insert: ' for details.' }]);
+    paragraph.insert(0, [before, wikiLink, after]);
+    clientA.fragment.push([paragraph]);
+
+    await pollUntil(() => clientB.ytext.toString().includes('[[Page#Section|here]]'), 5000);
+
+    expect(clientB.ytext.toString()).toContain('See [[Page#Section|here]] for details.');
+    assertClientsConverged(clientA, clientB);
+  });
+
+  // Reverse direction (source→tree): exercises Observer B's inline parser for [[...]]
+  // syntax under multi-client sync. Pairs with the two tree→text tests above to close
+  // bidirectional coverage for atom nodes — Observer A (tree→text) serializes the
+  // wikiLink node to markdown; Observer B (text→tree) parses markdown [[...]] back
+  // into a structured wikiLink atom node. Different code paths, both need multi-client
+  // coverage per S7.
+  test('wiki-link written as raw source text by client B materializes as atom node on client A', async () => {
+    clientB.doc.transact(() => {
+      clientB.ytext.insert(0, 'See [[Page#Section|here]] for details.\n');
+    }, 'user-edit');
+
+    // Observer B on clientB parses the markdown into a wikiLink atom node in its
+    // XmlFragment; the XmlFragment update propagates to clientA via CRDT sync; on
+    // clientA, serializeFragment round-trips the atom node back to [[...]] markdown.
+    await pollUntil(
+      () => serializeFragment(clientA.fragment).includes('[[Page#Section|here]]'),
+      5000,
+    );
+
+    expect(serializeFragment(clientA.fragment)).toContain('See [[Page#Section|here]] for details.');
+    expect(clientA.ytext.toString()).toContain('See [[Page#Section|here]] for details.');
+
+    // Structural verification: the wikiLink exists as an atom node in clientA's
+    // XmlFragment (not just raw text). Without this, the test would pass even if
+    // Observer B failed to parse [[...]] into a structured node — raw text
+    // round-trips identically through serialization.
+    const pmJson = JSON.stringify(yXmlFragmentToProsemirrorJSON(clientA.fragment));
+    expect(pmJson).toContain('"type":"wikiLink"');
+    expect(pmJson).toContain('"target":"Page"');
+    expect(pmJson).toContain('"anchor":"Section"');
+    expect(pmJson).toContain('"alias":"here"');
+
     assertClientsConverged(clientA, clientB);
   });
 });

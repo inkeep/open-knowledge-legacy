@@ -29,7 +29,7 @@ Topic: ${topic}
 
 ## Principle: provisional, not canonical
 
-Research articles are **provisional**. They capture what you found at a point in time. They are not the source of truth — that's what \`articles/\` is for. When decisions solidify, research gets promoted to \`articles/\` via \`/consolidate\` (or manually). Until then, research is a place where uncertainty lives.
+Research articles are **provisional**. They capture what you found at a point in time. They are not the source of truth — that's what \`articles/\` is for. When decisions solidify, research gets promoted to \`articles/\` via the \`consolidate\` tool (or manually). Until then, research is a place where uncertainty lives.
 
 ## Steps
 
@@ -39,7 +39,7 @@ Understand what the developer is actually asking:
 
 - **What specific question needs answering?** If the prompt was vague, narrow it before gathering sources.
 - **What's the decision this research will inform?** A research article without a decision context tends to meander.
-- **What's already known?** Check \`.open-knowledge/articles/\` and \`.open-knowledge/research/\` first. If there's prior work on the topic, read it before starting fresh — you may be iterating on an existing research doc rather than creating a new one.
+- **What's already known?** Check \`.open-knowledge/articles/\` and \`.open-knowledge/research/\` first. Use \`search\` to find existing work on the topic (matches come with article metadata attached, so you can judge relevance without opening each). If prior work exists, use \`read_document\` to load it with full context (metadata + history + backlinks) — you may be iterating on an existing research doc rather than creating a new one.
 
 If the topic is itself a URL, treat that URL as the anchor source and widen from there. If it's a question, figure out 3–8 sources that could plausibly inform it.
 
@@ -55,9 +55,9 @@ If a fetch fails for a source you specifically need, stop and ask the user to pa
 
 Read each ingested source carefully. Also read:
 
-- **Existing articles** on the topic (\`articles/\`)
-- **Prior research** on adjacent topics (\`research/\`)
-- **Relevant source code** for projects where research is grounded in the codebase (read entry points, core modules, and any specs that touch the topic)
+- **Existing articles** on the topic (\`articles/\`) — use \`read_document\` for wiki files to pick up metadata + git history + backlinks in one call
+- **Prior research** on adjacent topics (\`research/\`) — same: prefer \`read_document\` over native \`Read\` for wiki content
+- **Relevant source code** for projects where research is grounded in the codebase (read entry points, core modules, and any specs that touch the topic) — use native \`Read\` for code files
 - **Project context** — \`PROJECT.md\`, \`STORIES.md\`, \`specs/\`, \`reports/\` if they exist
 
 Take notes on:
@@ -145,7 +145,7 @@ Structure:
 
 ## Non-goals
 
-- **Don't promote to \`articles/\`** — that's \`/consolidate\`'s job after the team actually decides
+- **Don't promote to \`articles/\`** — that's the \`consolidate\` tool's job after the team actually decides
 - **Don't hide uncertainty** — research is where uncertainty lives; be explicit about what you don't know
 - **Don't skip \`ingest\`** — always capture raw sources first, then analyze
 - **Don't overwrite existing research** — if the topic was researched before, either iterate on the existing file or create a clearly-named successor (e.g., \`crdt-alternatives-2.md\`) and mark the old one as superseded

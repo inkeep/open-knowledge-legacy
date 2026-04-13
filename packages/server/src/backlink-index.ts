@@ -1,17 +1,23 @@
 import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import { getWikiLinkText, sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { MarkdownManager } from '@tiptap/markdown';
+import { getWikiLinkText, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import type { ContentFilter } from './content-filter.ts';
 
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+// Line-oriented variant: excludes \n since lines are pre-split.
+// cf. packages/core/src/extensions/wiki-link.ts WIKI_LINK_PATTERN (no \n exclusion).
+// Sticky flag ('y') enables position-based matching via lastIndex.
+const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
 
-interface PMNodeJson {
-  type?: string;
-  text?: string;
-  attrs?: Record<string, unknown>;
-  content?: PMNodeJson[];
+interface InlineWikiLinkOccurrence {
+  target: string;
+  start: number;
+  end: number;
+}
+
+interface FenceState {
+  char: '`' | '~';
+  length: number;
 }
 
 export interface ExtractedWikiLink {
@@ -86,57 +92,147 @@ function snippetAround(text: string, start: number, end: number): string | null 
   return `${prefix}${snippet}${suffix}`;
 }
 
-function collectInlineWikiLinks(node: PMNodeJson): ExtractedWikiLink[] {
-  const children = node.content ?? [];
-  let flatText = '';
-  const occurrences: Array<{ target: string; start: number; end: number }> = [];
-
-  for (const child of children) {
-    if (child.type === 'text') {
-      flatText += child.text ?? '';
-      continue;
-    }
-    if (child.type === 'hardBreak') {
-      flatText += '\n';
-      continue;
-    }
-    if (child.type !== 'wikiLink') continue;
-
-    const target = typeof child.attrs?.target === 'string' ? child.attrs.target.trim() : '';
-    if (!target) continue;
-
-    const alias = typeof child.attrs?.alias === 'string' ? child.attrs.alias : null;
-    const anchor = typeof child.attrs?.anchor === 'string' ? child.attrs.anchor : null;
-    const label = getWikiLinkText({ target, alias, anchor });
-    const start = flatText.length;
-    flatText += label;
-    occurrences.push({ target, start, end: flatText.length });
-  }
-
-  return occurrences.map((occurrence) => ({
-    target: occurrence.target,
-    snippet: snippetAround(flatText, occurrence.start, occurrence.end),
-  }));
+function matchFence(line: string): FenceState | null {
+  const match = /^\s{0,3}([`~]{3,})/.exec(line);
+  if (!match) return null;
+  const fence = match[1];
+  const char = fence[0];
+  if (char !== '`' && char !== '~') return null;
+  return { char, length: fence.length };
 }
 
-export function extractWikiLinksFromProsemirrorJson(json: PMNodeJson): ExtractedWikiLink[] {
-  const links: ExtractedWikiLink[] = [];
+function isFenceClose(line: string, fence: FenceState): boolean {
+  return new RegExp(`^\\s{0,3}\\${fence.char}{${fence.length},}\\s*$`).test(line);
+}
 
-  function walk(node: PMNodeJson): void {
-    const children = node.content ?? [];
-    const hasDirectInlineWikiLink = children.some((child) => child.type === 'wikiLink');
+function leadingMarkdownPrefixLength(line: string): number {
+  const match = /^\s{0,3}(?:#{1,6}\s+|>\s+|(?:[-+*]|\d+[.)])\s+)/.exec(line);
+  return match ? match[0].length : 0;
+}
 
-    if (hasDirectInlineWikiLink) {
-      links.push(...collectInlineWikiLinks(node));
+function readInlineCode(line: string, start: number): { text: string; nextIndex: number } | null {
+  let runLength = 0;
+  while (line[start + runLength] === '`') runLength++;
+  if (runLength === 0) return null;
+  const openEnd = start + runLength;
+
+  // CommonMark §6.1: the closing backtick string must be exactly the same length
+  // as the opening string and must not be preceded or followed by a backtick.
+  // indexOf() would match inside a longer run, so we scan for exact-length runs.
+  let i = openEnd;
+  while (i < line.length) {
+    if (line[i] !== '`') {
+      i++;
+      continue;
+    }
+    let closeLen = 0;
+    while (line[i + closeLen] === '`') closeLen++;
+    if (closeLen === runLength) {
+      return { text: line.slice(openEnd, i), nextIndex: i + runLength };
+    }
+    i += closeLen;
+  }
+  return null;
+}
+
+function readWikiLink(
+  line: string,
+  start: number,
+): { target: string; alias: string | null; anchor: string | null; nextIndex: number } | null {
+  // Uses sticky flag for position-based matching via lastIndex.
+  // core's parseWikiLink expects the string to start with '[[' (^ anchor) and
+  // cannot be used here where start may be mid-line.
+  WIKI_LINK_RE.lastIndex = start;
+  const match = WIKI_LINK_RE.exec(line);
+  if (!match) return null;
+
+  const target = match[1]?.trim();
+  const anchor = match[2]?.trim() || null;
+  const alias = match[3]?.trim() || null;
+  if (!target) return null;
+
+  return {
+    target,
+    alias,
+    anchor,
+    nextIndex: start + match[0].length,
+  };
+}
+
+function extractWikiLinksFromLine(line: string): {
+  text: string;
+  occurrences: InlineWikiLinkOccurrence[];
+} {
+  let flatText = '';
+  const occurrences: InlineWikiLinkOccurrence[] = [];
+  let idx = leadingMarkdownPrefixLength(line);
+
+  while (idx < line.length) {
+    if (line[idx] === '\\' && idx + 1 < line.length) {
+      flatText += line[idx + 1];
+      idx += 2;
+      continue;
     }
 
-    for (const child of children) {
-      if (child.type === 'wikiLink') continue;
-      walk(child);
+    if (line[idx] === '`') {
+      const inlineCode = readInlineCode(line, idx);
+      if (inlineCode) {
+        flatText += inlineCode.text;
+        idx = inlineCode.nextIndex;
+        continue;
+      }
+    }
+
+    if (line[idx] === '[' && line[idx + 1] === '[') {
+      const wikiLink = readWikiLink(line, idx);
+      if (wikiLink) {
+        const label = getWikiLinkText(wikiLink);
+        const start = flatText.length;
+        flatText += label;
+        occurrences.push({
+          target: wikiLink.target,
+          start,
+          end: start + label.length,
+        });
+        idx = wikiLink.nextIndex;
+        continue;
+      }
+    }
+
+    flatText += line[idx];
+    idx++;
+  }
+
+  return { text: flatText, occurrences };
+}
+
+export function extractWikiLinksFromMarkdown(markdown: string): ExtractedWikiLink[] {
+  const source = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  const lines = source.split('\n');
+  const links: ExtractedWikiLink[] = [];
+  let fence: FenceState | null = null;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    const line = lines[lineIndex] ?? '';
+
+    if (fence) {
+      if (isFenceClose(line, fence)) fence = null;
+    } else {
+      const nextFence = matchFence(line);
+      if (nextFence) {
+        fence = nextFence;
+      } else {
+        const extracted = extractWikiLinksFromLine(line);
+        links.push(
+          ...extracted.occurrences.map(({ target, start, end }) => ({
+            target,
+            snippet: snippetAround(extracted.text, start, end),
+          })),
+        );
+      }
     }
   }
 
-  walk(json);
   return links;
 }
 
@@ -235,10 +331,9 @@ export class BacklinkIndex {
   updateDocumentFromMarkdown(docName: string, markdown: string, branch = this.activeBranch): void {
     try {
       const { body } = stripFrontmatter(markdown);
-      const json = mdManager.parse(body) as PMNodeJson;
-      this.updateDocument(docName, extractWikiLinksFromProsemirrorJson(json), branch);
+      this.updateDocument(docName, extractWikiLinksFromMarkdown(body), branch);
     } catch (err) {
-      console.warn(`[backlinks] Failed to parse ${docName} for link extraction:`, err);
+      console.warn(`[backlinks] Failed to scan ${docName} for link extraction:`, err);
       this.deleteDocument(docName, branch);
     }
   }
@@ -381,8 +476,7 @@ export class BacklinkIndex {
       try {
         const markdown = readFileSync(filePath, 'utf-8');
         const { body } = stripFrontmatter(markdown);
-        const json = mdManager.parse(body) as PMNodeJson;
-        const links = extractWikiLinksFromProsemirrorJson(json);
+        const links = extractWikiLinksFromMarkdown(body);
 
         const targets = new Set<string>();
         state.forward.set(docName, targets);

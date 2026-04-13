@@ -24,16 +24,20 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 import type { HeadingEntry } from '@inkeep/open-knowledge-core';
-import fuzzysort from 'fuzzysort';
+import {
+  fetchHeadings,
+  fetchPages,
+  filterHeadings,
+  filterPages,
+  type PageItem,
+} from '../extensions/wiki-link-suggestion';
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface PageItem {
-  docName: string;
-  title: string;
-}
-
-// ── Data fetching (module-level cache with TTL) ───────────────────────────────
+// ── Data fetching (module-level TTL cache wrapping shared fetchers) ──────────
+//
+// Source mode fires completion requests per keystroke, so a short TTL cache
+// is needed to avoid hitting /api/pages on every character. WYSIWYG uses a
+// session-scoped cache (bounded by each `[[` trigger) — see wiki-link-suggestion.ts.
+// Divergent caching strategy is intentional; the HTTP fetch itself is shared.
 
 const PAGES_CACHE_TTL_MS = 5_000;
 
@@ -44,10 +48,7 @@ const headingsCache = new Map<string, { headings: HeadingEntry[]; time: number }
 async function getPages(): Promise<PageItem[]> {
   const now = Date.now();
   if (pagesCache && now - pagesCacheTime < PAGES_CACHE_TTL_MS) return pagesCache;
-  const r = await fetch('/api/pages');
-  if (!r.ok) throw new Error(`/api/pages ${r.status}`);
-  const data = (await r.json()) as { pages?: PageItem[] };
-  pagesCache = Array.isArray(data.pages) ? data.pages : [];
+  pagesCache = await fetchPages();
   pagesCacheTime = now;
   return pagesCache;
 }
@@ -58,16 +59,16 @@ async function getHeadings(docName: string): Promise<HeadingEntry[]> {
   if (cached !== undefined && now - cached.time < PAGES_CACHE_TTL_MS) {
     return cached.headings;
   }
-  const r = await fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`);
-  if (!r.ok) {
-    console.warn(`[wiki-link-source] /api/page-headings returned ${r.status}`);
+  try {
+    const h = await fetchHeadings(docName);
+    headingsCache.set(docName, { headings: h, time: now });
+    return h;
+  } catch (err) {
+    console.warn('[wiki-link-source] /api/page-headings fetch failed:', err);
+    // Cache empty to prevent retry storm within TTL — matches prior behavior.
     headingsCache.set(docName, { headings: [], time: now });
     return [];
   }
-  const data = (await r.json()) as { ok: boolean; headings?: HeadingEntry[] };
-  const h = data.ok && Array.isArray(data.headings) ? data.headings : [];
-  headingsCache.set(docName, { headings: h, time: now });
-  return h;
 }
 
 // ── Mark decorations ──────────────────────────────────────────────────────────
@@ -139,8 +140,10 @@ const wikiLinkClickHandler = EditorView.domEventHandlers({
 });
 
 // ── Completion source ─────────────────────────────────────────────────────────
-
-const MAX_ITEMS = 8;
+//
+// Uses `filterPages` / `filterHeadings` from the shared module so source-mode
+// and WYSIWYG surfaces stay in lockstep on filter behavior — e.g. searching
+// pages by both `title` and `docName` (spec R02).
 
 async function wikiLinkCompletionSource(
   context: CompletionContext,
@@ -161,16 +164,10 @@ async function wikiLinkCompletionSource(
     const anchorQuery = query.slice(hashIdx + 1);
     const anchorPos = triggerPos + hashIdx + 1; // position right after #
 
-    const headings = await getHeadings(pageTarget).catch(() => [] as HeadingEntry[]);
+    const headings = await getHeadings(pageTarget);
     if (!headings.length) return null;
 
-    const filtered = anchorQuery.trim()
-      ? fuzzysort
-          .go(anchorQuery, headings, { key: 'text', threshold: -10000 })
-          .slice(0, MAX_ITEMS)
-          .map((r) => r.obj)
-      : headings.slice(0, MAX_ITEMS);
-
+    const filtered = filterHeadings(headings, anchorQuery);
     if (!filtered.length) return null;
 
     return {
@@ -191,13 +188,11 @@ async function wikiLinkCompletionSource(
   }
 
   // ── Page mode: [[query ─────────────────────────────────────────────────────
-  const pages = await getPages().catch(() => [] as PageItem[]);
-  const filtered = query.trim()
-    ? fuzzysort
-        .go(query, pages, { key: 'title', threshold: -10000 })
-        .slice(0, MAX_ITEMS)
-        .map((r) => r.obj)
-    : pages.slice(0, MAX_ITEMS);
+  const pages = await getPages().catch((err) => {
+    console.warn('[wiki-link-source] Failed to fetch pages:', err);
+    return [] as PageItem[];
+  });
+  const filtered = filterPages(pages, query);
 
   return {
     from: triggerPos,

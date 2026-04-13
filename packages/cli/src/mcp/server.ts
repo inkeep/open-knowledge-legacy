@@ -20,8 +20,10 @@ import { existsSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { setProjectDir } from '../bash/index.ts';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
+import { IndexMdCatalogStore } from '../content/catalog-store.ts';
 import { isTrackedContent, rebuildMirroredCatalogs } from '../content/mirror-catalog.ts';
 import { dim } from '../ui/colors.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
@@ -44,23 +46,24 @@ This project may have a \`.open-knowledge/\` directory for structured project kn
 ## Getting Started
 If \`.open-knowledge/\` doesn't exist yet, scaffolding is a **terminal-side** operation — the user (or the agent via \`Bash\`) runs \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That scaffolds the directory structure, registers this MCP server in \`.mcp.json\`, and returns. After scaffolding, reconnect the MCP client so this server sees the new directory and starts its file watcher.
 
-This MCP server exposes three workflow tools (init-content, ingest, research) that return instructional text for agents to follow. Scaffolding belongs in the CLI; runtime behavior (catalogs, watcher, tools, instructions) belongs here.
+This MCP server exposes workflow tools (init-content, ingest, research, consolidate) that return instructional text for agents to follow, enriched read/search tools that bundle metadata + git history + backlinks, and document tools that route writes through the Hocuspocus CRDT layer. Scaffolding belongs in the CLI; runtime behavior (catalogs, watcher, tools, instructions) belongs here.
 
-## Navigation
-1. Read \`.open-knowledge/catalogs/INDEX.md\` for a top-level overview of all tracked content
-2. Follow links to subdirectory catalogs for deeper navigation
-3. Use grep to search across content for specific topics
-4. Read specific articles for detailed context
+## Navigation — preferred tools for wiki content
 
-Catalogs are auto-generated inside \`.open-knowledge/catalogs/\` — they mirror the project's directory structure without polluting the source tree.
+- **Reading a file:** Use \`read_document\` (not native \`Read\`). It returns contents + frontmatter metadata + recent git history + backlinks + parent folder catalog context in one call.
+- **Searching:** Use \`search\` (not native \`Grep\`). Results are grouped by file with article metadata attached, so you can judge relevance before opening each file.
+- **Browsing the structure:** Read \`.open-knowledge/catalogs/<path>/INDEX.md\` natively. Catalogs are auto-generated markdown that mirror the project tree, with article listings, folder descriptions, and subfolder links.
 
-## File Access
-Use your native Read, Edit, Grep, and Glob tools for all file operations. The MCP server handles catalog generation automatically.
+## Navigation — fallback
+
+Native \`Read\`, \`Grep\`, \`Glob\` still work for any file — use them when the enriched tools aren't necessary (e.g., reading code, scanning non-wiki content, or the MCP server isn't the bottleneck).
+
+Catalogs live in \`.open-knowledge/catalogs/\` and never pollute the source tree.
 
 ## Content Lifecycle
-- \`external-sources/\` — Raw ingested content (URLs, documents). Reference material.
-- \`research/\` — Analysis and synthesis. Provisional findings.
-- \`articles/\` — Canonical knowledge. Architecture, processes, decisions. Source of truth.
+- \`external-sources/\` — Raw ingested content (URLs, documents). Reference material. Use \`ingest\`.
+- \`research/\` — Analysis and synthesis. Provisional findings. Use \`research\`.
+- \`articles/\` — Canonical knowledge. Architecture, processes, decisions. Source of truth. Use \`consolidate\` to promote research → articles.
 
 ## Writing Articles
 - Add YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended)
@@ -68,7 +71,10 @@ Use your native Read, Edit, Grep, and Glob tools for all file operations. The MC
 - Group by topic in subdirectories under articles/
 
 ## Tools
-This server exposes workflow tools (init-content, ingest, research) that return instructional text, and document tools (write_document, edit_document, list_documents, undo_agent_edit, redo_agent_edit) that operate through the Hocuspocus CRDT layer when available.
+Three groups:
+- **Workflow tools** (init-content, ingest, research, consolidate) — return instructional text you follow
+- **Enriched tools** (read_document, search) — one-call wiki reads/searches with metadata
+- **Document tools** (write_document, edit_document, list_documents, undo_agent_edit, redo_agent_edit, get_backlinks, get_forward_links, get_orphans, get_hubs) — route through Hocuspocus when available
 
 ${Object.entries(TOOL_DESCRIPTIONS)
   .map(([name, desc]) => `### \`${name}\`\n${desc}`)
@@ -241,11 +247,14 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const okDir = resolve(projectDir, OK_DIR);
   let watcherHandle: CatalogWatcher | null = null;
 
-  // MCP tools — workflow tools + document tools (document tools need httpUrl)
+  // MCP tools — workflow tools + document tools + enriched tools
   const httpUrl = serverUrl
     ? serverUrl.replace('ws://', 'http://').replace('wss://', 'https://')
     : undefined;
-  registerAllTools(server, httpUrl);
+  // Bash wrapper scopes all shell ops to projectDir (see bash/index.ts).
+  setProjectDir(projectDir);
+  const catalog = new IndexMdCatalogStore({ projectDir });
+  registerAllTools(server, { serverUrl: httpUrl, projectDir, config, catalog });
 
   // Catalog rebuild + watcher
   if (existsSync(okDir)) {

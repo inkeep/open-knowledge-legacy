@@ -1,0 +1,145 @@
+{
+  "total": 118,
+  "byteIdentical": 88,
+  "whitespaceOnlyPass": 97,
+  "target": 77,
+  "verdict": "PASS",
+  "counts": {
+    "BYTE_IDENTICAL": 88,
+    "STRUCTURE_CHANGE": 8,
+    "WHITESPACE_DIFF": 9,
+    "ERROR": 2,
+    "SEMANTIC_LOSS": 8,
+    "COSMETIC_NORMALIZATION": 3
+  },
+  "failures": [
+    {
+      "name": "atx-heading-trailing-hashes",
+      "klass": "STRUCTURE_CHANGE",
+      "input": "## Heading ##\n",
+      "output": "## Heading\n"
+    },
+    {
+      "name": "blockquote-multiline",
+      "klass": "STRUCTURE_CHANGE",
+      "input": "> Line one.\n> Line two.\n",
+      "output": "> Line one. Line two.\n"
+    },
+    {
+      "name": "emphasis-nested",
+      "klass": "STRUCTURE_CHANGE",
+      "input": "This is **bold with *italic* inside**.\n",
+      "output": "This is **bold with *****italic***** inside**.\n"
+    },
+    {
+      "name": "link-autolink",
+      "klass": "ERROR",
+      "input": "Visit <https://example.com>.\n",
+      "output": "",
+      "error": "Unexpected character `/` (U+002F) before local name, expected a character that can start a name, such as a letter, `$`, or `_` (note: to create a link in MDX, use `[text](url)`)"
+    },
+    {
+      "name": "html-block-div",
+      "klass": "SEMANTIC_LOSS",
+      "input": "<div class=\"box\">HTML block</div>\n",
+      "output": "<div />\n"
+    },
+    {
+      "name": "html-inline-span",
+      "klass": "SEMANTIC_LOSS",
+      "input": "Text with <span>inline</span> HTML.\n",
+      "output": "Text with <span /> HTML.\n"
+    },
+    {
+      "name": "html-br",
+      "klass": "ERROR",
+      "input": "Line one<br>Line two.\n",
+      "output": "",
+      "error": "Expected a closing tag for `<br>` (1:9-1:13) before the end of `paragraph`"
+    },
+    {
+      "name": "gfm-table-simple",
+      "klass": "STRUCTURE_CHANGE",
+      "input": "| H1 | H2 |\n|---|---|\n| c1 | c2 |\n",
+      "output": "| H1 | H2 |\n| -- | -- |\n| c1 | c2 |\n"
+    },
+    {
+      "name": "gfm-table-aligned",
+      "klass": "STRUCTURE_CHANGE",
+      "input": "| Left | Center | Right |\n|:---|:---:|---:|\n| a | b | c |\n",
+      "output": "| Left | Center | Right |\n| ---- | ------ | ----- |\n| a    | b      | c     |\n"
+    },
+    {
+      "name": "gfm-table-with-ampersand",
+      "klass": "STRUCTURE_CHANGE",
+      "input": "| Name | Desc |\n|---|---|\n| A & B | test |\n",
+      "output": "| Name  | Desc |\n| ----- | ---- |\n| A & B | test |\n"
+    },
+    {
+      "name": "gfm-task-list-unchecked",
+      "klass": "STRUCTURE_CHANGE",
+      "input": "- [ ] Todo item\n- [ ] Another todo\n",
+      "output": "- Todo item\n- Another todo\n"
+    },
+    {
+      "name": "gfm-task-list-checked",
+      "klass": "SEMANTIC_LOSS",
+      "input": "- [x] Done\n- [ ] Todo\n",
+      "output": "- Done\n- Todo\n"
+    },
+    {
+      "name": "gfm-autolink-bare-url",
+      "klass": "SEMANTIC_LOSS",
+      "input": "Visit https://example.com directly.\n",
+      "output": "Visit [https://example.com](https://example.com) directly.\n"
+    },
+    {
+      "name": "already-encoded-amp",
+      "klass": "COSMETIC_NORMALIZATION",
+      "input": "Author wrote &amp; explicitly.\n",
+      "output": "Author wrote & explicitly.\n"
+    },
+    {
+      "name": "already-encoded-lt-gt",
+      "klass": "STRUCTURE_CHANGE",
+      "input": "Author wrote &lt;tag&gt; explicitly.\n",
+      "output": "Author wrote <tag> explicitly.\n"
+    },
+    {
+      "name": "numeric-entity-decimal",
+      "klass": "SEMANTIC_LOSS",
+      "input": "Copyright &#169; 2026.\n",
+      "output": "Copyright © 2026.\n"
+    },
+    {
+      "name": "numeric-entity-hex",
+      "klass": "SEMANTIC_LOSS",
+      "input": "Bullet &#x2022; item.\n",
+      "output": "Bullet • item.\n"
+    },
+    {
+      "name": "named-entity-copy",
+      "klass": "SEMANTIC_LOSS",
+      "input": "&copy; 2026 Example Inc.\n",
+      "output": "© 2026 Example Inc.\n"
+    },
+    {
+      "name": "named-entity-mdash",
+      "klass": "SEMANTIC_LOSS",
+      "input": "She said &mdash; wait, no.\n",
+      "output": "She said — wait, no.\n"
+    },
+    {
+      "name": "backslash-escape-bracket",
+      "klass": "COSMETIC_NORMALIZATION",
+      "input": "Literal \\[not link\\].\n",
+      "output": "Literal \\[not link].\n"
+    },
+    {
+      "name": "math-operators",
+      "klass": "COSMETIC_NORMALIZATION",
+      "input": "Formula: x = (a + b) * c / d\n",
+      "output": "Formula: x = (a + b) \\* c / d\n"
+    }
+  ]
+}

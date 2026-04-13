@@ -35,6 +35,7 @@ Three layers, each with its own cadence and responsibility.
 `@parcel/watcher` detects external `.md` file changes on disk and reconciles them into the CRDT.
 
 - ContentFilter drops excluded files (gitignored, config patterns)
+- Symlinks resolved to canonical paths via `realpath`; multiple paths to the same file share one Y.Doc
 - Events classified as create, update, delete, rename, or conflict
 - Self-writes skipped via content-hash matching
 - External changes reconciled into Y.Doc via three-way merge (base/ours/theirs)
@@ -45,8 +46,9 @@ Three layers, each with its own cadence and responsibility.
 The `onStoreDocument` hook fires after Y.Doc changes and flushes the document to disk.
 
 - Y.Doc serialized to markdown (frontmatter preserved via Y.Map cache)
-- Atomic write: temp file then rename
+- Atomic write: temp file then rename (symlinks preserved -- writes target the canonical path)
 - Write hash registered in writeTracker for feedback prevention
+- Symlink-escape check refuses writes that resolve outside `contentDir`
 - Debounce: 2s quiet, 10s max
 
 ### Layer 2: Disk to Git (shadow repo)

@@ -1,0 +1,22 @@
+
+id	kind	input	parsed_count	round_trip	serialized	pass	notes
+F1	functional	"[[Page]]"	1	true	"[[Page]]"	PASS	
+F2	functional	"[[Page|Alias]]"	1	true	"[[Page|Alias]]"	PASS	
+F3	functional	"[[Page#Heading]]"	1	true	"[[Page#Heading]]"	PASS	
+F4	functional	"[[Page#Heading|Alias]]"	1	true	"[[Page#Heading|Alias]]"	PASS	
+E1	edge	"[[Page Name With Spaces]]"	1	true	"[[Page Name With Spaces]]"	PASS	
+E2	edge	"[[Page]]-adjacent-text"	1	true	"[[Page]]-adjacent-text"	PASS	
+E3	edge	"text-before-[[Page]]-text-after"	1	true	"text-before-[[Page]]-text-after"	PASS	
+E4	edge	"[[Page]] [[Another]]"	2	true	"[[Page]] [[Another]]"	PASS	
+E5	edge	"\\[[Not-a-link\\]]"	0	false	"\\[\\[Not-a-link]]"	PASS	
+E6	edge	"[Not a wiki [link]]"	0	false	"\\[Not a wiki \\[link]]"	PASS	
+E7	edge	"[[]]"	0	false	"\\[\\[]]"	PASS	
+E8	edge	"[[Page with `code` inside]]"	1	true	"[[Page with `code` inside]]"	PASS	
+E9	edge	"[[Página]]"	1	true	"[[Página]]"	PASS	
+E10	edge	"[[Page\\|Alias]]"	1	true	"[[Page\\|Alias]]"	PASS	escaped pipe
+E11	edge	"[[Page#H#H]]"	1	true	"[[Page#H#H]]"	PASS	double hash
+I1	integration	"# See [[Page]] for details"	1	true	"# See [[Page]] for details"	PASS	
+I2	integration	"- See [[Page]]"	1	false	"* See [[Page]]"	PASS	
+I3	integration	"*See [[Page]]*"	1	true	"*See [[Page]]*"	PASS	
+I4	integration	"**See [[Page]]**"	1	true	"**See [[Page]]**"	PASS	
+I5	integration	"[[Page]] and [inline](link)"	1	true	"[[Page]] and [inline](link)"	PASS	

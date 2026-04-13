@@ -6,16 +6,11 @@
  * UndoManager tracks 'agent-write' origin for per-agent undo/redo.
  */
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
-import {
-  prependFrontmatter,
-  sharedExtensions,
-  stripFrontmatter,
-} from '@inkeep/open-knowledge-core';
-import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
+import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { getLogger } from './logger.ts';
+import { mdManager, schema } from './md-manager.ts';
 
 const log = getLogger('agent-sessions');
 
@@ -35,9 +30,6 @@ export const AGENT_WRITE_ORIGIN = 'agent-write';
 /** Default agent identity. Key used in Y.Map('activity'). */
 export const DEFAULT_AGENT_ID = 'claude-1';
 
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
-
 /**
  * After writing to Y.Text, sync the full Y.Text content to XmlFragment so
  * clients receive paired changes. This is necessary because client-side
@@ -48,7 +40,7 @@ export function syncTextToFragment(document: Document): void {
   const fullText = ytext.toString();
   try {
     const { frontmatter, body } = stripFrontmatter(fullText);
-    const parsedJson = mdManager.parse(body);
+    const parsedJson = mdManager.parseSafe(body);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const xmlFragment = document.getXmlFragment('default');
     const meta = { mapping: new Map(), isOMark: new Map() };

@@ -107,7 +107,7 @@
         "tests/fidelity/**/*.json",
         "src/editor/**/*.ts",
         "../core/src/**/*.ts",
-        "../../patches/@tiptap%2Fmarkdown@3.22.3.patch"
+        "../../patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch"
       ]
     },
     "test:e2e": {

@@ -1,12 +1,25 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-11 by `generate-catalogue.ts`
-> 57 valid reports indexed
+> Auto-generated on 2026-04-13 by `generate-catalogue.ts`
+> 69 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md) | 2026-04-13 | 9 files | git-backed CMS architecture, markd… | TinaCMS, SSW, isomorphic-git, Plat… |
+| [Backlinks, Typed Links, and UX Patterns: Landscape Acr…](backlinks-typed-links-and-ux-landscape/REPORT.md) | 2026-04-12 | 8 files | typed links, transclusion, backlin… | Roam Research, Org-roam, TiddlyWik… |
+| [Markdown Construct Fidelity Catalog: 118-Case Test Tar…](markdown-construct-fidelity-catalog/REPORT.md) | 2026-04-11 | 6 files | markdown round-trip fidelity, bidi… | @tiptap/markdown, @tiptap/core, @t… |
+| [Electron Desktop App Operations: Versioning, Signing, …](electron-desktop-app-operations-2025/REPORT.md) | 2026-04-11 | 5 files | electron operations, desktop app r… | Electron, electron-builder, electr… |
+| [OSS Licensing Strategies for Open-Core Companies: Lice…](oss-licensing-strategies-open-core/REPORT.md) | 2026-04-11 | 6 files | open source licensing, open core s… | MIT License, Apache 2.0, AGPL-3.0,… |
+| [Permissive Licenses and Compiled-Only Distribution: Ca…](permissive-licenses-compiled-distribution/REPORT.md) | 2026-04-11 | 1 files | permissive licensing, compiled dis… | MIT License, Apache 2.0, BSD, ISC,… |
+| [Zero-Config bunx CLI Packaging: Making open-knowledge …](zero-config-bunx-cli-packaging/REPORT.md) | 2026-04-11 | 6 files | CLI packaging, embedded frontend, … | open-knowledge, bunx, npx, Claude … |
+| [How Markdown Editors Handle Paste + Raw HTML: A 15-Edi…](markdown-editor-paste-and-html-survey/REPORT.md) | 2026-04-11 | 5 files | clipboard paste behavior, HTML-in-… | TipTap, Notion, Obsidian, Typora, … |
+| [Markdown Round-Trip Fidelity Through @tiptap/markdown](markdown-roundtrip-fidelity-tiptap/REPORT.md) | 2026-04-11 | 8 files | markdown round-trip fidelity, docu… | @tiptap/markdown, prosemirror-mark… |
+| [Can Compiled Code Be Distributed Under AGPL Without Re…](agpl-compiled-code-source-requirements/REPORT.md) | 2026-04-11 | 1 files | GPL source requirements, compiled … | AGPL-3.0, GPLv3, JavaScript, npm |
+| [Wrapping a Web App as a Native macOS Desktop App in 20…](web-to-macos-desktop-wrapping-2025/REPORT.md) | 2026-04-11 | 4 files | desktop app wrapping, macOS native… | Electron, Tauri, SwiftUI WebView, … |
+| [Open-Core Split Licensing Engineering Patterns: ee/ Di…](open-core-split-licensing-engineering/REPORT.md) | 2026-04-11 | 5 files | open core engineering, split licen… | Cal.com, Formbricks, Infisical, Gi… |
+| [CI Test Pipeline Patterns in TypeScript OSS Monorepos](ts-monorepo-ci-test-pipeline-patterns/REPORT.md) | 2026-04-11 | — | CI pipeline patterns, conditional … | n8n, Supabase, Strapi, AFFiNE, Cal… |
 | [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus C…](vite-6-to-8-migration/REPORT.md) | 2026-04-09 | 4 files | framework migration, bundler archi… | Vite 8, Vite 7, Rolldown, Oxc, @vi… |
 | [agent-browser vs Playwright for CRDT Integration Testi…](agent-browser-vs-playwright-crdt-testing/REPORT.md) | 2026-04-09 | 6 files | CRDT integration testing, browser … | Playwright, Vercel agent-browser, … |
 | [CRDT Observer Bridge Latency Analysis — Architecture R…](crdt-observer-bridge-latency-analysis/REPORT.md) | 2026-04-09 | 2 files | CRDT latency analysis, observer br… | Yjs, TipTap, Hocuspocus, ProseMirr… |
@@ -23,7 +36,6 @@
 | [KB Index and Navigation Patterns for AI Agents: How Ag…](kb-index-navigation-patterns-for-agents/REPORT.md) | 2026-04-07 | 9 files | agent navigation, knowledge base i… | Claude Code, OpenAI Codex, Cursor,… |
 | [Compiled Truth + Timeline: Content Conventions for Age…](compiled-truth-timeline-content-conventions/REPORT.md) | 2026-04-07 | 6 files | knowledge entry conventions, compi… | GBrain, ByteRover, Andrej Karpathy… |
 | [One-Way Y.XmlFragment to Y.Text Observer Sync with y-c…](yjs-constrained-observer-sync/REPORT.md) | 2026-04-07 | 7 files | CRDT observer patterns, collaborat… | y-codemirror.next, y-prosemirror, … |
-| [Markdown Round-Trip Fidelity Through @tiptap/markdown](markdown-roundtrip-fidelity-tiptap/REPORT.md) | 2026-04-07 | 7 files | markdown round-trip fidelity, docu… | @tiptap/markdown, prosemirror-mark… |
 | [Competitive Landscape for an Agent-Native Knowledge Pl…](openknowledge-competitive-landscape/REPORT.md) | 2026-04-07 | 8 files | competitive landscape, knowledge m… | Notion, Confluence, Obsidian, Mint… |
 | [MDX Text Editor + Live Preview: Architecture, Prior Ar…](mdx-text-editor-preview-approach/REPORT.md) | 2026-04-07 | 11 files | MDX editing, live preview architec… | CodeMirror 6, MDX, Yjs, y-codemirr… |
 | [Peritext-on-Yjs Feasibility: Can the Peritext Rich Tex…](peritext-on-yjs-feasibility/REPORT.md) | 2026-04-07 | 7 files | Peritext CRDT rich text, Y.Text fo… | Yjs, Peritext, ProseMirror, TipTap… |
@@ -68,6 +80,129 @@
 ---
 
 ## Report Details
+
+### [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md)
+
+> Deep dive into TinaCMS's operational architecture outside the MDX pipeline — git integration via the Bridge/GitProvider seam, unknown-component degradation and error UX, absent real-time collaboration, agent/MCP posture, and SSW-era trajectory. Focused on what 7 years of git-backed markdown editing…
+
+- **Created:** 2026-04-12
+- **Updated:** 2026-04-13
+- **Topics:** git-backed CMS architecture, markdown round-trip fidelity, unknown-component degradation, collaboration model, agent-native content authoring, MCP integration, OSS/commercial split, parser architecture, schema evolution, GraphQL mutation API
+- **Subjects:** TinaCMS, SSW, isomorphic-git, Plate, GitHub Contents API, Tina Cloud, Editorial Workflow
+- **Evidence files:** 9
+
+### [Backlinks, Typed Links, and UX Patterns: Landscape Across 9 Tools](backlinks-typed-links-and-ux-landscape/REPORT.md)
+
+> Factual landscape of how backlinks and wikilinks are architected, surfaced, and represented across 9 tools not fully covered by the existing wiki-links-backlinks-architecture report: Roam, Org-roam, TiddlyWiki, Tana, Anytype, Notion (deeper), Heptabase, Reflect, SilverBullet. Focused on four angles…
+
+- **Created:** 2026-04-12
+- **Topics:** typed links, transclusion, backlink UX, link semantics, knowledge graph
+- **Subjects:** Roam Research, Org-roam, TiddlyWiki, Tana, Anytype, Notion, Heptabase, Reflect, SilverBullet, BlockSuite, Datomic, Datascript
+- **Evidence files:** 8
+
+### [Markdown Construct Fidelity Catalog: 118-Case Test Target Map for @tiptap/markdown + Yjs Bidirectional Round-Trip](markdown-construct-fidelity-catalog/REPORT.md)
+
+> Exhaustive, programmatically-verified catalog of every markdown construct we could enumerate — 118 cases across CommonMark, GFM, custom extensions, and edge cases — ranked by test priority. Identifies which constructs silently corrupt on round-trip through the @tiptap/markdown + @tiptap/y-tiptap + …
+
+- **Created:** 2026-04-11
+- **Topics:** markdown round-trip fidelity, bidirectional editor construct catalog, test priority ranking, HTML entity corruption, CRDT observer bridge
+- **Subjects:** @tiptap/markdown, @tiptap/core, @tiptap/y-tiptap, ProseMirror, TipTap, Yjs, marked, CommonMark, GFM
+- **Evidence files:** 6
+- **Warnings:** 2
+
+### [Electron Desktop App Operations: Versioning, Signing, Updates, CI, and Security (2025/2026)](electron-desktop-app-operations-2025/REPORT.md)
+
+> Factual reference for the operational surface of shipping an Electron desktop app in 2025/2026. Covers Electron release cadence, code signing economics, auto-update infrastructure, CI/CD pipelines, distribution channels, security hardening (fuses, ASAR integrity), release lifecycle, telemetry, bund…
+
+- **Created:** 2026-04-11
+- **Topics:** electron operations, desktop app release pipeline, code signing, auto-update infrastructure
+- **Subjects:** Electron, electron-builder, electron-vite, electron-updater, Sentry, GitHub Actions, Apple Developer Program, Azure Trusted Signing
+- **Evidence files:** 5
+- **Warnings:** 2
+
+### [OSS Licensing Strategies for Open-Core Companies: License Selection, Community Dynamics, and Business Model Interplay](oss-licensing-strategies-open-core/REPORT.md)
+
+> Comprehensive analysis of how open-core companies choose between MIT, Apache 2.0, AGPL, and source-available licenses. Covers 22 company case studies, community perception data from HN/Reddit, anti-commercialization strategies using OSI-approved licenses, the relicensing pattern and fork dynamics, …
+
+- **Created:** 2026-04-11
+- **Topics:** open source licensing, open core strategy, community perception, dual licensing
+- **Subjects:** MIT License, Apache 2.0, AGPL-3.0, BSL, SSPL, Cal.com, Infisical, Supabase, PostHog, Lago, MinIO, GitLab, Sentry, Redis, Elastic, HashiCorp, MongoDB, n8n, Penpot, NocoDB, Twenty, Formbricks, CockroachDB
+- **Evidence files:** 6
+- **Warnings:** 1
+
+### [Permissive Licenses and Compiled-Only Distribution: Can MIT/Apache npm Packages Ship Without Source?](permissive-licenses-compiled-distribution/REPORT.md)
+
+> Whether MIT, Apache 2.0, BSD, and ISC licenses allow distributing compiled/minified npm packages without providing readable source code. Short answer: yes — permissive licenses have zero source distribution requirements. This opens a simpler architecture for open-core split licensing than proprieta…
+
+- **Created:** 2026-04-11
+- **Topics:** permissive licensing, compiled distribution, source requirements
+- **Subjects:** MIT License, Apache 2.0, BSD, ISC, MPL 2.0, npm
+- **Evidence files:** 1
+
+### [Zero-Config bunx CLI Packaging: Making open-knowledge 'Just Work' from Claude Code Desktop](zero-config-bunx-cli-packaging/REPORT.md)
+
+> How to make `bunx @inkeep/open-knowledge` a single zero-config command that starts the collaboration server, file watcher, and serves the React editor — with embedded frontend distribution, native addon portability, and Claude Code Desktop MCP integration.
+
+- **Created:** 2026-04-11
+- **Topics:** CLI packaging, embedded frontend, zero-config developer tools, native addon portability
+- **Subjects:** open-knowledge, bunx, npx, Claude Code Desktop, MCP, Storybook, Prisma Studio
+- **Evidence files:** 6
+
+### [How Markdown Editors Handle Paste + Raw HTML: A 15-Editor Landscape Survey](markdown-editor-paste-and-html-survey/REPORT.md)
+
+> Comparative survey of how 15 markdown-capable editors handle two interrelated problems: pasting markdown/HTML content from external sources, and rendering raw HTML embedded in markdown. Covers WYSIWYG (TipTap, Notion, Typora, AFFiNE, Bear, Milkdown, Plate), source-based (Obsidian, VS Code, HackMD/H…
+
+- **Created:** 2026-04-11
+- **Topics:** clipboard paste behavior, HTML-in-markdown rendering, editor UX patterns, sanitization approaches
+- **Subjects:** TipTap, Notion, Obsidian, Typora, AFFiNE, Milkdown, Plate, Lexical, Ghost, Logseq, HedgeDoc, VS Code, StackEdit, Bear, iA Writer
+- **Evidence files:** 5
+
+### [Markdown Round-Trip Fidelity Through @tiptap/markdown](markdown-roundtrip-fidelity-tiptap/REPORT.md)
+
+> Empirical measurement of information loss when markdown passes through @tiptap/markdown parse/serialize pipeline. Classifies 12 lossy patterns as fundamental, fixable, or cosmetic. Tests convergence across multiple cycles. Compares three ecosystems. Provides a concrete lossless-enough configuration…
+
+- **Created:** 2026-04-07
+- **Updated:** 2026-04-11
+- **Topics:** markdown round-trip fidelity, document model information loss, bidirectional markdown sync, CRDT document persistence
+- **Subjects:** @tiptap/markdown, prosemirror-markdown, ProseMirror, TipTap, marked, markdown-it, remark-prosemirror, Yjs
+- **Evidence files:** 8
+- **Warnings:** 2
+
+### [Can Compiled Code Be Distributed Under AGPL Without Readable Source?](agpl-compiled-code-source-requirements/REPORT.md)
+
+> Whether compiled/minified JavaScript can be distributed under AGPL while keeping source private. Covers GPLv3 'Corresponding Source' requirements, what counts as 'object code' for interpreted languages, the written offer provision, obfuscation strategies, and enforcement precedents. Short answer: n…
+
+- **Created:** 2026-04-11
+- **Topics:** GPL source requirements, compiled code licensing, open source compliance
+- **Subjects:** AGPL-3.0, GPLv3, JavaScript, npm
+- **Evidence files:** 1
+
+### [Wrapping a Web App as a Native macOS Desktop App in 2025/2026](web-to-macos-desktop-wrapping-2025/REPORT.md)
+
+> Comprehensive analysis of desktop app frameworks (Electron, Tauri v2, Wails, SwiftUI WebView, native Swift) for wrapping a TypeScript/React web app as a native macOS desktop app. Includes primary-source tech stack investigations of 20 popular apps (Claude Desktop, ChatGPT, Codex, Obsidian, Figma, N…
+
+- **Created:** 2026-04-11
+- **Topics:** desktop app wrapping, macOS native apps, web to desktop, electron vs tauri
+- **Subjects:** Electron, Tauri, SwiftUI WebView, Claude Desktop, ChatGPT Desktop, Codex, Obsidian, Figma, Notion, Linear, VS Code, Cursor, Raycast, Warp Terminal, electron-vite, ToDesktop
+- **Evidence files:** 4
+
+### [Open-Core Split Licensing Engineering Patterns: ee/ Directories, AGPL Linking Exceptions, and npm IP Protection](open-core-split-licensing-engineering/REPORT.md)
+
+> How open-core companies architecturally implement split licensing — structuring proprietary code alongside open-source code, building/distributing compiled-only npm packages, handling contributor boundaries, and using AGPL linking exceptions. 13 company code-first case studies, legal mechanics, npm…
+
+- **Created:** 2026-04-11
+- **Topics:** open core engineering, split licensing, npm obfuscation, AGPL linking exceptions
+- **Subjects:** Cal.com, Formbricks, Infisical, GitLab, Grafana, Documenso, Dub.co, Twenty, Appsmith, Mastra, Activepieces, n8n, Tldraw, Liveblocks, Firecrawl, napi-rs, terser, javascript-obfuscator
+- **Evidence files:** 5
+- **Warnings:** 1
+
+### [CI Test Pipeline Patterns in TypeScript OSS Monorepos](ts-monorepo-ci-test-pipeline-patterns/REPORT.md)
+
+> How 26 top TypeScript-first OSS companies structure CI test pipelines — change detection, conditional execution, test tier organization, E2E strategy, caching, and nightly runs. Evidence from n8n, Supabase, Strapi, AFFiNE, Cal.com, PostHog, tldraw, and 19 others.
+
+- **Created:** 2026-04-11
+- **Topics:** CI pipeline patterns, conditional test execution, monorepo test sharding, GitHub Actions
+- **Subjects:** n8n, Supabase, Strapi, AFFiNE, Cal.com, PostHog, tldraw, Twenty, Directus, Medusa, Nango, Liveblocks, Formbricks
 
 ### [Vite 6 → 8 Migration Guide for a TipTap + Hocuspocus CRDT Editor](vite-6-to-8-migration/REPORT.md)
 
@@ -169,7 +304,7 @@
 - **Topics:** CRDT migration assessment, Peritext rich text model, dual-view editor architecture, collaborative editor infrastructure
 - **Subjects:** Automerge, automerge-prosemirror, automerge-repo, automerge-codemirror, Yjs, TipTap, ProseMirror, Hocuspocus, Peritext, CodeMirror 6
 - **Evidence files:** 9
-- **Warnings:** 1
+- **Warnings:** 2
 
 ### [Yjs Dual-Key Shimmer Analysis: Will Bidirectional Observer Sync Between Y.XmlFragment and Y.Text Actually Cascade?](yjs-dual-key-shimmer-analysis/REPORT.md)
 
@@ -188,6 +323,7 @@
 - **Topics:** source toggle architecture, CRDT dual representation, collaborative markdown editing, editor mode switching
 - **Subjects:** Yjs, TipTap, ProseMirror, CodeMirror 6, y-prosemirror, y-codemirror.next, Hocuspocus, Obsidian, AFFiNE, Automerge, Peritext
 - **Evidence files:** 5
+- **Warnings:** 1
 
 ### [KB Index and Navigation Patterns for AI Agents: How Agents Orient in Document Collections (2025-2026)](kb-index-navigation-patterns-for-agents/REPORT.md)
 
@@ -198,6 +334,7 @@
 - **Topics:** agent navigation, knowledge base indexing, progressive disclosure, context engineering, repo-map, CLAUDE.md, AGENTS.md, graph traversal, frontmatter metadata
 - **Subjects:** Claude Code, OpenAI Codex, Cursor, Aider, Augment Code, Windsurf, Devin, Context7, Obsidian, Andrej Karpathy, Dust.tt, LightRAG, GraphRAG, Anthropic
 - **Evidence files:** 9
+- **Warnings:** 1
 
 ### [Compiled Truth + Timeline: Content Conventions for Agent-Authored Knowledge Entries](compiled-truth-timeline-content-conventions/REPORT.md)
 
@@ -216,16 +353,6 @@
 - **Topics:** CRDT observer patterns, collaborative source editing, dual-mode editor sync
 - **Subjects:** y-codemirror.next, y-prosemirror, Yjs, Hocuspocus, TipTap, CodeMirror 6
 - **Evidence files:** 7
-
-### [Markdown Round-Trip Fidelity Through @tiptap/markdown](markdown-roundtrip-fidelity-tiptap/REPORT.md)
-
-> Empirical measurement of information loss when markdown passes through @tiptap/markdown parse/serialize pipeline. Classifies 12 lossy patterns as fundamental, fixable, or cosmetic. Tests convergence across multiple cycles. Compares three ecosystems. Provides a concrete lossless-enough configuration…
-
-- **Created:** 2026-04-07
-- **Topics:** markdown round-trip fidelity, document model information loss, bidirectional markdown sync, CRDT document persistence
-- **Subjects:** @tiptap/markdown, prosemirror-markdown, ProseMirror, TipTap, marked, markdown-it, remark-prosemirror, Yjs
-- **Evidence files:** 7
-- **Warnings:** 1
 
 ### [Competitive Landscape for an Agent-Native Knowledge Platform](openknowledge-competitive-landscape/REPORT.md)
 
@@ -353,6 +480,7 @@
 - **Created:** 2026-04-04
 - **Topics:** wiki-link formats, backlink index architecture, knowledge graph navigation, CRDT collaboration, agent-native knowledge
 - **Subjects:** Obsidian, Logseq, Outline, AFFiNE, Foam, Dendron, Marksman, remark-wiki-link, TipTap, ProseMirror, Hocuspocus, Yjs, GraphRAG, Orama
+- **Warnings:** 1
 
 ### [Search Engine Decision: Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector for a CRDT-Backed Branchable Knowledge Platform](search-engine-decision/REPORT.md)
 
@@ -362,6 +490,7 @@
 - **Topics:** search engine selection, CRDT search integration, per-branch index caching, contentless search indexing, local-to-cloud migration
 - **Subjects:** Orama, SQLite FTS5, sqlite-vec, better-sqlite3, PGlite, pgvector, pg_textsearch, Yjs, Hocuspocus
 - **Evidence files:** 6
+- **Warnings:** 1
 
 ### [TipTap in 2026: Product Direction, Platform Ambitions, and Overlap with Agent-Native Knowledge Platforms](tiptap-2026-direction-overlap/REPORT.md)
 
@@ -380,7 +509,7 @@
 - **Topics:** component inventory comparison, block type analysis, editing feature gap analysis, knowledge platform architecture, component distribution
 - **Subjects:** Obsidian, Fumadocs, fumadocs-ui, fumadocs-core, shadcn/ui, Radix UI, MDX
 - **Evidence files:** 5
-- **Warnings:** 1
+- **Warnings:** 2
 
 ### [Bun vs Node.js as Server Runtime for an Agent-Native Knowledge Platform](bun-vs-node-runtime/REPORT.md)
 
@@ -409,7 +538,7 @@
 - **Topics:** component prop extraction, visual editor prop panels, TypeScript to UI control mapping, auto-generated editing interfaces
 - **Subjects:** react-docgen-typescript, Storybook, Webstudio, Builder.io, Plasmic, TypeScript Compiler API
 - **Evidence files:** 6
-- **Warnings:** 2
+- **Warnings:** 3
 
 ### [MDX Round-Trip Fidelity Through CRDT-Backed Visual Editors](mdx-crdt-roundtrip-fidelity/REPORT.md)
 
@@ -494,7 +623,7 @@
 - **Topics:** MCP tool design, agent tool interfaces, filesystem vs semantic tools, progressive disclosure, tool explosion problem, agent performance benchmarks
 - **Subjects:** Claude Code, Cursor, Mintlify, Context7, Anthropic, SWE-agent, SocratiCode, Microsoft Research, MCP-Bench, Mem0, GitHub MCP Server, Notion MCP Server
 - **Evidence files:** 7
-- **Warnings:** 1
+- **Warnings:** 2
 
 ### [Orama Deep Dive: A Source-Code-Level Assessment for Agent-Native Knowledge Platforms](orama-deep-dive/REPORT.md)
 
@@ -504,7 +633,7 @@
 - **Topics:** hybrid search internals, in-memory search engine, TypeScript search library, vector search implementation, search engine gap analysis
 - **Subjects:** Orama, OramaSearch Inc, Orama Cloud, OramaCore, Fumadocs
 - **Evidence files:** 11
-- **Warnings:** 1
+- **Warnings:** 2
 
 ### [Fumadocs as Infrastructure for the Karpathy LLM Knowledge Base Workflow](fumadocs-karpathy-workflow-deep-dive/REPORT.md)
 
@@ -533,7 +662,7 @@
 - **Topics:** virtual filesystem MCP, agent tool surface overlap, filesystem abstraction backends, MCP tool design patterns, content search MCP tools, remote filesystem MCP tools
 - **Subjects:** Model Context Protocol, Claude Code, Mintlify ChromaFs, E2B, Daytona, Desktop Commander MCP, mcp-ripgrep, GitHub MCP Server, Replit MCP, Obsidian MCP, CodeSandbox MCP, filesystem-mcp-rs
 - **Evidence files:** 8
-- **Warnings:** 4
+- **Warnings:** 5
 
 ### [Git Worktrees as Draft Isolation for Knowledge Platforms: Lessons from Claude Code and the AI Coding Agent Landscape](claude-code-worktree-git-isolation/REPORT.md)
 
@@ -571,7 +700,7 @@
 - **Topics:** virtual filesystem for agents, custom filesystem backends, shell environment TypeScript, agent-native knowledge platform, MCP server architecture, MCP tool count agent performance, exec tool vs semantic tools, CRDT filesystem implementation
 - **Subjects:** just-bash, Vercel Labs, Mintlify ChromaFs, bash-tool, IFileSystem, just-bash-mcp, MCP structuredContent
 - **Evidence files:** 14
-- **Warnings:** 3
+- **Warnings:** 4
 
 ### [Fumadocs vs Mintlify: Architecture Deep Dive for Agent-Native Knowledge Platforms](fumadocs-vs-mintlify-architecture/REPORT.md)
 
@@ -600,6 +729,7 @@
 - **Topics:** knowledge consolidation, factual fidelity, multi-document synthesis, claim-level verification, information preservation, consensus mechanisms, multi-agent voting, incremental consolidation, cost-fidelity tradeoffs, production systems, recomposition patterns, outline-first generation, nuance preservation, confidence inflation, claim-to-document generation
 - **Subjects:** FActScore, MiniCheck, LLMxMapReduce, LangChain, LangGraph, AutoGen, CrewAI, Agent Zero, NEXUSSUM, GraphRAG, Perplexity, Elicit, Consensus, NotebookLM, Mem0, Zep/Graphiti, MemGPT, MetaFaith, FiC, WritingPath, PlanGen
 - **Evidence files:** 13
+- **Warnings:** 1
 
 ### [AI Coding Agent Tool Surfaces: How Agents Interface with Codebases](ai-coding-agent-tool-surfaces/REPORT.md)
 

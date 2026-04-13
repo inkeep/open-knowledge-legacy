@@ -17,6 +17,13 @@ function itemKey(item: WikiLinkSuggestionItem): string {
   return item.kind === 'anchor' ? `${item.docName}#${item.slug}` : item.docName;
 }
 
+/** Screen-reader announcement text for the currently-selected item. */
+function announcementText(item: WikiLinkSuggestionItem): string {
+  if (item.kind === 'anchor') return `Heading H${item.level}: ${item.text}`;
+  if (item.kind === 'create') return item.actionLabel;
+  return item.title;
+}
+
 export function WikiLinkSuggestionMenu({
   items,
   query,
@@ -55,6 +62,7 @@ export function WikiLinkSuggestionMenu({
         role="status"
         aria-live="polite"
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
+        style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
         onMouseDown={preventFocusSteal}
       >
         {mode === 'anchor' ? `Loading headings for ${pageTarget}…` : 'Loading pages…'}
@@ -79,12 +87,16 @@ export function WikiLinkSuggestionMenu({
         role="status"
         aria-live="polite"
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
+        style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
         onMouseDown={preventFocusSteal}
       >
         {emptyMsg}
       </div>
     );
   }
+
+  const selectedItem =
+    selectedIndex >= 0 && selectedIndex < items.length ? items[selectedIndex] : null;
 
   return (
     <div
@@ -94,8 +106,18 @@ export function WikiLinkSuggestionMenu({
       aria-activedescendant={activeDescendant}
       tabIndex={-1}
       onMouseDown={preventFocusSteal}
-      className="w-64 max-h-80 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
+      className="w-64 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
+      style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
     >
+      {/*
+        Live region announces the selected item on arrow navigation. Required
+        because aria-activedescendant on the listbox is inert — focus stays in
+        ProseMirror's contenteditable, and screen readers only announce
+        activedescendant on the focused element.
+      */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {selectedItem ? announcementText(selectedItem) : ''}
+      </span>
       {error && (
         <div className="rounded-md px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300">
           {error}

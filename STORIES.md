@@ -1,6 +1,10 @@
-# STORIES.md — Now phase workstreams
+# STORIES.md — Now phase workstreams (PHASE 1 — LARGELY SHIPPED)
 
 **Last verified:** 2026-04-08
+**Status:** Most stories in this phase are shipped or in-flight (WYSIWYG editor, source toggle, MCP surface, presence, auto-persistence, wiki-links all merged as of 2026-04-12). This document covers the **original Phase 1** decomposition from `PROJECT.md`'s S1-S10.
+
+**Next phase:** See `projects/day-0-editor-completeness/PROJECT.md` for the Phase 2 decomposition — day-0 editor gaps (file ops, real-time sidebar, onboarding, graph panels, navigation, polish). Uses ED-prefixed story IDs (ED-1 through ED-7) to distinguish from Phase 1's S1-S10.
+
 **Scope:** Only PROJECT.md's **Now** phase (S1, S2, S4, S5, S6, S9, S10) + the cross-cutting concerns that gate them.
 **Purpose:** Bucket the Now-phase work into logical semantic workstreams so the team can assign owners. Each bucket is split into **user stories** (observable outcomes) and **technical stories** (implementation work). Items marked **[scope: Next]** or **[scope: Later]** surfaced in planning but PROJECT.md has deferred them — decide per-item whether to promote, defer, or ship a stub.
 

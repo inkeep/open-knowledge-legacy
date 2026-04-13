@@ -1,0 +1,1066 @@
+[
+  {
+    "name": "atx-heading-h1",
+    "category": "commonmark-block",
+    "input": "# Heading 1\n",
+    "notes": "",
+    "output": "# Heading 1\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "atx-heading-h2",
+    "category": "commonmark-block",
+    "input": "## Heading 2\n",
+    "notes": "",
+    "output": "## Heading 2\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "atx-heading-h3",
+    "category": "commonmark-block",
+    "input": "### Heading 3\n",
+    "notes": "",
+    "output": "### Heading 3\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "atx-heading-h4",
+    "category": "commonmark-block",
+    "input": "#### Heading 4\n",
+    "notes": "",
+    "output": "#### Heading 4\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "atx-heading-h5",
+    "category": "commonmark-block",
+    "input": "##### Heading 5\n",
+    "notes": "",
+    "output": "##### Heading 5\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "atx-heading-h6",
+    "category": "commonmark-block",
+    "input": "###### Heading 6\n",
+    "notes": "",
+    "output": "###### Heading 6\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "atx-heading-trailing-hashes",
+    "category": "commonmark-block",
+    "input": "## Heading ##\n",
+    "notes": "",
+    "output": "## Heading\n",
+    "klass": "STRUCTURE_CHANGE",
+    "idempotent": true
+  },
+  {
+    "name": "setext-heading-h1",
+    "category": "commonmark-block",
+    "input": "Heading 1\n=========\n",
+    "notes": "",
+    "output": "Heading 1\n=========\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "setext-heading-h2",
+    "category": "commonmark-block",
+    "input": "Heading 2\n---------\n",
+    "notes": "",
+    "output": "Heading 2\n---------\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "hr-dashes",
+    "category": "commonmark-block",
+    "input": "---\n",
+    "notes": "",
+    "output": "---\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "hr-asterisks",
+    "category": "commonmark-block",
+    "input": "***\n",
+    "notes": "",
+    "output": "***\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "hr-underscores",
+    "category": "commonmark-block",
+    "input": "___\n",
+    "notes": "",
+    "output": "___\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "paragraph-plain",
+    "category": "commonmark-block",
+    "input": "A simple paragraph.\n",
+    "notes": "",
+    "output": "A simple paragraph.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "paragraph-with-soft-break",
+    "category": "commonmark-block",
+    "input": "Line one.\nLine two continues.\n",
+    "notes": "",
+    "output": "Line one. Line two continues.\n",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  },
+  {
+    "name": "paragraph-with-hard-break-spaces",
+    "category": "commonmark-block",
+    "input": "Line one.  \nLine two.\n",
+    "notes": "",
+    "output": "Line one.  \nLine two.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "paragraph-with-hard-break-backslash",
+    "category": "commonmark-block",
+    "input": "Line one.\\\nLine two.\n",
+    "notes": "",
+    "output": "Line one.\\\nLine two.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "paragraph-multiple-blank-lines",
+    "category": "commonmark-block",
+    "input": "First.\n\n\n\nSecond.\n",
+    "notes": "",
+    "output": "First.\n\nSecond.\n",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  },
+  {
+    "name": "blockquote-simple",
+    "category": "commonmark-block",
+    "input": "> A blockquote.\n",
+    "notes": "",
+    "output": "> A blockquote.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "blockquote-multiline",
+    "category": "commonmark-block",
+    "input": "> Line one.\n> Line two.\n",
+    "notes": "",
+    "output": "> Line one. Line two.\n",
+    "klass": "STRUCTURE_CHANGE",
+    "idempotent": true
+  },
+  {
+    "name": "blockquote-nested",
+    "category": "commonmark-block",
+    "input": "> Outer.\n>\n> > Inner.\n",
+    "notes": "",
+    "output": "> Outer.\n>\n> > Inner.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "blockquote-with-heading",
+    "category": "commonmark-block",
+    "input": "> # Heading in quote\n>\n> And text.\n",
+    "notes": "",
+    "output": "> # Heading in quote\n>\n> And text.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-bullet-dash",
+    "category": "commonmark-block",
+    "input": "- Item 1\n- Item 2\n- Item 3\n",
+    "notes": "",
+    "output": "- Item 1\n- Item 2\n- Item 3\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-bullet-asterisk",
+    "category": "commonmark-block",
+    "input": "* Item 1\n* Item 2\n* Item 3\n",
+    "notes": "",
+    "output": "* Item 1\n* Item 2\n* Item 3\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-bullet-plus",
+    "category": "commonmark-block",
+    "input": "+ Item 1\n+ Item 2\n+ Item 3\n",
+    "notes": "",
+    "output": "+ Item 1\n+ Item 2\n+ Item 3\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-bullet-single-item",
+    "category": "commonmark-block",
+    "input": "- Solo item\n",
+    "notes": "",
+    "output": "- Solo item\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-ordered-period",
+    "category": "commonmark-block",
+    "input": "1. First\n2. Second\n3. Third\n",
+    "notes": "",
+    "output": "1. First\n2. Second\n3. Third\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-ordered-paren",
+    "category": "commonmark-block",
+    "input": "1) First\n2) Second\n3) Third\n",
+    "notes": "",
+    "output": "1) First\n2) Second\n3) Third\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-ordered-start-at-5",
+    "category": "commonmark-block",
+    "input": "5. Five\n6. Six\n7. Seven\n",
+    "notes": "",
+    "output": "5. Five\n6. Six\n7. Seven\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-tight",
+    "category": "commonmark-block",
+    "input": "- Item 1\n- Item 2\n- Item 3\n",
+    "notes": "",
+    "output": "- Item 1\n- Item 2\n- Item 3\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-loose",
+    "category": "commonmark-block",
+    "input": "- Item 1\n\n- Item 2\n\n- Item 3\n",
+    "notes": "",
+    "output": "- Item 1\n\n- Item 2\n\n- Item 3\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-nested-2-levels",
+    "category": "commonmark-block",
+    "input": "- Outer 1\n  - Nested 1a\n  - Nested 1b\n- Outer 2\n",
+    "notes": "",
+    "output": "- Outer 1\n  - Nested 1a\n  - Nested 1b\n- Outer 2\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-nested-3-levels",
+    "category": "commonmark-block",
+    "input": "- L1\n  - L2\n    - L3\n",
+    "notes": "",
+    "output": "- L1\n  - L2\n    - L3\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-nested-mixed",
+    "category": "commonmark-block",
+    "input": "- Bullet\n  1. Nested ordered 1\n  2. Nested ordered 2\n- Another bullet\n",
+    "notes": "",
+    "output": "- Bullet\n  1. Nested ordered 1\n  2. Nested ordered 2\n- Another bullet\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "code-block-fenced-backticks",
+    "category": "commonmark-block",
+    "input": "```\nplain code\n```\n",
+    "notes": "",
+    "output": "```\nplain code\n```\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "code-block-fenced-tildes",
+    "category": "commonmark-block",
+    "input": "~~~\nplain code\n~~~\n",
+    "notes": "",
+    "output": "~~~\nplain code\n~~~\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "code-block-with-lang",
+    "category": "commonmark-block",
+    "input": "```javascript\nconst x = 1;\n```\n",
+    "notes": "",
+    "output": "```javascript\nconst x = 1;\n```\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "code-block-with-info-string",
+    "category": "commonmark-block",
+    "input": "```ts title=\"foo.ts\"\nconst x = 1;\n```\n",
+    "notes": "",
+    "output": "```ts title=\"foo.ts\"\nconst x = 1;\n```\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "code-block-indented",
+    "category": "commonmark-block",
+    "input": "    indented code\n    second line\n",
+    "notes": "",
+    "output": "indented code second line\n",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  },
+  {
+    "name": "code-block-empty-lang",
+    "category": "commonmark-block",
+    "input": "```\n\nempty lines preserved\n\n```\n",
+    "notes": "",
+    "output": "```\n\nempty lines preserved\n\n```\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "code-block-contains-ampersand",
+    "category": "commonmark-block",
+    "input": "```\nfoo & bar\nx < y > z\n```\n",
+    "notes": "",
+    "output": "```\nfoo & bar\nx < y > z\n```\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "inline-code-simple",
+    "category": "commonmark-inline",
+    "input": "Use `code` here.\n",
+    "notes": "",
+    "output": "Use `code` here.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "inline-code-with-ampersand",
+    "category": "commonmark-inline",
+    "input": "Use `a & b` here.\n",
+    "notes": "",
+    "output": "Use `a & b` here.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "inline-code-with-brackets",
+    "category": "commonmark-inline",
+    "input": "Use `foo[1]` here.\n",
+    "notes": "",
+    "output": "Use `foo[1]` here.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "inline-code-with-backticks",
+    "category": "commonmark-inline",
+    "input": "Use `` `backtick` `` here.\n",
+    "notes": "",
+    "output": "Use `` `backtick` `` here.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "emphasis-bold-asterisks",
+    "category": "commonmark-inline",
+    "input": "This is **bold** text.\n",
+    "notes": "",
+    "output": "This is **bold** text.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "emphasis-bold-underscores",
+    "category": "commonmark-inline",
+    "input": "This is __bold__ text.\n",
+    "notes": "",
+    "output": "This is __bold__ text.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "emphasis-italic-asterisks",
+    "category": "commonmark-inline",
+    "input": "This is *italic* text.\n",
+    "notes": "",
+    "output": "This is *italic* text.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "emphasis-italic-underscores",
+    "category": "commonmark-inline",
+    "input": "This is _italic_ text.\n",
+    "notes": "",
+    "output": "This is _italic_ text.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "emphasis-bold-italic-combined",
+    "category": "commonmark-inline",
+    "input": "This is ***bold italic*** text.\n",
+    "notes": "",
+    "output": "This is ***bold italic*** text.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "emphasis-nested",
+    "category": "commonmark-inline",
+    "input": "This is **bold with *italic* inside**.\n",
+    "notes": "",
+    "output": "This is **bold with *****italic***** inside**.\n",
+    "klass": "STRUCTURE_CHANGE",
+    "idempotent": true
+  },
+  {
+    "name": "link-inline",
+    "category": "commonmark-inline",
+    "input": "See [docs](https://example.com).\n",
+    "notes": "",
+    "output": "See [docs](https://example.com).\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "link-with-title",
+    "category": "commonmark-inline",
+    "input": "See [docs](https://example.com \"title\").\n",
+    "notes": "",
+    "output": "See [docs](https://example.com \"title\").\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "link-reference",
+    "category": "commonmark-inline",
+    "input": "See [docs][ref].\n\n[ref]: https://example.com\n",
+    "notes": "",
+    "output": "See [docs][ref].\n\n[ref]: https://example.com\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "link-collapsed-reference",
+    "category": "commonmark-inline",
+    "input": "See [docs][].\n\n[docs]: https://example.com\n",
+    "notes": "",
+    "output": "See [docs][].\n\n[docs]: https://example.com\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "link-shortcut-reference",
+    "category": "commonmark-inline",
+    "input": "See [docs].\n\n[docs]: https://example.com\n",
+    "notes": "",
+    "output": "See [docs].\n\n[docs]: https://example.com\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "link-autolink",
+    "category": "commonmark-inline",
+    "input": "Visit <https://example.com>.\n",
+    "notes": "",
+    "output": "",
+    "klass": "ERROR",
+    "error": "Unexpected character `/` (U+002F) before local name, expected a character that can start a name, such as a letter, `$`, or `_` (note: to create a link in MDX, use `[text](url)`)",
+    "idempotent": true
+  },
+  {
+    "name": "link-with-ampersand-in-url",
+    "category": "commonmark-inline",
+    "input": "See [docs](https://example.com?a=1&b=2).\n",
+    "notes": "",
+    "output": "See [docs](https://example.com?a=1&b=2).\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "link-with-ampersand-in-text",
+    "category": "commonmark-inline",
+    "input": "See [A & B](https://example.com).\n",
+    "notes": "",
+    "output": "See [A & B](https://example.com).\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "image-inline",
+    "category": "commonmark-inline",
+    "input": "![Alt text](https://example.com/img.png)\n",
+    "notes": "",
+    "output": "![Alt text](https://example.com/img.png)\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "image-with-title",
+    "category": "commonmark-inline",
+    "input": "![Alt](https://example.com/img.png \"title\")\n",
+    "notes": "",
+    "output": "![Alt](https://example.com/img.png \"title\")\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "html-block-div",
+    "category": "commonmark-block",
+    "input": "<div class=\"box\">HTML block</div>\n",
+    "notes": "",
+    "output": "<div />\n",
+    "klass": "SEMANTIC_LOSS",
+    "idempotent": true
+  },
+  {
+    "name": "html-inline-span",
+    "category": "commonmark-inline",
+    "input": "Text with <span>inline</span> HTML.\n",
+    "notes": "",
+    "output": "Text with <span /> HTML.\n",
+    "klass": "SEMANTIC_LOSS",
+    "idempotent": true
+  },
+  {
+    "name": "html-br",
+    "category": "commonmark-inline",
+    "input": "Line one<br>Line two.\n",
+    "notes": "",
+    "output": "",
+    "klass": "ERROR",
+    "error": "Expected a closing tag for `<br>` (1:9-1:13) before the end of `paragraph`",
+    "idempotent": true
+  },
+  {
+    "name": "gfm-table-simple",
+    "category": "gfm-extension",
+    "input": "| H1 | H2 |\n|---|---|\n| c1 | c2 |\n",
+    "notes": "",
+    "output": "| H1 | H2 |\n| -- | -- |\n| c1 | c2 |\n",
+    "klass": "STRUCTURE_CHANGE",
+    "idempotent": true
+  },
+  {
+    "name": "gfm-table-aligned",
+    "category": "gfm-extension",
+    "input": "| Left | Center | Right |\n|:---|:---:|---:|\n| a | b | c |\n",
+    "notes": "",
+    "output": "| Left | Center | Right |\n| ---- | ------ | ----- |\n| a    | b      | c     |\n",
+    "klass": "STRUCTURE_CHANGE",
+    "idempotent": true
+  },
+  {
+    "name": "gfm-table-with-ampersand",
+    "category": "gfm-extension",
+    "input": "| Name | Desc |\n|---|---|\n| A & B | test |\n",
+    "notes": "",
+    "output": "| Name  | Desc |\n| ----- | ---- |\n| A & B | test |\n",
+    "klass": "STRUCTURE_CHANGE",
+    "idempotent": true
+  },
+  {
+    "name": "gfm-task-list-unchecked",
+    "category": "gfm-extension",
+    "input": "- [ ] Todo item\n- [ ] Another todo\n",
+    "notes": "",
+    "output": "- Todo item\n- Another todo\n",
+    "klass": "STRUCTURE_CHANGE",
+    "idempotent": true
+  },
+  {
+    "name": "gfm-task-list-checked",
+    "category": "gfm-extension",
+    "input": "- [x] Done\n- [ ] Todo\n",
+    "notes": "",
+    "output": "- Done\n- Todo\n",
+    "klass": "SEMANTIC_LOSS",
+    "idempotent": true
+  },
+  {
+    "name": "gfm-strikethrough",
+    "category": "gfm-extension",
+    "input": "This is ~~struck~~ text.\n",
+    "notes": "",
+    "output": "This is ~~struck~~ text.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "gfm-autolink-bare-url",
+    "category": "gfm-extension",
+    "input": "Visit https://example.com directly.\n",
+    "notes": "",
+    "output": "Visit [https://example.com](https://example.com) directly.\n",
+    "klass": "SEMANTIC_LOSS",
+    "idempotent": true
+  },
+  {
+    "name": "ampersand-literal-in-heading",
+    "category": "char-content",
+    "input": "# H&M Store\n",
+    "notes": "",
+    "output": "# H&M Store\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "ampersand-literal-in-paragraph",
+    "category": "char-content",
+    "input": "Foo & Bar & Baz.\n",
+    "notes": "",
+    "output": "Foo & Bar & Baz.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "lt-gt-in-paragraph",
+    "category": "char-content",
+    "input": "If a < b and b > c then a < c.\n",
+    "notes": "",
+    "output": "If a < b and b > c then a < c.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "already-encoded-amp",
+    "category": "char-content",
+    "input": "Author wrote &amp; explicitly.\n",
+    "notes": "",
+    "output": "Author wrote & explicitly.\n",
+    "klass": "COSMETIC_NORMALIZATION",
+    "idempotent": true
+  },
+  {
+    "name": "already-encoded-lt-gt",
+    "category": "char-content",
+    "input": "Author wrote &lt;tag&gt; explicitly.\n",
+    "notes": "",
+    "output": "Author wrote <tag> explicitly.\n",
+    "klass": "STRUCTURE_CHANGE",
+    "idempotent": false
+  },
+  {
+    "name": "numeric-entity-decimal",
+    "category": "char-content",
+    "input": "Copyright &#169; 2026.\n",
+    "notes": "",
+    "output": "Copyright © 2026.\n",
+    "klass": "SEMANTIC_LOSS",
+    "idempotent": true
+  },
+  {
+    "name": "numeric-entity-hex",
+    "category": "char-content",
+    "input": "Bullet &#x2022; item.\n",
+    "notes": "",
+    "output": "Bullet • item.\n",
+    "klass": "SEMANTIC_LOSS",
+    "idempotent": true
+  },
+  {
+    "name": "named-entity-copy",
+    "category": "char-content",
+    "input": "&copy; 2026 Example Inc.\n",
+    "notes": "",
+    "output": "© 2026 Example Inc.\n",
+    "klass": "SEMANTIC_LOSS",
+    "idempotent": true
+  },
+  {
+    "name": "named-entity-mdash",
+    "category": "char-content",
+    "input": "She said &mdash; wait, no.\n",
+    "notes": "",
+    "output": "She said — wait, no.\n",
+    "klass": "SEMANTIC_LOSS",
+    "idempotent": true
+  },
+  {
+    "name": "backslash-escape-asterisk",
+    "category": "char-content",
+    "input": "Literal \\*not italic\\*.\n",
+    "notes": "",
+    "output": "Literal \\*not italic\\*.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "backslash-escape-underscore",
+    "category": "char-content",
+    "input": "Literal \\_not italic\\_.\n",
+    "notes": "",
+    "output": "Literal \\_not italic\\_.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "backslash-escape-bracket",
+    "category": "char-content",
+    "input": "Literal \\[not link\\].\n",
+    "notes": "",
+    "output": "Literal \\[not link].\n",
+    "klass": "COSMETIC_NORMALIZATION",
+    "idempotent": true
+  },
+  {
+    "name": "backslash-escape-hash",
+    "category": "char-content",
+    "input": "\\# Not a heading.\n",
+    "notes": "",
+    "output": "\\# Not a heading.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "punctuation-mixed",
+    "category": "char-content",
+    "input": "It's a \"quoted\" string; with: punctuation!\n",
+    "notes": "",
+    "output": "It's a \"quoted\" string; with: punctuation!\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "single-char-words",
+    "category": "char-content",
+    "input": "A cat; I saw it on TV.\n",
+    "notes": "",
+    "output": "A cat; I saw it on TV.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "two-char-words",
+    "category": "char-content",
+    "input": "It is an IT system on my OS.\n",
+    "notes": "",
+    "output": "It is an IT system on my OS.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "numbers-in-text",
+    "category": "char-content",
+    "input": "Version 1.2.3 released on 2026-04-11.\n",
+    "notes": "",
+    "output": "Version 1.2.3 released on 2026-04-11.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "math-operators",
+    "category": "char-content",
+    "input": "Formula: x = (a + b) * c / d\n",
+    "notes": "",
+    "output": "Formula: x = (a + b) \\* c / d\n",
+    "klass": "COSMETIC_NORMALIZATION",
+    "idempotent": true
+  },
+  {
+    "name": "unicode-emoji",
+    "category": "char-content",
+    "input": "Launch 🚀 success!\n",
+    "notes": "",
+    "output": "Launch 🚀 success!\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "unicode-cjk",
+    "category": "char-content",
+    "input": "你好世界\n",
+    "notes": "",
+    "output": "你好世界\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "unicode-rtl-arabic",
+    "category": "char-content",
+    "input": "مرحبا بالعالم\n",
+    "notes": "",
+    "output": "مرحبا بالعالم\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "unicode-accented-latin",
+    "category": "char-content",
+    "input": "Café résumé naïve über\n",
+    "notes": "",
+    "output": "Café résumé naïve über\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "unicode-combining",
+    "category": "char-content",
+    "input": "ñ combining tilde\n",
+    "notes": "",
+    "output": "ñ combining tilde\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "unicode-zwj-emoji",
+    "category": "char-content",
+    "input": "👨‍👩‍👧‍👦 family emoji\n",
+    "notes": "",
+    "output": "👨‍👩‍👧‍👦 family emoji\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "whitespace-trailing-spaces-paragraph",
+    "category": "char-content",
+    "input": "Has trailing spaces.   \n",
+    "notes": "",
+    "output": "Has trailing spaces.\n",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  },
+  {
+    "name": "whitespace-tab-in-paragraph",
+    "category": "char-content",
+    "input": "Col1\tCol2\n",
+    "notes": "",
+    "output": "Col1\tCol2\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "whitespace-leading-spaces",
+    "category": "char-content",
+    "input": "   Indented paragraph start.\n",
+    "notes": "",
+    "output": "Indented paragraph start.\n",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  },
+  {
+    "name": "whitespace-nbsp",
+    "category": "char-content",
+    "input": "Two words joined by non-breaking space.\n",
+    "notes": "",
+    "output": "Two words joined by non-breaking space.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "wikilink-bare",
+    "category": "custom-extension",
+    "input": "See [[TargetPage]] for details.\n",
+    "notes": "",
+    "output": "See [[TargetPage]] for details.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "wikilink-with-alias",
+    "category": "custom-extension",
+    "input": "See [[TargetPage|the target]] for details.\n",
+    "notes": "",
+    "output": "See [[TargetPage|the target]] for details.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "wikilink-with-section",
+    "category": "custom-extension",
+    "input": "See [[TargetPage#Section]] for details.\n",
+    "notes": "",
+    "output": "See [[TargetPage#Section]] for details.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "wikilink-with-section-and-alias",
+    "category": "custom-extension",
+    "input": "See [[TargetPage#Section|label]] for details.\n",
+    "notes": "",
+    "output": "See [[TargetPage#Section|label]] for details.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "wikilink-inside-list",
+    "category": "custom-extension",
+    "input": "- See [[Page A]]\n- See [[Page B]]\n",
+    "notes": "",
+    "output": "- See [[Page A]]\n- See [[Page B]]\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "jsx-component-simple",
+    "category": "custom-extension",
+    "input": "```jsx-component name=Callout\n{\"variant\": \"info\", \"children\": \"Hello\"}\n```\n",
+    "notes": "",
+    "output": "```jsx-component name=Callout\n{\"variant\": \"info\", \"children\": \"Hello\"}\n```\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "frontmatter-yaml",
+    "category": "custom-extension",
+    "input": "---\ntitle: My Doc\ntags: [a, b]\n---\n\n# Content\n",
+    "notes": "",
+    "output": "---\ntitle: My Doc\ntags: [a, b]\n---\n\n# Content\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "heading-then-paragraph",
+    "category": "structural",
+    "input": "# Heading\n\nParagraph text.\n",
+    "notes": "",
+    "output": "# Heading\n\nParagraph text.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-containing-code",
+    "category": "structural",
+    "input": "- Item with code\n\n  ```\n  code inside list\n  ```\n\n- Next item\n",
+    "notes": "",
+    "output": "- Item with code\n\n  ```\n  code inside list\n  ```\n\n- Next item\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "list-containing-heading",
+    "category": "structural",
+    "input": "- Item 1\n\n  ## Subheading in list\n\n- Item 2\n",
+    "notes": "",
+    "output": "- Item 1\n\n  ## Subheading in list\n\n- Item 2\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "paragraph-with-bold-italic-code",
+    "category": "structural",
+    "input": "Mix **bold** _italic_ `code` together.\n",
+    "notes": "",
+    "output": "Mix **bold** _italic_ `code` together.\n",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  },
+  {
+    "name": "heading-with-bold",
+    "category": "structural",
+    "input": "## Heading with **bold** part\n",
+    "notes": "",
+    "output": "## Heading with **bold** part\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "heading-with-inline-code",
+    "category": "structural",
+    "input": "## Heading with `code` part\n",
+    "notes": "",
+    "output": "## Heading with `code` part\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "heading-with-link",
+    "category": "structural",
+    "input": "## See [the docs](https://example.com)\n",
+    "notes": "",
+    "output": "## See [the docs](https://example.com)\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "empty-document",
+    "category": "edge-case",
+    "input": "",
+    "notes": "",
+    "output": "",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "only-whitespace",
+    "category": "edge-case",
+    "input": "   \n  \n",
+    "notes": "",
+    "output": "",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  },
+  {
+    "name": "single-character",
+    "category": "edge-case",
+    "input": "A\n",
+    "notes": "",
+    "output": "A\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "very-long-paragraph",
+    "category": "edge-case",
+    "input": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word.\n",
+    "notes": "",
+    "output": "word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word.\n",
+    "klass": "BYTE_IDENTICAL",
+    "idempotent": true
+  },
+  {
+    "name": "trailing-newlines",
+    "category": "edge-case",
+    "input": "Text.\n\n\n\n",
+    "notes": "",
+    "output": "Text.\n",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  },
+  {
+    "name": "no-trailing-newline",
+    "category": "edge-case",
+    "input": "Text without trailing newline",
+    "notes": "",
+    "output": "Text without trailing newline\n",
+    "klass": "WHITESPACE_DIFF",
+    "idempotent": true
+  }
+]

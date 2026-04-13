@@ -10,7 +10,7 @@ export {
   type BacklinkEntry,
   BacklinkIndex,
   type ExtractedWikiLink,
-  extractWikiLinksFromProsemirrorJson,
+  extractWikiLinksFromMarkdown,
   type HubEntry,
 } from './backlink-index.ts';
 export {

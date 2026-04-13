@@ -32,8 +32,8 @@
  *   transaction can merge before updateYFragment rebuilds the tree.
  */
 
-import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import type { MarkdownManager } from '@tiptap/markdown';
+import type { MarkdownManager } from '@inkeep/open-knowledge-core';
+import { prependFrontmatter, stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
@@ -433,7 +433,41 @@ export function setupObservers(deps: ObserverDeps): () => void {
         return;
       }
 
-      const parsedJson = mdManager.parse(body);
+      let parsedJson: ReturnType<typeof mdManager.parse>;
+      try {
+        parsedJson = mdManager.parse(body);
+      } catch (parseErr) {
+        // MDX expression attributes (e.g., `<Chart data={[1,2,3]} />`) and other
+        // partial syntax can cause remark-mdx / acorn parse failures while the user
+        // is mid-edit. This is NOT a data loss event — XmlFragment keeps its last
+        // valid state and the next keystroke will re-trigger Observer B. Log at
+        // debug level; do NOT fire onSyncError (that's reserved for actual sync
+        // failures, not transient live-typing parse noise).
+        //
+        // Only swallow genuinely transient parse errors from the remark-mdx pipeline:
+        //   - SyntaxError: from acorn when {…} content isn't valid JavaScript
+        //   - VFileMessage: from remark-mdx when tag/expression syntax is malformed
+        //     (e.g., unclosed `<Tag` without guard protection, `</` incomplete)
+        //   - RangeError "Invalid content for node": from ProseMirror schema validation
+        //     when valid mdast maps to an invalid PM structure (e.g., text directive
+        //     inside strikethrough → inline jsxComponent violates doc.content spec)
+        // Non-transient errors (TypeError from handler bugs, etc.) must propagate
+        // to onSyncError via the outer catch so regressions are visible.
+        if (
+          parseErr instanceof SyntaxError ||
+          parseErr instanceof VFileMessage ||
+          (parseErr instanceof RangeError &&
+            (parseErr as RangeError).message.includes('Invalid content for node'))
+        ) {
+          console.debug('[Observer B] Parse skipped (partial/invalid markdown):', parseErr);
+          return;
+        }
+        throw parseErr;
+      }
+
+      // Schema validation errors (e.g., malformed PM JSON from a handler bug) are
+      // NOT transient — they indicate a pipeline regression and must reach onSyncError
+      // via the outer catch. Kept outside the parse try/catch deliberately.
       const pmNode = schema.nodeFromJSON(parsedJson);
 
       doc.transact(() => {
