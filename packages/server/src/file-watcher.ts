@@ -215,7 +215,11 @@ export async function classifyEvents(
       if (code !== 'ENOENT') {
         console.warn(`[file-watcher] resolveDocName lstat failed for ${rawPath}:`, e);
       }
-      return aliasMap.get(raw) ?? raw;
+      if (aliasMap.has(raw)) {
+        aliasMap.delete(raw);
+        return raw;
+      }
+      return raw;
     }
 
     if (!lst.isSymbolicLink()) {
@@ -528,7 +532,17 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
       break;
     }
     case 'delete': {
-      fileIndex.delete(event.docName);
+      if (fileIndex.has(event.docName)) {
+        fileIndex.delete(event.docName);
+      } else {
+        for (const [, entry] of fileIndex) {
+          const idx = entry.aliases.indexOf(event.docName);
+          if (idx !== -1) {
+            entry.aliases.splice(idx, 1);
+            break;
+          }
+        }
+      }
       break;
     }
     case 'rename': {
@@ -573,8 +587,13 @@ async function handleRawEvents(
       let checkPath = event.path;
       try {
         checkPath = realpathSync(event.path);
-      } catch {
-        /* use raw path */
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') {
+          console.warn(
+            `[file-watcher] realpathSync failed for self-write check on ${event.path} (${code})`,
+          );
+        }
       }
       isSelf = isSelfWrite(checkPath, hash);
     } else if (event.kind === 'rename') {
@@ -582,8 +601,13 @@ async function handleRawEvents(
       let checkPath = event.newPath;
       try {
         checkPath = realpathSync(event.newPath);
-      } catch {
-        /* use raw path */
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') {
+          console.warn(
+            `[file-watcher] realpathSync failed for self-write check on ${event.newPath} (${code})`,
+          );
+        }
       }
       isSelf = isSelfWrite(checkPath, hash);
     }

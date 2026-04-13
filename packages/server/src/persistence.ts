@@ -7,7 +7,7 @@
  * Hocuspocus config: debounce=2000, maxDebounce=10000 (L1)
  * Git commit debounced separately: 30s idle after last disk write (L2)
  */
-import { existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
 import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
@@ -138,7 +138,12 @@ export interface PersistenceHandle {
 
 export function createPersistenceExtension(options?: PersistenceOptions): PersistenceHandle {
   const contentDirRaw = options?.contentDir ?? process.cwd();
-  const contentDir = existsSync(contentDirRaw) ? realpathSync(contentDirRaw) : contentDirRaw;
+  let contentDir: string;
+  try {
+    contentDir = realpathSync(contentDirRaw);
+  } catch {
+    contentDir = contentDirRaw;
+  }
   const projectDir = options?.projectDir ?? process.cwd();
   const shadowRef = options?.shadowRef;
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
@@ -321,6 +326,16 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const filePath = safeContentPath(documentName, contentDir);
       if (!existsSync(filePath)) return;
 
+      try {
+        const canonical = realpathSync(filePath);
+        if (!isWithinContentDir(canonical, contentDir)) {
+          console.warn(
+            `[persistence] symlink-escape on load: ${filePath} → ${canonical}, refusing`,
+          );
+          return;
+        }
+      } catch {}
+
       const raw = readFileSync(filePath, 'utf-8');
       const { frontmatter, body } = stripFrontmatter(raw);
 
@@ -408,10 +423,16 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') {
-          console.warn(`[persistence] broken-symlink fallback`, {
-            docName: documentName,
-            reason: 'broken-symlink',
-          });
+          let isBrokenSymlink = false;
+          try {
+            isBrokenSymlink = lstatSync(requestedPath).isSymbolicLink();
+          } catch {}
+          if (isBrokenSymlink) {
+            console.warn(`[persistence] broken-symlink fallback`, {
+              docName: documentName,
+              reason: 'broken-symlink',
+            });
+          }
           canonicalPath = requestedPath;
         } else if (code === 'ELOOP') {
           console.error(`[persistence] Symlink cycle at ${requestedPath}`);
@@ -432,7 +453,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         throw new Error(msg);
       }
 
-      const tmpPath = `${canonicalPath}.tmp`;
+      const tmpPath = `${canonicalPath}.tmp.${crypto.randomUUID()}`;
       try {
         await writeFile(tmpPath, markdown, 'utf-8');
         await rename(tmpPath, canonicalPath);

@@ -769,7 +769,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const docName = url.searchParams.get('docName') ?? 'test-doc';
+      const docName = resolveAlias(url.searchParams.get('docName') ?? 'test-doc');
 
       // Path traversal guard — reuse the canonical validator from persistence.ts.
       // Throws `Invalid document name: ${docName}` for names that escape contentDir;
