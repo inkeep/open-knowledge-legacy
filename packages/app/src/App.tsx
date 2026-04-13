@@ -9,8 +9,17 @@ export function docNameFromHash(): string | null {
   if (hash.startsWith('#/')) {
     const rest = hash.slice(2);
     const qmark = rest.indexOf('?');
-    const docName = qmark >= 0 ? rest.slice(0, qmark) : rest;
-    return docName || null;
+    const encoded = qmark >= 0 ? rest.slice(0, qmark) : rest;
+    if (!encoded) return null;
+    // Browsers percent-encode spaces and non-ASCII in window.location.hash.
+    // Decode per path segment so docName matches the server's raw on-disk name
+    // (e.g. 'My Notes/Ideas — 2026/draft').
+    try {
+      return encoded.split('/').map(decodeURIComponent).join('/');
+    } catch {
+      // Malformed percent-encoding — fall back to raw string.
+      return encoded;
+    }
   }
   return null;
 }

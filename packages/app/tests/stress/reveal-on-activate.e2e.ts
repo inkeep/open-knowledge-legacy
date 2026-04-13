@@ -74,19 +74,24 @@ test('activation overrides prior manual collapse (D1)', async ({ page }) => {
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
 });
 
-test('roving tabindex: active row has tabIndex=0, others have tabIndex=-1', async ({ page }) => {
-  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
-  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+test('user-expanded non-ancestor folder persists across navigation (D4)', async ({ page }) => {
+  await page.goto(`${BASE}/#/test-doc`);
+  await sidebar(page).getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
 
-  const activeRow = sidebar(page).locator('[aria-current="page"]');
-  await expect(activeRow).toHaveAttribute('tabindex', '0');
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
+  await folderButton(page).click();
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
 
-  const otherFileBtn = sidebar(page).locator(
-    '[data-slot="sidebar-menu-button"]:has-text("test-doc.md")',
-  );
-  await expect(otherFileBtn).toHaveAttribute('tabindex', '-1');
+  await page.evaluate(() => {
+    window.location.hash = '#/sidebar-folder/nested-doc';
+  });
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.evaluate(() => {
+    window.location.hash = '#/test-doc';
+  });
+  await sidebar(page).getByText('test-doc.md').waitFor({ state: 'visible', timeout: 10_000 });
 
-  await expect(folderButton(page)).toHaveAttribute('tabindex', '-1');
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
 });
 
 test('exactly one aria-current="page" row, matching activeDocName (D9)', async ({ page }) => {
@@ -100,7 +105,7 @@ test('exactly one aria-current="page" row, matching activeDocName (D9)', async (
   await page.evaluate(() => {
     window.location.hash = '#/test-doc';
   });
-  await page.getByText('test-doc.md').waitFor({ state: 'visible', timeout: 10_000 });
+  await sidebar(page).getByText('test-doc.md').waitFor({ state: 'visible', timeout: 10_000 });
 
   await expect(current).toHaveCount(1);
   await expect(current).toContainText('test-doc.md');
@@ -108,7 +113,7 @@ test('exactly one aria-current="page" row, matching activeDocName (D9)', async (
 
 test('activation does not steal focus from the editor', async ({ page }) => {
   await page.goto(`${BASE}/#/test-doc`);
-  await page.getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+  await sidebar(page).getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
   await page.waitForSelector('.ProseMirror', { timeout: 15_000 });
 
   await page.locator('.ProseMirror').focus();
