@@ -95,23 +95,6 @@ export function deleteReconciledBase(docName: string): void {
   reconciledBaseByBranch.get(activeBranch)?.delete(docName);
 }
 
-/**
- * Legacy flat accessor — returns the active branch's map.
- * Used by standalone.ts for event-driven reconciliation where the flat
- * Map interface is expected.
- */
-export const reconciledBase = {
-  get(docName: string): string | undefined {
-    return getReconciledBase(docName);
-  },
-  set(docName: string, content: string): void {
-    setReconciledBase(docName, content);
-  },
-  delete(docName: string): void {
-    deleteReconciledBase(docName);
-  },
-};
-
 /** Batch-in-progress flag — gates L1 writes and L2 commits during coordinated git operations. */
 let batchInProgress = false;
 
