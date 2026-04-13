@@ -720,6 +720,10 @@ export function createServer(options: ServerOptions): ServerInstance {
         try {
           releaseServerLock(lockDir);
         } catch (err) {
+          phaseErrors.push({
+            phase: 'server-lock-release',
+            error: err instanceof Error ? err.message : String(err),
+          });
           log.error({ err }, '[server] shutdown phase-6 releaseServerLock failed');
         }
       }

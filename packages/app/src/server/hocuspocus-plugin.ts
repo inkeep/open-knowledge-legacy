@@ -103,11 +103,17 @@ try {
 
 // Release on process exit even if Vite's shutdown path doesn't call the plugin's
 // close hook. `releaseServerLock` is ownership-guarded — only removes our lock.
+// Registered BEFORE any throwable init below so the exit event covers module-load
+// crashes too; the init block additionally releases explicitly in its catch.
 let vitePluginShuttingDown = false;
 const viteShutdownHandler = () => {
   if (vitePluginShuttingDown) return;
   vitePluginShuttingDown = true;
-  releaseServerLock(LOCK_DIR);
+  try {
+    releaseServerLock(LOCK_DIR);
+  } catch (err) {
+    console.error('[hocuspocus] Failed to release server lock:', err);
+  }
 };
 process.once('SIGINT', viteShutdownHandler);
 process.once('SIGTERM', viteShutdownHandler);
@@ -115,68 +121,88 @@ process.once('exit', viteShutdownHandler);
 
 console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 
-// Create content filter at module scope — unified exclusion (gitignore + config exclude).
-// When OK_TEST_CONTENT_DIR is set (E2E test isolation), the content dir is an external
-// tmpdir outside the project tree. Passing PROJECT_ROOT as projectDir would make
-// content-filter compute `relative(projectDir, contentDir)` as a path with many `..`
-// components, which the `ignore` npm library rejects. Treat the test content dir as
-// its own project root — gitignore scanning becomes a no-op (the tmpdir has no
-// .gitignore), which is semantically correct for isolated test runs.
-const contentFilter = createContentFilter({
-  projectDir: process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT,
-  contentDir: CONTENT_DIR,
-  includePatterns: contentConfig.include,
-  excludePatterns: contentConfig.exclude,
-});
-const backlinkIndex = new BacklinkIndex({
-  projectDir: PROJECT_ROOT,
-  contentDir: CONTENT_DIR,
-  contentFilter,
-});
-
 // When test isolation is active, persistence's git integration is a liability —
 // it tries to `git add <contentRoot>` in the worktree's .git, but contentRoot is
 // an external tmpdir path starting with `../../..` which git refuses. Tests don't
 // need git tracking of their throwaway content, so disable it outright.
 const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 
-export const hocuspocus = new Hocuspocus({
-  quiet: true,
-  debounce: 2000,
-  maxDebounce: 10000,
-  extensions: [
-    createPersistenceExtension({
-      contentDir: CONTENT_DIR,
-      projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
-      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-      gitEnabled: !isTestIsolated,
-      backlinkIndex,
-    }).extension,
-  ],
-});
-
-const sessionManager = new AgentSessionManager(hocuspocus);
-
-// Add API extension — push directly rather than using hocuspocus.configure()
-// which replaces the extensions array via spread, losing the persistence extension.
-// enableTestRoutes is safe here: this plugin only runs under `vite dev` (local
-// development), never in production builds. E2E tests rely on /api/test-reset.
-hocuspocus.configuration.extensions.push(
-  createApiExtension({
-    hocuspocus,
-    sessionManager,
+// All throwable module-scope init runs inside this try. If anything fails we
+// release the lock synchronously before re-throwing, so a subsequent `bun run
+// dev` doesn't collide with an orphaned lock. Bindings are declared `let` so
+// consumers downstream in this module (and the exported `hocuspocus`) can read
+// them post-init.
+let contentFilter: ReturnType<typeof createContentFilter>;
+let backlinkIndex: BacklinkIndex;
+export let hocuspocus: Hocuspocus;
+let sessionManager: AgentSessionManager;
+try {
+  // Create content filter at module scope — unified exclusion (gitignore + config exclude).
+  // When OK_TEST_CONTENT_DIR is set (E2E test isolation), the content dir is an external
+  // tmpdir outside the project tree. Passing PROJECT_ROOT as projectDir would make
+  // content-filter compute `relative(projectDir, contentDir)` as a path with many `..`
+  // components, which the `ignore` npm library rejects. Treat the test content dir as
+  // its own project root — gitignore scanning becomes a no-op (the tmpdir has no
+  // .gitignore), which is semantically correct for isolated test runs.
+  contentFilter = createContentFilter({
+    projectDir: process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT,
     contentDir: CONTENT_DIR,
-    getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
-    getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
-    enableTestRoutes: true,
-    // Mirror persistence's test-isolation handling so shadow-repo path calculation
-    // doesn't try to resolve paths through ../.. components when CONTENT_DIR is
-    // outside the worktree.
-    projectRoot: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
-    contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-    backlinkIndex,
-  }),
-);
+    includePatterns: contentConfig.include,
+    excludePatterns: contentConfig.exclude,
+  });
+  backlinkIndex = new BacklinkIndex({
+    projectDir: PROJECT_ROOT,
+    contentDir: CONTENT_DIR,
+    contentFilter,
+  });
+
+  hocuspocus = new Hocuspocus({
+    quiet: true,
+    debounce: 2000,
+    maxDebounce: 10000,
+    extensions: [
+      createPersistenceExtension({
+        contentDir: CONTENT_DIR,
+        projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
+        contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+        gitEnabled: !isTestIsolated,
+        backlinkIndex,
+      }).extension,
+    ],
+  });
+
+  sessionManager = new AgentSessionManager(hocuspocus);
+
+  // Add API extension — push directly rather than using hocuspocus.configure()
+  // which replaces the extensions array via spread, losing the persistence extension.
+  // enableTestRoutes is safe here: this plugin only runs under `vite dev` (local
+  // development), never in production builds. E2E tests rely on /api/test-reset.
+  hocuspocus.configuration.extensions.push(
+    createApiExtension({
+      hocuspocus,
+      sessionManager,
+      contentDir: CONTENT_DIR,
+      getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
+      getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
+      enableTestRoutes: true,
+      // Mirror persistence's test-isolation handling so shadow-repo path calculation
+      // doesn't try to resolve paths through ../.. components when CONTENT_DIR is
+      // outside the worktree.
+      projectRoot: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
+      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      backlinkIndex,
+    }),
+  );
+} catch (err) {
+  // Belt-and-suspenders to the process.once('exit') handler: release synchronously
+  // so the next `bun run dev` in this contentDir doesn't see an orphan lock.
+  try {
+    releaseServerLock(LOCK_DIR);
+  } catch (releaseErr) {
+    console.error('[hocuspocus] Failed to release server lock during init rollback:', releaseErr);
+  }
+  throw err;
+}
 
 export function hocuspocusPlugin(): Plugin {
   return {
