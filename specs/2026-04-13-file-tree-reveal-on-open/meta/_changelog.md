@@ -135,4 +135,20 @@ Append-only process history for this spec.
 
 **Unchanged decisions:** D1, D2, D3, D4, D5, D6, D7, D8 all intact.
 
+---
+
+## 2026-04-13 — Cascade sweep: §6 / §9 / §14 updated to match D9 amendment
+
+`/qa-plan` (Phase 6) flagged a non-blocking contradiction: §6 Requirements still listed the roving tabindex as a Must criterion even though D9 was amended. The amendment only updated §10 (Decision Log) and §15 (Future Work) — §6, §9, and §14 still reflected the original D9.
+
+**Cascade edits applied:**
+- **§6 Functional requirements:** Replaced the roving-tabindex row ("active row `tabIndex={0}`, others `-1`") with a row covering only the amended invariant: "Activation does not steal keyboard focus." The `aria-current="page"` row is unchanged.
+- **§6 Non-functional requirements — Accessibility:** Removed "Roving tabindex" phrasing; reframed as "default Tab order for non-active rows; full WAI-ARIA Treeview is Future Work."
+- **§9 Proposed solution — Single change surface:** Dropped "`tabIndex` attribute threading"; kept `aria-current` attribute on the active row.
+- **§9 System design — D9 block:** Updated to say "active row has `aria-current='page'`; non-active rows use default Tab order."
+- **§13 Next actions:** Updated the a11y bullet.
+- **§14 Risks:** Tightened the focus-regression row — likelihood/impact both LOW; mitigation is default Tab order preservation.
+
+No code change in this cascade pass — SPEC text only. `qa-progress.json`'s contradiction note can be resolved by /qa noting the cascade in scenario audit.
+
 **Not committed yet:** All artifacts live in the worktree `../open-knowledge-spec-file-tree-reveal` on branch `spec/file-tree-reveal-on-open`. User to review and commit.

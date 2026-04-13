@@ -88,7 +88,7 @@ All converge through one hash-change listener in `App.tsx`, which calls `openDoc
 | Must | On `activeDocName` change, all ancestor folders of the active doc's path are expanded. | Playwright: open `#/a/b/c.md` with sidebar collapsed → `a` and `a/b` folders show `aria-expanded="true"`; `c.md` row has `data-active`/`isActive` styling. | Entry-point agnostic. |
 | Must | Active row is scrolled into view if it is off-screen; no scroll if already visible. | `element.scrollIntoView({ block: 'nearest' })` called on every activation; `'nearest'` is a native no-op when fully in view. | Per D2, D7. Plain scroll — no `behavior` override (matches sibling components; honors `prefers-reduced-motion` implicitly by not introducing animation). |
 | Must | Active file row has `aria-current="page"`. Only the active row carries this attribute at any time. | DOM inspection: exactly one element with `aria-current="page"` in the sidebar; it matches `activeDocName`. | Per D9. |
-| Must | Sidebar tree uses roving tabindex: the active row is `tabIndex={0}` (tab stop); all other rows are `tabIndex={-1}`. Activation does not steal focus. | Tab into sidebar → focus lands on active row. Navigating via graph/URL does not move focus from the editor. | Per D9. |
+| Must | Activation does not steal keyboard focus. | Focus the editor; activate a doc via graph/URL/wikilink; `document.activeElement` remains in the editor (does not move to any sidebar row). | Per D9 (amended — full WAI-ARIA Treeview keyboard nav is Future Work; default Tab order is accepted for non-active rows). |
 | Must | Reveal fires for every entry point that changes `activeDocName`. | Unit test enumerates: sidebar click, graph click, post-rename, backlinks click, wikilink click, direct URL load, hashchange. | Hooks off `activeDocName`, not per-entry-point. |
 | Must | Manual folder toggles still work; user can collapse any folder. | Click chevron/row on folder → collapses; click again → expands. Independent of active doc. | Per D1 (1A): activation overrides prior manual collapse once, but subsequent manual toggle is honored until next activation. |
 | Must | Reveal does not fire on initial mount for `activeDocName=null` (no doc open). | No scroll, no expansion. | |
@@ -100,7 +100,7 @@ All converge through one hash-change listener in `App.tsx`, which calls `openDoc
 
 - **Performance:** Ancestor derivation runs in O(depth) on every render. Render-time intersection of `userExpanded`/`userCollapsed` with folder paths is O(folders), bounded by existing `buildTree` cost. No visible jank.
 - **Reliability:** Derived, not stored. Expansion is a function of `(activeDocName, userExpanded, userCollapsed, current tree)` at render time. No state-desync paths.
-- **Accessibility:** Respects `prefers-reduced-motion` implicitly (no animated scroll introduced). Active row has `aria-current="page"`. Roving tabindex — no focus theft on activation.
+- **Accessibility:** Respects `prefers-reduced-motion` implicitly (no animated scroll introduced). Active row has `aria-current="page"`. No focus theft on activation. Non-active rows use default Tab order (full WAI-ARIA Treeview keyboard navigation is Future Work).
 - **Security/privacy:** N/A — client-only UI.
 - **Operability:** No telemetry needed for v1. If users report reveal misbehaving, log the active doc + tree structure via existing console diagnostics.
 - **Cost:** Near zero — pure rendering, no network.
@@ -139,7 +139,7 @@ All converge through one hash-change listener in `App.tsx`, which calls `openDoc
 
 ### System design
 
-**Single change surface:** `packages/app/src/components/FileSidebar.tsx`. No server, API, schema, or other component touched. (Ref plumbing into `FileTreeNode` for the active-row scroll target, plus `aria-current` and `tabIndex` attribute threading.)
+**Single change surface:** `packages/app/src/components/FileSidebar.tsx`. No server, API, schema, or other component touched. (Ref plumbing into `FileTreeNode` for the active-row scroll target, plus `aria-current` attribute on the active row.)
 
 **Approach: derive expansion on render; store only user-toggle intent (D4 refined).**
 
@@ -170,7 +170,7 @@ Per D2 + D7 (scroll only when off-screen; no smooth override), `scrollIntoView({
 
 Per D3 (canonical only), ancestors are derived from `activeDocName` without consulting `aliasMap`.
 
-Per D9 (focus policy), the active row has `aria-current="page"` and `tabIndex={0}`; all other rows are `tabIndex={-1}`. Activation does not call `.focus()` — focus stays where the user's interaction originated (editor, graph, URL bar).
+Per D9 (focus policy, amended), the active row has `aria-current="page"`. Non-active rows use default Tab order. Activation does not call `.focus()` — focus stays where the user's interaction originated (editor, graph, URL bar).
 
 #### Affected routes / pages
 
@@ -246,7 +246,7 @@ Per D9 (focus policy), the active row has `aria-current="page"` and `tabIndex={0
   - Add `userExpanded`/`userCollapsed` state (Sets); `userCollapsed` clears on every `activeDocName` change.
   - Derive `expandedPaths` reactively on render (ancestors ∪ userExpanded \ userCollapsed, intersected with folderPaths).
   - Wire `useEffect(() => activeRowRef.current?.scrollIntoView({ block: 'nearest' }), [activeDocName])` — no `behavior` option (per D7).
-  - Set `aria-current="page"` on the active row; implement roving tabindex (per D9).
+  - Set `aria-current="page"` on the active row (per D9 amended; full WAI-ARIA Treeview deferred).
   - Thread `activeRowRef` through `FileTreeNode` as a prop; only the active row captures the ref.
   - Add unit tests for ancestor derivation, intersection filter, and D1 "userCollapsed clears on activation" behavior.
   - Add Playwright test for graph-click → reveal + URL-load → reveal + tab-focus lands on active row.
@@ -270,7 +270,7 @@ Per D9 (focus policy), the active row has `aria-current="page"` and `tabIndex={0
 | Reveal on initial mount scrolls the sidebar even when the user hasn't interacted | LOW | LOW | `scrollIntoView({ block: 'nearest' })` is a native no-op when the row is already visible. If the initial row is off-screen, scrolling to reveal is the intended behavior. | Andrew |
 | Stale `userExpanded`/`userCollapsed` entries after rename/delete | LOW | LOW | Render-time intersection with `folderPaths` filters stale entries (D4). Recreated folders render with default collapsed state. | Andrew |
 | Transitive ancestor rename (folder `a` → `a'` while `a/b/c.md` is active) | LOW | LOW | `handleRename` writes a new hash (`FileSidebar.tsx:320`) → `activeDocName` changes to `a'/b/c.md` → ancestors re-derive, scroll fires. | Andrew |
-| Focus-management regression in existing keyboard navigation through sidebar | LOW | MEDIUM | D9 roving tabindex is additive; existing tab-order into sidebar lands on first tab-stop, which is now the active row. Verified via Playwright keyboard test. | Andrew |
+| Focus-management regression in existing keyboard navigation through sidebar | LOW | LOW | Default Tab order is preserved (per D9 amended); `aria-current` is additive. No focus steal on activation. | Andrew |
 
 ## 15) Future Work
 
