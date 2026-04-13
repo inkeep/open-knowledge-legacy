@@ -150,3 +150,23 @@ Bot review + Amy/Tim session produced 5 new decisions (D19-D23) and 3 new requir
 **Consider items accepted** (bot review 💭): FR10 INSTRUCTIONS include WHY rationale; tool-description tiering per FR12; A1 `mcp_instructions_version` bump for rollback communication.
 
 **Implementation status:** US-001 through US-004 committed on `implement/enriched-exec-mcp-surface` branch (deps, readShadowLog, shared enrichPath, migrate read_document/search); US-005 WIP stashed. With the spec updated, implementation will restart from clean state using the revised EnrichedMeta shape and FR20/FR21 additions.
+
+## 2026-04-14 R2 — PR #103 second review round (bot + human reviewers)
+
+Second-round review after commit 081abc2. Bot flagged 2 Major + 3 Minor + 3 Consider. All addressed:
+
+**Major fixes:**
+- **R2 🟠 #1 (dep direction):** D22/FR20 revised — shadow-repo layout helpers move from `packages/server/` to `packages/core/src/shadow-repo-layout.ts` (new file). Rationale: CLI has server as devDependency, not runtime — placing the shared utilities in server would create a runtime dep direction concern at publish time. Core is the neutral location (already a workspace dep of both CLI and server; no node-server-specific deps). DEP-1 scope updated accordingly: new core file, one-line import swap in server, CLI consumer.
+- **R2 🟠 #2 (binary/image):** NG8 added — binary/image resources via `exec` explicitly scoped out. Text/markdown only; binary retrieval uses native `Read` or a future `resource_read` tool. Amy's PR review comment converted to durable NG entry.
+
+**Minor fixes:**
+- **R2 🟡 STOP_IF:** stale `/api/shadow-log` reference in `exec` PR STOP_IF corrected to `readShadowLog` helper + core `shadow-repo-layout`.
+- **R2 🟡 ASK_FIRST:** stale `D6 Liberal` + `L2-lite` references corrected to `D15 Conservative-plus` + `L2-aggressive`.
+- **R2 🟡 D8 regex:** path-extraction fallback broadened from `\b[\w./-]+\.md\b` to `\b[\w./-]+\.(md|mdx)\b` to cover `.mdx` content. Non-wiki extensions (`.txt`, `.json`) intentionally excluded.
+
+**Consider items accepted:**
+- **R2 💭 isAgent null semantics:** ShadowCommit shape comment clarifies `null` = "cannot be classified (legacy commits, external git operations outside OK); agents should treat as indeterminate."
+- **R2 💭 `@vercel/just-bash` vs `just-bash`:** architecture diagram and 3P deps list standardized on `just-bash` (actual npm name; `@vercel/just-bash` never existed as a published package).
+- **R2 💭 `message` vs `subject`:** kept `message` (more natural for commit payloads; spec-wide); old `GitLogEntry.subject` belongs to the deleted code path so no consistency pressure.
+
+**Status:** spec ready for re-review. Implementation restart still pending — the 4 committed impl commits (US-001..US-004) + stashed US-005 need to be reset and redone against the fully-revised spec (new EnrichedMeta shape, FR20 core-location, NG8, FR21 mtime-scan).
