@@ -9,26 +9,13 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
+import { isProcessAlive } from './process-alive.ts';
 
 export interface LockMetadata {
   pid: number;
   hostname: string;
   startedAt: string;
   worktreeRoot: string;
-}
-
-/** Check whether a process with the given pid is still alive. */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    // EPERM means the process exists but we lack permission to signal it
-    if (err && typeof err === 'object' && 'code' in err && err.code === 'EPERM') {
-      return true;
-    }
-    return false;
-  }
 }
 
 /**
@@ -52,9 +39,8 @@ export function acquireLock(shadowDir: string, worktreeRoot: string): string {
 
     if (existing) {
       const sameHost = existing.hostname === hostname();
-      // Same process re-acquiring — idempotent
       if (sameHost && existing.pid === process.pid) {
-        // Update the lock metadata (e.g. worktreeRoot may differ)
+        // Same process re-acquiring — idempotent, fall through to rewrite
       } else if (sameHost && isProcessAlive(existing.pid)) {
         throw new Error(
           `Shadow repo at ${shadowDir} is locked by another writer ` +
@@ -62,11 +48,11 @@ export function acquireLock(shadowDir: string, worktreeRoot: string): string {
             `started=${existing.startedAt}). ` +
             `Only one active writer instance may mutate a given shadow root at a time.`,
         );
+      } else {
+        console.warn(
+          `[shadow-lock] Stale lock detected (pid=${existing.pid}, host=${existing.hostname}) — replacing`,
+        );
       }
-      // Owner is dead or on a different host — stale lock
-      console.warn(
-        `[shadow-lock] Stale lock detected (pid=${existing.pid}, host=${existing.hostname}) — replacing`,
-      );
     }
   }
 
