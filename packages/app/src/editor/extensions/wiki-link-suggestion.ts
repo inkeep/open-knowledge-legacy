@@ -243,6 +243,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
       const posState: SuggestionPositionState = { popup: null, stopAutoUpdate: null };
 
       let doPosition: (() => void) | null = null;
+      let reveal: (() => void) | null = null;
 
       const onSelect = (item: WikiLinkSuggestionItem) => {
         currentProps?.command(item);
@@ -305,6 +306,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           const result = createSuggestionPopup(() => currentProps, 'wiki-link-suggestion');
           posState.popup = result.popup;
           doPosition = result.doPosition;
+          reveal = result.reveal;
 
           renderer = new ReactRenderer(WikiLinkSuggestionMenu, {
             props: computeMenuProps(props, true, onSelect),
@@ -312,7 +314,9 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           });
           result.popup.appendChild(renderer.element);
           // startAutoUpdate after content is in popup — autoUpdate fires
-          // doPosition synchronously on setup
+          // doPosition synchronously on setup. Popup remains visibility:hidden
+          // until reveal() is called in onStart (after items load) — this
+          // prevents the loading-state flash at the wrong position.
           posState.stopAutoUpdate = result.startAutoUpdate();
         },
 
@@ -330,7 +334,11 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           currentProps = props;
           selectedIndex = 0;
           rerender(null);
-          doPosition?.();
+          // Items have loaded — reveal the popup. reveal() triggers a
+          // doPosition pass that measures the populated content (so flip()
+          // correctly decides above/below), then unhides on resolution.
+          // No separate doPosition call needed — reveal() does it.
+          reveal?.();
         },
 
         onUpdate(props: SuggestionProps<WikiLinkSuggestionItem>) {
@@ -375,6 +383,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           // Positioning cleanup first (stop autoUpdate → remove popup DOM)
           destroySuggestionPopup(posState);
           doPosition = null;
+          reveal = null;
           // React cleanup last — if destroy() throws, DOM is already clean
           renderer?.destroy();
           renderer = null;
