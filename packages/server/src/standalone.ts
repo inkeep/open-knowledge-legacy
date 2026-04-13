@@ -213,6 +213,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           void backlinkIndex.saveToDisk().catch((err) => {
             console.warn(`[backlinks] Failed to persist create for ${event.docName}:`, err);
           });
+          cc1Broadcaster.signal('files');
           break;
         }
 
@@ -340,6 +341,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk().catch((err) => {
               console.warn(`[backlinks] Failed to persist closed-doc delete for ${docName}:`, err);
             });
+            cc1Broadcaster.signal('files');
             return;
           }
 
@@ -377,6 +379,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
           await hocuspocus.unloadDocument(document);
+          cc1Broadcaster.signal('files');
           break;
         }
 
@@ -401,6 +404,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
 
           log.info({ oldDocName, newDocName }, `[reconcile] rename: ${oldDocName} → ${newDocName}`);
+          cc1Broadcaster.signal('files');
           break;
         }
 
