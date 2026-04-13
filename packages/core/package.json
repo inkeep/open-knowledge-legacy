@@ -7,6 +7,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./shadow-repo-layout": {
+      "types": "./src/shadow-repo-layout.ts",
+      "default": "./src/shadow-repo-layout.ts"
     }
   },
   "dependencies": {

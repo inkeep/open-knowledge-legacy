@@ -16,7 +16,7 @@ import {
   getWipRefPattern,
   parseWriterId,
   type WriterClassification,
-} from '@inkeep/open-knowledge-core';
+} from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit, { type SimpleGit } from 'simple-git';
 
 export interface ShadowCommit {

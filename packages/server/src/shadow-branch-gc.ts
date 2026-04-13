@@ -9,7 +9,7 @@
  * - Branch rename: if old branch disappears and new branch has same HEAD SHA, migrate refs
  */
 
-import { parseWriterId } from '@inkeep/open-knowledge-core';
+import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';

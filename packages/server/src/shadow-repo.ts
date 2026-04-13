@@ -12,7 +12,7 @@
 
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { resolveShadowDir } from '@inkeep/open-knowledge-core';
+import { resolveShadowDir } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import { acquireLock, releaseLock } from './shadow-lock.ts';
 
