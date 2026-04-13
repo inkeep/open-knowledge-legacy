@@ -1,6 +1,41 @@
+import { Maximize2, Minimize2 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-force-graph-2d';
+
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
+
+function getFullscreenElement(): Element | null {
+  return (
+    document.fullscreenElement ??
+    (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ??
+    null
+  );
+}
+
+async function toggleGraphFullscreen(root: HTMLElement | null): Promise<void> {
+  if (!root) return;
+  try {
+    if (getFullscreenElement()) {
+      if (document.exitFullscreen) {
+        await document.exitFullscreen();
+      } else {
+        await (
+          document as Document & { webkitExitFullscreen?: () => Promise<void> }
+        ).webkitExitFullscreen?.();
+      }
+    } else if (root.requestFullscreen) {
+      await root.requestFullscreen();
+    } else {
+      await (
+        root as HTMLElement & { webkitRequestFullscreen?: () => Promise<void> }
+      ).webkitRequestFullscreen?.();
+    }
+  } catch {
+    // User gesture / permission / unsupported
+  }
+}
 
 interface GraphNode {
   id: string;
@@ -40,10 +75,26 @@ export function GraphView({
   const lastSigRef = useRef({ nodes: '', links: '' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const sectionRef = useRef<HTMLElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<ForceGraphMethods<NodeObject<GraphNode>> | undefined>(undefined);
   const [dimensions, setDimensions] = useState({ width: 320, height: 400 });
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const { resolvedTheme } = useTheme();
+
+  useEffect(() => {
+    const sync = () => {
+      const el = sectionRef.current;
+      if (!el) return;
+      setIsFullscreen(getFullscreenElement() === el);
+    };
+    document.addEventListener('fullscreenchange', sync);
+    document.addEventListener('webkitfullscreenchange', sync);
+    return () => {
+      document.removeEventListener('fullscreenchange', sync);
+      document.removeEventListener('webkitfullscreenchange', sync);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,14 +165,33 @@ export function GraphView({
   const labelColor = isDark ? '#f3f4f6' : '#111827';
 
   return (
-    <section className={`flex h-full min-h-0 flex-col ${className}`}>
-      <div className="border-b border-border/60 px-4 py-4">
-        <h2 className="text-sm font-semibold tracking-tight text-foreground">Graph</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {loading
-            ? 'Loading…'
-            : `${graphData.nodes.length} ${graphData.nodes.length === 1 ? 'page' : 'pages'}, ${graphData.links.length} ${graphData.links.length === 1 ? 'link' : 'links'}`}
-        </p>
+    <section
+      ref={sectionRef}
+      className={cn(
+        'flex h-full min-h-0 flex-col bg-background',
+        isFullscreen && 'min-h-[100dvh]',
+        className,
+      )}
+    >
+      <div className="flex shrink-0 items-start justify-between gap-2 border-b border-border/60 px-4 py-4">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold tracking-tight text-foreground">Graph</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {loading
+              ? 'Loading…'
+              : `${graphData.nodes.length} ${graphData.nodes.length === 1 ? 'page' : 'pages'}, ${graphData.links.length} ${graphData.links.length === 1 ? 'link' : 'links'}`}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0"
+          aria-label={isFullscreen ? 'Exit fullscreen' : 'Full screen graph'}
+          onClick={() => void toggleGraphFullscreen(sectionRef.current)}
+        >
+          {isFullscreen ? <Minimize2 /> : <Maximize2 />}
+        </Button>
       </div>
       <div ref={containerRef} className="min-h-0 flex-1 overflow-hidden">
         {error ? (
@@ -131,43 +201,49 @@ export function GraphView({
             No links yet. Add {'[[wikilinks]]'} to build a graph.
           </p>
         ) : (
-          <ForceGraph2D
-            ref={fgRef}
-            graphData={graphData}
-            cooldownTicks={150}
-            onEngineStop={() => fgRef.current?.pauseAnimation()}
-            width={dimensions.width}
-            height={dimensions.height}
-            backgroundColor={bgColor}
-            nodeId="id"
-            nodeLabel="label"
-            nodeRelSize={4}
-            nodeColor={(node: NodeObject<GraphNode>) =>
-              node.id === activeDocName ? activeNodeColor : defaultNodeColor
-            }
-            nodeCanvasObjectMode={() => 'after'}
-            nodeCanvasObject={(
-              node: NodeObject<GraphNode>,
-              ctx: CanvasRenderingContext2D,
-              globalScale: number,
-            ) => {
-              if (globalScale < 1.8 || !node.x || !node.y) return;
-              const label = node.label ?? node.id ?? '';
-              const fontSize = 10 / globalScale;
-              ctx.font = `${fontSize}px system-ui, sans-serif`;
-              ctx.fillStyle = labelColor;
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'top';
-              ctx.fillText(label, node.x, node.y + 5);
-            }}
-            linkColor={() => edgeColor}
-            linkDirectionalArrowLength={3}
-            linkDirectionalArrowRelPos={1}
-            linkWidth={1}
-            onNodeClick={(node: NodeObject<GraphNode>) => {
-              if (node.id) window.location.hash = `#/${node.id}`;
-            }}
-          />
+          <div
+            className="h-full min-h-0"
+            role="img"
+            aria-label="Graph visualization of document links"
+          >
+            <ForceGraph2D
+              ref={fgRef}
+              graphData={graphData}
+              cooldownTicks={150}
+              onEngineStop={() => fgRef.current?.pauseAnimation()}
+              width={dimensions.width}
+              height={dimensions.height}
+              backgroundColor={bgColor}
+              nodeId="id"
+              nodeLabel="label"
+              nodeRelSize={4}
+              nodeColor={(node: NodeObject<GraphNode>) =>
+                node.id === activeDocName ? activeNodeColor : defaultNodeColor
+              }
+              nodeCanvasObjectMode={() => 'after'}
+              nodeCanvasObject={(
+                node: NodeObject<GraphNode>,
+                ctx: CanvasRenderingContext2D,
+                globalScale: number,
+              ) => {
+                if (globalScale < 1.8 || !node.x || !node.y) return;
+                const label = node.label ?? node.id ?? '';
+                const fontSize = 10 / globalScale;
+                ctx.font = `${fontSize}px system-ui, sans-serif`;
+                ctx.fillStyle = labelColor;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'top';
+                ctx.fillText(label, node.x, node.y + 5);
+              }}
+              linkColor={() => edgeColor}
+              linkDirectionalArrowLength={3}
+              linkDirectionalArrowRelPos={1}
+              linkWidth={1}
+              onNodeClick={(node: NodeObject<GraphNode>) => {
+                if (node.id) window.location.hash = `#/${node.id}`;
+              }}
+            />
+          </div>
         )}
       </div>
     </section>

@@ -1,9 +1,12 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
-import { GraphView } from '@/components/GraphView';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
+
+const GraphView = lazy(() =>
+  import('@/components/GraphView').then((m) => ({ default: m.GraphView })),
+);
 
 interface EditorAreaProps {
   isSourceMode: boolean;
@@ -44,9 +47,11 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
         </div>
       </div>
       <aside className="hidden w-80 shrink-0 border-l border-border/60 bg-muted/20 lg:flex lg:flex-col">
-        <div className="flex shrink-0 border-b border-border/60">
+        <div className="flex shrink-0 border-b border-border/60" role="tablist">
           <button
             type="button"
+            role="tab"
+            aria-selected={sidebarTab === 'backlinks'}
             onClick={() => setSidebarTab('backlinks')}
             className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
               sidebarTab === 'backlinks'
@@ -58,6 +63,8 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={sidebarTab === 'graph'}
             onClick={() => setSidebarTab('graph')}
             className={`flex-1 px-3 py-2 text-xs font-medium transition-colors ${
               sidebarTab === 'graph'
@@ -72,7 +79,11 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
           {sidebarTab === 'backlinks' ? (
             <BacklinksPanel docName={activeDocName} />
           ) : (
-            <GraphView activeDocName={activeDocName} />
+            <Suspense
+              fallback={<div className="p-4 text-sm text-muted-foreground">Loading graph…</div>}
+            >
+              <GraphView activeDocName={activeDocName} />
+            </Suspense>
           )}
         </div>
       </aside>
