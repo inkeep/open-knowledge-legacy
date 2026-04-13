@@ -496,7 +496,7 @@ md`).
 
 **Owners.** **Andrew** (server-side push broadcast — the CC1 infrastructure, file-watcher-to-awareness plumbing). **Dima** (client-side sidebar subscriber — sidebar event handler, tree patch on events). Andrew sets the push contract; Dima consumes. Pattern is reusable: Mike's V0-3 (BacklinksPanel) and V0-11 (graph panels) adopt the same contract.
 
-**Status.** Spec drafted with 5 OQs unresolved (TQ2). Not started. 
+**Status.** Spec finalized (`specs/2026-04-13-v0-2-sidebar-push/SPEC.md`, all 9 OQs closed). **Server-side primitive shipped (PR #106)** — `CC1Broadcaster`, `__system__` direct connection at startup, `isSystemDoc()` skip surface across 8 subsystems, reserved-name policy, L1 integration test. Client-side consumer (ProviderPool pin, `main.tsx` mount, `FileSidebar` subscriber, L2 Playwright) deferred to follow-up PR (Dima). 
 
 ---
 
@@ -989,7 +989,7 @@ P0 = must resolve before this story can move to spec. P2 = explicitly deferred w
 These thread through multiple stories. Each is a constraint or shared infrastructure, not a story itself.
 
 ### CC1: Push-over-awareness pattern (V0-2, V0-3, future panels)
-The file watcher emits `DiskEvent` (create/update/delete/rename); the backlink index updates on persistence-store. Both today force consumers to poll because there's no client-facing push channel. Establish the pattern in V0-2 (sidebar): use the existing Hocuspocus awareness channel with a dedicated "system" sub-state, signal-then-fetch (not push-the-data), idempotent under rapid changes. V0-3 (BacklinksPanel) adopts the same pattern — whichever ships first defines the contract; the second consumes it. Future panels (V0-11 graph panels, future tag browser) inherit.
+Server-side primitive shipped in V0-2 (PR #106). Transport: dedicated `__system__` Y.Doc, pre-materialized at startup via `hocuspocus.openDirectConnection('__system__')`; clients subscribe via `ProviderPool`. Contract v1 is a **pure signal** — `{v:1, ch:string, seq:number}` — carrying no event kind, no path, no docName. Clients respond by re-fetching the channel's canonical REST endpoint. Server coalesces bursts via 100 ms trailing-edge debounce. Channels are owned by their emitters: `ch:'files'` fires on create/delete/rename DiskEvents; V0-3 will emit `ch:'backlinks'` from `persistence.ts`'s backlink-index update path; V0-11 inherits for graph panels. Every subsystem that keys off `documentName` must call `isSystemDoc()` at entry (enforced by L1 integration test). Reference: `packages/server/README.md`, `specs/2026-04-13-v0-2-sidebar-push/SPEC.md` §9-10.
 
 ### CC2: Dual UI + MCP surface for file operations (V0-4, V0-5)
 Every file operation (delete, move, duplicate, new folder, rename) needs a backend API consumed by BOTH a React UI (sidebar context menu) AND an MCP tool (agent-callable). Backend API is shared; consistent path validation (reuses safe-path utilities), consistent error shapes, consistent response formats. If V0-4 ships UI-only, V0-5 will follow the precedent — and every future file-related agent capability fragments. Owner: V0-4 spec author sets the pattern.

@@ -1,6 +1,6 @@
 # V0-2: Push-based real-time sidebar updates — Spec
 
-**Status:** Approved — ready for /ship
+**Status:** Server-side shipped (PR #106, commit range `2d49759..4ea9adb`: US-001/002/003/004/005/006/008). Client-side consumer (ProviderPool pin, `main.tsx` mount, `FileSidebar` subscriber, Playwright L2) deferred to follow-up PR (owner: Dima).
 **Owner(s):** Andrew (server-side push contract — CC1 infrastructure), Dima (client-side sidebar subscriber)
 **Last updated:** 2026-04-13
 **Baseline commit:** 2fa8b91 (finalized 2026-04-13 after audit + challenge + reopen resolution)
