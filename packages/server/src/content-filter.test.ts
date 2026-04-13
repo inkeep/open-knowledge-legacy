@@ -294,6 +294,44 @@ describe('ContentFilter', () => {
     });
   });
 
+  describe('reserved system doc names', () => {
+    test('excludes __system__.md regardless of include patterns', () => {
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // Reserved system doc name is always excluded even though it matches **/*.md
+      expect(filter.isExcluded('__system__.md')).toBe(true);
+    });
+
+    test('excludes __system__.md even when include patterns match it explicitly', () => {
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md', '__system__.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('__system__.md')).toBe(true);
+    });
+
+    test('does not exclude files with __system__ in non-identity positions', () => {
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // Only the exact reserved docName ('__system__') is blocked — subfolders / lookalikes pass
+      expect(filter.isExcluded('notes/__system__-notes.md')).toBe(false);
+      expect(filter.isExcluded('docs/about-__system__.md')).toBe(false);
+    });
+  });
+
   describe('contentDir different from projectDir', () => {
     test('filter works when contentDir is a subdirectory of projectDir', () => {
       const contentDir = join(projectDir, 'content');

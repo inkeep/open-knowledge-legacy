@@ -25,7 +25,7 @@ import { join } from 'node:path';
 
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
-import { createServer } from '@inkeep/open-knowledge-server';
+import { createServer, type ServerInstance } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
@@ -55,6 +55,8 @@ export async function getFreePort(): Promise<number> {
 export interface TestServer {
   port: number;
   contentDir: string;
+  /** The underlying ServerInstance — exposes hocuspocus, sessionManager, cc1Broadcaster for direct-access tests. */
+  instance: ServerInstance;
   cleanup: () => Promise<void>;
 }
 
@@ -125,6 +127,7 @@ export async function createTestServer(): Promise<TestServer> {
   return {
     port,
     contentDir,
+    instance: srv,
     cleanup: async () => {
       await srv.destroy();
       wss.close();
