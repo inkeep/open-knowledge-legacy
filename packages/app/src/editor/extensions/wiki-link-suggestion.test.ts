@@ -5,6 +5,7 @@ import {
   buildSuggestionItems,
   type PageItem,
   parseQuery,
+  wikiLinkMatcher,
 } from './wiki-link-suggestion';
 
 const pages: PageItem[] = [
@@ -56,6 +57,15 @@ describe('parseQuery', () => {
 });
 
 describe('buildSuggestionItems', () => {
+  test('returns all pages (up to MAX_ITEMS) when query is empty', () => {
+    const items = buildSuggestionItems(pages, '');
+    expect(items).toEqual([
+      { kind: 'page', docName: 'test-doc', title: 'Test Document' },
+      { kind: 'page', docName: 'release-notes', title: 'Release Notes' },
+      { kind: 'page', docName: 'qa-source', title: 'QA Source File' },
+    ]);
+  });
+
   test('returns matching pages when results exist', () => {
     expect(buildSuggestionItems(pages, 'test')).toEqual([
       {
@@ -143,5 +153,66 @@ describe('buildAnchorItems', () => {
     expect(buildAnchorItems('my-doc', single, '')).toEqual([
       { kind: 'anchor', docName: 'my-doc', level: 4, text: 'Deep Section', slug: 'deep-section' },
     ]);
+  });
+});
+
+describe('wikiLinkMatcher', () => {
+  /** Stub that satisfies the subset of ResolvedPos used by wikiLinkMatcher. */
+  function stubPosition(textBefore: string, blockStart: number) {
+    const cursorPos = blockStart + textBefore.length;
+    return {
+      $position: {
+        parent: {
+          textBetween: () => textBefore,
+        },
+        parentOffset: textBefore.length,
+        start: () => blockStart,
+        pos: cursorPos,
+      },
+    };
+  }
+
+  test('matches [[ at start of block', () => {
+    const result = wikiLinkMatcher(stubPosition('[[', 1) as never);
+    expect(result).toEqual({
+      range: { from: 1, to: 3 },
+      query: '',
+      text: '[[',
+    });
+  });
+
+  test('matches [[ with query text', () => {
+    const result = wikiLinkMatcher(stubPosition('[[release-notes', 1) as never);
+    expect(result).toEqual({
+      range: { from: 1, to: 16 },
+      query: 'release-notes',
+      text: '[[release-notes',
+    });
+  });
+
+  test('matches [[ with anchor query (# included in query)', () => {
+    const result = wikiLinkMatcher(stubPosition('[[page#heading', 1) as never);
+    expect(result).toEqual({
+      range: { from: 1, to: 15 },
+      query: 'page#heading',
+      text: '[[page#heading',
+    });
+  });
+
+  test('matches [[ after preceding text', () => {
+    const result = wikiLinkMatcher(stubPosition('some text [[foo', 1) as never);
+    expect(result).toEqual({
+      range: { from: 11, to: 16 },
+      query: 'foo',
+      text: '[[foo',
+    });
+  });
+
+  test('returns null when no [[ found', () => {
+    expect(wikiLinkMatcher(stubPosition('no brackets here', 1) as never)).toBeNull();
+  });
+
+  test('returns null when ] appears after [[ (closed bracket)', () => {
+    expect(wikiLinkMatcher(stubPosition('[[done]', 1) as never)).toBeNull();
   });
 });

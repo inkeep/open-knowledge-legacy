@@ -1,7 +1,7 @@
 /**
  * App-specific WikiLink extension — extends core with a React NodeView so
  * wiki-links render as inline chips in the browser editor, plus a [[ suggestion
- * popup for autocompleting page names.
+ * popup for autocompleting page names and section headings (anchor mode via #).
  */
 import { WikiLink as BaseWikiLink } from '@inkeep/open-knowledge-core';
 import { ReactNodeViewRenderer } from '@tiptap/react';
@@ -10,7 +10,8 @@ import { configureWikiLinkSuggestion, wikiLinkSuggestionKey } from './wiki-link-
 
 export const WikiLink = BaseWikiLink.extend({
   // Higher priority ensures the suggestion plugin's handleKeyDown fires before
-  // TipTap's base keymap (Enter → split block), so Enter completes a suggestion.
+  // TipTap's base keymap (Enter → split block, Backspace → joinBackward), so
+  // Enter completes a suggestion and Backspace/Delete can target adjacent atoms.
   priority: 200,
 
   addNodeView() {

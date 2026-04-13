@@ -55,7 +55,7 @@ export function WikiLinkSuggestionMenu({
         role="status"
         aria-live="polite"
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
-        style={{ maxHeight: 'var(--suggestion-menu-max-height, 20rem)' }}
+        style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
         onMouseDown={preventFocusSteal}
       >
         {mode === 'anchor' ? `Loading headings for ${pageTarget}…` : 'Loading pages…'}
@@ -80,7 +80,7 @@ export function WikiLinkSuggestionMenu({
         role="status"
         aria-live="polite"
         className="w-64 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
-        style={{ maxHeight: 'var(--suggestion-menu-max-height, 20rem)' }}
+        style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
         onMouseDown={preventFocusSteal}
       >
         {emptyMsg}
@@ -97,7 +97,7 @@ export function WikiLinkSuggestionMenu({
       tabIndex={-1}
       onMouseDown={preventFocusSteal}
       className="w-64 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
-      style={{ maxHeight: 'var(--suggestion-menu-max-height, 20rem)' }}
+      style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
     >
       {error && (
         <div className="rounded-md px-2 py-1.5 text-xs text-amber-700 dark:text-amber-300">

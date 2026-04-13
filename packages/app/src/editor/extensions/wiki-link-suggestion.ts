@@ -130,7 +130,8 @@ export async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
 /**
  * Returns a `@tiptap/suggestion` plugin for wiki-link `[[` autocompletion.
  * Replaces the former hand-rolled ProseMirror Plugin with the same Suggestion
- * lifecycle used by slash commands (PR #51).
+ * framework used by slash commands (PR #51), plus `onBeforeStart` and
+ * `onBeforeUpdate` hooks for per-mode async loading labels.
  */
 export function configureWikiLinkSuggestion(editor: Editor) {
   // Mutable closure state — reset in onExit for behavioral parity
@@ -140,6 +141,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
   let cachedHeadings = new Map<string, HeadingEntry[]>();
   let anchorFetchingFor: string | null = null;
   let fetchError: string | null = null;
+  let anchorFetchError: string | null = null;
 
   return Suggestion<WikiLinkSuggestionItem>({
     editor,
@@ -157,9 +159,11 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           try {
             const headings = await fetchHeadings(pageTarget);
             cachedHeadings.set(pageTarget, headings);
+            anchorFetchError = null;
           } catch (err) {
             console.error('[wiki-link-suggestion] Failed to fetch headings:', err);
             cachedHeadings.set(pageTarget, []);
+            anchorFetchError = `Failed to load headings for ${pageTarget}.`;
           } finally {
             anchorFetchingFor = null;
           }
@@ -274,7 +278,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           selectedIndex,
           onSelect: onSelectCb,
           loading,
-          error: mode === 'page' ? fetchError : null,
+          error: mode === 'page' ? fetchError : anchorFetchError,
           mode,
           pageTarget,
           anchorQuery,
@@ -389,10 +393,12 @@ export function configureWikiLinkSuggestion(editor: Editor) {
         },
 
         onExit() {
+          // Clean up positioning first (must run even if renderer.destroy throws)
           stopAutoUpdate?.();
           stopAutoUpdate = null;
           popup?.remove();
           popup = null;
+          // React cleanup last — if destroy() throws, DOM is already clean
           renderer?.destroy();
           renderer = null;
           currentProps = null;
@@ -401,6 +407,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           cachedPages = [];
           cachedHeadings = new Map();
           fetchError = null;
+          anchorFetchError = null;
           pagesLoaded = false;
           pagesFetching = false;
           anchorFetchingFor = null;
