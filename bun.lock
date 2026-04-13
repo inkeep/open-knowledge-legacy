@@ -96,6 +96,7 @@
         "typescript": "^5.9.3",
         "vite": "^8.0.0",
         "ws": "^8.20.0",
+        "yaml": "^2.8.3",
       },
     },
     "packages/cli": {
@@ -117,10 +118,8 @@
         "zod": "^4.3.6",
       },
       "devDependencies": {
-        "@inkeep/open-knowledge-core": "workspace:*",
         "@inkeep/open-knowledge-server": "workspace:*",
         "@types/node": "^22.16.0",
-        "open-knowledge-app": "workspace:*",
         "tsdown": "^0.21.7",
         "typescript": "^5.9.3",
       },

@@ -61,6 +61,7 @@
     "yjs": "^13.6.30"
   },
   "devDependencies": {
+    "yaml": "^2.8.3",
     "ws": "^8.20.0",
     "@biomejs/biome": "^2.4.10",
     "@hocuspocus/server": "4.0.0-rc.1",
