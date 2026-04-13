@@ -1,12 +1,13 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-12 by `generate-catalogue.ts`
-> 68 valid reports indexed
+> Auto-generated on 2026-04-13 by `generate-catalogue.ts`
+> 69 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md) | 2026-04-13 | 9 files | git-backed CMS architecture, markd… | TinaCMS, SSW, isomorphic-git, Plat… |
 | [Backlinks, Typed Links, and UX Patterns: Landscape Acr…](backlinks-typed-links-and-ux-landscape/REPORT.md) | 2026-04-12 | 8 files | typed links, transclusion, backlin… | Roam Research, Org-roam, TiddlyWik… |
 | [Markdown Construct Fidelity Catalog: 118-Case Test Tar…](markdown-construct-fidelity-catalog/REPORT.md) | 2026-04-11 | 6 files | markdown round-trip fidelity, bidi… | @tiptap/markdown, @tiptap/core, @t… |
 | [Electron Desktop App Operations: Versioning, Signing, …](electron-desktop-app-operations-2025/REPORT.md) | 2026-04-11 | 5 files | electron operations, desktop app r… | Electron, electron-builder, electr… |
@@ -79,6 +80,16 @@
 ---
 
 ## Report Details
+
+### [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md)
+
+> Deep dive into TinaCMS's operational architecture outside the MDX pipeline — git integration via the Bridge/GitProvider seam, unknown-component degradation and error UX, absent real-time collaboration, agent/MCP posture, and SSW-era trajectory. Focused on what 7 years of git-backed markdown editing…
+
+- **Created:** 2026-04-12
+- **Updated:** 2026-04-13
+- **Topics:** git-backed CMS architecture, markdown round-trip fidelity, unknown-component degradation, collaboration model, agent-native content authoring, MCP integration, OSS/commercial split, parser architecture, schema evolution, GraphQL mutation API
+- **Subjects:** TinaCMS, SSW, isomorphic-git, Plate, GitHub Contents API, Tina Cloud, Editorial Workflow
+- **Evidence files:** 9
 
 ### [Backlinks, Typed Links, and UX Patterns: Landscape Across 9 Tools](backlinks-typed-links-and-ux-landscape/REPORT.md)
 

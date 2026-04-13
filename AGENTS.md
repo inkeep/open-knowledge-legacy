@@ -54,6 +54,19 @@ bun run src/server/agent-sim.ts --markdown --rapid 5 # 5 markdown writes
 - TypeScript strict mode, `verbatimModuleSyntax: true`
 - Workspace deps use `"workspace:*"` in package.json
 
+### Architectural precedents (greenfield directive, 2026-04-13)
+
+These are patterns that ALL work in the repo should follow. Established during the collaboration-capabilities audit (`stories/collaboration-capabilities-audit/STORY.md §13`).
+
+1. **Typed transaction origins.** All Y.Doc transaction origins use `LocalTransactionOrigin` objects, never raw strings. One convention. Applies to: observer origin guards, agent-write origins, rollback origins, any future origin.
+2. **Generic primitives over specific ones.** Name primitives for extensibility: `safetyCheckpoint({ action, context })` not `emitPreRollbackSnapshot()`. The first caller is one use case; the primitive serves many.
+3. **Structured event schemas.** Activity-map entries carry `{ actor, timestamp, action: {kind, metadata}, visibility }` — any coarse collaborative action fits the shape. Don't grow ad-hoc fields.
+4. **Shared computation, per-surface rendering.** Logic that determines *what* to render (e.g., which lines to flash) lives in one shared module. Per-surface code (WYSIWYG decorations, CodeMirror decorations) only applies the result. Prevents divergence-by-copy-paste.
+5. **Contract-first MCP tools.** We define the MCP protocol; clients conform. Required parameters are required, not optional-with-fallback. Document the contract.
+6. **Mode state as enums.** Editor state machines use enums (`'wysiwyg' | 'source' | 'diff'`), not boolean flags that implicitly encode state. Booleans don't scale past 2 states.
+7. **Remove broken capabilities rather than shipping them.** A confidently-broken UI is worse than the absence of capability. If a feature scaffold is known to malfunction, remove it; don't ship it alongside the product.
+8. **Separate long-lived identity from short-lived session concerns.** Agent identity (who is this?) is long-lived — stable across conversations, derived from MCP connection primitives. Pass boundaries (what did they do in this burst?) are short-lived — derived from the product's own edit-history model (user-action-bounded grouping). Don't conflate them. See `stories/collaboration-capabilities-audit/ §14`.
+
 ### Resolving `bun.lock` merge conflicts
 
 `bun.lock` is a binary-ish file that cannot be merged textually. When rebasing or merging produces a conflict in `bun.lock`, do **not** attempt to hand-edit it. Instead:
