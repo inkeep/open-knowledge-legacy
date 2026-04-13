@@ -2,6 +2,12 @@
 
 **Last verified:** 2026-04-12
 
+> **Split notice (2026-04-12):** This story was originally shaped as two parts.
+> **Part A (onboarding)** is now owned by `projects/day-0-editor-completeness/PROJECT.md` as story **ED-4**.
+> **Part B (project switching)** remains here as a standalone story — a sibling bet, not within the day-0 editor completeness project.
+> The content below is preserved intact for traceability and as the source of truth for Part B.
+> Part A's canonical home is the project; this file retains it for the draft PR (#75) history.
+
 ---
 
 ## Part A — Web editor initialization and onboarding
