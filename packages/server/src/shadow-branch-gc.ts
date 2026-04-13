@@ -9,6 +9,7 @@
  * - Branch rename: if old branch disappears and new branch has same HEAD SHA, migrate refs
  */
 
+import { parseWriterId } from '@inkeep/open-knowledge-core';
 import simpleGit from 'simple-git';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
@@ -32,13 +33,16 @@ export interface GcResult {
 function extractBranchNames(refs: string[]): Set<string> {
   const branches = new Set<string>();
   for (const ref of refs) {
-    // Strip refs/wip/ prefix
+    // Strip refs/wip/ prefix, then split into branch + writerId at the last slash.
+    // The writer-id portion is classified via the core helper (D22/FR20) — any
+    // non-matching id is ignored (legacy refs from before this spec).
     const withoutPrefix = ref.replace(/^refs\/wip\//, '');
-    // Writer IDs match: human-*, agent-*, upstream, server
-    const writerMatch = withoutPrefix.match(/\/(human-[^/]+|agent-[^/]+|upstream|server)$/);
-    if (writerMatch) {
-      const branch = withoutPrefix.slice(0, withoutPrefix.length - writerMatch[0].length);
-      if (branch) branches.add(branch);
+    const lastSlash = withoutPrefix.lastIndexOf('/');
+    if (lastSlash <= 0) continue;
+    const branch = withoutPrefix.slice(0, lastSlash);
+    const writerId = withoutPrefix.slice(lastSlash + 1);
+    if (parseWriterId(writerId).classification !== 'unknown') {
+      branches.add(branch);
     }
   }
   return branches;

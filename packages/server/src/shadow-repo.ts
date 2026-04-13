@@ -10,8 +10,9 @@
  *   Standalone mode: .openknowledge/       (added to .gitignore)
  */
 
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { resolveShadowDir } from '@inkeep/open-knowledge-core';
 import simpleGit from 'simple-git';
 import { acquireLock, releaseLock } from './shadow-lock.ts';
 
@@ -57,18 +58,9 @@ export function shadowGit(shadow: ShadowHandle) {
  * - Standalone mode (no .git/):     creates .openknowledge/ and adds to .gitignore
  */
 export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle> {
-  const projectGitDir = resolve(projectRoot, '.git');
-  const hasProjectRepo = (() => {
-    try {
-      return statSync(projectGitDir).isDirectory();
-    } catch {
-      return false;
-    }
-  })();
-
-  const shadowDir = hasProjectRepo
-    ? resolve(projectGitDir, 'openknowledge')
-    : resolve(projectRoot, '.openknowledge');
+  // Path + mode resolution lives in @inkeep/open-knowledge-core so the CLI
+  // read path and this server write path use exactly the same rule (D22/FR20).
+  const { path: shadowDir, mode } = resolveShadowDir(projectRoot);
 
   // Skip init if already valid
   const alreadyInit = existsSync(resolve(shadowDir, 'HEAD'));
@@ -86,7 +78,7 @@ export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle>
   }
 
   // Standalone mode: ensure .openknowledge/ is in .gitignore
-  if (!hasProjectRepo) {
+  if (mode === 'standalone') {
     const gitignorePath = resolve(projectRoot, '.gitignore');
     const entry = '.openknowledge/';
     let content = '';
