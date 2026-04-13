@@ -25,8 +25,14 @@
     "release": "changeset publish"
   },
   "lint-staged": {
-    "*.{ts,tsx,js,jsx,json,md}": [
-      "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true"
+    "packages/**/*.{ts,tsx,js,jsx,json,md}": [
+      "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true --error-on-warnings"
+    ],
+    "docs/**/*.{ts,tsx,js,jsx,json,md}": [
+      "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true --error-on-warnings"
+    ],
+    "{package.json,turbo.json,tsconfig.json,biome.jsonc}": [
+      "biome check --write --no-errors-on-unmatched --files-ignore-unknown=true --error-on-warnings"
     ]
   },
   "devDependencies": {

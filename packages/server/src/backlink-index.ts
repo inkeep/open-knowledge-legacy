@@ -394,6 +394,25 @@ export class BacklinkIndex {
       .slice(0, limit);
   }
 
+  getLinkGraph(branch = this.activeBranch): {
+    nodes: string[];
+    links: Array<{ source: string; target: string }>;
+  } {
+    const state = this.getState(branch);
+    const nodeSet = new Set<string>();
+    const links: Array<{ source: string; target: string }> = [];
+
+    for (const [source, targets] of state.forward) {
+      nodeSet.add(source);
+      for (const target of targets) {
+        nodeSet.add(target);
+        links.push({ source, target });
+      }
+    }
+
+    return { nodes: [...nodeSet].sort(), links };
+  }
+
   async saveToDisk(branch = this.activeBranch): Promise<void> {
     const filePath = this.cachePath(branch);
     mkdirSync(dirname(filePath), { recursive: true });
