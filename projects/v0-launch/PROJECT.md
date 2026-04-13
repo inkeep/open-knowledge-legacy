@@ -40,7 +40,6 @@ Internal: closing the silent data-integrity bugs (V0-1 process safety, V0-12 slu
 - **[NOT NOW]** Electron native distribution. Already spec'd separately (`specs/2026-04-11-electron-desktop-app/`). v0 ships in CLI + web form. Promote: when Electron implementation begins (V0-20 desktop build prep is the gating story).
 - **[NOT NOW]** Multi-project switching (registry + `openknowledge list`/`open` + in-editor switcher). Cross-project navigation, separate bet. Lives as `stories/init-and-project-switching/` Part B. Promote: when v0 ships and users have multiple projects registered.
 - **[NOT NOW]** Tracked changes / inline suggestion mode (Google Docs-style green/red proposals). PROJECT.md PQ11 explicitly parked. Lives in a combined "agent-proposal review experience" design space with branching/draft UX (PQ9). Promote: dedicated design pass for the bundle.
-- **[NOT NOW]** Graph view (force-directed link visualization). Different surface from the panels in V0-11 (which surface existing API endpoints). Promote: post-v0 when graph data is rich enough to be useful.
 - **[NOT NOW]** Tags / tag browser, custom CSS, keyboard customization, font size adjustment. Parity-for-parity's-sake or low-leverage features.
 
 ## Provenance
@@ -51,12 +50,18 @@ This project consolidates four prior planning surfaces into a single source of t
 |--------|--------|------|-------------|
 | `projects/desktop-readiness/` (Andrew) | `chore/restore-scoped-reports` | Original "ship desktop-ready foundations" decomposition (5 stories) | Stories 1, 2a, 2b, 3, 5 absorbed; dark mode dropped (shipped via PR #60). Source PROJECT.md should be retired when chore branch lands. |
 | `projects/day-0-editor-completeness/` (this branch) | `worktree-stories+init-and-project-switching` | "Close day-0 editor gaps" decomposition (7 stories) | All 7 stories absorbed (ED-1 through ED-7). Source directory deleted as part of this consolidation. |
-| `stories/wiki-links-next/` (Mike) | `feat/backlinks-landscape-and-stories` | Wiki-link correctness + agent capability bundle (4 stories) | Stories 1, 3, 4 absorbed (slug correctness, managed rename + link rewrite, BacklinksPanel push). Story 2 (suggest_links MCP tool) absorbed as Later (agent capability, not user-blocking). Source bundle remains in Mike's PR #72 as the original framing; v0-launch is authoritative going forward. |
+| `stories/wiki-links-next/` (prepared for Mike as decision-maker) | `feat/backlinks-landscape-and-stories` (PR #72, authored by Nick) | Wiki-link correctness + agent capability bundle (4 stories) | Stories 1, 3, 4 absorbed (slug correctness, managed rename + link rewrite, BacklinksPanel push). Story 2 (suggest_links MCP tool) absorbed as Later (agent capability, not user-blocking). Source bundle remains in PR #72 as the original framing; v0-launch is authoritative going forward. |
 | `stories/collaboration-capabilities-audit/` (Miles) | `feat/backlinks-landscape-and-stories` | Decision brief covering Timeline (Area A), Per-origin Undo (Area B), Presence (Area C), Suggestions (Area D parked) | Areas A, B, C absorbed as V0-16, V0-14, V0-15. Area D stays parked (PQ11). Source brief remains as the deeper rationale + per-area detail. |
 
 **Why one master, not four bets:** the four surfaces have ~40% direct overlap (file rename appears in three of them; real-time sidebar pattern in two; first-run experience in two). Consolidating eliminates duplicate scoping work and gives the team one PROJECT.md to plan against.
 
-**Coordination footprint:** Mike's PR #72 (wiki-links-next) and Miles's PR #39 (Timeline) are in flight. This master should be reviewed alongside both PRs to ensure scoping is reflected back into their work. Andrew's `desktop-readiness` PROJECT.md on `chore/restore-scoped-reports` is unmerged — when that branch lands, the redundant directory should be removed in favor of this master.
+**Coordination footprint:** Three in-flight PRs intersect v0-launch:
+- **PR #72** (Nick, draft) carries the wiki-links-next bundle — stories prepared for Mike as decision-maker. Mike needs to confirm absorption of his stories (V0-3, V0-5, V0-12, V0-13).
+- **PR #39** (Miles, open) is V0-16 Timeline delivery. Miles owns; v0 framing is close-out.
+- **PR #76** (Mike, open) is V0-8 Graph View delivery. Mike owns; v0 framing is close-out.
+- **PR #41** (Sarah, open) is V0-6 image paste delivery. Sarah owns; v0 framing is close-out.
+
+This master should be reviewed alongside all four PRs to ensure scoping is reflected. Andrew's `desktop-readiness` PROJECT.md on `chore/restore-scoped-reports` is unmerged — when that branch lands, the redundant directory should be removed in favor of this master.
 
 ## Items table
 
@@ -90,7 +95,7 @@ P0 = must resolve before this story can move to spec. P2 = explicitly deferred w
 | TQ13 | Activity flash divergence: WYSIWYG flashes last/first 3 blocks; Source flashes all lines | Tech | P0 | **Open** | Miles's audit Area C. **Resolve in V0-15 spec** (verify behavior + reconcile divergence). |
 | TQ14 | Dynamic port injection point for Electron: where the preload bridge passes the utilityProcess port to the renderer | Tech | P0 | **Decided** | Directed. Andrew's Story 5. Use `window.__OK_WS_URL__` or preload-injected config. ProviderPool already accepts `wsUrl` override. Affects V0-20. |
 | TQ15 | CJS build target for `packages/server/`: tsdown or vite build --format cjs, entry standalone.ts | Tech | P0 | **Decided** | Directed. Andrew's Story 5. ESM remains default; CJS added as parallel output. Affects V0-20. |
-| XQ1 | Coordination with Mike's PR #72 for V0-5 (rename) and V0-12 (slug) absorption | Cross-cutting | P0 | **Open** | V0-5 absorbs Mike's Story 3 (rename + link rewrite); V0-12 absorbs Mike's Story 1 (slug). Mike to confirm scoping reflects in his PR or accept that v0-launch is authoritative going forward. |
+| XQ1 | Coordination with Mike on V0-3, V0-5, V0-8, V0-12, V0-13 (wiki-links bundle + graph view) | Cross-cutting | P0 | **Open** | Mike is the decision-maker for wiki-links prioritization (PR #72) AND the author of PR #76 (graph view, V0-8). v0-launch absorbs Stories 1 (V0-12), 3 (V0-5), 4 (V0-3), 2 (V0-13 Later) from his bundle + Graph view (V0-8) as in-flight close-out. Mike to confirm scoping reflects his intent. |
 | XQ2 | Coordination with Miles's PR #39 for V0-16 (Timeline close-out) | Cross-cutting | P0 | **Open** | Miles owns PR #39 delivery. V0-16 in this project = "close out PR #39 to land." Confirm with Miles that v0-launch including Timeline doesn't conflict with his ownership. |
 | XQ3 | Multi-user collaboration semantics on file ops: Alice deletes while Bob edits | Cross-cutting | P0 | **Assumed** | MEDIUM confidence. `standalone.ts:322-368` handles external delete via rescue buffer; rename path may need similar treatment. Verify by Playwright test in V0-4/V0-5 spec. |
 | XQ4 | Component composability for future Electron renderer | Cross-cutting | P2 | **Parked** | Components naturally reusable because Electron wraps React unchanged. Guardrail: avoid browser-only APIs (File System Access). |
@@ -125,19 +130,20 @@ PR #61 fixed graceful-shutdown data loss in `createServer().destroy()`. V0-1 add
 
 ---
 
-## Stories — Now (8 stories, 6-8 weeks)
+## Stories — Now (9 stories, 6-8 weeks)
 
-**Phasing rationale:** Risk-first + dependency-first + customer-journey-first. Now contains the things that block any external demo:
+**Phasing rationale:** Risk-first + dependency-first + customer-journey-first + in-flight-close-out. Now contains the things that block any external demo, plus the in-flight PRs that should land as part of the v0 push:
 - Process safety (V0-1): fixes existing data-corruption bug. Without this, dual-process collision silently corrupts content. **Risk-first.**
 - Real-time sidebar (V0-2): prerequisite for file ops UX (delete/rename feel broken with 5s polling staleness). **Dependency-first.**
 - File org ops (V0-4): table-stakes for any docs author. Today users can create files but not delete or move them. **Customer-journey-first.**
 - Image paste (V0-6): PR #41 in flight, near-shipped. Close-out, not full build. **In-flight close-out.**
 - Onboarding (V0-7): day-0 first impression. Empty state currently has no affordance. **Customer-journey-first.**
+- Graph view (V0-8): PR #76 in flight. Differentiation feature that rounds out the wiki-links shipping story. **In-flight close-out.**
 - Slug correctness (V0-12): one-way door. Every day delayed accumulates more vault content under the broken slug. **Risk-first.**
 - Per-origin undo basic (V0-14): users literally cannot Cmd+Z their own typo. Embarrassing day-0 bug. **Customer-journey-first.**
-- Timeline close-out (V0-16): PR #39 in flight, blocks server-bridge-hardening project. **In-flight close-out.**
+- Timeline close-out (V0-16): PR #39 in flight. **In-flight close-out.**
 
-Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), creates files (existing) and organizes them (V0-4), can undo their typos (V0-14), pastes screenshots (V0-6), trusts that data isn't silently corrupting (V0-1), sees real-time sidebar updates as the agent writes (V0-2), can recover from mistakes via Timeline (V0-16), and can use non-English titles without losing content (V0-12). That's a credible v0.
+Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), creates files (existing) and organizes them (V0-4), can undo their typos (V0-14), pastes screenshots (V0-6), sees their knowledge graph (V0-8), trusts that data isn't silently corrupting (V0-1), sees real-time sidebar updates as the agent writes (V0-2), can recover from mistakes via Timeline (V0-16), and can use non-English titles without losing content (V0-12). That's a credible v0.
 
 ---
 
@@ -253,6 +259,30 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 **Source.** ED-4 from day-0-editor-completeness (Part A of init-and-project-switching) + Andrew's Story 3 (consolidated). **Story-depth detail in `stories/V0-7-onboarding/STORY.md`.**
 
 **Status / owner signals.** Part A onboarding scoped in detail. Auto-init shipped (PR #57). Starter doc + session persistence not started. Estimate: 2 weeks (1.5 weeks UI + 0.5 week persistence after V0-1).
+
+---
+
+### V0-8: Graph view of links (close out PR #76)
+
+**What to build.** Force-directed graph visualization of the wiki-link structure. A `GraphView` React component (using `react-force-graph-2d`) consumes a new `GET /api/link-graph` endpoint backed by `BacklinkIndex.getLinkGraph()`. Nodes are docs; edges are `[[wiki-links]]`. Active document highlighted. Theme-aware (hooks into existing next-themes setup). Integrates into `EditorArea.tsx` as a panel or overlay.
+
+**Value.** Customer: writers see the shape of their knowledge graph visually — a differentiator vs plain-filesystem docs tools, a recognizable feature for Obsidian users evaluating OK. Platform: `/api/link-graph` + `getLinkGraph()` become the foundation for future graph-based features (future clustering, semantic overlays, agent navigation hints). Internal: rounds out the wiki-links shipping story — PR #71 shipped the graph data + panels for inline context; V0-11 surfaces list-form navigation; V0-8 surfaces visual-form exploration. Together they cover the three Obsidian-grade link UX modes.
+
+**Intersection with V0-11 (graph panels):** V0-11 (outline + forward + orphans + hubs) is list-form navigation — quick orientation. V0-8 (this story) is visual-form exploration — see connectedness. Different UI, shared backend data. Both consume the backlink index; neither supersedes the other. The panels answer "what's related to THIS doc"; the graph view answers "what does the whole knowledge base look like."
+
+**Constraints.**
+- Reuse existing `BacklinkIndex` forward map — no new data model.
+- Theme-aware via existing `next-themes` integration (dark mode already shipped PR #60).
+- Performance at scale: `react-force-graph-2d` must render acceptably for KBs up to ~5000 nodes. Verify during PR close-out; if performance is a blocker at realistic KB sizes, node/edge filtering (e.g., N-hop neighborhood around active doc) may be needed.
+- Must not introduce per-interaction server load — graph data fetched once per open; updates respond to awareness push from V0-2/V0-3 (or poll if those haven't shipped).
+
+**Lateral.** Pairs with V0-11 (graph panels) — complementary surfaces on the same backend. Pairs with V0-3 (BacklinksPanel push) — both are derived-view UIs that should adopt CC1 push-over-awareness pattern for live updates.
+
+**Forward.** Foundation for future graph-based features: clustering overlays, tag-colored nodes (if tags ship), semantic-similarity edges, agent navigation hints ("you're here; these clusters are related"). If search ships (separate bet), graph view could layer search results as a filter.
+
+**Source.** Mike's PR #76 (`feat/graph_view` — 296 additions, 2 deletions, 7 files changed). Previously carved out of v0-launch as "parity-for-parity's-sake"; reframed 2026-04-13 to include as v0 story since Mike is actively shipping and the differentiation argument holds.
+
+**Status / owner signals.** **PR #76 OPEN**, Mike authored. Remaining work: PR review, performance validation at realistic KB sizes, layout/placement decision in `EditorArea.tsx` (panel vs overlay vs separate view), accessibility pass (keyboard navigation for graph). Estimate: 1-2 weeks of close-out, mostly review + polish of existing PR.
 
 ---
 
@@ -570,6 +600,9 @@ V0-2 (real-time sidebar push) ─┬─→ V0-4 (file ops UX needs instant feedb
 
 V0-2 ↔ V0-3 (BacklinksPanel push) — CC1 pattern coordinator; first one defines contract
 
+V0-8 (graph view) ↔ V0-11 (graph panels) — complementary UIs on same BacklinkIndex data
+V0-8 — can adopt CC1 push-over-awareness for live updates once V0-2/V0-3 defines contract
+
 V0-4 (file ops) ─→ V0-5 (rename shares backend machinery + dual-surface pattern)
 
 V0-12 (slug) ─→ V0-13 (suggest_links — Unicode propagation)
@@ -597,15 +630,16 @@ Owner signals where they exist (in-flight PR author or original story author). W
 |-------|----------|---------------|------------------|--------|
 | V0-1 process safety | 1 wk | Andrew (story author) | Spec → impl | Not started, fully scoped |
 | V0-2 real-time sidebar | 2 wk | open | Spec resolves 5 OQs → impl | Spec drafted |
-| V0-3 BacklinksPanel push | 1 wk | Mike (story author) | Spec → impl | Mike's PR #72 includes story |
+| V0-3 BacklinksPanel push | 1 wk | Mike (story decision-maker) | Spec → impl | Source story in PR #72 bundle |
 | V0-4 file ops bundle | 2-3 wk | open | Spec → impl | Not started |
-| V0-5 rename + link rewrite | 2-3 wk | Mike (story author) | Spec → impl | Mike's PR #72 includes story; coordinate absorption |
-| V0-6 image paste | 1-2 wk | (PR #41 author) | Close out PR #41 | In flight |
+| V0-5 rename + link rewrite | 2-3 wk | Mike (story decision-maker) | Spec → impl | Source story in PR #72 bundle; coordinate absorption |
+| V0-6 image paste | 1-2 wk | Sarah (PR #41 author) | Close out PR #41 | In flight |
 | V0-7 onboarding + session + starter | 2 wk | (this PR) | Spec → impl | Onboarding scoped (Part A); rest not started |
+| V0-8 graph view | 1-2 wk close-out | Mike (PR #76 author) | Close out PR #76 | In flight; 296 LOC added, needs review + perf validation |
 | V0-10 Cmd+K | 1 wk | open | Spec → impl | Not started |
 | V0-11 graph panels | 1-2 wk | open | Spec → impl | Backend done, pure React |
-| V0-12 slug correctness | 1 wk + migration | Mike (story author) | Spec → impl | Mike's PR #72 includes story |
-| V0-13 suggest_links | 1 wk | Mike (story author) | Spec → impl | Mike's PR #72 includes story; Later phase |
+| V0-12 slug correctness | 1 wk + migration | Mike (story decision-maker) | Spec → impl | Source story in PR #72 bundle |
+| V0-13 suggest_links | 1 wk | Mike (story decision-maker) | Spec → impl | Source story in PR #72 bundle; Later phase |
 | V0-14 per-origin undo basic | 1-2 wk | open | Spec update + impl | Spec needs reframe per Miles's audit |
 | V0-15 activity flash verify | 0.5-1 wk | open | Verification + small fix | Existing impl, needs test coverage |
 | V0-16 Timeline + Rollback | 1-2 wk close-out | Miles (PR #39 author) | Close out PR #39 | In flight; needs rebase + 17 review comments |
@@ -614,13 +648,14 @@ Owner signals where they exist (in-flight PR author or original story author). W
 | V0-19 sort + word count | 0.5-1 wk | open | Spec → impl | Not started; Later phase |
 | V0-20 desktop build prep | 0.5 wk | Andrew (story author) | Spec → impl | Gated on Electron starting |
 
-**Sequencing for Now phase (8 stories, 6-8 weeks):**
+**Sequencing for Now phase (9 stories, 6-8 weeks):**
 - Week 1-2: V0-1 (Andrew), V0-2 (open), V0-12 (Mike) start in parallel — process safety + spec resolution + slug fix
-- Week 2-4: V0-6 (PR #41 close-out), V0-16 (Miles PR #39 close-out), V0-7 (open) — close out in-flight + start onboarding
+- Week 1-3: In-flight close-outs land in parallel — V0-6 (Sarah PR #41), V0-8 (Mike PR #76), V0-16 (Miles PR #39)
+- Week 2-4: V0-7 (open) onboarding starts
 - Week 3-5: V0-4 (open) starts after V0-2 contract clear; V0-14 (open) starts in parallel (undo is independent of file ops)
 - Week 5-8: ship, integration test, polish
 
-**Parallel barrels:** ~3-4 active barrels at any time given 8 Now stories over 6-8 weeks. Matches inferred team size (7-10 engineers based on recent merge velocity).
+**Parallel barrels:** ~3-4 active barrels at any time given 9 Now stories over 6-8 weeks. Three of the nine are in-flight PR close-outs (V0-6, V0-8, V0-16) with different authors — they parallelize cheaply since the work is mostly review + polish. Matches inferred team size (7-10 engineers based on recent merge velocity + per-author branch activity).
 
 ## Rabbit holes
 
@@ -646,7 +681,7 @@ Owner signals where they exist (in-flight PR author or original story author). W
 
 **Second-most likely: V0-4 scope creeps.** Story already includes delete + move + duplicate + new folder + MCP tools for all four. Adding folder-move-with-content variations, undo affordances, or trash blows the appetite. **Mitigation:** Hard scope line at spec — folder ops mirror file ops with no special cases; single confirmation modal for destructive ops; no trash in v0.
 
-**Third: PR #75 / Mike's PR #72 / Miles's PR #39 coordination breaks.** Three in-flight PRs from different authors all overlap with v0 scope. If absorbing into v0 isn't communicated cleanly, work duplicates or conflicts at merge time. **Mitigation:** Walk this PROJECT.md through with Mike, Miles, Andrew before any v0 stories enter spec phase. Get explicit acknowledgment that absorption is acceptable.
+**Third: multi-PR coordination breaks.** Five in-flight PRs intersect v0 scope (PR #75 planning master; PR #72 Mike's story bundle; PR #39 Miles's Timeline; PR #76 Mike's graph view; PR #41 Sarah's image paste). If absorption isn't communicated cleanly, work duplicates, conflicts at merge time, or owners receive planning changes as a surprise. **Mitigation:** Walk this PROJECT.md through with Mike (PR #72 + PR #76), Miles (PR #39), Sarah (PR #41), Andrew (desktop-readiness retirement) before any v0 stories enter spec phase. Get explicit acknowledgment that absorption is acceptable.
 
 **Fourth: V0-5 (rename) atomic-rewrite strategy (TQ5) is harder than expected.** Per-doc-with-journal vs all-in-one-transaction is a staff-level decision; whichever picked has crash-recovery edge cases. **Mitigation:** Treat as P0 spec-time decision; budget extra discovery time for V0-5 spec.
 
@@ -675,15 +710,17 @@ Owner signals where they exist (in-flight PR author or original story author). W
 - [projects/server-bridge-hardening/PROJECT.md](../server-bridge-hardening/PROJECT.md) — Narrow wedge (test coverage + unification); waiting on PR #39 merge
 
 ### Active PRs in flight (status as of 2026-04-13)
-- **PR #75** (this PR) — story decomposition + v0 master project
-- **PR #72** (Mike, draft) — wiki-links-next bundle (4 stories absorbed; Mike's PR carries source-of-truth scoping)
+- **PR #75** (Nick, draft) — this PR: story decomposition + v0 master project
+- **PR #72** (Nick, draft) — wiki-links-next story bundle prepared for Mike as decision-maker (4 stories absorbed — V0-3, V0-5, V0-12, V0-13; bundle carries source-of-truth detail)
 - **PR #39** (Miles, open) — Timeline + Rollback (V0-16 close-out)
-- **PR #41** (open) — Image upload (V0-6 close-out)
-- **PR #76** (open) — Graph view of links — out of v0 scope, may inform post-v0
-- **PR #81** (open) — wiki-link menu flash bug fix
-- **PR #36** (open, 3 days stale) — OpenTelemetry instrumentation spec (out of v0 scope)
-- **PR #23** (open) — Typed component nodes (out of v0 scope)
-- **PR #12** (draft, 4 days stale) — Component slash insert (status unclear; needs triage)
+- **PR #76** (Mike, open) — Graph view of links (V0-8 close-out)
+- **PR #41** (Sarah, open) — Image upload (V0-6 close-out)
+- **PR #36** (Andrew, open, 3 days stale) — OpenTelemetry instrumentation spec (out of v0 scope)
+- **PR #23** (Nick, open) — Typed component nodes (out of v0 scope)
+- **PR #12** (Dima, draft, 4 days stale) — Component slash insert (status unclear; needs triage)
+- **PR #81** — MERGED 2026-04-13: wiki-link menu flash bug fix
+
+**Merged since v0-launch was written (2026-04-13):** PR #81 (small bug fix, no v0 scope impact).
 
 ### Specs referenced
 - `specs/2026-04-11-sidebar-realtime-updates/SPEC.md` — V0-2 (5 OQs to resolve)
