@@ -11,6 +11,8 @@
 // Re-export for convenience in handler files
 export type { Nodes, Parent, Root } from 'mdast';
 
+import type { Position } from 'unist';
+
 // Wiki-link mdast node (produced by our micromark extension in US-006).
 // Runtime shape: target/alias/anchor live under `data`, matching
 // the mdast-util-from-markdown enter/exit handlers in wiki-link-micromark.ts.
@@ -23,11 +25,41 @@ export interface WikiLinkMdast {
     anchor: string | null;
     [key: string]: unknown;
   };
-  position?: import('unist').Position;
+  position?: Position;
 }
 
 declare module 'mdast' {
-  interface PhrasingContentMap {
+  interface TextData {
+    escapedChars?: Array<{ offset: number; char: string }>;
+  }
+  interface EmphasisData {
+    sourceDelimiter?: string;
+  }
+  interface StrongData {
+    sourceDelimiter?: string;
+  }
+  interface LinkData {
+    sourceStyle?: string;
+  }
+  interface ThematicBreakData {
+    sourceRaw?: string;
+  }
+  interface BreakData {
+    sourceStyle?: string;
+  }
+  interface HeadingData {
+    sourceStyle?: string;
+  }
+  interface CodeData {
+    sourceFenceChar?: string;
+    sourceFenceLength?: number;
+  }
+  interface ListData {
+    bulletMarker?: string;
+    listMarkerDelimiter?: string;
+  }
+  /** Standalone `[[wiki]]` lines parse as root-level phrasing. */
+  interface RootContentMap {
     wikiLink: WikiLinkMdast;
   }
 }
