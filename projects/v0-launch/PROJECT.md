@@ -210,6 +210,9 @@ Per-person domain ownership. Stories in the Distribution table below map to thes
 - MCP tool surface for file operations (delete/move/duplicate/rename — dual surface with V0-4, V0-5; Dima owns UI side, Tim owns MCP side)
 - MCP `ingest` tool (writes to Raw/external-sources folder — structural decisions owned by Andrew)
 
+**Reach goal: V0-24 Enriched just-bash MCP surface.**
+If Tim has capacity after core v0 tools, expose a single `exec(command)` MCP tool that accepts bash-like commands (grep, ls, cat, find, wc, head, sort) scoped to the project's content directory — same commands agents already know, but output enriched with computed system data (frontmatter, backlink counts, catalog context per file reference). Pipes work for combinatorial operations (`grep 'auth' **/*.md | head -5` → first 5 matches, each enriched). Whitelisted read-only commands only (no rm, no arbitrary execution). See V0-24 in Reach section. This is an exploration of XQ1 (root PROJECT.md's open "semantic tools vs just-bash" question).
+
 **MCP enrichment quality bar (CC9 — Tim owns verification):**
 - Every agent-facing MCP tool must return enriched data beyond native tools (parsed frontmatter, backlinks, git history, catalog context). Agent using ONLY OK's MCP tools gets strictly better results than native Read/Grep/Glob.
 - Verify `list_documents` enrichment level during V0-4 spec — enhance if only returning raw names.
@@ -848,9 +851,9 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
-## Stories — Reach (2 stories, Dima if capacity allows)
+## Stories — Reach (3 stories — Dima + Tim if capacity allows)
 
-**Phasing rationale:** These are in Dima's brainstormed ownership areas and would improve the v0 product, but are **lower priority than his core v0 work** (V0-4 CRUD, V0-2 sidebar client, V0-9 outline, V0-10 Cmd+K, V0-18 find/replace, V0-19 sort+word count). Ship if Dima has capacity after core stories land. Both depend on core v0 infrastructure shipping first (V0-4 for backend, V0-2 for real-time sidebar).
+**Phasing rationale:** Lower priority than each owner's core v0 work. Ship if capacity allows after core stories land. Each depends on core v0 infrastructure shipping first.
 
 ---
 
@@ -889,6 +892,43 @@ Each is a focused UI consuming an existing, tested endpoint.
 **Owners.** **Dima** end-to-end. Sarah reviews polish after.
 
 **Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
+
+---
+
+### V0-24: Enriched just-bash MCP surface
+
+**What to build.** A single MCP tool `exec(command)` that accepts bash-like commands scoped to the project's content directory. Same commands agents already know (`grep`, `ls`, `cat`, `find`, `wc`, `head`, `tail`, `sort`), but output enriched with computed system data. Every file reference in output includes: title (from frontmatter), backlink count, forward-link count, tags, modified timestamp, catalog category. Combinatorial operations (pipes) work — enrichment applies per output line that references a file.
+
+**Why this matters.** Agents already compose native bash + curl/jq to glue grep results with our HTTP API. That works but it's three tool calls where one would do. Enriched just-bash makes the composition native: `exec("grep 'auth' **/*.md | head -5")` returns the first 5 files mentioning auth, each with enriched metadata, in one call. No curl, no jq, no glue code. The agent uses commands it already knows and gets better output.
+
+Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneously inventing file-path syntax before filesystem tools existed — agents naturally think in paths and Unix idioms." And: "Minimum tool count is the #1 failure predictor" — one `exec` tool vs 14 semantic tools.
+
+**Scope tiers:**
+
+| Tier | What | Effort |
+|------|------|--------|
+| **Tier 1 (minimum reach)** | `grep`, `ls`, `cat` enriched — per-file metadata in output | ~1 week |
+| **Tier 2 (combinatorial)** | Pipe support (`grep | head`, `ls | sort -k modified`) | +0.5 week |
+| **Tier 3 (full, post-v0)** | All read-only commands enriched + custom commands (`backlinks auth.md`, `orphans`, `dead-links`) | Larger scope |
+
+**Constraints.**
+- **Read-only + whitelisted.** No `rm`, `mv`, `cp`, `mkdir`, `chmod`, or arbitrary execution. Write operations go through semantic MCP tools (`write_document`, `delete_document`, etc.) that have CRDT awareness + provider pool coordination. Enriched bash is for reading + discovery only.
+- **Scoped to content directory.** Commands execute relative to the project's content root. Path traversal outside content dir blocked (reuse `safeSubdir()`).
+- **Enrichment is additive, not replacing.** Raw command output stays intact; enrichment appends as structured metadata. Agent can parse either the raw output (familiar) or the enriched metadata (richer).
+- **Falls back gracefully.** Commands that don't produce file-scoped output (e.g., `echo`, `date`) return raw output without enrichment — no error, just no metadata to add.
+- **Relationship to semantic tools:** Enriched just-bash COMPLEMENTS semantic tools for v0, not replaces. `exec("cat auth.md")` and `read_document("auth.md")` return the same enriched data via different entry points. Post-v0 decision: should enriched bash REPLACE some semantic tools to reduce tool count? That's XQ1.
+
+**Value.** Customer (agent): agents use one `exec` tool with familiar bash commands instead of learning 14 semantic MCP tools. Combinatorial operations (pipes, head, sort, grep chaining) work natively. Platform: explores XQ1 architecture (root PROJECT.md) — if enriched bash works well in practice, post-v0 we could make it the primary MCP surface and deprecate semantic tools that it subsumes.
+
+**Lateral.** CC9 (MCP enrichment quality bar) applies: enriched bash output must match or exceed what semantic tools return. If `exec("cat auth.md")` returns less than `read_document("auth.md")`, the value prop breaks. Same enrichment pipeline under the hood.
+
+**Forward.** If this works well: post-v0, evaluate deprecating `read_document`, `list_documents`, `search` in favor of `exec("cat")`, `exec("ls")`, `exec("grep")`. Reduces tool count from ~14 to ~5 (exec + write_document + edit_document + undo + redo). Root PROJECT.md XQ1 resolves.
+
+**Source.** Root PROJECT.md XQ1 (open architectural question). Internal `bash/index.ts` already implements `runShell()`, `grep()`, `gitLog()`, `cat()` — enriched bash wraps these as an MCP-exposed surface.
+
+**Owners.** **Tim** end-to-end. This is his "just-bash virtualization" brainstorm item brought to life.
+
+**Status.** Not started. Estimate: Tier 1 = ~1 week; Tier 2 = +0.5 week. **Reach goal — lower priority than Tim's core v0 work** (V0-4 MCP file-ops, CC9 enrichment audit, MCP initialization/discovery, harness integration). Ship if Tim has capacity after core lands. Depends on core semantic tools working first (enriched bash reuses the same enrichment pipeline).
 
 ---
 
@@ -992,6 +1032,7 @@ Owner signals where they exist (in-flight PR author or original story author). W
 | V0-21 dead-link checking | Next | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | NEW — Tier 1 scope; Tier 2/3 post-v0 |
 | V0-22 tabbed file experience | **Reach** | 1-2 wk | **Dima** | Spec → impl | Lower P than Dima's core v0 work; ship if capacity |
 | V0-23 drag-and-drop files in sidebar | **Reach** | 1-2 wk | **Dima** | Spec → impl | Lower P; builds on V0-4 move backend |
+| V0-24 enriched just-bash MCP surface | **Reach** | 1-1.5 wk (Tier 1-2) | **Tim** | Prototype → evaluate | Lower P; explores XQ1 architecture; reuses internal bash/index.ts |
 
 **Sequencing for Now phase (9 stories, 6-8 weeks):**
 - Week 1-2: V0-1 (Andrew), V0-2 (Andrew/Dima — spec resolution), V0-12 (Mike) start in parallel
