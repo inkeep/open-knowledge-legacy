@@ -12,16 +12,13 @@ export default {
   },
   workspaces: {
     'packages/app': {
-      project: ['src/**/*.{ts,tsx}', 'tests/**/*.{ts,tsx}'],
+      entry: 'tests/**/*.{test,e2e}.ts',
+      project: 'src/**',
       ignoreDependencies: [
-        'shadcn',
-        'tailwind-scrollbar',
-        'tailwindcss',
-        'tw-animate-css',
-        '@fontsource-variable/inter',
-        '@fontsource-variable/jetbrains-mono',
-        '@tailwindcss/postcss'
+        '@tailwindcss/postcss',
+        'ws' // false positive
       ],
+      ignoreFiles: ['src/server/agent-sim.ts'],
     },
     docs: {
       ignoreDependencies: [
@@ -29,7 +26,9 @@ export default {
       ],
     },
     'packages/cli': {
-      entry: 'src/cli.ts',
+      ignoreDependencies: [
+        'ws', // looks like dynamic import isn't checked
+      ],
     },
   },
 } satisfies KnipConfig;
