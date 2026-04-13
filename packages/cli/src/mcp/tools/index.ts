@@ -104,17 +104,17 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   registerResearch(server);
   registerConsolidate(server);
 
-  // Enriched read/search — need catalog + filesystem + (optionally) Hocuspocus for backlinks
+  // Enriched read/search — filesystem + shadow-repo + (optionally) Hocuspocus for backlinks.
+  // Folder catalog was removed in D19 (per-file frontmatter is source of truth).
   registerReadDocument(server, {
-    catalog: opts.catalog,
     projectDir: opts.projectDir,
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
   registerSearch(server, {
-    catalog: opts.catalog,
     projectDir: opts.projectDir,
     config: opts.config,
+    serverUrl: opts.serverUrl,
   });
 
   // Document tools — make HTTP calls to Hocuspocus
