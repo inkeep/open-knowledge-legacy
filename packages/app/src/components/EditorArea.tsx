@@ -31,12 +31,12 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   // @codemirror/merge supports incremental updates via Chunk.updateA()/updateB()
   // — a future iteration could subscribe to Y.Text changes and live-update the
   // "current" side of the diff. For v0 (solo + AI) this is acceptable as-is.
-  const [oldContent, setOldContent] = useState<string | null>(null);
+  const [diffContent, setDiffContent] = useState<{ old: string; new: string } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
     if (!previewEntry?.sha || !activeDocName) {
-      setOldContent(null);
+      setDiffContent(null);
       return;
     }
 
@@ -44,14 +44,14 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
     const sha = previewEntry.sha;
     const docName = activeDocName;
     setPreviewLoading(true);
-    setOldContent(null);
+    setDiffContent(null);
 
     async function fetchHistoricalContent() {
       try {
         const res = await fetch(`/api/history/${sha}?docName=${encodeURIComponent(docName)}`);
         if (cancelled) return;
         if (!res.ok) {
-          setOldContent(null);
+          setDiffContent(null);
           setPreviewLoading(false);
           return;
         }
@@ -72,12 +72,14 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
             onNoDiff?.();
             return;
           }
-          setOldContent(historical);
+          // Capture both sides together so they're consistent — Y.Text may not
+          // be populated during the synchronous render that triggers this effect.
+          setDiffContent({ old: historical, new: current });
           setPreviewLoading(false);
         }
       } catch {
         if (!cancelled) {
-          setOldContent(null);
+          setDiffContent(null);
           setPreviewLoading(false);
         }
       }
@@ -99,7 +101,6 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
 
   const isDiffMode = editorMode === 'diff';
   const isSourceMode = editorMode === 'source';
-  const newContent = activeProvider.document.getText('source').toString();
 
   return (
     // Wrapper div takes flex-1 in the flex-col SidebarInset, giving ResizablePanelGroup
@@ -122,8 +123,12 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
                   <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
                 </div>
               )}
-              {isDiffMode && !previewLoading && oldContent !== null && (
-                <DiffView oldContent={oldContent} newContent={newContent} layout={diffLayout} />
+              {isDiffMode && !previewLoading && diffContent !== null && (
+                <DiffView
+                  oldContent={diffContent.old}
+                  newContent={diffContent.new}
+                  layout={diffLayout}
+                />
               )}
 
               {/* CSS-based show/hide — display:none keeps DOM alive without triggering
