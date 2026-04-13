@@ -126,7 +126,16 @@ Structure:
 [Links to research articles and external sources for readers who want the trail.]
 \`\`\`
 
-### 4. Supersede the research
+### 4. Link aggressively
+
+Canonical articles are destinations — they should be **linked heavily from everywhere they're relevant** and link **out to every related page** themselves. Underlinked canonical articles lose most of their value.
+
+- **Inside this article:** every noun-phrase that names another document (other canonical articles, related research, external-source pages, sibling topics) should be a \`[[Page Name]]\` link, not plain prose. Prefer \`[[Page]]\` over Markdown \`[text](./page.md)\` — only wiki-links participate in the backlinks index.
+- **Redlinks are fine.** If you mention a concept that *should* have a page but doesn't yet, \`[[link it anyway]]\`. The redlink signals future work.
+- **Update neighbors.** After writing, find 2–3 closely-related existing pages (via \`exec("grep -rn <topic> ${contentDir}")\`) and add a \`[[<new article>]]\` link from each — usually under a "See also" section or inline where the new article is relevant. This makes the article discoverable via backlinks, not just by remembering the path.
+- **Link to the sources and superseded research** from "Further reading" — readers who want the trail can follow.
+
+### 5. Supersede the research
 
 Add a \`supersedes:\` list in the new article's frontmatter pointing at the research article(s) it consolidates. This creates an audit trail.
 
@@ -136,7 +145,7 @@ Do NOT delete the research articles — they remain as historical context for ho
 superseded_by: <path-to-new-canonical-article>.md
 \`\`\`
 
-### 5. Verify
+### 6. Verify
 
 - File exists at the chosen path under the content directory
 - Has \`status: canonical\` frontmatter

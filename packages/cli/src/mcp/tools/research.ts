@@ -132,14 +132,24 @@ Structure:
 [Your best guess, clearly marked as tentative. Explain the reasoning so a future reader can re-evaluate when new information arrives.]
 \`\`\`
 
-### 5. Mark it provisional
+### 5. Link aggressively
+
+Research articles are discovery surfaces — they should link out to **every** related document (sources, sibling research, prior canonical articles, adjacent topics). Under-linked research becomes an island that nobody finds.
+
+- Every noun-phrase that names another document should be a \`[[Page Name]]\` link, not plain prose. Prefer \`[[Page]]\` over Markdown \`[text](./page.md)\` — only wiki-links participate in the backlinks index.
+- Link sources inline where you cite them, not just in the \`sources:\` frontmatter list. "According to \`[[llm-agents-dust-tt]]\`..." is stronger than a bare path.
+- Cross-link sibling research: if an adjacent topic has its own research doc, link it in "Open questions" or inline. Readers following one thread should find the others.
+- **Redlinks are fine.** If the research surfaces a concept that needs its own page later, \`[[name it now]]\` — the redlink is a breadcrumb for future work.
+- Update 1–2 closely-related existing pages to link back to this research (usually under "Further reading" or "See also").
+
+### 6. Mark it provisional
 
 - Set \`status: provisional\` in frontmatter
 - Use language like "tentative", "initial findings", "based on current understanding"
 - Do NOT write research articles as if they were canonical — that's misleading to future readers
 - If you're uncertain, say so explicitly. Research is the layer where uncertainty is allowed to live.
 
-### 6. Verify
+### 7. Verify
 
 - File exists at the chosen path under the content directory
 - Has frontmatter with \`title\`, \`description\`, \`status: provisional\`, \`date\`, and a \`sources\` list
