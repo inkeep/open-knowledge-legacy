@@ -130,10 +130,9 @@ const FileTreeNode: FC<{
         value={editingValue}
         autoFocus
         disabled={isBusy}
+        aria-label={`Rename ${node.kind}`}
         onFocus={(event) => event.currentTarget.select()}
-        onBlur={() => {
-          if (!isBusy) onCancelRename();
-        }}
+        onBlur={onCancelRename}
         onChange={(event) => onEditingValueChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
