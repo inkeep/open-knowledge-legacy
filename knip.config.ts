@@ -3,8 +3,9 @@ import type { KnipConfig } from 'knip';
 export default {
   tags: ['-lintignore'],
   ignoreDependencies: [
-    'lint-staged' // not sure if it's false positive
+    'lint-staged', // not sure if it's false positive
   ],
+  ignore: ['tech-probes/**', 'reports/**', 'specs/**'],
   ignoreIssues: {
     'packages/app/src/components/ui/*': ['exports'],
     'docs/source.config.ts': ['exports'],
