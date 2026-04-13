@@ -28,6 +28,7 @@ export default {
     'packages/cli': {
       ignoreDependencies: [
         'ws', // looks like dynamic import isn't checked
+        '@types/ws',
       ],
     },
   },

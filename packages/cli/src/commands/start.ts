@@ -14,7 +14,7 @@ export function startCommand(getConfig: () => Config): Command {
     .option('--no-init', 'Skip auto-scaffolding of .open-knowledge/')
     .action(async (opts) => {
       // Lazy imports — avoids loading TipTap/Hocuspocus for other commands
-      const { existsSync } = await import('node:fs');
+      const { existsSync, mkdirSync } = await import('node:fs');
       const { createServer: createHttpServer } = await import('node:http');
       const { resolve } = await import('node:path');
       const { createServer, getLogger } = await import('@inkeep/open-knowledge-server');
@@ -22,8 +22,6 @@ export function startCommand(getConfig: () => Config): Command {
       const { WebSocketServer } = await import('ws');
       const { renderBanner } = await import('../ui/banner.ts');
       const { dim, error, info, warning } = await import('../ui/colors.ts');
-
-      const { mkdirSync } = await import('node:fs');
 
       const log = getLogger('start');
       const config = getConfig();
