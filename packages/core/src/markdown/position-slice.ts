@@ -163,6 +163,16 @@ export function positionSlicePlugin() {
           break;
         }
 
+        case 'mdxJsxFlowElement':
+        case 'mdxJsxTextElement':
+        case 'mdxFlowExpression':
+        case 'mdxTextExpression':
+        case 'mdxjsEsm': {
+          // Capture raw MDX source for byte-identical round-trip
+          node.data.sourceRaw = source.slice(startOff, endOff);
+          break;
+        }
+
         case 'break': {
           const slice = source.slice(startOff, endOff);
           if (slice.includes('\\')) {

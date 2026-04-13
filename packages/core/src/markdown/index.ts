@@ -280,35 +280,31 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       });
   }
 
-  // MDX nodes — minimal passthrough (full coverage in US-008)
-  // These need to exist to prevent "unknown markdown node" errors
+  // MDX nodes — store raw source for byte-identical round-trip (US-008)
   if (n.jsxComponent) {
     handlers.mdxJsxFlowElement = (node: any) =>
       n.jsxComponent.createAndFill({
-        name: node.name,
-        attributes: node.attributes ?? null,
-        value: '',
+        content: node.data?.sourceRaw ?? '',
       });
-  }
-  if (n.jsxInline) {
     handlers.mdxJsxTextElement = (node: any) =>
-      n.jsxInline.createAndFill({
-        name: node.name,
-        attributes: node.attributes ?? null,
-        value: '',
+      n.jsxComponent.createAndFill({
+        content: node.data?.sourceRaw ?? '',
       });
   }
-  // For MDX expressions and ESM, only register if schema has the node type
-  if (n.mdxExpression) {
+  // MDX expressions and ESM — store in jsxComponent content
+  if (n.jsxComponent) {
     handlers.mdxFlowExpression = (node: any) =>
-      n.mdxExpression.createAndFill({ value: node.value ?? '' });
-  }
-  if (n.mdxInlineExpression) {
+      n.jsxComponent.createAndFill({
+        content: node.data?.sourceRaw ?? `{${node.value ?? ''}}`,
+      });
     handlers.mdxTextExpression = (node: any) =>
-      n.mdxInlineExpression.createAndFill({ value: node.value ?? '' });
-  }
-  if (n.mdxEsm) {
-    handlers.mdxjsEsm = (node: any) => n.mdxEsm.createAndFill({ value: node.value ?? '' });
+      n.jsxComponent.createAndFill({
+        content: node.data?.sourceRaw ?? `{${node.value ?? ''}}`,
+      });
+    handlers.mdxjsEsm = (node: any) =>
+      n.jsxComponent.createAndFill({
+        content: node.data?.sourceRaw ?? node.value ?? '',
+      });
   }
 
   // Wiki-link → inline atom node
@@ -453,6 +449,14 @@ function buildPmToMdastHandlers(schema: Schema): {
       label: pmNode.attrs.label ?? pmNode.attrs.identifier,
       url: pmNode.attrs.url,
       title: pmNode.attrs.title,
+    });
+  }
+
+  // JSX component → emit raw source as HTML for byte-identical MDX round-trip
+  if (n.jsxComponent) {
+    nodeHandlers.jsxComponent = (pmNode: any) => ({
+      type: 'html' as const,
+      value: pmNode.attrs.content ?? '',
     });
   }
 
