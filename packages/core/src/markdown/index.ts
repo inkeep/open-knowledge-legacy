@@ -21,6 +21,7 @@ import type { Extensions, JSONContent } from '@tiptap/core';
 import { getSchema } from '@tiptap/core';
 import { Node as PmNode, type Schema } from 'prosemirror-model';
 import { parseMd, serializeMd } from './pipeline.ts';
+import { toMarkdownHandlers } from './to-markdown-handlers.ts';
 
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
@@ -66,6 +67,7 @@ export class MarkdownManager {
       handlers: this.handlers,
       pmNodeHandlers: this.pmNodeHandlers,
       pmMarkHandlers: this.pmMarkHandlers,
+      toMarkdownHandlers,
     });
   }
 }
