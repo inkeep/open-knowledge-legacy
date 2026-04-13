@@ -8,7 +8,17 @@ export default {
     'docs/source.config.ts': ['exports'],
   },
   workspaces: {
-    'packages/app': {},
+    'packages/app': {
+      project: ['src/**/*.{ts,tsx}', 'tests/**/*.{ts,tsx}'],
+      ignoreDependencies: [
+        'shadcn',
+        'tailwind-scrollbar',
+        'tailwindcss',
+        'tw-animate-css',
+        '@fontsource-variable/inter',
+        '@fontsource-variable/jetbrains-mono',
+      ],
+    },
     docs: {
       ignoreDependencies: [
         'postcss', // Bundled in Next.js
