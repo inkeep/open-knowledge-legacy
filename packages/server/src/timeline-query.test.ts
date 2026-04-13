@@ -82,7 +82,7 @@ describe('getDocumentHistory', () => {
   });
 
   test('classifies entry types from commit message prefix', async () => {
-    const { contentDir, projectRoot, shadow } = await setup();
+    const { contentDir, shadow } = await setup();
 
     // WIP commit
     writeFileSync(resolve(contentDir, 'intro.md'), '# WIP\n');
@@ -94,7 +94,7 @@ describe('getDocumentHistory', () => {
 
     // Checkpoint (Save Version)
     writeFileSync(resolve(contentDir, 'intro.md'), '# Checkpoint\n');
-    await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+    await saveVersion(shadow, 'content/docs', [human]);
 
     const result = await getDocumentHistory(shadow, { docName: 'intro' });
 
@@ -126,11 +126,11 @@ describe('getDocumentHistory', () => {
   });
 
   test('type=checkpoint fast path returns only checkpoints', async () => {
-    const { contentDir, projectRoot, shadow } = await setup();
+    const { contentDir, shadow } = await setup();
 
     writeFileSync(resolve(contentDir, 'intro.md'), '# v1\n');
     await commitWip(shadow, human, 'content/docs', 'WIP: v1');
-    await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+    await saveVersion(shadow, 'content/docs', [human]);
 
     writeFileSync(resolve(contentDir, 'intro.md'), '# v2\n');
     await commitWip(shadow, human, 'content/docs', 'WIP: v2');
@@ -230,13 +230,13 @@ describe('getDocumentHistory', () => {
   });
 
   test('deduplicates entries that appear in multiple ref walks', async () => {
-    const { contentDir, projectRoot, shadow } = await setup();
+    const { contentDir, shadow } = await setup();
 
     writeFileSync(resolve(contentDir, 'intro.md'), '# Shared\n');
     await commitWip(shadow, human, 'content/docs', 'WIP: shared ancestor');
 
     // Save version — checkpoint will parent on the WIP commit
-    await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+    await saveVersion(shadow, 'content/docs', [human]);
 
     // The WIP commit is reachable from both the checkpoint ref and the (now-deleted) WIP ref
     // After save version, WIP ref is deleted but checkpoint ancestry still includes it

@@ -58,8 +58,19 @@ import { isSystemDoc } from './cc1-broadcast.ts';
 import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { getMetrics } from './metrics.ts';
-import { deleteReconciledBase, isWithinContentDir, safeContentPath, setReconciledBase } from './persistence.ts';
-import { type ShadowRef, saveVersion, shadowGit, type WriterIdentity } from './shadow-repo.ts';
+import {
+  deleteReconciledBase,
+  isWithinContentDir,
+  safeContentPath,
+  setReconciledBase,
+} from './persistence.ts';
+import {
+  type ShadowRef,
+  safetyCheckpoint,
+  saveVersion,
+  shadowGit,
+  type WriterIdentity,
+} from './shadow-repo.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 /** Validates a docName and builds a shadow-repo-safe path.
@@ -319,7 +330,6 @@ export interface ApiExtensionOptions {
   shadowRef?: ShadowRef;
   /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
-  projectRoot?: string;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
 }
@@ -428,7 +438,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     enableTestRoutes = false,
     shadowRef,
     flushGitCommit,
-    projectRoot,
     contentRoot,
     backlinkIndex,
   } = options;
@@ -1089,16 +1098,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const resolvedContentRoot = contentRoot ?? 'content';
-      const result = await saveVersion(shadow, projectRoot ?? null, resolvedContentRoot, writers);
+      const result = await saveVersion(shadow, resolvedContentRoot, writers);
 
-      const projectRef = result.projectCommitSha
-        ? `→ project commit ${result.projectCommitSha.slice(0, 8)}`
-        : '(standalone)';
-      console.log(`[shadow] checkpoint ${result.checkpointRef} ${projectRef}`);
+      console.log(`[shadow] checkpoint ${result.checkpointRef}`);
 
       json(res, 200, {
         ok: true,
-        projectCommitSha: result.projectCommitSha,
         checkpointRef: result.checkpointRef,
       });
     } catch (e) {
@@ -1388,6 +1393,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
       const timestamp = new Date().toISOString();
+
+      // snapshot current state before the destructive rollback
+      await safetyCheckpoint(shadow, resolvedContentRoot, {
+        action: 'rollback',
+        context: { docName, targetSha: commitSha },
+      });
 
       // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
       const document = hocuspocus.documents.get(docName);

@@ -28,14 +28,19 @@ export interface AgentDirectConnection extends DirectConnection {
 }
 
 /**
- * Agent write origin — used by transaction origin guards and future UndoManager scoping.
+ * Agent write origin — typed LocalTransactionOrigin
  *
- * Raw string form. Kept for backward compatibility with existing code that
- * passes a string to document.transact(). TQ10 introduces typed
- * LocalTransactionOrigin objects as the forward-looking pattern; new code
- * should prefer AGENT_WRITE_TX_ORIGIN where a full origin object is needed.
+ * Passed to `document.transact(fn, AGENT_WRITE_ORIGIN)` in all agent write
+ * paths. Load-bearing for observer origin guards and future UndoManager scoping.
+ *
+ * skipStoreHooks: false — persistence SHOULD fire after agent writes so
+ * content reaches disk through the normal debounce pipeline.
  */
-export const AGENT_WRITE_ORIGIN = 'agent-write';
+export const AGENT_WRITE_ORIGIN = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'agent-write' },
+};
 
 /** Default agent identity. Key used in Y.Map('activity'). */
 export const DEFAULT_AGENT_ID = 'claude-1';
