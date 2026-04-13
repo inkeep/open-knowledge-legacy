@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
-import { MarkdownManager, prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
+import { prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
@@ -11,6 +11,7 @@ import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { getLogger } from './logger.ts';
+import { mdManager } from './md-manager.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -44,8 +45,6 @@ import {
   type ShadowRef,
   shadowGit,
 } from './shadow-repo.ts';
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
 export interface ServerOptions {
   port?: number;

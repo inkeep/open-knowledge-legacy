@@ -17,8 +17,26 @@ import { visit } from 'unist-util-visit';
 
 // Use Unicode Private Use Area characters as markers.
 // These won't appear in normal text and MDX won't try to parse them as JSX.
-const GUARD_OPEN = '\uE000'; // U+E000 Private Use
-const GUARD_CLOSE = '\uE001'; // U+E001 Private Use
+// NG9 documents their reservation (source content containing these codepoints
+// may be corrupted by the restoration pass — rare in legitimate content).
+//
+// Four sentinels total, each with a specific semantic role:
+//   GUARD_OPEN  (U+E000) — replaces `<` in protected patterns
+//   GUARD_CLOSE (U+E001) — replaces `>` in protected patterns
+//   GUARD_COLON (U+E002) — replaces `:` inside autolink URLs so
+//     remark-gfm's autolink-literal (scheme-colon URLs) and
+//     remark-directive (`:name` text-directive syntax) cannot
+//     re-claim the URL body as one of their constructs.
+//   GUARD_AT    (U+E003) — replaces `@` inside autolink URLs so
+//     remark-gfm's email autolink cannot re-claim `user@host.tld`
+//     patterns inside wrapped mailto / other `@`-bearing URIs.
+//
+// We preserve URL bytes otherwise (dots, slashes, hyphens) so the
+// original `<url>` form survives round-trip byte-identically.
+const GUARD_OPEN = '\uE000';
+const GUARD_CLOSE = '\uE001';
+const GUARD_COLON = '\uE002';
+const GUARD_AT = '\uE003';
 
 /**
  * Autolink pattern: <scheme:uri>
@@ -32,9 +50,15 @@ const AUTOLINK_RE = /<([a-zA-Z][a-zA-Z0-9+.-]*:[^\s<>]+)>/g;
 const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
 
 /**
- * HTML closing tags: </tag>
+ * HTML closing tags: </tag> — ONLY lowercase tags (real HTML).
+ *
+ * JSX component closing tags (`</Callout>`, `</Docs.Link>`) MUST pass through
+ * to remark-mdx so paired components (mdxJsxFlowElement / mdxJsxTextElement)
+ * parse correctly. Matching mixed-case closing tags here was the original bug
+ * that broke paired MDX round-trip entirely — mirror the opening-tag regex's
+ * lowercase-only discrimination (see `LOWERCASE_HTML_TAG_RE`).
  */
-const HTML_CLOSE_TAG_RE = /<\/[a-zA-Z][a-zA-Z0-9]*\s*>/g;
+const HTML_CLOSE_TAG_RE = /<\/([a-z][a-z0-9]*)\s*>/g;
 
 /**
  * Lowercase HTML tags (not JSX components).
@@ -55,9 +79,20 @@ export function protectFromMdx(source: string): string {
     return match.replace(/</g, GUARD_OPEN).replace(/>/g, GUARD_CLOSE);
   });
 
-  // Protect autolinks: <https://url> → GUARD_LT https://url GUARD_GT
+  // Protect autolinks: <scheme:uri> → GUARD_OPEN + scheme + GUARD_COLON + rest + GUARD_CLOSE
+  // (and GUARD_AT replacing any `@` in the rest).
+  //
+  // Simple bracket replacement leaves the URL body exposed to downstream
+  // pattern matchers: remark-gfm's autolink-literal still matches the
+  // scheme-colon URL, remark-gfm's email autolink still matches `user@host`,
+  // and remark-directive still claims the `:` as a text-directive marker.
+  // Replacing the pattern-triggering chars (`:` and `@`) with PUA sentinels
+  // defeats all three matchers while preserving every other byte of the URL,
+  // so restoreFromMdx can reconstruct the original `<scheme:uri>` form
+  // byte-identically.
   result = result.replace(AUTOLINK_RE, (_match, uri: string) => {
-    return `${GUARD_OPEN}${uri}${GUARD_CLOSE}`;
+    const safe = uri.replaceAll(':', GUARD_COLON).replaceAll('@', GUARD_AT);
+    return `${GUARD_OPEN}${safe}${GUARD_CLOSE}`;
   });
 
   // Protect HTML closing tags: </div> → GUARD_LT /div GUARD_GT
@@ -121,5 +156,11 @@ export function restoreFromMdx() {
 }
 
 function restoreString(s: string): string {
-  return s.replaceAll('\uE000', '<').replaceAll('\uE001', '>');
+  // Restore every sentinel to its original character. Sentinels are mutually
+  // independent (no nesting) so replacement order does not matter.
+  return s
+    .replaceAll(GUARD_OPEN, '<')
+    .replaceAll(GUARD_CLOSE, '>')
+    .replaceAll(GUARD_COLON, ':')
+    .replaceAll(GUARD_AT, '@');
 }

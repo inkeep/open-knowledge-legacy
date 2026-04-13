@@ -7,12 +7,9 @@
  */
 
 import type { Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
-import { MarkdownManager, sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { getSchema } from '@tiptap/core';
+import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
+import { mdManager, schema } from './md-manager.ts';
 
 /**
  * Apply external file content to a live Y.Doc — the throwing core of the

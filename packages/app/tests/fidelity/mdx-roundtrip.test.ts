@@ -55,17 +55,27 @@ describe('MDX round-trip — self-closing flow elements', () => {
   });
 });
 
-describe('MDX round-trip — paired flow elements (known gap)', () => {
-  test('paired with text children throws — jsxComponent is atom, cannot host children', () => {
-    // Known gap: paired MDX components with children cannot round-trip because
-    // jsxComponent is an atom node (no children slot). Self-closing components
-    // round-trip via raw-source capture in the content attr. Fixing this
-    // requires making jsxComponent non-atom with a children content spec.
-    expect(() => mdRoundTrip('<Callout>\nHello world\n</Callout>\n')).toThrow();
+describe('MDX round-trip — paired flow elements', () => {
+  // Paired MDX components round-trip byte-identically via raw-source capture
+  // in the jsxComponent.content attr + `restoreFromMdx`'s mixed-case close-tag
+  // preservation (NG9 sentinels; `HTML_CLOSE_TAG_RE` excludes JSX closing
+  // tags). The atom-node schema is sufficient because the entire paired-tag
+  // source (open-tag + children + close-tag) is captured as a single string
+  // and serialized verbatim.
+  test('paired with text children round-trips byte-identically', () => {
+    assertRoundTrip('<Callout>\n\nHello world\n\n</Callout>\n');
   });
 
-  test('deep nesting throws — same atom limitation', () => {
-    expect(() => mdRoundTrip('<A>\n<B>\n<C>text</C>\n</B>\n</A>\n')).toThrow();
+  test('deep nesting round-trips byte-identically', () => {
+    assertRoundTrip('<A>\n<B>\n<C>text</C>\n</B>\n</A>\n');
+  });
+
+  test('paired with block children round-trips', () => {
+    assertRoundTrip('<Card>\n\n# Heading\n\nparagraph\n\n</Card>\n');
+  });
+
+  test('paired with mixed inline children round-trips', () => {
+    assertRoundTrip('<Note>see <br> below</Note>\n');
   });
 });
 

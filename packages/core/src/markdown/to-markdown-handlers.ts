@@ -246,13 +246,34 @@ export const toMarkdownHandlers: Record<string, any> = {
 };
 
 /**
- * Emit text through state.safe with `&` and `<` stripped from the unsafe list.
+ * Emit text through state.safe with NG5-specific strips applied to the
+ * mdast-util-to-markdown unsafe list.
+ *
+ * We preserve authoring-form fidelity by removing escapes the pipeline does
+ * not need:
+ *   - `&` before `[#A-Za-z]` — mdast-util-to-markdown escapes to avoid HTML
+ *     entity round-trip; NG5 forbids storage-layer entity handling.
+ *   - `<` — mdast-util-to-markdown escapes to prevent re-parse as inline HTML
+ *     or JSX; our R23 `protectFromMdx` guard already handles those tokenizers,
+ *     so escaping `<` in serialized text produces a false positive on re-parse.
+ *   - `:` — mdast-util-to-markdown escapes to prevent re-parse as autolink
+ *     scheme; our R23 guard already tames autolinks, so the escape adds a
+ *     backslash that our autolink regex rejects on re-parse (breaking idempotence
+ *     of `<url>` text when the URL body was preserved as literal text by the
+ *     guard-and-restore path).
  */
 function safeText(state: any, value: string, info: any): string {
   const originalUnsafe = state.unsafe;
   state.unsafe = originalUnsafe.filter((u: any) => {
     if (u.character === '&' && u.after === '[#A-Za-z]') return false;
     if (u.character === '<') return false;
+    if (u.character === ':') return false;
+    // `@` is escaped in the default unsafe list because remark-gfm's email
+    // autolink-literal would re-claim `user@host` on re-parse. Our R23 guard
+    // protects wrapped autolinks via GUARD_AT so we do not need the escape,
+    // and keeping it would produce `<mailto:a\@b.com>` which is not
+    // byte-identical and breaks idempotence through the autolink guard.
+    if (u.character === '@') return false;
     return true;
   });
   try {

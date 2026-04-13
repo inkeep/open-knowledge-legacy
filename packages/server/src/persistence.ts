@@ -11,17 +11,12 @@ import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from 'n
 import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
 import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
-import {
-  MarkdownManager,
-  prependFrontmatter,
-  sharedExtensions,
-  stripFrontmatter,
-} from '@inkeep/open-knowledge-core';
-import { getSchema } from '@tiptap/core';
+import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { type BacklinkIndex, extractWikiLinksFromProsemirrorJson } from './backlink-index.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
+import { mdManager, schema } from './md-manager.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import { commitWip, shadowGit } from './shadow-repo.ts';
 
@@ -39,9 +34,6 @@ export interface PersistenceOptions {
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
 }
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
-const schema = getSchema(sharedExtensions);
 
 export function safeContentPath(documentName: string, contentDir: string): string {
   if (documentName.includes('\x00')) {
