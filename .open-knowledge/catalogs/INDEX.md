@@ -22,4 +22,4 @@ schema_version: 1
 - **[projects](.open-knowledge/catalogs/projects/INDEX.md)** (2 articles)
 - **[reports](.open-knowledge/catalogs/reports/INDEX.md)** (953 articles)
 - **[specs](.open-knowledge/catalogs/specs/INDEX.md)** (164 articles)
-- **[tmp](.open-knowledge/catalogs/tmp/INDEX.md)** (33 articles)
+- **[tmp](.open-knowledge/catalogs/tmp/INDEX.md)** (36 articles)
