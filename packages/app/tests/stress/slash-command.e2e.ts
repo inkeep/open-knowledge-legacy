@@ -484,6 +484,81 @@ test.describe('slash command — accessibility', () => {
     await page.keyboard.press('Escape');
   });
 
+  test('aria-activedescendant references a valid option and updates on navigation', async ({
+    page,
+  }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/');
+    await page.waitForTimeout(300);
+
+    // Initial state: first item selected — aria-activedescendant should reference it
+    const initial = await page.evaluate(() => {
+      const menu = document.querySelector('[role="listbox"]');
+      if (!menu) return null;
+      const adId = menu.getAttribute('aria-activedescendant');
+      if (!adId) return { adId: null, exists: false, isSelected: false };
+      const target = document.getElementById(adId);
+      return {
+        adId,
+        exists: !!target,
+        isSelected: target?.getAttribute('aria-selected') === 'true',
+      };
+    });
+    if (!initial) throw new Error('menu not rendered');
+    expect(initial.adId).toBeTruthy();
+    expect(initial.exists).toBe(true);
+    expect(initial.isSelected).toBe(true);
+
+    // Navigate down — aria-activedescendant should update to a different ID
+    await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(100);
+
+    const afterNav = await page.evaluate(() => {
+      const menu = document.querySelector('[role="listbox"]');
+      if (!menu) return null;
+      const adId = menu.getAttribute('aria-activedescendant');
+      if (!adId) return { adId: null, exists: false, isSelected: false };
+      const target = document.getElementById(adId);
+      return {
+        adId,
+        exists: !!target,
+        isSelected: target?.getAttribute('aria-selected') === 'true',
+      };
+    });
+    if (!afterNav) throw new Error('menu not rendered after navigation');
+    expect(afterNav.adId).toBeTruthy();
+    expect(afterNav.exists).toBe(true);
+    expect(afterNav.isSelected).toBe(true);
+    // The referenced ID should have changed after navigation
+    expect(afterNav.adId).not.toBe(initial.adId);
+    await page.keyboard.press('Escape');
+  });
+
+  test('live region announces the selected item label on navigation', async ({ page }) => {
+    await resetEditor(page);
+    await page.keyboard.type('/');
+    await page.waitForTimeout(300);
+
+    // Initial live region should contain the first item's label
+    const initialLive = await page.evaluate(() => {
+      const live = document.querySelector('[role="listbox"] [aria-live="polite"]');
+      return live?.textContent?.trim() ?? null;
+    });
+    expect(initialLive).toBeTruthy();
+
+    // Navigate down — live region should update to the new item's label
+    await page.keyboard.press('ArrowDown');
+    await page.waitForTimeout(100);
+
+    const afterNavLive = await page.evaluate(() => {
+      const live = document.querySelector('[role="listbox"] [aria-live="polite"]');
+      return live?.textContent?.trim() ?? null;
+    });
+    expect(afterNavLive).toBeTruthy();
+    expect(afterNavLive).not.toBe(initialLive);
+    await page.keyboard.press('Escape');
+  });
+
   test('items are grouped under category headers', async ({ page }) => {
     await resetEditor(page);
     await page.keyboard.type('/');

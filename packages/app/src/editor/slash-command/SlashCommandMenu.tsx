@@ -37,7 +37,9 @@ export function SlashCommandMenu({
       <div
         ref={containerRef}
         role="status"
+        aria-live="polite"
         className="w-56 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
+        style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
         onMouseDown={(e) => e.preventDefault()}
       >
         No results
@@ -74,6 +76,12 @@ export function SlashCommandMenu({
       className="w-56 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
       style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
     >
+      {/*
+        Live region announces the selected item on arrow navigation. Required
+        because aria-activedescendant on the listbox is inert — focus stays in
+        ProseMirror's contenteditable, and screen readers only announce
+        activedescendant on the focused element.
+      */}
       <span className="sr-only" aria-live="polite" aria-atomic="true">
         {selectedItem ? selectedItem.label : ''}
       </span>

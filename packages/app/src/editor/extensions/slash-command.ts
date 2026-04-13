@@ -100,7 +100,7 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             for (const item of allItems) {
               if (seen.has(item.name)) {
                 console.warn(
-                  `SlashCommand: duplicate item name "${item.name}" — both will appear in the menu; ensure names are unique across sources`,
+                  `[slash-command] duplicate item name "${item.name}" — both will appear in the menu; ensure names are unique across sources`,
                 );
               }
               seen.add(item.name);
