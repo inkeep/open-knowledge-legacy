@@ -183,8 +183,8 @@ export function hocuspocusPlugin(): Plugin {
     name: 'hocuspocus',
     configureServer(server) {
       // V0-1: record the Vite dev-server port in the lock file so MCP discovery
-      // can connect. Vite binds synchronously in some configs; fall back to
-      // httpServer.address() after listening fires.
+      // can connect. httpServer.address() is only valid after bind, so we wait
+      // for the 'listening' event.
       server.httpServer?.once('listening', () => {
         const addr = server.httpServer?.address();
         if (typeof addr === 'object' && addr !== null) {

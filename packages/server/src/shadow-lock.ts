@@ -39,9 +39,8 @@ export function acquireLock(shadowDir: string, worktreeRoot: string): string {
 
     if (existing) {
       const sameHost = existing.hostname === hostname();
-      // Same process re-acquiring — idempotent
       if (sameHost && existing.pid === process.pid) {
-        // Update the lock metadata (e.g. worktreeRoot may differ)
+        // Same process re-acquiring — idempotent, fall through to rewrite
       } else if (sameHost && isProcessAlive(existing.pid)) {
         throw new Error(
           `Shadow repo at ${shadowDir} is locked by another writer ` +
@@ -49,11 +48,11 @@ export function acquireLock(shadowDir: string, worktreeRoot: string): string {
             `started=${existing.startedAt}). ` +
             `Only one active writer instance may mutate a given shadow root at a time.`,
         );
+      } else {
+        console.warn(
+          `[shadow-lock] Stale lock detected (pid=${existing.pid}, host=${existing.hostname}) — replacing`,
+        );
       }
-      // Owner is dead or on a different host — stale lock
-      console.warn(
-        `[shadow-lock] Stale lock detected (pid=${existing.pid}, host=${existing.hostname}) — replacing`,
-      );
     }
   }
 

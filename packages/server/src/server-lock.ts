@@ -108,15 +108,22 @@ export function acquireServerLock(
  */
 export function updateServerLockPort(lockDir: string, port: number): void {
   const lockPath = lockFileFor(lockDir);
-  if (!existsSync(lockPath)) return;
+  if (!existsSync(lockPath)) {
+    console.warn(`[server-lock] Lock file missing at ${lockPath} during port update — skipping`);
+    return;
+  }
 
   let existing: ServerLockMetadata;
   try {
     const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.pid !== 'number') return;
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.pid !== 'number') {
+      console.warn(`[server-lock] Corrupt lock at ${lockPath} during port update — skipping`);
+      return;
+    }
     existing = parsed as ServerLockMetadata;
   } catch {
-    return; // Corrupt or raced read — nothing to update
+    console.warn(`[server-lock] Unreadable lock at ${lockPath} during port update — skipping`);
+    return;
   }
   if (existing.pid !== process.pid) return; // Not ours — refuse to overwrite
 

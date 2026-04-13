@@ -38,6 +38,12 @@ export function discoverServerUrl(params: {
 
   if (portOverride !== undefined) {
     const parsed = Number.parseInt(portOverride, 10);
+    if (Number.isNaN(parsed)) {
+      return {
+        serverUrl: undefined,
+        message: `invalid --port value '${portOverride}' — disk-only mode`,
+      };
+    }
     if (parsed > 0) {
       const serverUrl = `ws://${host}:${parsed}`;
       return { serverUrl, message: `using --port override, connecting to ${serverUrl}` };
@@ -47,6 +53,9 @@ export function discoverServerUrl(params: {
 
   const lock = readServerLock(lockDir);
   if (lock && lock.port > 0) {
+    // Lock-based discovery always uses 127.0.0.1: the lock file is local, so
+    // the server is on this machine. `host` is only meaningful for --port
+    // overrides where the user may target a remote server.
     const serverUrl = `ws://127.0.0.1:${lock.port}`;
     return {
       serverUrl,

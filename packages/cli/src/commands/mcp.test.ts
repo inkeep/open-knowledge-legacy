@@ -105,4 +105,11 @@ describe('discoverServerUrl', () => {
     const result = discoverServerUrl({ lockDir, host: '0.0.0.0', portOverride: '4444' });
     expect(result.serverUrl).toBe('ws://0.0.0.0:4444');
   });
+
+  test('--port with non-numeric value → disk-only with invalid message', () => {
+    const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: 'abc' });
+    expect(result.serverUrl).toBeUndefined();
+    expect(result.message).toContain('invalid');
+    expect(result.message).toContain('abc');
+  });
 });

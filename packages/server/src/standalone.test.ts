@@ -604,6 +604,29 @@ describe('createServer() server-lock integration (V0-1)', () => {
     await first.destroy();
   });
 
+  test('updateServerLockPort through createServer().lockDir updates on-disk port', async () => {
+    const { updateServerLockPort, readServerLock } = await import('./server-lock.ts');
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    await server.ready;
+
+    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    const before = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    expect(before.port).toBe(0);
+
+    updateServerLockPort(server.lockDir, 5173);
+
+    const after = readServerLock(server.lockDir);
+    expect(after).not.toBeNull();
+    expect(after?.port).toBe(5173);
+    expect(after?.pid).toBe(process.pid);
+
+    await server.destroy();
+  });
+
   test('destroy() releases server.lock even when a shutdown phase throws (CC8)', async () => {
     const server = createServer({
       contentDir: tmpDir,
