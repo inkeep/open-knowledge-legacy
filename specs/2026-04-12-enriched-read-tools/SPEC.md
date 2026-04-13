@@ -16,14 +16,14 @@
 
 **Complication:** Reads and search are unenriched. When an agent wants to read an article, it calls native `Read` and gets raw markdown content — no git history, no backlinks, no catalog context attached. To get those, the agent makes separate tool calls (`get_backlinks`, native Grep against catalog files, `git log` via Bash). For search, the agent uses native `Grep` and gets raw line matches with no article metadata — it can't tell which article each match belongs to or what that article is about without additional reads. Meanwhile, the content lifecycle has a gap: `ingest` captures external sources, `research` analyzes them into provisional findings, but there's no tool to promote research → canonical articles. Agents do this ad-hoc, inconsistently, without the guidance that `ingest` and `research` provide.
 
-**Resolution:** Three new MCP tools — `read_document` (enriched read), `search` (enriched grep), `consolidate` (workflow tool) — that fill the gaps without duplicating existing work. `read_document` bundles file contents + recent git history + backlinks + catalog context in one call. `search` groups grep matches by file and attaches article metadata. `consolidate` gives the agent an instructional workflow for research → article promotion, mirroring the `ingest` and `research` pattern. Two supporting primitives: a `just-bash` wrapper for sandboxed shell operations (used by `read_document` and `search`), and a `CatalogStore` read interface that lets a future SQLite backend slot in without touching tool code.
+**Resolution:** Three new MCP tools — `read_document` (enriched read), `search` (enriched grep), `consolidate` (workflow tool) — that fill the gaps without duplicating existing work. `read_document` bundles file contents + recent git history + backlinks + catalog context in one call. `search` groups grep matches by file and attaches article metadata. `consolidate` gives the agent an instructional workflow for research → article promotion, mirroring the `ingest` and `research` pattern. Two supporting primitives: a shell wrapper that standardizes `cat`/`git log`/`grep`/`runShell` (used by `read_document` and `search`), and a `CatalogStore` read interface that lets a future SQLite backend slot in without touching tool code.
 
 ## 2) Goals
 
 - G1: Agents get enriched context on every wiki read — metadata, git history, backlinks, catalog position — in one tool call
 - G2: Agents searching the wiki get matches grouped by file with article metadata attached, so they can evaluate relevance before reading
 - G3: Research findings have a clear, guided path to canonical articles via `consolidate`
-- G4: Shell operations inside our tools use a standardized, sandboxed primitive (just-bash) — no ad-hoc `child_process` calls
+- G4: Shell operations inside our tools use a standardized wrapper — no ad-hoc `child_process` calls scattered across tool files
 - G5: Catalog data access is abstracted behind an interface so future SQLite storage is a drop-in replacement
 - G6: No duplication of Andrew's or Mike's work — new tools fill orthogonal gaps
 
@@ -31,7 +31,7 @@
 
 - **[NEVER]** NG1: Replace `write_document`, `edit_document`, `list_documents`, `undo_agent_edit`, `redo_agent_edit` (Andrew #50) — existing tools are stable and correct
 - **[NEVER]** NG2: Replace `get_backlinks`, `get_forward_links`, `get_orphans`, `get_hubs` (Mike #71) — `read_document` consumes the backlinks endpoint, not replaces it
-- **[NEVER]** NG3: Build CLI subcommands (`open-knowledge read`, `ok` binary) — just-bash is an internal implementation primitive, not an agent-facing surface
+- **[NEVER]** NG3: Build CLI subcommands (`open-knowledge read`, `ok` binary) — the shell wrapper is an internal implementation primitive, not an agent-facing surface
 - **[NOT NOW]** NG4: `list_files` MCP tool — agents read `.open-knowledge/catalogs/<path>/INDEX.md` directly via native `Read`. Revisit if agents struggle to navigate catalogs.
 - **[NOT NOW]** NG5: SQLite catalog backend — interface design only in this spec. Actual SQLite impl is future work.
 - **[NOT NOW]** NG6: Multi-root config — Andrew dropped `wiki.roots` in #47. Revisit when a real use case emerges.
@@ -86,7 +86,7 @@
 | Must | `search` MCP tool returns grep matches grouped by file with metadata | Matching lines + line numbers grouped by file, each file annotated with its frontmatter | Case-insensitive by default |
 | Must | `search` truncates at configurable max | Default 50 matches; output notes "N more not shown" when truncated | Configurable via `mcp.tools.search.max_results` |
 | Must | `consolidate` MCP workflow tool returns instructional text | Handler returns `textResult` with step-by-step guidance, matching `ingest`/`research` pattern | No server call; instructional only |
-| Must | `just-bash` wrapper module standardizes shell operations | Exports `runShell`, `cat`, `gitLog`, `grep` helpers. Singleton Bash instance scoped to project root. | Used internally by `read_document` and `search` |
+| Must | Shell wrapper module standardizes shell operations | Exports `runShell`, `cat`, `gitLog`, `grep`, `shellEscape` helpers. Module-level `setProjectDir` scopes all ops to project root. | Used internally by `read_document` and `search`. Implementation: `node:child_process` wrapped with project-root scoping + path guards. |
 | Must | `CatalogStore` interface abstracts catalog reads | `getCatalog(relDir)` and `getArticleMeta(relPath)` methods. `IndexMdCatalogStore` impl reads INDEX.md via bash. | `read_document` uses this; future SQLite impl drops in |
 | Must | Config schema adds `mcp.tools` section | `mcp.tools.read_document.history_depth` (default 5), `mcp.tools.search.max_results` (default 50) | New section in Zod schema |
 | Must | MCP instructions updated | `INSTRUCTIONS` in `server.ts` mentions `read_document`, `search`, `consolidate` as primary tools for enriched reads / search / research promotion | Via `TOOL_DESCRIPTIONS` aggregation |
@@ -99,7 +99,7 @@
 - Performance: `read_document` completes in <200ms typical (shell ops <50ms each, HTTP to localhost <5ms)
 - Performance: `search` handles wiki scale (<500 files) in <500ms
 - Reliability: `read_document` returns partial results when optional sources fail (e.g., Hocuspocus down → no backlinks, but rest works)
-- Security: just-bash wrapper escapes paths; no shell injection via user-supplied params
+- Security: shell wrapper escapes paths; no shell injection via user-supplied params
 - Testability: unit tests co-located with source, use fixture directories for integration
 
 ## 7) Proposed solution (vertical slice)
@@ -129,13 +129,13 @@
 │                   MCP Server                             │
 │                (open-knowledge mcp)                      │
 │                                                          │
-│  read_document ── just-bash ──► cat, git log                │
+│  read_document ── shell ────► cat, git log                │
 │       │                                                  │
 │       ├── CatalogStore ──► .open-knowledge/catalogs/    │
 │       │                                                  │
 │       └── httpGet ──► /api/backlinks (if Hocuspocus up) │
 │                                                          │
-│  search ── just-bash ──► grep/rg                        │
+│  search ── shell ────► grep/rg                        │
 │       │                                                  │
 │       └── parseFrontmatter ──► article metadata         │
 │                                                          │
@@ -157,8 +157,8 @@
 
 **Operations (parallelized where independent):**
 1. Resolve + validate path against project root (via `content.dir` config)
-2. `cat <path>` via just-bash → file contents
-3. `git log -N --format='%h|%ai|%s' -- <path>` via just-bash → recent history (N from config)
+2. `cat <path>` via shell wrapper → file contents
+3. `git log -N --format='%h|%ai|%s' -- <path>` via shell wrapper → recent history (N from config)
 4. `parseFrontmatter(content)` → article's own metadata
 5. `CatalogStore.getCatalog(dirname(path))` → parent folder's title/description
 6. `httpGet(serverUrl, '/api/backlinks?docName=<path-without-.md>')` → backlinks (optional)
@@ -204,11 +204,11 @@ When Hocuspocus is unavailable, the `### Backlinks` section is omitted entirely 
 ```
 
 **Operations:**
-1. Build grep command via just-bash wrapper — scoped to project root, respects `content.include`/`content.exclude` globs
+1. Build grep command via shell wrapper — scoped to project root, respects `content.include`/`content.exclude` globs
 2. Parse grep output into `{ path, line, text }[]`
 3. Group by path
 4. For each path with matches: `parseFrontmatter` to get title/description/tags
-5. Truncate at `mcp.tools.search.max_results`
+5. Truncate at `mcp.tools.search.maxResults`
 
 **Output:**
 ```
@@ -244,27 +244,34 @@ Tags: auth, architecture
 4. Write to `articles/<topic-folder>/<slug>.md` via `write_document` with frontmatter: `title`, `description`, `tags`, `status: canonical`
 5. Mirror-catalog will pick it up automatically
 
-### Supporting primitive 1: just-bash wrapper
+### Supporting primitive 1: shell wrapper
 
 **File:** `packages/cli/src/bash/index.ts` (new)
 
 ```typescript
-import { Bash } from 'just-bash';
+import { exec } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { promisify } from 'node:util';
 
-const bash = new Bash({ cwd: process.cwd() });
+const execAsync = promisify(exec);
 
-export async function runShell(cmd: string): Promise<string> { ... }
-export async function cat(path: string): Promise<string> { ... }
+export function setProjectDir(dir: string): void { ... }   // module-level scope
+export function shellEscape(arg: string): string { ... }   // POSIX shell escape
+
+export async function runShell(cmd: string, opts?: ExecShellOptions): Promise<string> { ... }
+export async function cat(path: string): Promise<string> { ... }  // fs.readFile + path guard
 
 export interface GitLogEntry { hash: string; date: string; subject: string; }
 export async function gitLog(path: string, count: number, since?: string): Promise<GitLogEntry[]> { ... }
 
 export interface GrepMatch { path: string; line: number; text: string; }
-export interface GrepOptions { caseInsensitive?: boolean; include?: string[]; exclude?: string[]; }
-export async function grep(pattern: string, opts: GrepOptions): Promise<GrepMatch[]> { ... }
+export interface GrepOptions { caseInsensitive?: boolean; include?: string[]; exclude?: string[]; paths?: string[]; maxResults?: number; }
+export async function grep(pattern: string, opts?: GrepOptions): Promise<GrepMatch[]> { ... }
 ```
 
-All helpers use the singleton Bash instance. Paths shell-escaped. Errors thrown, not silently swallowed.
+All helpers use module-level `projectDir` state (set once via `setProjectDir` at server startup). Paths shell-escaped. `cat` uses `fs.readFile` directly for speed and includes a path-guard that rejects paths escaping the project root. `gitLog` returns an empty array for non-git directories; unexpected errors are logged to stderr. `runShell` wraps `child_process.exec` with a 30s default timeout and 16MB max buffer.
+
+**Note on D1:** The spec originally proposed Vercel's `just-bash` for this layer. See D1 for why the shipped implementation uses `node:child_process` instead. The wrapper interface is identical to what just-bash would have exposed, so a future swap is contained to this file.
 
 ### Supporting primitive 2: CatalogStore
 
@@ -328,7 +335,7 @@ Update `INSTRUCTIONS` to direct agents to new tools:
 
 | ID | Decision | Status | Rationale |
 |---|---|---|---|
-| D1 | Use just-bash as internal shell primitive | DIRECTED | Composable shell ops without reimplementing grep/find/git in JS. Sandboxed. Cloud-friendly (same primitive works in just-bash cloud sandbox). Installable from npm (`just-bash` v2.14.1). **Tradeoff acknowledged:** adds a dep for ~4 wrappers. If R1 benchmarks show unacceptable overhead, fall back to `node:child_process` — D1 is an architectural choice, not a lock. Chosen now to avoid retrofitting later when cloud surface lands. |
+| D1 | Use a shell wrapper as internal primitive (originally proposed just-bash; shipped with `node:child_process`) | DIRECTED | **Updated during implementation.** The spec originally proposed Vercel's `just-bash` for sandboxing + cloud compatibility. Investigation found: (a) just-bash does not ship a `git` command, which `read_document` needs for history enrichment; (b) just-bash uses a virtual filesystem (needs `ReadWriteFs` mounted); (c) in our controlled-command, controlled-args path from inside our own MCP server, the interpreter overhead is real cost with no security benefit. Per R1 (mitigation was explicitly accepted in the spec), shipped using `node:child_process` instead. The wrapper interface is identical; if cloud deployment later wants sandboxed execution, swap the wrapper internals without touching tool code. |
 | D2 | Backlinks always-on in `read_document`, graceful degrade if Hocuspocus unavailable | LOCKED | Tim explicitly directed always-on. When Hocuspocus down, omit backlinks section — don't error the whole read. |
 | D3 | `CatalogStore` interface for read-side abstraction | DIRECTED | Future SQLite backend drops in without touching tool code. Leave `mirror-catalog.ts` write path alone this PR. |
 | D4 | No replacement of existing Andrew/Mike tools | LOCKED | `write_document`, `list_documents`, `get_backlinks` etc. are stable. New tools fill orthogonal gaps. |
@@ -345,7 +352,7 @@ None. All P0 questions resolved through iterative discussion. P2 items folded in
 
 | ID | Assumption | Confidence | Verification |
 |---|---|---|---|
-| A1 | `just-bash` npm package is production-ready | MEDIUM | v2.14.1 published by vercel-labs. Benchmark vs `child_process.exec` during implementation. Fall back to `child_process` if overhead is unacceptable. |
+| A1 | `node:child_process` latency is acceptable for shell ops | HIGH | Node builtin, no extra dep, no interpreter overhead. Shell commands complete in <50ms typical at wiki scale. Verified during implementation. |
 | A2 | Backlinks endpoint (`/api/backlinks`) response shape is stable | HIGH | Shipped in Mike #71, used by `get_backlinks` tool |
 | A3 | Mirror-catalog INDEX.md format is stable | HIGH | Shipped in Andrew #47, used by existing catalog browsing |
 | A4 | Wiki scale stays under ~500 files | HIGH | Current usage; revisit if adoption grows |
@@ -355,11 +362,11 @@ None. All P0 questions resolved through iterative discussion. P2 items folded in
 
 | ID | Risk | Severity | Mitigation |
 |---|---|---|---|
-| R1 | just-bash adds runtime dep for trivial shell ops | Medium | Benchmark during implementation. If overhead is unacceptable, fall back to `node:child_process`. D1 becomes a choice, not a lock. |
+| R1 | ~~just-bash adds runtime dep for trivial shell ops~~ | — | **Resolved during implementation.** Shipped with `node:child_process` (see D1). No extra dep. If cloud deployment later wants sandboxed execution, swap the wrapper internals (~50 LOC) without touching tool code. |
 | R2 | `read_document` latency from multiple ops | Medium | Parallelize independent ops (`Promise.all`). Target <200ms typical. |
 | R3 | Agent keeps using native `Read` instead of `read_document` | Medium | Update MCP `INSTRUCTIONS` to direct agents to enriched tools for wiki ops. |
 | R4 | `CatalogStore` interface proves wrong shape when SQLite impl is built | Low | Interface is minimal (2 methods). Can evolve before SQLite ships. |
-| R5 | just-bash shell escaping bugs cause injection via path params | Medium | Use just-bash's parameterized API; unit tests with malicious fixture paths. |
+| R5 | Shell escaping bugs cause injection via path params | Medium | `shellEscape` wraps all interpolated args; `cat` uses `fs.readFile` directly (no shell); unit tests cover embedded quotes, empty strings, safe-char fast path. |
 
 ## 12) Future work
 
@@ -376,15 +383,15 @@ None. All P0 questions resolved through iterative discussion. P2 items folded in
 ## 13) Agent constraints
 
 - **SCOPE:**
-  - `packages/cli/src/bash/` — new (just-bash wrapper)
+  - `packages/cli/src/bash/` — new (shell wrapper)
   - `packages/cli/src/mcp/tools/read-document.ts` — new
   - `packages/cli/src/mcp/tools/search.ts` — new
-  - `packages/cli/src/mcp/toolsconsolidate.ts` — new
+  - `packages/cli/src/mcp/tools/consolidate.ts` — new
   - `packages/cli/src/mcp/tools/index.ts` — modify (register new tools)
   - `packages/cli/src/content/catalog-store.ts` — new
   - `packages/cli/src/config/schema.ts` — modify (add `mcp.tools` section)
   - `packages/cli/src/mcp/server.ts` — modify (update INSTRUCTIONS)
-  - `packages/cli/package.json` — modify (add `just-bash` dep)
+  - ~~`packages/cli/package.json` — modify (add `just-bash` dep)~~ No new deps (see D1)
 - **EXCLUDE:**
   - `packages/server/` — Hocuspocus API stable, no changes needed
   - `packages/app/` — editor frontend, not affected
@@ -392,10 +399,10 @@ None. All P0 questions resolved through iterative discussion. P2 items folded in
   - `packages/cli/src/content/mirror-catalog.ts` — write path stays as-is (don't refactor to use `CatalogStore`)
   - Existing MCP tool files (`write-document.ts`, `edit-document.ts`, `list-documents.ts`, `undo-agent-edit.ts`, `redo-agent-edit.ts`, `get-backlinks.ts`, `get-forward-links.ts`, `get-orphans.ts`, `get-hubs.ts`, `init-content.ts`, `ingest.ts`, `research.ts`)
 - **STOP_IF:**
-  - just-bash benchmark shows unacceptable overhead — return to spec to re-evaluate D1
+  - ~~just-bash benchmark shows unacceptable overhead — return to spec to re-evaluate D1~~ (resolved pre-implementation)
   - `CatalogStore` interface shape requires changes to `mirror-catalog.ts` — return to scope discussion
   - Mike's backlinks endpoint response shape differs from what `get-backlinks.ts` shows
 - **ASK_FIRST:**
   - Deprecating any existing tool
   - Changing MCP `INSTRUCTIONS` structure (not just content)
-  - Adding dependencies beyond `just-bash`
+  - Adding new runtime dependencies

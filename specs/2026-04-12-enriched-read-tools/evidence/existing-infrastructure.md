@@ -133,24 +133,21 @@ Layout produced:
 
 Each INDEX.md has sticky frontmatter (title, description — preserved across rebuilds) + auto-generated Articles list + Subfolders list with article counts.
 
-## just-bash (external dependency)
+## just-bash (evaluated, not shipped)
 
 **Package:** `just-bash` v2.14.1 from `vercel-labs/just-bash`
 **Homepage:** https://justbash.dev/
 
-API shape:
-```typescript
-import { Bash } from 'just-bash';
+Spec D1 originally proposed this as the shell primitive for its sandboxing and cloud-compatibility story. Evaluated during implementation; not shipped. Findings:
 
-const bash = new Bash(options);
-await bash.exec(script, execOptions);
-```
+- **No `git` command.** just-bash's command registry has `cat`, `grep`, `ls`, `find`, `awk`, `cp`, `curl`, etc. but no `git`. `read_document`'s `git log` enrichment couldn't be served.
+- **Virtual filesystem.** To access real files, callers must mount `ReadWriteFs({ root })`. Functional but adds a layer over `node:fs` for operations that are already safe (we control commands and args from inside our own MCP server).
+- **Interpreter overhead.** The AST-based interpreter is real cost (tens of ms per exec) that buys sandboxing we don't need for this use case.
 
-Supports:
-- `defineCommand()` for custom commands
-- `InMemoryFs`, `MountableFs` filesystem abstraction
-- Persistent FS across calls
-- Isolated shell state per exec
-- CLI binaries: `just-bash`, `just-bash-shell`
+**Decision:** Shipped with `node:child_process.exec` wrapped in `packages/cli/src/bash/index.ts`. The wrapper interface matches what a just-bash-backed implementation would expose, so a future swap (e.g., for cloud sandbox deployment) is contained to that one file.
 
-Status: installable as npm dep.
+Reference for future swap:
+- `Bash` class: `new Bash({ fs: new ReadWriteFs({ root: projectDir }), files: ... })`
+- `bash.exec(cmd, { cwd, env, signal })` returns `{ stdout, stderr, exitCode }`
+- Command registry: `getCommandNames()` (no git)
+- Installable as npm dep.

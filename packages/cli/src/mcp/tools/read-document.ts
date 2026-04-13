@@ -100,7 +100,7 @@ async function fetchBacklinks(
   for (const item of raw) {
     if (typeof item !== 'object' || item === null) continue;
     const rec = item as Record<string, unknown>;
-    const docName =
+    const sourceDocName =
       typeof rec.docName === 'string'
         ? rec.docName
         : typeof rec.source === 'string'
@@ -108,9 +108,9 @@ async function fetchBacklinks(
           : typeof rec.page === 'string'
             ? rec.page
             : undefined;
-    if (!docName) continue;
+    if (!sourceDocName) continue;
     entries.push({
-      docName,
+      docName: sourceDocName,
       title: typeof rec.title === 'string' ? rec.title : undefined,
       snippet: typeof rec.snippet === 'string' ? rec.snippet : undefined,
     });
@@ -129,17 +129,18 @@ export async function buildReadResult(
   deps: ReadDocumentDeps,
 ): Promise<string> {
   const relPath = toProjectRelative(deps.projectDir, args.path);
-  const historyDepth = deps.config.mcp.tools.read_document.history_depth;
+  const historyDepth = deps.config.mcp.tools.read_document.historyDepth;
   const docName = pathToDocName(relPath);
   const abs = resolve(deps.projectDir, relPath);
 
   // Step 2 (read content) is the precondition for step 4 (parse frontmatter).
   // Steps 3, 5, 6 are independent; run them in parallel with step 2.
+  // Only content is critical — enrichment ops degrade gracefully (per D2).
   const [content, history, folder, backlinks] = await Promise.all([
     readFile(abs, 'utf-8'),
-    gitLog(relPath, historyDepth, args.since),
-    deps.catalog.getCatalog(parentDirOf(relPath)),
-    fetchBacklinks(deps.serverUrl, docName),
+    gitLog(relPath, historyDepth, args.since).catch(() => [] as GitLogEntry[]),
+    deps.catalog.getCatalog(parentDirOf(relPath)).catch(() => null),
+    fetchBacklinks(deps.serverUrl, docName).catch(() => null),
   ]);
 
   const fm = parseFrontmatter(content, ArticleFrontmatterSchema);

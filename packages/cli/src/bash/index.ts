@@ -118,10 +118,14 @@ export async function runShell(cmd: string, opts?: ExecShellOptions): Promise<st
 
 /**
  * Read a file as UTF-8. Uses fs.readFile directly — no shell — for safety and speed.
- * Path is resolved against projectDir if relative.
+ * Path is resolved against projectDir if relative. Throws if the resolved path
+ * escapes the project directory.
  */
 export async function cat(path: string): Promise<string> {
   const abs = resolve(projectDir, path);
+  if (!abs.startsWith(`${projectDir}/`) && abs !== projectDir) {
+    throw new Error(`Path outside project root: ${path}`);
+  }
   return readFile(abs, 'utf-8');
 }
 
@@ -152,8 +156,14 @@ export async function gitLog(path: string, count: number, since?: string): Promi
           subject: subjectParts.join('|'),
         };
       });
-  } catch {
+  } catch (err) {
     // File outside git repo, or git not installed, or no history — all non-fatal.
+    // Log at debug level (stderr) so operators can diagnose missing history when
+    // it's unexpected; avoid noise for the common "not a git repo" case.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/not a git repository|fatal: ambiguous argument/.test(msg)) {
+      process.stderr.write(`[gitLog] ${path}: ${msg}\n`);
+    }
     return [];
   }
 }

@@ -31,26 +31,29 @@ export const ConfigSchema = z.object({
     .object({
       tools: z
         .object({
+          // Tool names stay snake_case (they match MCP tool names on the wire).
+          // Setting names inside each tool use camelCase to match sibling config
+          // sections (persistence.debounceMs, etc.).
           read_document: z
             .object({
-              history_depth: z.number().int().min(0).default(5),
+              historyDepth: z.number().int().min(0).default(5),
             })
-            .default({ history_depth: 5 }),
+            .default({ historyDepth: 5 }),
           search: z
             .object({
-              max_results: z.number().int().min(1).default(50),
+              maxResults: z.number().int().min(1).default(50),
             })
-            .default({ max_results: 50 }),
+            .default({ maxResults: 50 }),
         })
         .default({
-          read_document: { history_depth: 5 },
-          search: { max_results: 50 },
+          read_document: { historyDepth: 5 },
+          search: { maxResults: 50 },
         }),
     })
     .default({
       tools: {
-        read_document: { history_depth: 5 },
-        search: { max_results: 50 },
+        read_document: { historyDepth: 5 },
+        search: { maxResults: 50 },
       },
     }),
 });

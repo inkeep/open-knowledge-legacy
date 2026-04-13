@@ -56,7 +56,7 @@ export async function buildSearchResult(
   args: { query: string; case_sensitive?: boolean },
   deps: SearchDeps,
 ): Promise<string> {
-  const maxResults = deps.config.mcp.tools.search.max_results;
+  const maxResults = deps.config.mcp.tools.search.maxResults;
   const include = deps.config.content.include;
   const exclude = deps.config.content.exclude;
 
@@ -110,7 +110,7 @@ export async function buildSearchResult(
 
   if (truncated) {
     lines.push(
-      `_${visible.length} of ${matches.length}+ matches shown. Raise \`mcp.tools.search.max_results\` in config.yml to see more._`,
+      `_${visible.length} of ${matches.length}+ matches shown. Raise \`mcp.tools.search.maxResults\` in config.yml to see more._`,
     );
   }
 
