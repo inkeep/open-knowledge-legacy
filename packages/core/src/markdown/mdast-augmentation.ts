@@ -12,7 +12,7 @@ import type { Position } from 'unist';
 // Wiki-link mdast node (produced by our micromark extension in US-006).
 // Runtime shape: target/alias/anchor live under `data`, matching
 // the mdast-util-from-markdown enter/exit handlers in wiki-link-micromark.ts.
-interface WikiLinkMdast {
+export interface WikiLinkMdast {
   type: 'wikiLink';
   value: string;
   data: {
