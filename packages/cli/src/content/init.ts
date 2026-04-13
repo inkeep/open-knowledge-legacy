@@ -36,6 +36,19 @@ Projects that want an explicit knowledge-maturation flow can organize as three t
 
 This is a pattern, not a requirement. Projects with existing layouts (\`specs/\`, \`reports/\`, \`docs/\`, etc.) should use those; the lifecycle exists as mental scaffolding, not as enforced filesystem structure.
 
+## Linking — use \`[[wiki-links]]\` aggressively
+
+**When writing or editing any document, link liberally to every other document it relates to.** Open Knowledge's value compounds with link density: backlinks surface cross-document context in every read, graph queries (\`get_hubs\` / \`get_orphans\`) reveal structure, and agents navigate the knowledge base by following links. A document with no outbound links is an island.
+
+**Defaults when writing:**
+
+- Every noun-phrase that names another document is a link. Write \`[[Page Title]]\` instead of plain prose when mentioning concepts, projects, decisions, or entities that have (or should have) their own page. Redlinks are fine — they signal "this should exist."
+- Cross-link siblings: when creating a document in a folder, link to the 2–3 most related neighbors.
+- Link back to sources instead of re-summarizing — the reader can follow.
+- Prefer \`[[Page]]\` over Markdown \`[text](./page.md)\`. Wiki-links resolve by docName and participate in the backlinks index; Markdown links to other wiki files don't.
+
+**Rule of thumb:** if a human reader would want to click a term to learn more, make it a link. Err on the side of too many links.
+
 ## Frontmatter Conventions
 
 Every \`.md\` file that's part of the knowledge base should have YAML frontmatter:

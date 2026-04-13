@@ -12,6 +12,8 @@ export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find-and-replace on a live document via the CRDT layer.',
   'The patch is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
+  '**When rewriting prose, add `[[wiki-links]]` aggressively.** If the replacement mentions other documents or entities that should have their own page, link them as `[[Page Name]]`. Over-linking is the goal; underlinked documents lose their value in backlink-driven navigation.',
+  '',
   '**Parameters:**',
   '- `docName` — Document name to edit',
   '- `find` — Text to find (exact match)',
