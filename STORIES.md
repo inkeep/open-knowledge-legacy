@@ -6,12 +6,11 @@
 **Next phase:** See `projects/day-0-editor-completeness/PROJECT.md` for the Phase 2 decomposition — day-0 editor gaps (file ops, real-time sidebar, onboarding, graph panels, navigation, polish). Uses ED-prefixed story IDs (ED-1 through ED-7) to distinguish from Phase 1's S1-S10.
 
 **Scope:** Only PROJECT.md's **Now** phase (S1, S2, S4, S5, S6, S9, S10) + the cross-cutting concerns that gate them.
-**Purpose:** Bucket the Now-phase work into logical semantic workstreams so the team can assign owners. Each bucket is split into **user stories** (observable outcomes) and **technical stories** (implementation work). Items marked **[scope: Next]** or **[scope: Later]** surfaced in planning but PROJECT.md has deferred them — decide per-item whether to promote, defer, or ship a stub.
+**Purpose:** Bucket the Now-phase work into logical semantic workstreams so the team can assign owners. Each bucket is split into **user stories** (observable outcomes) and **technical stories** (implementation work). Items marked **\[scope: Next]** or **\[scope: Later]** surfaced in planning but PROJECT.md has deferred them — decide per-item whether to promote, defer, or ship a stub.
 
 ---
 
 ## Now-phase story map
-
 
 | Story   | Title                                                                    |
 | ------- | ------------------------------------------------------------------------ |
@@ -22,7 +21,6 @@
 | **S6**  | Auto-persistence + version history timeline                              |
 | **S9**  | Localhost editor embeddable in agent environments                        |
 | **S10** | Wiki-links + backlinks (the knowledge graph)                             |
-
 
 Seven Now stories form **one delivery group** — they share the CRDT layer and ship together. Internal sequencing from the phasing rationale: S1+S4 (CRDT+MCP foundation) → S6 (persistence) → S5+S10 (presence + knowledge graph) → S2+S9 (source mode + embeddability as polish).
 
@@ -47,19 +45,19 @@ Seven Now stories form **one delivery group** — they share the CRDT layer and 
 
 - **T1.1** Wire TipTap + y-prosemirror to Y.XmlFragment('default') — block-level CRDT, void nodes atomic. *(Already landed via init-spike; this bucket inherits it.)*
 - **T1.2** Build custom block schemas for the pre-defined component set, each backed by a React component from the project's `mdx-components.tsx`
-- **T1.3** Build the component introspection pipeline: react-docgen-typescript reads the TypeScript interface → auto-generate prop controls (string→text, boolean→toggle, union→dropdown). Override file (`.open-knowledge/component-meta.ts`) upgrades specific controls. React.ReactNode props become inline-editable children, not prop fields. Cache to `.open-knowledge/component-cache.json` with mtime invalidation. *(See TQ31 findings — `skipChildrenPropWithoutDoc: false`, `shouldExtractLiteralValuesFromEnum: true`, not `shouldExtractValuesFromUnion`.)*
+- **T1.3** Build the component introspection pipeline: react-docgen-typescript reads the TypeScript interface → auto-generate prop controls (string→text, boolean→toggle, union→dropdown). Override file (`.open-knowledge/component-meta.ts`) upgrades specific controls. React.ReactNode props become inline-editable children, not prop fields. Cache to `.open-knowledge/component-cache.json` with mtime invalidation. *(See TQ31 findings — *`skipChildrenPropWithoutDoc: false`*, *`shouldExtractLiteralValuesFromEnum: true`*, not *`shouldExtractValuesFromUnion`*.)*
 - **T1.4** Build the void-node-with-mini-CodeMirror extension for non-registered JSX. Raw string in, raw string out.
 - **T1.5** Build the per-block code toggle — one component block switches to code view while the rest stays WYSIWYG
 - **T1.6** Build the file-level source toggle UI on top of the observer sync already landed in PR #6 (TQ25). *(The sync is done; the polish is not.)*
-- **T1.7** Build the Obsidian-parity component shim — math, mermaid, footnotes, collapsible callouts, inline tags (~3-4 days per TQ4)
+- **T1.7** Build the Obsidian-parity component shim — math, mermaid, footnotes, collapsible callouts, inline tags (\~3-4 days per TQ4)
 - **T1.8** (optional Now) Build the side-by-side MDX preview pane — compiles MDX → React on each change
 - **T1.9** Expose rendering hooks for S5 presence: agent cursor position + diff view inside the editor canvas *(data model lives in Bucket 3; this bucket only draws)*
 
 ### Scope flags
 
-- **[scope: Next — S3]** Full file navigator sidebar (create folders, full-text search). A **minimal shell sidebar** without polished organization is part of CC3 and acceptable in Now.
-- **[scope: Next — S3]** Frontmatter editing via the editor
-- **[?]** "Switching between projects" — not in any Now story. Decide if it's CC3 shell or PQ12 init concern.
+- **\[scope: Next — S3]** Full file navigator sidebar (create folders, full-text search). A **minimal shell sidebar** without polished organization is part of CC3 and acceptable in Now.
+- **\[scope: Next — S3]** Frontmatter editing via the editor
+- **\[?]** "Switching between projects" — not in any Now story. Decide if it's CC3 shell or PQ12 init concern.
 
 ### Dependencies
 
@@ -109,7 +107,7 @@ The "tool count is the strongest failure predictor" research argues for (a). Dec
 
 ### Scope flags
 
-- **[scope: Next — S8]** Orama-powered search bar for humans (agents get catalog + grep at P0). Consider shipping a trivial file-content search in Now as a placeholder if the bucket has capacity.
+- **\[scope: Next — S8]** Orama-powered search bar for humans (agents get catalog + grep at P0). Consider shipping a trivial file-content search in Now as a placeholder if the bucket has capacity.
 
 ### Dependencies
 
@@ -304,7 +302,7 @@ T7.8 (6 link-graph MCP tools) live in Bucket 2's surface. This is the M2' 10-vs-
 
 ### Scope flags
 
-- **[scope: Later — S-L4]** Graph view visualization. Fumadocs already has `graph-view.tsx` wired to `react-force-graph-2d` — low marginal cost if promoted. Decide in meeting.
+- **\[scope: Later — S-L4]** Graph view visualization. Fumadocs already has `graph-view.tsx` wired to `react-force-graph-2d` — low marginal cost if promoted. Decide in meeting.
 
 ### Dependencies
 
@@ -357,7 +355,7 @@ Buckets 2 (MCP), 5 (permissions), and 6 (onboarding) all touch:
 
 - **TQ30** — is `.open-knowledge/` the project namespace? What goes in it?
 - **PQ12** — editor-by-default or proposer-by-default?
-- **MCP `instructions` field** — what does an agent read on connect?
+- **MCP **`instructions`** field** — what does an agent read on connect?
 
 Recommend a single 30-minute sync early in Now to resolve all three together. Otherwise all three buckets block on each other.
 
@@ -381,18 +379,16 @@ Permission model decisions propagate downstream:
 
 Items in the team planning doc that PROJECT.md has in Next or Later. Each needs: **promote**, **defer per PROJECT.md**, or **ship a stub**.
 
-
-| Item                                         | Related bucket       | PROJECT.md phase              | Decision                                                              |
-| -------------------------------------------- | -------------------- | ----------------------------- | --------------------------------------------------------------------- |
-| Orama search bar for humans                  | Bucket 2             | Next (S8)                     | Ship trivial file/content search in Now, or defer?                    |
-| `/ingest` **reference skill [Tim]**          | **— (not bucketed)** | **Next (PQ14 + S7)**          | **Promote S7 + PQ14 to Now? Or parallel reference-skill track?**      |
-| `/consolidate` **reference skill [Tim]**     | **— (not bucketed)** | **Next (PQ14 + S7)**          | **Same as above**                                                     |
-| **Externalize the "research" skill [Tim]**   | **— (not bucketed)** | **Next (PQ14)**               | **Same as above**                                                     |
-| Graph view of links                          | Bucket 7             | Later (S-L4)                  | Low marginal cost (Fumadocs has it); promote?                         |
-| **Full file navigator sidebar [Dima/Sarah]** | **Bucket 1**         | **Next (S3)**                 | **Minimal shell sidebar in CC3 Now, full S3 Next. Where's the line?** |
-| Switching between projects                   | Bucket 1 or 6        | — (not in PROJECT.md)         | Add to CC3, CC5, or defer                                             |
-| Obsidian parity in components                | Bucket 1             | S1 Now (~3-4 day gap per TQ4) | Explicit Now AC, or forward-looking goal?                             |
-
+| Item                                          | Related bucket       | PROJECT.md phase               | Decision                                                              |
+| --------------------------------------------- | -------------------- | ------------------------------ | --------------------------------------------------------------------- |
+| Orama search bar for humans                   | Bucket 2             | Next (S8)                      | Ship trivial file/content search in Now, or defer?                    |
+| `/ingest` **reference skill \[Tim]**          | **— (not bucketed)** | **Next (PQ14 + S7)**           | **Promote S7 + PQ14 to Now? Or parallel reference-skill track?**      |
+| `/consolidate` **reference skill \[Tim]**     | **— (not bucketed)** | **Next (PQ14 + S7)**           | **Same as above**                                                     |
+| **Externalize the "research" skill \[Tim]**   | **— (not bucketed)** | **Next (PQ14)**                | **Same as above**                                                     |
+| Graph view of links                           | Bucket 7             | Later (S-L4)                   | Low marginal cost (Fumadocs has it); promote?                         |
+| **Full file navigator sidebar \[Dima/Sarah]** | **Bucket 1**         | **Next (S3)**                  | **Minimal shell sidebar in CC3 Now, full S3 Next. Where's the line?** |
+| Switching between projects                    | Bucket 1 or 6        | — (not in PROJECT.md)          | Add to CC3, CC5, or defer                                             |
+| Obsidian parity in components                 | Bucket 1             | S1 Now (\~3-4 day gap per TQ4) | Explicit Now AC, or forward-looking goal?                             |
 
 ---
 
@@ -402,7 +398,7 @@ Items in the team planning doc that PROJECT.md has in Next or Later. Each needs:
 2. **M2' audit (Bucket 2):** 10 MCP tools with S10's links behind a capability flag, or 16 tools in two namespaces, or drop the framing?
 3. **TQ10 permission store (Bucket 5):** frontmatter-only, config file, or full Zanzibar?
 4. **PQ12 init defaults (Buckets 5, 6):** editor-by-default or proposer-by-default for new KBs?
-5. **TQ30 `.open-knowledge/` directory (Buckets 2, 5, 6):** confirm as project namespace, or alternative convention?
+5. **TQ30 **`.open-knowledge/`** directory (Buckets 2, 5, 6):** confirm as project namespace, or alternative convention?
 6. **KB git relationship to parent repo (Bucket 6):** own repo / subdir with own `.git` / worktree / tracked in parent?
 7. **Bucket 4 timeline UI scope:** ship the full "Save Version" + timeline in Now, or ship invisible auto-persist with UI deferred to Next?
 8. **Bucket 1 / Bucket 3 boundary on S5:** who draws the cursor + diff view inside the editor canvas?
@@ -419,5 +415,5 @@ Items in the team planning doc that PROJECT.md has in Next or Later. Each needs:
 - **Items table:** [PROJECT.md §Items](PROJECT.md) — 59 rows (PQ / TQ / XQ)
 - **PR #6 (merged):** bidirectional observer sync + disk bridge — TQ25, TQ26, CC1 matrix
 - **PR #7 (in-flight):** `feat/presence-awareness-ux` — S5 core (cursors, flash, per-origin undo)
-- **Post-merge audit findings:** [meta/_audit-project-md-post-merge.md](meta/_audit-project-md-post-merge.md) — most resolved; H3' and M2' deferred for team decision
+- **Post-merge audit findings:** [meta/\_audit-project-md-post-merge.md](meta/_audit-project-md-post-merge.md) — most resolved; H3' and M2' deferred for team decision
 

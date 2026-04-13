@@ -127,6 +127,7 @@ export async function commitWip(
   const tmpIndex = resolve(shadow.gitDir, `index-wip-${writer.id}`);
   const ref = `refs/wip/${branch}/${writer.id}`;
   const sg = shadowGit(shadow);
+  const gitPathspec = contentRoot || '.';
 
   try {
     // Seed index from current ref state (if exists)
@@ -150,7 +151,7 @@ export async function commitWip(
         GIT_WORK_TREE: shadow.workTree,
         GIT_INDEX_FILE: tmpIndex,
       })
-      .raw('add', contentRoot);
+      .raw('add', gitPathspec);
     const treeSha = (
       await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: tmpIndex }).raw('write-tree')
     ).trim();
@@ -393,6 +394,9 @@ export async function saveVersion(
   branch = 'main',
 ): Promise<SaveVersionResult> {
   const sg = shadowGit(shadow);
+  // git rejects an empty string pathspec — use '.' (repo root) when
+  // contentRoot is '' (content dir === project root).
+  const gitPathspec = contentRoot || '.';
 
   // ── Step 1: Create project repo commit (integrated mode only) ──
   let projectCommitSha: string | null = null;
@@ -417,7 +421,7 @@ export async function saveVersion(
       }
 
       // Stage current content
-      await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('add', contentRoot);
+      await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('add', gitPathspec);
       const treeSha = (await projectGit.env({ GIT_INDEX_FILE: tmpIndex }).raw('write-tree')).trim();
 
       // Find parent
@@ -487,7 +491,7 @@ export async function saveVersion(
         GIT_WORK_TREE: shadow.workTree,
         GIT_INDEX_FILE: shadowTmpIndex,
       })
-      .raw('add', contentRoot);
+      .raw('add', gitPathspec);
     const shadowTreeSha = (
       await sg.env({ GIT_DIR: shadow.gitDir, GIT_INDEX_FILE: shadowTmpIndex }).raw('write-tree')
     ).trim();
