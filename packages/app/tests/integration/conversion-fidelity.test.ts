@@ -5,8 +5,8 @@
  * conversions in the stack:
  *   1. Markdown round-trip: serialize(parse(md))
  *   2. Tree round-trip: pmJSON → nodeFromJSON → updateYFragment → yXmlFragmentToProsemirrorJSON → pmJSON
- *   3. Observer round-trip: XmlFragment → Observer A → Y.Text → Observer B → XmlFragment
- *   4. Full-stack chain: md → parse → XmlFragment → Observer A → Y.Text → Observer B → XmlFragment → serialize → md
+ *   3. Disk round-trip: XmlFragment → persistence → disk → onLoadDocument → XmlFragment
+ *   4. Agent-as-file-editor: agent writes file → disk → CRDT → all surfaces
  *
  * Documents which constructs are stable vs which normalize.
  */
@@ -17,7 +17,6 @@ import { join } from 'node:path';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 
-import { setupObservers } from '../../src/editor/observers';
 import {
   agentWriteMd,
   assertBridgeInvariant,
@@ -203,104 +202,13 @@ describe('tree round-trip: pmJSON → updateYFragment → yXmlFragmentToProsemir
   }
 });
 
-// ─── 3. Observer round-trip ───
+// Observer round-trip and full-stack chain blocks removed 2026-04-12.
+// Layer A (mdManager) === Layer B (Y.Doc observer path) on all 118 constructs
+// (fidelity-catalog probe, 2026-04-12). These chains tested a proven pass-through.
+// Remaining blocks (md round-trip, tree round-trip, disk round-trip, agent-as-file-editor)
+// exercise genuinely distinct code paths.
 
-describe('observer round-trip: XmlFragment → Observer A → Y.Text → Observer B → XmlFragment', () => {
-  for (const { name, input } of CONSTRUCTS) {
-    test.concurrent(name, async () => {
-      const doc = new Y.Doc();
-      const fragment = doc.getXmlFragment('default');
-      const ytext = doc.getText('source');
-
-      const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
-
-      try {
-        // Apply markdown to XmlFragment (simulates WYSIWYG content)
-        const json = mdManager.parse(input);
-        const pmNode = schema.nodeFromJSON(json);
-        const meta = { mapping: new Map(), isOMark: new Map() };
-        updateYFragment(doc, fragment, pmNode, meta);
-
-        // Poll until Observer A (tree→text) + Observer B (text→tree) settle —
-        // the bridge is converged when both sides are equal and non-empty.
-        await pollUntil(() => {
-          const t = stripTrailingWhitespace(ytext.toString());
-          const f = stripTrailingWhitespace(
-            mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
-          );
-          return t === f && t.length > 0;
-        }, 5000);
-
-        // Verify bridge invariant holds
-        const textContent = stripTrailingWhitespace(ytext.toString());
-        const fragSerialized = stripTrailingWhitespace(
-          mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
-        );
-        expect(textContent).toBe(fragSerialized);
-
-        // Verify content is preserved (strict: includes &<> fidelity chars)
-        const tokens = stripTrailingWhitespace(input).match(/[\w&<>]+/g) ?? [];
-        for (const token of tokens) {
-          expect(textContent).toContain(token);
-        }
-      } finally {
-        cleanup();
-        doc.destroy();
-      }
-    });
-  }
-});
-
-// ─── 4. Full-stack chain ───
-
-describe('full-stack chain: md → parse → XmlFragment → Observer A → Y.Text → Observer B → XmlFragment → serialize → md', () => {
-  for (const { name, input } of CONSTRUCTS) {
-    test.concurrent(name, async () => {
-      const doc = new Y.Doc();
-      const fragment = doc.getXmlFragment('default');
-      const ytext = doc.getText('source');
-
-      const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
-
-      try {
-        // Start with markdown → parse → XmlFragment
-        const json = mdManager.parse(input);
-        const pmNode = schema.nodeFromJSON(json);
-        const meta = { mapping: new Map(), isOMark: new Map() };
-        updateYFragment(doc, fragment, pmNode, meta);
-
-        // Poll until the full observer cycle settles (bridge converged + non-empty)
-        await pollUntil(() => {
-          const t = stripTrailingWhitespace(ytext.toString());
-          const f = stripTrailingWhitespace(
-            mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
-          );
-          return t === f && t.length > 0;
-        }, 5000);
-
-        // Final output: serialize back to markdown
-        const finalMd = stripTrailingWhitespace(
-          mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment)),
-        );
-
-        // Content must be preserved (strict: includes &<> fidelity chars)
-        const tokens = stripTrailingWhitespace(input).match(/[\w&<>]+/g) ?? [];
-        for (const token of tokens) {
-          expect(finalMd).toContain(token);
-        }
-
-        // Bridge invariant must hold
-        const textContent = stripTrailingWhitespace(ytext.toString());
-        expect(textContent).toBe(finalMd);
-      } finally {
-        cleanup();
-        doc.destroy();
-      }
-    });
-  }
-});
-
-// ─── 5. Disk round-trip (Tier 1 integration) ───
+// ─── 3. Disk round-trip (Tier 1 integration) ───
 
 describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocument → XmlFragment', () => {
   let server: TestServer;
@@ -371,7 +279,7 @@ describe('disk round-trip: XmlFragment → persistence → disk → onLoadDocume
   }
 });
 
-// ─── 6. Agent-as-file-editor fidelity ───
+// ─── 4. Agent-as-file-editor fidelity ───
 
 describe('agent-as-file-editor fidelity', () => {
   let server: TestServer;
