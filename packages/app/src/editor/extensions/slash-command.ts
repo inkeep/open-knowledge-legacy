@@ -163,6 +163,9 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               // startAutoUpdate after content is in popup — autoUpdate fires
               // doPosition synchronously on setup, no separate doPosition() needed
               posState.stopAutoUpdate = result.startAutoUpdate();
+              // Items are synchronous — reveal immediately. The popup becomes
+              // visible after the first computePosition resolution.
+              result.reveal();
             },
 
             onUpdate(props: SuggestionProps<SlashCommandItem>) {

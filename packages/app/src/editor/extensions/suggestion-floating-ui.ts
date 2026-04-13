@@ -10,14 +10,22 @@ export interface SuggestionPositionState {
  * Create a positioned suggestion popup element and its positioning helpers.
  * Shared by slash-command and wiki-link suggestion menus.
  *
- * Returns: { popup, doPosition, startAutoUpdate }
- * - popup: the positioned container element (fixed, z-50, appended to body)
- * - doPosition: trigger repositioning (call after content changes in onStart and onUpdate)
+ * Returns: { popup, doPosition, startAutoUpdate, reveal }
+ * - popup: the positioned container element (fixed, z-50, appended to body).
+ *   Starts with `visibility: hidden` — caller must call `reveal()` once content
+ *   is ready and stable. This prevents the "flash at wrong position" artifact
+ *   when the popup is placed before its final content is rendered.
+ * - doPosition: trigger repositioning (call after content changes in onStart
+ *   and onUpdate)
  * - startAutoUpdate: call AFTER appending renderer content to preserve
  *   content-before-autoUpdate ordering (autoUpdate fires doPosition
  *   synchronously on setup — must run after popup has content so
  *   flip/placement middleware see the populated element's dimensions,
  *   not an empty container's)
+ * - reveal: makes the popup visible after the next computePosition resolves.
+ *   For sync menus (slash-command), call immediately after startAutoUpdate.
+ *   For async menus (wiki-link), defer until items have loaded (in onStart)
+ *   so flip() sees the populated content's dimensions, not the loading state's.
  *
  * Uses `popup.isConnected` guards in async callbacks because computePosition
  * is async (returns Promise). The `.then()` can resolve after cleanup has
@@ -27,10 +35,20 @@ export interface SuggestionPositionState {
 export function createSuggestionPopup(
   getCurrentProps: () => SuggestionProps<unknown> | null,
   label: string,
-): { popup: HTMLDivElement; doPosition: () => void; startAutoUpdate: () => () => void } {
+): {
+  popup: HTMLDivElement;
+  doPosition: () => void;
+  startAutoUpdate: () => () => void;
+  reveal: () => void;
+} {
   const popup = document.createElement('div');
   popup.style.position = 'fixed';
   popup.style.zIndex = '50';
+  // Hide until reveal() — callers stage real content first, then unhide.
+  // This eliminates the "flash at wrong position" visible during the initial
+  // sync placement (before computePosition's first resolution) and during
+  // async loading-state → populated-content transitions (wiki-link).
+  popup.style.visibility = 'hidden';
   document.body.appendChild(popup);
 
   const virtualEl = {
@@ -40,8 +58,18 @@ export function createSuggestionPopup(
     },
   };
 
+  let revealRequested = false;
+  let revealed = false;
+
   const doPosition = () => {
     if (!popup.isConnected) return;
+    // Reset max-height before computePosition so flip() measures the popup's
+    // natural content height, not the constrained height from a previous size()
+    // pass. Without this, async menus (wiki-link) get stuck below the cursor:
+    // the loading state is small → size() constrains max-height to the small
+    // available space → items load but flip() still sees the constrained height
+    // → never flips above. The fallback 40vh matches the component's CSS default.
+    popup.style.removeProperty('--suggestion-menu-max-height');
     computePosition(virtualEl, popup, {
       placement: 'bottom-start',
       middleware: [
@@ -63,6 +91,13 @@ export function createSuggestionPopup(
         if (popup.isConnected) {
           popup.style.left = `${x}px`;
           popup.style.top = `${y}px`;
+          // Reveal on the first computePosition resolution after reveal() was
+          // requested. Position is stable now, so showing the popup won't cause
+          // a visible reposition.
+          if (revealRequested && !revealed) {
+            popup.style.removeProperty('visibility');
+            revealed = true;
+          }
         }
       })
       .catch((err) => {
@@ -75,7 +110,16 @@ export function createSuggestionPopup(
   // Caller invokes startAutoUpdate() AFTER appending renderer content
   const startAutoUpdate = () => autoUpdate(virtualEl, popup, doPosition);
 
-  return { popup, doPosition, startAutoUpdate };
+  // Caller invokes reveal() once content is ready (sync menus: immediately;
+  // async menus: after items have loaded). The popup becomes visible after
+  // the next computePosition resolution.
+  const reveal = () => {
+    if (revealed) return;
+    revealRequested = true;
+    doPosition();
+  };
+
+  return { popup, doPosition, startAutoUpdate, reveal };
 }
 
 /**
