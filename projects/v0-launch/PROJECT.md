@@ -20,6 +20,8 @@ The intersection: each of these classes alone is fixable; together they form a "
 
 **Resolution.** A single "v0 launch" project that consolidates the four prior planning surfaces (see Provenance), focuses exclusively on unfinished work, and phases into Now (must-have for launch) / Next (should-have to feel complete) / Later (polish + gated). Each story carries its own ownership signal and current PR/spec status so the team can pick up work without re-discovery.
 
+**Operating pattern — design → implementation handoff.** For UI stories that are design-taste heavy in the spec but mechanical in the build, we operate a Sarah-specs / Dima-implements split. Sarah owns the design (visual, interaction, keyboard, a11y considerations) as a design spec; Dima implements to spec; Sarah reviews for fidelity. Feature owners (Miles, Mike, Andrew) own their features end-to-end including minor feature-specific UX. This is explicit for V0-9, V0-10, V0-18, V0-19. See the "Team ownership reference" section for per-person scope.
+
 **Multi-dimensional value.**
 
 Customer-facing: end-user writers (P1) and developers using OK as a docs tool (P2) get a tool that doesn't trip them on basic operations. Demos work without scripted workarounds. Returning users land where they left off. Renames don't break things.
@@ -41,6 +43,7 @@ Internal: closing the silent data-integrity bugs (V0-1 process safety, V0-12 slu
 - **[NOT NOW]** Multi-project switching (registry + `openknowledge list`/`open` + in-editor switcher). Cross-project navigation, separate bet. Lives as `stories/init-and-project-switching/` Part B. Promote: when v0 ships and users have multiple projects registered.
 - **[NOT NOW]** Tracked changes / inline suggestion mode (Google Docs-style green/red proposals). PROJECT.md PQ11 explicitly parked. Lives in a combined "agent-proposal review experience" design space with branching/draft UX (PQ9). Promote: dedicated design pass for the bundle.
 - **[NOT NOW]** Tags / tag browser, custom CSS, keyboard customization, font size adjustment. Parity-for-parity's-sake or low-leverage features.
+- **[NOT NOW] "OK as a WYSIWYG editor for a Fumadocs project."** Future bet: a Fumadocs project (with fumadocs-ui components registered in `mdx-components.tsx`) can be opened by Open Knowledge as the editor. The editor recognizes fumadocs components, renders them with prop panels, persists changes back to the `.mdx` files. Positions OK as a Mintlify-class editor for the Fumadocs ecosystem. Owner: Dima long-term; Nick consults on generalizable MDX editing + built-in/custom component rendering. Promote when: v0 ships AND MDX pipeline (Nick's territory) stabilizes enough that the generalization surface is clean.
 
 ## Provenance
 
@@ -130,6 +133,168 @@ PR #61 fixed graceful-shutdown data loss in `createServer().destroy()`. V0-1 add
 
 ---
 
+## Team ownership reference
+
+Per-person domain ownership. Stories in the Distribution table below map to these owners.
+
+### Andrew — Platform / Ops / System-level infrastructure
+
+**Core territory:**
+- Project initialization, discovery, opening (CLI experience)
+- Multi-project navigation + switching (CLI-side)
+- Lock files, port management, service boot/shutdown, multi-session coordination
+- Server-side push broadcast infrastructure (CC1) — file watcher → WebSocket awareness pattern
+- Directory structure decisions (Assets/Attachments folder, Raw/external-sources folder, init scaffolding)
+- OpenTelemetry / logging / instrumentation
+- Testing / CI / quality-gate infrastructure (formal steward)
+- Electron desktop app (staged — becomes active when spec promotes from Draft)
+
+**Platform primitives consumed by feature owners:** `initContent()` scaffolding, `state.json` atomic writes + lock coordination, server-side awareness broadcast, process-safety primitives. Feature specs declare their primitive requirements; Andrew implements the primitives; feature code consumes them.
+
+**Load watch:** Heavy platform stack — project init, multi-project nav, lock files, port management, service lifecycle, server-side push broadcast, OpenTelemetry, testing/CI infrastructure, directory structure decisions. Electron is staged as "later" but if it promotes before v0 ships, Andrew's load saturates. Worth checking whether some of this (testing/CI as a formal role; Electron as a new owner) should split. Flag if saturated.
+
+### Mike — Knowledge graph / Content / Search
+
+**Core territory:**
+- Wiki links and back links (data + link rewriting + managed rename)
+- Graph visualization (PR #76 / V0-8)
+- Auto-indexing forward/back links
+- Link-click navigation experience (inside the doc system)
+- Orphans and hub detection
+- Dead link checking (new — V0-21)
+- Slug correctness (Unicode + duplicate heading, V0-12 — one-way door)
+- Config schema (SQLite / Drizzle / Zod)
+- Full-text search (backend, UX, MCP tool integration) — using Orama / SQLite FTS5 / fumadocs bits; standalone bet post-v0
+- `suggest_links` MCP tool (V0-13)
+
+**Load watch:** Broad — knowledge-graph substrate + search substrate + config schema substrate. Three functional surfaces that share underlying data infrastructure. Manageable because coherent, but worth confirming he's sized for all of it.
+
+### Miles — Collaboration / Shadow git / Presence
+
+**Core territory:**
+- Shadow git repo (infrastructure + lifecycle)
+- Anything relating to merge conflicts or lifecycle relative to the sidecared project
+- Timeline + rollback (PR #39 / V0-16)
+- Change attribution (writer identity, shadow refs)
+- Showing diffs made by agents (V0-15 + V0-16 diff view)
+- "Presence" UX for agents (activity flash, agent indicators)
+- Unique identification of agents (e.g., via MCP connection)
+- Cmd+Z for self; Cmd+Z or revert for changes made by others (V0-14 per-origin undo)
+- Branching / merge conflicts (future)
+- Persistence failure indicator UI (V0-17 — 1:1 with his change attribution territory)
+- Permissions model (if needed, future)
+
+### Tim — Agent infrastructure / MCP / Virtualization
+
+**Core territory:**
+- MCP tools for read/write/list for agent
+- Just-bash virtualization (grep, ls, etc. — agent-facing filesystem primitives)
+- MCP initialization and discovery by Cursor, Claude Code/Cowork, Codex (CLIs and desktop apps)
+- Agent harness integration — making it so MCPs and skills-in-MCP work well across harnesses
+- Embedded web viewer integration — harnesses with Cursor/Claude Cowork/Claude Code macOS app knowing how to run and view a document during co-authoring
+- Computing virtualized information / cataloging / indexes for agents (frontmatter indexing, etc.)
+- MCP tool surface for file operations (delete/move/duplicate/rename — dual surface with V0-4, V0-5; Dima owns UI side, Tim owns MCP side)
+- MCP `ingest` tool (writes to Raw/external-sources folder — structural decisions owned by Andrew)
+
+### Dima — Sidebar / CRUD / Docs-system engineering
+
+**Core territory:**
+- Sidebar (UX + internals)
+- CRUD on files/folders (V0-4 file organization ops)
+- Tabbed file experience (Obsidian-style)
+- Drag-and-drop markdown files
+- Docs site / Fumadocs maintenance
+- Long-term: "OK as WYSIWYG editor for a Fumadocs project" future bet (Nick consulting on MDX)
+
+**Implementation partner for Sarah-designed UX (design → impl handoff):**
+- V0-9 Outline panel — Sarah designs, Dima implements (scroll integration, active-heading detection, tree render)
+- V0-10 Quick switcher (Cmd+K) — Sarah designs, Dima implements (fuzzy match, performance, keyboard state machine)
+- V0-18 Find and replace — Sarah designs, Dima implements (TipTap + CodeMirror coordination)
+- V0-19 Word count + sidebar sort — Dima implements fully
+
+**Engineering refactor owner:**
+- Slash-command-generalization spec (still Draft) — pure engineering refactor, Dima owns
+- Block editor UX (future `block-editor-ux` spec) — extension of drag-drop + CRUD territory
+
+**A11y (post-v0 as a formal practice):**
+- A11y as a formal engineering practice is **deprioritized post-v0** (decided 2026-04-13). See Post-v0 section for the scope that moves.
+- In v0: baseline a11y is engineering hygiene — Dima implements keyboard nav, focus management, semantic HTML as part of shipping his own stories. Each feature owner does the same for their own stories. No formal compliance sprint, no axe-core gate, no dedicated audit.
+- Post-v0 (when promoted): Dima owns the formal practice — tooling, standards, compliance audits, team education.
+
+**Long-term (Nick → Dima handoff):**
+- Typed component nodes (PR #23) — handoff when MDX pipeline clean
+- Component slash insert (PR #12) — handoff when MDX pipeline clean
+
+### Sarah — Head of design / Design engineer
+
+**Core territory:**
+- WYSIWYG experience design — end-to-end visual + interaction direction for the editor
+- TipTap extensions / rich UX (bubble menu, inline formatting, callouts, authoring rich patterns)
+- Copy-paste experience (image paste V0-6 close-out — PR #41 she already authored; copy-paste images; drag-drop images)
+- V0-7 Onboarding feature + React UI (novel first-impression work)
+- Frontmatter editing UX (future)
+- Persistence indicator visual design (consulted with Miles on V0-17)
+
+**Pattern ownership (cross-cutting):**
+- Panel-docking visual + interaction pattern (consumed by V0-9 outline, V0-11 graph panels, future panels)
+- Keyboard shortcut scheme (Cmd+K, Cmd+F, Ctrl+\, future shortcuts — scheme + discoverability)
+- Visual design language (focus indicators, motion, error states — adopted across the product)
+
+**Design specs for Dima-implemented UI:**
+- V0-9 Outline panel design spec (Dima implements)
+- V0-10 Cmd+K design spec (Dima implements)
+- V0-18 Find/replace design spec (Dima implements)
+- Design reviews during implementation to catch UX regressions
+
+**Go-to UX triager:**
+- Default owner for UX questions that don't cleanly fit another feature area
+- Final call on UX tradeoffs, taste decisions, novel interaction design
+
+**Explicitly not Sarah's:** A11y as an engineering practice (Dima owns tooling + compliance). Her designs remain accessible by default as part of her design discipline — table stakes for head-of-design, not a bucket she manages.
+
+### Nick — Editor internals / CRDT / MDX pipeline
+
+**Core territory:**
+- Bidirectional markdown ↔ prosemirror conversion pipelines
+- Observers / conversion preservation / CRDT invariants
+- Bridge invariant (Y.XmlFragment ↔ Y.Text)
+- Editing or rendering MDX components (built-in or custom)
+- Consultation for V0-14 (observer modal fix — R7 in undo spec)
+- Consultation for V0-15 (activity flash WYSIWYG + Source plugins)
+- Consultation for V0-16 (Source-mode diff view in SourceEditor.tsx)
+- Consultation for V0-18 (find/replace bridge invariant — CRDT write path)
+- Consultation for V0-20 (provider-pool.ts dynamic port change)
+
+**Temporary until handoff:**
+- PR #12 Component slash insert — Nick's until MDX pipeline clean → Dima
+- PR #23 Typed component nodes — Nick's until MDX pipeline clean → Dima
+- Generalizable MDX editing for future Fumadocs editor bet — Nick consulting Dima long-term
+
+### You (Nick Gomez) — Planning / coordination (this session)
+
+**Out of scope for the per-person engineering map:** The planning/strategic work you've been doing (PR #75, PR #72 submission, v0-launch decomposition) isn't a feature area — it's organizing the team's work. Listed here for completeness.
+
+---
+
+### Cross-cutting concern owners
+
+| CC | Concern | Owner | Pattern consumers |
+|----|---------|-------|-------------------|
+| CC1 | Push-over-awareness pattern (server-side broadcast) | **Andrew** (server infrastructure) | Dima (V0-2 sidebar client), Mike (V0-3 BacklinksPanel client), Mike (V0-8 graph view + V0-11 panels — can subscribe) |
+| CC2 | Dual UI + MCP surface for file ops | **Dima** UI + **Tim** MCP — joint | V0-4, V0-5 |
+| CC3 | Safe path utilities (security boundary) | Platform primitive (Andrew) | Every new file-op endpoint reuses |
+| CC4 | Provider pool lifecycle on file events | Nick (CRDT/observer infra) — platform primitive | V0-4 delete handling, V0-5 rename handling |
+| CC5 | Backlink index rewrites on rename/slug-migration | **Mike** | V0-5, V0-12 PQ9 |
+| CC6 | Process safety + state.json coordination | **Andrew** primitives | V0-1, V0-7 consumes |
+| CC7 | content.exclude interactions with new file types | **Andrew** structural + **Mike** semantic | V0-4, V0-6 |
+| CC8 | Server shutdown ordering | **Andrew** | Everyone touching server lifecycle |
+| (meta) | Panel-docking visual + interaction pattern | **Sarah** (design) | V0-9, V0-11, future panels |
+| (meta) | Keyboard shortcut scheme | **Sarah** (design) | V0-10 Cmd+K, V0-18 Cmd+F, future shortcuts |
+| (meta) | A11y as engineering practice (post-v0) | **Dima** future (deprioritized for v0) | Baseline a11y stays as engineering hygiene in v0 (feature owners ship keyboard nav, semantic HTML, focus management as part of their feature) |
+| (meta) | Design → implementation handoff for UI stories | Pattern | V0-9, V0-10, V0-18, V0-19 |
+
+---
+
 ## Stories — Now (9 stories, 6-8 weeks)
 
 **Phasing rationale:** Risk-first + dependency-first + customer-journey-first + in-flight-close-out. Now contains the things that block any external demo, plus the in-flight PRs that should land as part of the v0 push:
@@ -187,7 +352,9 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 
 **Source.** ED-1 from day-0-editor-completeness; complementary to draft `specs/2026-04-11-sidebar-realtime-updates/`.
 
-**Status / owner signals.** Spec drafted with 5 OQs unresolved. Not started. Estimate: ~2 weeks (1 week spec resolution + 1 week implementation).
+**Owners.** **Andrew** (server-side push broadcast — the CC1 infrastructure, file-watcher-to-awareness plumbing). **Dima** (client-side sidebar subscriber — sidebar event handler, tree patch on events). Andrew sets the push contract; Dima consumes. Pattern is reusable: Mike's V0-3 (BacklinksPanel) and V0-11 (graph panels) adopt the same contract.
+
+**Status.** Spec drafted with 5 OQs unresolved (TQ2). Not started. Estimate: ~2 weeks (1 week spec resolution + 1 week implementation, split between Andrew server and Dima client).
 
 ---
 
@@ -258,7 +425,9 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 
 **Source.** ED-4 from day-0-editor-completeness (Part A of init-and-project-switching) + Andrew's Story 3 (consolidated). **Story-depth detail in `stories/V0-7-onboarding/STORY.md`.**
 
-**Status / owner signals.** Part A onboarding scoped in detail. Auto-init shipped (PR #57). Starter doc + session persistence not started. Estimate: 2 weeks (1.5 weeks UI + 0.5 week persistence after V0-1).
+**Owners (layered).** **Sarah** owns the feature end-to-end and the React UI (welcome screen, content scope confirmation, first-doc creation — highest-leverage first-impression novel UX). **Andrew** owns the platform primitives the spec consumes: `initContent()` extension for starter README, `state.json` schema + atomic writes + lock-coordinated writes (depends on V0-1), server endpoint for init status. Sarah writes the spec declaring primitive requirements; Andrew implements primitives; Sarah's React components consume them.
+
+**Status.** Part A onboarding scoped in detail. Auto-init shipped (PR #57). Starter doc + session persistence + React UI not started. Estimate: 2 weeks (Sarah ~1.5 weeks UI + Andrew ~0.5 week primitives after V0-1).
 
 ---
 
@@ -385,13 +554,15 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 
 ---
 
-## Stories — Next (5 stories)
+## Stories — Next (7 stories)
 
 **Phasing rationale:** Value-first + dependency-resolved. After Now ships:
 - V0-5 (rename) becomes possible because V0-4 file ops machinery exists and V0-2 real-time sidebar provides instant feedback.
-- V0-11 (graph panels) is highest-ROI remaining — backend already shipped, pure React.
+- V0-9 (outline panel) sets Sarah's panel-docking pattern, which V0-11 adopts.
+- V0-11 (graph panels) is highest-ROI remaining for Mike — backend already shipped, pure React, adopts V0-9's pattern.
 - V0-10 (Cmd+K) becomes valuable as Now-shipped onboarding leads to real usage.
 - V0-3 (BacklinksPanel push) adopts V0-2's pattern.
+- V0-21 (dead-link checking) surfaces BacklinkIndex's existing unresolved-target data.
 - V0-17 (persistence indicator) UI adopts V0-16's Timeline button if Timeline shipped, otherwise standalone.
 
 ---
@@ -421,31 +592,57 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 
 ---
 
-### V0-11: Surface existing graph and outline APIs as editor panels
+### V0-9: Document outline panel
 
-**What to build.** Four React panels/views consuming already-live server APIs (no new backend work):
-- **Document outline** (`GET /api/page-headings`) — H1-H6 tree with click-to-scroll, docked to editor
+**What to build.** A panel showing the hierarchy of headings (H1-H6) in the currently-open document as a clickable tree. Click a heading → editor scrolls to it. Active heading highlighted based on cursor/scroll position. Collapsible. Live-updates as headings change. Consumes `GET /api/page-headings` (already shipped). Works in both WYSIWYG and Source modes (scroll integration with TipTap + CodeMirror). **This story also sets the panel-docking visual + interaction pattern that V0-11 and future panels adopt.**
+
+**Value.** Customer: within-doc navigation — writers working in long docs can jump between sections without scrolling. Obsidian/VS Code/Google Docs/Typora all ship this; users coming from those tools expect it. Platform: panel-docking pattern established here (where panels live, collapse behavior, keyboard nav, active-state visual) becomes the visual language for V0-11 (graph panels) and any future docked panel. **Load-bearing design decision** — getting the pattern right once saves every future panel from re-deciding.
+
+**Constraints.**
+- Reuse existing `BacklinksPanel` component architecture as the template where possible.
+- Scroll-integration works in both TipTap (WYSIWYG) and CodeMirror (Source) modes; single behavior spec, two implementations.
+- Active-heading detection via scroll position (IntersectionObserver or similar — performance-sensitive on long docs).
+- Live updates: subscribe to CC1 push if V0-2 shipped; fall back to on-demand refresh.
+- Outline slug consistency with V0-12 (Mike's slug correctness) — outline panel's anchor IDs must match the editor's rendered heading IDs.
+
+**Lateral.** Sets the panel-docking pattern V0-11 adopts. V0-3 (BacklinksPanel push) and V0-11 (graph panels) are the next consumers. Coordinates with V0-12 on slug consistency (Mike owns slugs; this panel consumes them).
+
+**Forward.** Panel-docking visual language carries into every future panel: tag browser, future graph clusters, AI-suggestion surfaces, etc.
+
+**Source.** Originally bundled into day-0-editor-completeness ED-6; split out 2026-04-13 per Sarah-owns-outline-experience decision.
+
+**Owners.** **Sarah designs** (panel-docking visual pattern + interaction spec + keyboard nav + active-state visual + a11y considerations in spec). **Dima implements** (scroll integration with TipTap + CodeMirror, IntersectionObserver active-heading detection, live-update state management, tree rendering). Sarah reviews implementation for fidelity. Nick consulted on editor-side integration (ProseMirror scroll primitives in WYSIWYG mode).
+
+**Status.** Not started. Backend API exists (`/api/page-headings`). Pure frontend work once Sarah's design spec is written. Estimate: Sarah design ~0.5 week + Dima impl ~1 week = ~1.5 weeks total.
+
+---
+
+### V0-11: Surface existing graph APIs as editor panels (forward links, orphans, hubs)
+
+**What to build.** Three React panels/views consuming already-live server APIs (no new backend work):
 - **Forward links panel** (`GET /api/forward-links`) — what this doc links to
 - **Orphans view** (`GET /api/orphans`) — docs with no inbound or outbound links
 - **Hubs view** (`GET /api/hubs`) — most-linked docs
 
 Each is a focused UI consuming an existing, tested endpoint.
 
-**Value.** Customer: writers see the shape of their knowledge graph — where they've written dense clusters (hubs), where they have orphaned thoughts, where a doc links forward — without leaving the editor. **Highest-ROI story in the project** — backend work is done, this is pure React. Makes visible the investment the team has already made (5 API endpoints with no UI consumer). Completes the sense that the editor is "a real knowledge tool."
+**Value.** Customer: writers see the shape of their knowledge graph — where they've written dense clusters (hubs), where they have orphaned thoughts, where a doc links forward — without leaving the editor. **Highest-ROI story in the project** — backend work is done, this is pure React. Makes visible the investment the team has already made (3 API endpoints with no UI consumer). Pairs with V0-8 (graph view) for visual exploration and V0-9 (outline panel) for within-doc navigation.
 
 **Constraints.**
 - Reuse existing BacklinksPanel component architecture as the template.
-- Outline panel needs click-to-scroll integration with TipTap editor.
+- **Adopts Sarah's panel-docking pattern** (defined by Sarah as cross-cutting, first expressed in V0-9).
 - Subscribes to V0-2/V0-3 push channel for live updates if shipped; falls back to refresh-on-demand otherwise.
-- Panel layout (TQ10 OPEN): tabbed region, accordion in sidebar, right-dock panels (VS Code style), or select subset for v0.
+- Panel layout (TQ10 OPEN): tabbed region, accordion in sidebar, right-dock panels (VS Code style), or select subset for v0 — resolved as part of Sarah's panel-docking pattern spec.
 
-**Lateral.** Adopts V0-3 push-over-awareness pattern for live updates (CC1).
+**Lateral.** Adopts V0-3 push-over-awareness pattern for live updates (CC1) and V0-9's panel-docking pattern.
 
-**Forward.** Establishes "derived-view panel" UI pattern for future graph features (graph view, tag browser if added).
+**Forward.** Consumes "derived-view panel" pattern set by V0-9.
 
-**Source.** ED-6 from day-0-editor-completeness.
+**Source.** ED-6 from day-0-editor-completeness (reduced scope after outline panel extracted as V0-9).
 
-**Status / owner signals.** Not started. Backend APIs all exist and are tested (`/api/page-headings`, `/api/forward-links`, `/api/orphans`, `/api/hubs`). Pure frontend work. Estimate: 1-2 weeks.
+**Owners.** **Mike** owns delivery end-to-end (his knowledge-graph domain). Consumes Sarah's panel-docking pattern. Mike works with Dima on scroll/performance if active-state behavior differs from outline.
+
+**Status.** Not started. Backend APIs all exist and are tested (`/api/forward-links`, `/api/orphans`, `/api/hubs`). Pure frontend work. Estimate: 1-2 weeks.
 
 ---
 
@@ -468,7 +665,9 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Source.** ED-5 from day-0-editor-completeness.
 
-**Status / owner signals.** Not started. Pure frontend. Estimate: 1 week.
+**Owners.** **Sarah designs** (interaction model — what's in the palette, result ranking, keyboard flow, visual design, Cmd+K shortcut registration). **Dima implements** (fuzzy-match library integration + tuning, performance engineering for large fileIndex, keyboard state machine, overlay rendering via Floating UI, localStorage recents sync). Sarah reviews implementation. Nextra has analogous command palette work Dima can draw from.
+
+**Status.** Not started. Estimate: Sarah design ~0.5 week + Dima impl ~1 week = ~1.5 weeks total.
 
 ---
 
@@ -512,11 +711,40 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Source.** Andrew's Story 4 persistence indicator portion (dark mode dropped — shipped via PR #60, #63).
 
-**Status / owner signals.** Backend infrastructure shipped (PR #62 — degraded boot signal). UI not started. Estimate: 0.5-1 week.
+**Owners.** **Miles** end-to-end (1:1 with his change-attribution / shadow-git territory — feature-owner principle applies). Sarah consulted on visual design (dot + tooltip micro-interaction). Backend infra already shipped (PR #62 degraded-boot signal); Miles wires the UI.
+
+**Status.** Backend infrastructure shipped (PR #62 — degraded boot signal). UI not started. Estimate: 0.5-1 week.
 
 ---
 
-## Stories — Later (4 stories, promote on trigger)
+### V0-21: Dead-link checking
+
+**What to build.** Surface existing unresolved-wiki-link data as a UI panel + MCP tool. `BacklinkIndex` already tracks unresolved targets (PR #71 wiki-links infrastructure). Add `GET /api/dead-links` endpoint returning the list. UI panel: "Dead links" section (either per-doc "Dead links in this doc" or vault-wide "Dead links across vault") with click-to-source navigation. MCP tool `find_dead_links()` for agents to call during link-hygiene workflows.
+
+**Value.** Customer: writers can find broken `[[links]]` before they accumulate silently — closes the trust-breaking gap that rename (V0-5) also addresses from a different angle. Platform: exposes existing BacklinkIndex data via a new consumer surface. Internal (agent capability): agents can run dead-link checks as part of KB hygiene workflows.
+
+**Scope (Tier 1 for v0 Next):** Just expose existing unresolved-wiki-link data. Small scope, builds on shipped infrastructure.
+
+**Out of Tier 1 / Later:**
+- External URL validation (HTTP fetch, rate limiting, cache) — larger scope, own story post-v0
+- Section-anchor validation (`[[Page#missing]]`) — depends on V0-12 slug correctness for canonical anchors
+- Auto-fix suggestions ("did you mean `[[foo]]`?") — parity-for-parity's-sake without clear user demand
+
+**Constraints.** Uses existing BacklinkIndex — no new data model. Endpoint is a thin wrapper over `BacklinkIndex.getUnresolvedTargets()` (or equivalent; Mike knows the exact API). UI adopts Sarah's panel-docking pattern (when that pattern lands via V0-9).
+
+**Lateral.** V0-5 (managed rename) prevents dead links from happening at rename time. V0-21 surfaces dead links that already exist. Complementary.
+
+**Forward.** Foundation for future link-hygiene automation: agent auto-fix of dead links, scheduled audits, heading-rename propagation.
+
+**Source.** Raised 2026-04-13 as new scope (not in any prior planning surface).
+
+**Owners.** **Mike** end-to-end (his knowledge-graph territory). MCP tool registration coordinates with Tim (dual-surface pattern — UI panel + MCP tool for agents).
+
+**Status.** Not started. Estimate: ~1 week (Tier 1 scope).
+
+---
+
+## Stories — Later (5 stories, promote on trigger)
 
 **Phasing rationale:** Polish + gated work. Promote when explicit trigger fires; not on a calendar.
 
@@ -544,7 +772,9 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Constraints.** TipTap and CodeMirror have separate search extensions; coordinated Cmd+F across modes (TQ12 OPEN). Must go through CRDT writes (bridge invariant).
 
-**Source.** ED-7a from day-0-editor-completeness. Estimate: 1-2 weeks.
+**Source.** ED-7a from day-0-editor-completeness. Estimate: Sarah design ~0.5 week + Dima impl ~1-1.5 weeks.
+
+**Owners.** **Sarah designs** (find-bar visual + interaction, match highlighting style, replace-confirmation UX, keyboard flow). **Dima implements** (TipTap search+replace extension wiring, CodeMirror search extension coordination, single Cmd+F across both modes, bridge-invariant preservation — consult Nick on CRDT write path). Sarah reviews.
 
 ---
 
@@ -557,6 +787,8 @@ Each is a focused UI consuming an existing, tested endpoint.
 **Promote when:** Now+Next ship and qualitative feedback surfaces "feels unfinished" sentiment OR when a larger polish sprint is scheduled.
 
 **Source.** ED-7b from day-0-editor-completeness. Estimate: 0.5-1 week.
+
+**Owners.** **Dima** implements both (sort is trivial extension of his sidebar territory; word count is trivial Y.Text derivation). Sarah reviews word-count placement in the editor footer.
 
 ---
 
@@ -588,6 +820,39 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
+## Post-v0 (out of v0-launch scope; tracked for future planning)
+
+Items explicitly deprioritized to post-v0. Not stories in this project — future bets or ongoing practices that pick up after v0 ships.
+
+### Deprioritized engineering practices
+
+- **A11y as a formal engineering practice** (Dima future) — deprioritized 2026-04-13. Baseline a11y stays as engineering hygiene in v0: feature owners implement keyboard nav, semantic HTML, focus management as part of shipping. Sarah's designs remain accessible by default as design discipline. What moves post-v0:
+  - Formal WCAG AA compliance audit + checklist
+  - `axe-core` in CI / Lighthouse audits as a gate
+  - Playwright a11y test suite
+  - ESLint a11y plugin enforcement as a release gate
+  - Dedicated a11y compliance sprint
+  - **Promote trigger:** v0 ships AND real user evidence of a11y gaps OR enterprise evaluation requires WCAG compliance.
+
+### Separate bets (each its own future project)
+
+- **Full-text search** — Mike's future project. 8 research reports completed. 4-6 week system integration (Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector). Promote when: v0 ships AND search becomes the biggest remaining gap.
+- **User-facing version history UI (beyond Timeline)** — Miles's future project. Shadow repo was designed for attribution journaling; richer user-versioned history needs redesigned data model + UX. V0-16 Timeline covers the narrow scope for v0. Promote when: users demand richer history controls (named versions, per-file timeline, branch-based experiments).
+- **Electron native distribution** — Andrew's future project. V0-20 is the build-pipeline-prep gating story. Spec exists at `specs/2026-04-11-electron-desktop-app/`. Promote when: Electron implementation begins (DMG packaging spike).
+- **Multi-project switching (Part B of init-and-project-switching)** — separate bet. Registry at `~/.open-knowledge/projects.json`, CLI `list`/`open` commands, in-editor switcher. Cross-project navigation, not within-project. Promote when: v0 ships AND users have multiple projects registered.
+- **"OK as WYSIWYG editor for a Fumadocs project"** — Dima's future project (Nick consulting on MDX). Positions OK as Mintlify-class editor for the Fumadocs ecosystem. Promote when: v0 ships AND MDX pipeline stabilizes enough that the generalization surface is clean.
+- **Permissions model (Zanzibar-style)** — Miles's future project if needed. Root PROJECT.md PQ7/PQ12/TQ10. Promote when: multi-human collaboration or enterprise use cases force the model.
+- **Suggestions / tracked changes (PQ11 parked)** — combined "agent-proposal review experience" design bundle with branching/draft UX (PQ9). Promote as a dedicated design pass, not piecemeal.
+
+### Dead-link checking Tier 2/3 (post-v0 expansion of V0-21)
+
+V0-21 covers Tier 1 (surface existing unresolved wiki-link data). Tier 2/3 are post-v0:
+- **Tier 2:** External URL validation (HTTP fetch with rate limiting, cache, retry on transient failures)
+- **Tier 3:** Section-anchor validation (`[[Page#missing-heading]]` — depends on V0-12 slug correctness)
+- **Promote when:** V0-21 ships AND link-hygiene workflows surface demand for deeper validation.
+
+---
+
 ## Dependency graph
 
 ```
@@ -613,6 +878,10 @@ V0-14 (per-origin undo) ↔ V0-16 (Timeline) — coordinate L2 rollback+undo ori
 
 V0-16 (Timeline) ↔ V0-17 (persistence indicator) — placement decision (PQ11)
 
+V0-9 (outline panel) — Sarah sets panel-docking pattern; V0-11 (graph panels) adopts
+
+V0-12 (slug) ─→ V0-21 (dead-link checking — unresolved targets matched by slug; Unicode bug would propagate false-positives)
+
 V0-7 (onboarding) — independent of all others except V0-1
 
 V0-6 (image paste) — independent of all others (PR #41 close-out)
@@ -626,36 +895,38 @@ V0-10 (Cmd+K), V0-11 (panels), V0-15 (flash), V0-18 (find/replace), V0-19 (sort+
 
 Owner signals where they exist (in-flight PR author or original story author). When no signal, marked "open assignment."
 
-| Story | Estimate | Owner signal | Delivery vehicle | Status |
-|-------|----------|---------------|------------------|--------|
-| V0-1 process safety | 1 wk | Andrew (story author) | Spec → impl | Not started, fully scoped |
-| V0-2 real-time sidebar | 2 wk | open | Spec resolves 5 OQs → impl | Spec drafted |
-| V0-3 BacklinksPanel push | 1 wk | Mike (story decision-maker) | Spec → impl | Source story in PR #72 bundle |
-| V0-4 file ops bundle | 2-3 wk | open | Spec → impl | Not started |
-| V0-5 rename + link rewrite | 2-3 wk | Mike (story decision-maker) | Spec → impl | Source story in PR #72 bundle; coordinate absorption |
-| V0-6 image paste | 1-2 wk | Sarah (PR #41 author) | Close out PR #41 | In flight |
-| V0-7 onboarding + session + starter | 2 wk | (this PR) | Spec → impl | Onboarding scoped (Part A); rest not started |
-| V0-8 graph view | 1-2 wk close-out | Mike (PR #76 author) | Close out PR #76 | In flight; 296 LOC added, needs review + perf validation |
-| V0-10 Cmd+K | 1 wk | open | Spec → impl | Not started |
-| V0-11 graph panels | 1-2 wk | open | Spec → impl | Backend done, pure React |
-| V0-12 slug correctness | 1 wk + migration | Mike (story decision-maker) | Spec → impl | Source story in PR #72 bundle |
-| V0-13 suggest_links | 1 wk | Mike (story decision-maker) | Spec → impl | Source story in PR #72 bundle; Later phase |
-| V0-14 per-origin undo basic | 1-2 wk | open | Spec update + impl | Spec needs reframe per Miles's audit |
-| V0-15 activity flash verify | 0.5-1 wk | open | Verification + small fix | Existing impl, needs test coverage |
-| V0-16 Timeline + Rollback | 1-2 wk close-out | Miles (PR #39 author) | Close out PR #39 | In flight; needs rebase + 17 review comments |
-| V0-17 persistence indicator UI | 0.5-1 wk | open | Spec → impl | Backend infra shipped (PR #62) |
-| V0-18 find/replace | 1-2 wk | open | Spec → impl | Not started; Later phase |
-| V0-19 sort + word count | 0.5-1 wk | open | Spec → impl | Not started; Later phase |
-| V0-20 desktop build prep | 0.5 wk | Andrew (story author) | Spec → impl | Gated on Electron starting |
+| Story | Phase | Estimate | Owner(s) | Delivery vehicle | Status |
+|-------|-------|----------|----------|------------------|--------|
+| V0-1 process safety | Now | 1 wk | **Andrew** | Spec → impl | Not started, fully scoped |
+| V0-2 real-time sidebar | Now | 2 wk | **Andrew** (server push) + **Dima** (client sidebar) | Spec resolves 5 OQs → impl | Spec drafted (5 OQs) |
+| V0-3 BacklinksPanel push | Next | 1 wk | **Mike** (consumer) + **Andrew** push infra | Spec → impl | Source story in PR #72 bundle |
+| V0-4 file ops bundle | Now | 2-3 wk | **Dima** (UI + server API) + **Tim** (MCP tools) | Spec → impl | Not started |
+| V0-5 rename + link rewrite | Next | 2-3 wk | **Mike** (rewrite machinery) + **Dima** (sidebar trigger UX) | Spec → impl | Source story in PR #72 bundle |
+| V0-6 image paste | Now | 1-2 wk | **Sarah** | Close out PR #41 | In flight |
+| V0-7 onboarding + session + starter | Now | 2 wk | **Sarah** (feature + UI) + **Andrew** (state.json, init primitives) | Spec → impl | Part A scoped; rest not started |
+| V0-8 graph view | Now | 1-2 wk close-out | **Mike** | Close out PR #76 | In flight; 296 LOC, needs review + perf |
+| V0-9 outline panel | Next | 1.5 wk | **Sarah** designs + **Dima** implements | Spec → impl | NEW — sets panel-docking pattern |
+| V0-10 Cmd+K | Next | 1.5 wk | **Sarah** designs + **Dima** implements | Spec → impl | Not started |
+| V0-11 graph panels | Next | 1-2 wk | **Mike** (adopts Sarah's panel-docking pattern) | Spec → impl | Backend done, pure React |
+| V0-12 slug correctness | Now | 1 wk + migration | **Mike** | Spec → impl | Source story in PR #72 bundle |
+| V0-13 suggest_links | Later | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | Source story in PR #72 bundle |
+| V0-14 per-origin undo basic | Now | 1-2 wk | **Miles** (Nick consulted on observer modal) | Spec update + impl | Spec needs reframe |
+| V0-15 activity flash verify | Later | 0.5-1 wk | **Miles** (Nick consulted on plugin hosts) | Verification + small fix | Existing impl unverified |
+| V0-16 Timeline + Rollback | Now | 1-2 wk close-out | **Miles** (Nick consulted on SourceEditor diff view) | Close out PR #39 | In flight; needs rebase + 17 review comments |
+| V0-17 persistence indicator UI | Next | 0.5-1 wk | **Miles** (Sarah consulted on visual) | Spec → impl | Backend infra shipped (PR #62) |
+| V0-18 find/replace | Later | 1.5-2 wk | **Sarah** designs + **Dima** implements (Nick consulted on CRDT write path) | Spec → impl | Not started |
+| V0-19 sort + word count | Later | 0.5-1 wk | **Dima** (Sarah reviews placement) | Spec → impl | Not started |
+| V0-20 desktop build prep | Later | 0.5 wk | **Andrew** (Nick: provider-pool.ts change) | Spec → impl | Gated on Electron starting |
+| V0-21 dead-link checking | Next | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | NEW — Tier 1 scope; Tier 2/3 post-v0 |
 
 **Sequencing for Now phase (9 stories, 6-8 weeks):**
-- Week 1-2: V0-1 (Andrew), V0-2 (open), V0-12 (Mike) start in parallel — process safety + spec resolution + slug fix
-- Week 1-3: In-flight close-outs land in parallel — V0-6 (Sarah PR #41), V0-8 (Mike PR #76), V0-16 (Miles PR #39)
-- Week 2-4: V0-7 (open) onboarding starts
-- Week 3-5: V0-4 (open) starts after V0-2 contract clear; V0-14 (open) starts in parallel (undo is independent of file ops)
+- Week 1-2: V0-1 (Andrew), V0-2 (Andrew/Dima — spec resolution), V0-12 (Mike) start in parallel
+- Week 1-3: In-flight close-outs land in parallel — V0-6 (Sarah, PR #41), V0-8 (Mike, PR #76), V0-16 (Miles, PR #39)
+- Week 2-4: V0-7 (Sarah UI + Andrew primitives) onboarding starts
+- Week 3-5: V0-4 (Dima + Tim) starts after V0-2 contract clear; V0-14 (Miles) starts in parallel (undo is independent of file ops)
 - Week 5-8: ship, integration test, polish
 
-**Parallel barrels:** ~3-4 active barrels at any time given 9 Now stories over 6-8 weeks. Three of the nine are in-flight PR close-outs (V0-6, V0-8, V0-16) with different authors — they parallelize cheaply since the work is mostly review + polish. Matches inferred team size (7-10 engineers based on recent merge velocity + per-author branch activity).
+**Parallel barrels:** ~3-4 active barrels at any time given 9 Now stories over 6-8 weeks. Three of nine are in-flight PR close-outs (V0-6, V0-8, V0-16) with different authors — they parallelize cheaply since the work is mostly review + polish. V0-2 and V0-7 are two-owner stories with clean handoff (Andrew primitives → Sarah/Dima consumers). V0-4 is two-owner (Dima UI + Tim MCP) sharing a backend API. Matches inferred team size (7-10 engineers).
 
 ## Rabbit holes
 
