@@ -94,7 +94,10 @@
         "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
         "commonmark.json": "^0.31.0",
         "fast-check": "^4.6.0",
+        "remark-mdx": "^3.1.1",
+        "remark-parse": "^11.0.0",
         "typescript": "^5.9.3",
+        "unified": "^11.0.5",
         "vite": "^8.0.0",
         "yaml": "^2.8.3",
       },
@@ -165,6 +168,7 @@
       "devDependencies": {
         "@types/mdast": "^4.0.4",
         "@types/unist": "^3.0.3",
+        "fast-check": "^4.6.0",
         "mdast-util-directive": "^3.1.0",
         "mdast-util-mdx": "^3.0.0",
         "micromark-util-types": "^2.0.2",

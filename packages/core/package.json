@@ -46,6 +46,7 @@
     "test": "bun test"
   },
   "devDependencies": {
+    "fast-check": "^4.6.0",
     "@types/unist": "^3.0.3",
     "micromark-util-types": "^2.0.2",
     "mdast-util-directive": "^3.1.0",
