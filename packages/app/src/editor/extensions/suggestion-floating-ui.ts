@@ -12,7 +12,7 @@ export interface SuggestionPositionState {
  *
  * Returns: { popup, doPosition, startAutoUpdate }
  * - popup: the positioned container element (fixed, z-50, appended to body)
- * - doPosition: trigger repositioning (call from onUpdate)
+ * - doPosition: trigger repositioning (call after content changes in onStart and onUpdate)
  * - startAutoUpdate: call AFTER appending renderer content to preserve
  *   content-before-autoUpdate ordering (autoUpdate fires doPosition
  *   synchronously on setup — must run after popup has content so
