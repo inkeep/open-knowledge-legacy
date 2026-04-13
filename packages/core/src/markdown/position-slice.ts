@@ -33,7 +33,7 @@ import type { VFile } from 'vfile';
  */
 const ESCAPABLE_CHARS = new Set('\\`*_{}[]()#+-.!|~<>:/&$%@^'.split(''));
 
-export interface EscapedChar {
+interface EscapedChar {
   /** Offset within the text node value (0-based) */
   offset: number;
   /** The character that was escaped */

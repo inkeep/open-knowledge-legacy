@@ -40,7 +40,7 @@ import { docStartThematicFixPlugin } from './doc-start-thematic-fix.ts';
 import { positionSlicePlugin } from './position-slice.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
-export interface PipelineOptions {
+interface PipelineOptions {
   schema: Schema;
   /** mdast → PM handlers (keyed by mdast node type) */
   handlers: RemarkProseMirrorOptions['handlers'];
