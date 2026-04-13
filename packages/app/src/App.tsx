@@ -4,8 +4,7 @@ import { FileSidebar } from '@/components/FileSidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
 
-export function docNameFromHash(): string | null {
-  const hash = window.location.hash;
+export function docNameFromHash(hash = window.location.hash): string | null {
   if (hash.startsWith('#/')) {
     const rest = hash.slice(2);
     const qmark = rest.indexOf('?');
