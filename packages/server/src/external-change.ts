@@ -9,6 +9,7 @@
 import type { Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
+import { isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
 
 /**
@@ -31,6 +32,7 @@ export function applyExternalChange(
   docName: string,
   content: string,
 ): void {
+  if (isSystemDoc(docName)) return;
   const document = hocuspocus.documents.get(docName);
   if (!document) return;
   const { frontmatter, body } = stripFrontmatter(content);

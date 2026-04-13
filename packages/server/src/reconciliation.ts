@@ -1,3 +1,5 @@
+import { isSystemDoc } from './cc1-broadcast.ts';
+
 /**
  * Three-way reconciliation for external writes.
  *
@@ -96,6 +98,7 @@ export function splitMarkdownBlocks(md: string): string[] {
  * Perform three-way reconciliation between base, ours, and theirs.
  */
 export function reconcile(input: ReconcileInput): ReconcileOutcome {
+  if (isSystemDoc(input.docName)) return { kind: 'noop' };
   const { base, ours, theirs } = input;
 
   // Check for conflict markers first — refuse to ingest
