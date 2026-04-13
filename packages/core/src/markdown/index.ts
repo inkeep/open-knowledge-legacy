@@ -19,7 +19,7 @@ import {
 } from '@handlewithcare/remark-prosemirror';
 import type { Extensions, JSONContent } from '@tiptap/core';
 import { getSchema } from '@tiptap/core';
-import { type Mark as PmMark, Node as PmNode, type Schema } from '@tiptap/pm/model';
+import type { Mark as PmMark, Node as PmNode, Schema } from '@tiptap/pm/model';
 import type {
   Break,
   Code,
@@ -144,7 +144,13 @@ export class MarkdownManager {
   serialize(json: JSONContent): string {
     let doc: PmNode;
     try {
-      doc = PmNode.fromJSON(this.schema, json);
+      // Use schema.nodeFromJSON() instead of PmNode.fromJSON(schema, json):
+      // in monorepos with multiple physical copies of prosemirror-model, the
+      // static PmNode import can disagree with the Schema instance from
+      // getSchema() ("multiple versions loaded"). schema.nodeFromJSON() uses
+      // the schema's own Node/Fragment constructors — always consistent.
+      // Credit: Mike (PR #105)
+      doc = this.schema.nodeFromJSON(json) as PmNode;
     } catch (err) {
       const msg = `MarkdownManager.serialize() failed: schema rejected JSONContent (type=${json.type}, childCount=${json.content?.length ?? 0})`;
       throw new Error(msg, { cause: err });
