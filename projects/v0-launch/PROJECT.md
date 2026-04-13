@@ -147,373 +147,20 @@ Every agent-facing MCP tool must return **enriched data beyond what native tools
 
 ---
 
-## Team ownership reference
-
-Per-person domain ownership. Stories in the Distribution table below map to these owners.
-
-### Andrew — Platform / Ops / System-level infrastructure
-
-**Core territory:**
-- Project initialization, discovery, opening (CLI experience)
-- Multi-project navigation + switching (CLI-side)
-- Lock files, port management, service boot/shutdown, multi-session coordination
-- Server-side push broadcast infrastructure (CC1) — file watcher → WebSocket awareness pattern
-- Directory structure decisions (Assets/Attachments folder, Raw/external-sources folder, init scaffolding)
-- OpenTelemetry / logging / instrumentation
-- Testing / CI / quality-gate infrastructure (formal steward)
-- Electron desktop app (staged — becomes active when spec promotes from Draft)
-
-**Platform primitives consumed by feature owners:** `initContent()` scaffolding, `state.json` atomic writes + lock coordination, server-side awareness broadcast, process-safety primitives. Feature specs declare their primitive requirements; Andrew implements the primitives; feature code consumes them.
-
-**Load watch:** Heavy platform stack — project init, multi-project nav, lock files, port management, service lifecycle, server-side push broadcast, OpenTelemetry, testing/CI infrastructure, directory structure decisions. Electron is staged as "later" but if it promotes before v0 ships, Andrew's load saturates. Worth checking whether some of this (testing/CI as a formal role; Electron as a new owner) should split. Flag if saturated.
-
-### Mike — Knowledge graph / Content / Search
-
-**Core territory:**
-- Wiki links and back links (data + link rewriting + managed rename)
-- Graph visualization (PR #76 / V0-8)
-- Auto-indexing forward/back links
-- Link-click navigation experience (inside the doc system)
-- Orphans and hub detection
-- Dead link checking (new — V0-21)
-- Slug correctness (Unicode + duplicate heading, V0-12 — one-way door)
-- Config schema (SQLite / Drizzle / Zod)
-- Full-text search (backend, UX, MCP tool integration) — using Orama / SQLite FTS5 / fumadocs bits; standalone bet post-v0
-- `suggest_links` MCP tool (V0-13)
-
-**Load watch:** Broad — knowledge-graph substrate + search substrate + config schema substrate. Three functional surfaces that share underlying data infrastructure. Manageable because coherent, but worth confirming he's sized for all of it.
-
-### Miles — Collaboration / Shadow git / Presence
-
-**Core territory:**
-- Shadow git repo (infrastructure + lifecycle)
-- Anything relating to merge conflicts or lifecycle relative to the sidecared project
-- Timeline + rollback (PR #39 / V0-16)
-- Change attribution (writer identity, shadow refs)
-- Showing diffs made by agents (V0-15 + V0-16 diff view)
-- "Presence" UX for agents (activity flash, agent indicators)
-- Unique identification of agents (e.g., via MCP connection)
-- Cmd+Z for self; Cmd+Z or revert for changes made by others (V0-14 per-origin undo)
-- Branching / merge conflicts (future)
-- Persistence failure indicator UI (V0-17 — 1:1 with his change attribution territory)
-- Permissions model (if needed, future)
-
-### Tim — Agent infrastructure / MCP / Virtualization
-
-**Core territory:**
-- MCP tools for read/write/list for agent
-- Just-bash virtualization (grep, ls, etc. — agent-facing filesystem primitives; open question XQ1 in root PROJECT.md)
-- MCP initialization and discovery by Cursor, Claude Code/Cowork, Codex (CLIs and desktop apps)
-- Agent harness integration — making it so MCPs and skills-in-MCP work well across harnesses
-- Embedded web viewer integration — harnesses with Cursor/Claude Cowork/Claude Code macOS app knowing how to run and view a document during co-authoring
-- Computing virtualized information / cataloging / indexes for agents (frontmatter indexing, etc.)
-- MCP tool surface for file operations (delete/move/duplicate/rename — dual surface with V0-4, V0-5; Dima owns UI side, Tim owns MCP side)
-- MCP `ingest` tool (writes to Raw/external-sources folder — structural decisions owned by Andrew)
-
-**Reach goal: V0-24 Enriched just-bash MCP surface.**
-If Tim has capacity after core v0 tools, expose a single `exec(command)` MCP tool that accepts bash-like commands (grep, ls, cat, find, wc, head, sort) scoped to the project's content directory — same commands agents already know, but output enriched with computed system data (frontmatter, backlink counts, catalog context per file reference). Pipes work for combinatorial operations (`grep 'auth' **/*.md | head -5` → first 5 matches, each enriched). Whitelisted read-only commands only (no rm, no arbitrary execution). See V0-24 in Reach section. This is an exploration of XQ1 (root PROJECT.md's open "semantic tools vs just-bash" question).
-
-**MCP enrichment quality bar (CC9 — Tim owns verification):**
-- Every agent-facing MCP tool must return enriched data beyond native tools (parsed frontmatter, backlinks, git history, catalog context). Agent using ONLY OK's MCP tools gets strictly better results than native Read/Grep/Glob.
-- Verify `list_documents` enrichment level during V0-4 spec — enhance if only returning raw names.
-- Design enriched response shapes for V0-4 file-ops tools (delete/move/duplicate/folder → report what was affected + link-graph context).
-- Update MCP `instructions` field to direct agents to prefer OK MCP tools over native for all KB operations.
-- See CC9 in Cross-cutting concerns for full detail.
-
-### Dima — Sidebar / CRUD / Docs-system engineering
-
-**Core territory:**
-- Sidebar (UX + internals)
-- CRUD on files/folders (V0-4 file organization ops)
-- Tabbed file experience (Obsidian-style)
-- Drag-and-drop markdown files
-- Docs site / Fumadocs maintenance
-- Long-term: "OK as WYSIWYG editor for a Fumadocs project" future bet (Nick consulting on MDX)
-
-**Feature owner for engineering-heavy UI stories (ships UX functional + high quality; Sarah reviews/polishes after):**
-- V0-9 Outline panel — Dima feature-owns build (scroll integration, active-heading detection, tree render). Consumes Sarah's panel-docking pattern. Sarah reviews polish.
-- V0-10 Quick switcher (Cmd+K) — Dima feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk`). Designs result-source architecture himself; Mike consulted when search bet activates post-v0. Sarah reviews polish.
-- V0-18 Find and replace — Dima feature-owns (TipTap + CodeMirror coordination, CRDT write path). Sarah reviews polish.
-- V0-19 Word count + sidebar sort — Dima fully
-
-**Engineering refactor owner:**
-- Slash-command-generalization spec (still Draft) — pure engineering refactor, Dima owns
-- Block editor UX (future `block-editor-ux` spec) — extension of drag-drop + CRUD territory
-
-**A11y (post-v0 as a formal practice):**
-- A11y as a formal engineering practice is **deprioritized post-v0** (decided 2026-04-13). See Post-v0 section for the scope that moves.
-- In v0: baseline a11y is engineering hygiene — Dima implements keyboard nav, focus management, semantic HTML as part of shipping his own stories. Each feature owner does the same for their own stories. No formal compliance sprint, no axe-core gate, no dedicated audit.
-- Post-v0 (when promoted): Dima owns the formal practice — tooling, standards, compliance audits, team education.
-
-**Reach goals (lower P than core v0 — ship if Dima has capacity):**
-- V0-22 Tabbed file experience (Obsidian-style — multi-doc tabs, tab state persistence)
-- V0-23 Drag-and-drop files in sidebar (builds on V0-4's move backend)
-
-**Long-term (Nick → Dima handoff):**
-- Typed component nodes (PR #23) — handoff when MDX pipeline clean
-- Component slash insert (PR #12) — handoff when MDX pipeline clean
-
-### Sarah — Head of design / Design engineer
-
-**Core territory:**
-- WYSIWYG experience design — end-to-end visual + interaction direction for the editor
-- TipTap extensions / rich UX (bubble menu, inline formatting, callouts, authoring rich patterns)
-- Copy-paste experience (image paste V0-6 close-out — PR #41 she already authored; copy-paste images; drag-drop images)
-- V0-7 Onboarding feature + React UI (novel first-impression work)
-- Frontmatter editing UX (future)
-- Persistence indicator visual design (consulted with Miles on V0-17)
-
-**Cross-cutting patterns (set once, ahead of implementation — not per-story):**
-- Panel-docking visual + interaction pattern (consumed by V0-9 outline, V0-11 graph panels, future panels) — Sarah writes pattern doc; feature owners build to it
-- Keyboard shortcut scheme (Cmd+K, Cmd+F, Ctrl+\, future shortcuts — scheme + discoverability)
-- Visual design language (focus indicators, motion, error states — adopted across the product)
-- V0-10 palette result-source contract reviewed after Dima ships (Dima designs + builds end-to-end; Sarah reviews for pattern consistency)
-
-**Review + polish (not in the critical path):**
-- Feature owners ship UX functional + high quality for their own features
-- Sarah reviews after and polishes — she does NOT gate implementation
-- If a feature owner's UX is tightly bound to their feature scope, they ship without waiting for Sarah
-- Sarah reviews identify pattern drift, visual inconsistencies, or polish opportunities
-
-**Go-to UX triager:**
-- Default owner for UX questions that don't cleanly fit another feature area
-- Final call on UX tradeoffs and taste decisions when feature owners genuinely aren't sure
-- But feature owners should try first, ship functional, and Sarah polishes later
-
-**Explicitly not Sarah's:** A11y as an engineering practice (Dima post-v0). Her designs remain accessible by default as design discipline. Feature-specific UX gating (feature owners ship without waiting).
-
-### Nick — Editor internals / CRDT / MDX pipeline
-
-**Core territory:**
-- Bidirectional markdown ↔ prosemirror conversion pipelines
-- Observers / conversion preservation / CRDT invariants
-- Bridge invariant (Y.XmlFragment ↔ Y.Text)
-- Editing or rendering MDX components (built-in or custom)
-- Consultation for V0-14 (observer modal fix — R7 in undo spec)
-- Consultation for V0-15 (activity flash WYSIWYG + Source plugins)
-- Consultation for V0-16 (Source-mode diff view in SourceEditor.tsx)
-- Consultation for V0-18 (find/replace bridge invariant — CRDT write path)
-- Consultation for V0-20 (provider-pool.ts dynamic port change)
-
-**Temporary until handoff:**
-- PR #12 Component slash insert — Nick's until MDX pipeline clean → Dima
-- PR #23 Typed component nodes — Nick's until MDX pipeline clean → Dima
-- Generalizable MDX editing for future Fumadocs editor bet — Nick consulting Dima long-term
-
-### You (Nick Gomez) — Planning / coordination (this session)
-
-**Out of scope for the per-person engineering map:** The planning/strategic work you've been doing (PR #75, PR #72 submission, v0-launch decomposition) isn't a feature area — it's organizing the team's work. Listed here for completeness.
 
 ---
 
-### Cross-cutting concern owners
+## Team burndowns
 
-| CC | Concern | Owner | Pattern consumers |
-|----|---------|-------|-------------------|
-| CC1 | Push-over-awareness pattern (server-side broadcast) | **Andrew** (server infrastructure) | Dima (V0-2 sidebar client), Mike (V0-3 BacklinksPanel client), Mike (V0-8 graph view + V0-11 panels — can subscribe) |
-| CC2 | Dual UI + MCP surface for file ops | **Dima** UI + **Tim** MCP — joint | V0-4, V0-5 |
-| CC3 | Safe path utilities (security boundary) | Platform primitive (Andrew) | Every new file-op endpoint reuses |
-| CC4 | Provider pool lifecycle on file events | Nick (CRDT/observer infra) — platform primitive | V0-4 delete handling, V0-5 rename handling |
-| CC5 | Backlink index rewrites on rename/slug-migration | **Mike** | V0-5, V0-12 PQ9 |
-| CC6 | Process safety + state.json coordination | **Andrew** primitives | V0-1, V0-7 consumes |
-| CC7 | content.exclude interactions with new file types | **Andrew** structural + **Mike** semantic | V0-4, V0-6 |
-| CC8 | Server shutdown ordering | **Andrew** | Everyone touching server lifecycle |
-| (meta) | Panel-docking visual + interaction pattern | **Sarah** (design) | V0-9, V0-11, future panels |
-| (meta) | Keyboard shortcut scheme | **Sarah** (design) | V0-10 Cmd+K, V0-18 Cmd+F, future shortcuts |
-| (meta) | A11y as engineering practice (post-v0) | **Dima** future (deprioritized for v0) | Baseline a11y stays as engineering hygiene in v0 (feature owners ship keyboard nav, semantic HTML, focus management as part of their feature) |
-| (meta) | Feature owners ship UX; Sarah reviews/polishes after. **Sarah blocks nobody.** | Operating model | All stories. No exceptions. |
+Each section below contains one team member's ownership summary, their stories in priority order (Now → Next → Later → Reach), and cross-references to shared stories owned by others.
 
 ---
 
-## Stories — Now (9 stories, 6-8 weeks)
+### Miles — Collaboration / Shadow Git / Presence
 
-**Phasing rationale:** Risk-first + dependency-first + customer-journey-first + in-flight-close-out. Now contains the things that block any external demo, plus the in-flight PRs that should land as part of the v0 push:
-- Process safety (V0-1): fixes existing data-corruption bug. Without this, dual-process collision silently corrupts content. **Risk-first.**
-- Real-time sidebar (V0-2): prerequisite for file ops UX (delete/rename feel broken with 5s polling staleness). **Dependency-first.**
-- File org ops (V0-4): table-stakes for any docs author. Today users can create files but not delete or move them. **Customer-journey-first.**
-- Image paste (V0-6): PR #41 in flight, near-shipped. Close-out, not full build. **In-flight close-out.**
-- Onboarding (V0-7): day-0 first impression. Empty state currently has no affordance. **Customer-journey-first.**
-- Graph view (V0-8): PR #76 in flight. Differentiation feature that rounds out the wiki-links shipping story. **In-flight close-out.**
-- Slug correctness (V0-12): one-way door. Every day delayed accumulates more vault content under the broken slug. **Risk-first.**
-- Per-origin undo basic (V0-14): users literally cannot Cmd+Z their own typo. Embarrassing day-0 bug. **Customer-journey-first.**
-- Timeline close-out (V0-16): PR #39 in flight. **In-flight close-out.**
+**Territory:** Shadow git repo (infrastructure + lifecycle). Merge conflicts and project-sidecar lifecycle. Timeline + rollback. Change attribution (writer identity, shadow refs). Showing diffs made by agents. "Presence" UX for agents (activity flash, agent indicators). Unique identification of agents (via MCP connection). Cmd+Z for self; Cmd+Z or revert for changes made by others. Branching / merge conflicts (future). Persistence failure indicator UI. Permissions model (if needed, future).
 
-Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), creates files (existing) and organizes them (V0-4), can undo their typos (V0-14), pastes screenshots (V0-6), sees their knowledge graph (V0-8), trusts that data isn't silently corrupting (V0-1), sees real-time sidebar updates as the agent writes (V0-2), can recover from mistakes via Timeline (V0-16), and can use non-English titles without losing content (V0-12). That's a credible v0.
-
----
-
-### V0-1: Server process safety — lock file, hardened shutdown, MCP port auto-discovery
-
-**What to build.** Establish exclusive per-project process ownership. Extend `shadow-lock.ts` PID-based pattern to a server-level lock at `<contentDir>/.open-knowledge/server.lock`. Harden `destroy()` to release the lock as the final step (after git flush, session close, watcher stop). MCP stdio server reads the lock file on startup to discover a running instance's port — eliminates `--port` flag requirement.
-
-**Value.** Customer: fixes a current data-corruption bug (two `open-knowledge start` in same directory = competing file watchers + competing git pipelines writing to `.git/index-wip`). Platform: lock pattern extends directly to Electron multi-window — each window acquires a lock; second window on same project gets "Already open in another window" dialog with zero Electron-specific code. AND zero-config MCP integration (Claude Desktop "just works" without `--port`).
-
-**Constraints.**
-- MUST extend `shadow-lock.ts` pattern (PID, hostname, startedAt) — invent nothing new.
-- Lock metadata: `{ pid, hostname, port, startedAt }`.
-- `destroy()` releases lock LAST, after all other shutdown steps (CC8).
-- Stale lock detection: live PID → refuse to start with "Already running on port X"; dead PID → remove and continue.
-
-**Lateral.** V0-7 (session persistence) depends on this — writing `state.json` without process exclusivity is a race condition.
-
-**Forward.** Electron multi-window lock collision dialog reads this lock file. Future cross-machine deployment (if ever) reuses the pattern.
-
-**Source.** Andrew's Story 1 (`projects/desktop-readiness/PROJECT.md`).
-
-**Status / owner signals.** Not started. Andrew authored the original scoping; assignable to him or a server-focused engineer. Estimate: ~1 week. Spec needed.
-
----
-
-### V0-2: Push-based real-time sidebar updates
-
-**What to build.** Replace the 5-second polling in `FileSidebar.tsx` with server-pushed file events over the existing WebSocket connection. When the file watcher emits a `DiskEvent` (create/update/delete/rename), the server broadcasts a structured event to all connected clients. The sidebar patches its local tree from the event stream rather than re-fetching the full document list. Establishes the push-over-awareness pattern (CC1).
-
-**Value.** Customer: writers see agent-created files appear instantly; file ops (V0-4) ship with usable UX because delete/rename feedback is immediate. Platform: file-watcher-to-client push becomes the reusable primitive for V0-3 (BacklinksPanel push), V0-11 (graph panels), and any future derived-view UI. Without this, every panel defaults to polling and the architecture fragments.
-
-**Constraints.**
-- Reuses existing Hocuspocus awareness channel (CC1) — does NOT introduce a new WebSocket endpoint.
-- Push payload is small (file path + event kind), not the full document list.
-- Polling fallback on awareness disconnect is acceptable (single re-fetch on reconnect).
-- Resolves the 5 open questions in `specs/2026-04-11-sidebar-realtime-updates/` SPEC.md (TQ2).
-
-**Lateral.** V0-3 (BacklinksPanel push) shares the architectural primitive — coordinate the contract.
-
-**Forward.** Enables V0-4/V0-5 file op UX, V0-11 graph panels with live updates, future tag browser.
-
-**Source.** ED-1 from day-0-editor-completeness; complementary to draft `specs/2026-04-11-sidebar-realtime-updates/`.
-
-**Owners.** **Andrew** (server-side push broadcast — the CC1 infrastructure, file-watcher-to-awareness plumbing). **Dima** (client-side sidebar subscriber — sidebar event handler, tree patch on events). Andrew sets the push contract; Dima consumes. Pattern is reusable: Mike's V0-3 (BacklinksPanel) and V0-11 (graph panels) adopt the same contract.
-
-**Status.** Spec drafted with 5 OQs unresolved (TQ2). Not started. Estimate: ~2 weeks (1 week spec resolution + 1 week implementation, split between Andrew server and Dima client).
-
----
-
-### V0-4: File organization operations from the sidebar (delete, move, duplicate, new folder)
-
-**What to build.** Writers can right-click a file in the sidebar and choose Delete, Move, or Duplicate. Writers can create an empty folder via sidebar action or context menu. Agents can call equivalent MCP tools: `delete_document`, `move_document`, `duplicate_document`, `create_folder`. Backend API shared between UI and MCP (CC2). On delete with a dirty doc open in the editor, the existing rescue-buffer mechanism preserves unsaved CRDT state.
-
-**Value.** Customer: writers can clean up and reorganize without leaving the browser — fixes a concrete day-0 embarrassment (users can currently create files they cannot remove from the UI). Platform: dual UI + MCP surface establishes the precedent for every future file-level agent capability (CC2 — load-bearing).
-
-**Constraints.**
-- Reuses safe path utilities (CC3) and provider pool cleanup (CC4).
-- Real-time sidebar (V0-2) is prerequisite — without it, delete UX is broken (5s stale state, user reclicks, errors).
-- Confirmation UX required for destructive operations (no version history → irreversible).
-- Folder operations mirror file operations; no special-case folder-move-with-content semantics in v0.
-- **MCP tool enrichment (CC9):** File-ops MCP tools must return enriched responses — not just `{ok: true}`. E.g., `delete_document` reports title of deleted doc + count of orphaned backlinks created. `move_document` reports which backlinks now point to the new path. Tim designs response shapes during spec. Agent using `delete_document` gets strictly better feedback than agent using native `Bash("rm")`.
-
-**Lateral.** V0-5 (rename) shares most backend machinery and the dual-surface pattern. **Scope note:** V0-4 scopes "move" as context-menu / move-dialog interaction. Drag-and-drop reorder/move in the sidebar tree is explicitly NOT V0-4 — that's V0-23 (reach goal, lower priority, builds on V0-4's backend).
-
-**Forward.** Establishes the dual UI+MCP pattern for future file-level operations (archive, tag, batch ops).
-
-**Source.** ED-2 from day-0-editor-completeness + Andrew's Story 2a (consolidated).
-
-**Status / owner signals.** Not started. PR #40 (open spec) defines MCP write_file conventions — coordinate API shape. PR #53 (open) adds wiki-link context menu — UI pattern reusable. Estimate: 2-3 weeks.
-
----
-
-### V0-6: Image paste + attachments model
-
-**What to build.** When a user pastes a screenshot into the editor, save it to the project's attachments directory and insert a markdown image reference. Define the attachments directory model (location, naming, content-filter interaction, git behavior).
-
-**Value.** Customer: docs authors paste screenshots constantly. Without this, OK forces them to manually save images, switch to Finder, find the file, construct a markdown reference, switch back — destroying writing flow. Every competing tool handles this. Platform: attachments model establishes how OK handles non-markdown assets generally (future video embeds, PDF attachments, import/export all build on this pattern).
-
-**Constraints.**
-- Attachments location: `<contentDir>/attachments/<docName>/` (PQ4 — per-doc subfolder for portability).
-- Naming: `<timestamp>-<first8-hash>.png` (deterministic, collision-free).
-- `content.exclude` auto-excludes `attachments/` from document index (CC7); attachments are version-controlled (PQ5).
-- TipTap paste handler intercepts `image/*` clipboard events; calls `POST /api/attachments` with multipart form; inserts `![](./attachments/<docName>/<filename>.png)` at cursor.
-- Drag-and-drop deferred to a separate story.
-
-**Lateral.** Shares `content.exclude` concern with V0-4 (CC7).
-
-**Forward.** Electron inherits unchanged (TipTap paste runs in any renderer). Drag-and-drop builds on the same endpoint.
-
-**Source.** Andrew's Story 2b. **PR #41 is in flight** with 492 LOC already covering the TipTap plugin, busboy server endpoint, MIME validation, atomic writes — saves to flat `uploads/` (not per-doc).
-
-**Status / owner signals.** **PR #41 open**. Remaining work: design decisions (PQ4, PQ5 — directory naming, gitignore behavior) and adapting PR #41 to current codebase + content.exclude integration. Estimate: 1-2 weeks of close-out, mostly review + refactor of existing PR.
-
----
-
-### V0-7: First-run onboarding flow + session persistence + starter document
-
-**What to build.** Three integrated UX components for the first-run and return-visit experience:
-- **Welcome screen** — when `.open-knowledge/` is fresh OR no documents loaded, show a guided onboarding (content detection summary if files exist, "Create your first article" action if empty). Once dismissed and ≥1 doc exists, never reappears.
-- **Starter document** — `initContent()` creates a starter `README.md` in `<contentDir>` if no `.md` files matching `content.include` exist. Brief welcome content, 5-10 lines showing markdown + a JSX component example.
-- **Session persistence** — per-project `.open-knowledge/state.json` stores `{ lastOpenedDoc, lastModified }`. On app load, opens the last doc (or falls back to first in index if deleted). Atomic write (tmp + rename), respects V0-1 lock.
-
-**Value.** Customer: new writers land in a productive state without terminal context-switching. Returning users resume where they left off — small UX moment with outsized stickiness impact. Platform: onboarding components compose into the future Electron Project Navigator without rework. State.json model establishes per-project state pattern that Electron's per-user state extends.
-
-**Constraints.**
-- Onboarding components are React components the Electron renderer can wrap.
-- Content detection reuses the existing `ContentFilter` pipeline (no separate file walking).
-- Config changes during onboarding (content.dir, exclude) persist to `.open-knowledge/config.yml`.
-- Existing content NEVER modified by onboarding — detection only.
-- State.json depends on V0-1 lock (CC6).
-
-**Lateral.** Part B of `stories/init-and-project-switching/` (multi-project switching) is a sibling bet — explicitly out of v0 scope. PR #57 already shipped auto-init; this story extends with the UI flow + starter doc + session persistence.
-
-**Forward.** Electron Project Navigator composes these components. Per-user state (window size/position) is a separate Electron concern that doesn't change this per-project model.
-
-**Source.** ED-4 from day-0-editor-completeness (Part A of init-and-project-switching) + Andrew's Story 3 (consolidated). **Story-depth detail in `stories/V0-7-onboarding/STORY.md`.**
-
-**Owners (layered).** **Sarah** owns the feature end-to-end and the React UI (welcome screen, content scope confirmation, first-doc creation — highest-leverage first-impression novel UX). **Andrew** owns the platform primitives the spec consumes: `initContent()` extension for starter README, `state.json` schema + atomic writes + lock-coordinated writes (depends on V0-1), server endpoint for init status. Sarah writes the spec declaring primitive requirements; Andrew implements primitives; Sarah's React components consume them.
-
-**Status.** Part A onboarding scoped in detail. Auto-init shipped (PR #57). Starter doc + session persistence + React UI not started. Estimate: 2 weeks (Sarah ~1.5 weeks UI + Andrew ~0.5 week primitives after V0-1).
-
----
-
-### V0-8: Graph view of links (close out PR #76)
-
-**What to build.** Force-directed graph visualization of the wiki-link structure. A `GraphView` React component (using `react-force-graph-2d`) consumes a new `GET /api/link-graph` endpoint backed by `BacklinkIndex.getLinkGraph()`. Nodes are docs; edges are `[[wiki-links]]`. Active document highlighted. Theme-aware (hooks into existing next-themes setup). Integrates into `EditorArea.tsx` as a panel or overlay.
-
-**Value.** Customer: writers see the shape of their knowledge graph visually — a differentiator vs plain-filesystem docs tools, a recognizable feature for Obsidian users evaluating OK. Platform: `/api/link-graph` + `getLinkGraph()` become the foundation for future graph-based features (future clustering, semantic overlays, agent navigation hints). Internal: rounds out the wiki-links shipping story — PR #71 shipped the graph data + panels for inline context; V0-11 surfaces list-form navigation; V0-8 surfaces visual-form exploration. Together they cover the three Obsidian-grade link UX modes.
-
-**Intersection with V0-11 (graph panels):** V0-11 (outline + forward + orphans + hubs) is list-form navigation — quick orientation. V0-8 (this story) is visual-form exploration — see connectedness. Different UI, shared backend data. Both consume the backlink index; neither supersedes the other. The panels answer "what's related to THIS doc"; the graph view answers "what does the whole knowledge base look like."
-
-**Constraints.**
-- Reuse existing `BacklinkIndex` forward map — no new data model.
-- Theme-aware via existing `next-themes` integration (dark mode already shipped PR #60).
-- Performance at scale: `react-force-graph-2d` must render acceptably for KBs up to ~5000 nodes. Verify during PR close-out; if performance is a blocker at realistic KB sizes, node/edge filtering (e.g., N-hop neighborhood around active doc) may be needed.
-- Must not introduce per-interaction server load — graph data fetched once per open; updates respond to awareness push from V0-2/V0-3 (or poll if those haven't shipped).
-
-**Lateral.** Pairs with V0-11 (graph panels) — complementary surfaces on the same backend. Pairs with V0-3 (BacklinksPanel push) — both are derived-view UIs that should adopt CC1 push-over-awareness pattern for live updates.
-
-**Forward.** Foundation for future graph-based features: clustering overlays, tag-colored nodes (if tags ship), semantic-similarity edges, agent navigation hints ("you're here; these clusters are related"). If search ships (separate bet), graph view could layer search results as a filter.
-
-**Source.** Mike's PR #76 (`feat/graph_view` — 296 additions, 2 deletions, 7 files changed). Previously carved out of v0-launch as "parity-for-parity's-sake"; reframed 2026-04-13 to include as v0 story since Mike is actively shipping and the differentiation argument holds.
-
-**Status / owner signals.** **PR #76 OPEN**, Mike authored. Remaining work: PR review, performance validation at realistic KB sizes, layout/placement decision in `EditorArea.tsx` (panel vs overlay vs separate view), accessibility pass (keyboard navigation for graph). Estimate: 1-2 weeks of close-out, mostly review + polish of existing PR.
-
----
-
-### V0-12: Slug correctness — Unicode-safe + duplicate-heading-anchor disambiguation
-
-**What to build.** Replace `toWikiLinkSlug` in `packages/core/src/utils/slug.ts` (currently `text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')` — destroys non-ASCII) with a Unicode-aware algorithm: NFKD normalize, lowercase, keep `\p{L}\p{N}`, collapse other to `-`, trim. Update `extractHeadings` in `api-extension.ts` to emit consistent `-1`, `-2` suffixes for duplicate headings (today only the client-side `HeadingAnchors` plugin disambiguates). Single source of truth in core.
-
-**Value.** Customer-correctness: any user with non-ASCII content (Latin-accented, CJK, Cyrillic, Arabic, emoji-laden) is hitting a silent destructive bug today. Platform: the slug function is a shared identifier producer used in 4+ contexts (page targets, heading anchors, heading picker, unresolved-link creation) — fixing it once ripples atomically. **GTM (negative):** shipping international users a vault that destructively mangles links on every save is a trust cliff.
-
-**One-way door:** the rewrite cost of fixing this AFTER users accumulate content is linear in vault size. Every day delayed = more migration work.
-
-**Constraints.**
-- Slug function lives in `@inkeep/open-knowledge-core`; `extractHeadings`, `HeadingAnchors`, `buildUnresolvedWikiLinkAttrs` all consume.
-- Idempotent: `slug(slug(x)) === slug(x)`.
-- Duplicate-heading disambiguation: server returns `notes`, `notes-1`, `notes-2`; rendered DOM IDs match exactly.
-- Migration path (PQ9 OPEN): TBD between rewrite-on-boot, dual-resolve, or empty-vault-only release. Coordinates with V0-5 infrastructure (CC5).
-
-**Non-goals.**
-- **[NEVER]** Transliteration across scripts (`東京` → `tokyo` is lossy).
-- **[NOT NOW]** Configurable slug algorithm per workspace.
-- **[NOT NOW]** Fuzzy slug resolution (`[[cafe]]` → `café.md`).
-
-**Lateral.** Mike's Story 2 (suggest_links, V0-13) depends on this — Unicode bug propagates to false-negatives. V0-5 (rename) shares rewrite infrastructure if PQ9 lands on option (a).
-
-**Forward.** Sets precedent for every future identifier-producing function (heading IDs, wiki-link targets, future block IDs).
-
-**Source.** Mike's wiki-links-next Story 1 (full SCR + invariants + AC available in `stories/wiki-links-next/STORY.md` Story 1).
-
-**Status / owner signals.** Mike's. Scoped in detail. Migration path open. Estimate: ~1 week + migration testing.
-
----
+#### Now
 
 ### V0-14: Per-origin undo — three-UndoManager architecture with character-level Observer A prerequisite
 
@@ -551,6 +198,7 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 **Status.** Nick's TQ5/TQ6 starting now (zero-coordination, parallel with Miles's V0-16). Miles's UM wiring starts after V0-16 + TQ5 converge. Estimate: Nick's track ~1 week; Miles's UM wiring ~2 weeks after prerequisites land. Total calendar: ~3-4 weeks (parallelized with V0-16).
 
 ---
+
 
 ### V0-16: Timeline + Rollback — PR #39 expanded scope under greenfield directive
 
@@ -628,18 +276,112 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 
 ---
 
-## Stories — Next (7 stories)
 
-**Phasing rationale:** Value-first + dependency-resolved. After Now ships:
-- V0-5 (rename) becomes possible because V0-4 file ops machinery exists and V0-2 real-time sidebar provides instant feedback.
-- V0-9 (outline panel) sets Sarah's panel-docking pattern, which V0-11 adopts.
-- V0-11 (graph panels) is highest-ROI remaining for Mike — backend already shipped, pure React, adopts V0-9's pattern.
-- V0-10 (Cmd+K) becomes valuable as Now-shipped onboarding leads to real usage.
-- V0-3 (BacklinksPanel push) adopts V0-2's pattern.
-- V0-21 (dead-link checking) surfaces BacklinkIndex's existing unresolved-target data.
-- V0-17 (persistence indicator) UI adopts V0-16's Timeline button if Timeline shipped, otherwise standalone.
+
+#### Next
+
+### V0-17: Persistence failure indicator UI
+
+**What to build.** Subtle status dot in editor header. Green = healthy, red = git pipeline failed. Tooltip on hover explains the failure. Clears when subsequent commit succeeds. Server emits a persistence-status event when `consecutiveGitFailures >= 3` (already tracked in `persistence.ts:99-103`); UI consumes it. **If V0-16 (Timeline) ships first, this becomes a red badge on the Timeline button instead of standalone (PQ11).**
+
+**Value.** Customer: prevents silent-failure scenario — user thinks version history is recording but git plumbing has failed 3+ times unbeknownst to them. Data integrity trust is load-bearing for production use.
+
+**Constraints.**
+- Server emits via awareness channel or a dedicated SSE/WS event (spec decision).
+- Indicator design: minimal — a dot, not a banner or toast (Andrew's PQ6 lean).
+- Recovers automatically on next successful commit.
+
+**Lateral.** Coordinates with V0-16 (Timeline) on visual placement (PQ11).
+
+**Forward.** Foundation for future operational signals (sync status, agent activity status).
+
+**Source.** Andrew's Story 4 persistence indicator portion (dark mode dropped — shipped via PR #60, #63).
+
+**Owners.** **Miles** end-to-end (1:1 with his change-attribution / shadow-git territory — feature-owner principle applies). Sarah consulted on visual design (dot + tooltip micro-interaction). Backend infra already shipped (PR #62 degraded-boot signal); Miles wires the UI.
+
+**Status.** Backend infrastructure shipped (PR #62 — degraded boot signal). UI not started. Estimate: 0.5-1 week.
 
 ---
+
+
+
+#### Subsumed
+
+### ~~V0-15: Activity flash verification + WYSIWYG/Source reconciliation~~ — SUBSUMED BY V0-16
+
+**Subsumed 2026-04-13.** Flash reconciliation (TQ2), shared flash primitive (TQ12), `prefers-reduced-motion` (TQ7), and Playwright E2E verification all ship as part of V0-16's expanded scope under greenfield directive. V0-15 as a separate story is no longer needed. See V0-16 §TQ2/TQ12/TQ7.
+
+---
+
+
+
+---
+
+### Mike — Knowledge Graph / Content / Search
+
+**Territory:** Wiki links and back links (data + link rewriting + managed rename). Graph visualization. Auto-indexing forward/back links. Link-click navigation experience. Orphans and hub detection. Dead-link checking. Slug correctness (Unicode + duplicate heading — one-way door). Config schema (SQLite / Drizzle / Zod). Full-text search (backend, UX, MCP tool integration — standalone bet post-v0). `suggest_links` MCP tool.
+
+**Load watch:** Broad — knowledge-graph substrate + search substrate + config schema substrate. Three functional surfaces that share underlying data infrastructure. Manageable because coherent, but worth confirming he's sized for all of it.
+
+#### Now
+
+### V0-8: Graph view of links (close out PR #76)
+
+**What to build.** Force-directed graph visualization of the wiki-link structure. A `GraphView` React component (using `react-force-graph-2d`) consumes a new `GET /api/link-graph` endpoint backed by `BacklinkIndex.getLinkGraph()`. Nodes are docs; edges are `[[wiki-links]]`. Active document highlighted. Theme-aware (hooks into existing next-themes setup). Integrates into `EditorArea.tsx` as a panel or overlay.
+
+**Value.** Customer: writers see the shape of their knowledge graph visually — a differentiator vs plain-filesystem docs tools, a recognizable feature for Obsidian users evaluating OK. Platform: `/api/link-graph` + `getLinkGraph()` become the foundation for future graph-based features (future clustering, semantic overlays, agent navigation hints). Internal: rounds out the wiki-links shipping story — PR #71 shipped the graph data + panels for inline context; V0-11 surfaces list-form navigation; V0-8 surfaces visual-form exploration. Together they cover the three Obsidian-grade link UX modes.
+
+**Intersection with V0-11 (graph panels):** V0-11 (outline + forward + orphans + hubs) is list-form navigation — quick orientation. V0-8 (this story) is visual-form exploration — see connectedness. Different UI, shared backend data. Both consume the backlink index; neither supersedes the other. The panels answer "what's related to THIS doc"; the graph view answers "what does the whole knowledge base look like."
+
+**Constraints.**
+- Reuse existing `BacklinkIndex` forward map — no new data model.
+- Theme-aware via existing `next-themes` integration (dark mode already shipped PR #60).
+- Performance at scale: `react-force-graph-2d` must render acceptably for KBs up to ~5000 nodes. Verify during PR close-out; if performance is a blocker at realistic KB sizes, node/edge filtering (e.g., N-hop neighborhood around active doc) may be needed.
+- Must not introduce per-interaction server load — graph data fetched once per open; updates respond to awareness push from V0-2/V0-3 (or poll if those haven't shipped).
+
+**Lateral.** Pairs with V0-11 (graph panels) — complementary surfaces on the same backend. Pairs with V0-3 (BacklinksPanel push) — both are derived-view UIs that should adopt CC1 push-over-awareness pattern for live updates.
+
+**Forward.** Foundation for future graph-based features: clustering overlays, tag-colored nodes (if tags ship), semantic-similarity edges, agent navigation hints ("you're here; these clusters are related"). If search ships (separate bet), graph view could layer search results as a filter.
+
+**Source.** Mike's PR #76 (`feat/graph_view` — 296 additions, 2 deletions, 7 files changed). Previously carved out of v0-launch as "parity-for-parity's-sake"; reframed 2026-04-13 to include as v0 story since Mike is actively shipping and the differentiation argument holds.
+
+**Status / owner signals.** **PR #76 OPEN**, Mike authored. Remaining work: PR review, performance validation at realistic KB sizes, layout/placement decision in `EditorArea.tsx` (panel vs overlay vs separate view), accessibility pass (keyboard navigation for graph). Estimate: 1-2 weeks of close-out, mostly review + polish of existing PR.
+
+---
+
+
+### V0-12: Slug correctness — Unicode-safe + duplicate-heading-anchor disambiguation
+
+**What to build.** Replace `toWikiLinkSlug` in `packages/core/src/utils/slug.ts` (currently `text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')` — destroys non-ASCII) with a Unicode-aware algorithm: NFKD normalize, lowercase, keep `\p{L}\p{N}`, collapse other to `-`, trim. Update `extractHeadings` in `api-extension.ts` to emit consistent `-1`, `-2` suffixes for duplicate headings (today only the client-side `HeadingAnchors` plugin disambiguates). Single source of truth in core.
+
+**Value.** Customer-correctness: any user with non-ASCII content (Latin-accented, CJK, Cyrillic, Arabic, emoji-laden) is hitting a silent destructive bug today. Platform: the slug function is a shared identifier producer used in 4+ contexts (page targets, heading anchors, heading picker, unresolved-link creation) — fixing it once ripples atomically. **GTM (negative):** shipping international users a vault that destructively mangles links on every save is a trust cliff.
+
+**One-way door:** the rewrite cost of fixing this AFTER users accumulate content is linear in vault size. Every day delayed = more migration work.
+
+**Constraints.**
+- Slug function lives in `@inkeep/open-knowledge-core`; `extractHeadings`, `HeadingAnchors`, `buildUnresolvedWikiLinkAttrs` all consume.
+- Idempotent: `slug(slug(x)) === slug(x)`.
+- Duplicate-heading disambiguation: server returns `notes`, `notes-1`, `notes-2`; rendered DOM IDs match exactly.
+- Migration path (PQ9 OPEN): TBD between rewrite-on-boot, dual-resolve, or empty-vault-only release. Coordinates with V0-5 infrastructure (CC5).
+
+**Non-goals.**
+- **[NEVER]** Transliteration across scripts (`東京` → `tokyo` is lossy).
+- **[NOT NOW]** Configurable slug algorithm per workspace.
+- **[NOT NOW]** Fuzzy slug resolution (`[[cafe]]` → `café.md`).
+
+**Lateral.** Mike's Story 2 (suggest_links, V0-13) depends on this — Unicode bug propagates to false-negatives. V0-5 (rename) shares rewrite infrastructure if PQ9 lands on option (a).
+
+**Forward.** Sets precedent for every future identifier-producing function (heading IDs, wiki-link targets, future block IDs).
+
+**Source.** Mike's wiki-links-next Story 1 (full SCR + invariants + AC available in `stories/wiki-links-next/STORY.md` Story 1).
+
+**Status / owner signals.** Mike's. Scoped in detail. Migration path open. Estimate: ~1 week + migration testing.
+
+---
+
+
+
+#### Next
 
 ### V0-5: File rename + atomic backlink rewriting
 
@@ -666,30 +408,6 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 
 ---
 
-### V0-9: Document outline panel
-
-**What to build.** A panel showing the hierarchy of headings (H1-H6) in the currently-open document as a clickable tree. Click a heading → editor scrolls to it. Active heading highlighted based on cursor/scroll position. Collapsible. Live-updates as headings change. Consumes `GET /api/page-headings` (already shipped). Works in both WYSIWYG and Source modes (scroll integration with TipTap + CodeMirror). **This story also sets the panel-docking visual + interaction pattern that V0-11 and future panels adopt.**
-
-**Value.** Customer: within-doc navigation — writers working in long docs can jump between sections without scrolling. Obsidian/VS Code/Google Docs/Typora all ship this; users coming from those tools expect it. Platform: panel-docking pattern established here (where panels live, collapse behavior, keyboard nav, active-state visual) becomes the visual language for V0-11 (graph panels) and any future docked panel. **Load-bearing design decision** — getting the pattern right once saves every future panel from re-deciding.
-
-**Constraints.**
-- Reuse existing `BacklinksPanel` component architecture as the template where possible.
-- Scroll-integration works in both TipTap (WYSIWYG) and CodeMirror (Source) modes; single behavior spec, two implementations.
-- Active-heading detection via scroll position (IntersectionObserver or similar — performance-sensitive on long docs).
-- Live updates: subscribe to CC1 push if V0-2 shipped; fall back to on-demand refresh.
-- Outline slug consistency with V0-12 (Mike's slug correctness) — outline panel's anchor IDs must match the editor's rendered heading IDs.
-
-**Lateral.** Sets the panel-docking pattern V0-11 adopts. V0-3 (BacklinksPanel push) and V0-11 (graph panels) are the next consumers. Coordinates with V0-12 on slug consistency (Mike owns slugs; this panel consumes them).
-
-**Forward.** Panel-docking visual language carries into every future panel: tag browser, future graph clusters, AI-suggestion surfaces, etc.
-
-**Source.** Originally bundled into day-0-editor-completeness ED-6; split out 2026-04-13 per Sarah-owns-outline-experience decision.
-
-**Owners.** **Dima** feature-owns end-to-end (scroll integration with TipTap + CodeMirror, IntersectionObserver active-heading detection, live-update state management, tree rendering, UX decisions). Consumes Sarah's panel-docking pattern doc if available; ships without it if not — Sarah pattern-reconciles later. Nick consulted on editor-side integration (ProseMirror scroll primitives in WYSIWYG mode). Sarah reviews polish after.
-
-**Status.** Not started. Backend API exists (`/api/page-headings`). Pure frontend work. Estimate: ~1-1.5 weeks.
-
----
 
 ### V0-11: Surface existing graph APIs as editor panels (forward links, orphans, hubs)
 
@@ -720,30 +438,6 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
-### V0-10: Quick switcher (Cmd+K) and recent files
-
-**What to build.** Writers press Cmd+K and get a fuzzy-matched command palette listing all documents. Selecting a result opens that document. A "Recently opened" section appears at the top of the palette, tracked client-side. No server-side search index needed — the `fileIndex` already in memory is enough for fuzzy matching at expected KB sizes (<5000 docs).
-
-**Value.** Customer: writers with growing KBs (>50 docs) jump directly to any file without scrolling the sidebar tree. Platform: validates that document-finding doesn't require a full-text search engine — clarifies the eventual search bet's scope (search is for content, Cmd+K is for navigation). Internal: muscle memory for Obsidian + VS Code users lands intact.
-
-**Constraints.**
-- Pure frontend — no server changes.
-- Fuzzy matching library (TQ11 PARKED): fzf.js, fuse.js, or custom (~5KB).
-- Recents stored in localStorage.
-- Keyboard navigation primary (arrow keys, enter, escape).
-- Must handle large fileIndex (thousands of docs) with responsive typing (<100ms match time).
-
-**Lateral.** When full-text search ships as separate bet, Cmd+K becomes the natural entry point for combined navigation + search results.
-
-**Forward.** Natural home for future command-palette commands (create doc, insert template, switch theme).
-
-**Source.** ED-5 from day-0-editor-completeness.
-
-**Owners.** **Dima** feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk` — used by Linear, Vercel; handles keyboard nav, fuzzy filtering, a11y). Designs result-source extensibility contract himself — Mike consulted when post-v0 search bet activates to ensure content results plug in cleanly. Sarah reviews polish after. Nextra has analogous command palette work Dima can draw from.
-
-**Status.** Not started. Library: `shadcn/ui Command` (wraps `cmdk`). Estimate: ~1-1.5 weeks.
-
----
 
 ### V0-3: BacklinksPanel push-over-awareness (replace 2s polling)
 
@@ -768,28 +462,6 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
-### V0-17: Persistence failure indicator UI
-
-**What to build.** Subtle status dot in editor header. Green = healthy, red = git pipeline failed. Tooltip on hover explains the failure. Clears when subsequent commit succeeds. Server emits a persistence-status event when `consecutiveGitFailures >= 3` (already tracked in `persistence.ts:99-103`); UI consumes it. **If V0-16 (Timeline) ships first, this becomes a red badge on the Timeline button instead of standalone (PQ11).**
-
-**Value.** Customer: prevents silent-failure scenario — user thinks version history is recording but git plumbing has failed 3+ times unbeknownst to them. Data integrity trust is load-bearing for production use.
-
-**Constraints.**
-- Server emits via awareness channel or a dedicated SSE/WS event (spec decision).
-- Indicator design: minimal — a dot, not a banner or toast (Andrew's PQ6 lean).
-- Recovers automatically on next successful commit.
-
-**Lateral.** Coordinates with V0-16 (Timeline) on visual placement (PQ11).
-
-**Forward.** Foundation for future operational signals (sync status, agent activity status).
-
-**Source.** Andrew's Story 4 persistence indicator portion (dark mode dropped — shipped via PR #60, #63).
-
-**Owners.** **Miles** end-to-end (1:1 with his change-attribution / shadow-git territory — feature-owner principle applies). Sarah consulted on visual design (dot + tooltip micro-interaction). Backend infra already shipped (PR #62 degraded-boot signal); Miles wires the UI.
-
-**Status.** Backend infrastructure shipped (PR #62 — degraded boot signal). UI not started. Estimate: 0.5-1 week.
-
----
 
 ### V0-21: Dead-link checking
 
@@ -818,47 +490,9 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
-## Stories — Later (4 stories + 1 subsumed, promote on trigger)
 
-**Phasing rationale:** Polish + gated work. Promote when explicit trigger fires; not on a calendar.
 
----
-
-### ~~V0-15: Activity flash verification + WYSIWYG/Source reconciliation~~ — SUBSUMED BY V0-16
-
-**Subsumed 2026-04-13.** Flash reconciliation (TQ2), shared flash primitive (TQ12), `prefers-reduced-motion` (TQ7), and Playwright E2E verification all ship as part of V0-16's expanded scope under greenfield directive. V0-15 as a separate story is no longer needed. See V0-16 §TQ2/TQ12/TQ7.
-
----
-
-### V0-18: Find and replace within document
-
-**What.** Cmd+F find bar; Cmd+Shift+F find-and-replace. Find highlights in document, next/previous navigate matches, replace-one and replace-all modify the document through normal CRDT writes (so agent visibility + undo work correctly).
-
-**Value.** Customer: core editor table-stakes. Without this, users drop to VS Code/sed for bulk in-document edits.
-
-**Promote when:** users report bulk-edit friction OR inline-edit flow becomes a common agent workflow.
-
-**Constraints.** TipTap and CodeMirror have separate search extensions; coordinated Cmd+F across modes (TQ12 OPEN). Must go through CRDT writes (bridge invariant).
-
-**Source.** ED-7a from day-0-editor-completeness.
-
-**Owners.** **Dima** feature-owns end-to-end (TipTap search+replace extension wiring, CodeMirror search extension coordination, single Cmd+F across both modes, bridge-invariant preservation — consult Nick on CRDT write path, find-bar UX). Sarah reviews polish after. Estimate: ~1-1.5 weeks.
-
----
-
-### V0-19: Sidebar sort + word count polish bundle
-
-**What.** Sidebar sort toggle (name [default] or modified date descending — fileIndex already has `modified`). Live word count in editor footer (derived from Y.Text). Optional: characters, reading time.
-
-**Value.** Customer: productive-feeling basics; collectively closes "feels unfinished" gap.
-
-**Promote when:** Now+Next ship and qualitative feedback surfaces "feels unfinished" sentiment OR when a larger polish sprint is scheduled.
-
-**Source.** ED-7b from day-0-editor-completeness. Estimate: 0.5-1 week.
-
-**Owners.** **Dima** implements both (sort is trivial extension of his sidebar territory; word count is trivial Y.Text derivation). Sarah reviews word-count placement in the editor footer.
-
----
+#### Later
 
 ### V0-13: `suggest_links` MCP tool (unlinked mentions for agents)
 
@@ -874,100 +508,9 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
-### V0-20: Desktop build pipeline prep — dynamic port + CJS build
 
-**What.** Two infrastructure changes for Electron packaging: (1) ensure HocuspocusProvider accepts runtime-injected WebSocket URL instead of reading from `location.host` (current bug: `provider-pool.ts:35` falls back to `'localhost'` without port when loaded via `file://`), (2) add CJS build target for `packages/server/` (Electron's `utilityProcess.fork()` doesn't support ESM entry points).
 
-**Value.** Platform: technically necessary for Electron build. Zero impact on current CLI/web experience.
-
-**Promote when:** Electron packaging spec promotes from Draft (Intake) to Approved AND implementation begins. Currently no signal of imminent Electron work; promote trigger is "first DMG packaging spike" or equivalent.
-
-**Constraints.** ProviderPool already accepts `wsUrl` override (TQ14). CJS build adds parallel output, ESM stays default (TQ15). Inherits PR #54 Track T2's `@parcel/watcher` → `chokidar` fallback.
-
-**Source.** Andrew's Story 5. Estimate: 0.5 week (~2-4 hours each item).
-
----
-
-## Stories — Reach (4 stories — Dima, Tim, Mike if capacity allows)
-
-**Phasing rationale:** Lower priority than each owner's core v0 work. Ship if capacity allows after core stories land. Each depends on core v0 infrastructure shipping first.
-
----
-
-### V0-22: Tabbed file experience (Obsidian-style)
-
-**What.** Multiple documents open simultaneously as tabs above the editor. Tab bar shows open docs. Click tab to switch. Close tab (X button or middle-click). Remember open tabs across sessions via `state.json` (depends on V0-7 session persistence).
-
-**Value.** Customer: users can reference one doc while editing another — reduces sidebar navigation overhead. Matches Obsidian, VS Code, every editor users are coming from.
-
-**Constraints.**
-- Provider pool already supports multiple open docs (LRU from `specs/2026-04-10-provider-pool/`). Each tab = one active HocuspocusProvider.
-- Hash routing (`#/docName`) needs to extend or be replaced with tab-aware state management.
-- Tab persistence in `state.json` — depends on V0-7 session persistence (Andrew's primitives).
-- Closing a doc's tab doesn't delete the doc (obvious but worth stating).
-
-**Owners.** **Dima** end-to-end. Sarah reviews polish after.
-
-**Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
-
----
-
-### V0-23: Drag-and-drop files in sidebar
-
-**What.** Drag files and folders within the sidebar tree to move them. Drag a file to a different folder → moves the file (same backend as V0-4 move). Drag a folder → moves the folder + contents. Visual drag preview, drop-target highlighting, prohibited-drop indication (e.g., can't drop a folder into itself).
-
-**Value.** Customer: intuitive organization matching every file manager. Faster than context-menu move for spatial thinkers. Obsidian and VS Code support this.
-
-**Constraints.**
-- Builds on V0-4's move backend — DnD is a **trigger** for the same `move_document` API, not a separate operation.
-- Needs V0-2 real-time sidebar to update correctly after moves.
-- DnD library: `@dnd-kit/core` or HTML5 drag API. Evaluate at impl time.
-- Must handle edge cases: drop onto root, drop onto self, deeply nested moves.
-
-**Scope note on V0-4:** V0-4 (file organization ops) scopes "move" as context-menu / move-dialog. DnD is explicitly NOT in V0-4 — it's this separate reach story that builds on V0-4's backend.
-
-**Owners.** **Dima** end-to-end. Sarah reviews polish after.
-
-**Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
-
----
-
-### V0-24: Enriched just-bash MCP surface
-
-**What to build.** A single MCP tool `exec(command)` that accepts bash-like commands scoped to the project's content directory. Same commands agents already know (`grep`, `ls`, `cat`, `find`, `wc`, `head`, `tail`, `sort`), but output enriched with computed system data. Every file reference in output includes: title (from frontmatter), backlink count, forward-link count, tags, modified timestamp, catalog category. Combinatorial operations (pipes) work — enrichment applies per output line that references a file.
-
-**Why this matters.** Agents already compose native bash + curl/jq to glue grep results with our HTTP API. That works but it's three tool calls where one would do. Enriched just-bash makes the composition native: `exec("grep 'auth' **/*.md | head -5")` returns the first 5 files mentioning auth, each with enriched metadata, in one call. No curl, no jq, no glue code. The agent uses commands it already knows and gets better output.
-
-Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneously inventing file-path syntax before filesystem tools existed — agents naturally think in paths and Unix idioms." And: "Minimum tool count is the #1 failure predictor" — one `exec` tool vs 14 semantic tools.
-
-**Scope tiers:**
-
-| Tier | What | Effort |
-|------|------|--------|
-| **Tier 1 (minimum reach)** | `grep`, `ls`, `cat` enriched — per-file metadata in output | ~1 week |
-| **Tier 2 (combinatorial)** | Pipe support (`grep | head`, `ls | sort -k modified`) | +0.5 week |
-| **Tier 3 (full, post-v0)** | All read-only commands enriched + custom commands (`backlinks auth.md`, `orphans`, `dead-links`) | Larger scope |
-
-**Constraints.**
-- **Read-only + whitelisted.** No `rm`, `mv`, `cp`, `mkdir`, `chmod`, or arbitrary execution. Write operations go through semantic MCP tools (`write_document`, `delete_document`, etc.) that have CRDT awareness + provider pool coordination. Enriched bash is for reading + discovery only.
-- **Scoped to content directory.** Commands execute relative to the project's content root. Path traversal outside content dir blocked (reuse `safeSubdir()`).
-- **Enrichment is additive, not replacing.** Raw command output stays intact; enrichment appends as structured metadata. Agent can parse either the raw output (familiar) or the enriched metadata (richer).
-- **Falls back gracefully.** Commands that don't produce file-scoped output (e.g., `echo`, `date`) return raw output without enrichment — no error, just no metadata to add.
-- **Relationship to semantic tools:** Enriched just-bash COMPLEMENTS semantic tools for v0, not replaces. `exec("cat auth.md")` and `read_document("auth.md")` return the same enriched data via different entry points. Post-v0 decision: should enriched bash REPLACE some semantic tools to reduce tool count? That's XQ1.
-
-**Value.** Customer (agent): agents use one `exec` tool with familiar bash commands instead of learning 14 semantic MCP tools. Combinatorial operations (pipes, head, sort, grep chaining) work natively. Platform: explores XQ1 architecture (root PROJECT.md) — if enriched bash works well in practice, post-v0 we could make it the primary MCP surface and deprecate semantic tools that it subsumes.
-
-**Lateral.** CC9 (MCP enrichment quality bar) applies: enriched bash output must match or exceed what semantic tools return. If `exec("cat auth.md")` returns less than `read_document("auth.md")`, the value prop breaks. Same enrichment pipeline under the hood.
-
-**Forward.** If this works well: post-v0, evaluate deprecating `read_document`, `list_documents`, `search` in favor of `exec("cat")`, `exec("ls")`, `exec("grep")`. Reduces tool count from ~14 to ~5 (exec + write_document + edit_document + undo + redo). Root PROJECT.md XQ1 resolves.
-
-**Source.** Root PROJECT.md XQ1 (open architectural question). Internal `bash/index.ts` already implements `runShell()`, `grep()`, `gitLog()`, `cat()` — enriched bash wraps these as an MCP-exposed surface.
-
-**Owners.** **Tim** end-to-end. This is his "just-bash virtualization" brainstorm item brought to life.
-
-**Status.** Not started. Estimate: Tier 1 = ~1 week; Tier 2 = +0.5 week. **Reach goal — lower priority than Tim's core v0 work** (V0-4 MCP file-ops, CC9 enrichment audit, MCP initialization/discovery, harness integration). Ship if Tim has capacity after core lands. Depends on core semantic tools working first (enriched bash reuses the same enrichment pipeline).
-
----
+#### Reach
 
 ### V0-25: Schematize backlink index + config into SQLite with Drizzle + Zod
 
@@ -1009,6 +552,429 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 **Owners.** **Mike** end-to-end. His "schematizing config into proper SQLite → Drizzle → Zod" brainstorm item.
 
 **Status.** Not started. Estimate: 2-3 weeks (schema design + Drizzle setup + migrate backlink index + migrate file index + migrate config mirror + verify all consumers work). **Reach goal — lower priority than Mike's core v0 work** (V0-8 graph view close-out, V0-12 slug correctness, V0-3 BacklinksPanel push, V0-5 rename + link rewrite, V0-11 graph panels, V0-21 dead-link checking). Ship if Mike has capacity after core stories land. Becomes a prerequisite for the post-v0 search bet.
+
+---
+
+
+
+---
+
+### Andrew — Platform / Ops / System-level Infrastructure
+
+**Territory:** Project initialization, discovery, opening (CLI experience). Multi-project navigation + switching (CLI-side). Lock files, port management, service boot/shutdown, multi-session coordination. Server-side push broadcast infrastructure (CC1). Directory structure decisions (Assets/Attachments folder, Raw/external-sources folder, init scaffolding). OpenTelemetry / logging / instrumentation. Testing / CI / quality-gate infrastructure (formal steward). Electron desktop app (staged).
+
+**Platform primitives consumed by feature owners:** `initContent()` scaffolding, `state.json` atomic writes + lock coordination, server-side awareness broadcast, process-safety primitives. Feature specs declare their primitive requirements; Andrew implements the primitives; feature code consumes them.
+
+**Load watch:** Heavy platform stack. If Electron promotes from staged before v0 ships, or if testing/CI needs formal investment, consider splitting. Flag if saturated.
+
+#### Now
+
+### V0-1: Server process safety — lock file, hardened shutdown, MCP port auto-discovery
+
+**What to build.** Establish exclusive per-project process ownership. Extend `shadow-lock.ts` PID-based pattern to a server-level lock at `<contentDir>/.open-knowledge/server.lock`. Harden `destroy()` to release the lock as the final step (after git flush, session close, watcher stop). MCP stdio server reads the lock file on startup to discover a running instance's port — eliminates `--port` flag requirement.
+
+**Value.** Customer: fixes a current data-corruption bug (two `open-knowledge start` in same directory = competing file watchers + competing git pipelines writing to `.git/index-wip`). Platform: lock pattern extends directly to Electron multi-window — each window acquires a lock; second window on same project gets "Already open in another window" dialog with zero Electron-specific code. AND zero-config MCP integration (Claude Desktop "just works" without `--port`).
+
+**Constraints.**
+- MUST extend `shadow-lock.ts` pattern (PID, hostname, startedAt) — invent nothing new.
+- Lock metadata: `{ pid, hostname, port, startedAt }`.
+- `destroy()` releases lock LAST, after all other shutdown steps (CC8).
+- Stale lock detection: live PID → refuse to start with "Already running on port X"; dead PID → remove and continue.
+
+**Lateral.** V0-7 (session persistence) depends on this — writing `state.json` without process exclusivity is a race condition.
+
+**Forward.** Electron multi-window lock collision dialog reads this lock file. Future cross-machine deployment (if ever) reuses the pattern.
+
+**Source.** Andrew's Story 1 (`projects/desktop-readiness/PROJECT.md`).
+
+**Status / owner signals.** Not started. Andrew authored the original scoping; assignable to him or a server-focused engineer. Estimate: ~1 week. Spec needed.
+
+---
+
+
+### V0-2: Push-based real-time sidebar updates
+
+**What to build.** Replace the 5-second polling in `FileSidebar.tsx` with server-pushed file events over the existing WebSocket connection. When the file watcher emits a `DiskEvent` (create/update/delete/rename), the server broadcasts a structured event to all connected clients. The sidebar patches its local tree from the event stream rather than re-fetching the full document list. Establishes the push-over-awareness pattern (CC1).
+
+**Value.** Customer: writers see agent-created files appear instantly; file ops (V0-4) ship with usable UX because delete/rename feedback is immediate. Platform: file-watcher-to-client push becomes the reusable primitive for V0-3 (BacklinksPanel push), V0-11 (graph panels), and any future derived-view UI. Without this, every panel defaults to polling and the architecture fragments.
+
+**Constraints.**
+- Reuses existing Hocuspocus awareness channel (CC1) — does NOT introduce a new WebSocket endpoint.
+- Push payload is small (file path + event kind), not the full document list.
+- Polling fallback on awareness disconnect is acceptable (single re-fetch on reconnect).
+- Resolves the 5 open questions in `specs/2026-04-11-sidebar-realtime-updates/` SPEC.md (TQ2).
+
+**Lateral.** V0-3 (BacklinksPanel push) shares the architectural primitive — coordinate the contract.
+
+**Forward.** Enables V0-4/V0-5 file op UX, V0-11 graph panels with live updates, future tag browser.
+
+**Source.** ED-1 from day-0-editor-completeness; complementary to draft `specs/2026-04-11-sidebar-realtime-updates/`.
+
+**Owners.** **Andrew** (server-side push broadcast — the CC1 infrastructure, file-watcher-to-awareness plumbing). **Dima** (client-side sidebar subscriber — sidebar event handler, tree patch on events). Andrew sets the push contract; Dima consumes. Pattern is reusable: Mike's V0-3 (BacklinksPanel) and V0-11 (graph panels) adopt the same contract.
+
+**Status.** Spec drafted with 5 OQs unresolved (TQ2). Not started. Estimate: ~2 weeks (1 week spec resolution + 1 week implementation, split between Andrew server and Dima client).
+
+---
+
+
+
+#### Later
+
+### V0-20: Desktop build pipeline prep — dynamic port + CJS build
+
+**What.** Two infrastructure changes for Electron packaging: (1) ensure HocuspocusProvider accepts runtime-injected WebSocket URL instead of reading from `location.host` (current bug: `provider-pool.ts:35` falls back to `'localhost'` without port when loaded via `file://`), (2) add CJS build target for `packages/server/` (Electron's `utilityProcess.fork()` doesn't support ESM entry points).
+
+**Value.** Platform: technically necessary for Electron build. Zero impact on current CLI/web experience.
+
+**Promote when:** Electron packaging spec promotes from Draft (Intake) to Approved AND implementation begins. Currently no signal of imminent Electron work; promote trigger is "first DMG packaging spike" or equivalent.
+
+**Constraints.** ProviderPool already accepts `wsUrl` override (TQ14). CJS build adds parallel output, ESM stays default (TQ15). Inherits PR #54 Track T2's `@parcel/watcher` → `chokidar` fallback.
+
+**Source.** Andrew's Story 5. Estimate: 0.5 week (~2-4 hours each item).
+
+---
+
+
+
+#### Cross-references (secondary owner)
+
+- **V0-7** (onboarding): Andrew owns platform primitives (`initContent()` extension, `state.json` schema + atomic writes + lock coordination, server init-status endpoint). Sarah is primary feature owner — see Sarah section.
+- **V0-4** (file ops): Andrew's CC1 push-broadcast infrastructure is a prerequisite for Dima's sidebar UX. Andrew ships push server-side; Dima consumes client-side.
+
+---
+
+### Tim — Agent Infrastructure / MCP / Virtualization
+
+**Territory:** MCP tools for read/write/list for agent. Just-bash virtualization (grep, ls, etc. — open question XQ1). MCP initialization and discovery by Cursor, Claude Code/Cowork, Codex. Agent harness integration. Embedded web viewer integration. Computing virtualized information / cataloging / indexes for agents (frontmatter indexing, etc.). MCP tool surface for file operations (dual surface with V0-4, V0-5; Dima owns UI, Tim owns MCP). MCP `ingest` tool.
+
+**MCP enrichment quality bar (CC9 — Tim owns verification):** Every agent-facing MCP tool must return enriched data beyond native tools. Verify `list_documents` enrichment. Design enriched response shapes for V0-4 file-ops tools. Update MCP `instructions` field to direct agents to prefer OK MCP tools. See CC9 for full detail.
+
+#### Reach
+
+### V0-24: Enriched just-bash MCP surface
+
+**What to build.** A single MCP tool `exec(command)` that accepts bash-like commands scoped to the project's content directory. Same commands agents already know (`grep`, `ls`, `cat`, `find`, `wc`, `head`, `tail`, `sort`), but output enriched with computed system data. Every file reference in output includes: title (from frontmatter), backlink count, forward-link count, tags, modified timestamp, catalog category. Combinatorial operations (pipes) work — enrichment applies per output line that references a file.
+
+**Why this matters.** Agents already compose native bash + curl/jq to glue grep results with our HTTP API. That works but it's three tool calls where one would do. Enriched just-bash makes the composition native: `exec("grep 'auth' **/*.md | head -5")` returns the first 5 files mentioning auth, each with enriched metadata, in one call. No curl, no jq, no glue code. The agent uses commands it already knows and gets better output.
+
+Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneously inventing file-path syntax before filesystem tools existed — agents naturally think in paths and Unix idioms." And: "Minimum tool count is the #1 failure predictor" — one `exec` tool vs 14 semantic tools.
+
+**Scope tiers:**
+
+| Tier | What | Effort |
+|------|------|--------|
+| **Tier 1 (minimum reach)** | `grep`, `ls`, `cat` enriched — per-file metadata in output | ~1 week |
+| **Tier 2 (combinatorial)** | Pipe support (`grep | head`, `ls | sort -k modified`) | +0.5 week |
+| **Tier 3 (full, post-v0)** | All read-only commands enriched + custom commands (`backlinks auth.md`, `orphans`, `dead-links`) | Larger scope |
+
+**Constraints.**
+- **Read-only + whitelisted.** No `rm`, `mv`, `cp`, `mkdir`, `chmod`, or arbitrary execution. Write operations go through semantic MCP tools (`write_document`, `delete_document`, etc.) that have CRDT awareness + provider pool coordination. Enriched bash is for reading + discovery only.
+- **Scoped to content directory.** Commands execute relative to the project's content root. Path traversal outside content dir blocked (reuse `safeSubdir()`).
+- **Enrichment is additive, not replacing.** Raw command output stays intact; enrichment appends as structured metadata. Agent can parse either the raw output (familiar) or the enriched metadata (richer).
+- **Falls back gracefully.** Commands that don't produce file-scoped output (e.g., `echo`, `date`) return raw output without enrichment — no error, just no metadata to add.
+- **Relationship to semantic tools:** Enriched just-bash COMPLEMENTS semantic tools for v0, not replaces. `exec("cat auth.md")` and `read_document("auth.md")` return the same enriched data via different entry points. Post-v0 decision: should enriched bash REPLACE some semantic tools to reduce tool count? That's XQ1.
+
+**Value.** Customer (agent): agents use one `exec` tool with familiar bash commands instead of learning 14 semantic MCP tools. Combinatorial operations (pipes, head, sort, grep chaining) work natively. Platform: explores XQ1 architecture (root PROJECT.md) — if enriched bash works well in practice, post-v0 we could make it the primary MCP surface and deprecate semantic tools that it subsumes.
+
+**Lateral.** CC9 (MCP enrichment quality bar) applies: enriched bash output must match or exceed what semantic tools return. If `exec("cat auth.md")` returns less than `read_document("auth.md")`, the value prop breaks. Same enrichment pipeline under the hood.
+
+**Forward.** If this works well: post-v0, evaluate deprecating `read_document`, `list_documents`, `search` in favor of `exec("cat")`, `exec("ls")`, `exec("grep")`. Reduces tool count from ~14 to ~5 (exec + write_document + edit_document + undo + redo). Root PROJECT.md XQ1 resolves.
+
+**Source.** Root PROJECT.md XQ1 (open architectural question). Internal `bash/index.ts` already implements `runShell()`, `grep()`, `gitLog()`, `cat()` — enriched bash wraps these as an MCP-exposed surface.
+
+**Owners.** **Tim** end-to-end. This is his "just-bash virtualization" brainstorm item brought to life.
+
+**Status.** Not started. Estimate: Tier 1 = ~1 week; Tier 2 = +0.5 week. **Reach goal — lower priority than Tim's core v0 work** (V0-4 MCP file-ops, CC9 enrichment audit, MCP initialization/discovery, harness integration). Ship if Tim has capacity after core lands. Depends on core semantic tools working first (enriched bash reuses the same enrichment pipeline).
+
+---
+
+
+
+#### Cross-references (secondary owner)
+
+- **V0-4** (file ops): Tim owns MCP tool surface (`delete_document`, `move_document`, `duplicate_document`, `create_folder`). Dima is primary (UI + server API) — see Dima section.
+- **V0-21** (dead-link checking): Tim owns MCP tool registration (`find_dead_links`). Mike is primary — see Mike section.
+- **V0-13** (suggest_links): Tim owns MCP tool registration. Mike is primary — see Mike section.
+- **CC9** (MCP enrichment quality bar): Tim owns verification across all MCP tools during V0-4 spec.
+
+---
+
+### Dima — Sidebar / CRUD / Docs-system Engineering
+
+**Territory:** Sidebar (UX + internals). CRUD on files/folders (V0-4). Tabbed file experience (Obsidian-style). Drag-and-drop markdown files. Docs site / Fumadocs maintenance. Long-term: "OK as WYSIWYG editor for a Fumadocs project" future bet (Nick consulting on MDX).
+
+**Feature owner for engineering-heavy UI stories (ships UX functional + high quality; Sarah reviews/polishes after):**
+- V0-9 Outline panel — Dima feature-owns build. Consumes Sarah's panel-docking pattern. Sarah reviews polish.
+- V0-10 Quick switcher (Cmd+K) — Dima feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk`). Designs result-source architecture himself; Mike consulted when search bet activates post-v0. Sarah reviews polish.
+- V0-18 Find and replace — Dima feature-owns (TipTap + CodeMirror coordination). Sarah reviews polish.
+- V0-19 Word count + sidebar sort — Dima fully.
+
+**Engineering refactor owner:** Slash-command-generalization spec (still Draft) — pure engineering refactor. Block editor UX (future `block-editor-ux` spec).
+
+**A11y (post-v0 as a formal practice):** Deprioritized for v0. In v0: baseline a11y is engineering hygiene — Dima implements keyboard nav, focus management, semantic HTML as part of shipping his own stories. Post-v0 (when promoted): Dima owns the formal practice — tooling, standards, compliance audits, team education.
+
+**Long-term (Nick → Dima handoff):** Typed component nodes (PR #23) + Component slash insert (PR #12) — handoff when MDX pipeline clean.
+
+#### Now
+
+### V0-4: File organization operations from the sidebar (delete, move, duplicate, new folder)
+
+**What to build.** Writers can right-click a file in the sidebar and choose Delete, Move, or Duplicate. Writers can create an empty folder via sidebar action or context menu. Agents can call equivalent MCP tools: `delete_document`, `move_document`, `duplicate_document`, `create_folder`. Backend API shared between UI and MCP (CC2). On delete with a dirty doc open in the editor, the existing rescue-buffer mechanism preserves unsaved CRDT state.
+
+**Value.** Customer: writers can clean up and reorganize without leaving the browser — fixes a concrete day-0 embarrassment (users can currently create files they cannot remove from the UI). Platform: dual UI + MCP surface establishes the precedent for every future file-level agent capability (CC2 — load-bearing).
+
+**Constraints.**
+- Reuses safe path utilities (CC3) and provider pool cleanup (CC4).
+- Real-time sidebar (V0-2) is prerequisite — without it, delete UX is broken (5s stale state, user reclicks, errors).
+- Confirmation UX required for destructive operations (no version history → irreversible).
+- Folder operations mirror file operations; no special-case folder-move-with-content semantics in v0.
+- **MCP tool enrichment (CC9):** File-ops MCP tools must return enriched responses — not just `{ok: true}`. E.g., `delete_document` reports title of deleted doc + count of orphaned backlinks created. `move_document` reports which backlinks now point to the new path. Tim designs response shapes during spec. Agent using `delete_document` gets strictly better feedback than agent using native `Bash("rm")`.
+
+**Lateral.** V0-5 (rename) shares most backend machinery and the dual-surface pattern. **Scope note:** V0-4 scopes "move" as context-menu / move-dialog interaction. Drag-and-drop reorder/move in the sidebar tree is explicitly NOT V0-4 — that's V0-23 (reach goal, lower priority, builds on V0-4's backend).
+
+**Forward.** Establishes the dual UI+MCP pattern for future file-level operations (archive, tag, batch ops).
+
+**Source.** ED-2 from day-0-editor-completeness + Andrew's Story 2a (consolidated).
+
+**Status / owner signals.** Not started. PR #40 (open spec) defines MCP write_file conventions — coordinate API shape. PR #53 (open) adds wiki-link context menu — UI pattern reusable. Estimate: 2-3 weeks.
+
+---
+
+
+
+#### Next
+
+### V0-9: Document outline panel
+
+**What to build.** A panel showing the hierarchy of headings (H1-H6) in the currently-open document as a clickable tree. Click a heading → editor scrolls to it. Active heading highlighted based on cursor/scroll position. Collapsible. Live-updates as headings change. Consumes `GET /api/page-headings` (already shipped). Works in both WYSIWYG and Source modes (scroll integration with TipTap + CodeMirror). **This story also sets the panel-docking visual + interaction pattern that V0-11 and future panels adopt.**
+
+**Value.** Customer: within-doc navigation — writers working in long docs can jump between sections without scrolling. Obsidian/VS Code/Google Docs/Typora all ship this; users coming from those tools expect it. Platform: panel-docking pattern established here (where panels live, collapse behavior, keyboard nav, active-state visual) becomes the visual language for V0-11 (graph panels) and any future docked panel. **Load-bearing design decision** — getting the pattern right once saves every future panel from re-deciding.
+
+**Constraints.**
+- Reuse existing `BacklinksPanel` component architecture as the template where possible.
+- Scroll-integration works in both TipTap (WYSIWYG) and CodeMirror (Source) modes; single behavior spec, two implementations.
+- Active-heading detection via scroll position (IntersectionObserver or similar — performance-sensitive on long docs).
+- Live updates: subscribe to CC1 push if V0-2 shipped; fall back to on-demand refresh.
+- Outline slug consistency with V0-12 (Mike's slug correctness) — outline panel's anchor IDs must match the editor's rendered heading IDs.
+
+**Lateral.** Sets the panel-docking pattern V0-11 adopts. V0-3 (BacklinksPanel push) and V0-11 (graph panels) are the next consumers. Coordinates with V0-12 on slug consistency (Mike owns slugs; this panel consumes them).
+
+**Forward.** Panel-docking visual language carries into every future panel: tag browser, future graph clusters, AI-suggestion surfaces, etc.
+
+**Source.** Originally bundled into day-0-editor-completeness ED-6; split out 2026-04-13 per Sarah-owns-outline-experience decision.
+
+**Owners.** **Dima** feature-owns end-to-end (scroll integration with TipTap + CodeMirror, IntersectionObserver active-heading detection, live-update state management, tree rendering, UX decisions). Consumes Sarah's panel-docking pattern doc if available; ships without it if not — Sarah pattern-reconciles later. Nick consulted on editor-side integration (ProseMirror scroll primitives in WYSIWYG mode). Sarah reviews polish after.
+
+**Status.** Not started. Backend API exists (`/api/page-headings`). Pure frontend work. Estimate: ~1-1.5 weeks.
+
+---
+
+
+### V0-10: Quick switcher (Cmd+K) and recent files
+
+**What to build.** Writers press Cmd+K and get a fuzzy-matched command palette listing all documents. Selecting a result opens that document. A "Recently opened" section appears at the top of the palette, tracked client-side. No server-side search index needed — the `fileIndex` already in memory is enough for fuzzy matching at expected KB sizes (<5000 docs).
+
+**Value.** Customer: writers with growing KBs (>50 docs) jump directly to any file without scrolling the sidebar tree. Platform: validates that document-finding doesn't require a full-text search engine — clarifies the eventual search bet's scope (search is for content, Cmd+K is for navigation). Internal: muscle memory for Obsidian + VS Code users lands intact.
+
+**Constraints.**
+- Pure frontend — no server changes.
+- Fuzzy matching library (TQ11 PARKED): fzf.js, fuse.js, or custom (~5KB).
+- Recents stored in localStorage.
+- Keyboard navigation primary (arrow keys, enter, escape).
+- Must handle large fileIndex (thousands of docs) with responsive typing (<100ms match time).
+
+**Lateral.** When full-text search ships as separate bet, Cmd+K becomes the natural entry point for combined navigation + search results.
+
+**Forward.** Natural home for future command-palette commands (create doc, insert template, switch theme).
+
+**Source.** ED-5 from day-0-editor-completeness.
+
+**Owners.** **Dima** feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk` — used by Linear, Vercel; handles keyboard nav, fuzzy filtering, a11y). Designs result-source extensibility contract himself — Mike consulted when post-v0 search bet activates to ensure content results plug in cleanly. Sarah reviews polish after. Nextra has analogous command palette work Dima can draw from.
+
+**Status.** Not started. Library: `shadcn/ui Command` (wraps `cmdk`). Estimate: ~1-1.5 weeks.
+
+---
+
+
+
+#### Later
+
+### V0-18: Find and replace within document
+
+**What.** Cmd+F find bar; Cmd+Shift+F find-and-replace. Find highlights in document, next/previous navigate matches, replace-one and replace-all modify the document through normal CRDT writes (so agent visibility + undo work correctly).
+
+**Value.** Customer: core editor table-stakes. Without this, users drop to VS Code/sed for bulk in-document edits.
+
+**Promote when:** users report bulk-edit friction OR inline-edit flow becomes a common agent workflow.
+
+**Constraints.** TipTap and CodeMirror have separate search extensions; coordinated Cmd+F across modes (TQ12 OPEN). Must go through CRDT writes (bridge invariant).
+
+**Source.** ED-7a from day-0-editor-completeness.
+
+**Owners.** **Dima** feature-owns end-to-end (TipTap search+replace extension wiring, CodeMirror search extension coordination, single Cmd+F across both modes, bridge-invariant preservation — consult Nick on CRDT write path, find-bar UX). Sarah reviews polish after. Estimate: ~1-1.5 weeks.
+
+---
+
+
+### V0-19: Sidebar sort + word count polish bundle
+
+**What.** Sidebar sort toggle (name [default] or modified date descending — fileIndex already has `modified`). Live word count in editor footer (derived from Y.Text). Optional: characters, reading time.
+
+**Value.** Customer: productive-feeling basics; collectively closes "feels unfinished" gap.
+
+**Promote when:** Now+Next ship and qualitative feedback surfaces "feels unfinished" sentiment OR when a larger polish sprint is scheduled.
+
+**Source.** ED-7b from day-0-editor-completeness. Estimate: 0.5-1 week.
+
+**Owners.** **Dima** implements both (sort is trivial extension of his sidebar territory; word count is trivial Y.Text derivation). Sarah reviews word-count placement in the editor footer.
+
+---
+
+
+
+#### Reach
+
+### V0-22: Tabbed file experience (Obsidian-style)
+
+**What.** Multiple documents open simultaneously as tabs above the editor. Tab bar shows open docs. Click tab to switch. Close tab (X button or middle-click). Remember open tabs across sessions via `state.json` (depends on V0-7 session persistence).
+
+**Value.** Customer: users can reference one doc while editing another — reduces sidebar navigation overhead. Matches Obsidian, VS Code, every editor users are coming from.
+
+**Constraints.**
+- Provider pool already supports multiple open docs (LRU from `specs/2026-04-10-provider-pool/`). Each tab = one active HocuspocusProvider.
+- Hash routing (`#/docName`) needs to extend or be replaced with tab-aware state management.
+- Tab persistence in `state.json` — depends on V0-7 session persistence (Andrew's primitives).
+- Closing a doc's tab doesn't delete the doc (obvious but worth stating).
+
+**Owners.** **Dima** end-to-end. Sarah reviews polish after.
+
+**Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
+
+---
+
+
+### V0-23: Drag-and-drop files in sidebar
+
+**What.** Drag files and folders within the sidebar tree to move them. Drag a file to a different folder → moves the file (same backend as V0-4 move). Drag a folder → moves the folder + contents. Visual drag preview, drop-target highlighting, prohibited-drop indication (e.g., can't drop a folder into itself).
+
+**Value.** Customer: intuitive organization matching every file manager. Faster than context-menu move for spatial thinkers. Obsidian and VS Code support this.
+
+**Constraints.**
+- Builds on V0-4's move backend — DnD is a **trigger** for the same `move_document` API, not a separate operation.
+- Needs V0-2 real-time sidebar to update correctly after moves.
+- DnD library: `@dnd-kit/core` or HTML5 drag API. Evaluate at impl time.
+- Must handle edge cases: drop onto root, drop onto self, deeply nested moves.
+
+**Scope note on V0-4:** V0-4 (file organization ops) scopes "move" as context-menu / move-dialog. DnD is explicitly NOT in V0-4 — it's this separate reach story that builds on V0-4's backend.
+
+**Owners.** **Dima** end-to-end. Sarah reviews polish after.
+
+**Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
+
+---
+
+
+
+#### Cross-references (secondary owner)
+
+- **V0-2** (real-time sidebar): Dima owns client-side subscriber (sidebar event handler, tree patch on events). Andrew is primary for server push infra — see Andrew section.
+- **V0-5** (rename): Dima owns sidebar trigger UX (inline rename). Mike is primary for rewrite machinery — see Mike section.
+
+---
+
+### Sarah — Head of Design / Design Engineer
+
+**Territory:** WYSIWYG experience design — end-to-end visual + interaction direction for the editor. TipTap extensions / rich UX (bubble menu, inline formatting, callouts, authoring rich patterns). Copy-paste experience (image paste V0-6 close-out; copy-paste images; drag-drop images). V0-7 Onboarding feature + React UI (novel first-impression work). Frontmatter editing UX (future). Persistence indicator visual design (consulted with Miles on V0-17).
+
+**Cross-cutting patterns (set once, ahead of implementation — not per-story):**
+- Panel-docking visual + interaction pattern (consumed by V0-9 outline, V0-11 graph panels, future panels) — Sarah writes pattern doc; feature owners build to it
+- Keyboard shortcut scheme (Cmd+K, Cmd+F, Ctrl+\, future shortcuts — scheme + discoverability)
+- Visual design language (focus indicators, motion, error states — adopted across the product)
+- V0-10 palette result-source contract reviewed after Dima ships (Dima designs + builds end-to-end; Sarah reviews for pattern consistency)
+
+**Review + polish (not in the critical path):** Feature owners ship UX functional + high quality for their own features. Sarah reviews after and polishes — she does NOT gate implementation. If a feature owner's UX is tightly bound to their feature scope, they ship without waiting for Sarah.
+
+**Go-to UX triager:** Default owner for UX questions that don't cleanly fit another feature area. Final call on UX tradeoffs and taste decisions when feature owners genuinely aren't sure. But feature owners should try first, ship functional, and Sarah polishes later.
+
+**Explicitly not Sarah's:** A11y as an engineering practice (Dima post-v0). Feature-specific UX gating (feature owners ship without waiting).
+
+#### Now
+
+### V0-6: Image paste + attachments model
+
+**What to build.** When a user pastes a screenshot into the editor, save it to the project's attachments directory and insert a markdown image reference. Define the attachments directory model (location, naming, content-filter interaction, git behavior).
+
+**Value.** Customer: docs authors paste screenshots constantly. Without this, OK forces them to manually save images, switch to Finder, find the file, construct a markdown reference, switch back — destroying writing flow. Every competing tool handles this. Platform: attachments model establishes how OK handles non-markdown assets generally (future video embeds, PDF attachments, import/export all build on this pattern).
+
+**Constraints.**
+- Attachments location: `<contentDir>/attachments/<docName>/` (PQ4 — per-doc subfolder for portability).
+- Naming: `<timestamp>-<first8-hash>.png` (deterministic, collision-free).
+- `content.exclude` auto-excludes `attachments/` from document index (CC7); attachments are version-controlled (PQ5).
+- TipTap paste handler intercepts `image/*` clipboard events; calls `POST /api/attachments` with multipart form; inserts `![](./attachments/<docName>/<filename>.png)` at cursor.
+- Drag-and-drop deferred to a separate story.
+
+**Lateral.** Shares `content.exclude` concern with V0-4 (CC7).
+
+**Forward.** Electron inherits unchanged (TipTap paste runs in any renderer). Drag-and-drop builds on the same endpoint.
+
+**Source.** Andrew's Story 2b. **PR #41 is in flight** with 492 LOC already covering the TipTap plugin, busboy server endpoint, MIME validation, atomic writes — saves to flat `uploads/` (not per-doc).
+
+**Status / owner signals.** **PR #41 open**. Remaining work: design decisions (PQ4, PQ5 — directory naming, gitignore behavior) and adapting PR #41 to current codebase + content.exclude integration. Estimate: 1-2 weeks of close-out, mostly review + refactor of existing PR.
+
+---
+
+
+### V0-7: First-run onboarding flow + session persistence + starter document
+
+**What to build.** Three integrated UX components for the first-run and return-visit experience:
+- **Welcome screen** — when `.open-knowledge/` is fresh OR no documents loaded, show a guided onboarding (content detection summary if files exist, "Create your first article" action if empty). Once dismissed and ≥1 doc exists, never reappears.
+- **Starter document** — `initContent()` creates a starter `README.md` in `<contentDir>` if no `.md` files matching `content.include` exist. Brief welcome content, 5-10 lines showing markdown + a JSX component example.
+- **Session persistence** — per-project `.open-knowledge/state.json` stores `{ lastOpenedDoc, lastModified }`. On app load, opens the last doc (or falls back to first in index if deleted). Atomic write (tmp + rename), respects V0-1 lock.
+
+**Value.** Customer: new writers land in a productive state without terminal context-switching. Returning users resume where they left off — small UX moment with outsized stickiness impact. Platform: onboarding components compose into the future Electron Project Navigator without rework. State.json model establishes per-project state pattern that Electron's per-user state extends.
+
+**Constraints.**
+- Onboarding components are React components the Electron renderer can wrap.
+- Content detection reuses the existing `ContentFilter` pipeline (no separate file walking).
+- Config changes during onboarding (content.dir, exclude) persist to `.open-knowledge/config.yml`.
+- Existing content NEVER modified by onboarding — detection only.
+- State.json depends on V0-1 lock (CC6).
+
+**Lateral.** Part B of `stories/init-and-project-switching/` (multi-project switching) is a sibling bet — explicitly out of v0 scope. PR #57 already shipped auto-init; this story extends with the UI flow + starter doc + session persistence.
+
+**Forward.** Electron Project Navigator composes these components. Per-user state (window size/position) is a separate Electron concern that doesn't change this per-project model.
+
+**Source.** ED-4 from day-0-editor-completeness (Part A of init-and-project-switching) + Andrew's Story 3 (consolidated). **Story-depth detail in `stories/V0-7-onboarding/STORY.md`.**
+
+**Owners (layered).** **Sarah** owns the feature end-to-end and the React UI (welcome screen, content scope confirmation, first-doc creation — highest-leverage first-impression novel UX). **Andrew** owns the platform primitives the spec consumes: `initContent()` extension for starter README, `state.json` schema + atomic writes + lock-coordinated writes (depends on V0-1), server endpoint for init status. Sarah writes the spec declaring primitive requirements; Andrew implements primitives; Sarah's React components consume them.
+
+**Status.** Part A onboarding scoped in detail. Auto-init shipped (PR #57). Starter doc + session persistence + React UI not started. Estimate: 2 weeks (Sarah ~1.5 weeks UI + Andrew ~0.5 week primitives after V0-1).
+
+---
+
+
+
+#### Cross-references
+
+- **Cross-cutting patterns:** Panel-docking, keyboard shortcut scheme, visual design language — published asynchronously as reference docs. Feature owners consume; Sarah pattern-reconciles after.
+- **Review + polish:** Sarah reviews all features after they ship for pattern drift, visual inconsistencies, or polish opportunities. Not in the critical path.
+
+---
+
+### Nick — Editor Internals / CRDT / MDX Pipeline
+
+**Territory:** Bidirectional markdown ↔ prosemirror conversion pipelines. Observers / conversion preservation / CRDT invariants. Bridge invariant (Y.XmlFragment ↔ Y.Text). Editing or rendering MDX components (built-in or custom).
+
+**Now (parallel track for V0-14 prerequisite):** TQ5 Observer A character-level diff refactor (~60 LOC in `observers.ts:206-249`). TQ6 US-3e stress test. Bridge-matrix undo-invariant tests (TDD groundwork). Zero coordination with Miles — Nick's files only. Starting now.
+
+**Temporary until handoff:** PR #12 Component slash insert — Nick's until MDX pipeline clean → Dima. PR #23 Typed component nodes — Nick's until MDX pipeline clean → Dima. Generalizable MDX editing for future Fumadocs editor bet — Nick consulting Dima long-term.
+
+#### Cross-references (consultation role)
+
+- **V0-14** (per-origin undo): Nick owns TQ5/TQ6 prerequisites (Observer A char-level refactor + stress test). Miles owns the three-UndoManager wiring — see Miles section. Convergence: Miles starts UM wiring after Nick's TQ5 lands + Miles's V0-16 scaffold removal. One 5-min conversation on TQ10 (typed origin constants shape in `packages/core/`), then independent.
+- **V0-16** (Timeline): Nick consulted on TQ10 (typed origins — constants shape).
+- **V0-18** (find/replace): Nick consulted on bridge invariant (CRDT write path for replace operations).
+- **V0-20** (desktop build prep): Nick consulted on provider-pool.ts dynamic port change.
 
 ---
 
