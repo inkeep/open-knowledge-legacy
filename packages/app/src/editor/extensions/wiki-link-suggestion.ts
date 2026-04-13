@@ -101,14 +101,14 @@ export function buildAnchorItems(
   }));
 }
 
-async function fetchPages(): Promise<PageItem[]> {
+export async function fetchPages(): Promise<PageItem[]> {
   const r = await fetch('/api/pages');
   if (!r.ok) throw new Error(`/api/pages responded with ${r.status}`);
   const data = (await r.json()) as { pages?: Array<{ docName: string; title: string }> };
   return Array.isArray(data.pages) ? data.pages : [];
 }
 
-async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
+export async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   const r = await fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`);
   if (!r.ok) throw new Error(`/api/page-headings responded with ${r.status}`);
   const data = (await r.json()) as { ok: boolean; headings?: HeadingEntry[] };
