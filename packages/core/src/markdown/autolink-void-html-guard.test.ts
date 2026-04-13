@@ -49,3 +49,23 @@ describe('R23: void HTML regression fix', () => {
     expect(() => mdManager.parse('Line<br/>break.\n')).not.toThrow();
   });
 });
+
+describe('R23: invalid JSX opener recovery', () => {
+  test('literal <50ms in prose parses without error', () => {
+    expect(() => mdManager.parse('Warm replay when nothing changed is <50ms.\n')).not.toThrow();
+  });
+
+  test('literal <50ms in prose remains literal text in parsed content', () => {
+    const json = mdManager.parse('Warm replay when nothing changed is <50ms.\n');
+    expect(json.content?.[0]?.type).toBe('paragraph');
+    expect(json.content?.[0]?.content?.[0]?.text).toBe(
+      'Warm replay when nothing changed is <50ms.',
+    );
+  });
+
+  test('comparison prose 2 < 5 remains literal text in parsed content', () => {
+    const json = mdManager.parse('Comparison: 2 < 5 and 7 > 3.\n');
+    expect(json.content?.[0]?.type).toBe('paragraph');
+    expect(json.content?.[0]?.content?.[0]?.text).toBe('Comparison: 2 < 5 and 7 > 3.');
+  });
+});
