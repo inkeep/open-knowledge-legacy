@@ -82,4 +82,3 @@ packages/
   app/     — React editor frontend
 docs/      — Documentation site (Fumadocs)
 ```
-

@@ -224,7 +224,6 @@ The intersection that matters: **this tool's value is gated by the slug correctn
 
 **Upstream Artifacts**
 
-- Staff-Eng Decision Brief (in-session, 2026-04-12) — this story is "address now" item #2.
 - Spec §6 lists `suggest_links(page)` as Should-priority and IMPLEMENTATION\_MILESTONES.md M4 as its home. This story is the "pull forward" decision.
 
 ---
