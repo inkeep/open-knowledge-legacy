@@ -334,7 +334,13 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           );
           return;
         }
-      } catch {}
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ELOOP') {
+          console.warn(`[persistence] Symlink cycle on load: ${filePath}, refusing`);
+          return;
+        }
+      }
 
       const raw = readFileSync(filePath, 'utf-8');
       const { frontmatter, body } = stripFrontmatter(raw);
