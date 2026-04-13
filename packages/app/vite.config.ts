@@ -47,6 +47,10 @@ export default defineConfig({
     //      `Error: Duplicate use of selection JSON ID gapcursor`.
     //
     // Deduping every prosemirror-* package + yjs here is the canonical fix.
+    //
+    // react + react-dom: TipTap's peer deps pull in a second copy of React
+    //   when installed alongside @tiptap/* packages, causing "Invalid hook call"
+    //   errors (React requires a single shared instance for hooks to work).
     dedupe: [
       'react',
       'react-dom',

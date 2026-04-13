@@ -6,54 +6,7 @@ import {
   BacklinkIndex,
   type ExtractedWikiLink,
   extractWikiLinksFromMarkdown,
-  extractWikiLinksFromProsemirrorJson,
 } from './backlink-index.ts';
-
-describe('extractWikiLinksFromProsemirrorJson', () => {
-  test('extracts wiki-link targets with context snippets', () => {
-    const json = {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [
-            { type: 'text', text: 'Alpha links to ' },
-            { type: 'wikiLink', attrs: { target: 'beta', alias: null, anchor: null } },
-            { type: 'text', text: ' for deployment notes.' },
-          ],
-        },
-      ],
-    };
-
-    expect(extractWikiLinksFromProsemirrorJson(json)).toEqual<ExtractedWikiLink[]>([
-      {
-        target: 'beta',
-        snippet: 'Alpha links to beta for deployment notes.',
-      },
-    ]);
-  });
-
-  test('handles multiple links in the same paragraph without duplicating sources', () => {
-    const json = {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [
-            { type: 'wikiLink', attrs: { target: 'alpha', alias: 'Alpha', anchor: null } },
-            { type: 'text', text: ' and ' },
-            { type: 'wikiLink', attrs: { target: 'beta', alias: null, anchor: 'heading' } },
-          ],
-        },
-      ],
-    };
-
-    expect(extractWikiLinksFromProsemirrorJson(json)).toEqual([
-      { target: 'alpha', snippet: 'Alpha and beta#heading' },
-      { target: 'beta', snippet: 'Alpha and beta#heading' },
-    ]);
-  });
-});
 
 describe('extractWikiLinksFromMarkdown', () => {
   test('extracts wiki-link targets with context snippets', () => {
@@ -94,6 +47,67 @@ describe('extractWikiLinksFromMarkdown', () => {
         target: 'beta',
         snippet: 'See beta.',
       },
+    ]);
+  });
+
+  test('ignores wiki-links inside tilde fenced code blocks', () => {
+    const markdown = [
+      'See [[alpha]].',
+      '',
+      '~~~js',
+      'const x = "[[beta]]";',
+      '~~~',
+      '',
+      'And [[gamma]].',
+    ].join('\n');
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'alpha', snippet: 'See alpha.' },
+      { target: 'gamma', snippet: 'And gamma.' },
+    ]);
+  });
+
+  test('fence-length matching: longer closing fence ends a shorter opening fence', () => {
+    // CommonMark: a closing fence must be at least as long as the opening fence.
+    // A longer closing fence is valid. A shorter closing fence does NOT close the block.
+    const markdown = [
+      'Before [[alpha]].',
+      '````ts',
+      '[[inside]]',
+      '```',
+      '[[also-inside]]',
+      '````',
+      'After [[beta]].',
+    ].join('\n');
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'alpha', snippet: 'Before alpha.' },
+      { target: 'beta', snippet: 'After beta.' },
+    ]);
+  });
+
+  test('extracts multiple wiki-links from the same line', () => {
+    const markdown = 'See [[alpha]] and [[beta]] for more.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'alpha', snippet: 'See alpha and beta for more.' },
+      { target: 'beta', snippet: 'See alpha and beta for more.' },
+    ]);
+  });
+
+  test('handles anchor syntax [[page#heading]]', () => {
+    const markdown = 'See [[guide#installation]] for setup.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'guide', snippet: 'See guide#installation for setup.' },
+    ]);
+  });
+
+  test('handles alias syntax [[page|display text]]', () => {
+    const markdown = 'See [[guide|the guide]] for setup.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'guide', snippet: 'See the guide for setup.' },
     ]);
   });
 });

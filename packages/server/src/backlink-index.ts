@@ -4,13 +4,6 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { getWikiLinkText, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import type { ContentFilter } from './content-filter.ts';
 
-interface PMNodeJson {
-  type?: string;
-  text?: string;
-  attrs?: Record<string, unknown>;
-  content?: PMNodeJson[];
-}
-
 const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
 
 interface InlineWikiLinkOccurrence {
@@ -94,60 +87,6 @@ function snippetAround(text: string, start: number, end: number): string | null 
   const snippet = normalizeSnippet(text.slice(rawStart, rawEnd));
   if (!snippet) return null;
   return `${prefix}${snippet}${suffix}`;
-}
-
-function collectInlineWikiLinks(node: PMNodeJson): ExtractedWikiLink[] {
-  const children = node.content ?? [];
-  let flatText = '';
-  const occurrences: Array<{ target: string; start: number; end: number }> = [];
-
-  for (const child of children) {
-    if (child.type === 'text') {
-      flatText += child.text ?? '';
-      continue;
-    }
-    if (child.type === 'hardBreak') {
-      flatText += '\n';
-      continue;
-    }
-    if (child.type !== 'wikiLink') continue;
-
-    const target = typeof child.attrs?.target === 'string' ? child.attrs.target.trim() : '';
-    if (!target) continue;
-
-    const alias = typeof child.attrs?.alias === 'string' ? child.attrs.alias : null;
-    const anchor = typeof child.attrs?.anchor === 'string' ? child.attrs.anchor : null;
-    const label = getWikiLinkText({ target, alias, anchor });
-    const start = flatText.length;
-    flatText += label;
-    occurrences.push({ target, start, end: flatText.length });
-  }
-
-  return occurrences.map((occurrence) => ({
-    target: occurrence.target,
-    snippet: snippetAround(flatText, occurrence.start, occurrence.end),
-  }));
-}
-
-export function extractWikiLinksFromProsemirrorJson(json: PMNodeJson): ExtractedWikiLink[] {
-  const links: ExtractedWikiLink[] = [];
-
-  function walk(node: PMNodeJson): void {
-    const children = node.content ?? [];
-    const hasDirectInlineWikiLink = children.some((child) => child.type === 'wikiLink');
-
-    if (hasDirectInlineWikiLink) {
-      links.push(...collectInlineWikiLinks(node));
-    }
-
-    for (const child of children) {
-      if (child.type === 'wikiLink') continue;
-      walk(child);
-    }
-  }
-
-  walk(json);
-  return links;
 }
 
 function matchFence(line: string): FenceState | null {

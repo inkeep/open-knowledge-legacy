@@ -11,7 +11,6 @@ export {
   BacklinkIndex,
   type ExtractedWikiLink,
   extractWikiLinksFromMarkdown,
-  extractWikiLinksFromProsemirrorJson,
   type HubEntry,
 } from './backlink-index.ts';
 export {
