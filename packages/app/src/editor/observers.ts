@@ -433,8 +433,20 @@ export function setupObservers(deps: ObserverDeps): () => void {
         return;
       }
 
-      const parsedJson = mdManager.parse(body);
-      const pmNode = schema.nodeFromJSON(parsedJson);
+      let pmNode: ReturnType<typeof schema.nodeFromJSON>;
+      try {
+        const parsedJson = mdManager.parse(body);
+        pmNode = schema.nodeFromJSON(parsedJson);
+      } catch (parseErr) {
+        // MDX expression attributes (e.g., `<Chart data={[1,2,3]} />`) and other
+        // partial syntax can cause remark-mdx / acorn parse failures while the user
+        // is mid-edit. This is NOT a data loss event — XmlFragment keeps its last
+        // valid state and the next keystroke will re-trigger Observer B. Log at
+        // debug level; do NOT fire onSyncError (that's reserved for actual sync
+        // failures, not transient live-typing parse noise).
+        console.debug('[Observer B] Parse skipped (partial/invalid markdown):', parseErr);
+        return;
+      }
 
       doc.transact(() => {
         const meta = { mapping: new Map(), isOMark: new Map() };

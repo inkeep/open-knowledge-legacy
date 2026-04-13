@@ -238,9 +238,9 @@ export const ListNode = Node.create({
 
   addInputRules() {
     return [
-      // Bullet list: - , * , +
+      // Bullet list: - , * , + (negative lookahead excludes task list pattern `- [ ] `)
       wrappingInputRule({
-        find: /^\s*([-+*])\s$/,
+        find: /^\s*([-+*])(?!\s*\[[ xX]\])\s$/,
         type: this.type,
         getAttributes: (match) => ({
           ordered: false,
@@ -426,8 +426,26 @@ export const ListItemNode = Node.create({
   addKeyboardShortcuts() {
     return {
       Enter: () => this.editor.commands.splitListItem(this.name),
-      Tab: () => this.editor.commands.sinkListItem(this.name),
-      'Shift-Tab': () => this.editor.commands.liftListItem(this.name),
+      Tab: () => {
+        // Only handle Tab when the cursor is inside a listItem — otherwise
+        // pass through so other extensions (e.g., table) can handle it.
+        const { $from } = this.editor.state.selection;
+        for (let d = $from.depth; d > 0; d--) {
+          if ($from.node(d).type.name === 'listItem') {
+            return this.editor.commands.sinkListItem(this.name);
+          }
+        }
+        return false;
+      },
+      'Shift-Tab': () => {
+        const { $from } = this.editor.state.selection;
+        for (let d = $from.depth; d > 0; d--) {
+          if ($from.node(d).type.name === 'listItem') {
+            return this.editor.commands.liftListItem(this.name);
+          }
+        }
+        return false;
+      },
     };
   },
 });
