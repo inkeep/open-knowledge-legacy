@@ -131,6 +131,20 @@ V0-4 creates new `.md` files via UI — must be included in document index autom
 ### CC8: Server shutdown ordering (V0-1, prior PR #61)
 PR #61 fixed graceful-shutdown data loss in `createServer().destroy()`. V0-1 adds the lock release as the final step (after git flush, session close, watcher stop). Lock release MUST be last — if a second process acquired the lock before git WIP is flushed, index corruption results. The shutdown ordering invariant is now: stop watchers → drain agent sessions → flush L1 → drain L2 → release shadow lock → release server lock.
 
+### CC9: MCP tool enrichment quality bar (all agent-facing tools, Tim owns)
+
+Every agent-facing MCP tool must return **enriched data beyond what native tools provide** — that's the value prop of the MCP server. An agent using ONLY OK's MCP tools (never touching native Read/Grep/Glob/Bash) should get strictly better results than one using native tools alone. Enrichment includes: parsed frontmatter, backlink/forward-link context, git history, catalog pointers, slug-resolved wiki-link targets, modified timestamps, per-doc metadata.
+
+**Verification items for Tim during V0-4 spec:**
+- **`list_documents` enrichment audit:** Does it return per-doc metadata (title from frontmatter, backlink count, modified timestamp, catalog category)? If it only returns raw names + sizes, agents must N+1 call `read_document` on each — defeating enrichment. Enhance if needed.
+- **V0-4 file-ops tool response shapes:** `delete_document` should report what was deleted (title, orphaned backlinks created). `move_document` should report which backlinks now point to the new path. `duplicate_document` should report the new doc's metadata. Fire-and-forget responses without context waste the agent's next turn on re-discovery.
+- **MCP `instructions` field guidance:** Tell agents explicitly "prefer OK MCP tools over native Read/Grep/Glob for all knowledge-base operations — our tools include computed context (backlinks, frontmatter, catalog, git history) that native tools don't."
+- **Consistency:** All tools that return document data should use the same enrichment shape (same metadata fields in the same format) so agents build one mental model of "what a document looks like."
+
+**Current state (post PR #74):** `read_document` and `search` are enriched (frontmatter + git history + backlinks + catalog context + snippets). `list_documents` enrichment level needs verification. V0-4's new file-ops tools need response-shape design. Graph tools (`get_backlinks`, `get_forward_links`, `get_orphans`, `get_hubs`) return computed data by nature.
+
+**Architecture note:** Enrichment lives in semantic MCP tools (Architecture A from root PROJECT.md XQ1). Under the hood, tools USE bash internally (`bash/index.ts` runs `grep`, `git log`, `cat`) then enrich with computed system data. The agent never calls bash directly through MCP. The just-bash alternative (Architecture B / XQ1) remains an open question for post-v0 — current semantic-tools approach works.
+
 ---
 
 ## Team ownership reference
@@ -188,13 +202,20 @@ Per-person domain ownership. Stories in the Distribution table below map to thes
 
 **Core territory:**
 - MCP tools for read/write/list for agent
-- Just-bash virtualization (grep, ls, etc. — agent-facing filesystem primitives)
+- Just-bash virtualization (grep, ls, etc. — agent-facing filesystem primitives; open question XQ1 in root PROJECT.md)
 - MCP initialization and discovery by Cursor, Claude Code/Cowork, Codex (CLIs and desktop apps)
 - Agent harness integration — making it so MCPs and skills-in-MCP work well across harnesses
 - Embedded web viewer integration — harnesses with Cursor/Claude Cowork/Claude Code macOS app knowing how to run and view a document during co-authoring
 - Computing virtualized information / cataloging / indexes for agents (frontmatter indexing, etc.)
 - MCP tool surface for file operations (delete/move/duplicate/rename — dual surface with V0-4, V0-5; Dima owns UI side, Tim owns MCP side)
 - MCP `ingest` tool (writes to Raw/external-sources folder — structural decisions owned by Andrew)
+
+**MCP enrichment quality bar (CC9 — Tim owns verification):**
+- Every agent-facing MCP tool must return enriched data beyond native tools (parsed frontmatter, backlinks, git history, catalog context). Agent using ONLY OK's MCP tools gets strictly better results than native Read/Grep/Glob.
+- Verify `list_documents` enrichment level during V0-4 spec — enhance if only returning raw names.
+- Design enriched response shapes for V0-4 file-ops tools (delete/move/duplicate/folder → report what was affected + link-graph context).
+- Update MCP `instructions` field to direct agents to prefer OK MCP tools over native for all KB operations.
+- See CC9 in Cross-cutting concerns for full detail.
 
 ### Dima — Sidebar / CRUD / Docs-system engineering
 
@@ -375,6 +396,7 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 - Real-time sidebar (V0-2) is prerequisite — without it, delete UX is broken (5s stale state, user reclicks, errors).
 - Confirmation UX required for destructive operations (no version history → irreversible).
 - Folder operations mirror file operations; no special-case folder-move-with-content semantics in v0.
+- **MCP tool enrichment (CC9):** File-ops MCP tools must return enriched responses — not just `{ok: true}`. E.g., `delete_document` reports title of deleted doc + count of orphaned backlinks created. `move_document` reports which backlinks now point to the new path. Tim designs response shapes during spec. Agent using `delete_document` gets strictly better feedback than agent using native `Bash("rm")`.
 
 **Lateral.** V0-5 (rename) shares most backend machinery and the dual-surface pattern. **Scope note:** V0-4 scopes "move" as context-menu / move-dialog interaction. Drag-and-drop reorder/move in the sidebar tree is explicitly NOT V0-4 — that's V0-23 (reach goal, lower priority, builds on V0-4's backend).
 
