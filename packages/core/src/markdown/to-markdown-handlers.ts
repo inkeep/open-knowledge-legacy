@@ -239,12 +239,7 @@ export const toMarkdownHandlers = {
       if (child.checked === true) marker += ' [x]';
       else if (child.checked === false) marker += ' [ ]';
       const pad = ' '.repeat(baseMarker.length + 1);
-      const itemContent = state.containerFlow(child, {
-        ...info,
-        // fix TS2353: Object literal may only specify known properties, and before does not exist in type TrackFields
-        // before: '\n',
-        // after: '\n',
-      });
+      const itemContent = state.containerFlow(child, info);
       const indented = itemContent
         .split('\n')
         .map((l, idx) => (idx === 0 ? `${marker} ${l}` : l ? `${pad}${l}` : l))
