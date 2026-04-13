@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -211,4 +212,49 @@ describe('file operation API routes', () => {
     expect(body.ok).toBe(false);
     expect(body.error).toContain('relative content paths');
   });
+
+  test.skipIf(process.platform === 'win32')(
+    'rejects delete when path resolves outside content via symlink',
+    async () => {
+      const root = setupTmpDir();
+      const contentDir = join(root, 'content');
+      const outside = join(root, 'outside');
+      mkdirSync(contentDir);
+      mkdirSync(outside);
+      const victim = join(outside, 'victim.md');
+      writeFileSync(victim, '# Victim\n', 'utf-8');
+      symlinkSync(join('..', 'outside'), join(contentDir, 'evil'), 'dir');
+
+      const result = await callApi(contentDir, '/api/delete-path', 'POST', {
+        kind: 'file',
+        path: 'evil/victim',
+      });
+
+      expect(result.status).toBe(500);
+      expect(existsSync(victim)).toBe(true);
+    },
+  );
+
+  test.skipIf(process.platform === 'win32')(
+    'rejects rename into destination that resolves outside content via symlink',
+    async () => {
+      const root = setupTmpDir();
+      const contentDir = join(root, 'content');
+      const outside = join(root, 'outside');
+      mkdirSync(contentDir);
+      mkdirSync(outside);
+      symlinkSync(join('..', 'outside'), join(contentDir, 'evil'), 'dir');
+      writeFileSync(join(contentDir, 'safe.md'), '# Safe\n', 'utf-8');
+
+      const result = await callApi(contentDir, '/api/rename-path', 'POST', {
+        kind: 'file',
+        fromPath: 'safe',
+        toPath: 'evil/captured',
+      });
+
+      expect(result.status).toBe(500);
+      expect(readFileSync(join(contentDir, 'safe.md'), 'utf-8')).toBe('# Safe\n');
+      expect(existsSync(join(outside, 'captured.md'))).toBe(false);
+    },
+  );
 });

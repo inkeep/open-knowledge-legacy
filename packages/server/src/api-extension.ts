@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   statSync,
@@ -17,7 +18,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import { type HeadingEntry, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import {
@@ -29,7 +30,7 @@ import {
 import type { BacklinkIndex } from './backlink-index.ts';
 import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
-import { deleteReconciledBase, safeContentPath } from './persistence.ts';
+import { deleteReconciledBase, isWithinContentDir, safeContentPath } from './persistence.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
@@ -84,6 +85,46 @@ export function remapDocNameForRename(
   return `${toPath}${docName.slice(fromPath.length)}`;
 }
 
+/**
+ * Ensures `fullPath` does not escape `resolvedContentDir` via symlinks (matches persistence
+ * symlink-escape checks). Walks up with dirname when the leaf is missing so destinations like
+ * `link/new.md` are rejected if `link` resolves outside the content dir.
+ *
+ * Uses `realpathSync(resolvedContentDir)` as the boundary anchor so platform normalization
+ * (e.g. macOS `/var` → `/private/var`) matches `realpathSync` of paths under it.
+ */
+function assertNoSymlinkEscape(fullPath: string, resolvedContentDir: string): void {
+  let contentRoot: string;
+  try {
+    contentRoot = realpathSync(resolvedContentDir);
+  } catch {
+    return;
+  }
+
+  let cur = fullPath;
+  for (;;) {
+    try {
+      const canonical = realpathSync(cur);
+      if (!isWithinContentDir(canonical, contentRoot)) {
+        throw new Error('symlink-escape: path resolves outside content directory');
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ELOOP') {
+        throw new Error('symlink-escape: symlink cycle in path');
+      }
+      if (code !== 'ENOENT') throw err;
+      const parent = dirname(cur);
+      if (parent === cur) throw err;
+      if (parent !== resolvedContentDir && !parent.startsWith(`${resolvedContentDir}${sep}`)) {
+        throw err;
+      }
+      cur = parent;
+    }
+  }
+}
+
 function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, path: string): string {
   if (!isValidRelativeContentPath(path)) {
     throw new Error('path must be a relative content path');
@@ -93,9 +134,11 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   const relativePath = kind === 'file' ? `${path}.md` : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
 
-  if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
+  if (fullPath !== resolvedContentDir && !fullPath.startsWith(`${resolvedContentDir}${sep}`)) {
     throw new Error('path must not escape content directory');
   }
+
+  assertNoSymlinkEscape(fullPath, resolvedContentDir);
 
   return fullPath;
 }
