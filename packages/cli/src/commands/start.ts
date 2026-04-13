@@ -17,7 +17,10 @@ export function startCommand(getConfig: () => Config): Command {
       const { existsSync } = await import('node:fs');
       const { createServer: createHttpServer } = await import('node:http');
       const { resolve } = await import('node:path');
-      const { createServer, getLogger } = await import('@inkeep/open-knowledge-server');
+      const { createServer, getLogger, updateServerLockPort } = await import(
+        '@inkeep/open-knowledge-server'
+      );
+      const { resolveContentDir } = await import('../config/paths.ts');
       const { default: sirv } = await import('sirv');
       const { WebSocketServer } = await import('ws');
       const { renderBanner } = await import('../ui/banner.ts');
@@ -47,13 +50,13 @@ export function startCommand(getConfig: () => Config): Command {
       }
 
       // Ensure content directory exists (for non-default content.dir)
-      const contentDir = resolve(cwd, config.content.dir);
+      const contentDir = resolveContentDir(config, cwd);
       if (!existsSync(contentDir)) {
         mkdirSync(contentDir, { recursive: true });
         log.info({ contentDir }, 'Created content directory');
       }
 
-      const { hocuspocus, destroy, ready, degraded } = createServer({
+      const { hocuspocus, destroy, ready, degraded, lockDir } = createServer({
         contentDir,
         projectDir: cwd,
         contentRoot: config.content.dir,
@@ -66,14 +69,30 @@ export function startCommand(getConfig: () => Config): Command {
         excludePatterns: config.content.exclude,
       });
 
-      // Graceful shutdown
-      const shutdown = async () => {
-        console.log(dim('\nShutting down...'));
-        await destroy();
-        process.exit(0);
+      // Graceful shutdown — idempotent, fires `destroy()` exactly once even
+      // if multiple signals arrive (SIGINT then SIGTERM). Ensures `releaseServerLock`
+      // runs as the final step in `destroy()`.
+      let shuttingDown = false;
+      const shutdown = async (signal: NodeJS.Signals) => {
+        if (shuttingDown) return;
+        shuttingDown = true;
+        console.log(dim(`\nShutting down (${signal})...`));
+        try {
+          await destroy();
+        } catch (err) {
+          console.error(
+            `${error('destroy() failed:')} ${err instanceof Error ? err.message : String(err)}`,
+          );
+          process.exitCode = 1;
+        }
+        process.exit(process.exitCode ?? 0);
       };
-      process.on('SIGINT', shutdown);
-      process.on('SIGTERM', shutdown);
+      process.once('SIGINT', () => {
+        void shutdown('SIGINT');
+      });
+      process.once('SIGTERM', () => {
+        void shutdown('SIGTERM');
+      });
 
       // Static asset serving — locate built React app.
       // Priority: (1) dist/public/ for npm-installed CLI, (2-3) monorepo dev paths.
@@ -150,10 +169,16 @@ export function startCommand(getConfig: () => Config): Command {
       });
 
       httpServer.listen(config.server.port, config.server.host, () => {
-        const localUrl = `http://${config.server.host}:${config.server.port}`;
+        // Update the lock file with the kernel-assigned port (or confirm the
+        // configured one). MCP discovery reads this field to connect.
+        const addr = httpServer.address();
+        const realPort = typeof addr === 'object' && addr !== null ? addr.port : config.server.port;
+        updateServerLockPort(lockDir, realPort);
+
+        const localUrl = `http://${config.server.host}:${realPort}`;
         const networkUrl =
           config.server.host === '0.0.0.0' || config.server.host === '::'
-            ? `http://0.0.0.0:${config.server.port}`
+            ? `http://0.0.0.0:${realPort}`
             : undefined;
         console.log(
           renderBanner({

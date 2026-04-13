@@ -9,26 +9,13 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
+import { isProcessAlive } from './process-alive.ts';
 
 export interface LockMetadata {
   pid: number;
   hostname: string;
   startedAt: string;
   worktreeRoot: string;
-}
-
-/** Check whether a process with the given pid is still alive. */
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err: unknown) {
-    // EPERM means the process exists but we lack permission to signal it
-    if (err && typeof err === 'object' && 'code' in err && err.code === 'EPERM') {
-      return true;
-    }
-    return false;
-  }
 }
 
 /**

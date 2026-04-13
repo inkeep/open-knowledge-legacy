@@ -514,3 +514,93 @@ describe('createServer() degraded signal', () => {
     await srv.destroy();
   });
 });
+
+// ─── V0-1: server-lock integration ──────────────────────────────────────────
+
+describe('createServer() server-lock integration (V0-1)', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-server-lock-int-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('acquires server.lock at createServer(), releases on destroy()', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    await server.ready;
+
+    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    expect(existsSync(lockPath)).toBe(true);
+    const md = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    expect(md.pid).toBe(process.pid);
+    expect(md.worktreeRoot).toBe(tmpDir);
+
+    await server.destroy();
+
+    expect(existsSync(lockPath)).toBe(false);
+  });
+
+  test('exposes lockDir on ServerInstance', async () => {
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    await server.ready;
+
+    expect(server.lockDir).toBe(join(tmpDir, '.open-knowledge'));
+
+    await server.destroy();
+  });
+
+  test('second createServer() on same contentDir rejects with collision error', async () => {
+    const first = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    await first.ready;
+
+    // Seed a lock file with PID 1 (always alive) to simulate a foreign holder
+    // (same process pid gets the idempotent path)
+    const { hostname } = await import('node:os');
+    const lockPath = join(tmpDir, '.open-knowledge', 'server.lock');
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: 1,
+        hostname: hostname(),
+        port: 9999,
+        startedAt: new Date().toISOString(),
+        worktreeRoot: tmpDir,
+      }),
+      'utf-8',
+    );
+
+    expect(() => createServer({ contentDir: tmpDir, projectDir: tmpDir, quiet: true })).toThrow(
+      /already running on port 9999/,
+    );
+
+    // Restore our own lock so destroy() cleans up
+    writeFileSync(
+      lockPath,
+      JSON.stringify({
+        pid: process.pid,
+        hostname: hostname(),
+        port: 0,
+        startedAt: new Date().toISOString(),
+        worktreeRoot: tmpDir,
+      }),
+      'utf-8',
+    );
+
+    await first.destroy();
+  });
+});

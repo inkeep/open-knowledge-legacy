@@ -10,12 +10,15 @@ import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import {
   AgentSessionManager,
+  acquireServerLock,
   BacklinkIndex,
   createApiExtension,
   createContentFilter,
   createExternalChangeHandler,
   createPersistenceExtension,
+  releaseServerLock,
   startWatcher,
+  updateServerLockPort,
   type WatcherHandle,
 } from '@inkeep/open-knowledge-server';
 import type { Plugin } from 'vite';
@@ -84,6 +87,26 @@ const CONTENT_ROOT = relative(PROJECT_ROOT, CONTENT_DIR);
 // Ensure content dir exists before hocuspocus/persistence/watcher touches it.
 // Without this, fresh clones and worktrees crash on first write.
 mkdirSync(CONTENT_DIR, { recursive: true });
+
+// V0-1: server-level lock. Acquire BEFORE spinning up Hocuspocus, watcher, etc.
+// Same contract as `createServer` uses in the CLI — collides fast with a running
+// `open-knowledge start` in the same contentDir. Port is rewritten in
+// `configureServer` once Vite tells us what port the dev server bound to.
+// HMR restarts in the same process are idempotent (same pid).
+const LOCK_DIR = resolve(CONTENT_DIR, '.open-knowledge');
+acquireServerLock(LOCK_DIR, { port: 0, worktreeRoot: PROJECT_ROOT });
+
+// Release on process exit even if Vite's shutdown path doesn't call the plugin's
+// close hook. `releaseServerLock` is ownership-guarded — only removes our lock.
+let vitePluginShuttingDown = false;
+const viteShutdownHandler = () => {
+  if (vitePluginShuttingDown) return;
+  vitePluginShuttingDown = true;
+  releaseServerLock(LOCK_DIR);
+};
+process.once('SIGINT', viteShutdownHandler);
+process.once('SIGTERM', viteShutdownHandler);
+process.once('exit', viteShutdownHandler);
 
 console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 
@@ -154,6 +177,16 @@ export function hocuspocusPlugin(): Plugin {
   return {
     name: 'hocuspocus',
     configureServer(server) {
+      // V0-1: record the Vite dev-server port in the lock file so MCP discovery
+      // can connect. Vite binds synchronously in some configs; fall back to
+      // httpServer.address() after listening fires.
+      server.httpServer?.once('listening', () => {
+        const addr = server.httpServer?.address();
+        if (typeof addr === 'object' && addr !== null) {
+          updateServerLockPort(LOCK_DIR, addr.port);
+        }
+      });
+
       const wss = new WebSocketServer({ noServer: true });
 
       // Prevent wss-level errors from bubbling up as unhandled.

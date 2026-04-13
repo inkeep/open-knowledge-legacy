@@ -171,6 +171,11 @@ function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void
     const dirPath = join(dir, entry.name);
     const relToProject = relative(projectDir, dirPath);
 
+    // Skip directories outside projectDir — the `ignore` library rejects
+    // path.relative paths that start with "..". This happens when contentDir
+    // and projectDir are unrelated (e.g., broken-config tests).
+    if (relToProject.startsWith('..')) continue;
+
     // Skip directories that are already excluded by the bootstrap filter
     if (ig.ignores(relToProject) || ig.ignores(`${relToProject}/`)) continue;
 
