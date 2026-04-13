@@ -21,7 +21,9 @@ export const WikiLink = BaseWikiLink.extend({
   addKeyboardShortcuts() {
     return {
       Backspace: () => {
-        // Cast reads internal @tiptap/suggestion state shape (not publicly exported)
+        // WARN: Reads @tiptap/suggestion internal state — verify shape on upgrades.
+        // The `active` field is not part of a public API; the cast assumes
+        // the shape from @tiptap/suggestion source (state.init / state.apply).
         const pluginState = wikiLinkSuggestionKey.getState(this.editor.state) as
           | { active: boolean }
           | undefined;
@@ -39,6 +41,7 @@ export const WikiLink = BaseWikiLink.extend({
         return false;
       },
       Delete: () => {
+        // WARN: Same internal state dependency as Backspace above.
         const pluginState = wikiLinkSuggestionKey.getState(this.editor.state) as
           | { active: boolean }
           | undefined;

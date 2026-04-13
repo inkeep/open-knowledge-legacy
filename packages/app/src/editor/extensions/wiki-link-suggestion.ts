@@ -225,6 +225,9 @@ export function configureWikiLinkSuggestion(editor: Editor) {
 
         editor.chain().focus().deleteRange(range).insertContent({ type: 'wikiLink', attrs }).run();
       } catch (err) {
+        // Silent failure is intentional — TipTap chains are atomic (single transaction),
+        // so partial state (deleteRange applied, insertContent not) cannot occur.
+        // User can retry with [[ if needed.
         console.error('[wiki-link-suggestion] command failed', { item, range }, err);
       }
     },

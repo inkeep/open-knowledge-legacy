@@ -164,7 +164,7 @@ async function wikiLinkCompletionSource(
     const anchorQuery = query.slice(hashIdx + 1);
     const anchorPos = triggerPos + hashIdx + 1; // position right after #
 
-    const headings = await getHeadings(pageTarget).catch(() => [] as HeadingEntry[]);
+    const headings = await getHeadings(pageTarget);
     if (!headings.length) return null;
 
     const filtered = filterHeadings(headings, anchorQuery);
@@ -188,7 +188,10 @@ async function wikiLinkCompletionSource(
   }
 
   // ── Page mode: [[query ─────────────────────────────────────────────────────
-  const pages = await getPages().catch(() => [] as PageItem[]);
+  const pages = await getPages().catch((err) => {
+    console.warn('[wiki-link-source] Failed to fetch pages:', err);
+    return [] as PageItem[];
+  });
   const filtered = filterPages(pages, query);
 
   return {
