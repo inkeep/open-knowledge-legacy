@@ -268,7 +268,6 @@ Internal value is data-integrity guarantees. Branch-scoped backlink index (from 
 
 - **I1: Atomic propagation.** After a managed rename completes successfully, no doc in the vault contains `[[old]]` *from this rename*. After a failed rename, every affected doc is either unchanged or rolled back to its pre-rename state. Observable: a crash test interrupting the rewrite mid-flight leaves the vault consistent (verified via backlink-index + on-disk grep).
 - **I2: Preservation of alias.** `[[old|Display Text]]` in any doc becomes `[[new|Display Text]]` — alias survives. Observable: rename fixture includes aliased inbound links; test asserts aliases are unchanged.
-- **I3: Preservation of anchor.** `[[old#section]]` becomes `[[new#section]]` — anchor survives. Observable: rename fixture includes section-anchored inbound links.
 - **I4: Editor-open docs update live.** If doc `A` is open in an editor tab and doc `foo` is renamed (A links to foo), the open tab reflects `[[bar]]` within the collab propagation budget (≤ Hocuspocus debounce interval). Observable: Playwright test opens doc A, triggers rename of foo→bar via API, asserts the rendered DOM updates.
 - **I5: Backlink index stays consistent.** After rename, `getBacklinks("new")` returns everything that previously returned from `getBacklinks("old")`; `getBacklinks("old")` returns empty. Observable: unit test on `BacklinkIndex`.
 - **I6: Branch-scoped.** Rename on branch `main` does not affect any other branch's state. Observable: test with two loaded branch states.
@@ -444,3 +443,4 @@ Intersection: the **platform pattern** is the load-bearing dimension. We're pick
 **Upstream Artifacts**
 
 - Staff-Eng Decision Brief (in-session, 2026-04-12) — this story was reclassified from "legitimately defer" to "address now" in the brief after reasoning about platform-pattern precedent.
+

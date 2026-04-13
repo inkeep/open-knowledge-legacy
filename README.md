@@ -1,5 +1,7 @@
 # DIFF TEST LINE
 
+# DIFF TEST LINE
+
 # Open Knowledge
 
 Local-first knowledge base with real-time CRDT collaboration. Includes a rich editor, markdown file-backed persistence, and an MCP server for AI agent integration.
@@ -80,3 +82,4 @@ packages/
   app/     — React editor frontend
 docs/      — Documentation site (Fumadocs)
 ```
+
