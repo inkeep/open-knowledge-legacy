@@ -1,30 +1,24 @@
 /**
- * MCP stdio server — content server with instructions, mirrored catalog
- * auto-generation, and workflow tools.
+ * MCP stdio server — content server with instructions + tool registration.
  *
  * What this server provides:
  *   - Instructions on connect (the INSTRUCTIONS constant below)
- *   - Mirrored catalog auto-generation: scans project for content files
- *     matching config globs, writes INDEX.md catalogs inside
- *     `.open-knowledge/catalogs/` (never pollutes the source tree)
- *   - Three workflow tools (init-content, ingest, research) registered from
- *     packages/cli/src/mcp/tools/ — each returns instructional text the agent follows
+ *   - All MCP tools registered from packages/cli/src/mcp/tools/
+ *
+ * Catalog auto-generation was removed per V0-24.2 — `exec("ls …")` +
+ * per-file enrichment renders the same view on demand without the
+ * persisted INDEX.md artifacts.
  *
  * Scaffolding (`.open-knowledge/` directory creation plus `.mcp.json` wiring) is a
  * terminal-side operation handled by the CLI `init` subcommand.
  *
- * Does NOT require Hocuspocus running. Agent uses native Read/Edit/Grep tools for
- * file access. All diagnostic logging goes to stderr (stdout is the MCP wire).
+ * Does NOT require Hocuspocus running. All diagnostic logging goes to stderr
+ * (stdout is the MCP wire).
  */
-import { existsSync } from 'node:fs';
-import { relative, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { setProjectDir } from '../bash/index.ts';
 import type { Config } from '../config/schema.ts';
-import { OK_DIR } from '../constants.ts';
-import { IndexMdCatalogStore } from '../content/catalog-store.ts';
-import { isTrackedContent, rebuildMirroredCatalogs } from '../content/mirror-catalog.ts';
 import { dim } from '../ui/colors.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
@@ -39,47 +33,78 @@ function log(msg: string): void {
   process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
-const INSTRUCTIONS = `# Open Knowledge — Project Knowledge Base
+function buildInstructions(config: Config): string {
+  const { dir, include, exclude } = config.content;
+  const excludeLine = exclude.length > 0 ? exclude.map((p) => `\`${p}\``).join(', ') : '(none)';
 
-This project may have a \`.open-knowledge/\` directory for structured project knowledge.
+  return `# MCP Instructions v2 — exec-primary (2026-04-13)
 
-## Getting Started
-If \`.open-knowledge/\` doesn't exist yet, scaffolding is a **terminal-side** operation — the user (or the agent via \`Bash\`) runs \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That scaffolds the directory structure, registers this MCP server in \`.mcp.json\`, and returns. After scaffolding, reconnect the MCP client so this server sees the new directory and starts its file watcher.
+## This project's content layout (live config)
 
-This MCP server exposes workflow tools (init-content, ingest, research, consolidate) that return instructional text for agents to follow, enriched read/search tools that bundle metadata + git history + backlinks, and document tools that route writes through the Hocuspocus CRDT layer. Scaffolding belongs in the CLI; runtime behavior (catalogs, watcher, tools, instructions) belongs here.
+- **Content directory:** \`${dir}\`
+- **Include globs:** ${include.map((p) => `\`${p}\``).join(', ')}
+- **Exclude globs:** ${excludeLine}
 
-## Navigation — preferred tools for wiki content
+Paths in \`exec\` commands are resolved relative to the content directory. The sandbox prevents paths escaping it.
 
-- **Reading a file:** Use \`read_document\` (not native \`Read\`). It returns contents + frontmatter metadata + recent git history + backlinks + parent folder catalog context in one call.
-- **Searching:** Use \`search\` (not native \`Grep\`). Results are grouped by file with article metadata attached, so you can judge relevance before opening each file.
-- **Browsing the structure:** Read \`.open-knowledge/catalogs/<path>/INDEX.md\` natively. Catalogs are auto-generated markdown that mirror the project tree, with article listings, folder descriptions, and subfolder links.
+## Navigation — prefer \`exec\` for all wiki reads
 
-## Navigation — fallback
+**Prefer \`exec\` over native \`Read\`/\`Grep\`/\`Glob\` and over \`read_document\`/\`search\` for all wiki operations.** \`exec\` provides the same enrichment as the typed tools (frontmatter, backlink count, shadow-repo activity with agent-vs-human attribution, project git history) plus bash composability (pipes, \`head\`, \`find\`). One tool covers reading, listing, grepping, and combining them — no per-operation tool switch.
 
-Native \`Read\`, \`Grep\`, \`Glob\` still work for any file — use them when the enriched tools aren't necessary (e.g., reading code, scanning non-wiki content, or the MCP server isn't the bottleneck).
+Examples:
 
-Catalogs live in \`.open-knowledge/catalogs/\` and never pollute the source tree.
+- Read a file: \`exec("cat <path>.md")\` — returns file contents + rich enrichment
+- List a directory: \`exec("ls <dir>")\` — each result comes with per-file enrichment in \`structuredContent.enrichedPaths\`
+- Search: \`exec("grep -rn <term> <dir>")\` — matches + enrichment per matched file
+- Combine: \`exec("grep -rn <term> <dir> | head -5")\` — top 5 matches with full enrichment
 
-## Content Lifecycle
-- \`external-sources/\` — Raw ingested content (URLs, documents). Reference material. Use \`ingest\`.
-- \`research/\` — Analysis and synthesis. Provisional findings. Use \`research\`.
-- \`articles/\` — Canonical knowledge. Architecture, processes, decisions. Source of truth. Use \`consolidate\` to promote research → articles.
+Allowlist (read-only): \`cat\`, \`ls\`, \`grep\`, \`find\`, \`head\`, \`tail\`, \`wc\`, \`sort\`, \`uniq\`, \`cut\`. Pipes (\`|\`) work between stages. Redirections, subshells, and writes are rejected with a category-specific error telling you the next step.
 
-## Writing Articles
-- Add YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended)
-- Keep articles focused on one topic
-- Group by topic in subdirectories under articles/
+### Why \`exec\` over typed tools
+
+\`exec\` is the default because it subsumes \`read_document\` and \`search\` enrichment paths (same shared helper under the hood) and adds bash composition. The typed tools remain registered as **Typed call sites (advanced)** — present for callers that consume \`structuredContent\` with fixed shapes — but they're not recommended for common agent reads.
+
+## Writing
+
+Agent writes to wiki markdown **must** go through the \`write_document\` / \`edit_document\` MCP tools — never \`exec\` (which is read-only) and never native \`Edit\` / \`sed\`. Routing writes through the server is what captures agent-vs-human attribution in the shadow repo. Writes via other paths land as anonymous \`upstream\` imports and lose attribution.
+
+## Linking — lean on \`[[wiki-links]]\` aggressively
+
+**When writing or editing any document, link liberally to every other document it relates to.** Open Knowledge's value compounds with link density: backlinks surface cross-document context in every \`exec("cat X.md")\` read, \`get_hubs\` / \`get_orphans\` reveal structure, and agents (you, next session) navigate the knowledge base by following links the way you'd navigate a wiki. A document with no outbound links is an island; an island in a knowledge base is worse than no document at all.
+
+**Defaults when writing:**
+
+- **Every noun-phrase that names another document is a link.** If you mention a concept, project, decision, or entity that has (or should have) its own page, write it as \`[[Page Title]]\` instead of plain prose. Don't stop to check whether the target exists first — a redlink signals "this should exist" to future work. Over-linking is the goal, not the failure mode.
+- **Cross-link siblings.** When you create a document in a folder, skim the siblings (\`exec("ls <folder>")\`) and link to the 2–3 most related ones. A "See also" section at the bottom is fine; inline links woven through the prose are better.
+- **Link back to sources.** If a document is derived from research, spec decisions, external sources, or prior reports, link to them — don't re-summarize. The reader can follow.
+- **Prefer \`[[Page]]\` over Markdown \`[text](./page.md)\`.** Wiki-links resolve by docName (file path minus \`.md\`) and participate in the backlinks index. Markdown links to other wiki files don't.
+- **Update both sides when possible.** If you add an important link from A → B, consider whether B should link back to A or to a landing page that lists documents like A.
+
+**Rule of thumb:** if a human reader would want to click a term to learn more, make it a link. Err on the side of too many links.
+
+## Frontmatter conventions
+
+Every \`.md\` file in the knowledge base should have YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended). Folder-level frontmatter was deprecated — per-file frontmatter is the only authored metadata surface.
 
 ## Tools
-Three groups:
-- **Workflow tools** (init-content, ingest, research, consolidate) — return instructional text you follow
-- **Enriched tools** (read_document, search) — one-call wiki reads/searches with metadata
-- **Document tools** (write_document, edit_document, list_documents, undo_agent_edit, redo_agent_edit, get_backlinks, get_forward_links, get_orphans, get_hubs) — route through Hocuspocus when available
+
+**Primary:**
+- \`exec\` — read-only bash with enriched output (see above).
+
+**Workflow (instructional tools):**
+- \`init-content\`, \`ingest\`, \`research\`, \`consolidate\` — each returns structured instructions you follow. Output text includes the live \`content.dir\` value (${dir}) so you don't need to re-read the config.
+
+**Writes:**
+- \`write_document\`, \`edit_document\`, \`undo_agent_edit\`, \`redo_agent_edit\` — mutate the CRDT through the server; attribution captured.
+
+**Typed call sites (advanced) — prefer \`exec\` for common reads:**
+- \`read_document\`, \`search\`, \`list_documents\`, \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`.
 
 ${Object.entries(TOOL_DESCRIPTIONS)
   .map(([name, desc]) => `### \`${name}\`\n${desc}`)
   .join('\n\n')}
 `;
+}
 
 async function detectHocuspocus(serverUrl: string): Promise<boolean> {
   try {
@@ -92,128 +117,6 @@ async function detectHocuspocus(serverUrl: string): Promise<boolean> {
     log(`Hocuspocus check failed: ${err instanceof Error ? err.message : String(err)}`);
     return false;
   }
-}
-
-// ── Catalog watcher ────────────────────────────────────────────────────
-
-const DEBOUNCE_QUIET_MS = 500;
-const DEBOUNCE_MAX_MS = 2000;
-
-interface CatalogWatcher {
-  stop: () => Promise<void>;
-}
-
-async function startCatalogWatcher(
-  projectDir: string,
-  okDir: string,
-  config: Config,
-): Promise<CatalogWatcher> {
-  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-  let maxWaitTimer: ReturnType<typeof setTimeout> | null = null;
-  let pendingRebuild = false;
-
-  const catalogOptions = {
-    projectDir,
-    okDir,
-    include: config.content.include,
-    exclude: config.content.exclude,
-  };
-
-  function scheduleRebuild(): void {
-    pendingRebuild = true;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(executeRebuild, DEBOUNCE_QUIET_MS);
-    if (!maxWaitTimer) {
-      maxWaitTimer = setTimeout(executeRebuild, DEBOUNCE_MAX_MS);
-    }
-  }
-
-  function executeRebuild(): void {
-    if (!pendingRebuild) return;
-    pendingRebuild = false;
-    if (debounceTimer) {
-      clearTimeout(debounceTimer);
-      debounceTimer = null;
-    }
-    if (maxWaitTimer) {
-      clearTimeout(maxWaitTimer);
-      maxWaitTimer = null;
-    }
-    try {
-      rebuildMirroredCatalogs(catalogOptions);
-    } catch (err) {
-      console.error('[content-watcher] Catalog rebuild failed:', err);
-    }
-  }
-
-  const { include, exclude } = config.content;
-
-  function onEvents(events: Array<{ path: string }>): void {
-    const hasRelevantChange = events.some((e) => {
-      const rel = relative(projectDir, e.path);
-      return isTrackedContent(rel, include, exclude);
-    });
-    if (hasRelevantChange) {
-      scheduleRebuild();
-    }
-  }
-
-  // Try @parcel/watcher, fall back to chokidar
-  let stopFn!: () => Promise<void>;
-  let parcel: typeof import('@parcel/watcher') | null = null;
-  try {
-    parcel = await import('@parcel/watcher');
-  } catch (err) {
-    console.warn(
-      '[content-watcher] @parcel/watcher import failed:',
-      err instanceof Error ? err.message : err,
-    );
-  }
-
-  if (parcel) {
-    try {
-      const subscription = await parcel.subscribe(
-        projectDir,
-        (_err, events) => {
-          if (_err) {
-            console.error('[content-watcher]', _err);
-            return;
-          }
-          onEvents(events);
-        },
-        { ignore: ['node_modules', '.git', '.claude'] },
-      );
-      stopFn = () => subscription.unsubscribe();
-    } catch (err) {
-      console.warn(
-        '[content-watcher] @parcel/watcher subscribe failed, using chokidar fallback:',
-        err,
-      );
-      parcel = null;
-    }
-  }
-
-  if (!parcel) {
-    const { watch } = await import('chokidar');
-    console.warn('[content-watcher] @parcel/watcher unavailable, using chokidar fallback');
-    const watcher = watch(projectDir, {
-      ignoreInitial: true,
-      ignored: ['**/node_modules/**', '**/.git/**', '**/.claude/**'],
-    });
-    watcher.on('error', (err) => console.error('[content-watcher] chokidar error:', err));
-    watcher.on('add', (path) => onEvents([{ path }]));
-    watcher.on('change', (path) => onEvents([{ path }]));
-    watcher.on('unlink', (path) => onEvents([{ path }]));
-    stopFn = () => watcher.close();
-  }
-
-  return {
-    stop: async () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      if (maxWaitTimer) clearTimeout(maxWaitTimer);
-      await stopFn();
-    },
-  };
 }
 
 // ── Server entrypoint ──────────────────────────────────────────────────
@@ -240,52 +143,24 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
       version: '0.0.1',
     },
     {
-      instructions: INSTRUCTIONS,
+      instructions: buildInstructions(config),
     },
   );
 
-  const okDir = resolve(projectDir, OK_DIR);
-  let watcherHandle: CatalogWatcher | null = null;
-
-  // MCP tools — workflow tools + document tools + enriched tools
+  // MCP tools — workflow + document + enriched + exec (V0-24)
   const httpUrl = serverUrl
     ? serverUrl.replace('ws://', 'http://').replace('wss://', 'https://')
     : undefined;
   // Bash wrapper scopes all shell ops to projectDir (see bash/index.ts).
   setProjectDir(projectDir);
-  const catalog = new IndexMdCatalogStore({ projectDir });
-  registerAllTools(server, { serverUrl: httpUrl, projectDir, config, catalog });
-
-  // Catalog rebuild + watcher
-  if (existsSync(okDir)) {
-    try {
-      rebuildMirroredCatalogs({
-        projectDir,
-        okDir,
-        include: config.content.include,
-        exclude: config.content.exclude,
-      });
-      log('Catalogs rebuilt');
-      watcherHandle = await startCatalogWatcher(projectDir, okDir, config);
-      log('File watcher started');
-    } catch (err) {
-      log(`Warning: catalog setup failed: ${err instanceof Error ? err.message : err}`);
-    }
-  } else {
-    log('.open-knowledge/ not found — run `open-knowledge init` in your terminal to scaffold');
-  }
+  registerAllTools(server, { serverUrl: httpUrl, projectDir, config });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log('MCP server running (stdio)');
 
   // Cleanup on exit
-  const shutdown = async () => {
-    try {
-      if (watcherHandle) await watcherHandle.stop();
-    } catch (err) {
-      log(`Warning: watcher cleanup failed: ${err instanceof Error ? err.message : err}`);
-    }
+  const shutdown = (): void => {
     process.exit(0);
   };
   process.on('SIGINT', shutdown);

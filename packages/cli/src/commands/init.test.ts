@@ -28,10 +28,13 @@ describe('runInit', () => {
     const result = runInit({ cwd: testDir });
 
     expect(result.contentCreated.length).toBeGreaterThan(0);
-    expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
-    expect(existsSync(join(testDir, '.open-knowledge', 'external-sources'))).toBe(true);
-    expect(existsSync(join(testDir, '.open-knowledge', 'research'))).toBe(true);
+    // Post-V0-24.2 scaffold: config-only, no content subdirs
+    expect(existsSync(join(testDir, '.open-knowledge', 'cache'))).toBe(true);
     expect(existsSync(join(testDir, '.open-knowledge', 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, '.open-knowledge', 'config.yml'))).toBe(true);
+    expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(false);
+    expect(existsSync(join(testDir, '.open-knowledge', 'external-sources'))).toBe(false);
+    expect(existsSync(join(testDir, '.open-knowledge', 'research'))).toBe(false);
 
     // Backward-compat fields
     expect(result.mcpAction).toBe('written');
@@ -141,8 +144,9 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('skipped-flag');
     expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
 
-    // But the content IS scaffolded
-    expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
+    // But the .open-knowledge/ config scaffold IS created
+    expect(existsSync(join(testDir, '.open-knowledge', 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, '.open-knowledge', 'config.yml'))).toBe(true);
   });
 
   it('is idempotent — running twice produces the same end state', () => {
@@ -168,8 +172,8 @@ describe('runInit', () => {
     expect(result.mcpAction).toBe('failed');
     expect(result.mcpError).toMatch(/invalid JSON/i);
 
-    // Content should still have been scaffolded
-    expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(true);
+    // Config scaffold should still have been created
+    expect(existsSync(join(testDir, '.open-knowledge', 'AGENTS.md'))).toBe(true);
   });
 
   // -----------------------------------------------------------------------

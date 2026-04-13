@@ -1,53 +1,45 @@
 /**
- * Shell execution primitive for MCP tool internals.
+ * Bash execution primitive — just-bash interpreter + ReadWriteFs backend.
  *
- * Thin wrapper around Node's child_process with project-scoped defaults:
- *   - cwd = projectDir (configurable)
- *   - All paths shell-escaped before being passed to child commands
- *   - Errors thrown, not silently swallowed
+ * Replaces the previous child_process-based primitives (runShell/gitLog/grep).
+ * Per D14/D18/FR18:
+ *   - `just-bash` owns parsing, pipes, globs, quoting — we never hand input
+ *     to a host shell.
+ *   - `ReadWriteFs` sandboxes I/O to `projectDir`; traversal outside is
+ *     rejected at the filesystem layer (EACCES from `resolveAndValidate`).
+ *   - Shadow-repo history is read via `simple-git` in `src/content/shadow-log.ts`,
+ *     NOT through this module.
  *
- * ## Why not just-bash?
+ * **IMPORTANT:** `ReadWriteFs` presents the host directory as the virtual
+ * root `/` inside the interpreter. Agent-supplied paths like
+ * `articles/auth.md` resolve relative to `cwd: '/'`, which maps to
+ * `<projectDir>/articles/auth.md` on disk. Passing `cwd: projectDir`
+ * (the host path) causes "No such file or directory" because the sandbox
+ * has no knowledge of that absolute path.
  *
- * The spec (D1) originally proposed using Vercel's `just-bash` package for
- * sandboxing + cloud compatibility. Investigation found:
- *   - just-bash doesn't ship a `git` command (can't do `git log` enrichment)
- *   - For the controlled command + controlled args scenario inside our own
- *     MCP server, sandboxing adds interpreter overhead without meaningful
- *     security benefit
+ * Public surface:
+ *   - setProjectDir / getProjectDir — module state set once at startup
+ *   - shellEscape — POSIX-safe arg quoting (retained for callers building
+ *     display strings)
+ *   - createBashInstance(projectDir?) — a fresh `Bash` scoped to projectDir
+ *   - execBash(bash, command) — run a pre-validated command string
+ *   - StdoutOverflowError — thrown when output exceeds the 16 MB cap
+ *   - grep(pattern, opts?) — internal helper for `search`, implemented
+ *     on top of just-bash so there's no host `/usr/bin/grep` dependency
  *
- * Per the spec's R1 mitigation, D1 is an architectural choice, not a lock.
- * The wrapper interface stays identical — if cloud deployment later wants
- * sandboxed execution, we swap the implementation here without touching any
- * tool code.
- *
- * ## Interface
- *
- *   runShell(cmd, opts?)        — arbitrary shell command, returns stdout
- *   cat(path)                   — read a file as UTF-8 (via fs.readFile, no shell)
- *   gitLog(path, count, since?) — parse `git log -N --format=...` into entries
- *   grep(pattern, opts)         — run grep/rg, parse into GrepMatch[]
- *
- * All helpers scope to `getProjectDir()` (module-level state, set once at init).
+ * Spec: SPEC.md FR18 + D14 + D15.
  */
-import { exec, execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { promisify } from 'node:util';
+import { Bash, ReadWriteFs } from 'just-bash';
 
-const execAsync = promisify(exec);
-const execFileAsync = promisify(execFile);
-
-/** Default maximum stdout/stderr buffer per command (16 MB). */
-const DEFAULT_MAX_BUFFER = 16 * 1024 * 1024;
-
-/** Default command timeout (30 seconds). */
-const DEFAULT_TIMEOUT_MS = 30_000;
+/** Hard cap on stdout bytes returned by `execBash` (16 MB per FR19/D9). */
+const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
 
 // ── Module-level state ─────────────────────────────────────────────────
 
 let projectDir: string = process.cwd();
 
-/** Set the project directory all helpers resolve paths against. Call once at startup. */
+/** Set the project directory the Bash instance scopes I/O against. Call once at startup. */
 export function setProjectDir(dir: string): void {
   projectDir = resolve(dir);
 }
@@ -57,29 +49,75 @@ export function getProjectDir(): string {
   return projectDir;
 }
 
-// ── Shell escape ───────────────────────────────────────────────────────
+// ── POSIX shell escape (retained for display/tool-description use) ──────
 
-/** POSIX shell escape for a single argument. Wraps in single quotes, escapes embedded quotes. */
 export function shellEscape(arg: string): string {
   if (arg === '') return "''";
-  // Fast path: only safe characters (alphanumeric, ./_-)
   if (/^[\w.\-/]+$/.test(arg)) return arg;
   return `'${arg.replace(/'/g, "'\\''")}'`;
 }
 
-// ── Types ───────────────────────────────────────────────────────────────
+// ── just-bash primitives ────────────────────────────────────────────────
 
-export interface ExecShellOptions {
-  cwd?: string;
-  timeoutMs?: number;
-  maxBuffer?: number;
+export interface ExecBashResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
 }
 
-export interface GitLogEntry {
-  hash: string;
-  date: string;
-  subject: string;
+export class StdoutOverflowError extends Error {
+  public readonly limitBytes: number;
+  public readonly actualBytes: number;
+  public readonly partial: ExecBashResult;
+  constructor(limit: number, actual: number, partial: ExecBashResult) {
+    super(`Output exceeded ${limit} byte buffer (got ${actual}); narrow the command`);
+    this.name = 'StdoutOverflowError';
+    this.limitBytes = limit;
+    this.actualBytes = actual;
+    this.partial = partial;
+  }
 }
+
+/**
+ * Create a fresh `Bash` instance scoped to the given project directory.
+ * Callers wanting per-call isolation should create a new instance each call.
+ *
+ * See the file header for the `cwd: '/'` rationale — do NOT pass the host
+ * path as `cwd`, it will produce "No such file or directory" for every path.
+ */
+export function createBashInstance(dir: string = projectDir): Bash {
+  const root = resolve(dir);
+  return new Bash({
+    cwd: '/',
+    fs: new ReadWriteFs({ root, allowSymlinks: false }),
+  });
+}
+
+/**
+ * Execute a pre-validated command string through a just-bash instance.
+ * Callers are responsible for structural validation via `parseCommand` —
+ * this function itself does NO allow/deny checking.
+ *
+ * Enforces the 16 MB stdout hard cap post-hoc: throws `StdoutOverflowError`
+ * when exceeded, with the captured portion attached.
+ */
+export async function execBash(bash: Bash, command: string): Promise<ExecBashResult> {
+  const result = await bash.exec(command);
+  if (result.stdout.length > MAX_STDOUT_BYTES) {
+    throw new StdoutOverflowError(MAX_STDOUT_BYTES, result.stdout.length, {
+      stdout: result.stdout.slice(0, MAX_STDOUT_BYTES),
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+    });
+  }
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+  };
+}
+
+// ── grep helper (consumed by `search` MCP tool) ─────────────────────────
 
 export interface GrepMatch {
   path: string;
@@ -99,140 +137,55 @@ export interface GrepOptions {
   maxResults?: number;
 }
 
-// ── Core exec ───────────────────────────────────────────────────────────
-
 /**
- * Run an arbitrary shell command and return stdout.
- * Caller is responsible for shell-escaping any interpolated values.
- * Throws on non-zero exit code or timeout.
- */
-export async function runShell(cmd: string, opts?: ExecShellOptions): Promise<string> {
-  const { stdout } = await execAsync(cmd, {
-    cwd: opts?.cwd ?? projectDir,
-    timeout: opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    maxBuffer: opts?.maxBuffer ?? DEFAULT_MAX_BUFFER,
-  });
-  return stdout;
-}
-
-// ── cat ─────────────────────────────────────────────────────────────────
-
-/**
- * Read a file as UTF-8. Uses fs.readFile directly — no shell — for safety and speed.
- * Path is resolved against projectDir if relative. Throws if the resolved path
- * escapes the project directory.
- */
-export async function cat(path: string): Promise<string> {
-  const abs = resolve(projectDir, path);
-  if (!abs.startsWith(`${projectDir}/`) && abs !== projectDir) {
-    throw new Error(`Path outside project root: ${path}`);
-  }
-  return readFile(abs, 'utf-8');
-}
-
-// ── git log ─────────────────────────────────────────────────────────────
-
-/**
- * Run `git log -N --format=%h|%ai|%s -- <path>` and parse into entries.
- * Returns empty array if the file is outside a git repo or has no history.
- * `since` is optional ISO timestamp — when provided, filters to commits after that time.
- */
-export async function gitLog(path: string, count: number, since?: string): Promise<GitLogEntry[]> {
-  // Use execFile (not exec) to bypass shell parsing entirely — each arg is passed
-  // directly to git as-is, no escaping needed. Avoids any quoting edge cases for
-  // `since` values or paths with spaces.
-  const args = ['log', `-${count}`, '--format=%h|%ai|%s'];
-  if (since) {
-    args.push(`--since=${since}`);
-  }
-  args.push('--', path);
-  try {
-    const { stdout } = await execFileAsync('git', args, {
-      cwd: projectDir,
-      timeout: DEFAULT_TIMEOUT_MS,
-      maxBuffer: DEFAULT_MAX_BUFFER,
-    });
-    return stdout
-      .split('\n')
-      .filter((line) => line.length > 0)
-      .map((line) => {
-        const [hash, date, ...subjectParts] = line.split('|');
-        return {
-          hash: hash ?? '',
-          date: date ?? '',
-          subject: subjectParts.join('|'),
-        };
-      });
-  } catch (err) {
-    // File outside git repo, or git not installed, or no history — all non-fatal.
-    // Log to stderr for unexpected errors; stay quiet for the common "not a git
-    // repo" and "ambiguous argument" failures (these happen normally).
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!/not a git repository|fatal: ambiguous argument|ENOENT/.test(msg)) {
-      process.stderr.write(`[gitLog] ${path}: ${msg}\n`);
-    }
-    return [];
-  }
-}
-
-// ── grep ────────────────────────────────────────────────────────────────
-
-/**
- * Run grep and parse into structured matches.
- * Uses system grep with `-rn` (recursive, with line numbers).
- * Returns empty array when no matches (grep exits 1 on no match; we treat that as empty).
+ * Fixed-string recursive grep implemented via just-bash. Preserves the
+ * `GrepMatch[]` contract the `search` MCP tool depends on.
+ *
+ * Paths passed in `opts.paths` are interpreted relative to the sandbox
+ * root — i.e., `.` (default) resolves to projectDir.
  */
 export async function grep(pattern: string, opts: GrepOptions = {}): Promise<GrepMatch[]> {
-  // Use execFile (not exec/runShell) to bypass shell parsing entirely — each arg
-  // is passed directly to the grep process, eliminating shell injection risk
-  // even if the pattern or paths contain special characters.
-  const args: string[] = ['-rn'];
-  if (opts.caseInsensitive ?? true) args.push('-i');
-  // Fixed-string matching — treats the pattern literally, no regex surprises.
-  args.push('-F');
+  const bash = createBashInstance(projectDir);
+
+  const flags: string[] = ['-rn', '-F']; // recursive, line numbers, fixed-string
+  if (opts.caseInsensitive ?? true) flags.push('-i');
   for (const inc of opts.include ?? []) {
-    args.push(`--include=${inc}`);
+    flags.push('--include', shellEscape(inc));
   }
   for (const exc of opts.exclude ?? []) {
-    args.push(`--exclude=${exc}`);
-    // Also exclude matching directories (common for node_modules, .git etc.)
-    args.push(`--exclude-dir=${exc}`);
+    flags.push('--exclude', shellEscape(exc));
+    flags.push('--exclude-dir', shellEscape(exc));
   }
-  args.push('--', pattern);
 
-  const searchPaths = opts.paths?.length ? opts.paths : ['.'];
-  args.push(...searchPaths);
+  const searchPaths = opts.paths?.length ? opts.paths.map(shellEscape) : ['.'];
+  // Note: just-bash's grep does not recognize the `--` end-of-options
+  // marker; omit it. Pattern is always quoted for safety.
+  const cmd = `grep ${flags.join(' ')} ${shellEscape(pattern)} ${searchPaths.join(' ')}`;
 
-  let stdout = '';
+  let result: ExecBashResult;
   try {
-    const result = await execFileAsync('grep', args, {
-      cwd: projectDir,
-      maxBuffer: 10 * 1024 * 1024,
-      timeout: 30_000,
-    });
-    stdout = result.stdout;
+    result = await execBash(bash, cmd);
   } catch (err) {
-    // grep exits 1 when no matches found — not an error for us.
-    // exitCode 2+ means actual error (bad pattern, unreadable file, etc.)
-    const errObj = err as { code?: number; stdout?: string };
-    if (errObj.code === 1) {
-      return [];
-    }
-    // Some grep errors still include partial stdout (e.g. permission denied on one file)
-    if (typeof errObj.stdout === 'string' && errObj.stdout.length > 0) {
-      console.warn(`[grep] returning partial results (exit code ${errObj.code})`);
-      stdout = errObj.stdout;
+    if (err instanceof StdoutOverflowError) {
+      // Return partial results if any; do not throw on overflow from grep —
+      // the `maxResults` cap handles agent context size.
+      result = err.partial;
     } else {
       throw err;
     }
   }
 
+  // grep exits 1 with empty stdout when no matches — not an error.
+  if (result.exitCode === 1 && !result.stdout) return [];
+  if (result.exitCode !== 0 && result.exitCode !== 1 && !result.stdout) {
+    throw new Error(`grep exited ${result.exitCode}: ${result.stderr}`);
+  }
+
   const matches: GrepMatch[] = [];
   const limit = opts.maxResults ?? Number.POSITIVE_INFINITY;
-  for (const line of stdout.split('\n')) {
-    if (line.length === 0) continue;
+  for (const line of result.stdout.split('\n')) {
+    if (!line) continue;
     if (matches.length >= limit) break;
-    // Format: <path>:<line>:<text>
     const firstColon = line.indexOf(':');
     if (firstColon === -1) continue;
     const secondColon = line.indexOf(':', firstColon + 1);

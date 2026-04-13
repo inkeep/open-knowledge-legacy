@@ -19,18 +19,22 @@ describe('initContent', () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('creates full .open-knowledge/ structure from scratch', () => {
+  it('creates config-only .open-knowledge/ scaffold from scratch', () => {
     const result = initContent(testDir);
 
     const okDir = join(testDir, '.open-knowledge');
     expect(existsSync(okDir)).toBe(true);
-    expect(existsSync(join(okDir, 'articles'))).toBe(true);
-    expect(existsSync(join(okDir, 'external-sources'))).toBe(true);
-    expect(existsSync(join(okDir, 'research'))).toBe(true);
     expect(existsSync(join(okDir, 'cache'))).toBe(true);
     expect(existsSync(join(okDir, 'AGENTS.md'))).toBe(true);
     expect(existsSync(join(okDir, '.gitignore'))).toBe(true);
     expect(existsSync(join(okDir, 'config.yml'))).toBe(true);
+
+    // Content subdirs are NOT scaffolded per V0-24.2 catalog teardown —
+    // wiki content lives wherever `content.dir` points (project root by default),
+    // not in opinionated subfolders.
+    expect(existsSync(join(okDir, 'articles'))).toBe(false);
+    expect(existsSync(join(okDir, 'external-sources'))).toBe(false);
+    expect(existsSync(join(okDir, 'research'))).toBe(false);
 
     expect(result.created.length).toBeGreaterThan(0);
     expect(result.skipped.length).toBe(0);
@@ -57,9 +61,10 @@ describe('initContent', () => {
 
     const okDir = join(testDir, '.open-knowledge');
 
-    // AGENTS.md has navigation instructions
+    // AGENTS.md describes the config-only scaffold + exec-first navigation
     const agents = readFileSync(join(okDir, 'AGENTS.md'), 'utf-8');
-    expect(agents).toContain('Content Lifecycle');
+    expect(agents).toContain('Navigation');
+    expect(agents).toContain('exec');
 
     // .gitignore excludes cache/
     const gitignore = readFileSync(join(okDir, '.gitignore'), 'utf-8');

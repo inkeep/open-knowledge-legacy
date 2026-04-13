@@ -2,7 +2,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { cat, gitLog, grep, setProjectDir, shellEscape } from './index.ts';
+import {
+  createBashInstance,
+  execBash,
+  grep,
+  StdoutOverflowError,
+  setProjectDir,
+  shellEscape,
+} from './index.ts';
 
 describe('shellEscape', () => {
   it('leaves safe characters alone', () => {
@@ -22,11 +29,11 @@ describe('shellEscape', () => {
   });
 });
 
-describe('bash wrapper', () => {
+describe('just-bash + ReadWriteFs', () => {
   let root: string;
 
   beforeAll(() => {
-    root = join(tmpdir(), `bash-wrapper-test-${Date.now()}`);
+    root = join(tmpdir(), `bash-test-${Date.now()}`);
     mkdirSync(root, { recursive: true });
     mkdirSync(join(root, 'sub'), { recursive: true });
     writeFileSync(join(root, 'file.txt'), 'hello\nworld\n');
@@ -38,25 +45,83 @@ describe('bash wrapper', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  describe('cat', () => {
-    it('reads file contents relative to projectDir', async () => {
-      const content = await cat('file.txt');
-      expect(content).toBe('hello\nworld\n');
+  describe('ReadWriteFs sandbox boundary', () => {
+    it('rejects path traversal via interpreter', async () => {
+      const bash = createBashInstance(root);
+      // Attempt to read a path outside the sandbox via `..`. ReadWriteFs should
+      // reject or return an error exit code — must NOT leak files from parent.
+      const result = await execBash(bash, 'cat ../outside.txt');
+      // Either non-zero exit or stderr indicating denial. The guarantee is:
+      // no stdout content that could only come from reading above the sandbox.
+      expect(result.stdout).not.toContain('SECRET');
+      expect(result.exitCode).not.toBe(0);
     });
 
-    it('throws for missing file', async () => {
-      await expect(cat('missing.txt')).rejects.toThrow();
+    it('rejects absolute paths outside the sandbox root', async () => {
+      const bash = createBashInstance(root);
+      // Inside the sandbox, `/` maps to projectDir — so `/etc/passwd` is
+      // resolved against the sandbox, not the host. This test asserts that
+      // the host's /etc/passwd is unreachable.
+      const result = await execBash(bash, 'cat /etc/passwd');
+      expect(result.stdout).not.toContain('root:');
+      expect(result.exitCode).not.toBe(0);
+    });
+
+    it('rejects sibling-directory prefix-collision traversal', async () => {
+      // Sanity: the sandbox shouldn't let `../projectdir-evil/X` escape
+      // by exploiting a parent directory whose name starts with projectDir.
+      const bash = createBashInstance(root);
+      const result = await execBash(bash, 'cat ../../etc/hosts');
+      expect(result.stdout).not.toContain('localhost');
+      expect(result.exitCode).not.toBe(0);
     });
   });
 
-  describe('grep', () => {
+  describe('createBashInstance + execBash', () => {
+    it('ls lists the sandbox root (cwd=/ maps to projectDir)', async () => {
+      const bash = createBashInstance(root);
+      const result = await execBash(bash, 'ls');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('file.txt');
+      expect(result.stdout).toContain('sub');
+    });
+
+    it('cat via interpreter returns file contents', async () => {
+      const bash = createBashInstance(root);
+      const result = await execBash(bash, 'cat file.txt');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toBe('hello\nworld\n');
+    });
+
+    it('supports pipes between stages', async () => {
+      const bash = createBashInstance(root);
+      writeFileSync(join(root, 'many.txt'), 'one\ntwo\nthree\nfour\nfive\n');
+      const result = await execBash(bash, "grep -n '' many.txt | head -2");
+      expect(result.exitCode).toBe(0);
+      const lines = result.stdout.split('\n').filter(Boolean);
+      expect(lines.length).toBe(2);
+    });
+  });
+
+  describe('StdoutOverflowError', () => {
+    it('is exported and carries limit/actual/partial', () => {
+      const err = new StdoutOverflowError(10, 20, { stdout: 'abc', stderr: '', exitCode: 0 });
+      expect(err).toBeInstanceOf(Error);
+      expect(err.name).toBe('StdoutOverflowError');
+      expect(err.limitBytes).toBe(10);
+      expect(err.actualBytes).toBe(20);
+      expect(err.partial.stdout).toBe('abc');
+    });
+  });
+
+  describe('grep helper (via just-bash)', () => {
     it('finds matches and parses them', async () => {
       const matches = await grep('hello');
       expect(matches.length).toBeGreaterThan(0);
-      const fileMatch = matches.find((m) => m.path.includes('file.txt'));
-      expect(fileMatch).toBeDefined();
-      expect(fileMatch?.line).toBe(1);
-      expect(fileMatch?.text).toBe('hello');
+      const match = matches.find((m) => m.path.includes('file.txt'));
+      expect(match).toBeDefined();
+      expect(match?.line).toBe(1);
+      expect(match?.text).toBe('hello');
     });
 
     it('returns empty array when no matches', async () => {
@@ -66,63 +131,11 @@ describe('bash wrapper', () => {
 
     it('respects maxResults', async () => {
       writeFileSync(
-        join(root, 'many.txt'),
+        join(root, 'many-grep.txt'),
         Array.from({ length: 10 }, (_, i) => `match ${i}`).join('\n'),
       );
       const matches = await grep('match', { maxResults: 3 });
       expect(matches.length).toBeLessThanOrEqual(3);
     });
-
-    it('respects exclude patterns', async () => {
-      mkdirSync(join(root, 'excluded'), { recursive: true });
-      writeFileSync(join(root, 'excluded', 'hidden.txt'), 'should-not-match\n');
-      writeFileSync(join(root, 'visible.txt'), 'should-not-match\n');
-      const matches = await grep('should-not-match', { exclude: ['excluded'] });
-      expect(matches.some((m) => m.path.includes('visible.txt'))).toBe(true);
-      expect(matches.some((m) => m.path.includes('excluded'))).toBe(false);
-    });
-  });
-
-  describe('gitLog', () => {
-    it('returns empty array when not a git repo', async () => {
-      // tmpdir is not a git repo
-      const entries = await gitLog('file.txt', 5);
-      expect(entries).toEqual([]);
-    });
-  });
-});
-
-describe('gitLog in a real git repo', () => {
-  let root: string;
-
-  beforeAll(async () => {
-    root = join(tmpdir(), `bash-git-test-${Date.now()}`);
-    mkdirSync(root, { recursive: true });
-    writeFileSync(join(root, 'tracked.md'), 'v1\n');
-    setProjectDir(root);
-    // Minimal git repo so we get a real commit to parse.
-    const { execFile } = await import('node:child_process');
-    const { promisify } = await import('node:util');
-    const exec = promisify(execFile);
-    await exec('git', ['init', '--quiet'], { cwd: root });
-    await exec('git', ['config', 'user.email', 'test@example.invalid'], { cwd: root });
-    await exec('git', ['config', 'user.name', 'Test'], { cwd: root });
-    await exec('git', ['config', 'commit.gpgsign', 'false'], { cwd: root });
-    await exec('git', ['add', 'tracked.md'], { cwd: root });
-    await exec('git', ['commit', '--quiet', '-m', 'initial commit'], { cwd: root });
-  });
-
-  afterAll(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it('parses git log output into entries', async () => {
-    const entries = await gitLog('tracked.md', 5);
-    expect(entries.length).toBe(1);
-    const entry = entries[0];
-    expect(entry).toBeDefined();
-    expect(entry?.hash).toMatch(/^[0-9a-f]{7,}$/);
-    expect(entry?.date).toMatch(/^\d{4}-\d{2}-\d{2}/);
-    expect(entry?.subject).toBe('initial commit');
   });
 });

@@ -21,6 +21,19 @@ export function textResult(text: string, isError?: boolean) {
   };
 }
 
+/**
+ * Dual-channel result (text `content` + machine-readable `structuredContent`)
+ * per D10/FR6. Used by `exec` to return enriched metadata in structured form
+ * alongside the raw-stdout + markdown-block content.
+ */
+export function textPlusStructured<T>(text: string, structured: T, isError?: boolean) {
+  return {
+    content: [{ type: 'text' as const, text }],
+    structuredContent: structured as unknown as Record<string, unknown>,
+    ...(isError ? { isError: true as const } : {}),
+  };
+}
+
 /** Error message for tools that require Hocuspocus to be running. */
 export const HOCUSPOCUS_NOT_RUNNING_ERROR =
   'Error: Hocuspocus server is not running. Start it with `open-knowledge start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';

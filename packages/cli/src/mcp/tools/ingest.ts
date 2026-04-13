@@ -1,18 +1,21 @@
 /**
  * `ingest` MCP workflow tool — capture an external source as raw reference material
- * in .open-knowledge/external-sources/.
+ * inside the project's content directory.
  *
  * Principle: raw preservation only. No summary, no analysis, no interpretation.
  * That's `research`'s job.
  */
 import { z } from 'zod';
+import type { Config } from '../../config/schema.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
-function buildBody(source: string): string {
+function buildBody(source: string, contentDir: string): string {
   return `Capture this external source into the project knowledge base as raw reference material. **Raw preservation only** — no summary, no analysis, no interpretation. Summarizing is the job of the \`research\` tool later.
 
 Source: ${source}
+
+The content directory for this project is **\`${contentDir}\`** (from \`.open-knowledge/config.yml\`).
 
 ## Step 1: Fetch the content
 
@@ -23,9 +26,11 @@ If the fetch fails (login wall, 401/402/403/429, anti-scraping block), **stop an
 
 If the fetcher returns an obvious *summary* of the page instead of the raw content (some LLM-backed fetch tools do this), note it and try a raw alternative (e.g., \`curl -sL <url>\` for text-heavy sources, or ask the user to paste). The goal is verbatim bytes.
 
-## Step 2: Save to external-sources
+## Step 2: Save as raw reference material
 
-Write the content to \`.open-knowledge/external-sources/<kebab-case-slug>.md\`. Pick the slug from the source's own title (e.g., \`karpathy-llm-wiki.md\`, \`anthropic-prompt-caching.md\`). Don't put dates in the filename — dates go in frontmatter.
+Write the content as a markdown file inside the content directory (\`${contentDir}\`). The convention if this project adopts the three-tier lifecycle is to group raw sources together — e.g., an \`external-sources/\` subfolder under the content dir — but it's just a convention. Use whatever the project's existing docs layout calls for. If unsure, ask the user or default to a sensible top-level subfolder name.
+
+Name the file with a kebab-case slug from the source's own title (e.g., \`karpathy-llm-wiki.md\`, \`anthropic-prompt-caching.md\`). Don't put dates in the filename — dates go in frontmatter.
 
 Prepend this frontmatter:
 
@@ -51,21 +56,21 @@ tags:
 
 ## Step 4: Verify
 
-- File exists at \`.open-knowledge/external-sources/<slug>.md\`
+- File exists at the chosen location under the content directory
 - Valid frontmatter (at minimum \`title\`, \`description\`, and either \`source_url\` or \`source_path\`)
-- \`.open-knowledge/catalogs/\` picks it up automatically via the MCP server's file watcher
+- \`exec("ls <dir>")\` should list the file with enrichment
 
 ## Non-goals
 
 - **No analysis** — don't interpret, compare, or critique the source
-- **No promotion to articles/** — that's the \`consolidate\` tool's job, later
+- **No promotion to a canonical article** — that's the \`consolidate\` tool's job, later
 - **No deduplication** — if the same source is ingested twice, let it happen; cleanup is a separate concern
 
 Full convention: read \`.open-knowledge/AGENTS.md\`.`;
 }
 
 export const DESCRIPTION = [
-  'Fetch an external source (URL or local file) and save raw content to .open-knowledge/external-sources/.',
+  'Fetch an external source (URL or local file) and save raw content as reference material in the project content directory.',
   'Raw preservation only — no analysis or interpretation.',
   '',
   '**Use when:**',
@@ -80,11 +85,11 @@ export const DESCRIPTION = [
   '- Research workflow needs raw sources before analysis',
 ].join('\n');
 
-export function register(server: ServerInstance): void {
+export function register(server: ServerInstance, config: Config): void {
   server.tool(
     'ingest',
     DESCRIPTION,
     { source: z.string().describe('URL, file path, or identifier of the source to ingest') },
-    (args: { source: string }) => textResult(buildBody(args.source)),
+    (args: { source: string }) => textResult(buildBody(args.source, config.content.dir)),
   );
 }
