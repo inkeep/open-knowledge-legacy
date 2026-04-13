@@ -68,6 +68,7 @@ Error messages are **category-specific** so agents get an actionable next-step r
 | Output exceeds soft cap (500 lines / 50 KB rendered) | (none, warning) | `content`: first N lines + `<truncated: M more lines — re-run with more-specific query>` marker; enrichment still applied to captured portion |
 | Output exceeds hard cap (16 MB) | `output_overflow` | `"Output exceeded 16 MB buffer. Narrow the command (e.g., add more specific grep pattern, use head, restrict the path)."` |
 | Defense-in-depth violation (FR21 mtime-scan detected filesystem change) | `security_invariant_violation` | `"Security invariant violated: file(s) in the content directory were modified during a read-only exec call. This indicates a parser bug. The offending paths have been logged; please report this."` |
+| Binary/non-text file in output (e.g., `cat diagram.png`) | (none, warning) | `content`: a warning banner `"File '<path>' appears to be binary (image/PDF/etc.) — exec returns text only (NG8). For binary retrieval, use native Read."` followed by the raw (likely garbled) UTF-8-decoded stdout. `structuredContent.enrichedPaths`: present for `.md`/`.mdx` references; binary paths themselves are not enriched. |
 
 ## 6) Requirements
 ### Functional requirements
@@ -75,7 +76,7 @@ Error messages are **category-specific** so agents get an actionable next-step r
 |---|---|---|---|
 | Must | FR1: `exec(command)` MCP tool registered | Tool appears in MCP server `registerAllTools`; passes allowlisted cmd end-to-end in integration test. | |
 | Must | FR2: Allowlist enforced on every pipeline stage | Test harness rejects `rm`, `mv`, redirections, subshells, backticks, `&` with clear error. | |
-| Must | FR3: Read-only first-tokens pass through | `grep`, `ls`, `cat`, `find`, `head`, `tail`, `wc`, `sort`, `uniq` (and any additions locked in D?) execute. | |
+| Must | FR3: Read-only first-tokens pass through | Conservative-plus allowlist per D15: `cat`, `ls`, `grep`, `find`, `head`, `tail`, `wc`, `sort`, `uniq`, `cut` execute. `awk`/`sed`/`xargs` explicitly excluded (D15). `find` accepted with flag denylist (`-exec`/`-execdir`/`-delete`/`-fprint`/`-fprintf`/`-ok`/`-okdir`). | Per D15 (Conservative-plus) |
 | Must | FR4: Pipes work between allowlisted stages | `grep 'x' | head -5` returns matching lines through head, enrichment applied to final output. | W3 wedge |
 | Must | FR5: Raw stdout preserved verbatim | Output byte-equivalent to equivalent native bash invocation for supported commands. | Enrichment is *additive* |
 | Must | FR6: Enrichment delivered via **two channels** | (a) `content` text: raw stdout verbatim + appended `### Referenced files` markdown block. (b) `structuredContent` JSON: `{ enrichedPaths: EnrichedMeta[], error?: { category: ErrorCategory, message: string } }` typed payload. Both populated on every `exec` call that identifies file references. Tool registration declares an `outputSchema` (zod) per MCP SDK 1.29 requirement — see `evidence/shadow-repo-identity-and-sdk.md` §2. `ErrorCategory` enum: `unknown_command` \| `write_blocked` \| `shell_construct_blocked` \| `path_traversal` \| `output_overflow` \| `security_invariant_violation`. | Matches report recommendation + supports future harness UI reading structured channel; category-specific errors per D21 / bot review 🟠 #1 |
@@ -107,10 +108,14 @@ Error messages are **category-specific** so agents get an actionable next-step r
 - **Cost:** Negligible per call; just-bash interpreter runs in-process, `simple-git` spawns `git` process per `readShadowLog` (amortize via caching per FR19 mitigation).
 
 ## 7) Success metrics & instrumentation
-- **Metric 1 — Agent adoption of `exec` vs. semantic tools**
+- **Metric 1 — Agent adoption of `exec` vs. semantic tools (overall)**
   - Baseline: 0 (tool doesn't exist)
   - Target: >50% of reads/lists/searches via `exec` within 30 days post-ship for agents that have both surfaces
   - Instrumentation notes: Count MCP tool invocations in server stderr logs; needs simple counter in `server.ts`
+- **Metric 1b — Single-file-read composition** (bot review R3 💭 #2)
+  - Rationale: Metric 1 conflates the pipe-composition win (`exec("grep X | head -5")` replaces 2+ semantic calls) with the XQ1 question (`exec("cat X.md")` vs `read_document("X.md")` for simple single-file reads). 1b isolates the XQ1 signal.
+  - Target: >30% of single-file read patterns via `exec("cat ...")` (vs `read_document`) in 30 days
+  - Instrumentation notes: Classify each exec call by command pattern; single-cat calls count toward 1b
 - **Metric 2 — Tool-call count for "find and read" patterns**
   - Baseline: measure pre-ship (informal — 3 calls typical: grep, curl, jq)
   - Target: 1 call via `exec`
@@ -178,7 +183,8 @@ Snapshot as of baseline commit 9c346cb (this section describes current state *be
   interface ShadowCommit {
     hash: string; date: string;                // ISO-8601
     writerId: string; writerName: string;
-    isAgent: boolean | null;                   // via parseWriterId() in core (FR20). null = writerId cannot be classified (legacy commits, external git operations outside OK); agents should treat as indeterminate.
+    isAgent: boolean | null;                   // convenience boolean; null means indeterminate, see writerClassification for the disambiguated value
+    writerClassification: 'agent' | 'human' | 'upstream' | 'server' | 'unknown';  // unambiguous discriminator from parseWriterId() (FR20). 'unknown' = writerId doesn't match any known prefix (legacy commits, external git operations outside OK). Agents reasoning about attribution should prefer this field over isAgent. isAgent is kept as a convenience: true iff classification === 'agent'; false iff 'human'; null iff 'upstream' | 'server' | 'unknown' (indeterminate for "who edited this?" question).
     message: string; branch: string;
   }
   ```
@@ -245,7 +251,7 @@ Snapshot as of baseline commit 9c346cb (this section describes current state *be
 
 | ID | Assumption | Confidence | Verification plan | Expiry | Status |
 |---|---|---|---|---|---|
-| A1 | Strategic thesis ("OK as default surface for agents") is correct; internal counter-signal (hybrid recommendation) consciously overridden | MEDIUM-HIGH | Post-ship telemetry (Metric 1): `>50%` `exec` share in 30 days validates the bet; `<25%` invalidates it. Between the two — L2-aggressive wasn't aggressive enough; consider L3 (unregister semantic tools). **Rollback communication** (bot review 💭 #1): if we revert to hybrid after agents learn exec-primary, the INSTRUCTIONS rewrite is accompanied by a bump to a `mcp_instructions_version` string in server responses so clients detect the posture change; the rewritten INSTRUCTIONS explicitly states "Prior guidance preferred `exec`; current guidance is that `exec` and semantic tools are both first-class — use whichever matches your call site." Tool registrations themselves never change; no client breakage. | 30 days post-ship | Active |
+| A1 | Strategic thesis ("OK as default surface for agents") is correct; internal counter-signal (hybrid recommendation) consciously overridden | MEDIUM-HIGH | Post-ship telemetry (Metric 1 + Metric 1b): `>50%` overall `exec` share AND `>30%` on single-file reads in 30 days validates the bet; `<25%` overall invalidates it. Between the two — L2-aggressive wasn't aggressive enough; consider L3 (unregister semantic tools). **Rollback communication:** the INSTRUCTIONS text itself carries an inline version tag as its first line (e.g., `# MCP Instructions v2 — exec-primary (2026-04-13)`). Agents consume the INSTRUCTIONS on every session, so they naturally see the version bump on rollback. The rewritten INSTRUCTIONS explicitly states: "Prior guidance preferred `exec`; current guidance is that `exec` and semantic tools are both first-class — use whichever matches your call site." Tool registrations themselves never change; no client breakage. | 30 days post-ship | Active |
 | A2 | Shared `enrichPath()` + CLI-side `readShadowLog()` helper factored as DEP-1 PR before V0-24 impl. Per D18, scope is CLI-only — no server edits | HIGH | Before V0-24 impl: confirm PR exists, extracts `enrichPath`, adds `readShadowLog`, migrates `read_document`+`search` to shared helper. No `/api/shadow-log` endpoint. `modified` fs.stat + batch-backlinks remain §15 Future Work. | Before V0-24 impl | Active |
 | A3 | just-bash's default interpreter timeout and our 16 MB soft/hard caps (FR19, D9) are adequate for the Conservative-plus command set over expected content-dir sizes | MEDIUM | Benchmark `grep -r` / `find` via just-bash over a 1000-file content dir during DEP-1 impl; confirm sub-5s typical and bundle-budget FR19 holds | Before V0-24 impl close | Active |
 | A4 | No agent harness today *requires* streaming MCP responses for tools in `exec`'s expected usage pattern (read, list, grep) | HIGH | Spot-check MCP SDK version + Claude Code / Cursor / Codex MCP client behavior | Confirmed — `@modelcontextprotocol/sdk@1.29.0` supports `structuredContent` with `outputSchema`; streaming not required | Resolved |

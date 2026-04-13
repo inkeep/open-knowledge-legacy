@@ -170,3 +170,21 @@ Second-round review after commit 081abc2. Bot flagged 2 Major + 3 Minor + 3 Cons
 - **R2 💭 `message` vs `subject`:** kept `message` (more natural for commit payloads; spec-wide); old `GitLogEntry.subject` belongs to the deleted code path so no consistency pressure.
 
 **Status:** spec ready for re-review. Implementation restart still pending — the 4 committed impl commits (US-001..US-004) + stashed US-005 need to be reset and redone against the fully-revised spec (new EnrichedMeta shape, FR20 core-location, NG8, FR21 mtime-scan).
+
+## 2026-04-14 R3 — PR #103 third review round (polish + attribution clarity)
+
+Third-round review after commit aab1608. Bot flagged 1 Major + 3 Minor + 2 Consider; all addressed.
+
+**Major:**
+- R3 🟠 **ShadowCommit.isAgent semantics disambiguated.** `isAgent: boolean | null` was ambiguous ("unknown" vs "not an agent"). Added `writerClassification: 'agent' | 'human' | 'upstream' | 'server' | 'unknown'` field from `parseWriterId()` (already computed in FR20). `isAgent` stays as a convenience derived from classification, but agents reasoning about attribution should prefer the unambiguous string discriminator.
+
+**Minor:**
+- R3 🟡 FR3 `D?` placeholder → `D15` reference; also inlined the full Conservative-plus allowlist for clarity
+- R3 🟡 `evidence/README.md` rewritten — now lists the four files that actually exist (`worldmodel.md`, `internal-prior-art-contradicts-direction.md`, `enrichment-data-gaps.md`, `shadow-repo-identity-and-sdk.md`); removed the stale "pending" entries
+- R3 🟡 §5 interaction-state matrix gained a binary-content row — agents running `exec("cat diagram.png")` now get a warning banner + NG8 pointer instead of silent binary garbage
+
+**Consider items accepted:**
+- R3 💭 A1 rollback communication clarified — `mcp_instructions_version` lives inline on the first line of INSTRUCTIONS (e.g., `# MCP Instructions v2 — exec-primary (2026-04-13)`). Simpler than a separate metadata field; guaranteed to reach every agent since INSTRUCTIONS are consumed per session.
+- R3 💭 Metric 1b added — single-file-read composition (`exec("cat X")` vs `read_document`). Isolates the XQ1 question from the pipe-composition win. Target: >30% share in 30 days.
+
+**Status:** spec now has **APPROVE** from R3 review. Implementation restart still pending; the 4 committed impl commits + stashed US-005 need to be reset against the fully-revised spec across R1 + R2 + R3.
