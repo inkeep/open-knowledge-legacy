@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildTree, type DocEntry } from './file-tree-utils';
+import { buildTree, collectFolderPaths, computeAncestors, type DocEntry } from './file-tree-utils';
 
 function doc(docName: string): DocEntry {
   return { docName, size: 100, modified: '2026-01-01T00:00:00Z' };
@@ -150,5 +150,70 @@ describe('buildTree', () => {
     expect(file.isSymlink).toBe(true);
     expect(file.canonicalDocName).toBe('target');
     expect(file.targetPath).toBe('target.md');
+  });
+});
+
+describe('computeAncestors', () => {
+  test('returns empty array for null', () => {
+    expect(computeAncestors(null)).toEqual([]);
+  });
+
+  test('returns empty array for empty string', () => {
+    expect(computeAncestors('')).toEqual([]);
+  });
+
+  test('returns empty array for top-level docName', () => {
+    expect(computeAncestors('README')).toEqual([]);
+  });
+
+  test('returns single ancestor for one-level nesting', () => {
+    expect(computeAncestors('docs/guide')).toEqual(['docs']);
+  });
+
+  test('returns ancestors from shallowest to deepest for multi-level path', () => {
+    expect(computeAncestors('a/b/c')).toEqual(['a', 'a/b']);
+  });
+
+  test('handles deeply nested paths', () => {
+    expect(computeAncestors('a/b/c/d/e')).toEqual(['a', 'a/b', 'a/b/c', 'a/b/c/d']);
+  });
+
+  test('returns stable results across multiple calls', () => {
+    const first = computeAncestors('x/y/z');
+    const second = computeAncestors('x/y/z');
+    expect(first).toEqual(second);
+  });
+});
+
+describe('collectFolderPaths', () => {
+  test('returns empty set for empty tree', () => {
+    expect(collectFolderPaths([])).toEqual(new Set());
+  });
+
+  test('returns empty set for tree with only files', () => {
+    const tree = buildTree([doc('README'), doc('CHANGELOG')]);
+    expect(collectFolderPaths(tree)).toEqual(new Set());
+  });
+
+  test('returns folder paths for single-level nesting', () => {
+    const tree = buildTree([doc('docs/guide'), doc('docs/intro')]);
+    expect(collectFolderPaths(tree)).toEqual(new Set(['docs']));
+  });
+
+  test('returns all folder paths for deeply nested tree', () => {
+    const tree = buildTree([doc('a/b/c/d')]);
+    expect(collectFolderPaths(tree)).toEqual(new Set(['a', 'a/b', 'a/b/c']));
+  });
+
+  test('handles mixed file and folder trees', () => {
+    const tree = buildTree([doc('README'), doc('docs/guide'), doc('reports/a/REPORT')]);
+    expect(collectFolderPaths(tree)).toEqual(new Set(['docs', 'reports', 'reports/a']));
+  });
+
+  test('returns stable results across multiple calls', () => {
+    const tree = buildTree([doc('x/y/z')]);
+    const first = collectFolderPaths(tree);
+    const second = collectFolderPaths(tree);
+    expect(first).toEqual(second);
   });
 });
