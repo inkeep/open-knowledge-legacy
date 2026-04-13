@@ -29,6 +29,7 @@ export {
 } from './extensions/jsx-tokenizer.ts';
 export { LinkFidelity } from './extensions/link-fidelity.ts';
 export { LinkRefDefFidelity } from './extensions/link-ref-def-fidelity.ts';
+export { List, ListItem, ListItemNode, ListNode } from './extensions/list.ts';
 export { ListItemFidelity } from './extensions/list-item-fidelity.ts';
 export { OrderedListFidelity } from './extensions/ordered-list-fidelity.ts';
 export { sharedExtensions } from './extensions/shared.ts';
