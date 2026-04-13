@@ -4,6 +4,16 @@ Append-only process history. Most recent first.
 
 ---
 
+## 2026-04-14 — D30: directory enrichment (V0-24.3)
+
+Post-`[V0-24.2]` catalog teardown uncovered that `exec("ls <dir>")` against a folder containing only subdirectories returned empty `enrichedPaths` — agents got folder names with zero metadata. The persisted `INDEX.md` catalogs used to fill this role; D26 removed them without the promised on-demand replacement.
+
+**D30 LOCKED** — `ls` output enriches directories with a new `DirectoryMeta` shape (`directMdCount`, `recursiveMdCount`, `childDirCount`, `mostRecentMd`, `truncated`) computed via bounded recursive walk. `structuredContent.enrichedPaths` element type widens to `EnrichedEntry = EnrichedMeta | DirectoryMeta` (discriminated by `type: 'directory'`). This IS the on-demand catalog view D26 promised.
+
+FR14 rewritten to document the union; §9 data model updated.
+
+Shipped as `[V0-24.3]` (commit 41b2b26 on `impl/v0-24`). No open questions; no outstanding decisions.
+
 ## 2026-04-13 — Spec scaffolded
 
 - Intake complete: SCR problem framing + 5-probe stress-test (observation probe flagged weak, captured as A1).
