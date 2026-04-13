@@ -48,22 +48,19 @@ export class MarkdownManager {
    * Parse a markdown string to TipTap JSONContent.
    */
   parse(markdown: string): JSONContent {
-    try {
-      const doc = parseMd(markdown, {
-        schema: this.schema,
-        handlers: this.handlers,
-        pmNodeHandlers: this.pmNodeHandlers,
-        pmMarkHandlers: this.pmMarkHandlers,
-      });
-      return doc.toJSON() as JSONContent;
-    } catch {
-      // Empty/whitespace-only content may produce an invalid doc (no block children).
-      // Return a minimal valid document with an empty paragraph.
+    if (!markdown.trim()) {
       return {
         type: 'doc',
         content: [{ type: 'paragraph', content: [] }],
       };
     }
+    const doc = parseMd(markdown, {
+      schema: this.schema,
+      handlers: this.handlers,
+      pmNodeHandlers: this.pmNodeHandlers,
+      pmMarkHandlers: this.pmMarkHandlers,
+    });
+    return doc.toJSON() as JSONContent;
   }
 
   /**
@@ -208,23 +205,18 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // ── Tier B fidelity handlers — read node.data.* from position-slice walker ──
 
-  // emphasis / italic — read sourceDelimiter → map to schema attr name
-  const emphMark = m.emphasis ?? m.italic;
-  if (emphMark) {
-    // Detect attr name: 'sourceDelimiter' (post-rename) or 'emphDelimiter' (pre-rename)
-    const emphAttr = emphMark.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'emphDelimiter';
-    handlers.emphasis = toPmMark(emphMark, (node: any) => ({
+  // emphasis — read sourceDelimiter → map to schema attr name
+  if (m.emphasis) {
+    const emphAttr = m.emphasis.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'emphDelimiter';
+    handlers.emphasis = toPmMark(m.emphasis, (node: any) => ({
       [emphAttr]: node.data?.sourceDelimiter ?? '*',
     }));
   }
 
-  // strong / bold — read sourceDelimiter → map to schema attr name
-  const strongMark = m.strong ?? m.bold;
-  if (strongMark) {
-    const strongAttr = strongMark.spec.attrs?.sourceDelimiter
-      ? 'sourceDelimiter'
-      : 'strongDelimiter';
-    handlers.strong = toPmMark(strongMark, (node: any) => ({
+  // strong — read sourceDelimiter → map to schema attr name
+  if (m.strong) {
+    const strongAttr = m.strong.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'strongDelimiter';
+    handlers.strong = toPmMark(m.strong, (node: any) => ({
       [strongAttr]: node.data?.sourceDelimiter ?? '**',
     }));
   }
@@ -260,12 +252,11 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     };
   }
 
-  // thematicBreak / horizontalRule — read sourceRaw → map to schema attr name
-  const hrNode = n.thematicBreak ?? n.horizontalRule;
-  if (hrNode) {
-    const hrAttr = hrNode.spec.attrs?.sourceRaw ? 'sourceRaw' : 'horizontalRuleRaw';
+  // thematicBreak — read sourceRaw → map to schema attr name
+  if (n.thematicBreak) {
+    const hrAttr = n.thematicBreak.spec.attrs?.sourceRaw ? 'sourceRaw' : 'horizontalRuleRaw';
     handlers.thematicBreak = (node: any) =>
-      hrNode.createAndFill({
+      n.thematicBreak.createAndFill({
         [hrAttr]: node.data?.sourceRaw ?? '---',
       });
   }
@@ -279,11 +270,8 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       });
   }
 
-  // Lists — read bulletMarker + listMarkerDelimiter
-  // Pre-rename: separate bulletList + orderedList; Post-rename: unified list
-  const listItemNode = n.listItem;
+  // Lists — read bulletMarker + listMarkerDelimiter (unified list node, D15)
   if (n.list) {
-    // Unified list node (post D15)
     handlers.list = toPmNode(n.list, (node: any) => ({
       ordered: !!node.ordered,
       start: node.start ?? 1,
@@ -291,34 +279,9 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       bulletMarker: node.data?.bulletMarker ?? null,
       listMarkerDelimiter: node.data?.listMarkerDelimiter ?? null,
     }));
-  } else {
-    // Pre-rename: route mdast list to bulletList or orderedList based on node.ordered
-    handlers.list = (node: any, _: any, state: any) => {
-      const children = state.all(node);
-      if (node.ordered && n.orderedList) {
-        return n.orderedList.createAndFill(
-          {
-            start: node.start ?? 1,
-            listMarkerDelimiter: node.data?.listMarkerDelimiter ?? '.',
-            ...(n.orderedList.spec.attrs?.loose != null ? { loose: !!node.spread } : {}),
-          },
-          children,
-        );
-      }
-      if (n.bulletList) {
-        return n.bulletList.createAndFill(
-          {
-            bulletMarker: node.data?.bulletMarker ?? '-',
-            ...(n.bulletList.spec.attrs?.loose != null ? { loose: !!node.spread } : {}),
-          },
-          children,
-        );
-      }
-      return null;
-    };
   }
-  if (listItemNode) {
-    handlers.listItem = toPmNode(listItemNode, (node: any) => ({
+  if (n.listItem) {
+    handlers.listItem = toPmNode(n.listItem, (node: any) => ({
       checked: node.checked ?? null,
       spread: !!node.spread,
     }));
@@ -480,11 +443,9 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  const hrNodeSer = n.thematicBreak ?? n.horizontalRule;
-  if (hrNodeSer) {
-    const name = n.thematicBreak ? 'thematicBreak' : 'horizontalRule';
-    const hrAttr = hrNodeSer.spec.attrs?.sourceRaw ? 'sourceRaw' : 'horizontalRuleRaw';
-    nodeHandlers[name] = (pmNode: any) => ({
+  if (n.thematicBreak) {
+    const hrAttr = n.thematicBreak.spec.attrs?.sourceRaw ? 'sourceRaw' : 'horizontalRuleRaw';
+    nodeHandlers.thematicBreak = (pmNode: any) => ({
       type: 'thematicBreak' as const,
       data: { sourceRaw: pmNode.attrs[hrAttr] },
     });
@@ -498,7 +459,7 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // Lists
+  // Lists (unified list node, D15)
   if (n.list) {
     nodeHandlers.list = fromPmNode('list', (pmNode: any) => ({
       ordered: pmNode.attrs.ordered ?? false,
@@ -509,22 +470,6 @@ function buildPmToMdastHandlers(schema: Schema): {
         listMarkerDelimiter: pmNode.attrs.listMarkerDelimiter,
       },
     }));
-  } else {
-    if (n.bulletList) {
-      nodeHandlers.bulletList = fromPmNode('list', (pmNode: any) => ({
-        ordered: false,
-        spread: pmNode.attrs.loose ?? false,
-        data: { bulletMarker: pmNode.attrs.bulletMarker },
-      }));
-    }
-    if (n.orderedList) {
-      nodeHandlers.orderedList = fromPmNode('list', (pmNode: any) => ({
-        ordered: true,
-        start: pmNode.attrs.start ?? 1,
-        spread: pmNode.attrs.loose ?? false,
-        data: { listMarkerDelimiter: pmNode.attrs.listMarkerDelimiter },
-      }));
-    }
   }
 
   if (n.listItem) {
@@ -595,22 +540,16 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   // Marks — carry fidelity data back to mdast
-  const serEmphMark = m.emphasis ?? m.italic;
-  if (serEmphMark) {
-    const name = m.emphasis ? 'emphasis' : 'italic';
-    const emphAttr = serEmphMark.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'emphDelimiter';
-    markHandlers[name] = fromPmMark('emphasis', (mark: any) => ({
+  if (m.emphasis) {
+    const emphAttr = m.emphasis.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'emphDelimiter';
+    markHandlers.emphasis = fromPmMark('emphasis', (mark: any) => ({
       data: { sourceDelimiter: mark.attrs[emphAttr] },
     }));
   }
 
-  const serStrongMark = m.strong ?? m.bold;
-  if (serStrongMark) {
-    const name = m.strong ? 'strong' : 'bold';
-    const strongAttr = serStrongMark.spec.attrs?.sourceDelimiter
-      ? 'sourceDelimiter'
-      : 'strongDelimiter';
-    markHandlers[name] = fromPmMark('strong', (mark: any) => ({
+  if (m.strong) {
+    const strongAttr = m.strong.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'strongDelimiter';
+    markHandlers.strong = fromPmMark('strong', (mark: any) => ({
       data: { sourceDelimiter: mark.attrs[strongAttr] },
     }));
   }

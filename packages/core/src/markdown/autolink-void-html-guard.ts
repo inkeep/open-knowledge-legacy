@@ -42,7 +42,7 @@ const HTML_CLOSE_TAG_RE = /<\/[a-zA-Z][a-zA-Z0-9]*\s*>/g;
  * Lowercase tags are standard HTML and should not be parsed as JSX.
  * Matches opening tags with optional attributes and optional self-closing slash.
  */
-const LOWERCASE_HTML_TAG_RE = /<([a-z][a-z0-9]*)(\s[^>]*)?\/?>/gi;
+const LOWERCASE_HTML_TAG_RE = /<([a-z][a-z0-9]*)(\s[^>]*)?\/?>/g;
 
 /**
  * Protect autolinks and HTML from MDX claiming.
@@ -102,6 +102,19 @@ export function restoreFromMdx() {
         (node.url.includes('\uE000') || node.url.includes('\uE001'))
       ) {
         node.url = restoreString(node.url);
+      }
+      // Restore in title and alt fields
+      if (
+        typeof node.title === 'string' &&
+        (node.title.includes('\uE000') || node.title.includes('\uE001'))
+      ) {
+        node.title = restoreString(node.title);
+      }
+      if (
+        typeof node.alt === 'string' &&
+        (node.alt.includes('\uE000') || node.alt.includes('\uE001'))
+      ) {
+        node.alt = restoreString(node.alt);
       }
     });
   };

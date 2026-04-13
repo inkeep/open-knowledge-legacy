@@ -15,9 +15,7 @@
  *
  * Keyboard shortcuts use prosemirror-schema-list utilities (wrapInList,
  * splitListItem, liftListItem, sinkListItem) which are designed for
- * nested list schemas. prosemirror-flat-list is a declared dependency
- * per D15 but its flat-schema commands are not used here — the nested
- * NodeSpec requires standard PM nested-list commands.
+ * nested list schemas.
  */
 
 import { findParentNode, InputRule, mergeAttributes, Node, wrappingInputRule } from '@tiptap/core';

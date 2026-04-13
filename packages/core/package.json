@@ -19,7 +19,6 @@
     "@tiptap/starter-kit": "^3.22.3",
     "mdast-util-from-markdown": "^2.0.3",
     "mdast-util-to-markdown": "^2.1.2",
-    "prosemirror-flat-list": "^0.5.8",
     "remark-directive": "^4.0.0",
     "remark-frontmatter": "^5.0.0",
     "remark-gfm": "^4.0.1",
@@ -27,6 +26,7 @@
     "remark-parse": "^11.0.0",
     "remark-stringify": "^11.0.0",
     "unified": "^11.0.5",
+    "vfile": "^6.0.0",
     "unist-util-visit": "^5.1.0",
     "yjs": "^13.6.30"
   },
