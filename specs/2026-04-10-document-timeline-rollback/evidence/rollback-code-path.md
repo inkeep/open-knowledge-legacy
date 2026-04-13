@@ -53,7 +53,7 @@ reconciledBase updates at three points:
 2. `onStoreDocument` — after successful disk write
 3. After reconciliation — `setReconciledBase(docName, result.newContent)`
 
-For rollback: update reconciledBase **inside the transaction** or immediately after, so the next L1 save uses the restored content as the merge base.
+For rollback: update reconciledBase **immediately after** the transaction (not inside — `setReconciledBase` is not a Y.Doc operation). The implementation calls `setReconciledBase(docName, markdown)` after `document.transact()` completes, so the next L1 save uses the restored content as the merge base.
 
 ## Transaction Origin
 

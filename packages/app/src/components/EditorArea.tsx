@@ -34,14 +34,13 @@ export function EditorArea({ isSourceMode, previewEntry, onNoDiff }: EditorAreaP
 
     let cancelled = false;
     const sha = previewEntry.sha;
+    const docName = activeDocName; // narrowed by guard above
     setPreviewLoading(true);
     setDiffLines(null);
 
     async function fetchDiff() {
       try {
-        const res = await fetch(
-          `/api/diff?docName=${encodeURIComponent(activeDocName!)}&to=${sha}`,
-        );
+        const res = await fetch(`/api/diff?docName=${encodeURIComponent(docName)}&to=${sha}`);
         if (cancelled) return;
         if (!res.ok) {
           setDiffLines([{ type: 'unchanged', text: '(Failed to load diff)' }]);

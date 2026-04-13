@@ -31,7 +31,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
-import { createPatch } from 'diff';
+import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import {
   AGENT_WRITE_ORIGIN,
@@ -39,6 +39,10 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+
+/** Transaction origin for rollback — colocated with AGENT_WRITE_ORIGIN for discoverability. */
+const ROLLBACK_ORIGIN = 'rollback-apply';
+
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
@@ -48,9 +52,9 @@ import { deleteReconciledBase, isWithinContentDir, safeContentPath, setReconcile
 import { type ShadowRef, saveVersion, shadowGit, type WriterIdentity } from './shadow-repo.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
-const ROLLBACK_ORIGIN = 'rollback-apply';
-
-/** Validates a docName is safe for use as a shadow git path component. */
+/** Validates a docName and builds a shadow-repo-safe path.
+ * Uses the same traversal check as safeContentPath (reject `..` and null bytes)
+ * but allows `/` for nested content directories (e.g. `test-content/test-doc`). */
 function safeDocPath(docName: string, contentRoot: string): { path: string } | { error: string } {
   if (!docName || docName.includes('..') || docName.includes('\0')) {
     return { error: 'Invalid document name' };
@@ -1273,13 +1277,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const docName = url.searchParams.get('docName') ?? '';
     const branch = url.searchParams.get('branch') ?? 'main';
 
-    if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
-      json(res, 400, { error: 'Invalid branch name' });
+    if (!docName) {
+      json(res, 400, { ok: false, error: 'docName query parameter is required' });
       return;
     }
 
-    const limit = Math.min(200, Number(url.searchParams.get('limit') ?? '50'));
-    const offset = Number(url.searchParams.get('offset') ?? '0');
+    if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
+      json(res, 400, { ok: false, error: 'Invalid branch name' });
+      return;
+    }
+
+    const rawLimit = Number(url.searchParams.get('limit') ?? '50');
+    const rawOffset = Number(url.searchParams.get('offset') ?? '0');
+    const limit = Math.min(200, Number.isFinite(rawLimit) ? rawLimit : 50);
+    const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
     const type = url.searchParams.get('type') ?? undefined;
     const author = url.searchParams.get('author') ?? undefined;
     const excludeAuthor = url.searchParams.get('excludeAuthor') ?? undefined;
@@ -1306,7 +1317,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         `[timeline] query docName=${docName} entries=${result.entries.length} duration=${duration}ms`,
       );
 
-      json(res, 200, result);
+      json(res, 200, { ok: true, ...result });
     } catch (e) {
       console.error('[history]', e);
       const message = e instanceof Error ? e.message : String(e);
@@ -1338,7 +1349,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const resolvedContentRoot = contentRoot ?? 'content';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
-      json(res, 400, { error: pathResult.error });
+      json(res, 400, { ok: false, error: pathResult.error });
       return;
     }
     const docPath = pathResult.path;
@@ -1346,7 +1357,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     // Validate SHA format
     if (!/^[0-9a-f]{40}$/i.test(sha)) {
-      json(res, 400, { error: 'Invalid commit SHA' });
+      json(res, 400, { ok: false, error: 'Invalid commit SHA' });
       return;
     }
 
@@ -1355,7 +1366,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         await sg.raw('cat-file', '-e', `${sha}:${docPath}`);
       } catch {
-        json(res, 404, { error: 'Document did not exist at this version' });
+        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
         return;
       }
 
@@ -1365,11 +1376,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const logLine = (await sg.raw('log', '-1', '--format=%aI%x00%an', sha)).trim();
       const [timestamp = '', author = ''] = logLine.split('\x00');
 
-      json(res, 200, { sha, content, timestamp, author });
+      json(res, 200, { ok: true, sha, content, timestamp, author });
     } catch (e) {
       console.error('[history-version]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 
@@ -1393,14 +1403,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const to = url.searchParams.get('to') ?? '';
 
     if (!to || !/^[0-9a-f]{40}$/i.test(to)) {
-      json(res, 400, { error: "'to' must be a valid 40-char commit SHA" });
+      json(res, 400, { ok: false, error: "'to' must be a valid 40-char commit SHA" });
       return;
     }
 
     const resolvedContentRoot = contentRoot ?? 'content';
     const pathResult = safeDocPath(docName, resolvedContentRoot);
     if ('error' in pathResult) {
-      json(res, 400, { error: pathResult.error });
+      json(res, 400, { ok: false, error: pathResult.error });
       return;
     }
     const docPath = pathResult.path;
@@ -1412,7 +1422,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       try {
         toContent = await sg.raw('show', `${to}:${docPath}`);
       } catch {
-        json(res, 404, { error: 'Document did not exist at the target version' });
+        json(res, 404, { ok: false, error: 'Document did not exist at the target version' });
         return;
       }
 
@@ -1422,14 +1432,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         try {
           fromContent = await sg.raw('show', `${from}:${docPath}`);
         } catch {
-          json(res, 404, { error: 'Document did not exist at the source version' });
+          json(res, 404, { ok: false, error: 'Document did not exist at the source version' });
           return;
         }
       } else {
         // from omitted — read current Y.Doc content directly (avoids creating an agent session)
         const doc = hocuspocus.documents.get(docName);
         if (!doc) {
-          json(res, 409, { error: 'Document is not currently open — open it in the editor first' });
+          json(res, 409, {
+            ok: false,
+            error: 'Document is not currently open — open it in the editor first',
+          });
           return;
         }
         fromContent = doc.getText('source').toString();
@@ -1451,11 +1464,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         if (change.removed) deletions += changeLines.length;
       }
 
-      json(res, 200, { lines, additions, deletions });
+      json(res, 200, { ok: true, lines, additions, deletions });
     } catch (e) {
       console.error('[diff]', e);
-      const message = e instanceof Error ? e.message : String(e);
-      json(res, 500, { error: message });
+      json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
 

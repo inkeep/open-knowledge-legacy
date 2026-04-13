@@ -83,7 +83,9 @@ function getAuthorColor(entry: TimelineEntry): string {
 
 function authorDot(entry: TimelineEntry) {
   const color = getAuthorColor(entry);
-  return <span className={`inline-block size-2 rounded-full shrink-0 ${color}`} />;
+  return (
+    <span aria-hidden="true" className={`inline-block size-2 rounded-full shrink-0 ${color}`} />
+  );
 }
 
 // ─── WIP Group component ──────────────────────────────────────────────────────

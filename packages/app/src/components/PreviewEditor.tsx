@@ -37,7 +37,10 @@ export function PreviewEditor({ lines }: PreviewEditorProps) {
           key={i}
           className={`whitespace-pre font-mono text-xs leading-5 ${lineStyle(line.type)}`}
         >
-          <span className="inline-block w-4 select-none text-right opacity-30 mr-2">
+          <span
+            aria-hidden="true"
+            className="inline-block w-4 select-none text-right opacity-30 mr-2"
+          >
             {linePrefix(line.type)}
           </span>
           {line.text}

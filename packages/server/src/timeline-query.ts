@@ -251,6 +251,10 @@ export async function getDocumentHistory(
       }
     }
 
+    // Sort by timestamp descending (newest first). Git log outputs are pre-sorted
+    // within each ref walk, but merging checkpoint + WIP results may interleave.
+    unique.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
     // Apply filters
     let filtered = unique;
 

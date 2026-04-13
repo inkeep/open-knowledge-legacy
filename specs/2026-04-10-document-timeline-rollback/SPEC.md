@@ -105,7 +105,7 @@
 | Priority | ID | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|---|
 | Must | FR1 | History list API endpoint | `GET /api/history?docName=<name>&branch=<branch>&limit=<n>&offset=<n>` returns paginated timeline entries sorted by `--author-date-order`, filtered to the requested file via `--full-history`. Each entry: `{ sha, timestamp, author, authorEmail, type, message }` where type is `checkpoint`, `wip`, or `upstream`. Supports filtering: `type` (checkpoint/wip/upstream, comma-separated), `author` (include by name), `excludeAuthor` (exclude by name). | Walks checkpoint ancestry + current WIP refs, merges by author date, applies filters post-merge |
-| Must | FR2 | Version content API endpoint | `GET /api/history/:sha?docName=<name>` returns the full markdown content of the document at the given commit via `git show <sha>:<docName>.md`. Returns 404 `{ error: "Document did not exist at this version" }` if the file is not in the tree at that commit (validated via `git cat-file -e` before `git show`). | Used for preview panel and restore |
+| Must | FR2 | Version content API endpoint | `GET /api/history/:sha?docName=<name>` returns the full markdown content of the document at the given commit via `git show <sha>:<docName>.md`. Returns 404 `{ ok: false, error: "Document did not exist at this version" }` if the file is not in the tree at that commit (validated via `git cat-file -e` before `git show`). | Used for preview panel and restore |
 | Must | FR3 | Diff API endpoint | `GET /api/diff?docName=<name>&from=<sha>&to=<sha>` returns a unified diff between two versions of the document. If `from` is omitted, diffs against current Y.Doc content. | Uses `diff` library (already in deps) for markdown-level diff |
 | Must | FR4 | Rollback API endpoint | `POST /api/rollback` with body `{ docName, commitSha }`. Validates file exists at commit via `git cat-file -e` (404 if not). Reads historical markdown from shadow → applies to Y.Doc via `updateYFragment` transact with string origin `'rollback-apply'` (no `skipStoreHooks` — L1 persistence fires normally, `registerWrite` in file-watcher prevents re-detection loop) → updates `reconciledBase`. Returns `{ ok, restoredFrom, timestamp }`. | Append-only: creates a new CRDT transaction, does NOT rewrite history. All connected clients see the change via CRDT sync. Rollback transaction propagates to clients as a remote update — client-side observers A/B skip remote transactions, so no feedback loops. |
 | Must | FR5 | Timeline panel UI (right-side Sheet) | Collapsible right-side panel (~350px) triggered by clock icon in EditorHeader. Shows chronological list of timeline entries. Checkpoints are always visible; WIP entries between checkpoints are collapsed behind "Show N auto-saves" expander. Current (pre-checkpoint) WIP entries expanded by default. Panel is a navigation list only — no content preview in the panel itself. | Uses existing Sheet component with `side="right"` |
@@ -119,7 +119,7 @@
 | Must | FR13 | Multi-parent checkpoint commits | `saveVersion()` collects ALL writer WIP refs as parents (not just the first), deduplicates by SHA (`[...new Set(parents)]`). When `parents` is empty (no activity since last checkpoint), falls back to parenting on the latest checkpoint ref. Ensures all per-writer WIP chains survive across Save Versions via checkpoint ancestry. | ~10 line change in shadow-repo.ts. Experimentally verified with octopus merges. |
 | Must | FR17 | Standalone-mode checkpoints | When no project repo exists, `saveVersion()` skips the project commit step (step 1) and creates only the shadow checkpoint + resets WIP refs. Checkpoint ref is named `refs/checkpoints/<branch>/<shadow-commit-sha>` (using the shadow commit's own SHA instead of a project commit SHA). The API endpoint (`POST /api/save-version`) removes the `!projectRoot` guard — the shadow ref is the only required dependency. | ~20 lines of conditional logic in saveVersion(). Ensures standalone users get the full two-tier timeline. |
 | Should | FR14 | Timeline live refresh | While the timeline panel is open, the entry list re-fetches when the document is saved (detectable by polling `GET /api/history` on a 10s interval while the panel is visible, or triggered by L2 commit completion if a signal is available). New entries appear at the top of the list. | Prevents stale timeline when panel stays open during editing |
-| Must | FR15 | UI states: loading, empty, error | **Loading:** Skeleton/spinner while `GET /api/history` is in flight. **Empty:** "No history yet" message for brand-new documents with zero commits. **Error:** "History unavailable" banner if shadow repo is missing/corrupt (graceful degradation). **Preview loading:** Spinner while `GET /api/history/:sha` fetches content. **Rollback error:** Toast "Restore failed — document unchanged" if `POST /api/rollback` returns an error. | Defensive UI for all non-happy-path states |
+| Must | FR15 | UI states: loading, empty, error | **Loading:** Skeleton/spinner while `GET /api/history` is in flight. **Empty:** "No history yet" message for brand-new documents with zero commits. **Error:** "History unavailable" banner if shadow repo is missing/corrupt (graceful degradation). **Preview loading:** Spinner while `GET /api/history/:sha` fetches content. **Rollback error:** Inline error text "Restore failed — document unchanged" in the editor header (auto-dismisses after 4s) if `POST /api/rollback` returns an error. | Defensive UI for all non-happy-path states |
 | Must | FR16 | No-checkpoint rendering | When zero checkpoints exist (new install, or standalone mode), all WIP entries display as a flat chronological list with no collapsing. The `type=checkpoint` fast path returns an empty list, which is correct. | First Save Version creates the first checkpoint anchor |
 
 ### Non-functional requirements
@@ -208,6 +208,7 @@ Query parameters:
 Response:
 ```json
 {
+  "ok": true,
   "entries": [
     {
       "sha": "abc123def456...",
@@ -263,6 +264,7 @@ Query parameters:
 Response:
 ```json
 {
+  "ok": true,
   "sha": "abc123...",
   "content": "---\ntitle: Introduction\n---\n\n# Welcome\n\nThis is the document content at that point in time.",
   "timestamp": "2026-04-10T14:30:00Z",
@@ -282,9 +284,14 @@ Query parameters:
 Response:
 ```json
 {
-  "diff": "--- a/intro.md\n+++ b/intro.md\n@@ -3,4 +3,6 @@\n...",
-  "additions": 12,
-  "deletions": 3
+  "ok": true,
+  "lines": [
+    { "type": "unchanged", "text": "# Welcome" },
+    { "type": "removed", "text": "Old paragraph" },
+    { "type": "added", "text": "New paragraph" }
+  ],
+  "additions": 1,
+  "deletions": 1
 }
 ```
 
@@ -406,7 +413,7 @@ Clicking a timeline entry puts the main editor into a **read-only preview/diff m
 - The Visual/Markdown mode toggle is hidden during preview mode
 
 **Attribution colors:**
-- Human: `azure-500` (#3784ff) dot + name
+- Human: `var(--color-azure-blue)` (#3784ff) dot + name
 - Agent: `agent` (#d97757) dot + name  
 - Upstream: `gray-400` dot + "upstream sync"
 

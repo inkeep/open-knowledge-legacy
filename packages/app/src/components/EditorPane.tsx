@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
@@ -13,6 +13,14 @@ export function EditorPane() {
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up error dismissal timer on unmount
+  useEffect(() => {
+    return () => {
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+    };
+  }, []);
 
   const { activeDocName } = useDocumentContext();
 
@@ -61,7 +69,8 @@ export function EditorPane() {
         setRestoreError(null);
       } else {
         setRestoreError('Restore failed — document unchanged');
-        setTimeout(() => setRestoreError(null), 4000);
+        if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = setTimeout(() => setRestoreError(null), 4000);
       }
     } catch {
       setRestoreError('Restore failed — document unchanged');
