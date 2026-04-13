@@ -1,4 +1,4 @@
-# Enriched Read Tools + /consolidate
+# Enriched Read Tools + `consolidate`
 
 **Status:** Draft
 **Owner(s):** Tim Cardona
@@ -14,15 +14,15 @@
 
 **Situation:** The open-knowledge MCP server has a mature set of tools already built. Andrew shipped write/edit/list/undo/redo as Hocuspocus-routed document tools (#50). Mike shipped backlinks (get_backlinks, get_forward_links, get_orphans, get_hubs) + `/api/backlinks` HTTP endpoint (#71). Andrew's #47 refactored config from `wiki.roots` to glob-based `content.include/exclude`, and mirror-catalog auto-generates INDEX.md files at `.open-knowledge/catalogs/` mirroring the whole project tree. Each tracked markdown file owns its inline frontmatter (title, description, tags); catalogs aggregate this into browsable folder views.
 
-**Complication:** Reads and search are unenriched. When an agent wants to read an article, it calls native `Read` and gets raw markdown content — no git history, no backlinks, no catalog context attached. To get those, the agent makes separate tool calls (`get_backlinks`, native Grep against catalog files, `git log` via Bash). For search, the agent uses native `Grep` and gets raw line matches with no article metadata — it can't tell which article each match belongs to or what that article is about without additional reads. Meanwhile, the content lifecycle has a gap: `/ingest` captures external sources, `/research` analyzes them into provisional findings, but there's no tool to promote research → canonical articles. Agents do this ad-hoc, inconsistently, without the guidance that `/ingest` and `/research` provide.
+**Complication:** Reads and search are unenriched. When an agent wants to read an article, it calls native `Read` and gets raw markdown content — no git history, no backlinks, no catalog context attached. To get those, the agent makes separate tool calls (`get_backlinks`, native Grep against catalog files, `git log` via Bash). For search, the agent uses native `Grep` and gets raw line matches with no article metadata — it can't tell which article each match belongs to or what that article is about without additional reads. Meanwhile, the content lifecycle has a gap: `ingest` captures external sources, `research` analyzes them into provisional findings, but there's no tool to promote research → canonical articles. Agents do this ad-hoc, inconsistently, without the guidance that `ingest` and `research` provide.
 
-**Resolution:** Three new MCP tools — `read_file` (enriched read), `search` (enriched grep), `/consolidate` (workflow tool) — that fill the gaps without duplicating existing work. `read_file` bundles file contents + recent git history + backlinks + catalog context in one call. `search` groups grep matches by file and attaches article metadata. `/consolidate` gives the agent an instructional workflow for research → article promotion, mirroring the `/ingest` and `/research` pattern. Two supporting primitives: a `just-bash` wrapper for sandboxed shell operations (used by `read_file` and `search`), and a `CatalogStore` read interface that lets a future SQLite backend slot in without touching tool code.
+**Resolution:** Three new MCP tools — `read_document` (enriched read), `search` (enriched grep), `consolidate` (workflow tool) — that fill the gaps without duplicating existing work. `read_document` bundles file contents + recent git history + backlinks + catalog context in one call. `search` groups grep matches by file and attaches article metadata. `consolidate` gives the agent an instructional workflow for research → article promotion, mirroring the `ingest` and `research` pattern. Two supporting primitives: a `just-bash` wrapper for sandboxed shell operations (used by `read_document` and `search`), and a `CatalogStore` read interface that lets a future SQLite backend slot in without touching tool code.
 
 ## 2) Goals
 
 - G1: Agents get enriched context on every wiki read — metadata, git history, backlinks, catalog position — in one tool call
 - G2: Agents searching the wiki get matches grouped by file with article metadata attached, so they can evaluate relevance before reading
-- G3: Research findings have a clear, guided path to canonical articles via `/consolidate`
+- G3: Research findings have a clear, guided path to canonical articles via `consolidate`
 - G4: Shell operations inside our tools use a standardized, sandboxed primitive (just-bash) — no ad-hoc `child_process` calls
 - G5: Catalog data access is abstracted behind an interface so future SQLite storage is a drop-in replacement
 - G6: No duplication of Andrew's or Mike's work — new tools fill orthogonal gaps
@@ -30,7 +30,7 @@
 ## 3) Non-goals
 
 - **[NEVER]** NG1: Replace `write_document`, `edit_document`, `list_documents`, `undo_agent_edit`, `redo_agent_edit` (Andrew #50) — existing tools are stable and correct
-- **[NEVER]** NG2: Replace `get_backlinks`, `get_forward_links`, `get_orphans`, `get_hubs` (Mike #71) — `read_file` consumes the backlinks endpoint, not replaces it
+- **[NEVER]** NG2: Replace `get_backlinks`, `get_forward_links`, `get_orphans`, `get_hubs` (Mike #71) — `read_document` consumes the backlinks endpoint, not replaces it
 - **[NEVER]** NG3: Build CLI subcommands (`open-knowledge read`, `ok` binary) — just-bash is an internal implementation primitive, not an agent-facing surface
 - **[NOT NOW]** NG4: `list_files` MCP tool — agents read `.open-knowledge/catalogs/<path>/INDEX.md` directly via native `Read`. Revisit if agents struggle to navigate catalogs.
 - **[NOT NOW]** NG5: SQLite catalog backend — interface design only in this spec. Actual SQLite impl is future work.
@@ -41,7 +41,7 @@
 
 ## 4) Personas / consumers
 
-- **P1: AI agent in Claude Code (primary)** — uses `read_file` to load wiki context, `search` to discover relevant articles, `/consolidate` to promote research to canonical
+- **P1: AI agent in Claude Code (primary)** — uses `read_document` to load wiki context, `search` to discover relevant articles, `consolidate` to promote research to canonical
 - **P2: AI agent in Cursor** — same tools via MCP
 - **P3: Developer supervising the agent** — benefits indirectly via better agent output (agent has fuller context on each read)
 
@@ -50,7 +50,7 @@
 ### Agent reads a wiki article (enriched)
 
 1. Agent wants to reason about SSO migration
-2. Calls `read_file({ path: "articles/auth/sso.md" })`
+2. Calls `read_document({ path: "articles/auth/sso.md" })`
 3. Gets back in one response:
    - File's frontmatter (title, description, tags)
    - File contents
@@ -65,12 +65,12 @@
 2. Calls `search({ query: "authentication" })`
 3. Gets back matches grouped by file — each file annotated with its title, description, tags
 4. Agent picks the most relevant article based on metadata, not just raw match text
-5. Uses `read_file` to load it with full enrichment
+5. Uses `read_document` to load it with full enrichment
 
 ### Agent consolidates research into a canonical article
 
 1. Developer says "consolidate the CRDT research into a canonical article"
-2. Agent calls `/consolidate({ topic: "CRDT alternatives" })`
+2. Agent calls `consolidate({ topic: "CRDT alternatives" })`
 3. Tool returns instructional text: read `research/crdt-*.md`, read referenced `external-sources/*.md`, synthesize, write to `articles/` via `write_document` with proper frontmatter
 4. Agent follows the instructions, produces a canonical article
 5. Mirror-catalog picks up the new article, updates INDEX.md automatically
@@ -81,24 +81,24 @@
 
 | Priority | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|
-| Must | `read_file` MCP tool returns content + metadata + git history + backlinks + catalog context | Given a path: returns (1) file contents, (2) frontmatter title/description/tags, (3) last N git log entries, (4) backlinks (if Hocuspocus up), (5) parent folder's catalog title/description | N default 5, configurable |
-| Must | `read_file` gracefully degrades when Hocuspocus unavailable | Backlinks section omitted — does NOT error the whole read | Agents get content + history + catalog context regardless |
+| Must | `read_document` MCP tool returns content + metadata + git history + backlinks + catalog context | Given a path: returns (1) file contents, (2) frontmatter title/description/tags, (3) last N git log entries, (4) backlinks (if Hocuspocus up), (5) parent folder's catalog title/description | N default 5, configurable |
+| Must | `read_document` gracefully degrades when Hocuspocus unavailable | Backlinks section omitted — does NOT error the whole read | Agents get content + history + catalog context regardless |
 | Must | `search` MCP tool returns grep matches grouped by file with metadata | Matching lines + line numbers grouped by file, each file annotated with its frontmatter | Case-insensitive by default |
 | Must | `search` truncates at configurable max | Default 50 matches; output notes "N more not shown" when truncated | Configurable via `mcp.tools.search.max_results` |
-| Must | `/consolidate` MCP workflow tool returns instructional text | Handler returns `textResult` with step-by-step guidance, matching `ingest`/`research` pattern | No server call; instructional only |
-| Must | `just-bash` wrapper module standardizes shell operations | Exports `runShell`, `cat`, `gitLog`, `grep` helpers. Singleton Bash instance scoped to project root. | Used internally by `read_file` and `search` |
-| Must | `CatalogStore` interface abstracts catalog reads | `getCatalog(relDir)` and `getArticleMeta(relPath)` methods. `IndexMdCatalogStore` impl reads INDEX.md via bash. | `read_file` uses this; future SQLite impl drops in |
-| Must | Config schema adds `mcp.tools` section | `mcp.tools.read_file.history_depth` (default 5), `mcp.tools.search.max_results` (default 50) | New section in Zod schema |
-| Must | MCP instructions updated | `INSTRUCTIONS` in `server.ts` mentions `read_file`, `search`, `/consolidate` as primary tools for enriched reads / search / research promotion | Via `TOOL_DESCRIPTIONS` aggregation |
-| Should | `read_file` supports `since` parameter | Optional ISO timestamp; git log filtered to commits after that time | Useful for "what changed since last session" |
-| Should | Tools parallelize independent operations | `read_file` runs git log + backlinks fetch in `Promise.all` | Latency optimization |
+| Must | `consolidate` MCP workflow tool returns instructional text | Handler returns `textResult` with step-by-step guidance, matching `ingest`/`research` pattern | No server call; instructional only |
+| Must | `just-bash` wrapper module standardizes shell operations | Exports `runShell`, `cat`, `gitLog`, `grep` helpers. Singleton Bash instance scoped to project root. | Used internally by `read_document` and `search` |
+| Must | `CatalogStore` interface abstracts catalog reads | `getCatalog(relDir)` and `getArticleMeta(relPath)` methods. `IndexMdCatalogStore` impl reads INDEX.md via bash. | `read_document` uses this; future SQLite impl drops in |
+| Must | Config schema adds `mcp.tools` section | `mcp.tools.read_document.history_depth` (default 5), `mcp.tools.search.max_results` (default 50) | New section in Zod schema |
+| Must | MCP instructions updated | `INSTRUCTIONS` in `server.ts` mentions `read_document`, `search`, `consolidate` as primary tools for enriched reads / search / research promotion | Via `TOOL_DESCRIPTIONS` aggregation |
+| Should | `read_document` supports `since` parameter | Optional ISO timestamp; git log filtered to commits after that time | Useful for "what changed since last session" |
+| Should | Tools parallelize independent operations | `read_document` runs git log + backlinks fetch in `Promise.all` | Latency optimization |
 | Could | `search` supports glob scoping | Optional `include`/`exclude` glob patterns overriding config | Narrow search scope |
 
 ### Non-functional requirements
 
-- Performance: `read_file` completes in <200ms typical (shell ops <50ms each, HTTP to localhost <5ms)
+- Performance: `read_document` completes in <200ms typical (shell ops <50ms each, HTTP to localhost <5ms)
 - Performance: `search` handles wiki scale (<500 files) in <500ms
-- Reliability: `read_file` returns partial results when optional sources fail (e.g., Hocuspocus down → no backlinks, but rest works)
+- Reliability: `read_document` returns partial results when optional sources fail (e.g., Hocuspocus down → no backlinks, but rest works)
 - Security: just-bash wrapper escapes paths; no shell injection via user-supplied params
 - Testability: unit tests co-located with source, use fixture directories for integration
 
@@ -112,9 +112,9 @@
 │         (Claude Code / Cursor / Codex)                   │
 │                                                          │
 │  New tools:                                              │
-│    read_file    — enriched read                          │
+│    read_document    — enriched read                          │
 │    search       — enriched grep                          │
-│    /consolidate — research → article workflow            │
+│    consolidate — research → article workflow            │
 │                                                          │
 │  Existing tools (unchanged):                             │
 │    write_document, edit_document, list_documents,        │
@@ -129,7 +129,7 @@
 │                   MCP Server                             │
 │                (open-knowledge mcp)                      │
 │                                                          │
-│  read_file ── just-bash ──► cat, git log                │
+│  read_document ── just-bash ──► cat, git log                │
 │       │                                                  │
 │       ├── CatalogStore ──► .open-knowledge/catalogs/    │
 │       │                                                  │
@@ -139,13 +139,13 @@
 │       │                                                  │
 │       └── parseFrontmatter ──► article metadata         │
 │                                                          │
-│  /consolidate ── textResult(instructional text)         │
+│  consolidate ── textResult(instructional text)         │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### Tool 1: `read_file`
+### Tool 1: `read_document`
 
-**File:** `packages/cli/src/mcp/tools/read-file.ts` (new)
+**File:** `packages/cli/src/mcp/tools/read-document.ts` (new)
 
 **Input:**
 ```typescript
@@ -163,7 +163,10 @@
 5. `CatalogStore.getCatalog(dirname(path))` → parent folder's title/description
 6. `httpGet(serverUrl, '/api/backlinks?docName=<path-without-.md>')` → backlinks (optional)
 
-Steps 2-6 run in `Promise.all` where possible.
+**Dependency graph:**
+- Step 4 (`parseFrontmatter`) depends on Step 2 (`cat`) — needs content first
+- Steps 2, 3, 5, 6 are independent → run in `Promise.all`
+- Step 4 runs after Step 2 resolves
 
 **Output:**
 ```
@@ -221,9 +224,9 @@ Tags: auth, architecture
 - Line 8: Core authentication middleware handles...
 ```
 
-### Tool 3: `/consolidate`
+### Tool 3: `consolidate`
 
-**File:** `packages/cli/src/mcp/tools/consolidate.ts` (new)
+**File:** `packages/cli/src/mcp/toolsconsolidate.ts` (new)
 
 **Input:**
 ```typescript
@@ -292,7 +295,7 @@ export class IndexMdCatalogStore implements CatalogStore {
 }
 ```
 
-Used by `read_file` for catalog context. Future SQLite impl satisfies the same interface.
+Used by `read_document` for catalog context. Future SQLite impl satisfies the same interface.
 
 ### Config schema changes
 
@@ -302,7 +305,7 @@ Add:
 ```typescript
 mcp: z.object({
   tools: z.object({
-    read_file: z.object({
+    read_document: z.object({
       history_depth: z.number().int().min(0).default(5),
     }).default({ history_depth: 5 }),
     search: z.object({
@@ -317,22 +320,22 @@ mcp: z.object({
 **File:** `packages/cli/src/mcp/server.ts` (modify)
 
 Update `INSTRUCTIONS` to direct agents to new tools:
-- `read_file` — preferred over native `Read` for wiki files (enriched metadata)
+- `read_document` — preferred over native `Read` for wiki files (enriched metadata)
 - `search` — preferred over native `Grep` for wiki search (article-aware)
-- `/consolidate` — workflow for promoting research to canonical articles
+- `consolidate` — workflow for promoting research to canonical articles
 
 ## 8) Decision log
 
 | ID | Decision | Status | Rationale |
 |---|---|---|---|
-| D1 | Use just-bash as internal shell primitive | DIRECTED | Composable shell ops without reimplementing grep/find/git in JS. Sandboxed. Cloud-friendly (same primitive works in just-bash cloud sandbox). Installable from npm (`just-bash` v2.14.1). |
-| D2 | Backlinks always-on in `read_file`, graceful degrade if Hocuspocus unavailable | LOCKED | Tim explicitly directed always-on. When Hocuspocus down, omit backlinks section — don't error the whole read. |
+| D1 | Use just-bash as internal shell primitive | DIRECTED | Composable shell ops without reimplementing grep/find/git in JS. Sandboxed. Cloud-friendly (same primitive works in just-bash cloud sandbox). Installable from npm (`just-bash` v2.14.1). **Tradeoff acknowledged:** adds a dep for ~4 wrappers. If R1 benchmarks show unacceptable overhead, fall back to `node:child_process` — D1 is an architectural choice, not a lock. Chosen now to avoid retrofitting later when cloud surface lands. |
+| D2 | Backlinks always-on in `read_document`, graceful degrade if Hocuspocus unavailable | LOCKED | Tim explicitly directed always-on. When Hocuspocus down, omit backlinks section — don't error the whole read. |
 | D3 | `CatalogStore` interface for read-side abstraction | DIRECTED | Future SQLite backend drops in without touching tool code. Leave `mirror-catalog.ts` write path alone this PR. |
 | D4 | No replacement of existing Andrew/Mike tools | LOCKED | `write_document`, `list_documents`, `get_backlinks` etc. are stable. New tools fill orthogonal gaps. |
 | D5 | Per-tool config under `mcp.tools.<tool_name>.<setting>` | DIRECTED | Separation of "what to track" (`content`) vs "how tools behave" (`mcp`). |
 | D6 | No CLI subcommands; no `ok` binary | DIRECTED | just-bash is internal primitive only. Agents access via MCP. |
-| D7 | `/consolidate` follows `research`/`ingest` pattern — returns instructional text | DIRECTED | Consistent with existing workflow tools. No server call. |
-| D8 | `read_file` parallelizes independent operations via `Promise.all` | DIRECTED | Latency optimization. 3-4 shell ops + HTTP call otherwise serial. |
+| D7 | `consolidate` follows `research`/`ingest` pattern — returns instructional text | DIRECTED | Consistent with existing workflow tools. No server call. |
+| D8 | `read_document` parallelizes independent operations via `Promise.all` | DIRECTED | Latency optimization. 3-4 shell ops + HTTP call otherwise serial. |
 
 ## 9) Open questions
 
@@ -353,8 +356,8 @@ None. All P0 questions resolved through iterative discussion. P2 items folded in
 | ID | Risk | Severity | Mitigation |
 |---|---|---|---|
 | R1 | just-bash adds runtime dep for trivial shell ops | Medium | Benchmark during implementation. If overhead is unacceptable, fall back to `node:child_process`. D1 becomes a choice, not a lock. |
-| R2 | `read_file` latency from multiple ops | Medium | Parallelize independent ops (`Promise.all`). Target <200ms typical. |
-| R3 | Agent keeps using native `Read` instead of `read_file` | Medium | Update MCP `INSTRUCTIONS` to direct agents to enriched tools for wiki ops. |
+| R2 | `read_document` latency from multiple ops | Medium | Parallelize independent ops (`Promise.all`). Target <200ms typical. |
+| R3 | Agent keeps using native `Read` instead of `read_document` | Medium | Update MCP `INSTRUCTIONS` to direct agents to enriched tools for wiki ops. |
 | R4 | `CatalogStore` interface proves wrong shape when SQLite impl is built | Low | Interface is minimal (2 methods). Can evolve before SQLite ships. |
 | R5 | just-bash shell escaping bugs cause injection via path params | Medium | Use just-bash's parameterized API; unit tests with malicious fixture paths. |
 
@@ -367,16 +370,16 @@ None. All P0 questions resolved through iterative discussion. P2 items folded in
 | CLI subcommands (`open-knowledge read`, etc.) | Noted | If a cloud deployment or non-MCP surface needs the same functionality |
 | Multi-root config | Noted | If a real use case emerges for tracking files outside `content.dir` |
 | `CATALOGUE.md` rename (T2.6) | Identified | Naming decision deferred; revisit with team |
-| `read_file` includes inbound section anchors | Noted | When section-link resolution (`[[Page#Heading]]`) ships |
+| `read_document` includes inbound section anchors | Noted | When section-link resolution (`[[Page#Heading]]`) ships |
 | `search` semantic/vector search | Noted | When wiki grows beyond grep-feasible scale |
 
 ## 13) Agent constraints
 
 - **SCOPE:**
   - `packages/cli/src/bash/` — new (just-bash wrapper)
-  - `packages/cli/src/mcp/tools/read-file.ts` — new
+  - `packages/cli/src/mcp/tools/read-document.ts` — new
   - `packages/cli/src/mcp/tools/search.ts` — new
-  - `packages/cli/src/mcp/tools/consolidate.ts` — new
+  - `packages/cli/src/mcp/toolsconsolidate.ts` — new
   - `packages/cli/src/mcp/tools/index.ts` — modify (register new tools)
   - `packages/cli/src/content/catalog-store.ts` — new
   - `packages/cli/src/config/schema.ts` — modify (add `mcp.tools` section)

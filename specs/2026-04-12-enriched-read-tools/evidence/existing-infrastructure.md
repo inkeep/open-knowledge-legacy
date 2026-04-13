@@ -62,7 +62,7 @@ Mirror-catalog walks from `content.dir` (= project root), scans files matching `
 
 ## Workflow tool pattern (ingest.ts, research.ts)
 
-All three workflow tools follow this shape:
+Both existing workflow tools follow this shape (a third — `consolidate` — is proposed in this spec):
 
 ```typescript
 export const DESCRIPTION = [
