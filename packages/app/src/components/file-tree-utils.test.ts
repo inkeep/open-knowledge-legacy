@@ -103,4 +103,51 @@ describe('buildTree', () => {
     expect(tree[0].children[0].path).toBe('a/b');
     expect(tree[0].children[0].children[0].path).toBe('a/b/c');
   });
+
+  test('propagates symlink metadata to file TreeNode', () => {
+    const tree = buildTree([
+      { docName: 'bar', size: 100, modified: '2026-01-01T00:00:00Z' },
+      {
+        docName: 'foo',
+        size: 100,
+        modified: '2026-01-01T00:00:00Z',
+        isSymlink: true,
+        canonicalDocName: 'bar',
+        targetPath: 'bar.md',
+      },
+    ]);
+    const bar = tree.find((n) => n.name === 'bar')!;
+    const foo = tree.find((n) => n.name === 'foo')!;
+
+    expect(foo.isSymlink).toBe(true);
+    expect(foo.canonicalDocName).toBe('bar');
+    expect(foo.targetPath).toBe('bar.md');
+
+    expect(bar.isSymlink).toBeUndefined();
+    expect(bar.canonicalDocName).toBeUndefined();
+    expect(bar.targetPath).toBeUndefined();
+  });
+
+  test('folder nodes do not carry symlink metadata', () => {
+    const tree = buildTree([
+      {
+        docName: 'links/alias',
+        size: 100,
+        modified: '2026-01-01T00:00:00Z',
+        isSymlink: true,
+        canonicalDocName: 'target',
+        targetPath: 'target.md',
+      },
+    ]);
+    const folder = tree[0];
+    expect(folder.kind).toBe('folder');
+    expect(folder.isSymlink).toBeUndefined();
+    expect(folder.canonicalDocName).toBeUndefined();
+
+    const file = folder.children[0];
+    expect(file.kind).toBe('file');
+    expect(file.isSymlink).toBe(true);
+    expect(file.canonicalDocName).toBe('target');
+    expect(file.targetPath).toBe('target.md');
+  });
 });
