@@ -1399,7 +1399,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const { body: mdBody } = stripFrontmatter(markdown);
+      const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
       const parsedJson = mdManager.parse(mdBody);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
@@ -1414,6 +1414,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           ytext.delete(0, currentText.length);
           ytext.insert(0, markdown);
         }
+
+        // Update metadata map with restored frontmatter so persistence
+        // serializes the correct frontmatter on next L1 flush.
+        const metaMap = document.getMap('metadata');
+        metaMap.set('frontmatter', frontmatter);
       }, ROLLBACK_ORIGIN);
 
       setReconciledBase(docName, markdown);

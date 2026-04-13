@@ -1,3 +1,4 @@
+import type { DiffLine, TimelineEntry } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
@@ -10,7 +11,6 @@ import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import type { EditorMode } from './EditorPane';
 import { PreviewEditor } from './PreviewEditor';
-import type { TimelineEntry } from './TimelinePanel';
 
 interface EditorAreaProps {
   editorMode: EditorMode;
@@ -23,7 +23,7 @@ export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaPro
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  const [diffLines, setDiffLines] = useState<{ type: string; text: string }[] | null>(null);
+  const [diffLines, setDiffLines] = useState<DiffLine[] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
 
   // Fetch diff when previewEntry changes — always show the diff view.
@@ -44,12 +44,12 @@ export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaPro
         const res = await fetch(`/api/diff?docName=${encodeURIComponent(docName)}&to=${sha}`);
         if (cancelled) return;
         if (!res.ok) {
-          setDiffLines([{ type: 'unchanged', text: '(Failed to load diff)' }]);
+          setDiffLines([{ type: 'unchanged' as const, text: '(Failed to load diff)' }]);
           setPreviewLoading(false);
           return;
         }
         const data = (await res.json()) as {
-          lines: { type: string; text: string }[];
+          lines: DiffLine[];
           additions: number;
           deletions: number;
         };
@@ -64,7 +64,7 @@ export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaPro
         }
       } catch {
         if (!cancelled) {
-          setDiffLines([{ type: 'unchanged', text: '(Failed to load diff)' }]);
+          setDiffLines([{ type: 'unchanged' as const, text: '(Failed to load diff)' }]);
           setPreviewLoading(false);
         }
       }
@@ -100,7 +100,11 @@ export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaPro
             >
               {/* Diff view — shown when editorMode === 'diff' */}
               {isDiffMode && previewLoading && (
-                <div className="flex items-center justify-center py-16">
+                <div
+                  className="flex items-center justify-center py-16"
+                  role="status"
+                  aria-label="Loading version"
+                >
                   <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
                 </div>
               )}

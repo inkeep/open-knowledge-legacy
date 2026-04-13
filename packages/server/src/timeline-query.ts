@@ -9,21 +9,11 @@
  */
 
 import { existsSync } from 'node:fs';
+import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export type EntryType = 'checkpoint' | 'wip' | 'upstream';
-
-export interface TimelineEntry {
-  sha: string;
-  timestamp: string; // ISO 8601
-  author: string;
-  authorEmail: string;
-  type: EntryType;
-  message: string;
-}
+export type { EntryType, TimelineEntry };
 
 export interface HistoryQuery {
   docName: string;

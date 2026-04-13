@@ -7,22 +7,19 @@
  * - no highlight for unchanged lines
  */
 
-interface DiffLine {
-  type: string; // 'added' | 'removed' | 'unchanged'
-  text: string;
-}
+import type { DiffLine, DiffLineType } from '@inkeep/open-knowledge-core';
 
 export interface PreviewEditorProps {
   lines: DiffLine[];
 }
 
-function lineStyle(type: string): string {
+function lineStyle(type: DiffLineType): string {
   if (type === 'added') return 'bg-green-900/60 text-green-200';
   if (type === 'removed') return 'bg-red-900/60 text-red-200 line-through decoration-red-400/50';
   return 'text-foreground';
 }
 
-function linePrefix(type: string): string {
+function linePrefix(type: DiffLineType): string {
   if (type === 'added') return '+';
   if (type === 'removed') return '-';
   return ' ';

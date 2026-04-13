@@ -1,3 +1,4 @@
+import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { Clock, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -10,7 +11,6 @@ import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 import { ThemeToggle } from './ThemeToggle';
-import type { TimelineEntry } from './TimelinePanel';
 import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 
 interface EditorHeaderProps {

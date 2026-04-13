@@ -1,9 +1,9 @@
+import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
 import { PageListProvider } from './PageListContext';
-import type { TimelineEntry } from './TimelinePanel';
 import { TimelinePanel } from './TimelinePanel';
 
 /**

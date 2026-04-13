@@ -6,24 +6,12 @@
  * are collapsed behind a "Show N auto-saves" expander.
  * Current (pre-checkpoint) WIP entries are expanded by default at top.
  */
+import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { ChevronDown, ChevronRight, Diamond, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-export type EntryType = 'checkpoint' | 'wip' | 'upstream';
-
-export interface TimelineEntry {
-  sha: string;
-  timestamp: string;
-  author: string;
-  authorEmail: string;
-  type: EntryType;
-  message: string;
-}
 
 interface TimelinePanelProps {
   open: boolean;
@@ -107,6 +95,7 @@ function WipGroup({ entries, defaultExpanded, selectedSha, onSelect }: WipGroupP
       {entries.length > 1 && (
         <button
           type="button"
+          aria-expanded={expanded}
           className="flex items-center gap-1 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors text-left"
           onClick={() => setExpanded((e) => !e)}
         >
