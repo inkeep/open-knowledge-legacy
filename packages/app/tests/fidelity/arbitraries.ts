@@ -81,7 +81,7 @@ export const orderedListParen = fc
   .map((items) => items.map((item, i) => `${i + 1}) ${item}`).join('\n'));
 
 /** Thematic break (default). */
-export const thematicBreak = fc.constant('---');
+const thematicBreak = fc.constant('---');
 
 /** Thematic break with * (non-default). */
 export const thematicBreakStar = fc.constant('***');
@@ -155,14 +155,6 @@ export const paragraphWithMarks = fc
 export const headingWithMarks = fc
   .tuple(fc.integer({ min: 1, max: 3 }), paragraphWithMarks)
   .map(([level, content]) => `${'#'.repeat(level)} ${content}`);
-
-/** Blockquote with inline marks. */
-export const blockquoteWithMarks = paragraphWithMarks.map((text) => `> ${text}`);
-
-/** List item with inline marks. */
-export const listWithMarks = fc
-  .array(paragraphWithMarks, { minLength: 2, maxLength: 3 })
-  .map((items) => items.map((item) => `- ${item}`).join('\n'));
 
 // ─── Composite ───
 

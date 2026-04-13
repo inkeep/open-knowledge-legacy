@@ -40,7 +40,7 @@ export const schema = getSchema(sharedExtensions);
 
 // ─── Port allocation ───
 
-export async function getFreePort(): Promise<number> {
+async function getFreePort(): Promise<number> {
   return new Promise((resolve) => {
     const s = createNetServer();
     s.listen(0, () => {
@@ -197,7 +197,7 @@ export async function createTestClient(port: number, docName?: string): Promise<
 
 // ─── Utilities ───
 
-export function waitForSync(provider: HocuspocusProvider, timeoutMs = 10_000): Promise<void> {
+function waitForSync(provider: HocuspocusProvider, timeoutMs = 10_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Provider sync timeout')), timeoutMs);
     provider.on('synced', () => {
