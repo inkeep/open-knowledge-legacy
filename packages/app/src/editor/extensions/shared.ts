@@ -10,6 +10,7 @@ import {
 import FileHandler from '@tiptap/extension-file-handler';
 import Placeholder from '@tiptap/extension-placeholder';
 import { uploadAndInsert } from '../image-upload/index.ts';
+import { HeadingAnchors } from './heading-anchors';
 import { JsxComponent } from './jsx-component';
 import { SlashCommand } from './slash-command';
 import { WikiLink } from './wiki-link';
@@ -35,6 +36,7 @@ export const sharedExtensions = [
       }
     },
   }),
+  HeadingAnchors,
   Placeholder.configure({
     placeholder: "Type '/' for commands",
     showOnlyCurrent: true,

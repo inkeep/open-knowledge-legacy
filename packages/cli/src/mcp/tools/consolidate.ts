@@ -1,0 +1,173 @@
+/**
+ * `consolidate` MCP workflow tool — promote research findings into a canonical
+ * article in `.open-knowledge/articles/`.
+ *
+ * Principle: canonical, not provisional. Consolidation is a deliberate step
+ * taken after research has stabilized and a team has made decisions. The
+ * output is the source of truth for future agents — not a snapshot of
+ * uncertainty.
+ *
+ * Relationship to other workflow tools:
+ *   - `ingest`   — captures raw external sources (no analysis)
+ *   - `research` — synthesizes provisional findings from sources (analysis, uncertain)
+ *   - `consolidate` — promotes research + sources into canonical articles (analysis, decided)
+ */
+import { z } from 'zod';
+import type { ServerInstance } from './shared.ts';
+import { textResult } from './shared.ts';
+
+function buildBody(topic: string): string {
+  return `Promote existing research on this topic into a canonical article in \`.open-knowledge/articles/\`. **Canonical, not provisional** — the output is the source of truth for future agents.
+
+Topic: ${topic}
+
+## When to use this workflow
+
+- A team has made a decision after research and wants the outcome committed as canonical knowledge
+- You want to compact several provisional research notes into one authoritative article
+- A developer asks to "consolidate" or "finalize" the knowledge on a topic
+
+Do NOT consolidate when:
+- The team has not actually decided (the output would be misleading — keep it as research)
+- You have not read the underlying sources (the output would lack evidence)
+
+## Principle: canonical, not provisional
+
+A consolidated article is the **source of truth**. Agents reading it should not need to dig further for context — it should stand on its own. That means:
+
+- Clear, direct statements (no "tentative", no "initial findings")
+- Decisions stated as decisions, not options
+- Rationale explained so future readers understand the why
+- Trade-offs acknowledged but framed against the chosen path, not as a menu
+- Evidence linked but not the whole story — this article is the destination, not a trail
+
+## Steps
+
+### 1. Load the research + sources
+
+Locate research articles on this topic:
+
+- Grep or list \`.open-knowledge/research/\` for files matching the topic
+- Read each research article fully
+- Follow its \`sources:\` frontmatter list — read every referenced file in \`.open-knowledge/external-sources/\`
+- Also read existing \`.open-knowledge/articles/\` on the topic — if an article already exists, you may be **updating** it rather than creating a new one
+
+If there is no research to consolidate, stop. Consolidation is promotion, not creation. Run \`research\` first.
+
+### 2. Confirm the decision
+
+Before writing, confirm with the developer:
+
+- **What is the actual decision?** (e.g., "We chose Yjs for CRDT" — not "Yjs is one option")
+- **What alternatives were considered and rejected?** (these get mentioned in trade-offs, not as equal options)
+- **What's the rationale the team actually used?** (not your reconstruction from sources — ask if unclear)
+
+If the decision is not yet made, **do not consolidate**. The article would be misleading. Return and tell the developer to either (a) make the decision first, or (b) keep the research as provisional.
+
+### 3. Write the canonical article
+
+Save to \`.open-knowledge/articles/<topic-folder>/<slug>.md\` — group by topic folder if the area is broad (e.g., \`articles/editor/crdt-architecture.md\` rather than \`articles/crdt-architecture.md\` if you expect multiple editor articles).
+
+If you create a new subfolder, write its \`INDEX.md\` with sticky \`title\` and \`description\` per the folder-description convention.
+
+Frontmatter:
+
+\`\`\`yaml
+---
+title: Descriptive title
+description: One-line summary of what this article covers
+status: canonical
+date: YYYY-MM-DD
+tags:
+  - topic-tag
+supersedes:
+  - research/<original-research-article>.md
+---
+\`\`\`
+
+Structure:
+
+\`\`\`markdown
+## Summary
+
+[One paragraph: what the decision is and why. A reader who reads only this paragraph should know the outcome.]
+
+## Context
+
+[What problem does this solve? What constraints shaped the decision?]
+
+## Decision
+
+[The chosen approach, stated directly. Not "we recommend" — "we chose".]
+
+## Rationale
+
+[Why this path over alternatives. Grounded in the constraints from Context.]
+
+## Trade-offs
+
+[What we gave up by choosing this path. Frame against the chosen decision, not as a menu.]
+
+## Alternatives considered
+
+[Briefly: what else was on the table, why it was rejected. Link to the research article for deeper analysis.]
+
+## Implementation notes
+
+[How this gets realized in the codebase — key files, patterns, gotchas.]
+
+## Further reading
+
+[Links to research articles and external sources for readers who want the trail.]
+\`\`\`
+
+### 4. Supersede the research
+
+Add a \`supersedes:\` list in the new article's frontmatter pointing at the research article(s) it consolidates. This creates an audit trail.
+
+Do NOT delete the research articles — they remain as historical context for how the decision was reached. Edit their frontmatter to add:
+
+\`\`\`yaml
+superseded_by: articles/<topic-folder>/<slug>.md
+\`\`\`
+
+### 5. Verify
+
+- File exists in \`.open-knowledge/articles/\` (or the subfolder you created)
+- Has \`status: canonical\` frontmatter
+- Lists the research articles it supersedes
+- Research articles updated with \`superseded_by\` pointer
+- \`.open-knowledge/catalogs/\` picks up the new article automatically via the file watcher
+
+## Non-goals
+
+- **Don't consolidate research that hasn't reached a decision** — the article would misrepresent the team's actual state of understanding
+- **Don't delete research articles** — they are the trail; keep them with a \`superseded_by\` marker
+- **Don't rewrite research prose verbatim** — canonical articles have a different voice (direct, decided) than research (exploratory, provisional)
+- **Don't skip the supersedes / superseded_by links** — the audit trail matters for future readers
+
+Full convention: read \`.open-knowledge/AGENTS.md\`.`;
+}
+
+export const DESCRIPTION = [
+  'Promote research into a canonical article in .open-knowledge/articles/. Canonical, not provisional — the output is the source of truth for future agents.',
+  '',
+  '**Use when:**',
+  '- A team has made a decision after research and wants the outcome committed as canonical knowledge',
+  '- Compacting several provisional research notes into one authoritative article',
+  '- A developer asks to "consolidate" or "finalize" knowledge on a topic',
+  '',
+  '**Triggers on:**',
+  '- "consolidate", "finalize", "promote to canonical", "make this official"',
+  '- User says the team has decided and wants the outcome written as canonical',
+  '- Research has stabilized and a destination article is needed',
+].join('\n');
+
+export function register(server: ServerInstance): void {
+  server.tool(
+    'consolidate',
+    DESCRIPTION,
+    { topic: z.string().describe('The topic to consolidate into a canonical article') },
+    (args: { topic: string }) => textResult(buildBody(args.topic)),
+  );
+}

@@ -285,6 +285,9 @@ describe('S9: observer init from restored doc', () => {
 
 // ---------- S3: Undo chain: N agent writes, N undos ----------
 
+/** Extra ms for `test()` timeout on CI — runners are often 2–3× slower than dev laptops. */
+const S3_CI_TIMEOUT_SLACK_MS = process.env.CI ? 120_000 : 0;
+
 describe('S3: undo chain', () => {
   const configs = [
     { tier: TIERS.small, N: 5 },
@@ -346,7 +349,8 @@ describe('S3: undo chain', () => {
       },
       // N*10s bonus accounts for per-iteration undo + re-sync overhead, doubled
       // from the original 5s to match the 2x CI timeout multiplier below.
-      tier.timeout + N * 10_000,
+      // S3-large can exceed 150s wall time on slow GHA runners without slack.
+      tier.timeout + N * 10_000 + S3_CI_TIMEOUT_SLACK_MS,
     );
   }
 });

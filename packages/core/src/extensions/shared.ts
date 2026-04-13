@@ -7,7 +7,18 @@ import Image from '@tiptap/extension-image';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
+import { BulletListFidelity } from './bullet-list-fidelity.ts';
+import { CodeBlockFidelity } from './code-block-fidelity.ts';
+import { BoldFidelity, ItalicFidelity } from './emphasis-fidelity.ts';
+import { HardBreakFidelity } from './hard-break-fidelity.ts';
+import { HeadingFidelity } from './heading-fidelity.ts';
+import { HorizontalRuleFidelity } from './horizontal-rule-fidelity.ts';
+import { HtmlBlockFidelity } from './html-block-fidelity.ts';
 import { JsxComponent } from './jsx-component.ts';
+import { LinkFidelity } from './link-fidelity.ts';
+import { LinkRefDefFidelity } from './link-ref-def-fidelity.ts';
+import { ListItemFidelity } from './list-item-fidelity.ts';
+import { OrderedListFidelity } from './ordered-list-fidelity.ts';
 import { WikiLink } from './wiki-link.ts';
 
 export const sharedExtensions = [
@@ -17,15 +28,32 @@ export const sharedExtensions = [
   // WikiLink also needs to register before StarterKit so its custom tokenizer is
   // part of the shared markdown schema everywhere we parse or serialize markdown.
   WikiLink,
+  // Tier 2 fidelity overrides: StarterKit built-ins are disabled (e.g. bulletList: false)
+  // so these extensions are the active definitions, not overrides.
+  BulletListFidelity,
+  OrderedListFidelity,
+  ListItemFidelity,
+  ItalicFidelity,
+  BoldFidelity,
+  CodeBlockFidelity,
+  HeadingFidelity,
+  HorizontalRuleFidelity,
+  LinkFidelity,
+  HtmlBlockFidelity,
+  LinkRefDefFidelity,
+  HardBreakFidelity,
   StarterKit.configure({
     undoRedo: false,
-    link: {
-      openOnClick: false,
-      HTMLAttributes: {
-        target: '_blank',
-        rel: 'noopener noreferrer',
-      },
-    },
+    bulletList: false,
+    orderedList: false,
+    listItem: false,
+    italic: false,
+    bold: false,
+    codeBlock: false,
+    heading: false,
+    horizontalRule: false,
+    hardBreak: false,
+    link: false,
   }),
   Table.configure({
     resizable: true,

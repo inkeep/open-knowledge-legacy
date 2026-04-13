@@ -1,0 +1,25 @@
+
+=== Summary (Layer A — mdManager only) ===
+Total: 118
+  WHITESPACE_DIFF: 77
+  STRUCTURE_CHANGE: 18
+  ENTITY_CORRUPTION: 10
+  SEMANTIC_LOSS: 8
+  COSMETIC_NORMALIZATION: 3
+  BYTE_IDENTICAL: 2
+
+=== Summary (Layer B — full Y.Doc path) ===
+Total: 118
+  WHITESPACE_DIFF: 77
+  STRUCTURE_CHANGE: 18
+  ENTITY_CORRUPTION: 10
+  SEMANTIC_LOSS: 8
+  COSMETIC_NORMALIZATION: 3
+  BYTE_IDENTICAL: 2
+
+Layer A ≠ Layer B: 0 cases
+
+Non-idempotent (A round-trip 2 ≠ A round-trip 1): 3 cases
+  inline-code-with-backticks
+  html-block-div
+  frontmatter-yaml

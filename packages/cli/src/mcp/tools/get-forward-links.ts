@@ -1,0 +1,31 @@
+import { z } from 'zod';
+import type { ServerInstance } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
+
+export const DESCRIPTION = [
+  '[Requires: Hocuspocus server] Find all pages that a given page links to.',
+  'Returns forward links as JSON.',
+  '',
+  '**Parameters:**',
+  '- `docName` — Source page docName',
+].join('\n');
+
+export function register(server: ServerInstance, serverUrl: string | undefined): void {
+  server.tool(
+    'get_forward_links',
+    DESCRIPTION,
+    {
+      docName: z.string().describe('Source page docName'),
+    },
+    async (args: { docName: string }) => {
+      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const result = await httpGet(
+        serverUrl,
+        `/api/forward-links?docName=${encodeURIComponent(args.docName)}`,
+      );
+      if (!result.ok) return textResult(`Error: ${result.error}`, true);
+      const { ok: _ok, ...data } = result;
+      return textResult(JSON.stringify(data, null, 2));
+    },
+  );
+}

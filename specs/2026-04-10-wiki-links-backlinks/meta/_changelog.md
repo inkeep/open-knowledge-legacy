@@ -48,7 +48,7 @@
 - Recorded deeper rename-propagation finding: U7.5 currently lacks any managed rename/move surface, so a first-class rename flow is likely required in P0, with watcher reconciliation as fallback for external filesystem changes.
 - Recorded `1:A`: P0 now explicitly includes a first-class managed rename/move flow in app/server for intentional renames.
 - Added concrete watcher-side fallback guidance: keep delete tombstones, pair delete+create by confidence tiers, auto-rewrite only on high-confidence matches, and treat low-confidence cases as ambiguous rather than rewriting blindly.
-- Recorded final ambiguity fallback policy: persist low-confidence external rename candidates to `.openknowledge/cache/<branch>/rename-ambiguities.json`, do not auto-rewrite them, and defer any GUI review surface to later work.
+- Recorded final ambiguity fallback policy: persist low-confidence external rename candidates to `.open-knowledge/cache/<branch>/rename-ambiguities.json`, do not auto-rewrite them, and defer any GUI review surface to later work.
 - Resolved the remaining non-blocking product calls directly in the spec: `suggest_links` stays deterministic text-match only, the backlinks panel is always visible at article bottom, and the file-watcher path performs explicit extraction instead of waiting for `onStoreDocument`.
 - Marked `SPEC.md` status as Final and closed the spec with all tracked decisions resolved for implementation.
 - Added `IMPLEMENTATION_MILESTONES.md` alongside the final spec, breaking S10 into 5 self-contained, reviewable PRs with explicit scope, test plan, and manual QA steps.

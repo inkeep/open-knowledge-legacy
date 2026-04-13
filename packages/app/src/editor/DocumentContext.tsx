@@ -90,7 +90,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
 export function useDocumentContext(): DocumentContextValue {
   const ctx = use(DocumentContext);
   if (!ctx) {
-    throw new Error('[useDocumentContext] Must be used within <DocumentProvider>');
+    throw new Error('useDocumentContext must be used within <DocumentProvider />');
   }
   return ctx;
 }

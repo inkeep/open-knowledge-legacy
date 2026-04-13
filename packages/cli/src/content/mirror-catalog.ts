@@ -231,8 +231,10 @@ function buildTree(files: string[]): DirNode {
 
   for (const file of files) {
     const parts = file.split(/[\\/]/).filter((p) => p.length > 0);
-    // biome-ignore lint/style/noNonNullAssertion: ignore
-    const fileName = parts.pop()!;
+    const fileName = parts.pop();
+    if (!fileName) {
+      continue;
+    }
     let node = root;
     let dirSoFar = '';
 

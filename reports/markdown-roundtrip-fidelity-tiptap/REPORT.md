@@ -2,7 +2,7 @@
 title: "Markdown Round-Trip Fidelity Through @tiptap/markdown"
 description: "Empirical measurement of information loss when markdown passes through @tiptap/markdown parse/serialize pipeline. Classifies 12 lossy patterns as fundamental, fixable, or cosmetic. Tests convergence across multiple cycles. Compares three ecosystems. Provides a concrete lossless-enough configuration recipe."
 createdAt: 2026-04-07
-updatedAt: 2026-04-07
+updatedAt: 2026-04-11
 subjects:
   - "@tiptap/markdown"
   - prosemirror-markdown
@@ -100,6 +100,26 @@ The package operates at the JSON level: markdown string to marked Lexer to parse
 | Custom syntax hooks | Limited | marked.use() | remark plugins |
 | Byte-identical rate | 48% | 52% | Not tested |
 
+#### D2 Update 2026-04-11: 118-Case Three-Library Comparison
+
+**Evidence:** [evidence/d2-ecosystem-comparison-118.md](evidence/d2-ecosystem-comparison-118.md) (supersedes the 27-case comparison), [evidence/d2-three-library-probe.ts](evidence/d2-three-library-probe.ts), [evidence/d2-three-library-results.tsv](evidence/d2-three-library-results.tsv)
+
+The original 27-case comparison understated the fidelity gap. Running the full 118-case construct catalog (from the companion [Markdown Construct Fidelity Catalog](../markdown-construct-fidelity-catalog/)) through all three libraries reveals:
+
+| Library | Whitespace-only | Material bugs | Entity corruption | Backslash consumed |
+|---|---|---|---|---|
+| @tiptap/markdown | 77 (65%) | 39 | **10** | **4** |
+| prosemirror-markdown | 74 (63%) | 42 | **0** | **0** |
+| marked-only | 91 (77%) | 25 | **0** | **0** |
+
+**Critical finding: prosemirror-markdown fixes both the entity corruption bug AND the backslash escape bug.** `# H&M Store` and `\*not italic\*` both round-trip correctly. The root cause -- `@tiptap/core`'s `encodeHtmlEntities` -- does not exist in prosemirror-markdown's serializer.
+
+**However, prosemirror-markdown introduces 9 NOT_IN_SCHEMA failures** for GFM and custom extensions (task lists, strikethrough, wiki-links). Its default schema is minimal CommonMark and would require custom ProseMirror schema nodes and serializer rules for each extension we use.
+
+**Recommendation unchanged:** Stay on @tiptap/markdown. Fix the entity bug via post-process wrapper (~30 LOC). The backslash escape bug requires parse-level intervention. Migrating to prosemirror-markdown would fix 14 bugs but create 9 new ones requiring custom schema work -- net negative for our extension-heavy use case.
+
+See the full evidence file for construct-by-construct comparison tables and the 21 cases where PM wins vs the 25 cases where tiptap wins.
+
 ---
 
 ### D3: Fixable vs Fundamental Losses
@@ -171,9 +191,10 @@ jsx-component info string and JSON content: BYTE-IDENTICAL in both systems.
 ## Limitations and Open Questions
 
 - remark-prosemirror assessed theoretically, not live tested
-- 27 test cases representative but not exhaustive
+- ~~27 test cases representative but not exhaustive~~ **Resolved 2026-04-11:** D2 updated to 118-case comparison across 3 libraries
 - Concurrent editing scenarios not tested
 - Tight/loose list fix needs live testing with marked token.loose property
+- prosemirror-markdown tested with default schema only; custom schema + serializer rules could close its GFM/extension gaps but would require significant engineering effort
 
 ---
 
@@ -181,7 +202,10 @@ jsx-component info string and JSON content: BYTE-IDENTICAL in both systems.
 
 ### Evidence Files
 - [evidence/d1-roundtrip-measurement.md](evidence/d1-roundtrip-measurement.md)
-- [evidence/d2-ecosystem-comparison.md](evidence/d2-ecosystem-comparison.md)
+- [evidence/d2-ecosystem-comparison.md](evidence/d2-ecosystem-comparison.md) (original 27-case comparison)
+- [evidence/d2-ecosystem-comparison-118.md](evidence/d2-ecosystem-comparison-118.md) (118-case update, supersedes above)
+- [evidence/d2-three-library-probe.ts](evidence/d2-three-library-probe.ts) (three-library probe script)
+- [evidence/d2-three-library-results.tsv](evidence/d2-three-library-results.tsv) (118-row x 3-library results)
 - [evidence/d3-fixable-vs-fundamental.md](evidence/d3-fixable-vs-fundamental.md)
 - [evidence/d4-lossless-configuration.md](evidence/d4-lossless-configuration.md)
 - [evidence/d5-convergence.md](evidence/d5-convergence.md)

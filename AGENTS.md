@@ -76,6 +76,7 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/shared.ts` — sharedExtensions array (THE schema source of truth)
 - `src/extensions/frontmatter.ts` — strip/prepend frontmatter for markdown round-trip
 - `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (schema + markdown, no React NodeView)
+- `src/extensions/*-fidelity.ts` — 12 source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (loaded via `shared.ts`)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
@@ -314,6 +315,7 @@ Y.Doc
 | C | Playwright E2E | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts` | `bunx playwright test` |
 | D | Fuzz | `packages/app/tests/stress/observers.fuzz.test.ts` | `STRESS_FUZZ_SEED=<seed> bun run test` |
 | Integration | Tier 1 bridge matrix | `packages/app/tests/integration/bridge-matrix.test.ts` | `bun run test` |
+| Fidelity | PBT invariants (I1-I7) + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/` | `bun run test:fidelity` (also in `bun run check`) |
 
 ### Tier 1 integration harness
 
@@ -360,6 +362,14 @@ Integration tests use per-test docNames via `createTestClient(port)` which auto-
 **Exception:** tests that verify shared-state behavior (initial sync, test-reset semantics) explicitly pass `'test-doc'` and do not run concurrently with each other.
 
 Client lifecycle is inside the test body via `try/finally` — NOT via `beforeEach/afterEach`. This is required for `test.concurrent()` correctness (the shared `let client` pattern races under concurrent mode).
+
+### Observer bridge coverage
+
+Changes to `observers.ts` (Observer A / Observer B / `applyUserDelta`) require **multi-client test coverage**, not just single-client tests. A remote peer's WYSIWYG edit can arrive as a Y.Text-only transaction during a local user's mid-sync on XmlFragment — this creates divergence states that single-client tests cannot reproduce. PR #43's multi-client test matrix proved this is a real production trigger. See the `applyUserDelta` JSDoc in `observers.ts` for the full explanation.
+
+### Playwright policy
+
+Playwright E2E tests run on every PR. The Playwright suite covers DOM-binding and user-interaction regressions that unit/integration tests cannot reach (e.g., TipTap NodeView rendering, CodeMirror key bindings, presence UI). Do not skip Playwright in CI; do not add Playwright tests for pure bridge-logic changes — those belong in `bridge-matrix.test.ts` and `observers.test.ts`.
 
 ### Fuzz replay
 
@@ -462,6 +472,37 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 - `reports/bun-module-resolution-extensions/` — Bun module resolution extensions
 - `reports/onboarding-multiproject-ux/` — Onboarding multiproject UX
 - `reports/crdt-observer-bridge-latency-analysis/` — CRDT observer bridge latency analysis
+
+## Storage-layer fidelity contract
+
+**Storage never sanitizes; render-time layers do.** Raw HTML, backslash escapes, and all literal characters pass through the storage layer unchanged. XSS mitigation is a render-layer concern (DOMPurify in docs site, not in the CRDT/persistence pipeline).
+
+### Seven fidelity invariants
+
+| ID | Invariant | Description |
+|---|---|---|
+| I1 | Identity | `serialize(parse(md)) === md` for supported constructs |
+| I2 | Character preservation | Every literal char in input appears in output — no entity encoding |
+| I3 | Normalization canonicality | `f(f(x)) === f(x)` — double round-trip equals single round-trip |
+| I4 | Idempotence | `serialize(parse(X))` applied twice produces identical output |
+| I5 | Layer A === Layer B | mdManager path and Y.Doc path produce the same output |
+| I6 | Multi-client preservation | Content survives Y.Doc state sync between clients |
+| I7 | Cross-path consistency | All write paths produce equivalent serialized output |
+
+### Irreducible gaps (by design)
+
+- **NG1:** Blank-line count between blocks normalizes (ProseMirror schema limitation)
+- **NG2:** GFM table column widths normalize
+- **NG3:** Constructs outside our extension set (math `$$`, footnotes, alerts) are NOT semantically preserved
+- **NG4:** No storage-layer HTML sanitization — raw HTML passes through unchanged
+- **NG5:** HTML entity references (`&amp;` `&lt;` `&gt;`) in source markdown are decoded to literal characters on first parse and remain as literals — the entity form is not preserved
+
+### @tiptap/markdown version discipline
+
+- `@tiptap/markdown` is pinned to exact version `3.22.3` (no caret) across all three packages
+- A `bun patch` in `patches/` modifies `encodeTextForMarkdown` (entity bypass) and `parseInlineTokens` (escape handler)
+- **Upgrade protocol:** Before bumping the version, re-run the 118-case fidelity probe and full invariant suite (`bun run test:fidelity`). Verify the patch still applies cleanly.
+- Failed patch surfaces at install time (fail-loud via `patchedDependencies`)
 
 ## Changesets
 

@@ -13,7 +13,7 @@
     "@hocuspocus/server": "4.0.0-rc.1",
     "@inkeep/open-knowledge-core": "workspace:*",
     "@tiptap/core": "^3.22.3",
-    "@tiptap/markdown": "^3.22.3",
+    "@tiptap/markdown": "3.22.3",
     "@tiptap/y-tiptap": "^3.0.3",
     "@types/busboy": "^1.5.4",
     "busboy": "^1.6.0",

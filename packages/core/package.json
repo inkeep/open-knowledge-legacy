@@ -16,7 +16,7 @@
     "@tiptap/extension-link": "^3.22.3",
     "@tiptap/extension-list": "^3.22.3",
     "@tiptap/extension-table": "^3.22.3",
-    "@tiptap/markdown": "^3.22.3",
+    "@tiptap/markdown": "3.22.3",
     "@tiptap/starter-kit": "^3.22.3",
     "yjs": "^13.6.30"
   },
