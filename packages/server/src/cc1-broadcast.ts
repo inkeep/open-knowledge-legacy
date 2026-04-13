@@ -1,6 +1,11 @@
 import type { Hocuspocus } from '@hocuspocus/server';
 import { getLogger } from './logger.ts';
-import { incrementCC1Broadcast, setCC1LastSeq, setCC1SubscriberCount } from './metrics.ts';
+import {
+  incrementCC1Broadcast,
+  incrementCC1BroadcastDrop,
+  setCC1LastSeq,
+  setCC1SubscriberCount,
+} from './metrics.ts';
 
 export const SYSTEM_DOC_NAME = '__system__';
 export const CC1_CONTRACT_VERSION = 1;
@@ -44,32 +49,37 @@ export class CC1Broadcaster {
   }
 
   private broadcast(channel: string): void {
-    const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
-    if (!doc) {
-      if (!this.warnedMissing) {
-        this.log.warn(
-          {},
-          `[cc1] __system__ document not found — broadcasts will be dropped until it is materialized`,
-        );
-        this.warnedMissing = true;
+    try {
+      const doc = this.hocuspocus.documents.get(SYSTEM_DOC_NAME);
+      if (!doc) {
+        if (!this.warnedMissing) {
+          this.log.warn(
+            {},
+            `[cc1] __system__ document not found — broadcasts will be dropped until it is materialized`,
+          );
+          this.warnedMissing = true;
+        }
+        incrementCC1BroadcastDrop();
+        return;
       }
-      return;
+
+      const seq = (this.seqs.get(channel) ?? 0) + 1;
+      this.seqs.set(channel, seq);
+
+      const payload: CC1Signal = {
+        v: CC1_CONTRACT_VERSION,
+        ch: channel,
+        seq,
+      };
+
+      doc.broadcastStateless(JSON.stringify(payload));
+
+      incrementCC1Broadcast();
+      setCC1LastSeq(channel, seq);
+      setCC1SubscriberCount(doc.getConnectionsCount());
+    } catch (err) {
+      this.log.error({ err, channel }, '[cc1] broadcast failed');
     }
-
-    const seq = (this.seqs.get(channel) ?? 0) + 1;
-    this.seqs.set(channel, seq);
-
-    const payload: CC1Signal = {
-      v: CC1_CONTRACT_VERSION,
-      ch: channel,
-      seq,
-    };
-
-    doc.broadcastStateless(JSON.stringify(payload));
-
-    incrementCC1Broadcast();
-    setCC1LastSeq(channel, seq);
-    setCC1SubscriberCount(doc.getConnectionsCount());
   }
 
   get subscriberCount(): number {

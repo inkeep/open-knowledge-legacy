@@ -6,7 +6,7 @@ import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
-import { CC1Broadcaster, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
+import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
@@ -501,6 +501,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         const rescueFailed: string[] = [];
         if (shadowRef.current) {
           for (const docName of stillLoaded) {
+            if (isSystemDoc(docName)) continue;
             try {
               const ours = serializeDoc(docName);
               if (ours === null) {
@@ -624,10 +625,18 @@ export function createServer(options: ServerOptions): ServerInstance {
         }
 
         // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
-        cc1Broadcaster.destroy();
-        if (systemDocConnection) {
-          systemDocConnection.disconnect();
-          systemDocConnection = null;
+        try {
+          cc1Broadcaster.destroy();
+          if (systemDocConnection) {
+            await systemDocConnection.disconnect();
+            systemDocConnection = null;
+          }
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'cc1-teardown',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-1b CC1 teardown failed');
         }
 
         // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
@@ -755,7 +764,11 @@ export function createServer(options: ServerOptions): ServerInstance {
     try {
       systemDocConnection = await hocuspocus.openDirectConnection(SYSTEM_DOC_NAME);
     } catch (err) {
-      log.error({ err }, '[server] failed to open __system__ direct connection');
+      log.error(
+        { err },
+        '[server] failed to open __system__ direct connection — CC1 push disabled',
+      );
+      degraded.push('cc1-push');
     }
 
     // Start file watcher (with content filter for gitignore + config exclude)
@@ -786,6 +799,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             const currentBranch = getActiveBranch();
             const docs: ParkableDoc[] = [];
             for (const [docName] of hocuspocus.documents) {
+              if (isSystemDoc(docName)) continue;
               const markdown = serializeDoc(docName);
               if (markdown === null) continue;
               const diskSnapshot = getReconciledBase(docName) ?? markdown;
@@ -840,6 +854,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
             // Reset all open Y.Docs from the target branch's disk content
             for (const [docName, document] of hocuspocus.documents) {
+              if (isSystemDoc(docName)) continue;
               try {
                 const filePath = safeContentPath(docName, contentDir);
                 if (!existsSync(filePath)) {
@@ -900,6 +915,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             if (shadowRef.current && info.batchKind === 'cross-branch') {
               let restoredCount = 0;
               for (const [docName] of hocuspocus.documents) {
+                if (isSystemDoc(docName)) continue;
                 try {
                   const parked = await readParkedState(
                     shadowRef.current,
