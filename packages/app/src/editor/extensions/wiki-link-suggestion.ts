@@ -1,5 +1,6 @@
 import type { HeadingEntry } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
+import type { ResolvedPos } from '@tiptap/pm/model';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import { ReactRenderer } from '@tiptap/react';
@@ -99,6 +100,30 @@ export function buildAnchorItems(
     text: h.text,
     slug: h.slug,
   }));
+}
+
+/**
+ * Custom `findSuggestionMatch` for `@tiptap/suggestion` — detects `[[` paired
+ * delimiters using the same regex as the original ProseMirror plugin. The query
+ * includes `#` so anchor mode (`page#heading`) works transparently.
+ */
+export function wikiLinkMatcher(config: {
+  $position: ResolvedPos;
+}): { range: { from: number; to: number }; query: string; text: string } | null {
+  const { $position } = config;
+  const textBefore = $position.parent.textBetween(0, $position.parentOffset, undefined, '\ufffc');
+  const match = textBefore.match(/\[\[([^\]]*)$/);
+  if (!match) return null;
+
+  const query = match[1];
+  const blockStart = $position.start();
+  const triggerPos = blockStart + textBefore.lastIndexOf('[[');
+
+  return {
+    range: { from: triggerPos, to: $position.pos },
+    query,
+    text: match[0],
+  };
 }
 
 export async function fetchPages(): Promise<PageItem[]> {
