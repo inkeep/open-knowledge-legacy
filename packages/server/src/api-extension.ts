@@ -261,6 +261,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
       const content =
@@ -339,6 +343,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const resolvedDocName = resolveAlias(effectiveDocName);
+      if (isSystemDoc(resolvedDocName)) {
+        json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(resolvedDocName);
       const timestamp = new Date().toISOString();
 
@@ -394,6 +402,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const content = dc.document.getText('source').toString();
       json(res, 200, { ok: true, docName, content });
@@ -621,6 +633,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(effectivePatchDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
 
@@ -711,6 +727,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
       if (!um.canUndo()) {
@@ -757,6 +777,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
       if (!um.canRedo()) {

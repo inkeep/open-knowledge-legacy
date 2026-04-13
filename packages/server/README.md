@@ -99,7 +99,7 @@ const provider = new HocuspocusProvider({
 
 `__system__` is not a content doc. Any subsystem that keys off `documentName` MUST call `isSystemDoc(documentName)` (exported from `cc1-broadcast.ts`) at its entry point. Audited subsystems that already do so:
 
-- `persistence.ts` — `onLoadDocument`, `onStoreDocument`, `afterStoreDocument` return early
+- `persistence.ts` — `onLoadDocument`, `onStoreDocument` return early
 - `file-watcher.ts` — `__system__` never appears in the in-memory file index
 - `content-filter.ts` — reserved-name tripwire; rejects user-created `__system__.md`
 - `reconciliation.ts` — no `reconciledBase` entry

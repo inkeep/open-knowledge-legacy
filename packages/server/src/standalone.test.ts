@@ -338,7 +338,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    // No DirectConnections opened — hocuspocus.documents is empty.
+    // Only the __system__ CC1 DirectConnection — no content documents loaded.
     // flushAllStoresAndWait short-circuits on documents.size === 0.
     const startedAt = Date.now();
     await server.destroy();
