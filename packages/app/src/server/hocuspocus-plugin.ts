@@ -139,6 +139,7 @@ hocuspocus.configuration.extensions.push(
     sessionManager,
     contentDir: CONTENT_DIR,
     getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
+    getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
     enableTestRoutes: true,
     // Mirror persistence's test-isolation handling so shadow-repo path calculation
     // doesn't try to resolve paths through ../.. components when CONTENT_DIR is

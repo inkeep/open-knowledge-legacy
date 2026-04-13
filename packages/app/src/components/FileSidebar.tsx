@@ -1,4 +1,4 @@
-import { ChevronRight, File, Folder, FolderOpen } from 'lucide-react';
+import { ChevronRight, File, Folder, FolderOpen, Link2 } from 'lucide-react';
 import { type FC, useEffect, useState } from 'react';
 import { buildTree, type DocEntry, type TreeNode } from '@/components/file-tree-utils';
 import {
@@ -13,6 +13,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
 } from '@/components/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { cn } from '@/lib/utils';
 
@@ -37,14 +38,31 @@ const FileTreeNode: FC<{
   const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
   const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
 
-  const content = (
+  const showSymlink = isFile && node.isSymlink;
+
+  const fileContent = (
     <>
       <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
       <span className="min-w-0 flex-1 truncate text-sm text-sidebar-foreground/70">
         {node.name}
         {isFile && '.md'}
       </span>
+      {showSymlink && <Link2 className="size-3.5 shrink-0 text-muted-foreground/50" />}
     </>
+  );
+
+  const content = showSymlink ? (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="flex min-w-0 flex-1 items-center gap-2">{fileContent}</span>
+      </TooltipTrigger>
+      <TooltipContent side="right" className="flex flex-col gap-0.5">
+        <span>Symlink → {node.targetPath}</span>
+        <span className="text-muted">Opens the same document as {node.canonicalDocName}</span>
+      </TooltipContent>
+    </Tooltip>
+  ) : (
+    fileContent
   );
 
   return (
