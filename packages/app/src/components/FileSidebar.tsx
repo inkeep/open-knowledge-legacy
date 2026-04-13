@@ -384,7 +384,9 @@ export function FileSidebar() {
           </SidebarMenuItem>
           {error && documents.length > 0 && (
             <SidebarMenuItem>
-            <span role="alert" className="text-xs text-destructive">{error}</span>
+              <span role="alert" className="text-xs text-destructive">
+                {error}
+              </span>
             </SidebarMenuItem>
           )}
         </SidebarMenu>
