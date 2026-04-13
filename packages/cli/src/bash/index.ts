@@ -220,6 +220,7 @@ export async function grep(pattern: string, opts: GrepOptions = {}): Promise<Gre
     }
     // Some grep errors still include partial stdout (e.g. permission denied on one file)
     if (typeof errObj.stdout === 'string' && errObj.stdout.length > 0) {
+      console.warn(`[grep] returning partial results (exit code ${errObj.code})`);
       stdout = errObj.stdout;
     } else {
       throw err;

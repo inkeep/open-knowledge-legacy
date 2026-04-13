@@ -574,6 +574,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       // subscriptions if destroy() is called during startup (e.g., Ctrl+C).
       // Bounded to 5s so destroy() doesn't hang indefinitely if init is stuck
       // (e.g., waiting for a shadow repo git lock held by another process).
+      let initTimeoutId: ReturnType<typeof setTimeout> | undefined;
       const initSettled = await Promise.race([
         ready.then(
           () => 'completed' as const,
@@ -582,8 +583,11 @@ export function createServer(options: ServerOptions): ServerInstance {
             return 'failed' as const;
           },
         ),
-        new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 5_000)),
+        new Promise<'timeout'>((r) => {
+          initTimeoutId = setTimeout(() => r('timeout'), 5_000);
+        }),
       ]);
+      if (initTimeoutId !== undefined) clearTimeout(initTimeoutId);
       if (initSettled === 'timeout') {
         log.warn({}, '[server] init did not complete within 5s during shutdown');
       }
@@ -634,15 +638,19 @@ export function createServer(options: ServerOptions): ServerInstance {
 
         // Phase 4: drain L2 (disk → git) — only meaningful AFTER L1 has run
         // Bounded to destroyTimeoutMs so a stuck git process doesn't hang shutdown.
+        let l2TimeoutId: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([
             (async () => {
               await persistence.flushPendingGitCommit();
               await persistence.waitForPendingCommits();
             })(),
-            new Promise<void>((_, reject) =>
-              setTimeout(() => reject(new Error('L2 git flush timeout')), destroyTimeoutMs),
-            ),
+            new Promise<void>((_, reject) => {
+              l2TimeoutId = setTimeout(
+                () => reject(new Error('L2 git flush timeout')),
+                destroyTimeoutMs,
+              );
+            }),
           ]);
         } catch (err) {
           phaseErrors.push({
@@ -650,6 +658,8 @@ export function createServer(options: ServerOptions): ServerInstance {
             error: err instanceof Error ? err.message : String(err),
           });
           log.error({ err }, '[server] shutdown phase-4 git commit flush failed');
+        } finally {
+          if (l2TimeoutId !== undefined) clearTimeout(l2TimeoutId);
         }
       } finally {
         // Phase 5: shadow repo release — ALWAYS runs
