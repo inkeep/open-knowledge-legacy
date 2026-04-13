@@ -147,6 +147,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
     editor,
     pluginKey: wikiLinkSuggestionKey,
     char: '[[',
+    // null allows mid-word triggers — safe because [[ is an unambiguous delimiter (unlike single-char /)
     allowedPrefixes: null,
     findSuggestionMatch: wikiLinkMatcher,
 
@@ -163,7 +164,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           } catch (err) {
             console.error('[wiki-link-suggestion] Failed to fetch headings:', err);
             cachedHeadings.set(pageTarget, []);
-            anchorFetchError = `Failed to load headings for ${pageTarget}.`;
+            anchorFetchError = `Failed to load headings for ${pageTarget}. Press Escape and type [[ again to retry.`;
           } finally {
             anchorFetchingFor = null;
           }
@@ -180,7 +181,8 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           fetchError = null;
         } catch (err) {
           console.error('[wiki-link-suggestion] Failed to fetch pages:', err);
-          fetchError = 'Failed to load pages. You can still insert an unresolved link.';
+          fetchError =
+            'Failed to load pages. Press Escape and type [[ again to retry, or continue typing to insert an unresolved link.';
           cachedPages = [];
         } finally {
           pagesLoaded = true;
@@ -206,7 +208,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
 
         editor.chain().focus().deleteRange(range).insertContent({ type: 'wikiLink', attrs }).run();
       } catch (err) {
-        console.error('[wiki-link-suggestion] command error:', err);
+        console.error('[wiki-link-suggestion] command failed', { item, range }, err);
       }
     },
 
@@ -334,7 +336,6 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           });
           popup.appendChild(renderer.element);
           stopAutoUpdate = autoUpdate(virtualEl, popup, doPosition);
-          doPosition();
         },
 
         onBeforeUpdate(props: SuggestionProps<WikiLinkSuggestionItem>) {
@@ -366,13 +367,13 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           const items = currentProps.items;
 
           if (event.key === 'ArrowDown') {
-            if (items.length === 0) return true;
+            if (items.length === 0) return false;
             selectedIndex = (selectedIndex + 1) % items.length;
             rerender(null);
             return true;
           }
           if (event.key === 'ArrowUp') {
-            if (items.length === 0) return true;
+            if (items.length === 0) return false;
             selectedIndex = (selectedIndex - 1 + items.length) % items.length;
             rerender(null);
             return true;
