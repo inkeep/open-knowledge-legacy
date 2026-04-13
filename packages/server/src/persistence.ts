@@ -408,6 +408,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       } catch (e) {
         const code = (e as NodeJS.ErrnoException).code;
         if (code === 'ENOENT') {
+          console.warn(`[persistence] broken-symlink fallback`, {
+            docName: documentName,
+            reason: 'broken-symlink',
+          });
           canonicalPath = requestedPath;
         } else if (code === 'ELOOP') {
           console.error(`[persistence] Symlink cycle at ${requestedPath}`);
