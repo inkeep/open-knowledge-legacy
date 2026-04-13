@@ -33,7 +33,7 @@
  */
 
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { prependFrontmatter, stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
@@ -455,7 +455,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
         // to onSyncError via the outer catch so regressions are visible.
         if (
           parseErr instanceof SyntaxError ||
-          (parseErr instanceof Error && parseErr.constructor.name === 'VFileMessage') ||
+          parseErr instanceof VFileMessage ||
           (parseErr instanceof RangeError &&
             (parseErr as RangeError).message.includes('Invalid content for node'))
         ) {

@@ -100,6 +100,8 @@ describe('R23 guard: exhaustive < context coverage', () => {
     ['<Callout>body</Callout>', 'paired MDX'],
     ['<Note>text</Note>', 'paired MDX inline'],
     ['<Icon />', 'self-closing MDX'],
+    ['<Widget\n  title="hello"\n/>', 'multi-line self-closing JSX'],
+    ['<Card\n  variant="warning"\n  />', 'multi-line self-closing with trailing space'],
 
     // Bare < (the PR #95 regression class — must NOT crash)
     ['<', 'bare < at EOF'],

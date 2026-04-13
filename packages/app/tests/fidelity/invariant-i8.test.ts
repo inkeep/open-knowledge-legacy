@@ -18,6 +18,7 @@
  */
 
 import { describe, test } from 'bun:test';
+import { VFileMessage } from '@inkeep/open-knowledge-core';
 import * as fc from 'fast-check';
 import { block } from './arbitraries';
 import { mdManager, NUM_RUNS, PBT_TIMEOUT_MS } from './helpers';
@@ -38,7 +39,7 @@ import { mdManager, NUM_RUNS, PBT_TIMEOUT_MS } from './helpers';
  */
 function isExpectedParseError(err: unknown): boolean {
   if (err instanceof SyntaxError) return true;
-  if (err instanceof Error && err.constructor.name === 'VFileMessage') return true;
+  if (err instanceof VFileMessage) return true;
   if (err instanceof RangeError && err.message.includes('Invalid content for node')) return true;
   return false;
 }
