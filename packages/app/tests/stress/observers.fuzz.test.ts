@@ -62,11 +62,25 @@ function serializeFragment(fragment: Y.XmlFragment): string {
   return mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
 }
 
+/**
+ * Applies one parse→serialize round-trip to normalize NG1 (blank-line-count
+ * between blocks). Used in `bridgeInvariantHolds` to compare Y.Text (which can
+ * contain raw multi-blank-line content from concatenation or paste) against
+ * XmlFragment (which represents blocks without encoding between-block blank
+ * counts). A real bridge divergence still produces a mismatch here because
+ * both sides must end up at the same canonical form.
+ */
+function stabilize(md: string): string {
+  return mdManager.serialize(mdManager.parse(md));
+}
+
 function bridgeInvariantHolds(
   ytext: Y.Text,
   fragment: Y.XmlFragment,
 ): { ok: boolean; textSide: string; treeSide: string } {
-  const textSide = stripTrailingWhitespace(ytext.toString());
+  // NG1 normalization: factor out blank-line-count-between-blocks via stabilize()
+  // so Y.Text and XmlFragment are compared under pipeline-equivalent representation.
+  const textSide = stripTrailingWhitespace(stabilize(ytext.toString()));
   const treeSide = stripTrailingWhitespace(serializeFragment(fragment));
   return { ok: textSide === treeSide, textSide, treeSide };
 }

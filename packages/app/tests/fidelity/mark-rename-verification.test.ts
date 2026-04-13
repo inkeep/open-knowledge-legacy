@@ -78,7 +78,16 @@ describe('renamed marks round-trip markdown correctly', () => {
     expect(normalize(mdRoundTrip('*em*\n'))).toBe(normalize('*em*\n'));
   });
 
-  test('--- serializes back as ---', () => {
-    expect(normalize(mdRoundTrip('---\n'))).toBe(normalize('---\n'));
+  // NG10: doc-start `---` thematicBreak normalizes to `***` on serialize
+  // because `---` at document position 0 is indistinguishable from empty YAML
+  // frontmatter under remark-frontmatter. Non-doc-start `---` preserves form.
+  test('doc-start --- normalizes to *** per NG10', () => {
+    expect(normalize(mdRoundTrip('---\n'))).toBe(normalize('***\n'));
+  });
+
+  test('non-doc-start --- preserves authoring form', () => {
+    expect(normalize(mdRoundTrip('paragraph\n\n---\n\nmore\n'))).toBe(
+      normalize('paragraph\n\n---\n\nmore\n'),
+    );
   });
 });

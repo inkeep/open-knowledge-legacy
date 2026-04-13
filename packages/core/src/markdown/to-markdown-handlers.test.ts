@@ -49,12 +49,19 @@ describe('to-markdown: code block fence preservation', () => {
 });
 
 describe('to-markdown: thematic break preservation', () => {
-  test('--- round-trips as ---', () => {
-    expect(roundTrip('---\n')).toBe('---\n');
+  // NG10: doc-start `---` is indistinguishable from empty YAML frontmatter
+  // under remark-frontmatter; normalize to `***` for idempotent round-trip.
+  // Non-doc-start `---` preserves sourceRaw.
+  test('doc-start --- normalizes to *** (NG10)', () => {
+    expect(roundTrip('---\n')).toBe('***\n');
   });
 
   test('*** round-trips as ***', () => {
     expect(roundTrip('***\n')).toBe('***\n');
+  });
+
+  test('non-doc-start --- preserves sourceRaw', () => {
+    expect(roundTrip('paragraph\n\n---\n\nmore\n')).toBe('paragraph\n\n---\n\nmore\n');
   });
 });
 

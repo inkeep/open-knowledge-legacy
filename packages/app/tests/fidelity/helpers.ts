@@ -23,3 +23,11 @@ export function normalize(s: string): string {
 
 /** Number of PBT runs: default 1000, or 10000 when STRESS_FIDELITY=1. */
 export const NUM_RUNS = process.env.STRESS_FIDELITY === '1' ? 10_000 : 1_000;
+
+/**
+ * Per-test timeout scaled to NUM_RUNS. At 10000 runs, a property that takes
+ * ~0.5ms per iteration accumulates to ~5s — right at bun test's default
+ * timeout boundary. Scale to 90s under STRESS_FIDELITY=1 to absorb both
+ * per-iteration cost and fast-check shrinking overhead on counterexamples.
+ */
+export const PBT_TIMEOUT_MS = process.env.STRESS_FIDELITY === '1' ? 90_000 : 30_000;

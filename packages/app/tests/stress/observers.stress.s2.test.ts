@@ -42,7 +42,9 @@ function stabilize(md: string): string {
 }
 
 function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment, label: string) {
-  const textSide = stripTrailingWhitespace(ytext.toString());
+  // NG1 normalization: factor out blank-line-count-between-blocks via stabilize()
+  // so Y.Text and XmlFragment are compared under pipeline-equivalent representation.
+  const textSide = stripTrailingWhitespace(stabilize(ytext.toString()));
   const treeSide = stripTrailingWhitespace(serializeFragment(fragment));
 
   if (textSide !== treeSide) {

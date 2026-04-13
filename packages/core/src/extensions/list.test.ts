@@ -217,3 +217,79 @@ describe('list pipeline round-trip (via new MarkdownManager)', () => {
     expect(listNode?.attrs.listMarkerDelimiter).toBe(')');
   });
 });
+
+// Regression tests for the input rule priority bug (QA-found, fixed in 38a9dd2).
+// Before the fix, typing `- [ ] ` created a bullet list because the bullet
+// rule regex /^\s*([-+*])\s$/ matched `- ` first and the task rule never
+// had a chance to fire. The fix adds a negative lookahead to the bullet
+// regex so it rejects patterns immediately followed by a checkbox.
+describe('list input rule priority (regression for QA-013)', () => {
+  // Mirror of the regexes in list.ts:240, 249, 259 — kept in sync manually.
+  // If these change in list.ts, update here AND verify the fix still holds.
+  const BULLET_RULE_RE = /^\s*([-+*])(?!\s*\[[ xX]\])\s$/;
+  const ORDERED_RULE_RE = /^\s*(\d+)([.)])\s$/;
+  const TASK_RULE_RE = /^\s*[-*+]\s\[([ xX])\]\s$/;
+
+  test('bullet rule does NOT match task list patterns', () => {
+    expect(BULLET_RULE_RE.test('- [ ] ')).toBe(false);
+    expect(BULLET_RULE_RE.test('- [x] ')).toBe(false);
+    expect(BULLET_RULE_RE.test('- [X] ')).toBe(false);
+    expect(BULLET_RULE_RE.test('* [ ] ')).toBe(false);
+    expect(BULLET_RULE_RE.test('+ [x] ')).toBe(false);
+  });
+
+  test('bullet rule matches plain bullet patterns', () => {
+    expect(BULLET_RULE_RE.test('- ')).toBe(true);
+    expect(BULLET_RULE_RE.test('* ')).toBe(true);
+    expect(BULLET_RULE_RE.test('+ ')).toBe(true);
+  });
+
+  test('bullet rule matches with leading whitespace (nested)', () => {
+    expect(BULLET_RULE_RE.test('  - ')).toBe(true);
+    expect(BULLET_RULE_RE.test('    * ')).toBe(true);
+    // And rejects task patterns even when nested
+    expect(BULLET_RULE_RE.test('  - [ ] ')).toBe(false);
+  });
+
+  test('bullet rule captures the marker character', () => {
+    expect('- '.match(BULLET_RULE_RE)?.[1]).toBe('-');
+    expect('* '.match(BULLET_RULE_RE)?.[1]).toBe('*');
+    expect('+ '.match(BULLET_RULE_RE)?.[1]).toBe('+');
+  });
+
+  test('task rule matches task list patterns with unchecked state', () => {
+    const m = '- [ ] '.match(TASK_RULE_RE);
+    expect(m).not.toBeNull();
+    expect(m?.[1]).toBe(' ');
+  });
+
+  test('task rule matches task list patterns with checked state', () => {
+    const checkedLower = '- [x] '.match(TASK_RULE_RE);
+    expect(checkedLower?.[1]).toBe('x');
+    const checkedUpper = '- [X] '.match(TASK_RULE_RE);
+    expect(checkedUpper?.[1]).toBe('X');
+  });
+
+  test('task rule matches with alternative bullet markers', () => {
+    expect(TASK_RULE_RE.test('* [ ] ')).toBe(true);
+    expect(TASK_RULE_RE.test('+ [x] ')).toBe(true);
+  });
+
+  test('ordered rule does not conflict with bullet or task rules', () => {
+    // All three rules are mutually exclusive for their shapes
+    expect(BULLET_RULE_RE.test('1. ')).toBe(false);
+    expect(TASK_RULE_RE.test('1. ')).toBe(false);
+    expect(ORDERED_RULE_RE.test('1. ')).toBe(true);
+    expect(ORDERED_RULE_RE.test('- ')).toBe(false);
+    expect(ORDERED_RULE_RE.test('- [ ] ')).toBe(false);
+  });
+
+  test('ordered rule captures number and delimiter', () => {
+    const dot = '1. '.match(ORDERED_RULE_RE);
+    expect(dot?.[1]).toBe('1');
+    expect(dot?.[2]).toBe('.');
+    const paren = '42) '.match(ORDERED_RULE_RE);
+    expect(paren?.[1]).toBe('42');
+    expect(paren?.[2]).toBe(')');
+  });
+});

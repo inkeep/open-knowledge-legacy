@@ -51,6 +51,43 @@ export interface PipelineOptions {
 }
 
 /**
+ * Ensure the mdast tree has at least one renderable block. remark-prosemirror
+ * maps certain mdast types to `ignore` by default (yaml, toml, definition,
+ * footnoteDefinition — see §19.1) or via our registered handlers. When the
+ * source consists solely of ignore-typed nodes (e.g., `---\n\n---` parses as
+ * empty YAML frontmatter; `[a]: url` is only a link definition), the PM doc
+ * would have zero children and `doc.content: 'block+'` validation would throw
+ * `Invalid content for node doc: <>`. Inject an empty paragraph so parse()
+ * always returns a valid PM doc — a real user document with only definitions
+ * would still editable as a blank page with those definitions preserved on
+ * serialize via the `linkDefinition` PM atom handler (R12) and frontmatter
+ * Y.Map bridge.
+ *
+ * mdast types that remark-prosemirror's `toProseMirror` filters out (either
+ * via default ignore or via user-registered ignore mappings):
+ *   - yaml, toml (frontmatter — handled via Y.Map on observer sync path)
+ *   - definition, footnoteDefinition (linkDefinition PM atom is registered
+ *     but not every caller uses it; default is ignore)
+ *
+ * This guard runs on the mdast tree BEFORE remark-prosemirror dispatch, so
+ * we never encounter the `createAndFill` failure.
+ */
+function ensureNonEmptyDoc(tree: MdastRoot): MdastRoot {
+  const renderable = tree.children.some((n) => {
+    const type = (n as { type: string }).type;
+    // Known ignore-only mdast types — list must stay in sync with
+    // remark-prosemirror's default ignores + any explicit ignores we register.
+    return type !== 'yaml' && type !== 'toml' && type !== 'footnoteDefinition';
+  });
+  if (renderable) return tree;
+  // Synthesize an empty paragraph alongside existing ignore-typed nodes.
+  return {
+    ...tree,
+    children: [...tree.children, { type: 'paragraph', children: [] } as never],
+  };
+}
+
+/**
  * Parse a markdown string to a ProseMirror document node.
  */
 export function parseMd(source: string, opts: PipelineOptions): PmNode {
@@ -66,6 +103,7 @@ export function parseMd(source: string, opts: PipelineOptions): PmNode {
     .use(remarkWikiLink)
     .use(restoreFromMdx) // R23: Restore protected patterns after MDX parsing
     .use(positionSlicePlugin)
+    .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {
       schema: opts.schema,
       handlers: opts.handlers,

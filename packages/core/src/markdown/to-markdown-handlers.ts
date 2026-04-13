@@ -122,10 +122,31 @@ export const toMarkdownHandlers: Record<string, any> = {
   },
 
   /**
-   * thematicBreak: emit node.data.sourceRaw verbatim.
+   * thematicBreak: emit node.data.sourceRaw verbatim, EXCEPT when at doc
+   * start — in that position `---` is indistinguishable from empty YAML
+   * frontmatter under `remark-frontmatter`, and re-parsing would tokenize
+   * the block differently. Normalize doc-start `---` thematicBreaks to
+   * `***` to guarantee idempotent round-trip (I3/I4/I5/I7).
+   *
+   * Fidelity trade: a user authoring a document that begins with `---`
+   * intending a thematicBreak (not frontmatter) will see it persisted as
+   * `***`. Documented as NG10. Non-doc-start thematicBreaks preserve
+   * `sourceRaw` faithfully.
    */
-  thematicBreak(node: any) {
-    return node.data?.sourceRaw ?? '---';
+  thematicBreak(node: any, _parent: any, state: { indexStack: number[] }) {
+    const sourceRaw = node.data?.sourceRaw;
+    // Detect "at doc start": top-level parent (indexStack.length === 1) and
+    // first child (indexStack[0] === 0). When both hold AND the preserved
+    // form starts with `---`, normalize to `***` to avoid frontmatter
+    // ambiguity on re-parse.
+    const isDocStart =
+      Array.isArray(state?.indexStack) &&
+      state.indexStack.length === 1 &&
+      state.indexStack[0] === 0;
+    if (isDocStart && (!sourceRaw || /^-[-\s]*-\s*$/.test(sourceRaw))) {
+      return '***';
+    }
+    return sourceRaw ?? '---';
   },
 
   /**

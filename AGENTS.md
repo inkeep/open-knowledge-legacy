@@ -522,6 +522,9 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 - **NG6:** Non-ambiguous backslash escapes (e.g., `\foo`) lose the backslash on round-trip — only CommonMark §2.4 structurally-ambiguous escapes are preserved via `escapeMark`
 - **NG7:** MDX `---` inside a JSX block parses as `thematicBreak` — escape to `\---` or wrap in code fence
 - **NG8:** Block-level GFM (tables, tasklists) inside inline `<Note>...</Note>` flattens to inline text — use `<Note>\n\n...\n\n</Note>` form for block children
+- **NG9:** Unicode Private Use Area characters U+E000 and U+E001 in source content are reserved as internal sentinels by `autolink-void-html-guard.ts` (R23 MDX-vs-autolink/bare-HTML fix). Source content containing these codepoints may be corrupted by the guard's restoration pass. U+E000/E001 are not assigned by Unicode and are rare in legitimate content (some icon-font payloads use them); if encountered in real documents, the guard's sentinel bytes must be remapped to a less-contested PUA range.
+- **NG10:** A thematicBreak at document start is normalized from `---` to `***` on serialize. `---` at document position 0 is indistinguishable from empty YAML frontmatter under `remark-frontmatter`; re-parsing `---\n\n<content>` tokenizes differently than `***\n\n<content>`, breaking idempotence (I3/I4/I5/I7). Non-doc-start thematicBreaks preserve `sourceRaw` faithfully. Implemented in `packages/core/src/markdown/to-markdown-handlers.ts:thematicBreak`.
+- **NG11:** Documents consisting only of ignore-typed mdast nodes (yaml frontmatter, toml frontmatter, footnoteDefinition) receive a synthesized empty paragraph so the PM doc satisfies `doc.content: 'block+'`. Observed input like `---\n\n---` (empty YAML frontmatter) or a file containing only `[label]: url` reference definitions without body content round-trips to an empty document. Implemented in `packages/core/src/markdown/pipeline.ts:ensureNonEmptyDoc`.
 
 ### Markdown pipeline dependency discipline
 

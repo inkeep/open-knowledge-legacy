@@ -49,15 +49,35 @@ export function positionSlicePlugin() {
     const source = typeof file.value === 'string' ? file.value : '';
     if (!source) return;
 
+    // Debug observability: opt-in via env var (OK_DEBUG_POSITION_SLICE=1)
+    // — when set, warns on nodes with missing/out-of-bounds positions so
+    // fidelity-attribute dropouts become diagnosable during development.
+    const debug = typeof process !== 'undefined' && process.env?.OK_DEBUG_POSITION_SLICE === '1';
+
     visit(tree, (node: any) => {
       const pos = node.position;
-      if (!pos || typeof pos.start?.offset !== 'number') return;
+      if (!pos || typeof pos.start?.offset !== 'number') {
+        if (debug) {
+          console.warn(
+            `[position-slice] node type=${node.type} has no position — fidelity defaults apply`,
+          );
+        }
+        return;
+      }
 
       const startOff = pos.start.offset;
       const endOff = pos.end?.offset ?? startOff;
 
-      // Bounds check
-      if (startOff < 0 || endOff > source.length) return;
+      // Bounds check — source.length is authoritative; discard malformed positions.
+      if (startOff < 0 || endOff > source.length) {
+        if (debug) {
+          console.warn(
+            `[position-slice] node type=${node.type} position out of bounds: ` +
+              `start=${startOff} end=${endOff} sourceLen=${source.length}`,
+          );
+        }
+        return;
+      }
 
       node.data = node.data ?? {};
 
