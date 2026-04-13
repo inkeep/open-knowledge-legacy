@@ -7,6 +7,7 @@
  * in remark-prosemirror.
  */
 import { describe, expect, test } from 'bun:test';
+import type { JSONContent } from '@tiptap/core';
 import { mdRoundTrip, normalize } from './helpers';
 
 function assertRoundTrip(input: string): void {
@@ -54,7 +55,7 @@ describe('reference-link + definition round-trip (R12, M4)', () => {
   });
 });
 
-function findNodeType(node: any, type: string): any {
+function findNodeType(node: JSONContent, type: string): JSONContent | null {
   if (node.type === type) return node;
   for (const child of node.content ?? []) {
     const found = findNodeType(child, type);

@@ -95,7 +95,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
       clipboardTextParser: (text, _context, _plain, view) => {
         const json = mdManagerRef.current.parse(text);
         const node = view.state.schema.nodeFromJSON(json);
-        // biome-ignore lint/suspicious/noExplicitAny: ProseMirror Slice type not directly importable from @tiptap/core
+        // biome-ignore lint/suspicious/noExplicitAny: TipTap's clipboardTextParser expects a Slice-like return but ProseMirror Fragment works at runtime; no public type expresses the union
         return node.content as any;
       },
     },

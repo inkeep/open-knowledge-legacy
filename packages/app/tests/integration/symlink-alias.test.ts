@@ -56,7 +56,7 @@ beforeAll(async () => {
   const httpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
     if (url?.startsWith('/api/')) {
-      // biome-ignore lint/suspicious/noExplicitAny: test harness
+      // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
       srv.hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
         if (!res.writableEnded) {
           res.writeHead(500);

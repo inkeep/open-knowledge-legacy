@@ -4,15 +4,15 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.3.11 **or** [Node.js](https://nodejs.org) >= 22
+- [Bun](https://bun.sh) >= 1.3.11
 - Git
 
 ## Quick Start
 
 ```bash
 cd your-project
-npx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP server
-npx @inkeep/open-knowledge start     # Start the editor at http://localhost:3000
+bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP server
+bunx @inkeep/open-knowledge start     # Start the editor at http://localhost:3000
 ```
 
 After `init`, open your project in an MCP-compatible editor (Claude Code, Cursor, Windsurf) and approve the `open-knowledge` server. AI agents work immediately -- `start` is optional (the MCP server operates in disk-only mode without it).
@@ -52,9 +52,9 @@ bun run build
 ### Run the CLI locally (after building)
 
 ```bash
-node packages/cli/dist/cli.mjs start
-node packages/cli/dist/cli.mjs init
-node packages/cli/dist/cli.mjs mcp
+bun packages/cli/dist/cli.mjs start
+bun packages/cli/dist/cli.mjs init
+bun packages/cli/dist/cli.mjs mcp
 ```
 
 ### Quality checks

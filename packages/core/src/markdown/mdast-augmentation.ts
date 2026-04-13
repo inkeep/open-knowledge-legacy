@@ -63,3 +63,41 @@ declare module 'mdast' {
     wikiLink: WikiLinkMdast;
   }
 }
+
+// Augment MDX + directive node data interfaces with `sourceRaw` captured by the
+// position-slice walker (US-008, D12 — byte-identical MDX round-trip).
+declare module 'mdast-util-mdx-jsx' {
+  interface MdxJsxFlowElementData {
+    sourceRaw?: string;
+  }
+  interface MdxJsxTextElementData {
+    sourceRaw?: string;
+  }
+}
+
+declare module 'mdast-util-mdx-expression' {
+  interface MdxFlowExpressionData {
+    sourceRaw?: string;
+  }
+  interface MdxTextExpressionData {
+    sourceRaw?: string;
+  }
+}
+
+declare module 'mdast-util-mdxjs-esm' {
+  interface MdxjsEsmData {
+    sourceRaw?: string;
+  }
+}
+
+declare module 'mdast-util-directive' {
+  interface ContainerDirectiveData {
+    sourceRaw?: string;
+  }
+  interface LeafDirectiveData {
+    sourceRaw?: string;
+  }
+  interface TextDirectiveData {
+    sourceRaw?: string;
+  }
+}
