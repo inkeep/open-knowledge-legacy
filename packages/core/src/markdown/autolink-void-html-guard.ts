@@ -155,7 +155,7 @@ export function protectFromMdx(source: string): string {
     // Incomplete `</` or `</foo` (no closing `>`) crashes remark-mdx.
     // Lowercase close tags were already handled by HTML_CLOSE_TAG_RE above.
     if (rest[1] === '/') {
-      if (/^<\/[a-zA-Z][a-zA-Z0-9.]*\s*>/.test(rest)) return match;
+      if (/^<\/[a-zA-Z][a-zA-Z0-9.]*[ \t]*>/.test(rest)) return match;
       return GUARD_OPEN; // Incomplete close tag — protect
     }
 
@@ -174,15 +174,17 @@ export function protectFromMdx(source: string): string {
     // — JSX tags don't span paragraph breaks.
     //
     // STRICT: only pass through if the content between <Tag and /> contains
-    // no stray `/` (which confuses remark-mdx's JSX parser). Valid self-closing
-    // patterns: `<Tag/>`, `<Tag />`, `<Tag attr="val"/>`.
+    // no stray `/` outside quoted attribute values. `<J/a/>` has a bare `/`
+    // (malformed JSX), but `<Image src="https://url" />` has `/` inside
+    // quotes (valid — URLs in attr values).
     const nextBlankLine = rest.search(/\n\s*\n/);
     const searchRegion = nextBlankLine === -1 ? rest : rest.slice(0, nextBlankLine);
     const selfCloseIdx = searchRegion.lastIndexOf('/>');
     if (selfCloseIdx > 0) {
-      // Content between tag name and `/>` — check for stray `/`
       const betweenContent = searchRegion.slice(tagMatch[0].length - 1, selfCloseIdx);
-      if (!betweenContent.includes('/')) {
+      // Strip quoted strings — `/` inside "..." or '...' is valid attr content
+      const withoutQuotes = betweenContent.replace(/"[^"]*"|'[^']*'/g, '');
+      if (!withoutQuotes.includes('/')) {
         return match; // Self-closing — safe for mdx-jsx
       }
     }
@@ -202,23 +204,32 @@ export function protectFromMdx(source: string): string {
   // matching `}`) crashes with "Unexpected end of file in expression".
   // Protect ALL unmatched `{` with a PUA sentinel.
   //
-  // Strategy: classic stack pairing with paragraph-break awareness. Push
-  // each `{` position; pop on `}`. On blank lines (\n\n), flush the stack
-  // — treat all open braces as unmatched because remark-mdx's expression
-  // parser can't reliably match `{…}` across paragraph breaks (the flow
-  // expression tokenizer fails when `}` has trailing content on its line).
-  // This correctly handles `{{`, `{{{`, `{a{b}`, `{\n\n}text`, etc.
+  // Strategy: classic stack pairing with block-boundary awareness. Push
+  // each `{` position; pop on `}`. On block boundaries, flush the stack
+  // — treat all open braces as unmatched because remark-parse processes
+  // block structure BEFORE remark-mdx processes expressions.
+  //
+  // Block boundaries that split expressions:
+  //   - Blank lines (\n\n) — paragraph breaks
+  //   - \n> — blockquote markers (remark-parse claims > as block syntax)
+  //
+  // This correctly handles `{{`, `{{{`, `{a{b}`, `{\n\n}text`,
+  // `a{\n>}` (blockquote splits expression), etc.
   {
     const unmatchedPositions: number[] = [];
     const stack: number[] = [];
     for (let i = 0; i < result.length; i++) {
-      // Paragraph break: flush open braces as unmatched
-      if (result[i] === '\n' && result[i + 1] === '\n') {
-        unmatchedPositions.push(...stack);
-        stack.length = 0;
-        // Skip past consecutive newlines
-        while (result[i + 1] === '\n') i++;
-        continue;
+      // Block boundary: flush open braces as unmatched
+      if (result[i] === '\n') {
+        const next = result[i + 1];
+        if (next === '\n' || next === '>') {
+          unmatchedPositions.push(...stack);
+          stack.length = 0;
+          if (next === '\n') {
+            while (result[i + 1] === '\n') i++;
+          }
+          continue;
+        }
       }
       if (result[i] === '{') {
         stack.push(i);
