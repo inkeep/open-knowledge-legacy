@@ -13,9 +13,9 @@ function roundTrip(md: string): string {
   return mdManager.serialize(mdManager.parse(md));
 }
 
-function findLinks(json: any): any[] {
-  const links: any[] = [];
-  function walk(node: any) {
+function findLinks(json: import('@tiptap/core').JSONContent): import('@tiptap/core').JSONContent[] {
+  const links: import('@tiptap/core').JSONContent[] = [];
+  function walk(node: import('@tiptap/core').JSONContent) {
     if (node.marks) {
       for (const m of node.marks) {
         if (m.type === 'link') links.push(m);
@@ -65,12 +65,12 @@ describe('autolink promotion: paragraph context', () => {
   test('autolink in middle of text produces 3 PM children', () => {
     const json = mdManager.parse('See <https://example.com> here.\n');
     // Should have: text "See ", link, text " here."
-    const para = json.content?.find((n: any) => n.type === 'paragraph');
+    const para = json.content?.find((n) => n.type === 'paragraph');
     expect(para).toBeDefined();
     const children = para?.content ?? [];
     // At least 3 children (text + linked-text + text)
     expect(children.length).toBeGreaterThanOrEqual(3);
-    const linkedChild = children.find((c: any) => c.marks?.some((m: any) => m.type === 'link'));
+    const linkedChild = children.find((c) => c.marks?.some((m) => m.type === 'link'));
     expect(linkedChild).toBeDefined();
     expect(linkedChild.marks[0].attrs.linkStyle).toBe('autolink');
   });

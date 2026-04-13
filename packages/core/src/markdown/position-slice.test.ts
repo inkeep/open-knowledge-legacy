@@ -5,34 +5,36 @@
  * metadata to mdast node.data by slicing the original source.
  */
 import { describe, expect, test } from 'bun:test';
+import type { Nodes as MdastNodes, Root } from 'mdast';
 import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
+import { VFile } from 'vfile';
 import { positionSlicePlugin } from './position-slice.ts';
 
 /** Parse markdown through remark-parse + remark-gfm + position-slice walker */
-function parseMdast(source: string) {
+function parseMdast(source: string): Root {
   const processor = unified().use(remarkParse).use(remarkGfm).use(positionSlicePlugin);
   const tree = processor.parse(source);
   // Run the transformer (positionSlicePlugin) — it needs the VFile with source
-  processor.runSync(tree, { value: source } as any);
+  processor.runSync(tree, new VFile({ value: source }));
   return tree;
 }
 
 /** Find first node of a given type */
-function findNode(tree: any, type: string): any {
-  let found: any = null;
-  visit(tree, type, (node: any) => {
+function findNode<T extends MdastNodes>(tree: Root, type: T['type']): T | null {
+  let found: T | null = null;
+  visit(tree, type, (node: MdastNodes) => {
     if (!found) found = node;
   });
   return found;
 }
 
 /** Find all nodes of a given type */
-function findNodes(tree: any, type: string): any[] {
-  const nodes: any[] = [];
-  visit(tree, type, (node: any) => {
+function findNodes<T extends MdastNodes>(tree: Root, type: T['type']): T[] {
+  const nodes: T[] = [];
+  visit(tree, type, (node: MdastNodes) => {
     nodes.push(node);
   });
   return nodes;
@@ -207,7 +209,7 @@ describe('position-slice: escapeMark tagging (D20)', () => {
     const tree = parseMdast('text \\# more\n');
     const textNodes = findNodes(tree, 'text');
     // Find the text node that contains #
-    const escaped = textNodes.find((n: any) => n.data?.escapedChars?.length > 0);
+    const escaped = textNodes.find((n) => n.data?.escapedChars?.length > 0);
     expect(escaped).toBeDefined();
     expect(escaped.data.escapedChars).toEqual([{ offset: expect.any(Number), char: '#' }]);
   });
@@ -215,7 +217,7 @@ describe('position-slice: escapeMark tagging (D20)', () => {
   test('backslash-escaped * → data.escapedChars', () => {
     const tree = parseMdast('text \\* more\n');
     const textNodes = findNodes(tree, 'text');
-    const escaped = textNodes.find((n: any) => n.data?.escapedChars?.length > 0);
+    const escaped = textNodes.find((n) => n.data?.escapedChars?.length > 0);
     expect(escaped).toBeDefined();
     expect(escaped.data.escapedChars[0].char).toBe('*');
   });
@@ -223,7 +225,7 @@ describe('position-slice: escapeMark tagging (D20)', () => {
   test('multiple escaped chars in one text run', () => {
     const tree = parseMdast('\\*literal\\*\n');
     const textNodes = findNodes(tree, 'text');
-    const escaped = textNodes.find((n: any) => n.data?.escapedChars?.length > 0);
+    const escaped = textNodes.find((n) => n.data?.escapedChars?.length > 0);
     expect(escaped).toBeDefined();
     expect(escaped.data.escapedChars.length).toBeGreaterThanOrEqual(1);
   });
@@ -235,7 +237,7 @@ describe('position-slice: escapeMark tagging (D20)', () => {
     const textNodes = findNodes(tree, 'text');
     // \\q is not a valid escape — mdast preserves literal backslash
     // so the raw source matches value; no escapedChars needed
-    const hasEscaped = textNodes.some((n: any) => n.data?.escapedChars?.length > 0);
+    const hasEscaped = textNodes.some((n) => n.data?.escapedChars?.length > 0);
     // This assertion is about the char 'q' not being in the escapable set
     // If mdast preserves the backslash literally, raw === value, no tag
     expect(hasEscaped).toBe(false);
@@ -253,8 +255,8 @@ describe('position-slice: fallback behavior', () => {
     // Parse a minimal document
     const tree = processor.parse('hello\n');
     // Remove position from root
-    delete (tree as any).position;
+    delete (tree as Root & { position?: unknown }).position;
     // Run should not throw
-    expect(() => processor.runSync(tree, { value: 'hello\n' } as any)).not.toThrow();
+    expect(() => processor.runSync(tree, new VFile({ value: 'hello\n' }))).not.toThrow();
   });
 });

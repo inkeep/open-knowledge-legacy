@@ -25,6 +25,7 @@ export const HtmlBlockFidelity = Node.create({
     return [{ tag: 'div[data-html-block]' }];
   },
 
+  // biome-ignore lint/suspicious/noExplicitAny: TipTap renderHTML parameter — avoids importing prosemirror-model in extension file
   renderHTML({ node }: any) {
     return ['div', { 'data-html-block': '', class: 'html-block' }, node.attrs.content];
   },

@@ -23,7 +23,7 @@
  *   is relative to the text node value.
  */
 
-import type { Root } from 'mdast';
+import type { Nodes as MdastNodes, Root } from 'mdast';
 import { visit } from 'unist-util-visit';
 import type { VFile } from 'vfile';
 
@@ -54,7 +54,7 @@ export function positionSlicePlugin() {
     // fidelity-attribute dropouts become diagnosable during development.
     const debug = typeof process !== 'undefined' && process.env?.OK_DEBUG_POSITION_SLICE === '1';
 
-    visit(tree, (node: any) => {
+    visit(tree, (node: MdastNodes) => {
       const pos = node.position;
       if (!pos || typeof pos.start?.offset !== 'number') {
         if (debug) {

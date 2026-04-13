@@ -12,7 +12,7 @@
  * Strategy: replace `<` and `>` in protected patterns with Unicode Private
  * Use Area characters before parsing. A post-parse transformer restores them.
  */
-import type { Root } from 'mdast';
+import type { Nodes as MdastNodes, Root } from 'mdast';
 import { visit } from 'unist-util-visit';
 
 // Use Unicode Private Use Area characters as markers.
@@ -124,6 +124,18 @@ export function protectFromMdx(source: string): string {
 }
 
 /**
+ * Protect a single literal `<` at a known source offset.
+ *
+ * Used by the parse retry path when remark-mdx misclassifies prose like
+ * `<50ms` as a JSX opener and aborts the entire document parse.
+ */
+export function protectLiteralLtAtOffset(source: string, offset: number): string {
+  if (offset < 0 || offset >= source.length) return source;
+  if (source[offset] !== '<') return source;
+  return `${source.slice(0, offset)}${GUARD_OPEN}${source.slice(offset + 1)}`;
+}
+
+/**
  * Restore protected autolinks and HTML after parsing.
  * Runs as a unified transformer on the mdast tree.
  */
@@ -136,7 +148,7 @@ function hasSentinels(s: string): boolean {
 
 export function restoreFromMdx() {
   return (tree: Root) => {
-    visit(tree, (node: any) => {
+    visit(tree, (node: MdastNodes) => {
       // Restore in text values
       if (typeof node.value === 'string' && hasSentinels(node.value)) {
         node.value = restoreString(node.value);

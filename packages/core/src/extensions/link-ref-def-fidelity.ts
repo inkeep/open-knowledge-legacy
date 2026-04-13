@@ -27,6 +27,7 @@ export const LinkRefDefFidelity = Node.create({
     return [{ tag: 'div[data-link-ref-def]' }];
   },
 
+  // biome-ignore lint/suspicious/noExplicitAny: TipTap renderHTML parameter — avoids importing prosemirror-model in extension file
   renderHTML({ node }: any) {
     const { label, href, title } = node.attrs;
     const display = title ? `[${label}]: ${href} "${title}"` : `[${label}]: ${href}`;

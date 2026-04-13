@@ -6,8 +6,10 @@
  *
  * Ported from tech-probes/wiki-link-micromark/ (20/20 tests pass, ~100 SLOC).
  */
+
+import type { Nodes as MdastNodes } from 'mdast';
 import type { CompileContext, Extension as FromMarkdownExtension } from 'mdast-util-from-markdown';
-import type { Construct, Extension, State, Tokenizer } from 'micromark-util-types';
+import type { Construct, Extension, State, Token, Tokenizer } from 'micromark-util-types';
 
 // Augment micromark's TokenTypeMap with our custom token types
 declare module 'micromark-util-types' {
@@ -148,32 +150,32 @@ export function wikiLinkSyntax(): Extension {
 
 // ─────────────── mdast-util-from-markdown extension ───────────────
 
-function enterWikiLink(this: CompileContext, token: any) {
+function enterWikiLink(this: CompileContext, token: Token) {
   this.enter(
-    { type: 'wikiLink', value: '', data: { target: '', anchor: null, alias: null } } as any,
+    { type: 'wikiLink', value: '', data: { target: '', anchor: null, alias: null } } as MdastNodes,
     token,
   );
 }
 
-function exitTarget(this: CompileContext, token: any) {
-  const node = this.stack[this.stack.length - 1] as any;
+function exitTarget(this: CompileContext, token: Token) {
+  const node = this.stack[this.stack.length - 1] as Extract<MdastNodes, { type: 'wikiLink' }>;
   node.data.target = this.sliceSerialize(token).trim();
 }
 
-function exitAnchor(this: CompileContext, token: any) {
-  const node = this.stack[this.stack.length - 1] as any;
+function exitAnchor(this: CompileContext, token: Token) {
+  const node = this.stack[this.stack.length - 1] as Extract<MdastNodes, { type: 'wikiLink' }>;
   const raw = this.sliceSerialize(token).trim();
   node.data.anchor = raw.length ? raw : null;
 }
 
-function exitAlias(this: CompileContext, token: any) {
-  const node = this.stack[this.stack.length - 1] as any;
+function exitAlias(this: CompileContext, token: Token) {
+  const node = this.stack[this.stack.length - 1] as Extract<MdastNodes, { type: 'wikiLink' }>;
   const raw = this.sliceSerialize(token).trim();
   node.data.alias = raw.length ? raw : null;
 }
 
-function exitWikiLink(this: CompileContext, token: any) {
-  const node = this.stack[this.stack.length - 1] as any;
+function exitWikiLink(this: CompileContext, token: Token) {
+  const node = this.stack[this.stack.length - 1] as Extract<MdastNodes, { type: 'wikiLink' }>;
   const { target, anchor, alias } = node.data;
   node.value = alias ? alias : anchor ? `${target}#${anchor}` : target;
   this.exit(token);
@@ -193,7 +195,7 @@ export const wikiLinkFromMarkdown: FromMarkdownExtension = {
 /** mdast-util-to-markdown extension (handlers + unsafe) */
 export const wikiLinkToMarkdown = {
   handlers: {
-    wikiLink(node: any) {
+    wikiLink(node: Extract<MdastNodes, { type: 'wikiLink' }>) {
       const target = node.data?.target ?? '';
       const anchor = node.data?.anchor;
       const alias = node.data?.alias;
@@ -204,7 +206,7 @@ export const wikiLinkToMarkdown = {
     },
   },
   unsafe: [{ character: '[', inConstruct: ['phrasing'] }],
-} as any;
+};
 
 // ─────────────── remark plugin ───────────────
 
@@ -212,7 +214,13 @@ export const wikiLinkToMarkdown = {
  * Remark plugin that adds wiki-link syntax support.
  * Use: `.use(remarkWikiLink)`
  */
-export function remarkWikiLink(this: any) {
+export function remarkWikiLink(this: {
+  data(): {
+    micromarkExtensions?: Extension[];
+    fromMarkdownExtensions?: FromMarkdownExtension[];
+    toMarkdownExtensions?: unknown[];
+  };
+}) {
   const data = this.data();
 
   // Register micromark syntax extension

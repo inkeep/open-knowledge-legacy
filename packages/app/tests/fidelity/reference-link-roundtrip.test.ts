@@ -54,7 +54,10 @@ describe('reference-link + definition round-trip (R12, M4)', () => {
   });
 });
 
-function findNodeType(node: any, type: string): any {
+function findNodeType(
+  node: import('@tiptap/core').JSONContent,
+  type: string,
+): import('@tiptap/core').JSONContent | null {
   if (node.type === type) return node;
   for (const child of node.content ?? []) {
     const found = findNodeType(child, type);

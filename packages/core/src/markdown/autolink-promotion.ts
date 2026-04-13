@@ -20,7 +20,7 @@
  * non-whitespace non-bracket content. Same regex as AUTOLINK_RE in the
  * preprocessor.
  */
-import type { Link, Parent, Root, Text } from 'mdast';
+import type { Link, Nodes as MdastNodes, Parent, Root, Text } from 'mdast';
 import { visit } from 'unist-util-visit';
 
 /**
@@ -36,12 +36,12 @@ const AUTOLINK_IN_TEXT_RE = /<([a-zA-Z][a-zA-Z0-9+.-]*:[^\s<>]+)>/g;
 export function autolinkPromotionPlugin() {
   return (tree: Root) => {
     // Walk ALL parent nodes that can contain phrasing content (text).
-    // Using `any` cast mirrors position-slice.ts and autolink-void-html-guard.ts
-    // patterns — mdast type augmentations (wiki-link, MDX) make strict typed
-    // visitors unwieldy without adding correctness value.
-    visit(tree, (node: any) => {
-      if (node.children && Array.isArray(node.children)) {
-        const hasTextChild = node.children.some((c: any) => c.type === 'text');
+    // `any` mirrors position-slice.ts and autolink-void-html-guard.ts:
+    // mdast type augmentations (wiki-link, MDX) make strict typed visitors
+    // unwieldy without adding correctness value.
+    visit(tree, (node: MdastNodes) => {
+      if ('children' in node && Array.isArray(node.children)) {
+        const hasTextChild = node.children.some((c) => c.type === 'text');
         if (hasTextChild) promoteInParent(node);
       }
     });

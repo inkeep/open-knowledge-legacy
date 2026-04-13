@@ -5,13 +5,20 @@
  * Uses POST-RENAME schema names per D16/D17: emphasis/strong/thematicBreak.
  */
 import { describe, expect, test } from 'bun:test';
+import type { JSONContent } from '@tiptap/core';
 import { sharedExtensions } from '../extensions/shared.ts';
 import { MarkdownManager } from './index.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
+type JsonNode = JSONContent & {
+  content?: JsonNode[];
+  marks?: Array<{ type?: string; attrs?: Record<string, unknown> }>;
+  attrs?: Record<string, unknown>;
+};
+
 // Helper: parse markdown and find first node of type in the JSONContent tree
-function findInJson(json: any, type: string): any {
+function findInJson(json: JsonNode, type: string): JsonNode | null {
   if (json.type === type) return json;
   for (const child of json.content ?? []) {
     const found = findInJson(child, type);
@@ -21,9 +28,12 @@ function findInJson(json: any, type: string): any {
 }
 
 // Helper: find a mark on a text node
-function findMarkInJson(json: any, markType: string): any {
+function findMarkInJson(
+  json: JsonNode,
+  markType: string,
+): { type?: string; attrs?: Record<string, unknown> } | null {
   if (json.marks) {
-    const mark = json.marks.find((m: any) => m.type === markType);
+    const mark = json.marks.find((m) => m.type === markType);
     if (mark) return mark;
   }
   for (const child of json.content ?? []) {

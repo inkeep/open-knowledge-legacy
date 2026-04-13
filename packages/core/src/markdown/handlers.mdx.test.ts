@@ -14,7 +14,10 @@ function roundTrip(md: string): string {
   return mdManager.serialize(mdManager.parse(md));
 }
 
-function findInJson(json: any, type: string): any {
+function findInJson(
+  json: import('@tiptap/core').JSONContent,
+  type: string,
+): import('@tiptap/core').JSONContent | null {
   if (json.type === type) return json;
   for (const child of json.content ?? []) {
     const found = findInJson(child, type);

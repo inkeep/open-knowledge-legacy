@@ -30,7 +30,7 @@ describe('jsxComponent via native MDX', () => {
   test('self-closing MDX component stores raw source in content', () => {
     const md = '<Button variant="primary" />\n';
     const json = mdManager.parse(md);
-    const jsxNode = json.content?.find((n: any) => n.type === 'jsxComponent');
+    const jsxNode = json.content?.find((n) => n.type === 'jsxComponent');
     expect(jsxNode).toBeDefined();
     expect(jsxNode?.attrs.content).toContain('Button');
   });
@@ -57,9 +57,7 @@ describe('jsxComponent via native MDX', () => {
 describe('jsxComponent insertJsxComponent command', () => {
   test('command is available in extension', () => {
     // The insertJsxComponent command is defined in JsxComponent extension
-    const ext = sharedExtensions.find(
-      (e: any) => e.name === 'jsxComponent' || e.config?.name === 'jsxComponent',
-    );
+    const ext = sharedExtensions.find((e) => e.name === 'jsxComponent');
     expect(ext).toBeDefined();
   });
 });

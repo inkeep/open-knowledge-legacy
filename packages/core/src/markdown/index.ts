@@ -19,7 +19,13 @@ import {
 } from '@handlewithcare/remark-prosemirror';
 import type { Extensions, JSONContent } from '@tiptap/core';
 import { getSchema } from '@tiptap/core';
-import { Node as PmNode, type Schema } from 'prosemirror-model';
+import type {
+  Definition as MdastDefinition,
+  FootnoteDefinition as MdastFootnoteDefinition,
+  Nodes as MdastNodes,
+  Parent as MdastParent,
+} from 'mdast';
+import { type NodeType, type Mark as PmMark, Node as PmNode, type Schema } from 'prosemirror-model';
 import { parseMd, serializeMd } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
 
@@ -28,6 +34,46 @@ import './mdast-augmentation.ts';
 
 export interface MarkdownManagerOptions {
   extensions: Extensions;
+}
+
+type RichMdastNode = MdastNodes & {
+  data?: {
+    escapedChars?: Array<{ offset: number; char: string }>;
+    sourceDelimiter?: string;
+    sourceStyle?: string;
+    sourceRaw?: string;
+    sourceFenceChar?: string;
+    sourceFenceLength?: number;
+    bulletMarker?: string;
+    listMarkerDelimiter?: string;
+    target?: string;
+    alias?: string | null;
+    anchor?: string | null;
+    [key: string]: unknown;
+  };
+  value?: string;
+  depth?: number;
+  lang?: string | null;
+  meta?: string | null;
+  ordered?: boolean;
+  start?: number | null;
+  spread?: boolean;
+  checked?: boolean | null;
+  alt?: string | null;
+  url?: string;
+  title?: string | null;
+  identifier?: string;
+  label?: string;
+  referenceType?: string;
+};
+
+interface ToPmState {
+  all(node: MdastNodes): PmNode[];
+  one(node: MdastNodes, parent: MdastParent | undefined): PmNode | PmNode[] | null;
+  definitionById: Map<string, MdastDefinition>;
+  footnoteById: Map<string, MdastFootnoteDefinition>;
+  footnoteCounts: Map<string, number>;
+  footnoteOrder: string[];
 }
 
 export class MarkdownManager {
@@ -93,19 +139,19 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   const n = schema.nodes;
   const m = schema.marks;
 
-  const handlers: Record<string, unknown> = {};
+  const handlers: RemarkProseMirrorOptions['handlers'] = {};
 
   // Tier A passthrough
   if (n.paragraph) {
     // Custom paragraph handler: lift sole block-level children (e.g., standalone images)
-    handlers.paragraph = (node: any, _: any, state: any) => {
+    handlers.paragraph = (node: RichMdastNode, _: MdastParent, state: ToPmState) => {
       const children = state.all(node);
       const flatChildren = children.flat();
       // If paragraph contains only block-level node(s) (e.g., images on own line),
       // lift them out of the paragraph wrapper
-      const hasBlockChildren = flatChildren.some((c: any) => c?.isBlock && !c?.isInline);
+      const hasBlockChildren = flatChildren.some((c) => c?.isBlock && !c?.isInline);
       const hasInlineChildren = flatChildren.some(
-        (c: any) => c?.isInline || c?.isText || c?.isTextblock,
+        (c) => c?.isInline || c?.isText || c?.isTextblock,
       );
       if (hasBlockChildren && !hasInlineChildren) {
         return flatChildren.length === 1 ? flatChildren[0] : flatChildren;
@@ -113,9 +159,9 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       // For mixed content: keep only inline-compatible children in the paragraph,
       // and emit block children as siblings after the paragraph
       if (hasBlockChildren && hasInlineChildren) {
-        const inlineOnly = flatChildren.filter((c: any) => !c?.isBlock || c?.isInline);
-        const blockOnly = flatChildren.filter((c: any) => c?.isBlock && !c?.isInline);
-        const result: any[] = [];
+        const inlineOnly = flatChildren.filter((c) => !c?.isBlock || c?.isInline);
+        const blockOnly = flatChildren.filter((c) => c?.isBlock && !c?.isInline);
+        const result: PmNode[] = [];
         const para = n.paragraph.createAndFill(null, inlineOnly.length > 0 ? inlineOnly : null);
         if (para) result.push(para);
         result.push(...blockOnly);
@@ -133,15 +179,16 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   // mdast cells contain phrasing (inline) content, but PM cells require block content.
   // Wrap inline children in a paragraph.
   if (n.tableCell) {
-    const cellHandler = (nodeType: any) => (node: any, _: any, state: any) => {
-      const children = state.all(node).flat();
-      // Wrap inline content in paragraph for PM cell content spec
-      if (children.length > 0 && n.paragraph) {
-        const para = n.paragraph.create(null, children);
-        return nodeType.createAndFill(null, [para]);
-      }
-      return nodeType.createAndFill(null, null);
-    };
+    const cellHandler =
+      (nodeType: NodeType) => (node: RichMdastNode, _: MdastParent, state: ToPmState) => {
+        const children = state.all(node).flat();
+        // Wrap inline content in paragraph for PM cell content spec
+        if (children.length > 0 && n.paragraph) {
+          const para = n.paragraph.create(null, children);
+          return nodeType.createAndFill(null, [para]);
+        }
+        return nodeType.createAndFill(null, null);
+      };
     handlers.tableCell = cellHandler(n.tableCell);
     if (n.tableHeader) {
       // First row uses tableHeader; remark-prosemirror will call the tableCell
@@ -152,13 +199,13 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Image
   if (n.image) {
-    handlers.image = (node: any) =>
+    handlers.image = (node: RichMdastNode) =>
       n.image.createAndFill({
         src: node.url ?? '',
         alt: node.alt ?? null,
         title: node.title ?? null,
       });
-    handlers.imageReference = (node: any) =>
+    handlers.imageReference = (node: RichMdastNode) =>
       n.image.createAndFill({
         src: '',
         alt: node.alt ?? null,
@@ -168,7 +215,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // D20: text handler — apply escapeMark to chars that had backslash escapes in source
   if (m.escapeMark) {
-    handlers.text = (node: any) => {
+    handlers.text = (node: RichMdastNode) => {
       const value: string = node.value ?? '';
       const escapedChars: Array<{ offset: number; char: string }> | undefined =
         node.data?.escapedChars;
@@ -176,7 +223,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
         return schema.text(value.replaceAll('\u00A0', ' '));
       }
       // Build PM Fragment: split text at escape boundaries, apply escapeMark to escaped chars
-      const fragments: any[] = [];
+      const fragments: PmNode[] = [];
       let lastIdx = 0;
       for (const { offset } of escapedChars) {
         // Adjust offset: in mdast, the value has the backslash consumed,
@@ -202,7 +249,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Inline code → code mark on text
   if (m.code) {
-    handlers.inlineCode = (node: any) => schema.text(node.value, [m.code.create()]);
+    handlers.inlineCode = (node: RichMdastNode) => schema.text(node.value ?? '', [m.code.create()]);
   }
 
   // GFM strikethrough
@@ -213,21 +260,21 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // emphasis — sourceDelimiter attr (EmphasisFidelity extension)
   if (m.emphasis) {
-    handlers.emphasis = toPmMark(m.emphasis, (node: any) => ({
+    handlers.emphasis = toPmMark(m.emphasis, (node: RichMdastNode) => ({
       sourceDelimiter: node.data?.sourceDelimiter ?? '*',
     }));
   }
 
   // strong — sourceDelimiter attr (StrongFidelity extension)
   if (m.strong) {
-    handlers.strong = toPmMark(m.strong, (node: any) => ({
+    handlers.strong = toPmMark(m.strong, (node: RichMdastNode) => ({
       sourceDelimiter: node.data?.sourceDelimiter ?? '**',
     }));
   }
 
   // heading — headingStyle attr (HeadingFidelity extension)
   if (n.heading) {
-    handlers.heading = toPmNode(n.heading, (node: any) => ({
+    handlers.heading = toPmNode(n.heading, (node: RichMdastNode) => ({
       level: node.depth,
       headingStyle: node.data?.sourceStyle ?? 'atx',
     }));
@@ -235,7 +282,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // code block — fenceDelimiter + fenceLength attrs (CodeBlockFidelity extension)
   if (n.codeBlock) {
-    handlers.code = (node: any) => {
+    handlers.code = (node: RichMdastNode) => {
       const textContent = node.value ? [schema.text(node.value)] : [];
       return n.codeBlock.createAndFill(
         {
@@ -251,7 +298,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // thematicBreak — sourceRaw attr (ThematicBreakFidelity extension)
   if (n.thematicBreak) {
-    handlers.thematicBreak = (node: any) =>
+    handlers.thematicBreak = (node: RichMdastNode) =>
       n.thematicBreak.createAndFill({
         sourceRaw: node.data?.sourceRaw ?? '---',
       });
@@ -259,7 +306,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // hardBreak / break — hardBreakStyle attr (HardBreakFidelity extension)
   if (n.hardBreak) {
-    handlers.break = (node: any) =>
+    handlers.break = (node: RichMdastNode) =>
       n.hardBreak.createAndFill({
         hardBreakStyle: node.data?.sourceStyle ?? 'spaces',
       });
@@ -267,7 +314,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Lists — read bulletMarker + listMarkerDelimiter (unified list node, D15)
   if (n.list) {
-    handlers.list = toPmNode(n.list, (node: any) => ({
+    handlers.list = toPmNode(n.list, (node: RichMdastNode) => ({
       ordered: !!node.ordered,
       start: node.start ?? 1,
       spread: !!node.spread,
@@ -276,7 +323,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     }));
   }
   if (n.listItem) {
-    handlers.listItem = toPmNode(n.listItem, (node: any) => ({
+    handlers.listItem = toPmNode(n.listItem, (node: RichMdastNode) => ({
       checked: node.checked ?? null,
       spread: !!node.spread,
     }));
@@ -286,7 +333,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Link mark — linkStyle + refLabel attrs (LinkFidelity extension)
   if (m.link) {
-    handlers.link = toPmMark(m.link, (node: any) => ({
+    handlers.link = toPmMark(m.link, (node: RichMdastNode) => ({
       href: node.url ?? '',
       title: node.title ?? null,
       linkStyle: node.data?.sourceStyle ?? 'inline',
@@ -294,7 +341,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     }));
 
     // linkReference → same link mark but with reference style info
-    handlers.linkReference = toPmMark(m.link, (node: any) => ({
+    handlers.linkReference = toPmMark(m.link, (node: RichMdastNode) => ({
       href: '',
       title: null,
       linkStyle: node.referenceType ?? 'shortcut',
@@ -304,7 +351,8 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // HTML block — content attr (HtmlBlockFidelity extension)
   if (n.htmlBlock) {
-    handlers.html = (node: any) => n.htmlBlock.createAndFill({ content: node.value ?? '' });
+    handlers.html = (node: RichMdastNode) =>
+      n.htmlBlock.createAndFill({ content: node.value ?? '' });
   }
 
   // Definition → linkRefDef/linkDefinition atom (R12 CRITICAL override)
@@ -316,8 +364,14 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     const hasUrlAttr = !!linkDefNode.spec.attrs?.url;
     const hasHrefAttr = !!linkDefNode.spec.attrs?.href;
     const hasIdentifierAttr = !!linkDefNode.spec.attrs?.identifier;
-    handlers.definition = (node: any) => {
-      const attrs: Record<string, any> = {
+    handlers.definition = (node: RichMdastNode) => {
+      const attrs: {
+        title: string | null;
+        identifier?: string;
+        label?: string;
+        url?: string;
+        href?: string;
+      } = {
         title: node.title ?? null,
       };
       // Map mdast label/identifier → PM attr names
@@ -338,39 +392,39 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   // with raw source for byte-identical round-trip (US-008, D12)
   if (n.jsxComponent) {
     // MDX JSX elements
-    handlers.mdxJsxFlowElement = (node: any) =>
+    handlers.mdxJsxFlowElement = (node: RichMdastNode) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? '',
       });
-    handlers.mdxJsxTextElement = (node: any) =>
+    handlers.mdxJsxTextElement = (node: RichMdastNode) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? '',
       });
 
     // MDX expressions and ESM
-    handlers.mdxFlowExpression = (node: any) =>
+    handlers.mdxFlowExpression = (node: RichMdastNode) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? `{${node.value ?? ''}}`,
       });
-    handlers.mdxTextExpression = (node: any) =>
+    handlers.mdxTextExpression = (node: RichMdastNode) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? `{${node.value ?? ''}}`,
       });
-    handlers.mdxjsEsm = (node: any) =>
+    handlers.mdxjsEsm = (node: RichMdastNode) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? node.value ?? '',
       });
 
     // Directive nodes
-    handlers.containerDirective = (node: any) =>
+    handlers.containerDirective = (node: RichMdastNode) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? '',
       });
-    handlers.leafDirective = (node: any) =>
+    handlers.leafDirective = (node: RichMdastNode) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? '',
       });
-    handlers.textDirective = (node: any) =>
+    handlers.textDirective = (node: RichMdastNode) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? '',
       });
@@ -378,7 +432,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Wiki-link → inline atom node
   if (n.wikiLink) {
-    handlers.wikiLink = (node: any) =>
+    handlers.wikiLink = (node: RichMdastNode) =>
       n.wikiLink.createAndFill({
         target: node.data?.target ?? '',
         alias: node.data?.alias ?? null,
@@ -398,8 +452,8 @@ function buildPmToMdastHandlers(schema: Schema): {
   nodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'];
   markHandlers: FromProseMirrorOptions<string, string>['markHandlers'];
 } {
-  const nodeHandlers: Record<string, any> = {};
-  const markHandlers: Record<string, any> = {};
+  const nodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'] = {};
+  const markHandlers: FromProseMirrorOptions<string, string>['markHandlers'] = {};
   const n = schema.nodes;
   const m = schema.marks;
 
@@ -408,14 +462,14 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.blockquote) nodeHandlers.blockquote = fromPmNode('blockquote');
 
   if (n.heading) {
-    nodeHandlers.heading = fromPmNode('heading', (pmNode: any) => ({
+    nodeHandlers.heading = fromPmNode('heading', (pmNode: PmNode) => ({
       depth: pmNode.attrs.level,
       data: { sourceStyle: pmNode.attrs.headingStyle },
     }));
   }
 
   if (n.codeBlock) {
-    nodeHandlers.codeBlock = (pmNode: any) => ({
+    nodeHandlers.codeBlock = (pmNode: PmNode) => ({
       type: 'code' as const,
       lang: pmNode.attrs.language ?? null,
       meta: pmNode.attrs.meta ?? null,
@@ -428,14 +482,14 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (n.thematicBreak) {
-    nodeHandlers.thematicBreak = (pmNode: any) => ({
+    nodeHandlers.thematicBreak = (pmNode: PmNode) => ({
       type: 'thematicBreak' as const,
       data: { sourceRaw: pmNode.attrs.sourceRaw },
     });
   }
 
   if (n.hardBreak) {
-    nodeHandlers.hardBreak = (pmNode: any) => ({
+    nodeHandlers.hardBreak = (pmNode: PmNode) => ({
       type: 'break' as const,
       data: { sourceStyle: pmNode.attrs.hardBreakStyle },
     });
@@ -443,7 +497,7 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   // Lists (unified list node, D15)
   if (n.list) {
-    nodeHandlers.list = fromPmNode('list', (pmNode: any) => ({
+    nodeHandlers.list = fromPmNode('list', (pmNode: PmNode) => ({
       ordered: pmNode.attrs.ordered ?? false,
       start: pmNode.attrs.ordered ? (pmNode.attrs.start ?? 1) : null,
       spread: pmNode.attrs.spread ?? false,
@@ -455,7 +509,7 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (n.listItem) {
-    nodeHandlers.listItem = fromPmNode('listItem', (pmNode: any) => ({
+    nodeHandlers.listItem = fromPmNode('listItem', (pmNode: PmNode) => ({
       checked: pmNode.attrs.checked ?? null,
       spread: pmNode.attrs.spread ?? false,
     }));
@@ -469,7 +523,7 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   // Image
   if (n.image) {
-    nodeHandlers.image = (pmNode: any) => ({
+    nodeHandlers.image = (pmNode: PmNode) => ({
       type: 'image' as const,
       url: pmNode.attrs.src,
       alt: pmNode.attrs.alt,
@@ -479,7 +533,7 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   // HTML block — content attr (HtmlBlockFidelity extension)
   if (n.htmlBlock) {
-    nodeHandlers.htmlBlock = (pmNode: any) => ({
+    nodeHandlers.htmlBlock = (pmNode: PmNode) => ({
       type: 'html' as const,
       value: pmNode.attrs.content,
     });
@@ -489,7 +543,7 @@ function buildPmToMdastHandlers(schema: Schema): {
   const linkDefNodeSer = n.linkDefinition ?? n.linkRefDef;
   if (linkDefNodeSer) {
     const linkDefName = n.linkDefinition ? 'linkDefinition' : 'linkRefDef';
-    nodeHandlers[linkDefName] = (pmNode: any) => ({
+    nodeHandlers[linkDefName] = (pmNode: PmNode) => ({
       type: 'definition' as const,
       identifier: pmNode.attrs.identifier ?? pmNode.attrs.label ?? '',
       label: pmNode.attrs.label ?? pmNode.attrs.identifier ?? '',
@@ -500,7 +554,7 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   // JSX component → emit raw source as HTML for byte-identical MDX round-trip
   if (n.jsxComponent) {
-    nodeHandlers.jsxComponent = (pmNode: any) => ({
+    nodeHandlers.jsxComponent = (pmNode: PmNode) => ({
       type: 'html' as const,
       value: pmNode.attrs.content ?? '',
     });
@@ -508,7 +562,7 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   // Wiki-link → emit as raw HTML to preserve [[...]] syntax on serialize
   if (n.wikiLink) {
-    nodeHandlers.wikiLink = (pmNode: any) => {
+    nodeHandlers.wikiLink = (pmNode: PmNode) => {
       const target = pmNode.attrs.target ?? '';
       const anchor = pmNode.attrs.anchor;
       const alias = pmNode.attrs.alias;
@@ -522,20 +576,20 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   // Marks — carry fidelity data back to mdast
   if (m.emphasis) {
-    markHandlers.emphasis = fromPmMark('emphasis', (mark: any) => ({
+    markHandlers.emphasis = fromPmMark('emphasis', (mark: PmMark) => ({
       data: { sourceDelimiter: mark.attrs.sourceDelimiter },
     }));
   }
 
   if (m.strong) {
-    markHandlers.strong = fromPmMark('strong', (mark: any) => ({
+    markHandlers.strong = fromPmMark('strong', (mark: PmMark) => ({
       data: { sourceDelimiter: mark.attrs.sourceDelimiter },
     }));
   }
 
   if (m.code) {
-    markHandlers.code = (_mark: any, _parent: any, children: any[]) => {
-      const val = children.map((c: any) => (c.type === 'text' ? c.value : '')).join('');
+    markHandlers.code = (_mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
+      const val = children.map((c) => (c.type === 'text' ? c.value : '')).join('');
       return { type: 'inlineCode' as const, value: val };
     };
   }
@@ -547,7 +601,7 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (m.link) {
-    markHandlers.link = (mark: any, _parent: any, children: any[]) => {
+    markHandlers.link = (mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
       const style = mark.attrs.linkStyle;
       // Autolink form: serialize as <url>
       if (style === 'autolink') {
@@ -581,7 +635,7 @@ function buildPmToMdastHandlers(schema: Schema): {
   // D20: escapeMark → tag the text node with escapedChars so the serialize
   // handler can re-emit backslash sequences
   if (m.escapeMark) {
-    markHandlers.escapeMark = (_mark: any, _parent: any, children: any[]) => {
+    markHandlers.escapeMark = (_mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
       // Each child text node under this mark was an escaped char — tag it
       for (const child of children) {
         if (child.type === 'text' && child.value) {
