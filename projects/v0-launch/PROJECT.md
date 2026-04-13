@@ -851,7 +851,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
-## Stories — Reach (3 stories — Dima + Tim if capacity allows)
+## Stories — Reach (4 stories — Dima, Tim, Mike if capacity allows)
 
 **Phasing rationale:** Lower priority than each owner's core v0 work. Ship if capacity allows after core stories land. Each depends on core v0 infrastructure shipping first.
 
@@ -929,6 +929,49 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 **Owners.** **Tim** end-to-end. This is his "just-bash virtualization" brainstorm item brought to life.
 
 **Status.** Not started. Estimate: Tier 1 = ~1 week; Tier 2 = +0.5 week. **Reach goal — lower priority than Tim's core v0 work** (V0-4 MCP file-ops, CC9 enrichment audit, MCP initialization/discovery, harness integration). Ship if Tim has capacity after core lands. Depends on core semantic tools working first (enriched bash reuses the same enrichment pipeline).
+
+---
+
+### V0-25: Schematize backlink index + config into SQLite with Drizzle + Zod
+
+**What to build.** Replace the in-memory Map-based backlink index (currently `Map<string, Map<string, string>>` forward + backward, serialized as JSON to `.open-knowledge/cache/{branch}/backlinks.json`) and the YAML config layer with a SQLite database accessed via Drizzle ORM with Zod schema validation. Single `.open-knowledge/cache/ok.db` per project (per-branch tables or branch column). Migrate the file index (`Map<docName, FileIndexEntry>`) into the same DB.
+
+**Why this matters.** Currently everything is Maps-in-memory + JSON/YAML-on-disk. That works at small scale but:
+- **No query capability** — finding "all docs modified in the last week that link to auth.md" requires iterating the entire in-memory Map. SQL makes this trivial.
+- **No full-text search foundation** — Mike's post-v0 search bet (Orama or SQLite FTS5) needs a DB layer. If the backlink index and file metadata are already in SQLite, adding FTS5 is a `CREATE VIRTUAL TABLE` on existing data — not a migration.
+- **Serialization is fragile** — the JSON cache (`backlinks.json`) is a full dump-and-reload. SQLite gives incremental writes, crash recovery, and ACID transactions.
+- **Schema enforcement** — Drizzle + Zod gives typed, validated data at every boundary. Current Maps are untyped at the persistence layer.
+
+**Scope (what moves into SQLite):**
+
+| Data | Current storage | SQLite table(s) |
+|------|----------------|-----------------|
+| Backlink index (forward + backward) | In-memory Maps + JSON cache | `links(source, target, snippet, branch)` |
+| File index (docName → size, modified) | In-memory Map (file-watcher) | `documents(doc_name, size, modified, title, description, tags, branch)` — frontmatter parsed at index time |
+| Config (content.dir, include, exclude, persistence settings) | YAML files + Zod schema | `config(key, value, scope)` — or keep YAML for human editing, mirror into SQLite for queries |
+
+**What stays as-is:**
+- Shadow git repo (`.git/openknowledge/`) — git objects, not database rows
+- Y.Doc CRDT state — Hocuspocus manages, not SQLite
+- YAML config files — human-editable source of truth; SQLite mirrors for query access
+
+**Constraints.**
+- Drizzle ORM (not Prisma — Drizzle is lighter, SQL-first, better Bun compatibility)
+- Zod schemas for all table types (consistent with existing config schema pattern in `config/schema.ts`)
+- Per-branch data via branch column or branch-prefixed tables (match existing `BranchGraphState` pattern)
+- Migration from in-memory to SQLite must be transparent — existing consumers (`getBacklinks()`, `getForwardLinks()`, `getOrphans()`, `getHubs()`, `getFileIndex()`) keep their interfaces; implementation changes underneath
+- Database file in `.open-knowledge/cache/ok.db` — gitignored, rebuild from files if missing (same as current JSON cache)
+- Must not slow down the hot path: `onStoreDocument` → backlink update must be fast (current in-memory Map update is <1ms; SQLite insert must be competitive)
+
+**Value.** Platform: SQLite becomes the foundation for Mike's post-v0 search bet — FTS5 virtual table on the `documents` table, vector search via sqlite-vec extension, metadata-filtered queries. The 8 research reports (Orama vs FTS5+sqlite-vec vs PGlite+pgvector) all assumed a DB layer exists — this builds it. Internal: replaces fragile JSON serialization with ACID persistence. Forward: enables future metadata queries (tag filtering, recent-modified, most-linked) without iterating Maps.
+
+**Lateral.** CC9 (MCP enrichment quality bar) — enriched MCP tool responses (`list_documents` with metadata, `read_document` with backlinks) become SQL queries instead of Map iterations. Faster, more flexible. V0-24 (enriched just-bash) — `exec("ls docs/ | sort -k modified")` becomes a SQL query under the hood.
+
+**Forward.** Direct path to Mike's search bet: add `CREATE VIRTUAL TABLE documents_fts USING fts5(title, description, content, content=documents)` on top of the `documents` table. No separate index-building pipeline needed — the data is already structured.
+
+**Owners.** **Mike** end-to-end. His "schematizing config into proper SQLite → Drizzle → Zod" brainstorm item.
+
+**Status.** Not started. Estimate: 2-3 weeks (schema design + Drizzle setup + migrate backlink index + migrate file index + migrate config mirror + verify all consumers work). **Reach goal — lower priority than Mike's core v0 work** (V0-8 graph view close-out, V0-12 slug correctness, V0-3 BacklinksPanel push, V0-5 rename + link rewrite, V0-11 graph panels, V0-21 dead-link checking). Ship if Mike has capacity after core stories land. Becomes a prerequisite for the post-v0 search bet.
 
 ---
 
@@ -1033,6 +1076,7 @@ Owner signals where they exist (in-flight PR author or original story author). W
 | V0-22 tabbed file experience | **Reach** | 1-2 wk | **Dima** | Spec → impl | Lower P than Dima's core v0 work; ship if capacity |
 | V0-23 drag-and-drop files in sidebar | **Reach** | 1-2 wk | **Dima** | Spec → impl | Lower P; builds on V0-4 move backend |
 | V0-24 enriched just-bash MCP surface | **Reach** | 1-1.5 wk (Tier 1-2) | **Tim** | Prototype → evaluate | Lower P; explores XQ1 architecture; reuses internal bash/index.ts |
+| V0-25 SQLite + Drizzle + Zod schematization | **Reach** | 2-3 wk | **Mike** | Schema design → migrate | Lower P; prerequisite for post-v0 search bet (FTS5); replaces in-memory Maps + JSON cache |
 
 **Sequencing for Now phase (9 stories, 6-8 weeks):**
 - Week 1-2: V0-1 (Andrew), V0-2 (Andrew/Dima — spec resolution), V0-12 (Mike) start in parallel
