@@ -170,8 +170,9 @@ export function releaseServerLock(lockDir: string): void {
   const lockPath = lockFileFor(lockDir);
   if (!existsSync(lockPath)) return;
   try {
-    const existing = JSON.parse(readFileSync(lockPath, 'utf-8')) as ServerLockMetadata;
-    if (existing.pid !== process.pid) return;
+    const parsed = JSON.parse(readFileSync(lockPath, 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.pid !== 'number') return;
+    if (parsed.pid !== process.pid) return;
     unlinkSync(lockPath);
   } catch (err) {
     console.warn(
