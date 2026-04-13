@@ -77,7 +77,7 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
         const relPath = relative(contentDir, fullPath);
         if (filter.isDirExcluded(relPath)) continue;
         walk(fullPath);
-      } else if (entry.isFile() && entry.name.endsWith('.md')) {
+      } else if (entry.isFile()) {
         const relPath = relative(contentDir, fullPath);
         if (filter.isExcluded(relPath)) continue;
         files.push(relPath);
