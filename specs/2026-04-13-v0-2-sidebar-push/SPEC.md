@@ -66,7 +66,9 @@
 | Must | Client tracks per-channel `seq`; `seq` gap → single `GET /api/documents` re-fetch | Fuzz: drop random stateless messages; sidebar converges to disk state within RTT of next event | D7 |
 | Must | WebSocket reconnect triggers single `GET /api/documents` re-fetch | Forced disconnect + disk write during disconnect + reconnect → sidebar reflects disk within RTT of reconnect | D3, D7 |
 | Must | Server assigns monotonic per-channel `seq` starting at 1 per process lifetime | Restart recovery: client sees `seq=1` after server restart → treats as gap → re-fetches | D7 |
-| Must | Persistence extension skips `__system__` — no disk write, no frontmatter cache | No `.__system__.md` file created; server restart does not load `__system__` from disk | D8 |
+| Must | Every subsystem that keys off `documentName` short-circuits on `__system__` via the single `isSystemDoc()` helper: persistence, file-watcher, content-filter, reconciliation, backlink-index, agent-sessions, external-change, frontmatter cache | Integration test after 10 CC1 broadcasts: zero state for `__system__` anywhere (no `.__system__.md`, no backlink index entries, no reconciledBase entry, no frontmatter cache entry) | D8 |
+| Must | `ContentFilter` rejects user-created `__system__.md` (reserved name); `POST /api/create-page` returns 400 on that name | Attempting to create `__system__.md` via API returns 400; writing one directly to disk does not enter the file index | D8, D13 |
+| Must | Server calls `hocuspocus.openDirectConnection('__system__')` on startup before enabling CC1 broadcaster | DiskEvents arriving before first browser connect no-op gracefully; Document exists in `hocuspocus.documents` after startup | D8 |
 | Must | Server coalesces bursts: 100 ms window; >5 events → `{kind:'resync'}` sentinel | `git checkout` of branch changing 200 files → ≤ ~2 broadcasts (one sentinel); client re-fetches once | D10 |
 | Must | Broadcast excludes `update` and `conflict` DiskEvents | Integration test: trigger `update` (file content change on open doc) → no CC1 broadcast | D9 |
 | Should | Rename events carry both old and new paths/docNames | Client patches tree atomically (no delete+create flash) | D9 contract shape |
@@ -132,7 +134,20 @@ File Watcher (existing — packages/server/src/file-watcher.ts)
                                 GET /api/documents → rebuild tree
 ```
 
-**Transport.** Dedicated `__system__` Y.Doc. Every client opens a second `HocuspocusProvider({name: '__system__'})` on app mount via the existing `ProviderPool`. Server-side, the broadcaster uses `Document.broadcastStateless(payload)` (`node_modules/@hocuspocus/server/src/Document.ts:238`) — per-doc primitive already in Hocuspocus. Persistence extension MUST skip `__system__` (no disk write; Y.Doc is ephemeral).
+**Transport.** Dedicated `__system__` Y.Doc. Every client opens a second `HocuspocusProvider({name: '__system__'})` on app mount via the existing `ProviderPool`. Server-side, the broadcaster uses `Document.broadcastStateless(payload)` (Hocuspocus public API: `Document#broadcastStateless(payload, filter?)`) — per-doc primitive already in Hocuspocus.
+
+**Server-side bootstrap (required).** Hocuspocus populates `this.documents` lazily — entries are inserted only when a client connects or when the server calls `openDirectConnection()`. A DiskEvent arriving before the first browser connects would have no Document to broadcast on. Therefore on server startup the CC1 broadcaster MUST call `hocuspocus.openDirectConnection('__system__')` to pre-materialize the Document. Persistence + file-watcher + related extensions short-circuit for this docName via a single `isSystemDoc(documentName)` helper (see cross-cutting skip surface below).
+
+**Cross-cutting skip surface (load-bearing).** Introducing a non-file Y.Doc crosses every subsystem that assumes docs are files. All skips MUST be centralized behind one helper `isSystemDoc(documentName)` defined in `packages/server/src/cc1-broadcast.ts`. Every extension that keys off `documentName` calls this helper at its entry point. Audited subsystems:
+- `persistence.ts` — `onLoadDocument`, `onStoreDocument`, `afterStoreDocument` return early
+- `file-watcher.ts` — `__system__` never appears in the in-memory file index (filename cannot exist on disk for it; defense in depth via ContentFilter)
+- `content-filter.ts` — `isSystemDoc` tripwire; rejects user-created `__system__.md` at index admit time and in `POST /api/create-page`
+- `reconciliation.ts` — no entry in `reconciledBase` for `__system__`
+- `backlink-index.ts` — no index entries for `__system__`
+- `agent-sessions.ts` — no agent session state for `__system__`
+- `external-change.ts` — skipped at dispatch
+- `frontmatter-cache` (inside persistence) — no cache entry for `__system__`
+Integration test asserts: after 10 CC1 broadcasts, no entries for `__system__` in any of the above.
 
 **Payload shape (CC1 contract v1).**
 
@@ -150,9 +165,20 @@ type CC1Event =
 // | { ch: 'backlinks'; docName: string; seq: number }
 ```
 
-**Sequence discipline.** Per-channel monotonically increasing `seq` issued by the server. Client stores `lastSeq` per channel. On `seq !== lastSeq + 1`, client treats it as a gap → re-fetches and advances. On WebSocket reconnect, client also re-fetches once unconditionally.
+**Sequence discipline.** Per-channel monotonically increasing `seq` issued by the server, starting at 1 per server process lifetime. Client stores `lastSeq` per channel. Gap detection:
+- `seq > lastSeq + 1` → drop: re-fetch and advance `lastSeq` to the received seq.
+- `seq < lastSeq` → regression (probable server restart or alternate server behind LB): re-fetch; advance `lastSeq` to received seq.
+- `seq === lastSeq` → duplicate: drop silently (defensive; acceptable no-op).
+- Late-arrival after a gap (e.g., `seq=44` arriving after we advanced to `45`) triggers an additional re-fetch. This is acceptable — at-most-one re-fetch is in flight at any time (a pending re-fetch cancels subsequent re-fetch requests until it returns).
+- On WebSocket reconnect: re-fetch once unconditionally and wait for the next broadcast to re-align seq.
 
-**Event kinds broadcast (Q4 decision).** `create | delete | rename`. `update` excluded — sidebar doesn't render mtime (re-open if V0-19 promotes sort-by-modified). `conflict` excluded — internal reconciliation concern, no sidebar-visible state change.
+**Event kinds broadcast (Q4 decision — REOPENED per design challenge).** Current: `create | delete | rename`; `update` excluded. Design-challenge Finding M4 notes that V0-3 BacklinksPanel definitionally needs content-update signals (backlinks change when bodies change). Excluding `update` from `ch:'files'` forces V0-3 to either extend the contract or invent a parallel channel — contradicting D2. Resolution deferred to user (see decision-reopens batch).
+
+**Contract addendum (from challenge Finding 6).** Beyond the payload shape, the CC1 contract v1 also declares:
+- **`v` field.** Every payload carries `v: 1` for forward-compat; unknown `v` → skip + log.
+- **Channel namespacing.** `ch` is a flat kebab-case string. Reserved prefix `_` for internal / debug channels. Adding a new `ch` value counts as a contract change (D2 signoff required).
+- **Malformed-payload policy.** Unknown `ch` or unparseable payload: log at WARN + skip. Never disconnect.
+- **Auth.** Today there is no per-channel auth; all subscribers on `__system__` see all channels. Trust boundary is localhost (§6 NFR). If a future channel needs per-doc filtering, it ships its own mechanism — CC1 v1 does not support that.
 
 **Coalescing (Q5 decision).** Server-side 100 ms tumbling window per channel. Bursts >5 events within a window collapse to a single `{kind: 'resync'}` sentinel rather than enumerating each — forces clients to re-fetch once instead of patching 200 deltas in series.
 
@@ -180,7 +206,9 @@ type CC1Event =
 | D9 | Broadcast kinds: `create \| delete \| rename`. Exclude `update` and `conflict` | T | DIRECTED | No | Sidebar doesn't render mtime; conflict is reconciliation-internal | `file-watcher.ts:33-45` | Re-open if V0-19 (sort-by-modified) promotes |
 | D10 | Coalescing: 100 ms tumbling window per channel. Bursts >5 events → single `{kind:'resync'}` sentinel | T | DIRECTED | No | Handles `git checkout` storms; clients re-fetch once instead of patching 200 deltas | Seed PROJECT.md:992 "idempotent under rapid changes" | Server tracks per-channel window timer + event count |
 | D11 | Test ownership: V0-2 owns **Layer 1** integration test (disk write → server broadcast → client `onStateless` fires within latency budget). V0-4 owns **Layer 2** Playwright E2E (agent write → sidebar row appears) | T/P | LOCKED | No | Layer 1 gates the CC1 contract; Layer 2 gates user-visible UX that V0-4 delivers anyway | Existing `tests/integration/` Tier 1 harness | V0-4 spec must note the inherited Layer-2 responsibility |
-| D12 | OQ5 (list endpoint scalability) dropped → Future Work → **Noted** | T | LOCKED | No | `handleDocumentList` already reads in-memory file index (no `readdirSync`); confirmed at `api-extension.ts:405-426` and `CLAUDE.md` "File discovery" | `packages/server/src/api-extension.ts:425-426`, `packages/server/src/document-list.test.ts` | Re-open only if vault exceeds ~10k files |
+| D12 | OQ5 (list endpoint scalability) dropped → Future Work → **Noted** | T | LOCKED | No | `handleDocumentList` reads in-memory file index (no filesystem scan); iteration is O(N) but JSON-serialization dominates, ~1-2 ms for 1k files | `packages/server/src/api-extension.ts:425-426,436-456`, `packages/server/src/document-list.test.ts` | Re-open if `resync` rate × client count × list size hurts, or vault exceeds ~10k files |
+| D13 | `__system__` (and any future `cc1:*` reserved doc) is a reserved docName. `ContentFilter` rejects at admit-time; `POST /api/create-page` returns 400 | T | LOCKED | Yes | Defense-in-depth: `isSystemDoc()` skip is necessary but not sufficient; a user-created `__system__.md` on disk would otherwise collide | §9 cross-cutting skip surface | Naming collision is a 1-way-door — lock before V0-3 adopts the pattern |
+| D14 | `__system__` is pinned in ProviderPool — does **not** count toward `maxSize`. Pool eviction skips pinned entries. User content docs retain full 10 slots | T | DIRECTED | No | Avoids surprise eviction cost; cleanest API | `provider-pool.ts:42-55,87-88,233-242` | Add `pinned: boolean` to `PoolEntry`; unit test for eviction-skip |
 
 ## 11) Open questions
 
@@ -202,12 +230,12 @@ type CC1Event =
 
 | ID | Assumption | Confidence | Verification plan | Expiry | Status |
 |---|---|---|---|---|---|
-| A1 | ~~`GET /api/documents` reads from in-memory file index~~ | HIGH | Verified in `api-extension.ts:405-426` | — | **Verified 2026-04-13** |
-| A2 | ~~Hocuspocus stateless messages carry arbitrary JSON to all connections on a doc~~ | HIGH | Verified in `node_modules/@hocuspocus/server/src/Document.ts:238`, `HocuspocusProvider.ts:334` | — | **Verified 2026-04-13** |
-| A3 | ~~Clients may mount sidebar before any content doc is open~~ | HIGH | Trivially true (app mount path); killed 3b | — | **Verified — resolved by D8** |
-| A4 | `ProviderPool.maxSize=10` accommodates `__system__` as one permanent entry without LRU-evicting content docs | MEDIUM | `__system__` is pinned in the pool (never evicted regardless of LRU). Add test in implementation | Before implementation complete | Active |
-| A5 | Persistence extension's `onLoadDocument` / `onStoreDocument` hooks can be gated on `docName === '__system__'` | MEDIUM | Read `persistence.ts` store hook; skip path is straightforward | Before implementation complete | Active |
-| A6 | 100 ms coalescing window is sufficient for `git checkout` bursts; watcher emits events within that window | MEDIUM | Measure during implementation against a real repo | Before implementation complete | Active |
+| A1 | ~~`GET /api/documents` reads from in-memory file index~~ | HIGH | Verified `api-extension.ts:405-426` | — | **Verified 2026-04-13** |
+| A2 | ~~Hocuspocus stateless messages carry arbitrary JSON to all connections on a doc~~ | HIGH | Verified Hocuspocus `Document#broadcastStateless` public API | — | **Verified 2026-04-13** |
+| A3 | ~~Clients may mount sidebar before any content doc is open~~ | HIGH | Trivially true; killed 3b | — | **Verified — resolved by D8** |
+| A4 | ~~ProviderPool can accommodate pinned `__system__` via new `pinned` flag~~ | HIGH | Resolved by D14 (pin does not count toward maxSize) | — | **Verified — resolved by D14** |
+| A5 | ~~Persistence/reconciliation/backlink-index/agent-sessions gate on `documentName`~~ | HIGH | All hooks take `documentName`; `isSystemDoc()` short-circuit is O(1) string compare | — | **Verified 2026-04-13 — resolved by D8 cross-cutting skip surface** |
+| A6 | 100 ms coalescing window is sufficient for `git checkout` bursts on Linux inotify | **LOW** | Measure during implementation against real repo; spread-out bursts may not trigger resync sentinel — audit H2 / design M3 flag this as spec-time blocker | Before D10 locks | **ACTIVE — flagged by audit/challenge; decision reopen pending** |
 
 ## 13) In Scope (implement now)
 
@@ -217,10 +245,11 @@ type CC1Event =
 - **Next actions:**
   1. Andrew: implement `packages/server/src/cc1-broadcast.ts` — coalescer + seq + `broadcastStateless` wiring. Wire into `standalone.ts` DiskEvent dispatch.
   2. Andrew: gate persistence extension on `docName === '__system__'`.
-  3. Andrew: Layer 1 integration test (`packages/server/tests/integration/cc1-broadcast.test.ts`) — disk write → broadcast → `onStateless` fires within latency budget.
-  4. Dima: extend `ProviderPool` to pin `__system__` (never-evict flag) + open on app mount.
-  5. Dima: subscribe module (`packages/app/src/cc1/subscribe.ts`) — seq tracker, gap detection, reconnect handler.
-  6. Dima: remove `setInterval` from `FileSidebar.tsx:144`; patch tree from typed events; re-fetch on gap/reconnect/`resync`.
+  3. Andrew: Layer 1 integration test in existing Tier-1 harness at `packages/app/tests/integration/cc1-broadcast.test.ts` (reuses `createTestServer` / `createTestClient` per `CLAUDE.md` "Tier 1 integration harness"). Asserts: disk write → broadcast → `onStateless` fires; zero `__system__` state in any subsystem after 10 broadcasts.
+  4. Dima: extend `ProviderPool` — add `pinned: boolean` to `PoolEntry`, skip pinned in `evictLru`, exclude pinned from `maxSize` count. Open `__system__` with `pinned=true` from `packages/app/src/main.tsx` at app mount.
+  5. Dima: subscribe module (`packages/app/src/cc1/subscribe.ts`) — seq tracker, gap + regression detection (see §9 sequence discipline), reconnect handler, at-most-one-in-flight re-fetch coalescing.
+  6. Dima: remove `setInterval` from `FileSidebar.tsx:144`; patch tree from typed events; re-fetch on gap/regression/reconnect/`resync`.
+  7. Andrew: add `isSystemDoc()` helper in `cc1-broadcast.ts`; integrate into all audited subsystems (see §9 cross-cutting skip surface).
 - **Risks + mitigations:** §14.
 - **Instrumentation:** `cc1BroadcastCount`, `cc1ResyncCount`, `cc1SubscriberCount` in `metrics.ts`; client logs `[CC1] gap detected seq=...` and `[CC1] reconnect resync`.
 - **Acceptance:** Layer 1 integration passes; manual smoke (run `agent-sim.ts --rapid 5`) shows sidebar updates <500 ms p95; `git checkout` between 2 branches with 200+ file delta produces ≤3 client re-fetches.
@@ -265,21 +294,29 @@ type CC1Event =
 ## 16) Agent constraints
 
 - **SCOPE:**
-  - `packages/server/src/cc1-broadcast.ts` (new — coalescer, seq, broadcast)
-  - `packages/server/src/standalone.ts` (wire DiskEvent → CC1 broadcaster)
-  - `packages/server/src/persistence.ts` (skip `__system__`)
-  - `packages/server/src/file-watcher.ts` (exclude `__system__` from index if ever seen)
-  - `packages/server/src/content-filter.ts` (deny `__system__`)
-  - `packages/server/src/metrics.ts` (add CC1 counters)
-  - `packages/server/tests/integration/cc1-broadcast.test.ts` (new — Layer 1)
+  - `packages/server/src/cc1-broadcast.ts` (new — coalescer, seq, broadcast, `isSystemDoc` helper, startup bootstrap)
+  - `packages/server/src/standalone.ts` (wire DiskEvent → CC1 broadcaster + `openDirectConnection('__system__')` bootstrap)
+  - `packages/server/src/persistence.ts` (short-circuit via `isSystemDoc`: onLoadDocument, onStoreDocument, afterStoreDocument, frontmatter cache)
+  - `packages/server/src/reconciliation.ts` (skip `__system__` in `reconciledBase`)
+  - `packages/server/src/backlink-index.ts` (skip indexing `__system__`)
+  - `packages/server/src/agent-sessions.ts` (skip agent session for `__system__`)
+  - `packages/server/src/external-change.ts` (skip at dispatch)
+  - `packages/server/src/file-watcher.ts` (defense in depth — refuse `__system__` entry to index)
+  - `packages/server/src/content-filter.ts` (reject `__system__.md`; reserved-name policy)
+  - `packages/server/src/api-extension.ts` (`POST /api/create-page` returns 400 on `__system__`)
+  - `packages/server/src/metrics.ts` (add CC1 counters: broadcast, resync, subscriber)
+  - `packages/app/tests/integration/cc1-broadcast.test.ts` (new — Layer 1 in existing Tier-1 harness)
   - `packages/app/src/cc1/subscribe.ts` (new — seq tracker, reconnect, channel router)
-  - `packages/app/src/editor/provider-pool.ts` (pin `__system__`, open on mount)
-  - `packages/app/src/components/FileSidebar.tsx` (remove 5s poll, subscribe to CC1)
+  - `packages/app/src/editor/provider-pool.ts` (add `pinned: boolean`; skip pinned in eviction + maxSize count)
+  - `packages/app/src/main.tsx` (open `__system__` with `pinned=true` at app mount)
+  - `packages/app/src/components/FileSidebar.tsx` (remove 5s poll, subscribe to CC1, filter `__system__` defensively)
 - **EXCLUDE:**
   - `packages/app/src/components/BacklinksPanel.tsx` (V0-3 consumes; no changes here)
   - Sidebar UX — sort, drag-drop, collapse persistence (NG1)
-  - Persistence / reconciliation flow (read-only beyond the `__system__` skip)
+  - Persistence / reconciliation flow beyond the `__system__` skip
   - `packages/core` markdown pipeline (irrelevant)
+  - `packages/app/src/editor/TiptapEditor.tsx`, `packages/app/src/editor/observers.ts` (unrelated)
+  - `packages/cli/`, `docs/` (unrelated)
 - **STOP_IF:**
   - Any change to §9 "Payload shape (CC1 contract v1)" after V0-3 implementation begins → require Andrew + Mike approval
   - A new WebSocket endpoint is needed (violates D1/NG4)

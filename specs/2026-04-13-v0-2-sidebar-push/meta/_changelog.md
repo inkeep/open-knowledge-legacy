@@ -70,3 +70,32 @@ Append-only process log. Decisions, scope changes, evidence captures, and audit 
 - §16 Agent constraints — concrete SCOPE file list, EXCLUDE set, STOP_IF/ASK_FIRST tripwires
 
 **Status:** All P0 open questions closed. Spec ready for audit (Step 6).
+
+## 2026-04-13 — Audit + Design Challenge + Assessment (session 1, Andrew)
+
+**Audit run:** 11 findings (2 High, 6 Medium, 3 Low) written to `meta/audit-findings.md`.
+**Design challenge run:** 7 findings (2 High, 3 Medium, 2 Low) written to `meta/design-challenge.md`.
+**Assessment:** `evidence/AUDIT-assessment-2026-04-13.md` — per-finding verdict + routing.
+
+**Applied as pure corrections (11 findings → spec updates):**
+- Audit H1: `__system__` bootstrap gap → §9 "Server-side bootstrap" block; §6 requirement row; §13 Next actions item 7; D8 rationale updated. `hocuspocus.openDirectConnection('__system__')` MUST fire before broadcaster enables.
+- Audit M1: Seq recovery clarified in §9 — regression, late-arrival, in-flight coalesce protocol explicit.
+- Audit M2 → D14 LOCKED: ProviderPool `pinned` flag; pin does not count toward `maxSize`.
+- Audit M3: Cross-cutting skip surface centralized behind single `isSystemDoc()` helper — persistence, file-watcher, content-filter, reconciliation, backlink-index, agent-sessions, external-change, frontmatter cache ALL routed through it. §9 block + §16 SCOPE expanded accordingly (was 10 files, now 15).
+- Audit M4: Layer-1 test path corrected from non-existent `packages/server/tests/integration/` to existing Tier-1 harness at `packages/app/tests/integration/cc1-broadcast.test.ts`.
+- Audit M5 → D13 LOCKED: `__system__` reserved name policy. `ContentFilter` rejects `__system__.md`; `POST /api/create-page` returns 400.
+- Audit M6: D12 phrasing tightened — in-memory but O(N) iteration, ~1-2 ms/1k files. Re-open trigger widened to include `resync × clients × list_size`.
+- Audit L1/L2/L3: Hocuspocus citation framed as "public API"; SCOPE adds `main.tsx`, EXCLUDE adds TiptapEditor/observers/cli/docs.
+- Design L6: §9 "Contract addendum" added — `v: 1` field, kebab-case flat namespace, malformed-payload policy (log+skip), explicit no-per-channel-auth.
+- Design L7: §9 ETag rejection reframed honestly — CC1 constraint is primary reason, not freestanding technical argument.
+
+**Reopened (5 items → consolidated user-facing batch):**
+- Audit H2 + Design M3: 100 ms coalesce window unverified on Linux; slow-arrival bursts bypass resync sentinel.
+- Design H1: `__system__` as cross-cutting leak. M3 correction centralizes skip via helper, but user should decide whether that's enough vs. reopening 3c (thin server-wide broadcast primitive).
+- Design H2: Hybrid vs. pure-signal contract. Response size unmeasured; three of four client paths re-fetch anyway. Could measure `/api/documents` gzipped and reopen D7.
+- Design M4: `update` exclusion breaks CC1-inheritance promise for V0-3 (backlinks need content-update signals).
+- Design M5: Add narrow V0-2 Playwright test for sidebar DOM patch path (~30 lines) vs. rely on L1 + manual smoke until V0-4.
+
+**Assumptions verified/archived:** A4, A5 promoted HIGH + verified by D14/D8 skip-surface work. A6 demoted LOW and flagged as ACTIVE (part of the reopen).
+
+**Dismissed:** Audit L2 (citation tolerance).
