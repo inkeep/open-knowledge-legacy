@@ -16,7 +16,7 @@ export default {
       project: 'src/**',
       ignoreDependencies: [
         '@tailwindcss/postcss',
-        'ws' // false positive
+        'ws', // false positive
       ],
       ignoreFiles: ['src/server/agent-sim.ts'],
     },
