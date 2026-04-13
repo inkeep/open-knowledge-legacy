@@ -210,8 +210,11 @@ export async function classifyEvents(
     let lst: ReturnType<typeof lstatSync> | null = null;
     try {
       lst = lstatSync(rawPath);
-    } catch {
-      // Path gone — fall back to known-alias lookup
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        console.warn(`[file-watcher] resolveDocName lstat failed for ${rawPath}:`, e);
+      }
       return aliasMap.get(raw) ?? raw;
     }
 
@@ -225,8 +228,11 @@ export async function classifyEvents(
     let canonical: string;
     try {
       canonical = realpathSync(rawPath);
-    } catch {
-      // Broken symlink — drop the stale alias if any and return raw
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT' && code !== 'ELOOP') {
+        console.warn(`[file-watcher] resolveDocName realpath failed for ${rawPath}:`, e);
+      }
       aliasMap.delete(raw);
       return raw;
     }
@@ -375,7 +381,16 @@ function seedLastKnownHashes(
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
-      const lst = lstatSync(fullPath);
+      let lst: ReturnType<typeof lstatSync>;
+      try {
+        lst = lstatSync(fullPath);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT') {
+          console.warn(`[file-watcher] Failed to lstat ${fullPath}, skipping:`, e);
+        }
+        continue;
+      }
 
       if (lst.isSymbolicLink()) {
         let canonical: string;
@@ -496,16 +511,12 @@ function seedLastKnownHashes(
  * Called unconditionally for every classified event (including self-writes)
  * to keep the index in sync with actual disk state.
  */
-export function updateFileIndex(
-  event: DiskEvent,
-  contentDir: string,
-  fileIndex: Map<string, FileIndexEntry>,
-): void {
+export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileIndexEntry>): void {
   switch (event.kind) {
     case 'create':
     case 'update':
     case 'conflict': {
-      const docName = pathToDocName(event.path, contentDir);
+      const docName = event.docName;
       const existing = fileIndex.get(docName);
       fileIndex.set(docName, {
         size: Buffer.byteLength(event.content, 'utf-8'),
@@ -517,16 +528,13 @@ export function updateFileIndex(
       break;
     }
     case 'delete': {
-      const docName = pathToDocName(event.path, contentDir);
-      fileIndex.delete(docName);
+      fileIndex.delete(event.docName);
       break;
     }
     case 'rename': {
-      const oldDocName = pathToDocName(event.oldPath, contentDir);
-      const newDocName = pathToDocName(event.newPath, contentDir);
-      const existing = fileIndex.get(oldDocName);
-      fileIndex.delete(oldDocName);
-      fileIndex.set(newDocName, {
+      const existing = fileIndex.get(event.oldDocName);
+      fileIndex.delete(event.oldDocName);
+      fileIndex.set(event.newDocName, {
         size: Buffer.byteLength(event.content, 'utf-8'),
         modified: new Date().toISOString(),
         canonicalPath: existing?.canonicalPath ?? event.newPath,
@@ -562,13 +570,25 @@ async function handleRawEvents(
 
     if (event.kind !== 'delete' && event.kind !== 'rename') {
       const hash = contentHash(event.content);
-      isSelf = isSelfWrite(event.path, hash);
+      let checkPath = event.path;
+      try {
+        checkPath = realpathSync(event.path);
+      } catch {
+        /* use raw path */
+      }
+      isSelf = isSelfWrite(checkPath, hash);
     } else if (event.kind === 'rename') {
       const hash = contentHash(event.content);
-      isSelf = isSelfWrite(event.newPath, hash);
+      let checkPath = event.newPath;
+      try {
+        checkPath = realpathSync(event.newPath);
+      } catch {
+        /* use raw path */
+      }
+      isSelf = isSelfWrite(checkPath, hash);
     }
 
-    updateFileIndex(event, contentDir, fileIndex);
+    updateFileIndex(event, fileIndex);
 
     if (isSelf) {
       console.log(
@@ -719,10 +739,17 @@ async function startChokidarWatcher(
  * Returns a WatcherHandle with unsubscribe() and getFileIndex().
  */
 export async function startWatcher(
-  contentDir: string,
+  contentDirRaw: string,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
   contentFilter?: ContentFilter,
 ): Promise<WatcherHandle> {
+  let contentDir: string;
+  try {
+    contentDir = realpathSync(contentDirRaw);
+  } catch {
+    contentDir = contentDirRaw;
+  }
+
   const fileIndex = new Map<string, FileIndexEntry>();
   const aliasMap = new Map<string, string>();
 

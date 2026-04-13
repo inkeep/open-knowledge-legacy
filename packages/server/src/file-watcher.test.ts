@@ -424,7 +424,7 @@ describe('startWatcher file index', () => {
       docName: 'new-file',
       content: '# New File\n',
     };
-    updateFileIndex(event, contentDir, index);
+    updateFileIndex(event, index);
     expect(index.has('new-file')).toBe(true);
     expect(index.get('new-file')?.size).toBe(Buffer.byteLength('# New File\n', 'utf-8'));
     expect(index.get('new-file')?.modified).toBeTruthy();
@@ -438,7 +438,7 @@ describe('startWatcher file index', () => {
       path: resolve(contentDir, 'existing.md'),
       docName: 'existing',
     };
-    updateFileIndex(event, contentDir, index);
+    updateFileIndex(event, index);
     expect(index.has('existing')).toBe(false);
   });
 
@@ -452,7 +452,7 @@ describe('startWatcher file index', () => {
       docName: 'doc',
       content: '# Updated content with more text\n',
     };
-    updateFileIndex(event, contentDir, index);
+    updateFileIndex(event, index);
     expect(index.get('doc')?.size).toBe(
       Buffer.byteLength('# Updated content with more text\n', 'utf-8'),
     );
@@ -470,7 +470,7 @@ describe('startWatcher file index', () => {
       newDocName: 'new-name',
       content: '# Renamed\n',
     };
-    updateFileIndex(event, contentDir, index);
+    updateFileIndex(event, index);
     expect(index.has('old-name')).toBe(false);
     expect(index.has('new-name')).toBe(true);
     expect(index.get('new-name')?.size).toBe(Buffer.byteLength('# Renamed\n', 'utf-8'));

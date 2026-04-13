@@ -67,6 +67,7 @@ schema_version: 1
 - **[search-engine-advanced-capabilities](.open-knowledge/catalogs/reports/search-engine-advanced-capabilities/INDEX.md)** (8 articles)
 - **[search-engine-decision](.open-knowledge/catalogs/reports/search-engine-decision/INDEX.md)** (7 articles)
 - **[source-toggle-architecture](.open-knowledge/catalogs/reports/source-toggle-architecture/INDEX.md)** (8 articles)
+- **[symlink-handling-file-sync-crdt](.open-knowledge/catalogs/reports/symlink-handling-file-sync-crdt/INDEX.md)** (8 articles)
 - **[tiptap-2026-direction-overlap](.open-knowledge/catalogs/reports/tiptap-2026-direction-overlap/INDEX.md)** (8 articles)
 - **[ts-monorepo-ci-test-pipeline-patterns](.open-knowledge/catalogs/reports/ts-monorepo-ci-test-pipeline-patterns/INDEX.md)** (1 article)
 - **[vec1-vs-sqlite-vec-ecosystem](.open-knowledge/catalogs/reports/vec1-vs-sqlite-vec-ecosystem/INDEX.md)** (7 articles)
