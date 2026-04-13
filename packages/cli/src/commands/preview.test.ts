@@ -97,7 +97,7 @@ describe('preview command', () => {
 
     expect(result.totalCount).toBe(0);
     expect(result.warnings.length).toBeGreaterThan(0);
-    expect(result.warnings[0]).toContain('content directory not found');
+    expect(result.warnings[0]).toContain('cannot access content directory');
   });
 
   it('produces zero filesystem writes', () => {

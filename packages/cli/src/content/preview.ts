@@ -1,4 +1,4 @@
-import { lstatSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createContentFilter } from '@inkeep/open-knowledge-server';
 
@@ -28,14 +28,15 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
 
   try {
     lstatSync(contentDir);
-  } catch {
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
     return {
       totalCount: 0,
       sample: [],
       contentDir,
       include,
       exclude,
-      warnings: [`content directory not found: ${contentDir}`],
+      warnings: [`cannot access content directory ${contentDir}: ${msg}`],
     };
   }
 
@@ -114,11 +115,23 @@ export function formatPreviewBlock(result: PreviewResult, cwd: string): string {
     lines.push(`  Sample: ${sampleStr}${suffix}`);
   }
 
+  if (result.warnings.length > 0) {
+    for (const w of result.warnings) {
+      lines.push(`  Warning: ${w}`);
+    }
+  }
+
   lines.push('');
-  lines.push('  To adjust, edit .open-knowledge/config.yml:');
-  lines.push('    content:');
-  lines.push(`      include: ${JSON.stringify(result.include)}`);
-  lines.push(`      exclude: ${JSON.stringify(result.exclude)}`);
+  const configPath = join(cwd, '.open-knowledge', 'config.yml');
+  if (existsSync(configPath)) {
+    lines.push('  To adjust, edit .open-knowledge/config.yml:');
+    lines.push('    content:');
+    lines.push(`      include: ${JSON.stringify(result.include)}`);
+    lines.push(`      exclude: ${JSON.stringify(result.exclude)}`);
+  } else {
+    lines.push('  Run `open-knowledge init` to scaffold config, then adjust:');
+    lines.push('    .open-knowledge/config.yml → content.include / content.exclude');
+  }
 
   lines.push('');
   lines.push('  Re-check anytime: open-knowledge preview');

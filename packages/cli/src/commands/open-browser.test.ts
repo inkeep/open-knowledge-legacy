@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as cp from 'node:child_process';
-import { openBrowser } from './start.ts';
+import { openBrowser } from '../utils/open-browser.ts';
 
 describe('openBrowser', () => {
   let execFileSpy: ReturnType<typeof spyOn>;
@@ -47,7 +47,7 @@ describe('openBrowser', () => {
 
   it('prints fallback message when launcher fails', () => {
     Object.defineProperty(process, 'platform', { value: 'linux' });
-    const consoleSpy = spyOn(console, 'log').mockImplementation(() => {});
+    const consoleSpy = spyOn(console, 'warn').mockImplementation(() => {});
 
     execFileSpy.mockImplementation(((
       _cmd: string,

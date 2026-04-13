@@ -83,7 +83,7 @@ describe('previewContent', () => {
     expect(result.totalCount).toBe(0);
     expect(result.sample).toEqual([]);
     expect(result.warnings.length).toBe(1);
-    expect(result.warnings[0]).toContain('content directory not found');
+    expect(result.warnings[0]).toContain('cannot access content directory');
   });
 
   it('caps sample at sampleCap', () => {

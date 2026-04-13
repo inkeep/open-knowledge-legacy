@@ -20,10 +20,6 @@ export function previewCommand(getConfig: () => Config): Command {
 
       process.stdout.write(`${formatPreviewBlock(result, cwd)}\n`);
 
-      for (const w of result.warnings) {
-        process.stderr.write(`Warning: ${w}\n`);
-      }
-
       if (result.totalCount === 0 && result.warnings.length > 0) {
         process.exitCode = 1;
       }
