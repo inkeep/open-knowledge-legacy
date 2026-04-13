@@ -582,11 +582,11 @@
 }
 
 .cm-lineNumbers .cm-gutterElement {
-  padding: 0 4px 0 16px !important;
+  @apply pr-1! pl-4!;
 }
 
 .cm-line {
-  padding-left: 16px !important;
+  @apply pl-4!;
 }
 
 /* ─────────────────────────────────────────────────────────────
