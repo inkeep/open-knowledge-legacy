@@ -1,6 +1,6 @@
 # Evidence — Enriched `exec` MCP Surface
 
-Spec-local factual findings. Each file is a discrete topic with frontmatter:
+Spec-local factual findings. Each file has frontmatter:
 
 ```yaml
 ---
@@ -12,10 +12,8 @@ confidence: HIGH | MED | LOW
 ```
 
 ## Index
-*(files will be added as investigation proceeds)*
 
-- `current-mcp-surface.md` — snapshot of registered MCP tools + INSTRUCTIONS (pending)
-- `bash-substrate.md` — `packages/cli/src/bash/index.ts` capabilities and constraints (pending)
-- `enrichment-divergence.md` — side-by-side of `read_document` vs `search` enrichment (pending)
-- `prior-art-min-tool-count.md` — Dust.tt + related research (pending)
-- `shell-parser-landscape.md` — 3P candidates for command parsing (pending)
+- `worldmodel.md` — full surface inventory (15 MCP tools), connections & dependencies, 3P landscape, current state, unresolved items (dispatched via `/worldmodel` skill on 2026-04-13)
+- `internal-prior-art-contradicts-direction.md` — `reports/just-bash-virtual-filesystem-analysis/` recommends hybrid 6-7 tools; our L2-aggressive direction is a conscious strategic choice, not an evidence-aligned one
+- `enrichment-data-gaps.md` — fs mtime not plumbed anywhere today; backlink count N-amplification on multi-path output
+- `shadow-repo-identity-and-sdk.md` — agent-vs-human attribution via `WriterIdentity.id` prefix (confirmed in code); MCP SDK 1.29 supports `structuredContent` with `outputSchema`
