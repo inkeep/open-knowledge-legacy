@@ -34,7 +34,7 @@ cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
 cd packages/<pkg> && bun test           # Unit tests per package
 ```
 
-**`bun run check` is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion` — lint, typecheck, unit tests, integration (bridge-matrix), and conversion fidelity. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is <50ms.
+**`bun run check` is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is <50ms.
 
 ### Agent simulator (requires dev server running)
 
@@ -86,10 +86,13 @@ Bun does not yet auto-resolve lockfile conflicts (tracked in [oven-sh/bun#17717]
 
 Shared extensions, types, constants, and pure utility functions. **No React or Node.js server dependencies** — browser + Node compatible.
 
+- `src/markdown/` — unified + remark pipeline (see "Markdown Pipeline" below)
 - `src/extensions/shared.ts` — sharedExtensions array (THE schema source of truth)
-- `src/extensions/frontmatter.ts` — strip/prepend frontmatter for markdown round-trip
-- `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (schema + markdown, no React NodeView)
-- `src/extensions/*-fidelity.ts` — 12 source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (loaded via `shared.ts`)
+- `src/extensions/frontmatter.ts` — strip/prepend frontmatter utilities for observer sync (Y.Text ↔ Y.Map bridge)
+- `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (schema only; markdown dispatch via `markdown/handlers.ts`)
+- `src/extensions/list.ts` — Unified list + listItem extension wrapping prosemirror-flat-list (D15)
+- `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
+- `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
@@ -529,13 +532,57 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 - **NG3:** Constructs outside our extension set (math `$$`, footnotes, alerts) are NOT semantically preserved
 - **NG4:** No storage-layer HTML sanitization — raw HTML passes through unchanged
 - **NG5:** HTML entity references (`&amp;` `&lt;` `&gt;`) in source markdown are decoded to literal characters on first parse and remain as literals — the entity form is not preserved
+- **NG6:** Non-ambiguous backslash escapes (e.g., `\foo`) lose the backslash on round-trip — only CommonMark §2.4 structurally-ambiguous escapes are preserved via `escapeMark`
+- **NG7:** MDX `---` inside a JSX block parses as `thematicBreak` — escape to `\---` or wrap in code fence
+- **NG8:** Block-level GFM (tables, tasklists) inside inline `<Note>...</Note>` flattens to inline text — use `<Note>\n\n...\n\n</Note>` form for block children
+- **NG9:** Unicode Private Use Area characters U+E000, U+E001, and U+E002 in source content are reserved as internal sentinels by `autolink-void-html-guard.ts` (R23 MDX-vs-autolink/bare-HTML fix). U+E000 replaces `<` and U+E001 replaces `>` in protected patterns; U+E002 is injected as a per-character separator inside autolink URLs to defeat `remark-gfm`'s autolink-literal matcher (so `<https://url>` round-trips faithfully instead of being re-tokenized as a bare-URL link with `>` absorbed into the href). Source content containing these codepoints may be corrupted by the guard's restoration pass. U+E000/E001/E002 are not assigned by Unicode and are rare in legitimate content (some icon-font payloads use them); if encountered in real documents, the guard's sentinel bytes must be remapped to a less-contested PUA range.
+- **NG10:** A thematicBreak at document start is normalized from `---` to `***` on serialize. `---` at document position 0 is indistinguishable from empty YAML frontmatter under `remark-frontmatter`; re-parsing `---\n\n<content>` tokenizes differently than `***\n\n<content>`, breaking idempotence (I3/I4/I5/I7). Non-doc-start thematicBreaks preserve `sourceRaw` faithfully. Implemented in `packages/core/src/markdown/to-markdown-handlers.ts:thematicBreak`.
+- **NG11:** Documents consisting only of ignore-typed mdast nodes (yaml frontmatter, toml frontmatter, footnoteDefinition) receive a synthesized empty paragraph so the PM doc satisfies `doc.content: 'block+'`. Observed input like `---\n\n---` (empty YAML frontmatter) or a file containing only `[label]: url` reference definitions without body content round-trips to an empty document. Implemented in `packages/core/src/markdown/pipeline.ts:ensureNonEmptyDoc`.
 
-### @tiptap/markdown version discipline
+### Markdown pipeline dependency discipline
 
-- `@tiptap/markdown` is pinned to exact version `3.22.3` (no caret) across all three packages
-- A `bun patch` in `patches/` modifies `encodeTextForMarkdown` (entity bypass) and `parseInlineTokens` (escape handler)
-- **Upgrade protocol:** Before bumping the version, re-run the 118-case fidelity probe and full invariant suite (`bun run test:fidelity`). Verify the patch still applies cleanly.
+- `@handlewithcare/remark-prosemirror` pinned to exact version `0.1.5` (no caret). A `bun patch` in `patches/` applies PR #3 fix (empty-text-node + NBSP whitespace preservation)
+- `remark-mdx` trio (`remark-mdx`, `mdast-util-mdx`, `micromark-extension-mdxjs`) pinned as a coupled unit — bump all three together
+- **Upgrade protocol:** Before bumping any dependency, re-run the 118-case fidelity probe (`tech-probes/r1-preflight-gate/`) and full invariant suite (`bun run test:fidelity`). Verify the remark-prosemirror patch still applies cleanly
 - Failed patch surfaces at install time (fail-loud via `patchedDependencies`)
+- **Pre-flight probe baseline:** 97/118 whitespace-only, 13/13 P0 entity/escape — see `tech-probes/r1-preflight-gate/REPORT.md`
+
+### Markdown Pipeline — System Design
+
+The markdown pipeline uses `unified + remark` for parsing and serialization, with `@handlewithcare/remark-prosemirror` bridging mdast ↔ ProseMirror.
+
+**Parse direction:**
+```
+remark-parse → remark-frontmatter → remark-mdx → remark-directive →
+remark-gfm → wiki-link micromark ext → [R23 autolink/void-HTML guard] →
+position-slice walker → remarkProseMirror (handlers map mdast → PM JSON)
+```
+
+**Serialize direction:**
+```
+fromProseMirror (PM JSON → mdast) → remark-stringify + custom mdast-util-to-markdown handlers
+```
+
+**Handler tiers:**
+- **Tier A (passthrough):** root, paragraph, text, blockquote, table/row/cell, image, inlineCode, delete, directives
+- **Tier B (fidelity):** emphasis, strong, heading, code, thematicBreak, break, list, listItem — reads `node.data.*` from position-slice walker
+- **Tier C (custom):** link/linkReference, definition (R12 override), html, MDX nodes, wikiLink
+
+**Position-slice walker** (`position-slice.ts`): runs after all syntax extensions produce mdast, slices original source at `node.position.start.offset` to recover authoring-form delimiters (emphasis `*`/`_`, fence char, bullet marker, etc.). Attaches `node.data.sourceDelimiter`, `node.data.sourceFenceChar`, etc.
+
+**D20 escapeMark:** PM-level mark applied to text runs whose source contained a backslash escape of a structurally-ambiguous char (`\#`, `\*`, `\_`, etc. per CommonMark §2.4). Position-slice walker tags, serialization handler re-emits the backslash.
+
+**Key files:**
+- `packages/core/src/markdown/pipeline.ts` — unified pipeline factory
+- `packages/core/src/markdown/index.ts` — MarkdownManager wrapper (parse/serialize)
+- `packages/core/src/markdown/handlers.ts` → `index.ts` — mdast→PM + PM→mdast handler tables
+- `packages/core/src/markdown/to-markdown-handlers.ts` — fidelity-aware serialization overrides
+- `packages/core/src/markdown/position-slice.ts` — source-form recovery walker
+- `packages/core/src/markdown/wiki-link-micromark.ts` — micromark tokenizer for `[[Page]]` syntax
+- `packages/core/src/markdown/autolink-void-html-guard.ts` — R23 regression fix
+- `packages/core/src/markdown/mdast-augmentation.ts` — TypeScript type augmentation for custom mdast types
+
+**Schema names (mdast-canonical, D16/D17):** `strong` (not bold), `emphasis` (not italic), `thematicBreak` (not horizontalRule). Unified `list` + `listItem` (not separate bulletList/orderedList/listItem).
 
 ## Changesets
 

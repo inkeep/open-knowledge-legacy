@@ -139,3 +139,22 @@ Systematic read of full STORY.md identified artifacts of iterative editing where
 13. §3 L3: updated from "idle-gap heuristic" to "product-native user-action-bounded + D12 connectionId"
 
 Also updated PQ3 in Items table from "Demoted" to "Back in scope." Architectural precedents already in AGENTS.md from prior update.
+
+### 2026-04-13 — D7 re-revised (4th pivot): Miles's undo decoupled from Observer A
+First-principles re-examination: which undo features actually depend on Observer A diff granularity?
+
+**Finding: core undo (FR-1/FR-2/FR-3/FR-5/FR-6) does NOT depend on Observer A.**
+- FR-1 (WYSIWYG Cmd+Z): Y.UndoManager on XmlFragment → Observer A propagates revert. Correct at any diff granularity.
+- FR-2 (Source Cmd+Z): y-codemirror native UM. Observer A not in path.
+- FR-3 (Agent undo): Server-side UM + syncTextToFragment. Observer A skips (origin guard).
+- FR-5 (Reactive state): Unrelated.
+- FR-6 (Cross-mode): UM coordination, not Observer A.
+Only FR-4 (same-line interleaved / US-3e) depends on Observer A. And per prior research, char-level alone doesn't fix it — root cause is CRDT Item origin-laundering (delete+reinsert overwrites agent Items from 'agent-write' to 'sync-from-tree').
+
+**D7 re-revised:** from "prerequisite" → "independent track, decoupled from Miles's undo."
+**TQ5 scope expanded:** from "char-level diff (~60 LOC)" → "origin-aware diff (deeper fix per prior research)."
+**Miles unblocked:** ships FR-1/FR-2/FR-3/FR-5/FR-6 with zero Observer A dependency.
+
+Updated: §3 Area B (full rewrite), §5 D7, §6 dependency graph + sequencing, §7 non-goals, §8 Items (PQ7, TQ5), §9 Context forward, §13 greenfield D7 row + items-back-in-scope, §15 ownership split (full rewrite — zero coordination needed).
+
+Prior D7 pivot history: (a) accept gap → (b) char-level prerequisite (greenfield) → (b) independent track (first-principles re-exam). Each pivot grounded in evidence that the prior was wrong.

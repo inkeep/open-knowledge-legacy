@@ -38,6 +38,9 @@ const NORMALIZE_SECTIONS = new Set([
   'Emphasis and strong emphasis', // Delimiter run edge cases
   'Links', // Reference links, angle-bracket URLs
   'Autolinks', // Angle-bracket autolinks
+  'Images', // Block/inline image lifting, image reference edge cases
+  'ATX headings', // Closing-sequence edge cases (## foo ##)
+  'Paragraphs', // Blank-line normalization between blocks
 ]);
 
 // Track crashes to detect regressions — if fidelity extension changes introduce

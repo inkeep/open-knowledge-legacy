@@ -7,9 +7,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { sharedExtensions } from '@inkeep/open-knowledge-core';
+import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as fc from 'fast-check';
 import * as Y from 'yjs';

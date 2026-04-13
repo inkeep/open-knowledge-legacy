@@ -346,24 +346,25 @@
   list-style-type: square;
 }
 
-/* Task lists */
-.ProseMirror ul[data-type="taskList"] {
+/* Task lists — unified List extension emits <li data-type="taskItem"> */
+.ProseMirror ul:has(> li[data-type="taskItem"]) {
   list-style: none;
   padding-left: 0;
 }
 
-.ProseMirror ul[data-type="taskList"] li {
+.ProseMirror li[data-type="taskItem"] {
   display: flex;
   align-items: flex-start;
   gap: 0.5em;
+  margin-bottom: 0.1em;
 }
 
-.ProseMirror ul[data-type="taskList"] li > label {
+.ProseMirror li[data-type="taskItem"] > label {
   flex-shrink: 0;
   margin-top: 0.3em;
 }
 
-.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+.ProseMirror li[data-type="taskItem"] > label input[type="checkbox"] {
   appearance: none;
   width: 1rem;
   height: 1rem;
@@ -379,12 +380,12 @@
     border-color 150ms;
 }
 
-.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
+.ProseMirror li[data-type="taskItem"] > label input[type="checkbox"]:checked {
   background-color: var(--color-primary);
   border-color: var(--color-primary);
 }
 
-.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
+.ProseMirror li[data-type="taskItem"] > label input[type="checkbox"]:checked::after {
   content: "";
   width: 0.55rem;
   height: 0.55rem;
@@ -394,24 +395,20 @@
   background-color: var(--color-primary-foreground);
 }
 
-.ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"]:focus-visible {
+.ProseMirror li[data-type="taskItem"] > label input[type="checkbox"]:focus-visible {
   outline: 2px solid var(--color-ring);
   outline-offset: 2px;
 }
 
-.ProseMirror ul[data-type="taskList"] li > div {
+.ProseMirror li[data-type="taskItem"] > div {
   flex: 1;
 }
 
-.ProseMirror ul[data-type="taskList"] li > div p {
+.ProseMirror li[data-type="taskItem"] > div p {
   margin-bottom: 0;
 }
 
-.ProseMirror ul[data-type="taskList"] li {
-  margin-bottom: 0.1em;
-}
-
-.ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+.ProseMirror li[data-type="taskItem"][data-checked="true"] > div {
   text-decoration: line-through;
   color: var(--color-gray-400);
 }
@@ -846,11 +843,11 @@ button:active:not(:disabled) {
 }
 
 /* Dark overrides — MEDIUM-severity items */
-.dark .ProseMirror ul[data-type="taskList"] li > label input[type="checkbox"] {
+.dark .ProseMirror li[data-type="taskItem"] > label input[type="checkbox"] {
   border-color: var(--color-gray-600);
 }
 
-.dark .ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+.dark .ProseMirror li[data-type="taskItem"][data-checked="true"] > div {
   color: var(--color-gray-500);
 }
 

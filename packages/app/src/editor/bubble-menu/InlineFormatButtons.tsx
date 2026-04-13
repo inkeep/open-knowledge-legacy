@@ -9,14 +9,14 @@ const formatActions = [
     name: 'bold',
     icon: Bold,
     command: (editor: Editor) => editor.chain().focus().toggleBold().run(),
-    isActive: (editor: Editor) => editor.isActive('bold'),
+    isActive: (editor: Editor) => editor.isActive('strong'),
     shortcut: '⌘B',
   },
   {
     name: 'italic',
     icon: Italic,
     command: (editor: Editor) => editor.chain().focus().toggleItalic().run(),
-    isActive: (editor: Editor) => editor.isActive('italic'),
+    isActive: (editor: Editor) => editor.isActive('emphasis'),
     shortcut: '⌘I',
   },
   {
