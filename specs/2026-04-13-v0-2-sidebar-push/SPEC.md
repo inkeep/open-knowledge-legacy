@@ -1,9 +1,9 @@
 # V0-2: Push-based real-time sidebar updates — Spec
 
-**Status:** Draft (In Review — all OQs resolved, audit pending)
+**Status:** Approved — ready for /ship
 **Owner(s):** Andrew (server-side push contract — CC1 infrastructure), Dima (client-side sidebar subscriber)
 **Last updated:** 2026-04-13
-**Baseline commit:** f8915cd
+**Baseline commit:** 2fa8b91 (finalized 2026-04-13 after audit + challenge + reopen resolution)
 **Links:**
 - Project: [`projects/v0-launch/PROJECT.md` §V0-2 (line 480)](../../projects/v0-launch/PROJECT.md), CC1 cross-cutting concern (line 991)
 - Predecessor draft: [`specs/2026-04-11-sidebar-realtime-updates/SPEC.md`](../2026-04-11-sidebar-realtime-updates/SPEC.md) (6 OQs)
@@ -116,22 +116,26 @@
 
 ```
 File Watcher (existing — packages/server/src/file-watcher.ts)
-  └─ DiskEvent {kind: 'create'|'delete'|'rename', ...}
+  └─ DiskEvent {kind: 'create'|'delete'|'rename'|'update'|'conflict', ...}
        │
        ├─→ Persistence + Reconciliation (existing — unchanged)
        │
        └─→ NEW: CC1 broadcaster (packages/server/src/cc1-broadcast.ts)
                 │
-                ├─ 100 ms coalescing window (per event channel)
+                ├─ Filter: 'files' channel signals only on create|delete|rename
+                │  (update/conflict do not change the file list)
+                │
+                ├─ 100 ms trailing-edge debounce — any event within the
+                │  window restarts the timer; emit one signal per quiet period
                 │
                 └─ hocuspocus.documents.get('__system__').broadcastStateless(JSON)
                            │
                            ▼
                   All HocuspocusProvider clients subscribed to '__system__'
                            │
-                           ├─ onStateless({payload}) — parse, check seq, patch tree
-                           └─ On seq gap / reconnect / 'resync' sentinel:
-                                GET /api/documents → rebuild tree
+                           ├─ onStateless({payload}) — parse, check seq
+                           └─ GET /api/documents → rebuild tree
+                                (every signal causes a refetch; no delta patching)
 ```
 
 **Transport.** Dedicated `__system__` Y.Doc. Every client opens a second `HocuspocusProvider({name: '__system__'})` on app mount via the existing `ProviderPool`. Server-side, the broadcaster uses `Document.broadcastStateless(payload)` (Hocuspocus public API: `Document#broadcastStateless(payload, filter?)`) — per-doc primitive already in Hocuspocus.
@@ -149,30 +153,29 @@ File Watcher (existing — packages/server/src/file-watcher.ts)
 - `frontmatter-cache` (inside persistence) — no cache entry for `__system__`
 Integration test asserts: after 10 CC1 broadcasts, no entries for `__system__` in any of the above.
 
-**Payload shape (CC1 contract v1).**
+**Payload shape (CC1 contract v1 — pure signal).**
 
 ```ts
-// Happy-path typed event:
-type CC1Event =
-  | { ch: 'files'; kind: 'create'; path: string; docName: string; seq: number }
-  | { ch: 'files'; kind: 'delete'; path: string; docName: string; seq: number }
-  | { ch: 'files'; kind: 'rename'; oldPath: string; newPath: string;
-      oldDocName: string; newDocName: string; seq: number }
-  // Resync sentinel — server emits when it coalesced away enumeration:
-  | { ch: 'files'; kind: 'resync'; seq: number };
+// Every broadcast is a pure signal — an opaque "something changed on this
+// channel" notice. No event kind, no path, no docName. The client responds
+// by re-fetching the channel's canonical REST endpoint.
+type CC1Signal = {
+  v: 1;
+  ch: string;   // e.g. 'files', 'backlinks', 'graph'
+  seq: number;  // per-channel monotonic from server startup
+};
 
-// Future V0-3 channel reuses the shape:
-// | { ch: 'backlinks'; docName: string; seq: number }
+// V0-2 emits on 'files' when the file list changes (create|delete|rename).
+// V0-3 will emit on 'backlinks' when the backlink index changes.
+// V0-11 will emit on 'graph' when graph-derived data changes.
+// Every subscriber fetches its channel's REST endpoint to resolve the signal.
 ```
 
-**Sequence discipline.** Per-channel monotonically increasing `seq` issued by the server, starting at 1 per server process lifetime. Client stores `lastSeq` per channel. Gap detection:
-- `seq > lastSeq + 1` → drop: re-fetch and advance `lastSeq` to the received seq.
-- `seq < lastSeq` → regression (probable server restart or alternate server behind LB): re-fetch; advance `lastSeq` to received seq.
-- `seq === lastSeq` → duplicate: drop silently (defensive; acceptable no-op).
-- Late-arrival after a gap (e.g., `seq=44` arriving after we advanced to `45`) triggers an additional re-fetch. This is acceptable — at-most-one re-fetch is in flight at any time (a pending re-fetch cancels subsequent re-fetch requests until it returns).
-- On WebSocket reconnect: re-fetch once unconditionally and wait for the next broadcast to re-align seq.
+**Why pure signal (not typed events).** Measured `/api/documents` response: 237 KB uncompressed / **26 KB gzipped for 1,807 files** (this repo itself); ~7-15 KB gzipped for typical vaults. The cost argument against pure signal in the original design assumed 100 KB × 10 clients; the real number is an order of magnitude smaller. Meanwhile, typed events would have forced all three client paths (gap, reconnect, resync) to re-fetch anyway — they'd save a fetch only in the pure-happy-path single-event case, at the cost of per-kind payload schema discipline every future consumer inherits. Pure signal matches CC1 charter text literally (*"signal-then-fetch (not push-the-data)"*) and gives V0-3/V0-11 the smallest possible inheritance surface. If V0-4's optimistic UI ever needs per-event info, we extend to `CC1SignalV2` in a backward-compatible way via the `v` field.
 
-**Event kinds broadcast (Q4 decision — REOPENED per design challenge).** Current: `create | delete | rename`; `update` excluded. Design-challenge Finding M4 notes that V0-3 BacklinksPanel definitionally needs content-update signals (backlinks change when bodies change). Excluding `update` from `ch:'files'` forces V0-3 to either extend the contract or invent a parallel channel — contradicting D2. Resolution deferred to user (see decision-reopens batch).
+**Sequence discipline.** Under pure signal, `seq` is primarily a debug/observability aid and a duplicate detector — it does not gate re-fetch behavior because every signal causes a re-fetch anyway. Server issues per-channel monotonic `seq` starting at 1 per process lifetime. Client tracks `lastSeq` for logging and for de-duping immediate redelivery. At-most-one re-fetch is in flight per channel (a pending re-fetch cancels redundant ones until it returns). On WebSocket reconnect: re-fetch once unconditionally.
+
+**Event kinds → signal mapping.** Under pure signal, the `ch:'files'` channel fires **only** on DiskEvents that change the file list: `create | delete | rename`. `update` and `conflict` do not change the list so they do not fire `ch:'files'`. V0-3's `ch:'backlinks'` channel will fire from `persistence.ts`'s backlink-index update path — that path naturally triggers on content-update, so V0-3 gets update-equivalent notification on its own channel without `ch:'files'` carrying it. This resolves Design-challenge M4 without `update` on `ch:'files'`: each channel's semantics are owned by its emitter.
 
 **Contract addendum (from challenge Finding 6).** Beyond the payload shape, the CC1 contract v1 also declares:
 - **`v` field.** Every payload carries `v: 1` for forward-compat; unknown `v` → skip + log.
@@ -180,7 +183,7 @@ type CC1Event =
 - **Malformed-payload policy.** Unknown `ch` or unparseable payload: log at WARN + skip. Never disconnect.
 - **Auth.** Today there is no per-channel auth; all subscribers on `__system__` see all channels. Trust boundary is localhost (§6 NFR). If a future channel needs per-doc filtering, it ships its own mechanism — CC1 v1 does not support that.
 
-**Coalescing (Q5 decision).** Server-side 100 ms tumbling window per channel. Bursts >5 events within a window collapse to a single `{kind: 'resync'}` sentinel rather than enumerating each — forces clients to re-fetch once instead of patching 200 deltas in series.
+**Coalescing.** Server-side **100 ms trailing-edge debounce** per channel. Every incoming DiskEvent restarts the timer; when the timer fires (i.e., no events for 100 ms), emit one signal. No threshold, no sentinel, no dual code paths. Works uniformly on macOS FSEvents (kernel-coalesced) and Linux inotify (spread-out bursts) — a 200-file `git checkout` spanning 800 ms produces exactly one signal 100 ms after the last event. Clients re-fetch once.
 
 ### Alternatives considered
 
@@ -201,11 +204,11 @@ type CC1Event =
 | D4 | Sidebar UX redesign out of scope | P | LOCKED | No | PROJECT.md RH2:1038 | | NG1 |
 | D5 | Optimistic UI for agent writes deferred to V0-4 | P | DIRECTED | No | Predecessor OQ4 | | NG2 |
 | D6 | SCR framing keeps dual emphasis (staleness + architectural fragmentation, equal weight) | P | LOCKED | No | Matches PROJECT.md:484 + :38 framing; single-lens alternatives (β/γ/δ/ε) each misrepresent the bet | `projects/v0-launch/PROJECT.md:38,484` | §1 kept as-is; preempts "just ship faster polling" counter-proposals |
-| D7 | Contract semantics: **hybrid** — typed events happy path + re-fetch on reconnect / seq gap / `resync` sentinel | T/X | LOCKED | Yes | Typed events give cheap steady-state bandwidth; re-fetch fallback is self-healing; V0-3/V0-11 inherit same shape | Hocuspocus `Document.broadcastStateless` (`node_modules/@hocuspocus/server/src/Document.ts:238`) | Client needs seq tracker + reconnect handler; server assigns per-channel monotonic seq |
-| D8 | Transport: dedicated **`__system__` Y.Doc**. Every client opens it on app mount via `ProviderPool`. Server broadcasts via `hocuspocus.documents.get('__system__').broadcastStateless()` | T | LOCKED | Yes | Works with sidebar-mounted-before-any-doc-open (Q9); O(clients) fan-out not O(docs × clients); zero fork of Hocuspocus | `provider-pool.ts:42-54` supports arbitrary docName; `Document.ts:238` per-doc broadcast is already public | Persistence extension MUST skip `__system__` (no disk write). `ProviderPool.maxSize` default 10 unchanged — `__system__` counts as one |
-| D9 | Broadcast kinds: `create \| delete \| rename`. Exclude `update` and `conflict` | T | DIRECTED | No | Sidebar doesn't render mtime; conflict is reconciliation-internal | `file-watcher.ts:33-45` | Re-open if V0-19 (sort-by-modified) promotes |
-| D10 | Coalescing: 100 ms tumbling window per channel. Bursts >5 events → single `{kind:'resync'}` sentinel | T | DIRECTED | No | Handles `git checkout` storms; clients re-fetch once instead of patching 200 deltas | Seed PROJECT.md:992 "idempotent under rapid changes" | Server tracks per-channel window timer + event count |
-| D11 | Test ownership: V0-2 owns **Layer 1** integration test (disk write → server broadcast → client `onStateless` fires within latency budget). V0-4 owns **Layer 2** Playwright E2E (agent write → sidebar row appears) | T/P | LOCKED | No | Layer 1 gates the CC1 contract; Layer 2 gates user-visible UX that V0-4 delivers anyway | Existing `tests/integration/` Tier 1 harness | V0-4 spec must note the inherited Layer-2 responsibility |
+| D7 | Contract semantics: **pure signal** — every broadcast is `{v:1, ch, seq}`; client re-fetches channel's canonical REST endpoint on every signal | T/X | LOCKED | Yes | Measured `/api/documents` = 26 KB gzipped on 1,807 files — bandwidth argument for typed events doesn't hold. Matches CC1 charter text literally ("signal-then-fetch"). Smallest possible inheritance surface for V0-3/V0-11. Extensible via `v: 2` if V0-4 ever needs per-event info | Measurement in `evidence/api-documents-size.md`; audit H2 + design challenge H2 | Seq is for dedup + observability, not gating. No sentinel, no typed-event schema, no per-kind branching |
+| D8 | Transport: dedicated **`__system__` Y.Doc**. Every client opens it on app mount via `ProviderPool`. Server pre-materializes via `openDirectConnection('__system__')` at startup, then broadcasts via `Document#broadcastStateless()` | T | LOCKED | Yes | Works with sidebar-mounted-before-any-doc-open (Q9); O(clients) fan-out not O(docs × clients); skip surface centralized in single `isSystemDoc()` helper audited across 8 subsystems. Alternative 3c (server-wide primitive) deferred — `isSystemDoc()` makes the leak mechanical | `provider-pool.ts:42-54`; Hocuspocus public API `Document#broadcastStateless`, `Hocuspocus#openDirectConnection` | Every new extension that keys off `documentName` must call `isSystemDoc()` at entry. If forgotten, integration test fails |
+| D9 | `ch:'files'` channel fires **only** on DiskEvents that change the file list: `create \| delete \| rename`. `update` and `conflict` do not change the list. V0-3's `ch:'backlinks'` channel fires from backlink-index update path (content-update naturally triggers it there) — so the primitive serves all consumers without `ch:'files'` carrying `update` | T | LOCKED | No | Resolves design-challenge M4: channel semantics owned by emitter, not by shared enumeration. Each channel's canonical refetch endpoint interprets the signal | `file-watcher.ts:33-45`; V0-3 PROJECT.md:332-346 | V0-3 wires its own emission inside `persistence.ts` backlink-index path; contract stays flat |
+| D10 | Coalescing: **100 ms trailing-edge debounce** per channel. Any event restarts the timer; emit one signal per quiet period. No threshold, no sentinel | T | LOCKED | No | Works uniformly on macOS FSEvents and Linux inotify. A `git checkout` of 200 files over 800 ms produces exactly one signal. Simpler than tumbling-window + threshold; eliminates the audit H2 / challenge M3 failure mode entirely | Audit H2 + Design-challenge M3; pure-signal D7 removes the need for a sentinel kind | Server keeps one `NodeJS.Timeout` per channel. Tests verify single-signal on burst |
+| D11 | Test ownership: V0-2 owns **Layer 1** integration test (disk→broadcast→`onStateless`) **and** one narrow **Layer-2 Playwright** test (`packages/app/tests/stress/cc1-sidebar.e2e.ts`) — agent write → sidebar row appears within p95 <2 s in CI. V0-4 owns the full L2 matrix for file-ops UX | T/P | LOCKED | No | Closes design-challenge M5 regression window: sidebar DOM patch path gains CI coverage from V0-2 day one. ~30 LOC added. V0-4 inherits responsibility only for its added surface (delete/rename context menu, multi-selection, etc.) | CLAUDE.md "Playwright policy"; Tier-1 harness already exists for L1 | V0-2 PR includes one Playwright fixture; not a full matrix |
 | D12 | OQ5 (list endpoint scalability) dropped → Future Work → **Noted** | T | LOCKED | No | `handleDocumentList` reads in-memory file index (no filesystem scan); iteration is O(N) but JSON-serialization dominates, ~1-2 ms for 1k files | `packages/server/src/api-extension.ts:425-426,436-456`, `packages/server/src/document-list.test.ts` | Re-open if `resync` rate × client count × list size hurts, or vault exceeds ~10k files |
 | D13 | `__system__` (and any future `cc1:*` reserved doc) is a reserved docName. `ContentFilter` rejects at admit-time; `POST /api/create-page` returns 400 | T | LOCKED | Yes | Defense-in-depth: `isSystemDoc()` skip is necessary but not sufficient; a user-created `__system__.md` on disk would otherwise collide | §9 cross-cutting skip surface | Naming collision is a 1-way-door — lock before V0-3 adopts the pattern |
 | D14 | `__system__` is pinned in ProviderPool — does **not** count toward `maxSize`. Pool eviction skips pinned entries. User content docs retain full 10 slots | T | DIRECTED | No | Avoids surprise eviction cost; cleanest API | `provider-pool.ts:42-55,87-88,233-242` | Add `pinned: boolean` to `PoolEntry`; unit test for eviction-skip |
@@ -224,7 +227,17 @@ type CC1Event =
 | ~~Q8~~ | ~~Multi-client correctness~~ | T | — | — | Resolved by D8: `broadcastStateless` delivers to every connection exactly once | **Closed 2026-04-13** |
 | ~~Q9~~ | ~~No-open-doc behavior~~ | T | — | — | Resolved by D8: `__system__` opens independently of content docs | **Closed 2026-04-13** |
 
-**All open questions closed. Ready for audit.**
+**All open questions closed. Audit + design-challenge complete. 11 findings applied, 5 reopens resolved → D7 pivoted to pure signal, D8/D9/D10/D11 tightened. Ready for finalization.**
+
+### Reopens resolved (post-audit, 2026-04-13)
+
+| ID | Reopen source | Resolution |
+|---|---|---|
+| R1 | Design H2 — hybrid vs pure signal | **D7 pivoted → pure signal.** Measurement: `/api/documents` = 26 KB gzipped for 1,807 files. Bandwidth argument for hybrid didn't hold. |
+| R2 | Design M4 — `update` exclusion | **D9 rewritten.** Channel semantics owned by emitter, not by shared enumeration. V0-3 wires `ch:'backlinks'` from backlink-index update path; `ch:'files'` stays create/delete/rename. Contract stays flat. |
+| R3 | Audit H2 + Design M3 — coalesce window | **D10 simplified → 100 ms trailing-edge debounce.** No threshold, no sentinel. Works on macOS + Linux uniformly. |
+| R4 | Design H1 — `__system__` leak | **D8 kept (4a).** `isSystemDoc()` helper makes skip mechanical across 8 subsystems. 3c (server-wide primitive) deferred — reopen if CC1 hits ≥5 channels. |
+| R5 | Design M5 — V0-2 Playwright | **D11 expanded.** V0-2 owns one narrow Playwright test (~30 LOC); V0-4 inherits full L2 matrix for its added surface. |
 
 ## 12) Assumptions
 
@@ -235,7 +248,7 @@ type CC1Event =
 | A3 | ~~Clients may mount sidebar before any content doc is open~~ | HIGH | Trivially true; killed 3b | — | **Verified — resolved by D8** |
 | A4 | ~~ProviderPool can accommodate pinned `__system__` via new `pinned` flag~~ | HIGH | Resolved by D14 (pin does not count toward maxSize) | — | **Verified — resolved by D14** |
 | A5 | ~~Persistence/reconciliation/backlink-index/agent-sessions gate on `documentName`~~ | HIGH | All hooks take `documentName`; `isSystemDoc()` short-circuit is O(1) string compare | — | **Verified 2026-04-13 — resolved by D8 cross-cutting skip surface** |
-| A6 | 100 ms coalescing window is sufficient for `git checkout` bursts on Linux inotify | **LOW** | Measure during implementation against real repo; spread-out bursts may not trigger resync sentinel — audit H2 / design M3 flag this as spec-time blocker | Before D10 locks | **ACTIVE — flagged by audit/challenge; decision reopen pending** |
+| A6 | ~~100 ms coalescing window sufficient for bursts~~ | HIGH | Resolved by D10 pivot to trailing-edge debounce — works uniformly on macOS FSEvents and Linux inotify regardless of inter-event spacing | — | **Verified — resolved by D10 rework** |
 
 ## 13) In Scope (implement now)
 
@@ -245,14 +258,15 @@ type CC1Event =
 - **Next actions:**
   1. Andrew: implement `packages/server/src/cc1-broadcast.ts` — coalescer + seq + `broadcastStateless` wiring. Wire into `standalone.ts` DiskEvent dispatch.
   2. Andrew: gate persistence extension on `docName === '__system__'`.
-  3. Andrew: Layer 1 integration test in existing Tier-1 harness at `packages/app/tests/integration/cc1-broadcast.test.ts` (reuses `createTestServer` / `createTestClient` per `CLAUDE.md` "Tier 1 integration harness"). Asserts: disk write → broadcast → `onStateless` fires; zero `__system__` state in any subsystem after 10 broadcasts.
+  3. Andrew: Layer 1 integration test in existing Tier-1 harness at `packages/app/tests/integration/cc1-broadcast.test.ts` (reuses `createTestServer` / `createTestClient` per `CLAUDE.md` "Tier 1 integration harness"). Asserts: disk write → broadcast → `onStateless` fires within budget; zero `__system__` state in any subsystem after 10 broadcasts; 200-event burst debounces to 1 signal.
   4. Dima: extend `ProviderPool` — add `pinned: boolean` to `PoolEntry`, skip pinned in `evictLru`, exclude pinned from `maxSize` count. Open `__system__` with `pinned=true` from `packages/app/src/main.tsx` at app mount.
-  5. Dima: subscribe module (`packages/app/src/cc1/subscribe.ts`) — seq tracker, gap + regression detection (see §9 sequence discipline), reconnect handler, at-most-one-in-flight re-fetch coalescing.
-  6. Dima: remove `setInterval` from `FileSidebar.tsx:144`; patch tree from typed events; re-fetch on gap/regression/reconnect/`resync`.
+  5. Dima: subscribe module (`packages/app/src/cc1/subscribe.ts`) — signal handler, seq dedup, reconnect handler, at-most-one-in-flight re-fetch coalescing per channel.
+  6. Dima: remove `setInterval` from `FileSidebar.tsx:144`; trigger `GET /api/documents` on every `ch:'files'` signal.
   7. Andrew: add `isSystemDoc()` helper in `cc1-broadcast.ts`; integrate into all audited subsystems (see §9 cross-cutting skip surface).
+  8. Dima: Layer 2 Playwright test at `packages/app/tests/stress/cc1-sidebar.e2e.ts` — agent write → sidebar row appears within CI budget (<2 s).
 - **Risks + mitigations:** §14.
 - **Instrumentation:** `cc1BroadcastCount`, `cc1ResyncCount`, `cc1SubscriberCount` in `metrics.ts`; client logs `[CC1] gap detected seq=...` and `[CC1] reconnect resync`.
-- **Acceptance:** Layer 1 integration passes; manual smoke (run `agent-sim.ts --rapid 5`) shows sidebar updates <500 ms p95; `git checkout` between 2 branches with 200+ file delta produces ≤3 client re-fetches.
+- **Acceptance:** Layer 1 integration passes (disk→broadcast→onStateless + skip-surface assertions + debounce-burst assertion); Layer 2 Playwright (`cc1-sidebar.e2e.ts`) passes under CI budget; manual smoke (run `agent-sim.ts --rapid 5`) shows sidebar updates <500 ms p95; `git checkout` between 2 branches with 200+ file delta produces exactly 1 client re-fetch.
 
 ### Deployment / rollout considerations
 

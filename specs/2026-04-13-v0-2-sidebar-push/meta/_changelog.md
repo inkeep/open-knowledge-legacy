@@ -99,3 +99,28 @@ Append-only process log. Decisions, scope changes, evidence captures, and audit 
 **Assumptions verified/archived:** A4, A5 promoted HIGH + verified by D14/D8 skip-surface work. A6 demoted LOW and flagged as ACTIVE (part of the reopen).
 
 **Dismissed:** Audit L2 (citation tolerance).
+
+## 2026-04-13 — All reopens resolved; spec finalized (session 1, Andrew)
+
+**User direction:** fast path — all recommended answers.
+
+**Load-bearing measurement captured:** `evidence/api-documents-size.md` — walked this repo's 1,807 `.md` files, serialized to `/api/documents` shape, measured **26 KB gzipped** (orig estimate 100 KB × 10 clients was 4× too conservative). This pivoted D7.
+
+**Reopens resolved:**
+- **R1 → D7 pivoted: pure signal.** `{v:1, ch, seq}` payload. Every signal → refetch canonical REST endpoint. Matches CC1 charter literally. Smallest possible inheritance surface for V0-3/V0-11. Extensible via `v:2` if V0-4 optimistic UI ever needs per-event info.
+- **R2 → D9 rewritten: channel semantics owned by emitter.** `ch:'files'` fires on create/delete/rename. V0-3's `ch:'backlinks'` will fire from `persistence.ts` backlink-index update path (which naturally triggers on content-update). Contract stays flat; no `update` forced onto `ch:'files'`.
+- **R3 → D10 simplified: trailing-edge debounce.** 100 ms, no threshold, no sentinel. Works uniformly on macOS FSEvents and Linux inotify. 200-file `git checkout` over 800 ms → exactly 1 signal. Eliminates audit H2 / challenge M3 failure mode.
+- **R4 → D8 kept (accept option 4a).** `isSystemDoc()` helper makes skip mechanical across 8 subsystems. 3c (thin server-wide broadcast primitive) deferred — reopen if CC1 hits ≥5 channels.
+- **R5 → D11 expanded.** V0-2 owns one narrow Playwright test (`cc1-sidebar.e2e.ts`, ~30 LOC) for sidebar DOM patch path. V0-4 owns the full L2 matrix for its added surface.
+
+**Cascades applied:**
+- §9 system design rewritten: new data-flow diagram (trailing-edge debounce, pure signal), new payload shape (`CC1Signal`), simplified sequence discipline (seq for dedup/observability, not gating), simplified coalescing text.
+- §9 Alternatives considered rewritten: A (pure signal) is now the chosen design; former hybrid rejection reframed as "B" option rejected; 3c honestly framed as deferred not impossible.
+- §6 Functional requirements rewritten: 14 rows (13 Must, 2 Should) — pure-signal semantics, debounce, Playwright, skip surface, bootstrap.
+- §10 D7, D9, D10, D11 rationale + evidence + implications updated.
+- §11 all reopens marked resolved with traceability.
+- §12 A6 resolved (D10 rework made it moot).
+- §13 Next actions: now 8 items (added L2 Playwright).
+- §16 SCOPE already reflected the expanded file list from audit corrections.
+
+**Status pivoted to Approved.** Ready for /ship.
