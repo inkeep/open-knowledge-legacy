@@ -120,6 +120,33 @@ export function protectFromMdx(source: string): string {
   // These appear in CommonMark edge cases like ![foo](<>) or bare < in text
   result = result.replace(/<>/g, `${GUARD_OPEN}${GUARD_CLOSE}`);
 
+  // Protect bare `<` at end of line or end of file (no character after it, or
+  // followed by whitespace/newline). remark-mdx doesn't claim these but they can
+  // cause "Unexpected end of file before name" in edge cases.
+  result = result.replace(/<(?=\s|$)/gm, GUARD_OPEN);
+
+  // Final fallback: protect any remaining `<` followed by a letter that wasn't
+  // claimed by the specific rules above. This catches unclosed JSX-like patterns
+  // (e.g., "text <foo bar", "<Component" without closing ">") that would crash
+  // remark-mdx. Without this, any markdown file containing a bare `<Letter`
+  // sequence without a closing `>` on the same line fails to parse — the document
+  // loads blank because Observer B catches the error and keeps last valid state.
+  //
+  // Safe because: if the pattern IS valid JSX, it has a closing `>` on the same
+  // line and either (a) was already handled by LOWERCASE_HTML_TAG_RE (lowercase
+  // with closing `>`), or (b) will be left alone for mdx-jsx (uppercase with
+  // closing `>`). We only protect `<Letter` where no `>` follows before newline/EOF.
+  result = result.replace(/<(?=[a-zA-Z$_])/g, (match, offset) => {
+    const rest = result.slice(offset + 1); // after the `<`
+    const nextClose = rest.indexOf('>');
+    const nextNewline = rest.indexOf('\n');
+    if (nextClose === -1 || (nextNewline !== -1 && nextNewline < nextClose)) {
+      // No closing `>` on this line — bare `<` that would crash remark-mdx
+      return GUARD_OPEN;
+    }
+    return match; // Has closing `>` — leave for mdx-jsx or HTML rules
+  });
+
   return result;
 }
 
