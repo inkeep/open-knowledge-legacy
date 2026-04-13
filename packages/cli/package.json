@@ -51,7 +51,6 @@
     "@inkeep/open-knowledge-server": "workspace:*",
     "open-knowledge-app": "workspace:*",
     "@types/node": "^22.16.0",
-    "@types/ws": "^8.18.1",
     "tsdown": "^0.21.7",
     "typescript": "^5.9.3"
   }
