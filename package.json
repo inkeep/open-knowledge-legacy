@@ -33,13 +33,15 @@
     "@changesets/cli": "^2.29.7",
     "@codemirror/state": "^6.6.0",
     "@codemirror/view": "^6.41.0",
+    "prosemirror-model": "^1.25.4",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "turbo": "^2.7.0"
   },
   "overrides": {
     "@codemirror/state": "$@codemirror/state",
-    "@codemirror/view": "$@codemirror/view"
+    "@codemirror/view": "$@codemirror/view",
+    "prosemirror-model": "$prosemirror-model"
   },
   "patchedDependencies": {
     "@handlewithcare/remark-prosemirror@0.1.5": "patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch"
