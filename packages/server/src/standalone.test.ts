@@ -339,7 +339,7 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     await server.ready;
 
     // Only the __system__ CC1 DirectConnection — no content documents loaded.
-    // flushAllStoresAndWait short-circuits on documents.size === 0.
+    // flushAllStoresAndWait runs (documents.size === 1 for __system__), but completes fast.
     const startedAt = Date.now();
     await server.destroy();
     const elapsed = Date.now() - startedAt;

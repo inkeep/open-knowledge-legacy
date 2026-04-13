@@ -686,6 +686,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const docName = resolveAlias(url.searchParams.get('docName') || 'test-doc');
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       if (!sessionManager.hasSession(docName)) {
         json(res, 200, { ok: true, canUndo: false, canRedo: false });
         return;
