@@ -12,6 +12,7 @@ export interface ReconciliationMetrics {
   rescueBufferCount: number;
   branchSwitchCount: number;
   parkCount: number;
+  gitAutoSaveFailureCount: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -22,6 +23,7 @@ const counters: ReconciliationMetrics = {
   rescueBufferCount: 0,
   branchSwitchCount: 0,
   parkCount: 0,
+  gitAutoSaveFailureCount: 0,
 };
 
 export function incrementReconcile(): void {
@@ -52,6 +54,10 @@ export function incrementPark(): void {
   counters.parkCount++;
 }
 
+export function incrementGitAutoSaveFailure(): void {
+  counters.gitAutoSaveFailureCount++;
+}
+
 export function getMetrics(): ReconciliationMetrics {
   return { ...counters };
 }
@@ -64,4 +70,5 @@ export function resetMetrics(): void {
   counters.rescueBufferCount = 0;
   counters.branchSwitchCount = 0;
   counters.parkCount = 0;
+  counters.gitAutoSaveFailureCount = 0;
 }
