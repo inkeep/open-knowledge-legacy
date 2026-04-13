@@ -11,7 +11,19 @@
  * - escapeMark: text with data.escapedChars re-emits backslash sequences
  */
 
-export const toMarkdownHandlers: Record<string, any> = {
+import type { Nodes, Parents } from 'mdast';
+import type { Info, State } from 'mdast-util-to-markdown';
+
+type MdastToMarkdownHandlerFor<N extends Nodes['type']> = (
+  node: Extract<Nodes, { type: N }>,
+  parent: Parents | undefined,
+  state: State,
+  info: Info,
+) => string;
+
+type MdastToMarkdownHandlers = { [K in Nodes['type']]: MdastToMarkdownHandlerFor<K> };
+
+export const toMarkdownHandlers = {
   /**
    * text: strip `&` (before [#A-Za-z]) and `<` from the unsafe list.
    * Without this, every literal `&` or `<` in prose gets backslash-escaped,
@@ -20,9 +32,9 @@ export const toMarkdownHandlers: Record<string, any> = {
    * Also handles D20 escapeMark: if the text carries data.escapedChars,
    * re-emit backslash sequences for structurally-ambiguous escapes.
    */
-  text(node: any, _parent: any, state: any, info: any) {
+  text(node, _parent, state, info) {
     // D20: if position-walker tagged escaped chars, reconstruct source form
-    if (node.data?.escapedChars?.length > 0) {
+    if (node.data?.escapedChars?.length) {
       const value: string = node.value ?? '';
       const escaped: Array<{ offset: number; char: string }> = node.data.escapedChars;
       let result = '';
@@ -52,7 +64,7 @@ export const toMarkdownHandlers: Record<string, any> = {
   /**
    * emphasis: use node.data.sourceDelimiter to pick `*` or `_`.
    */
-  emphasis(node: any, _parent: any, state: any, info: any) {
+  emphasis(node, _parent, state, info) {
     const delim = node.data?.sourceDelimiter ?? '*';
     const tracker = state.createTracker(info);
     const exit = state.enter('emphasis');
@@ -70,7 +82,7 @@ export const toMarkdownHandlers: Record<string, any> = {
   /**
    * strong: use node.data.sourceDelimiter to pick `**` or `__`.
    */
-  strong(node: any, _parent: any, state: any, info: any) {
+  strong(node, _parent, state, info) {
     const delim = node.data?.sourceDelimiter ?? '**';
     const tracker = state.createTracker(info);
     const exit = state.enter('strong');
@@ -89,7 +101,7 @@ export const toMarkdownHandlers: Record<string, any> = {
    * link: write URL verbatim (no `&` escaping in URLs).
    * Autolinks (data.sourceStyle === 'autolink') short-circuit to `<url>` form.
    */
-  link(node: any, _parent: any, state: any, info: any) {
+  link(node, _parent, state, info) {
     // Autolink form — promoted by autolink-promotion.ts transformer
     if (node.data?.sourceStyle === 'autolink') {
       return `<${node.url ?? ''}>`;
@@ -143,7 +155,7 @@ export const toMarkdownHandlers: Record<string, any> = {
    *
    * Non-doc-start thematicBreaks preserve `sourceRaw` faithfully.
    */
-  thematicBreak(node: any, _parent: any, state: { indexStack: number[] }) {
+  thematicBreak(node, _parent, state) {
     const sourceRaw = node.data?.sourceRaw;
     const isDocStart =
       Array.isArray(state?.indexStack) &&
@@ -158,7 +170,7 @@ export const toMarkdownHandlers: Record<string, any> = {
   /**
    * break: emit backslash or two-space form per data.sourceStyle.
    */
-  break(node: any) {
+  break(node) {
     if (node.data?.sourceStyle === 'backslash') return '\\\n';
     return '  \n';
   },
@@ -166,7 +178,7 @@ export const toMarkdownHandlers: Record<string, any> = {
   /**
    * code: preserve fence char and length.
    */
-  code(node: any) {
+  code(node) {
     const fenceChar = node.data?.sourceFenceChar;
     const char = fenceChar === '~' ? '~' : '`';
     const len = Math.max(3, node.data?.sourceFenceLength ?? 3);
@@ -180,19 +192,19 @@ export const toMarkdownHandlers: Record<string, any> = {
   /**
    * heading: preserve ATX vs setext style.
    */
-  heading(node: any, _parent: any, state: any, info: any) {
+  heading(node, _parent, state, info) {
     const style = node.data?.sourceStyle ?? 'atx';
     const depth = node.depth;
     if (style === 'setext' && (depth === 1 || depth === 2)) {
-      const content = state.containerPhrasing(node, { before: '\n', after: '\n', ...info });
+      const content = state.containerPhrasing(node, { ...info, before: '\n', after: '\n' });
       const underline = (depth === 1 ? '=' : '-').repeat(Math.max(content.length, 3));
       return `${content}\n${underline}`;
     }
     const hashes = '#'.repeat(depth);
     const content = state.containerPhrasing(node, {
+      ...info,
       before: `${hashes} `,
       after: '\n',
-      ...info,
     });
     if (!content) return hashes;
     return `${hashes} ${content}`;
@@ -201,7 +213,7 @@ export const toMarkdownHandlers: Record<string, any> = {
   /**
    * list: preserve bullet marker and ordered delimiter.
    */
-  list(node: any, _parent: any, state: any, info: any) {
+  list(node, _parent, state, info) {
     const bullet = state.options.bullet || '-';
     const ordered = !!node.ordered;
     const savedBullet = state.bulletCurrent;
@@ -228,13 +240,14 @@ export const toMarkdownHandlers: Record<string, any> = {
       else if (child.checked === false) marker += ' [ ]';
       const pad = ' '.repeat(baseMarker.length + 1);
       const itemContent = state.containerFlow(child, {
-        before: '\n',
-        after: '\n',
         ...info,
+        // fix TS2353: Object literal may only specify known properties, and before does not exist in type TrackFields
+        // before: '\n',
+        // after: '\n',
       });
       const indented = itemContent
         .split('\n')
-        .map((l: string, idx: number) => (idx === 0 ? `${marker} ${l}` : l ? `${pad}${l}` : l))
+        .map((l, idx) => (idx === 0 ? `${marker} ${l}` : l ? `${pad}${l}` : l))
         .join('\n');
       out.push(indented);
     }
@@ -245,7 +258,7 @@ export const toMarkdownHandlers: Record<string, any> = {
     const sep = node.spread ? '\n\n' : '\n';
     return out.join(sep);
   },
-};
+} satisfies Partial<MdastToMarkdownHandlers>;
 
 /**
  * Emit text through state.safe with NG5-specific strips applied to the
@@ -271,9 +284,9 @@ export const toMarkdownHandlers: Record<string, any> = {
  * `<url>` as text content, so `:` and `@` escaping follows the remark-stringify
  * default (safe for non-autolink text).
  */
-function safeText(state: any, value: string, info: any): string {
+function safeText(state: State, value: string, info: Info): string {
   const originalUnsafe = state.unsafe;
-  state.unsafe = originalUnsafe.filter((u: any) => {
+  state.unsafe = originalUnsafe.filter((u) => {
     if (u.character === '&' && u.after === '[#A-Za-z]') return false;
     if (u.character === '<') return false;
     return true;
