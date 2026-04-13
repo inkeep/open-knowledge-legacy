@@ -58,7 +58,7 @@ tags:
 ## Non-goals
 
 - **No analysis** — don't interpret, compare, or critique the source
-- **No promotion to articles/** — that's \`/consolidate\`'s job, later
+- **No promotion to articles/** — that's the \`consolidate\` tool's job, later
 - **No deduplication** — if the same source is ingested twice, let it happen; cleanup is a separate concern
 
 Full convention: read \`.open-knowledge/AGENTS.md\`.`;
