@@ -122,7 +122,11 @@ export async function getDocumentHistory(
   // Normalize contentRoot: strip leading './' — git rejects relative path syntax
   // ("./foo") when operating against a bare repo (cat-file, log --).
   const normalizedRoot = contentRoot.replace(/^\.\//, '');
-  const docPath = query.docName ? `${normalizedRoot}/${query.docName}.md` : undefined;
+  const docPath = query.docName
+    ? normalizedRoot
+      ? `${normalizedRoot}/${query.docName}.md`
+      : `${query.docName}.md`
+    : undefined;
 
   try {
     const sg = shadowGit(shadow);

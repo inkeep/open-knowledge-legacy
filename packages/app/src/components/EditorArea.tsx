@@ -39,7 +39,9 @@ export function EditorArea({ isSourceMode, previewEntry, onNoDiff }: EditorAreaP
 
     async function fetchDiff() {
       try {
-        const res = await fetch(`/api/diff?docName=${encodeURIComponent(activeDocName!)}&to=${sha}`);
+        const res = await fetch(
+          `/api/diff?docName=${encodeURIComponent(activeDocName!)}&to=${sha}`,
+        );
         if (cancelled) return;
         if (!res.ok) {
           setDiffLines([{ type: 'unchanged', text: '(Failed to load diff)' }]);
@@ -72,7 +74,7 @@ export function EditorArea({ isSourceMode, previewEntry, onNoDiff }: EditorAreaP
     return () => {
       cancelled = true;
     };
-  }, [previewEntry?.sha, activeDocName]);
+  }, [previewEntry?.sha, activeDocName, onNoDiff]);
 
   if (!activeProvider || !activeDocName) {
     return (
@@ -111,7 +113,6 @@ export function EditorArea({ isSourceMode, previewEntry, onNoDiff }: EditorAreaP
               <div style={{ display: isPreviewMode ? 'none' : undefined }}>
                 <div className={isSourceMode ? 'h-full' : 'hidden'}>
                   <SourceEditor
-                    key={activeDocName}
                     ytext={activeProvider.document.getText('source')}
                     provider={activeProvider}
                   />

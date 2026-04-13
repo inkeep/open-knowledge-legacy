@@ -52,11 +52,12 @@ const ROLLBACK_ORIGIN = 'rollback-apply';
 
 /** Validates a docName is safe for use as a shadow git path component. */
 function safeDocPath(docName: string, contentRoot: string): { path: string } | { error: string } {
-  if (!docName || docName.includes('..') || docName.includes('/') || docName.includes('\0')) {
+  if (!docName || docName.includes('..') || docName.includes('\0')) {
     return { error: 'Invalid document name' };
   }
   const normalized = contentRoot.replace(/^\.\//, '');
-  return { path: `${normalized}/${docName}.md` };
+  const path = normalized ? `${normalized}/${docName}.md` : `${docName}.md`;
+  return { path };
 }
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
