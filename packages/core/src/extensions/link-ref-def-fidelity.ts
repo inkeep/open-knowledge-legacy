@@ -27,7 +27,7 @@ export const LinkRefDefFidelity = Node.create({
     return [{ tag: 'div[data-link-ref-def]' }];
   },
 
-  renderHTML({ node }: any) {
+  renderHTML({ node }) {
     const { label, href, title } = node.attrs;
     const display = title ? `[${label}]: ${href} "${title}"` : `[${label}]: ${href}`;
     return ['div', { 'data-link-ref-def': '', class: 'link-ref-def' }, display];
