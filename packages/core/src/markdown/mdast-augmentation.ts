@@ -54,7 +54,15 @@ declare module 'mdast' {
     bulletMarker?: string;
     listMarkerDelimiter?: string;
   }
-  /** Standalone `[[wiki]]` lines parse as root-level phrasing. */
+  /**
+   * WikiLinks are phrasing (inline) content at the micromark level (registered
+   * as a `text` construct). Declared in RootContentMap rather than
+   * PhrasingContentMap because the latter would add WikiLinkMdast to the
+   * Nodes union, and WikiLinkMdast doesn't satisfy Nodes' structural
+   * constraints — causing type errors in unist-util-visit callbacks.
+   * RootContentMap makes wikiLink a valid mdast node type without breaking
+   * the phrasing content type chain.
+   */
   interface RootContentMap {
     wikiLink: WikiLinkMdast;
   }

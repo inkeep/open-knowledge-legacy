@@ -155,7 +155,7 @@ export function protectFromMdx(source: string): string {
     // Incomplete `</` or `</foo` (no closing `>`) crashes remark-mdx.
     // Lowercase close tags were already handled by HTML_CLOSE_TAG_RE above.
     if (rest[1] === '/') {
-      if (/^<\/[a-zA-Z][a-zA-Z0-9.]*\s*>/.test(rest)) return match;
+      if (/^<\/[a-zA-Z][a-zA-Z0-9.]*[ \t]*>/.test(rest)) return match;
       return GUARD_OPEN; // Incomplete close tag — protect
     }
 
@@ -172,10 +172,21 @@ export function protectFromMdx(source: string): string {
     // Multi-line self-closing JSX like `<Widget\n  attr="x"\n/>` has the
     // `/>` on a later line. Search up to the next paragraph break (blank line)
     // — JSX tags don't span paragraph breaks.
+    //
+    // STRICT: only pass through if the content between <Tag and /> contains
+    // no stray `/` outside quoted attribute values. `<J/a/>` has a bare `/`
+    // (malformed JSX), but `<Image src="https://url" />` has `/` inside
+    // quotes (valid — URLs in attr values).
     const nextBlankLine = rest.search(/\n\s*\n/);
     const searchRegion = nextBlankLine === -1 ? rest : rest.slice(0, nextBlankLine);
-    if (/\/>/.test(searchRegion)) {
-      return match; // Self-closing — safe for mdx-jsx
+    const selfCloseIdx = searchRegion.lastIndexOf('/>');
+    if (selfCloseIdx > 0) {
+      const betweenContent = searchRegion.slice(tagMatch[0].length - 1, selfCloseIdx);
+      // Strip quoted strings — `/` inside "..." or '...' is valid attr content
+      const withoutQuotes = betweenContent.replace(/"[^"]*"|'[^']*'/g, '');
+      if (!withoutQuotes.includes('/')) {
+        return match; // Self-closing — safe for mdx-jsx
+      }
     }
 
     // Check for matching close tag: </TagName>
@@ -193,21 +204,45 @@ export function protectFromMdx(source: string): string {
   // matching `}`) crashes with "Unexpected end of file in expression".
   // Protect ALL unmatched `{` with a PUA sentinel.
   //
-  // Strategy: classic stack pairing. Push each `{` position; pop on `}`.
-  // After the scan, any positions remaining on the stack are unmatched.
-  // This correctly handles `{{`, `{{{`, `{a {b}`, etc.
+  // Strategy: classic stack pairing with block-boundary awareness. Push
+  // each `{` position; pop on `}`. On block boundaries, flush the stack
+  // — treat all open braces as unmatched because remark-parse processes
+  // block structure BEFORE remark-mdx processes expressions.
+  //
+  // Block boundaries that split expressions:
+  //   - Blank lines (\n\n) — paragraph breaks
+  //   - \n> — blockquote markers (remark-parse claims > as block syntax)
+  //
+  // This correctly handles `{{`, `{{{`, `{a{b}`, `{\n\n}text`,
+  // `a{\n>}` (blockquote splits expression), etc.
   {
+    const unmatchedPositions: number[] = [];
     const stack: number[] = [];
     for (let i = 0; i < result.length; i++) {
+      // Block boundary: flush open braces as unmatched
+      if (result[i] === '\n') {
+        const next = result[i + 1];
+        if (next === '\n' || next === '>') {
+          unmatchedPositions.push(...stack);
+          stack.length = 0;
+          if (next === '\n') {
+            while (result[i + 1] === '\n') i++;
+          }
+          continue;
+        }
+      }
       if (result[i] === '{') {
         stack.push(i);
       } else if (result[i] === '}') {
-        if (stack.length > 0) stack.pop(); // matched pair
+        if (stack.length > 0) stack.pop(); // matched pair within same block
       }
     }
-    if (stack.length > 0) {
+    // Any remaining at EOF are also unmatched
+    unmatchedPositions.push(...stack);
+
+    if (unmatchedPositions.length > 0) {
       const chars = [...result];
-      for (const pos of stack) {
+      for (const pos of unmatchedPositions) {
         chars[pos] = GUARD_OPEN_BRACE;
       }
       result = chars.join('');
@@ -215,18 +250,6 @@ export function protectFromMdx(source: string): string {
   }
 
   return result;
-}
-
-/**
- * Protect a single literal `<` at a known source offset.
- *
- * Used by the parse retry path when remark-mdx misclassifies prose like
- * `<50ms` as a JSX opener and aborts the entire document parse.
- */
-export function protectLiteralLtAtOffset(source: string, offset: number): string {
-  if (offset < 0 || offset >= source.length) return source;
-  if (source[offset] !== '<') return source;
-  return `${source.slice(0, offset)}${GUARD_OPEN}${source.slice(offset + 1)}`;
 }
 
 /**

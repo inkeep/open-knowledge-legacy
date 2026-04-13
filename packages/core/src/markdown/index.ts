@@ -19,7 +19,7 @@ import {
 } from '@handlewithcare/remark-prosemirror';
 import type { Extensions, JSONContent } from '@tiptap/core';
 import { getSchema } from '@tiptap/core';
-import { type Mark as PmMark, Node as PmNode, type Schema } from '@tiptap/pm/model';
+import type { Mark as PmMark, Node as PmNode, Schema } from '@tiptap/pm/model';
 import type {
   Break,
   Code,
@@ -49,6 +49,7 @@ import type {
   MdxjsEsm,
   MdxTextExpression,
 } from 'mdast-util-mdx';
+import { GUARD_OPEN_BRACE } from './autolink-void-html-guard.ts';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseMd, serializeMd } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
@@ -107,12 +108,49 @@ export class MarkdownManager {
   }
 
   /**
+   * Crash-safe parse: never throws. Returns degraded content on failure.
+   *
+   * Use this on code paths where a throw = user-visible data loss:
+   *   - Server persistence (onLoadDocument) — better to show degraded text
+   *     than an empty document
+   *   - Any caller that can't keep "last valid state" like Observer B does
+   *
+   * On failure, retries with all `{` protected via PUA sentinel (defeats
+   * acorn's "Could not parse expression" error while preserving all other
+   * markdown parsing). If that also fails, returns raw text as a paragraph.
+   */
+  parseSafe(markdown: string): JSONContent {
+    try {
+      return this.parse(markdown);
+    } catch {
+      // Retry with all { protected — remark-mdx expression parser can't
+      // claim them, restoreFromMdx() converts PUA back to { in the tree
+      try {
+        const safeMd = markdown.replaceAll('{', GUARD_OPEN_BRACE);
+        return this.parse(safeMd);
+      } catch {
+        // Last resort: raw text as paragraph
+        return {
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
+        };
+      }
+    }
+  }
+
+  /**
    * Serialize TipTap JSONContent to a markdown string.
    */
   serialize(json: JSONContent): string {
     let doc: PmNode;
     try {
-      doc = PmNode.fromJSON(this.schema, json);
+      // Use schema.nodeFromJSON() instead of PmNode.fromJSON(schema, json):
+      // in monorepos with multiple physical copies of prosemirror-model, the
+      // static PmNode import can disagree with the Schema instance from
+      // getSchema() ("multiple versions loaded"). schema.nodeFromJSON() uses
+      // the schema's own Node/Fragment constructors — always consistent.
+      // Credit: Mike (PR #105)
+      doc = this.schema.nodeFromJSON(json) as PmNode;
     } catch (err) {
       const msg = `MarkdownManager.serialize() failed: schema rejected JSONContent (type=${json.type}, childCount=${json.content?.length ?? 0})`;
       throw new Error(msg, { cause: err });

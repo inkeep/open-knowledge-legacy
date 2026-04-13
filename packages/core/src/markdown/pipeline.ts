@@ -35,11 +35,7 @@ import { VFile } from 'vfile';
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
 import { autolinkPromotionPlugin } from './autolink-promotion.ts';
-import {
-  protectFromMdx,
-  protectLiteralLtAtOffset,
-  restoreFromMdx,
-} from './autolink-void-html-guard.ts';
+import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { docStartThematicFixPlugin } from './doc-start-thematic-fix.ts';
 import { positionSlicePlugin } from './position-slice.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
@@ -55,8 +51,6 @@ interface PipelineOptions {
   /** Custom mdast-util-to-markdown handlers for fidelity (wired in US-005) */
   toMarkdownHandlers?: Record<string, unknown>;
 }
-
-const MDX_RECOVERY_MAX_ATTEMPTS = 8;
 
 /**
  * Ensure the mdast tree has at least one renderable block. remark-prosemirror
@@ -99,33 +93,18 @@ function ensureNonEmptyDoc(tree: MdastRoot): MdastRoot {
  * Parse a markdown string to a ProseMirror document node.
  */
 export function parseMd(source: string, opts: PipelineOptions): PmNode {
-  let parseSource = source;
-  let lastError: unknown;
+  // R23: Protect autolinks, void HTML, bare <, unmatched {, and other
+  // crash-triggering patterns from remark-mdx claiming.
+  const protected_ = protectFromMdx(source);
+  const processor = createParseProcessor(opts);
 
-  for (let attempt = 0; attempt < MDX_RECOVERY_MAX_ATTEMPTS; attempt += 1) {
-    try {
-      const protected_ = protectFromMdx(parseSource);
-      const processor = createParseProcessor(opts);
-
-      // Create VFile so the position-slice walker can access the ORIGINAL source text
-      // (not the protected version) for accurate position slicing.
-      const file = new VFile(protected_);
-      const tree = processor.parse(file);
-      file.value = source;
-      const transformed = processor.runSync(tree, file);
-      const doc = (processor as unknown as { stringify(tree: unknown): PmNode }).stringify(
-        transformed,
-      );
-      return doc;
-    } catch (err) {
-      lastError = err;
-      const recovered = recoverInvalidMdxJsxLiteralLt(parseSource, err);
-      if (recovered == null) throw err;
-      parseSource = recovered;
-    }
-  }
-
-  throw lastError;
+  // Create VFile so the position-slice walker can access the ORIGINAL source text
+  // (not the protected version) for accurate position slicing.
+  const file = new VFile(protected_);
+  const tree = processor.parse(file);
+  file.value = source;
+  const transformed = processor.runSync(tree, file);
+  return (processor as unknown as { stringify(tree: unknown): PmNode }).stringify(transformed);
 }
 
 function createParseProcessor(opts: PipelineOptions) {
@@ -145,24 +124,6 @@ function createParseProcessor(opts: PipelineOptions) {
       schema: opts.schema,
       handlers: opts.handlers,
     } as RemarkProseMirrorOptions);
-}
-
-function recoverInvalidMdxJsxLiteralLt(source: string, err: unknown): string | null {
-  const e = err as {
-    source?: unknown;
-    ruleId?: unknown;
-    place?: { offset?: unknown };
-  };
-  if (e.source !== 'micromark-extension-mdx-jsx' || e.ruleId !== 'unexpected-character') {
-    return null;
-  }
-  if (typeof e.place?.offset !== 'number') return null;
-
-  const ltIndex = e.place.offset - 1;
-  if (ltIndex < 0 || ltIndex >= source.length) return null;
-  if (source[ltIndex] !== '<') return null;
-
-  return protectLiteralLtAtOffset(source, ltIndex);
 }
 
 /**
