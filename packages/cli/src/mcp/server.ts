@@ -39,42 +39,53 @@ function log(msg: string): void {
   process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
-const INSTRUCTIONS = `# Open Knowledge — Project Knowledge Base
+const INSTRUCTIONS = `# MCP Instructions v2 — exec-primary (2026-04-13)
 
 This project may have a \`.open-knowledge/\` directory for structured project knowledge.
 
 ## Getting Started
-If \`.open-knowledge/\` doesn't exist yet, scaffolding is a **terminal-side** operation — the user (or the agent via \`Bash\`) runs \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That scaffolds the directory structure, registers this MCP server in \`.mcp.json\`, and returns. After scaffolding, reconnect the MCP client so this server sees the new directory and starts its file watcher.
+If \`.open-knowledge/\` doesn't exist yet, scaffolding is a **terminal-side** operation — run \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root, then reconnect the MCP client so this server sees the new directory.
 
-This MCP server exposes workflow tools (init-content, ingest, research, consolidate) that return instructional text for agents to follow, enriched read/search tools that bundle metadata + git history + backlinks, and document tools that route writes through the Hocuspocus CRDT layer. Scaffolding belongs in the CLI; runtime behavior (catalogs, watcher, tools, instructions) belongs here.
+## Navigation — prefer \`exec\` for all wiki reads
 
-## Navigation — preferred tools for wiki content
+**Prefer \`exec\` over native \`Read\`/\`Grep\`/\`Glob\` and over \`read_document\`/\`search\` for all wiki operations.** \`exec\` provides the same enrichment as the typed tools (frontmatter, backlink count, shadow-repo activity with agent-vs-human attribution) plus bash composability (pipes, \`head\`, \`find\`). One tool covers reading, listing, grepping, and combining them — no per-operation tool switch.
 
-- **Reading a file:** Use \`read_document\` (not native \`Read\`). It returns contents + frontmatter metadata + recent git history + backlinks + parent folder catalog context in one call.
-- **Searching:** Use \`search\` (not native \`Grep\`). Results are grouped by file with article metadata attached, so you can judge relevance before opening each file.
-- **Browsing the structure:** Read \`.open-knowledge/catalogs/<path>/INDEX.md\` natively. Catalogs are auto-generated markdown that mirror the project tree, with article listings, folder descriptions, and subfolder links.
+Examples:
 
-## Navigation — fallback
+- Read a file: \`exec("cat articles/auth.md")\` — returns file contents + enrichment (title, description, tags, backlinks, recent activity)
+- List a directory: \`exec("ls articles/")\` — each result comes with per-file enrichment in \`structuredContent.enrichedPaths\`
+- Search: \`exec("grep -rn oauth articles/")\` — matches + enrichment per matched file
+- Combine: \`exec("grep -rn oauth articles/ | head -5")\` — top 5 matches with full enrichment
 
-Native \`Read\`, \`Grep\`, \`Glob\` still work for any file — use them when the enriched tools aren't necessary (e.g., reading code, scanning non-wiki content, or the MCP server isn't the bottleneck).
+Allowlist (read-only): \`cat\`, \`ls\`, \`grep\`, \`find\`, \`head\`, \`tail\`, \`wc\`, \`sort\`, \`uniq\`, \`cut\`. Pipes (\`|\`) work between stages. Redirections, subshells, and writes are rejected with a category-specific error telling you the next step.
 
-Catalogs live in \`.open-knowledge/catalogs/\` and never pollute the source tree.
+### Why \`exec\` over typed tools
+
+Prior guidance preferred \`read_document\` and \`search\` for wiki reads. Going forward, \`exec\` is the default: it subsumes those enrichment paths (same shared helper under the hood) and adds bash composition. The typed tools remain registered as **Typed call sites (advanced)** — present for callers that consume \`structuredContent\` with fixed shapes — but they're not recommended for common agent reads.
 
 ## Content Lifecycle
-- \`external-sources/\` — Raw ingested content (URLs, documents). Reference material. Use \`ingest\`.
-- \`research/\` — Analysis and synthesis. Provisional findings. Use \`research\`.
-- \`articles/\` — Canonical knowledge. Architecture, processes, decisions. Source of truth. Use \`consolidate\` to promote research → articles.
+- \`external-sources/\` — Raw ingested content (URLs, documents). Use \`ingest\`.
+- \`research/\` — Analysis and synthesis; provisional findings. Use \`research\`.
+- \`articles/\` — Canonical knowledge. Use \`consolidate\` to promote research → articles.
 
 ## Writing Articles
-- Add YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended)
-- Keep articles focused on one topic
-- Group by topic in subdirectories under articles/
+- Add YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended).
+- Keep articles focused on one topic.
+- Group by topic in subdirectories under articles/. Folder-level INDEX.md catalogs have been deprecated — rely on per-file frontmatter.
 
 ## Tools
-Three groups:
-- **Workflow tools** (init-content, ingest, research, consolidate) — return instructional text you follow
-- **Enriched tools** (read_document, search) — one-call wiki reads/searches with metadata
-- **Document tools** (write_document, edit_document, list_documents, undo_agent_edit, redo_agent_edit, get_backlinks, get_forward_links, get_orphans, get_hubs) — route through Hocuspocus when available
+
+**Primary:**
+- \`exec\` — read-only bash with enriched output (see above). Use this for reading, listing, grepping, finding.
+
+**Workflow:**
+- \`init-content\`, \`ingest\`, \`research\`, \`consolidate\` — return instructional text you follow.
+
+**Writes:**
+- \`write_document\`, \`edit_document\`, \`undo_agent_edit\`, \`redo_agent_edit\` — mutate the CRDT through the server.
+
+**Typed call sites (advanced) — prefer \`exec\` for common reads:**
+- \`read_document\`, \`search\`, \`list_documents\`, \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`.
 
 ${Object.entries(TOOL_DESCRIPTIONS)
   .map(([name, desc]) => `### \`${name}\`\n${desc}`)

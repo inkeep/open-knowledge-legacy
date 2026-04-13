@@ -26,6 +26,7 @@ import {
   DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
   register as registerEditDocument,
 } from './edit-document.ts';
+import { DESCRIPTION as EXEC_DESCRIPTION, register as registerExec } from './exec.ts';
 import {
   DESCRIPTION as GET_BACKLINKS_DESCRIPTION,
   register as registerGetBacklinks,
@@ -73,6 +74,7 @@ export { textResult } from './shared.ts';
 
 /** Tool descriptions keyed by name — used by INSTRUCTIONS in server.ts to avoid duplication. */
 export const TOOL_DESCRIPTIONS = {
+  exec: EXEC_DESCRIPTION,
   'init-content': INIT_CONTENT_DESCRIPTION,
   ingest: INGEST_DESCRIPTION,
   research: RESEARCH_DESCRIPTION,
@@ -98,14 +100,19 @@ export interface RegisterAllToolsOptions {
 }
 
 export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsOptions): void {
+  // exec — the primary surface (V0-24 / L2-aggressive per D2).
+  registerExec(server, {
+    projectDir: opts.projectDir,
+    serverUrl: opts.serverUrl,
+  });
+
   // Workflow tools — return instructional text, no server connection needed
   registerInitContent(server);
   registerIngest(server);
   registerResearch(server);
   registerConsolidate(server);
 
-  // Enriched read/search — filesystem + shadow-repo + (optionally) Hocuspocus for backlinks.
-  // Folder catalog was removed in D19 (per-file frontmatter is source of truth).
+  // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(server, {
     projectDir: opts.projectDir,
     config: opts.config,
