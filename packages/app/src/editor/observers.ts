@@ -444,10 +444,21 @@ export function setupObservers(deps: ObserverDeps): () => void {
         // debug level; do NOT fire onSyncError (that's reserved for actual sync
         // failures, not transient live-typing parse noise).
         //
-        // Only swallow genuinely transient parse errors (SyntaxError from acorn/mdx).
-        // Non-transient errors (TypeError, RangeError from handler bugs) must propagate
+        // Only swallow genuinely transient parse errors from the remark-mdx pipeline:
+        //   - SyntaxError: from acorn when {…} content isn't valid JavaScript
+        //   - VFileMessage: from remark-mdx when tag/expression syntax is malformed
+        //     (e.g., unclosed `<Tag` without guard protection, `</` incomplete)
+        //   - RangeError "Invalid content for node": from ProseMirror schema validation
+        //     when valid mdast maps to an invalid PM structure (e.g., text directive
+        //     inside strikethrough → inline jsxComponent violates doc.content spec)
+        // Non-transient errors (TypeError from handler bugs, etc.) must propagate
         // to onSyncError via the outer catch so regressions are visible.
-        if (parseErr instanceof SyntaxError) {
+        if (
+          parseErr instanceof SyntaxError ||
+          (parseErr instanceof Error && parseErr.constructor.name === 'VFileMessage') ||
+          (parseErr instanceof RangeError &&
+            (parseErr as RangeError).message.includes('Invalid content for node'))
+        ) {
           console.debug('[Observer B] Parse skipped (partial/invalid markdown):', parseErr);
           return;
         }

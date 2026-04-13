@@ -20,7 +20,7 @@ import { visit } from 'unist-util-visit';
 // NG9 documents their reservation (source content containing these codepoints
 // may be corrupted by the restoration pass — rare in legitimate content).
 //
-// Four sentinels total, each with a specific semantic role:
+// Five sentinels total, each with a specific semantic role:
 //   GUARD_OPEN  (U+E000) — replaces `<` in protected patterns
 //   GUARD_CLOSE (U+E001) — replaces `>` in protected patterns
 //   GUARD_COLON (U+E002) — replaces `:` inside autolink URLs so
@@ -30,6 +30,9 @@ import { visit } from 'unist-util-visit';
 //   GUARD_AT    (U+E003) — replaces `@` inside autolink URLs so
 //     remark-gfm's email autolink cannot re-claim `user@host.tld`
 //     patterns inside wrapped mailto / other `@`-bearing URIs.
+//   GUARD_OPEN_BRACE (U+E004) — replaces `{` in unmatched brace
+//     positions so remark-mdx's JSX expression parser cannot claim
+//     them and crash on "Unexpected end of file in expression".
 //
 // We preserve URL bytes otherwise (dots, slashes, hyphens) so the
 // original `<url>` form survives round-trip byte-identically.
@@ -37,6 +40,7 @@ const GUARD_OPEN = '\uE000';
 const GUARD_CLOSE = '\uE001';
 const GUARD_COLON = '\uE002';
 const GUARD_AT = '\uE003';
+export const GUARD_OPEN_BRACE = '\uE004';
 
 /**
  * Autolink pattern: <scheme:uri>
@@ -120,32 +124,92 @@ export function protectFromMdx(source: string): string {
   // These appear in CommonMark edge cases like ![foo](<>) or bare < in text
   result = result.replace(/<>/g, `${GUARD_OPEN}${GUARD_CLOSE}`);
 
-  // Protect bare `<` at end of line or end of file (no character after it, or
-  // followed by whitespace/newline). remark-mdx doesn't claim these but they can
-  // cause "Unexpected end of file before name" in edge cases.
-  result = result.replace(/<(?=\s|$)/gm, GUARD_OPEN);
-
-  // Final fallback: protect any remaining `<` followed by a letter that wasn't
-  // claimed by the specific rules above. This catches unclosed JSX-like patterns
-  // (e.g., "text <foo bar", "<Component" without closing ">") that would crash
-  // remark-mdx. Without this, any markdown file containing a bare `<Letter`
-  // sequence without a closing `>` on the same line fails to parse — the document
-  // loads blank because Observer B catches the error and keeps last valid state.
+  // Final catch-all: protect ANY remaining `<` that doesn't have a matching
+  // close-tag on the same line. This handles:
+  //   - Bare `<` at EOF/EOL (`<`, `< `, `<\n`)
+  //   - `<<`, `<<<` (consecutive angle brackets)
+  //   - `<foo bar` (unclosed lowercase)
+  //   - `<Component` (unclosed uppercase)
+  //   - `<B>text` (opened uppercase tag without closing `</B>` — mdx-jsx
+  //     would claim `<B>` as JSX element start then crash on missing close)
+  //   - `<$` and `<_` (remark-mdx claims $ and _ as JSX name starts)
   //
-  // Safe because: if the pattern IS valid JSX, it has a closing `>` on the same
-  // line and either (a) was already handled by LOWERCASE_HTML_TAG_RE (lowercase
-  // with closing `>`), or (b) will be left alone for mdx-jsx (uppercase with
-  // closing `>`). We only protect `<Letter` where no `>` follows before newline/EOF.
-  result = result.replace(/<(?=[a-zA-Z$_])/g, (match, offset) => {
-    const rest = result.slice(offset + 1); // after the `<`
-    const nextClose = rest.indexOf('>');
-    const nextNewline = rest.indexOf('\n');
-    if (nextClose === -1 || (nextNewline !== -1 && nextNewline < nextClose)) {
-      // No closing `>` on this line — bare `<` that would crash remark-mdx
+  // The earlier rules (AUTOLINK_RE, HTML_COMMENT_RE, HTML_CLOSE_TAG_RE,
+  // LOWERCASE_HTML_TAG_RE) have already replaced their matches with PUA
+  // sentinels. Any `<` still present either:
+  //   (a) starts a valid uppercase JSX tag with both open+close (`<X>...</X>`)
+  //   (b) is bare/unclosed and will crash remark-mdx
+  //
+  // Strategy: for each remaining `<`, check if it's followed by a valid
+  // tag name AND has BOTH a closing `>` AND a matching `</TagName>` on the
+  // same line or within the document. If not → protect with GUARD_OPEN.
+  //
+  // Simplified heuristic: protect `<` unless it's followed by an uppercase
+  // letter, has `>` on the same line, AND has `</` + same tag name later.
+  // This is conservative — some valid JSX may get guarded and rendered as
+  // text. But the alternative (crash) is worse.
+  result = result.replace(/</g, (match, offset) => {
+    const rest = result.slice(offset);
+
+    // Close tags (</TagName>) — pass through ONLY if complete.
+    // Incomplete `</` or `</foo` (no closing `>`) crashes remark-mdx.
+    // Lowercase close tags were already handled by HTML_CLOSE_TAG_RE above.
+    if (rest[1] === '/') {
+      if (/^<\/[a-zA-Z][a-zA-Z0-9.]*\s*>/.test(rest)) return match;
+      return GUARD_OPEN; // Incomplete close tag — protect
+    }
+
+    // Check if this looks like a valid self-closing or paired tag
+    const tagMatch = /^<([A-Z][a-zA-Z0-9.]*)[\s/>]/.exec(rest);
+    if (!tagMatch) {
+      // Not an uppercase tag start — protect unconditionally
       return GUARD_OPEN;
     }
-    return match; // Has closing `>` — leave for mdx-jsx or HTML rules
+
+    const tagName = tagMatch[1];
+
+    // Check for self-closing: <TagName ... />
+    const lineEnd = rest.indexOf('\n');
+    const lineContent = lineEnd === -1 ? rest : rest.slice(0, lineEnd);
+    if (/\/>/.test(lineContent)) {
+      return match; // Self-closing — safe for mdx-jsx
+    }
+
+    // Check for matching close tag: </TagName>
+    const closeTag = `</${tagName}>`;
+    if (rest.includes(closeTag)) {
+      return match; // Has matching close tag — safe for mdx-jsx
+    }
+
+    // Uppercase tag with no self-close and no matching close tag — protect
+    return GUARD_OPEN;
   });
+
+  // ── Brace guard ──
+  // remark-mdx claims `{` as JSX expression start. An unclosed `{` (no
+  // matching `}`) crashes with "Unexpected end of file in expression".
+  // Protect ALL unmatched `{` with a PUA sentinel.
+  //
+  // Strategy: classic stack pairing. Push each `{` position; pop on `}`.
+  // After the scan, any positions remaining on the stack are unmatched.
+  // This correctly handles `{{`, `{{{`, `{a {b}`, etc.
+  {
+    const stack: number[] = [];
+    for (let i = 0; i < result.length; i++) {
+      if (result[i] === '{') {
+        stack.push(i);
+      } else if (result[i] === '}') {
+        if (stack.length > 0) stack.pop(); // matched pair
+      }
+    }
+    if (stack.length > 0) {
+      const chars = [...result];
+      for (const pos of stack) {
+        chars[pos] = GUARD_OPEN_BRACE;
+      }
+      result = chars.join('');
+    }
+  }
 
   return result;
 }
@@ -169,7 +233,11 @@ export function protectLiteralLtAtOffset(source: string, offset: number): string
 /** Check whether a string contains any PUA sentinel character. */
 function hasSentinels(s: string): boolean {
   return (
-    s.includes('\uE000') || s.includes('\uE001') || s.includes('\uE002') || s.includes('\uE003')
+    s.includes('\uE000') ||
+    s.includes('\uE001') ||
+    s.includes('\uE002') ||
+    s.includes('\uE003') ||
+    s.includes('\uE004')
   );
 }
 
@@ -202,5 +270,6 @@ function restoreString(s: string): string {
     .replaceAll(GUARD_OPEN, '<')
     .replaceAll(GUARD_CLOSE, '>')
     .replaceAll(GUARD_COLON, ':')
-    .replaceAll(GUARD_AT, '@');
+    .replaceAll(GUARD_AT, '@')
+    .replaceAll(GUARD_OPEN_BRACE, '{');
 }
