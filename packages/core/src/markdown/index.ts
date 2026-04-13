@@ -311,6 +311,16 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     handlers.mdxjsEsm = (node: any) => n.mdxEsm.createAndFill({ value: node.value ?? '' });
   }
 
+  // Wiki-link → inline atom node
+  if (n.wikiLink) {
+    handlers.wikiLink = (node: any) =>
+      n.wikiLink.createAndFill({
+        target: node.data?.target ?? '',
+        alias: node.data?.alias ?? null,
+        anchor: node.data?.anchor ?? null,
+      });
+  }
+
   // Frontmatter: keep ignored (handled via Y.Map, not PM schema)
   // yaml + toml are pre-ignored by the library — correct behavior
 
@@ -444,6 +454,20 @@ function buildPmToMdastHandlers(schema: Schema): {
       url: pmNode.attrs.url,
       title: pmNode.attrs.title,
     });
+  }
+
+  // Wiki-link → emit as raw HTML to preserve [[...]] syntax on serialize
+  if (n.wikiLink) {
+    nodeHandlers.wikiLink = (pmNode: any) => {
+      const target = pmNode.attrs.target ?? '';
+      const anchor = pmNode.attrs.anchor;
+      const alias = pmNode.attrs.alias;
+      let text = `[[${target}`;
+      if (anchor) text += `#${anchor}`;
+      if (alias) text += `|${alias}`;
+      text += ']]';
+      return { type: 'html' as const, value: text };
+    };
   }
 
   // Marks — carry fidelity data back to mdast

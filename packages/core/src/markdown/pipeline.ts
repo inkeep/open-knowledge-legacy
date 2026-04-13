@@ -35,6 +35,7 @@ import { VFile } from 'vfile';
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
 import { positionSlicePlugin } from './position-slice.ts';
+import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 export interface PipelineOptions {
   schema: Schema;
@@ -58,6 +59,7 @@ export function parseMd(source: string, opts: PipelineOptions): PmNode {
     .use(remarkMdx)
     .use(remarkDirective)
     .use(remarkGfm)
+    .use(remarkWikiLink)
     .use(positionSlicePlugin)
     .use(remarkProseMirror, {
       schema: opts.schema,
