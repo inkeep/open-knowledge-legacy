@@ -27,6 +27,32 @@ export const ConfigSchema = z.object({
       maxDebounceMs: z.number().int().min(0).default(10000),
     })
     .default({ debounceMs: 2000, maxDebounceMs: 10000 }),
+  mcp: z
+    .object({
+      tools: z
+        .object({
+          read_document: z
+            .object({
+              history_depth: z.number().int().min(0).default(5),
+            })
+            .default({ history_depth: 5 }),
+          search: z
+            .object({
+              max_results: z.number().int().min(1).default(50),
+            })
+            .default({ max_results: 50 }),
+        })
+        .default({
+          read_document: { history_depth: 5 },
+          search: { max_results: 50 },
+        }),
+    })
+    .default({
+      tools: {
+        read_document: { history_depth: 5 },
+        search: { max_results: 50 },
+      },
+    }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
