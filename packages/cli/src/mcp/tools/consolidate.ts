@@ -1,6 +1,6 @@
 /**
  * `consolidate` MCP workflow tool — promote research findings into a canonical
- * article in `.open-knowledge/articles/`.
+ * article inside the project's content directory.
  *
  * Principle: canonical, not provisional. Consolidation is a deliberate step
  * taken after research has stabilized and a team has made decisions. The
@@ -8,18 +8,21 @@
  * uncertainty.
  *
  * Relationship to other workflow tools:
- *   - `ingest`   — captures raw external sources (no analysis)
- *   - `research` — synthesizes provisional findings from sources (analysis, uncertain)
+ *   - `ingest`     — captures raw external sources (no analysis)
+ *   - `research`   — synthesizes provisional findings from sources (analysis, uncertain)
  *   - `consolidate` — promotes research + sources into canonical articles (analysis, decided)
  */
 import { z } from 'zod';
+import type { Config } from '../../config/schema.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
-function buildBody(topic: string): string {
-  return `Promote existing research on this topic into a canonical article in \`.open-knowledge/articles/\`. **Canonical, not provisional** — the output is the source of truth for future agents.
+function buildBody(topic: string, contentDir: string): string {
+  return `Promote existing research on this topic into a canonical article inside the project content directory. **Canonical, not provisional** — the output is the source of truth for future agents.
 
 Topic: ${topic}
+
+The content directory for this project is **\`${contentDir}\`** (from \`.open-knowledge/config.yml\`).
 
 ## When to use this workflow
 
@@ -47,10 +50,10 @@ A consolidated article is the **source of truth**. Agents reading it should not 
 
 Locate research articles on this topic:
 
-- Grep or list \`.open-knowledge/research/\` for files matching the topic
-- Read each research article fully
-- Follow its \`sources:\` frontmatter list — read every referenced file in \`.open-knowledge/external-sources/\`
-- Also read existing \`.open-knowledge/articles/\` on the topic — if an article already exists, you may be **updating** it rather than creating a new one
+- Use \`exec("grep -rn <topic-keyword> ${contentDir}")\` to find prior research, or \`exec("ls <research-folder>")\` if the project groups research in a known location
+- Read each research article fully via \`exec("cat <path>")\` (rich enrichment gives frontmatter + shadow-repo activity + project git history + backlinks)
+- Follow its \`sources:\` frontmatter list — read every referenced source file
+- Also read any existing canonical article on the topic — if one already exists, you may be **updating** it rather than creating a new one
 
 If there is no research to consolidate, stop. Consolidation is promotion, not creation. Run \`research\` first.
 
@@ -62,13 +65,15 @@ Before writing, confirm with the developer:
 - **What alternatives were considered and rejected?** (these get mentioned in trade-offs, not as equal options)
 - **What's the rationale the team actually used?** (not your reconstruction from sources — ask if unclear)
 
-If the decision is not yet made, **do not consolidate**. The article would be misleading. Return and tell the developer to either (a) make the decision first, or (b) keep the research as provisional.
+If the decision is not yet made, **do not consolidate**. Return and tell the developer to either (a) make the decision first, or (b) keep the research as provisional.
 
 ### 3. Write the canonical article
 
-Save to \`.open-knowledge/articles/<topic-folder>/<slug>.md\` — group by topic folder if the area is broad (e.g., \`articles/editor/crdt-architecture.md\` rather than \`articles/crdt-architecture.md\` if you expect multiple editor articles).
+Save inside the content directory (\`${contentDir}\`). Path convention depends on the project:
 
-If you create a new subfolder, write its \`INDEX.md\` with sticky \`title\` and \`description\` per the folder-description convention.
+- If the project uses the three-tier lifecycle (external-sources → research → articles), save under an \`articles/\` folder relative to the content dir, grouped by topic subfolder when the area is broad (e.g., \`articles/editor/crdt-architecture.md\`)
+- If the project has an existing canonical-docs layout (\`docs/\`, \`guides/\`, etc.), save there in a location that matches the project's conventions
+- Ask the user when the canonical location is ambiguous
 
 Frontmatter:
 
@@ -81,7 +86,7 @@ date: YYYY-MM-DD
 tags:
   - topic-tag
 supersedes:
-  - research/<original-research-article>.md
+  - <path-to-research-article>.md
 ---
 \`\`\`
 
@@ -121,23 +126,32 @@ Structure:
 [Links to research articles and external sources for readers who want the trail.]
 \`\`\`
 
-### 4. Supersede the research
+### 4. Link aggressively
+
+Canonical articles are destinations — they should be **linked heavily from everywhere they're relevant** and link **out to every related page** themselves. Underlinked canonical articles lose most of their value.
+
+- **Inside this article:** every noun-phrase that names another document (other canonical articles, related research, external-source pages, sibling topics) should be a \`[[Page Name]]\` link, not plain prose. Prefer \`[[Page]]\` over Markdown \`[text](./page.md)\` — only wiki-links participate in the backlinks index.
+- **Redlinks are fine.** If you mention a concept that *should* have a page but doesn't yet, \`[[link it anyway]]\`. The redlink signals future work.
+- **Update neighbors.** After writing, find 2–3 closely-related existing pages (via \`exec("grep -rn <topic> ${contentDir}")\`) and add a \`[[<new article>]]\` link from each — usually under a "See also" section or inline where the new article is relevant. This makes the article discoverable via backlinks, not just by remembering the path.
+- **Link to the sources and superseded research** from "Further reading" — readers who want the trail can follow.
+
+### 5. Supersede the research
 
 Add a \`supersedes:\` list in the new article's frontmatter pointing at the research article(s) it consolidates. This creates an audit trail.
 
 Do NOT delete the research articles — they remain as historical context for how the decision was reached. Edit their frontmatter to add:
 
 \`\`\`yaml
-superseded_by: articles/<topic-folder>/<slug>.md
+superseded_by: <path-to-new-canonical-article>.md
 \`\`\`
 
-### 5. Verify
+### 6. Verify
 
-- File exists in \`.open-knowledge/articles/\` (or the subfolder you created)
+- File exists at the chosen path under the content directory
 - Has \`status: canonical\` frontmatter
 - Lists the research articles it supersedes
 - Research articles updated with \`superseded_by\` pointer
-- \`.open-knowledge/catalogs/\` picks up the new article automatically via the file watcher
+- \`exec("ls <target-dir>")\` shows the new file
 
 ## Non-goals
 
@@ -150,7 +164,7 @@ Full convention: read \`.open-knowledge/AGENTS.md\`.`;
 }
 
 export const DESCRIPTION = [
-  'Promote research into a canonical article in .open-knowledge/articles/. Canonical, not provisional — the output is the source of truth for future agents.',
+  'Promote research into a canonical article inside the project content directory. Canonical, not provisional — the output is the source of truth for future agents.',
   '',
   '**Use when:**',
   '- A team has made a decision after research and wants the outcome committed as canonical knowledge',
@@ -163,11 +177,11 @@ export const DESCRIPTION = [
   '- Research has stabilized and a destination article is needed',
 ].join('\n');
 
-export function register(server: ServerInstance): void {
+export function register(server: ServerInstance, config: Config): void {
   server.tool(
     'consolidate',
     DESCRIPTION,
     { topic: z.string().describe('The topic to consolidate into a canonical article') },
-    (args: { topic: string }) => textResult(buildBody(args.topic)),
+    (args: { topic: string }) => textResult(buildBody(args.topic, config.content.dir)),
   );
 }

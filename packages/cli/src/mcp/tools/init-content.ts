@@ -3,18 +3,22 @@
  * and writing initial knowledge articles grouped by topic.
  *
  * Non-content rendering: the tool emits instructional text with step-by-step
- * instructions; all real work (reading, writing articles, editing INDEX.md
- * frontmatter) happens via the agent's native tools, not through the MCP
- * server. The server only provides the instructions.
+ * instructions; all real work (reading, writing articles) happens via the
+ * agent's native tools, not through the MCP server. The server only provides
+ * the instructions.
  */
+import type { Config } from '../../config/schema.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
-const BODY = `Initialize a project knowledge base at .open-knowledge/ for this repository.
+function buildBody(contentDir: string): string {
+  return `Initialize a project knowledge base at \`${contentDir}\` for this repository.
+
+The content directory for this project is **\`${contentDir}\`** (from \`.open-knowledge/config.yml\`).
 
 ## When to use
 
-- First time setting up a knowledge base in a repo where \`.open-knowledge/\` does not exist or is empty
+- First time setting up a knowledge base in a repo where \`.open-knowledge/\` does not exist, or where the content directory has no articles yet
 - When onboarding to a new codebase and you want to capture initial understanding for future agent sessions
 
 ## Steps
@@ -28,7 +32,7 @@ open-knowledge init
 # or:  npx @inkeep/open-knowledge init
 \`\`\`
 
-That creates the directory layout (\`articles/\`, \`external-sources/\`, \`research/\`, \`cache/\`), \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. After scaffolding, reconnect the MCP client (\`/mcp\` in Claude Code) so the server picks up the new directory and starts its catalog file watcher.
+That creates \`.open-knowledge/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client (\`/mcp\` in Claude Code) so the server picks up the new config.
 
 If you have \`Bash\` tool access, you can shell out: \`bash\` → \`npx @inkeep/open-knowledge init\`, then prompt the user to reconnect.
 
@@ -37,25 +41,26 @@ If you have \`Bash\` tool access, you can shell out: \`bash\` → \`npx @inkeep/
 Explore the project to build understanding before writing anything:
 
 1. **Start broad** — Read \`README.md\`, \`CLAUDE.md\` or \`AGENTS.md\`, \`package.json\` (or equivalent manifest), and any existing prose documentation
-2. **Map the structure** — Use \`ls\`/\`glob\` to understand directory layout and naming conventions
+2. **Map the structure** — Use \`exec("ls <dir>")\` for wiki content (returns folder metadata — file counts, subdirs, most-recent md) and native \`Glob\`/\`ls\` for source code
 3. **Read key files** — Entry points, config files, core modules, type definitions, schema files
-4. **Check existing docs** — \`specs/\`, \`docs/\`, \`ARCHITECTURE.md\`, or any prose documentation directories
+4. **Check existing docs** — \`specs/\`, \`docs/\`, \`ARCHITECTURE.md\`, or any prose documentation directories (use \`exec("cat <path>")\` for any wiki markdown — it returns rich enrichment in one call)
 5. **Review recent history** — \`git log --oneline -30\` for recent decisions and direction
 
 Don't rush this phase. The quality of articles depends on the quality of understanding.
 
 ### 3. Synthesize knowledge articles
 
-Write articles grouped by topic in \`.open-knowledge/articles/\`. For each article:
+Write articles inside the content directory (\`${contentDir}\`). Organization is up to the project — no enforced structure:
 
-- **One topic per article** — Keep articles focused (e.g., "Auth Architecture", not "Everything About The Backend")
-- **Use subdirectories** for related topics: \`articles/infrastructure/\`, \`articles/auth/\`, \`articles/data-model/\`
+- If the project already has a docs layout (\`docs/\`, \`guides/\`, topic-grouped subfolders), follow it
+- If starting fresh, group by topic (e.g., \`architecture/\`, \`auth/\`, \`data-model/\`) — create subfolders as needed; no scaffolded directories exist by default
+- **One topic per article** — keep articles focused (e.g., "Auth Architecture", not "Everything About The Backend")
 - **Add proper frontmatter**:
 
 \`\`\`yaml
 ---
 title: Article Title
-description: One-line summary that will appear in INDEX.md catalogs
+description: One-line summary
 tags:
   - relevant
   - tags
@@ -66,20 +71,15 @@ tags:
 - **Keep articles concise** — 100-300 lines is a good target. Split larger topics into multiple articles.
 - **Link to source code** by file path when helpful, but don't duplicate code into articles.
 
-### 4. Set folder-level descriptions via mirrored catalogs
+### 4. Link aggressively
 
-To improve catalog navigation, you can set a \`title\` and \`description\` for any folder by editing its mirrored catalog at \`.open-knowledge/catalogs/<dir>/INDEX.md\`. These two fields are **sticky** — preserved across catalog rebuilds.
+This is the single highest-leverage step for a new knowledge base. Articles that don't link each other are isolated documents; articles that cross-link form a navigable graph.
 
-For example, after creating articles in \`articles/auth/\`, edit \`.open-knowledge/catalogs/articles/auth/INDEX.md\`:
-
-\`\`\`yaml
----
-title: Authentication
-description: How auth works in this codebase — SSO, sessions, tokens.
----
-\`\`\`
-
-The rebuild preserves your \`title\` and \`description\` while regenerating the article/subfolder listings. Catalogs live entirely inside \`.open-knowledge/catalogs/\` — they are never written into the source tree.
+- **Every noun-phrase that names another article is a \`[[Page Name]]\` link.** Write links inline as you draft — don't save linking for a second pass. Prefer \`[[Page]]\` over Markdown \`[text](./page.md)\` since only wiki-links participate in the backlinks index.
+- **Redlinks are fine — write them eagerly.** If you're drafting "Auth Architecture" and mention "session tokens", write \`[[Session Tokens]]\` even if that page doesn't exist yet. The redlink is a to-do list for the next pass.
+- **Build hub articles.** Pick 2–3 broad topics (e.g., "Architecture Overview", "Data Model") and have them link out to the specific articles below them. Hubs are what agents discover first — their outbound links are how everything else becomes findable.
+- **Cross-link siblings.** In each subfolder, 2–3 closely-related articles should link each other under a "See also" section or inline.
+- **After writing a batch of articles, verify link density:** \`exec("cat <article>.md")\` on a sample and confirm the rendered output shows a healthy backlinks list. An article with zero backlinks is an island — link back to it from somewhere.
 
 ### 5. Suggested starting topics
 
@@ -95,34 +95,34 @@ Depending on the project, consider articles covering:
 
 ### 6. Verify
 
-- Catalogs in \`.open-knowledge/catalogs/\` auto-regenerate as you write articles — the file watcher picks up changes
-- Read \`.open-knowledge/catalogs/INDEX.md\` to verify the knowledge base is navigable
-- Use \`read_document\` on a sample article to confirm frontmatter parses correctly (you should see title, description, and tags in the enriched output)
-- Use \`search\` to check that common terms from the codebase are findable across the articles you wrote
-- Ensure every article has frontmatter with at minimum \`title\` and \`description\`
+- \`exec("ls ${contentDir}")\` shows the articles you wrote, each with title/description/tags enrichment
+- \`exec("grep -rn <common-codebase-term> ${contentDir}")\` finds the expected articles
+- \`exec("cat <article>.md")\` on a sample shows the article plus its backlinks section — if the backlinks list is empty, go back to step 4 and link from somewhere
+- Every article has frontmatter with at minimum \`title\` and \`description\`
 
 ## Non-goals
 
 - **Don't produce a file-by-file code index** — the agent reads source code directly when needed
 - **Don't copy source code into articles** — link by path
 - **Don't write articles for things that change often** (dependency versions, file counts); focus on stable understanding
+- **Don't create scaffolded subfolders you won't fill** — empty \`articles/\`/\`research/\`/\`external-sources/\` folders are clutter; organize as you actually need
 
 Full convention: read \`.open-knowledge/AGENTS.md\`.`;
+}
 
 export const DESCRIPTION = [
-  'Bootstrap .open-knowledge/ by reading the codebase and writing initial knowledge articles grouped by topic.',
+  'Bootstrap the project knowledge base by reading the codebase and writing initial knowledge articles grouped by topic.',
   '',
   '**Use when:**',
   '- Setting up a knowledge base for the first time in a repo',
   '- Onboarding to a new codebase and capturing initial understanding',
-  '- .open-knowledge/ exists but articles/ is empty or sparse',
+  '- The content directory is empty or sparse',
   '',
   '**Triggers on:**',
   '- "init content", "bootstrap knowledge base", "populate articles", "set up project knowledge"',
-  '- .open-knowledge/ exists but has no articles',
   '- User asks to document or catalog the codebase',
 ].join('\n');
 
-export function register(server: ServerInstance): void {
-  server.tool('init-content', DESCRIPTION, () => textResult(BODY));
+export function register(server: ServerInstance, config: Config): void {
+  server.tool('init-content', DESCRIPTION, () => textResult(buildBody(config.content.dir)));
 }

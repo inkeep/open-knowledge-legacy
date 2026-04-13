@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ConfigSchema } from '../config/schema.ts';
-import { IndexMdCatalogStore } from '../content/catalog-store.ts';
 import { registerAllTools } from './tools/index.ts';
 
 describe('MCP server module', () => {
@@ -17,16 +16,14 @@ describe('MCP server module', () => {
 });
 
 describe('registerAllTools', () => {
-  it('registers all workflow, enriched, and document tools', () => {
+  it('registers all workflow, enriched, exec, and document tools', () => {
     const server = new McpServer({ name: 'test', version: '0.0.0' });
     const config = ConfigSchema.parse({});
-    const catalog = new IndexMdCatalogStore({ projectDir: process.cwd() });
 
     // registerAllTools should not throw
     registerAllTools(server, {
       projectDir: process.cwd(),
       config,
-      catalog,
     });
 
     // Verify tools were registered by checking the server's internal state

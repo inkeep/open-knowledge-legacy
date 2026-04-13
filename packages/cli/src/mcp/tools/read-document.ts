@@ -2,168 +2,133 @@
  * `read_document` MCP tool — enriched read.
  *
  * Single-call read that returns:
- *   - File contents (the file's raw markdown, frontmatter and all)
- *   - Article metadata parsed from the file's frontmatter (title / description / tags)
- *   - Parent folder catalog context (title / description from the folder's INDEX.md)
- *   - Recent git history (last N commits, optionally filtered by `since`)
- *   - Backlinks (if Hocuspocus is available — graceful degrade when not, per D2)
+ *   - File contents (raw markdown, frontmatter and all)
+ *   - Article metadata parsed from frontmatter (title / description / tags)
+ *   - Recent shadow-repo activity with per-writer attribution (agent vs human)
+ *   - Backlink count (when Hocuspocus is available — graceful degrade per FR9)
  *
- * See spec: specs/2026-04-12-enriched-read-tools/SPEC.md § Tool 1.
+ * Enrichment is fully delegated to the shared `enrichPath()` helper (D4/D13).
+ * CC9 parity with `exec("cat X.md")` is by construction: both surfaces read
+ * the same helper.
+ *
+ * Folder-catalog context is intentionally absent — folder INDEX.md
+ * frontmatter was deprecated in D19.
+ *
+ * Spec: SPEC.md FR7 + FR15 + D13 + D19.
  */
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { type GitLogEntry, gitLog } from '../../bash/index.ts';
 import type { Config } from '../../config/schema.ts';
-import {
-  type CatalogData,
-  type CatalogStore,
-  parentDirOf,
-  toProjectRelative,
-} from '../../content/catalog-store.ts';
-import { parseFrontmatter } from '../../utils/frontmatter.ts';
+import type { BacklinkEntry, GitCommit } from '../../content/enrichment.ts';
+import { enrichPath } from '../../content/enrichment.ts';
+import type { ShadowCommit } from '../../content/shadow-log.ts';
 import type { ServerInstance } from './shared.ts';
-import { httpGet, textResult } from './shared.ts';
+import { textResult } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Read a wiki file with enriched context: contents + frontmatter metadata + recent git history + backlinks (if Hocuspocus is running) + parent folder catalog context.',
+  'Read a wiki file with enriched context: contents + frontmatter metadata + recent shadow-repo activity (agent vs human attribution) + backlink count.',
   '',
   '**Use when:**',
   '- Loading an article for context',
-  '- Understanding what changed recently in a file (optional `since` timestamp)',
-  '- Seeing which other pages link to this one',
+  '- Understanding who changed a file recently and whether it was an agent or human',
+  '- Seeing how many other pages link to this one',
   '',
   'Prefer this over your native `Read` for wiki files — one call returns what otherwise takes 3-4.',
   '',
   '**Parameters:**',
   '- `path` — Project-root-relative path to the file (e.g. `articles/auth/sso.md`)',
-  '- `since` (optional) — ISO timestamp; filter git history to commits after this time',
+  '- `since` (reserved) — Reserved for shadow-log since-filter; currently unused.',
 ].join('\n');
 
 export interface ReadDocumentDeps {
-  catalog: CatalogStore;
   projectDir: string;
   config: Config;
   serverUrl: string | undefined;
 }
 
-interface BacklinkEntry {
-  docName: string;
-  title?: string;
-  snippet?: string;
-}
-
-function formatHistory(entries: GitLogEntry[]): string {
-  if (entries.length === 0) return '';
-  const lines = ['', '### Recent changes', ''];
+function formatShadowHistory(entries: ShadowCommit[] | null): string {
+  if (!entries || entries.length === 0) return '';
+  const lines: string[] = ['', '### Recent activity (OK edits)', ''];
   for (const e of entries) {
-    lines.push(`- ${e.hash} ${e.date} ${e.subject}`);
+    const who =
+      e.writerClassification === 'agent'
+        ? `agent: ${e.writerName}`
+        : e.writerClassification === 'human'
+          ? `human: ${e.writerName}`
+          : `${e.writerClassification}: ${e.writerName}`;
+    const hash = e.hash.slice(0, 7);
+    lines.push(`- ${hash} ${e.date} [${who}] ${e.message}`);
   }
   return lines.join('\n');
 }
 
-function formatBacklinks(backlinks: BacklinkEntry[]): string {
-  if (backlinks.length === 0) return '';
-  const lines = ['', `### Backlinks (${backlinks.length})`, ''];
+function formatProjectHistory(entries: GitCommit[] | null): string {
+  if (!entries || entries.length === 0) return '';
+  const lines: string[] = ['', '### Commit history (project git)', ''];
+  for (const e of entries) {
+    const hash = e.hash.slice(0, 7);
+    lines.push(`- ${hash} ${e.date} ${e.authorName} — ${e.subject}`);
+  }
+  return lines.join('\n');
+}
+
+function formatBacklinks(backlinks: BacklinkEntry[] | null): string {
+  if (!backlinks || backlinks.length === 0) return '';
+  const lines: string[] = ['', `### Backlinks (${backlinks.length})`, ''];
   for (const b of backlinks) {
-    const title = b.title ? ` — ${b.title}` : '';
-    lines.push(`- ${b.docName}${title}`);
+    const title = b.title ? ` — "${b.title}"` : '';
+    const snippet = b.snippet ? ` — "${b.snippet}"` : '';
+    lines.push(`- ${b.source}${title}${snippet}`);
   }
   return lines.join('\n');
 }
 
-function formatCatalogContext(folder: CatalogData | null): string {
-  if (!folder) return '';
-  if (!folder.title && !folder.description) return '';
-  const parts: string[] = [];
-  if (folder.title) parts.push(`**Folder:** ${folder.title}`);
-  if (folder.description) parts.push(`_${folder.description}_`);
-  return parts.join(' — ');
+function relativePath(input: string): string {
+  return input.replace(/^\.\//, '').replace(/^\/+/, '');
 }
-
-function pathToDocName(relPath: string): string {
-  return relPath.replace(/\.md$/, '');
-}
-
-async function fetchBacklinks(
-  serverUrl: string | undefined,
-  docName: string,
-): Promise<BacklinkEntry[] | null> {
-  if (!serverUrl) return null;
-  const result = await httpGet(serverUrl, `/api/backlinks?docName=${encodeURIComponent(docName)}`);
-  if (!result.ok) return null;
-  // Response shape from the backlinks endpoint is `{ ok, backlinks: [...] }` (or similar).
-  // Be tolerant — we accept anything that looks like an array of objects with a page identifier.
-  const raw = (result.backlinks ?? result.results ?? result.links) as unknown;
-  if (!Array.isArray(raw)) return [];
-  const entries: BacklinkEntry[] = [];
-  for (const item of raw) {
-    if (typeof item !== 'object' || item === null) continue;
-    const rec = item as Record<string, unknown>;
-    const sourceDocName =
-      typeof rec.docName === 'string'
-        ? rec.docName
-        : typeof rec.source === 'string'
-          ? rec.source
-          : typeof rec.page === 'string'
-            ? rec.page
-            : undefined;
-    if (!sourceDocName) continue;
-    entries.push({
-      docName: sourceDocName,
-      title: typeof rec.title === 'string' ? rec.title : undefined,
-      snippet: typeof rec.snippet === 'string' ? rec.snippet : undefined,
-    });
-  }
-  return entries;
-}
-
-const ArticleFrontmatterSchema = z.object({
-  title: z.string().optional(),
-  description: z.string().optional(),
-  tags: z.array(z.string()).default([]),
-});
 
 export async function buildReadResult(
   args: { path: string; since?: string },
   deps: ReadDocumentDeps,
 ): Promise<string> {
-  const relPath = toProjectRelative(deps.projectDir, args.path);
-  const historyDepth = deps.config.mcp.tools.read_document.historyDepth;
-  const docName = pathToDocName(relPath);
+  const relPath = relativePath(args.path);
   const abs = resolve(deps.projectDir, relPath);
+  const historyDepth = deps.config.mcp.tools.read_document.historyDepth;
 
-  // Step 2 (read content) is the precondition for step 4 (parse frontmatter).
-  // Steps 3, 5, 6 are independent; run them in parallel with step 2.
-  // Only content is critical — enrichment ops degrade gracefully (per D2).
-  const [content, history, folder, backlinks] = await Promise.all([
+  const [content, meta] = await Promise.all([
     readFile(abs, 'utf-8'),
-    gitLog(relPath, historyDepth, args.since).catch(() => [] as GitLogEntry[]),
-    deps.catalog.getCatalog(parentDirOf(relPath)).catch(() => null),
-    fetchBacklinks(deps.serverUrl, docName).catch(() => null),
+    enrichPath(
+      relPath,
+      { projectDir: deps.projectDir, serverUrl: deps.serverUrl, historyDepth },
+      { includeRichFields: true },
+    ),
   ]);
 
-  const fm = parseFrontmatter(content, ArticleFrontmatterSchema);
-  const basename = relPath.split('/').pop()?.replace(/\.md$/, '') ?? relPath;
-  const title = fm?.title ?? basename;
-  const description = fm?.description ?? '';
-  const tags = fm?.tags ?? [];
+  const basename =
+    relPath
+      .split('/')
+      .pop()
+      ?.replace(/\.md$/, '')
+      .replace(/\.mdx$/, '') ?? relPath;
+  const title = meta.title ?? basename;
+  const description = meta.description ?? '';
+  const tags = meta.tags;
 
-  // Compose output
   const lines: string[] = [];
   lines.push(`## ${title}`);
   if (description) lines.push(`**Description:** ${description}`);
   if (tags.length > 0) lines.push(`**Tags:** ${tags.join(', ')}`);
   lines.push(`**Path:** ${relPath}`);
-  const folderLine = formatCatalogContext(folder);
-  if (folderLine) lines.push(folderLine);
 
-  const historySection = formatHistory(history);
-  if (historySection) lines.push(historySection);
-  if (backlinks !== null) {
-    const backlinksSection = formatBacklinks(backlinks);
-    if (backlinksSection) lines.push(backlinksSection);
-  }
+  const shadowSection = formatShadowHistory(meta.history);
+  if (shadowSection) lines.push(shadowSection);
+
+  const projectSection = formatProjectHistory(meta.projectHistory);
+  if (projectSection) lines.push(projectSection);
+
+  const backlinksSection = formatBacklinks(meta.backlinks);
+  if (backlinksSection) lines.push(backlinksSection);
 
   lines.push('', '### Content', '', content);
   return lines.join('\n');
@@ -175,10 +140,7 @@ export function register(server: ServerInstance, deps: ReadDocumentDeps): void {
     DESCRIPTION,
     {
       path: z.string().describe('Project-root-relative path to the file'),
-      since: z
-        .string()
-        .optional()
-        .describe('Optional ISO timestamp; filter git history to commits after this time'),
+      since: z.string().optional().describe('Reserved; currently unused (§15 Future Work)'),
     },
     async (args: { path: string; since?: string }) => {
       try {
