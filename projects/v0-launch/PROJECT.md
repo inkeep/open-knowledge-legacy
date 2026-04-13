@@ -8,13 +8,13 @@
 
 | Person | Now | Next | Later | Reach |
 |--------|-----|------|-------|-------|
-| **[Miles](#miles--collaboration--shadow-git--presence)** | V0-14 per-origin undo, V0-16 Timeline | V0-17 persistence indicator | | |
+| **[Miles](#miles--collaboration--shadow-git--presence)** | V0-14 per-origin undo (NO Observer A dep), V0-16 Timeline | V0-17 persistence indicator | | |
 | **[Mike](#mike--knowledge-graph--content--search)** | V0-8 graph view, V0-12 slug correctness | V0-5 rename+backlink, V0-11 graph panels, V0-3 backlinks push, V0-21 dead-links | V0-13 suggest_links | V0-25 SQLite schema |
 | **[Andrew](#andrew--platform--ops--system-level-infrastructure)** | V0-1 process safety, V0-2 real-time sidebar | | V0-20 desktop build prep | |
 | **[Tim](#tim--agent-infrastructure--mcp--virtualization)** | | | | V0-24 enriched bash |
 | **[Dima](#dima--sidebar--crud--docs-system-engineering)** | V0-4 file ops | V0-9 outline, V0-10 Cmd+K | V0-18 find/replace, V0-19 sort+wc | V0-22 tabs, V0-23 DnD |
 | **[Sarah](#sarah--head-of-design--design-engineer)** | V0-6 image paste, V0-7 onboarding | | | |
-| **[Nick](#nick--editor-internals--crdt--mdx-pipeline)** | V0-14 prerequisite (Observer A) | | | |
+| **[Nick](#nick--editor-internals--crdt--mdx-pipeline)** | Observer A origin-aware diff (FR-4/US-3e, independent — does NOT block Miles) | | | |
 
 **Operating model:** Feature owners are empowered to ship UX within their scope. Sarah focuses on cross-cutting design patterns (panel-docking, keyboard shortcuts, visual language), novel UX surfaces (onboarding), and design reviews across the product.
 
@@ -60,40 +60,48 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Now**
 
-#### V0-14: Per-origin undo — three-UndoManager architecture with character-level Observer A prerequisite
+#### V0-14: Per-origin undo — three-UndoManager architecture (NO Observer A dependency)
 
-**What to build.** Full per-origin undo: three UndoManagers (WYSIWYG Y.XmlFragment + Source y-codemirror native + N× per-agent server-side scoped by `AgentIdentity.connectionId`). Observer A character-level diff refactor as prerequisite (closes R5/R6 — no known-broken edge cases ship). AgentIdentity from MCP connection primitives replaces hardcoded `DEFAULT_AGENT_ID`. Broken undo scaffold (AgentUndoButton, undo endpoints, undo MCP tools) removed pre-PR-#39-merge as part of V0-16.
+**What to build.** Full per-origin undo: three UndoManagers (WYSIWYG Y.XmlFragment + Source y-codemirror native + N× per-agent server-side scoped by `AgentIdentity.connectionId`). AgentIdentity from MCP connection primitives replaces hardcoded `DEFAULT_AGENT_ID`. Broken undo scaffold (AgentUndoButton, undo endpoints, undo MCP tools) removed pre-PR-#39-merge as part of V0-16.
 
-**Two parallel tracks (per polished audit §15):**
+**DECOUPLED from Observer A (2026-04-13).** First-principles re-examination showed core undo features (FR-1/FR-2/FR-3/FR-5/FR-6) do NOT depend on Observer A diff granularity:
+- FR-1 (WYSIWYG Cmd+Z): Y.UndoManager on XmlFragment reverts directly; Observer A propagates the revert — correct at any diff granularity.
+- FR-2 (Source Cmd+Z): y-codemirror native UM on Y.Text; Observer A not in path.
+- FR-3 (Agent undo): Server-side UM + syncTextToFragment; Observer A skips (origin guard on 'sync-from-text').
+- FR-4 (Same-line interleaved / US-3e): This IS the one that depends on Observer A — but per prior research, it needs origin-aware diff (not just char-level). Root cause is CRDT Item origin-laundering. **Nick's independent track, separate spec.** Does NOT block Miles.
 
-| Track | Owner | Items | Coordination |
-|-------|-------|-------|--------------|
-| **Bridge/observer layer** | **Nick** (starting now) | TQ5: Observer A char-level refactor (~60 LOC in `observers.ts:206-249`). TQ6: US-3e stress test. Bridge-matrix undo-invariant tests (TDD groundwork). | Zero coordination with Miles — Nick's files only |
-| **Server + UI + MCP + identity** | **Miles** (after V0-16 ships) | Three-UndoManager wiring. Cmd+Z keyboard in both modes. D12 AgentIdentity (TQ17/TQ18): build from MCP connection primitives; per-agent awareness in PresenceBar; per-agent UM scoping. D9(e) pass-boundary grouping. Optional `session_id?` enrichment on write tools (TQ16). | Depends on Nick's TQ5 landing + Miles's TQ13 scaffold removal in V0-16 |
+**Miles ships (owner: Miles, after V0-16):**
 
-**What this unlocks — ALL user scenarios clean, no known gaps:**
-- US-3a/b/c/d/e Cmd+Z for self (WYSIWYG, Source, cross-mode, interleaved, same-line concurrent) ✅
-- US-4a/b/c Agent undo (from button, from MCP, stack behavior) ✅ — with per-agent scoping (multi-agent correct)
+| Item | What | Unlocks |
+|------|------|---------|
+| Wire WYSIWYG UM on Y.XmlFragment | Cmd+Z reverts user's XmlFragment edits | FR-1 → US-3a, 3c, 3d |
+| Enable y-codemirror native UM on Y.Text | Cmd+Z reverts user's Source edits | FR-2 → US-3b |
+| Per-agent server-side UMs (D12/TQ17/TQ18) | Each connected agent gets own UM keyed by `AgentIdentity.connectionId` | FR-3 → US-4a/b/c (multi-agent correct) |
+| Cmd+Z keyboard wiring in both modes | Keyboard shortcuts for undo/redo | FR-1 + FR-2 |
+| D9(e) pass-boundary grouping | Product-native user-action-bounded grouping in timeline queries | Timeline UX for agent passes |
 
-**Greenfield directive applied:** Prior framing deferred US-3e (same-line concurrent) as an edge case. Under greenfield directive (§13 of polished audit): "Shipping Cmd+Z — the foundational editor primitive — with a known-broken edge case in the product's core differentiating scenario (human+AI concurrent editing) is deferred tech debt." The refactor is bounded (60 LOC + comprehensive test infra); do it right.
+**What this unlocks:**
+- US-3a/b/c/d Cmd+Z for self (WYSIWYG, Source, cross-mode, interleaved on different lines) ✅
+- US-4a/b/c Agent undo (from button, from MCP, stack behavior) ✅ — with per-agent scoping
+- US-3e (same-line concurrent) — ships when Nick's independent origin-aware diff track lands. NOT a v0 blocker.
 
-**R7 (observer modal pause/resume) — DROPPED.** Would cause stale-baseline bugs in multi-tab/agent scenarios. Current origin-guard architecture is already correct. See polished audit §3 Area B.
+**R7 (observer modal pause/resume) — DROPPED.** Would cause stale-baseline bugs in multi-tab/agent scenarios. Current origin-guard architecture is already correct.
 
 **Value.** Customer: most fundamental editor operation. Currently a user literally cannot undo their own typo (`StarterKit.configure({ undoRedo: false })`). Platform: AgentIdentity (D12) replaces hardcoded `DEFAULT_AGENT_ID = 'claude'` with connection-level identity from MCP primitives — enables per-agent presence, per-agent undo scoping, multi-agent support.
 
 **Constraints.**
-- Observer A char-level (TQ5) is PREREQUISITE — must land before three-UndoManager wiring (Nick delivers TQ5/TQ6; Miles consumes for UM wiring)
 - Scaffold removed in V0-16 (TQ13) — proper implementation ships here
 - Rollback NOT tracked by any UndoManager (D6(b) — decided in V0-16; coarse action, not fine-grained undo)
 - `AgentIdentity { connectionId, clientInfo, label, displayName, colorSeed }` — generated at MCP `initialize` time; per-agent server-side UndoManager keyed by connectionId
+- **NO dependency on Nick's Observer A work** — Miles ships independently
 
-**Lateral.** V0-16 removes the broken scaffold and establishes typed origins (TQ10) + activity-map schema (TQ11) that V0-14 builds on. Nick's TQ5 is a parallel track that converges.
+**Lateral.** V0-16 removes the broken scaffold and establishes typed origins (TQ10) + activity-map schema (TQ11) that V0-14 builds on.
 
-**Forward.** Per-agent identity enables future multi-agent UX (different colored cursors per agent, per-agent activity attribution in timeline, per-agent undo buttons).
+**Forward.** Per-agent identity enables future multi-agent UX. Nick's origin-aware diff (FR-4/US-3e) completes the undo story when it lands.
 
-**Detail.** `stories/collaboration-capabilities-audit/STORY.md` §3 Area B. Spec: `specs/2026-04-10-undo-architecture/SPEC.md` (needs update to reflect greenfield decisions).
+**Detail.** `stories/collaboration-capabilities-audit/STORY.md` §3 Area B. Spec: `specs/2026-04-10-undo-architecture/SPEC.md` (needs update to reflect decoupled decisions).
 
-**Status.** Nick's TQ5/TQ6 starting now (zero-coordination, parallel with Miles's V0-16). Miles's UM wiring starts after V0-16 + TQ5 converge.  ).
+**Status.** Miles starts after V0-16 ships. Zero dependency on Nick.
 
 ---
 
