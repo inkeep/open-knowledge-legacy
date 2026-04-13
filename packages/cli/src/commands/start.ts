@@ -2,8 +2,18 @@
  * `open-knowledge start` command — launches standalone Hocuspocus server
  * with optional static React app serving.
  */
+import { execFile } from 'node:child_process';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
+
+export function openBrowser(url: string): void {
+  const cmd =
+    process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
+  const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
+  execFile(cmd, args, (err) => {
+    if (err) console.log(`Could not auto-open browser; visit ${url} manually`);
+  });
+}
 
 export function startCommand(getConfig: () => Config): Command {
   const cmd = new Command('start')
@@ -241,11 +251,8 @@ export function startCommand(getConfig: () => Config): Command {
       });
 
       if (opts.open) {
-        const { execFile } = await import('node:child_process');
         const url = `http://${config.server.host}:${config.server.port}`;
-        execFile('open', [url], (err) => {
-          if (err) console.error(`${error('Failed to open browser:')} ${err.message}`);
-        });
+        openBrowser(url);
       }
     });
 
