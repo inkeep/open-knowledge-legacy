@@ -1,5 +1,6 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
@@ -53,6 +54,11 @@ export function EditorPane() {
     setPreviewEntry(null);
     setEditorMode(modeBeforeDiffRef.current);
     setRestoreError(null);
+  }
+
+  function handleNoDiff() {
+    handleExitPreview();
+    toast.info('No changes since this version');
   }
 
   function handleModeChange(mode: 'wysiwyg' | 'source') {
@@ -122,7 +128,7 @@ export function EditorPane() {
         editorMode={editorMode}
         previewEntry={previewEntry}
         diffLayout={diffLayout}
-        onNoDiff={handleExitPreview}
+        onNoDiff={handleNoDiff}
       />
       <TimelinePanel
         open={timelineOpen}

@@ -1,4 +1,5 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
+import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
@@ -56,9 +57,17 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
         }
         const data = (await res.json()) as { content: string };
         if (!cancelled) {
-          const historical = data.content ?? '';
+          // Git stores full file (with frontmatter); Y.Text('source') has body only.
+          const historical = stripFrontmatter(data.content ?? '').body;
           const current = activeProvider?.document.getText('source').toString() ?? '';
-          if (historical === current) {
+          // Normalize trailing whitespace + line endings before comparing —
+          // the markdown pipeline may add/remove trailing newlines or spaces.
+          const norm = (s: string) =>
+            s
+              .replace(/\r\n/g, '\n')
+              .replace(/[ \t]+$/gm, '')
+              .trimEnd();
+          if (norm(historical) === norm(current)) {
             setPreviewLoading(false);
             onNoDiff?.();
             return;

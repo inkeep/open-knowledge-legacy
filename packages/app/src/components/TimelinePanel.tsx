@@ -92,18 +92,18 @@ function WipGroup({ entries, defaultExpanded, selectedSha, onSelect }: WipGroupP
 
   return (
     <div className="flex flex-col">
-      {entries.length > 1 && (
-        <button
-          type="button"
-          aria-expanded={expanded}
-          className="flex items-center gap-1 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors text-left"
-          onClick={() => setExpanded((e) => !e)}
-        >
-          {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-          {expanded ? `Hide ${entries.length} auto-saves` : `Show ${entries.length} auto-saves`}
-        </button>
-      )}
-      {(expanded || entries.length === 1) &&
+      <button
+        type="button"
+        aria-expanded={expanded}
+        className="flex items-center gap-1 px-4 py-1.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors text-left"
+        onClick={() => setExpanded((e) => !e)}
+      >
+        {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+        {expanded
+          ? `Hide ${entries.length} auto-save${entries.length > 1 ? 's' : ''}`
+          : `Show ${entries.length} auto-save${entries.length > 1 ? 's' : ''}`}
+      </button>
+      {expanded &&
         entries.map((entry) => (
           <EntryRow
             key={entry.sha}

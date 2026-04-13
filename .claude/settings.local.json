@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(xargs ls:*)",
-      "Bash(bun ~/.claude/skills/research/scripts/generate-catalogue.ts)",
-      "Bash(bunx tsc:*)"
-    ]
-  }
-}
