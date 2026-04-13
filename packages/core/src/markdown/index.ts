@@ -83,6 +83,12 @@ export class MarkdownManager {
 
   /**
    * Parse a markdown string to TipTap JSONContent.
+   *
+   * May throw SyntaxError for inputs containing matched `{…}` with non-JS
+   * content (remark-mdx/acorn rejects them). This is expected — Observer B
+   * catches SyntaxError and keeps last valid XmlFragment state during live
+   * editing. The R23 guard prevents the more severe class of crash (bare
+   * unmatched `<` and `{` that cause "Unexpected end of file" errors).
    */
   parse(markdown: string): JSONContent {
     if (!markdown.trim()) {

@@ -156,11 +156,14 @@ describe('Observer B: Y.Text → XmlFragment', () => {
     const beforeMd = mdManager.serialize(beforeJson);
     expect(beforeMd).toContain('# Heading');
 
-    // Write incomplete MDX to Y.Text — remark-mdx/acorn will throw a parse error.
-    // Observer B should catch this and keep XmlFragment at its last valid state.
+    // Write matched `{…}` with non-JS content — remark-mdx/acorn throws
+    // VFileMessage ("Could not parse expression with acorn"). The R23 guard
+    // cannot protect matched braces (they're syntactically complete, just not
+    // valid JavaScript). Observer B should catch this and keep XmlFragment at
+    // its last valid state.
     doc.transact(() => {
       ytext.delete(0, ytext.length);
-      ytext.insert(0, '<Chart data={[1,2,\n');
+      ytext.insert(0, '{invalid js expression here}\n');
     }, 'user-edit');
 
     await wait();
