@@ -42,6 +42,7 @@
     "@codemirror/view": "$@codemirror/view"
   },
   "patchedDependencies": {
+    "@handlewithcare/remark-prosemirror@0.1.5": "patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch",
     "@tiptap/markdown@3.22.3": "patches/@tiptap%2Fmarkdown@3.22.3.patch"
   }
 }
