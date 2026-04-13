@@ -188,3 +188,23 @@ Third-round review after commit aab1608. Bot flagged 1 Major + 3 Minor + 2 Consi
 - R3 💭 Metric 1b added — single-file-read composition (`exec("cat X")` vs `read_document`). Isolates the XQ1 question from the pipe-composition win. Target: >30% share in 30 days.
 
 **Status:** spec now has **APPROVE** from R3 review. Implementation restart still pending; the 4 committed impl commits + stashed US-005 need to be reset against the fully-revised spec across R1 + R2 + R3.
+
+## 2026-04-14 — Post-impl refinements (D24-D29)
+
+After implementation landed on `impl/v0-24` (DEP-1 S1-S6 + V0-24 S7-S14 + probe scripts), two follow-up commits on the impl branch surfaced refinements that required spec revisions:
+
+**`[V0-24.1]` — restore project git log + full backlinks in rich enrichment (commit 9cd0dc5):**
+- **D24:** `read_document` + exec single-path rich enrichment now surfaces BOTH shadow-repo activity AND project git log. Revises D12's "shadow-repo instead of git log" — user noted that files committed to project git (without OK) lose their author + commit message in shadow-repo's lossy upstream-import form, and files never edited by OK show empty "Recent activity." D12's agent-vs-human attribution rationale preserved; we add project git log as a complementary source, not a replacement.
+- **D25:** backlinks rendered as a full list (not count-only) in single-path rich output. Multi-path slim keeps `backlinks: null` to avoid N-amplification. `read_document` output restores `### Backlinks (N)` section with entries.
+- FR14 updated with new nullable fields: `backlinks: BacklinkEntry[] | null`, `projectHistory: GitCommit[] | null`, `projectHistorySource: 'git' | 'git-absent' | null`.
+- Implementation: new `packages/cli/src/content/project-log.ts` using simple-git against project `.git/`.
+
+**`[V0-24.2]` — catalog + scaffold teardown + dynamic INSTRUCTIONS (commit 672c8d2):**
+- **D26:** catalog auto-generation fully removed (watcher deleted, 385 tracked INDEX.md artifacts deleted, CatalogStore API deleted). D19 deprecated folder-level frontmatter semantically; this completes the teardown now that no code consumes catalog outputs post-V0-24.
+- **D27:** `init` scaffolds config-only (no `articles/`/`research/`/`external-sources/` subdirs). Knowledge lives wherever `content.dir` points; the three-tier lifecycle becomes an optional pattern, not an enforced filesystem structure.
+- **D28:** MCP `INSTRUCTIONS` built at server-connect time from live config (no longer a static const). Agents see concrete `content.dir`/`include`/`exclude` values baked in — never need to read `config.yml`.
+- **D29:** Workflow tools (ingest / research / consolidate) interpolate `content.dir` into output text. Path prescriptions softened from `.open-knowledge/articles/` etc. to content-dir-relative guidance.
+
+Runtime cleanup commit (871c670) deletes the 385 stale INDEX.md files + refreshes the on-disk `.open-knowledge/AGENTS.md` to match the new template.
+
+**Status:** spec is current with implementation on `impl/v0-24` (6 DEP-1 commits + 4 V0-24 commits + V0-24.1 + V0-24.2 + runtime cleanup). No open questions or outstanding decisions. Ready for merge.
