@@ -19,6 +19,7 @@ import {
 } from '@handlewithcare/remark-prosemirror';
 import type { Extensions, JSONContent } from '@tiptap/core';
 import { getSchema } from '@tiptap/core';
+import { type Mark as PmMark, Node as PmNode, type Schema } from '@tiptap/pm/model';
 import type {
   Break,
   Code,
@@ -48,7 +49,6 @@ import type {
   MdxjsEsm,
   MdxTextExpression,
 } from 'mdast-util-mdx';
-import { type Mark as PmMark, Node as PmNode, type Schema } from 'prosemirror-model';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseMd, serializeMd } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
