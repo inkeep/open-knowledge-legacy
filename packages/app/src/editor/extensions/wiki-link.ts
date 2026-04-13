@@ -6,7 +6,7 @@
 import { WikiLink as BaseWikiLink } from '@inkeep/open-knowledge-core';
 import { ReactNodeViewRenderer } from '@tiptap/react';
 import { WikiLinkView } from './WikiLinkView';
-import { createWikiLinkSuggestionPlugin } from './wiki-link-suggestion';
+import { configureWikiLinkSuggestion } from './wiki-link-suggestion';
 
 export const WikiLink = BaseWikiLink.extend({
   // Higher priority ensures the suggestion plugin's handleKeyDown fires before
@@ -18,6 +18,6 @@ export const WikiLink = BaseWikiLink.extend({
   },
 
   addProseMirrorPlugins() {
-    return [createWikiLinkSuggestionPlugin(this.editor)];
+    return [configureWikiLinkSuggestion(this.editor)];
   },
 });
