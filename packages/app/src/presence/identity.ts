@@ -1,18 +1,13 @@
 import {
-  type ActivityEntry,
   type AwarenessState,
   type AwarenessUser,
-  generateRandomColor,
-  generateRandomName,
   getIdentity,
-  HUMAN_COLORS,
   type Identity,
 } from '@inkeep/open-knowledge-core';
 import { useState } from 'react';
 
 // Re-export types and functions from core for backwards compatibility
-export type { ActivityEntry, AwarenessState, AwarenessUser, Identity };
-export { generateRandomColor, generateRandomName, getIdentity, HUMAN_COLORS };
+export type { AwarenessState, AwarenessUser };
 
 // --- React hook ---
 

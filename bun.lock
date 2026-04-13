@@ -7,8 +7,6 @@
       "devDependencies": {
         "@biomejs/biome": "^2.4.10",
         "@changesets/cli": "^2.29.7",
-        "@codemirror/state": "^6.6.0",
-        "@codemirror/view": "^6.41.0",
         "husky": "^9.1.7",
         "knip": "^6.4.1",
         "lint-staged": "^16.4.0",
@@ -204,10 +202,6 @@
   },
   "patchedDependencies": {
     "@handlewithcare/remark-prosemirror@0.1.5": "patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch",
-  },
-  "overrides": {
-    "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.41.0",
   },
   "packages": {
     "@alloc/quick-lru": ["@alloc/quick-lru@5.2.0", "", {}, "sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw=="],

@@ -33,15 +33,9 @@
     "knip": "^6.4.1",
     "@biomejs/biome": "^2.4.10",
     "@changesets/cli": "^2.29.7",
-    "@codemirror/state": "^6.6.0",
-    "@codemirror/view": "^6.41.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "turbo": "^2.7.0"
-  },
-  "overrides": {
-    "@codemirror/state": "$@codemirror/state",
-    "@codemirror/view": "$@codemirror/view"
   },
   "patchedDependencies": {
     "@handlewithcare/remark-prosemirror@0.1.5": "patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch"
