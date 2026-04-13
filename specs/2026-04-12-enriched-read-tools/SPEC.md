@@ -226,7 +226,7 @@ Tags: auth, architecture
 
 ### Tool 3: `consolidate`
 
-**File:** `packages/cli/src/mcp/toolsconsolidate.ts` (new)
+**File:** `packages/cli/src/mcp/tools/consolidate.ts` (new)
 
 **Input:**
 ```typescript
