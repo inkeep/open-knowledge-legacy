@@ -23,8 +23,7 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noReactForwardRef": "error",
-        "noExplicitAny": "off"
+        "noReactForwardRef": "error"
       },
       "style": {
         "noRestrictedImports": {

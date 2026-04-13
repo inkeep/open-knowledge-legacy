@@ -12,7 +12,7 @@
  * Strategy: replace `<` and `>` in protected patterns with Unicode Private
  * Use Area characters before parsing. A post-parse transformer restores them.
  */
-import type { Root } from 'mdast';
+import type { Nodes, Root } from 'mdast';
 import { visit } from 'unist-util-visit';
 
 // Use Unicode Private Use Area characters as markers.
@@ -124,6 +124,18 @@ export function protectFromMdx(source: string): string {
 }
 
 /**
+ * Protect a single literal `<` at a known source offset.
+ *
+ * Used by the parse retry path when remark-mdx misclassifies prose like
+ * `<50ms` as a JSX opener and aborts the entire document parse.
+ */
+export function protectLiteralLtAtOffset(source: string, offset: number): string {
+  if (offset < 0 || offset >= source.length) return source;
+  if (source[offset] !== '<') return source;
+  return `${source.slice(0, offset)}${GUARD_OPEN}${source.slice(offset + 1)}`;
+}
+
+/**
  * Restore protected autolinks and HTML after parsing.
  * Runs as a unified transformer on the mdast tree.
  */
@@ -136,21 +148,21 @@ function hasSentinels(s: string): boolean {
 
 export function restoreFromMdx() {
   return (tree: Root) => {
-    visit(tree, (node: any) => {
-      // Restore in text values
-      if (typeof node.value === 'string' && hasSentinels(node.value)) {
-        node.value = restoreString(node.value);
+    visit(tree, (node: Nodes) => {
+      // Restore in text values, URL, title, alt — use a record view because
+      // these fields live on different subsets of Nodes.
+      const rec = node as unknown as Record<string, unknown>;
+      if (typeof rec.value === 'string' && hasSentinels(rec.value)) {
+        rec.value = restoreString(rec.value);
       }
-      // Restore in URL fields
-      if (typeof node.url === 'string' && hasSentinels(node.url)) {
-        node.url = restoreString(node.url);
+      if (typeof rec.url === 'string' && hasSentinels(rec.url)) {
+        rec.url = restoreString(rec.url);
       }
-      // Restore in title and alt fields
-      if (typeof node.title === 'string' && hasSentinels(node.title)) {
-        node.title = restoreString(node.title);
+      if (typeof rec.title === 'string' && hasSentinels(rec.title)) {
+        rec.title = restoreString(rec.title);
       }
-      if (typeof node.alt === 'string' && hasSentinels(node.alt)) {
-        node.alt = restoreString(node.alt);
+      if (typeof rec.alt === 'string' && hasSentinels(rec.alt)) {
+        rec.alt = restoreString(rec.alt);
       }
     });
   };

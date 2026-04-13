@@ -6,6 +6,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
+import type { JSONContent } from '@tiptap/core';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
@@ -13,7 +14,7 @@ function roundTrip(md: string): string {
   return mdManager.serialize(mdManager.parse(md));
 }
 
-function findNodeType(json: any, type: string): boolean {
+function findNodeType(json: JSONContent, type: string): boolean {
   if (json.type === type) return true;
   for (const child of json.content ?? []) {
     if (findNodeType(child, type)) return true;

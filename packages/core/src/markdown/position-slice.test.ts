@@ -5,37 +5,45 @@
  * metadata to mdast node.data by slicing the original source.
  */
 import { describe, expect, test } from 'bun:test';
+import type { Nodes, Root } from 'mdast';
 import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
+import { VFile } from 'vfile';
 import { positionSlicePlugin } from './position-slice.ts';
 
+// Tests access node.data.* for fields added via module augmentation
+// (sourceDelimiter, sourceFenceChar, escapedChars, etc.). Use an any-permissive
+// local alias so .data access on union-discriminated nodes doesn't have to be
+// narrowed per test.
+type AnyNode = Nodes & { data?: Record<string, unknown> };
+
 /** Parse markdown through remark-parse + remark-gfm + position-slice walker */
-function parseMdast(source: string) {
+function parseMdast(source: string): Root {
   const processor = unified().use(remarkParse).use(remarkGfm).use(positionSlicePlugin);
   const tree = processor.parse(source);
   // Run the transformer (positionSlicePlugin) — it needs the VFile with source
-  processor.runSync(tree, { value: source } as any);
+  processor.runSync(tree, new VFile({ value: source }));
   return tree;
 }
 
 /** Find first node of a given type */
-function findNode(tree: any, type: string): any {
-  let found: any = null;
-  visit(tree, type, (node: any) => {
-    if (!found) found = node;
+function findNode<T extends AnyNode = AnyNode>(tree: Root, type: string): T {
+  let found: AnyNode | null = null;
+  visit(tree, type, (node) => {
+    if (!found) found = node as AnyNode;
   });
-  return found;
+  return found as unknown as T;
 }
 
 /** Find all nodes of a given type */
-function findNodes(tree: any, type: string): any[] {
-  const nodes: any[] = [];
-  visit(tree, type, (node: any) => {
-    nodes.push(node);
+function findNodes<T extends AnyNode = AnyNode>(tree: Root, type: string): T[] {
+  const nodes: AnyNode[] = [];
+  visit(tree, type, (node) => {
+    nodes.push(node as AnyNode);
   });
-  return nodes;
+  return nodes as T[];
 }
 
 describe('position-slice: emphasis delimiter recovery', () => {
@@ -207,25 +215,36 @@ describe('position-slice: escapeMark tagging (D20)', () => {
     const tree = parseMdast('text \\# more\n');
     const textNodes = findNodes(tree, 'text');
     // Find the text node that contains #
-    const escaped = textNodes.find((n: any) => n.data?.escapedChars?.length > 0);
+    const escaped = textNodes.find((n) => {
+      const e = n.data?.escapedChars as unknown[] | undefined;
+      return !!e && e.length > 0;
+    });
     expect(escaped).toBeDefined();
-    expect(escaped.data.escapedChars).toEqual([{ offset: expect.any(Number), char: '#' }]);
+    expect(escaped?.data?.escapedChars).toEqual([{ offset: expect.any(Number), char: '#' }]);
   });
 
   test('backslash-escaped * → data.escapedChars', () => {
     const tree = parseMdast('text \\* more\n');
     const textNodes = findNodes(tree, 'text');
-    const escaped = textNodes.find((n: any) => n.data?.escapedChars?.length > 0);
+    const escaped = textNodes.find((n) => {
+      const e = n.data?.escapedChars as unknown[] | undefined;
+      return !!e && e.length > 0;
+    });
     expect(escaped).toBeDefined();
-    expect(escaped.data.escapedChars[0].char).toBe('*');
+    const chars = escaped?.data?.escapedChars as Array<{ char: string }>;
+    expect(chars[0].char).toBe('*');
   });
 
   test('multiple escaped chars in one text run', () => {
     const tree = parseMdast('\\*literal\\*\n');
     const textNodes = findNodes(tree, 'text');
-    const escaped = textNodes.find((n: any) => n.data?.escapedChars?.length > 0);
+    const escaped = textNodes.find((n) => {
+      const e = n.data?.escapedChars as unknown[] | undefined;
+      return !!e && e.length > 0;
+    });
     expect(escaped).toBeDefined();
-    expect(escaped.data.escapedChars.length).toBeGreaterThanOrEqual(1);
+    const chars = escaped?.data?.escapedChars as unknown[];
+    expect(chars.length).toBeGreaterThanOrEqual(1);
   });
 
   test('non-ambiguous escape (\\foo) has no escapedChars', () => {
@@ -235,7 +254,10 @@ describe('position-slice: escapeMark tagging (D20)', () => {
     const textNodes = findNodes(tree, 'text');
     // \\q is not a valid escape — mdast preserves literal backslash
     // so the raw source matches value; no escapedChars needed
-    const hasEscaped = textNodes.some((n: any) => n.data?.escapedChars?.length > 0);
+    const hasEscaped = textNodes.some((n) => {
+      const e = n.data?.escapedChars as unknown[] | undefined;
+      return !!e && e.length > 0;
+    });
     // This assertion is about the char 'q' not being in the escapable set
     // If mdast preserves the backslash literally, raw === value, no tag
     expect(hasEscaped).toBe(false);
@@ -253,8 +275,8 @@ describe('position-slice: fallback behavior', () => {
     // Parse a minimal document
     const tree = processor.parse('hello\n');
     // Remove position from root
-    delete (tree as any).position;
+    (tree as { position?: unknown }).position = undefined;
     // Run should not throw
-    expect(() => processor.runSync(tree, { value: 'hello\n' } as any)).not.toThrow();
+    expect(() => processor.runSync(tree, new VFile({ value: 'hello\n' }))).not.toThrow();
   });
 });
