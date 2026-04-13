@@ -30,6 +30,7 @@ import remarkMdx from 'remark-mdx';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { unified } from 'unified';
+import { VFile } from 'vfile';
 
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
@@ -63,8 +64,10 @@ export function parseMd(source: string, opts: PipelineOptions): PmNode {
       handlers: opts.handlers,
     } as RemarkProseMirrorOptions);
 
-  const tree = processor.parse(source);
-  const transformed = processor.runSync(tree);
+  // Create VFile so the position-slice walker can access the source text
+  const file = new VFile(source);
+  const tree = processor.parse(file);
+  const transformed = processor.runSync(tree, file);
   const doc = (processor as unknown as { stringify(tree: unknown): PmNode }).stringify(transformed);
   return doc;
 }

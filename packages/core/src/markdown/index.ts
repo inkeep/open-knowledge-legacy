@@ -124,72 +124,147 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   const strikeMark = m.strike ?? m.delete;
   if (strikeMark) handlers.delete = toPmMark(strikeMark);
 
-  // Tier B basic (no fidelity attrs yet — those come in US-004)
-  // emphasis / italic
+  // ── Tier B fidelity handlers — read node.data.* from position-slice walker ──
+
+  // emphasis / italic — read sourceDelimiter → map to schema attr name
   const emphMark = m.emphasis ?? m.italic;
-  if (emphMark) handlers.emphasis = toPmMark(emphMark);
-
-  // strong / bold
-  const strongMark = m.strong ?? m.bold;
-  if (strongMark) handlers.strong = toPmMark(strongMark);
-
-  // heading
-  if (n.heading) {
-    handlers.heading = toPmNode(n.heading, (node: any) => ({
-      level: node.depth,
+  if (emphMark) {
+    // Detect attr name: 'sourceDelimiter' (post-rename) or 'emphDelimiter' (pre-rename)
+    const emphAttr = emphMark.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'emphDelimiter';
+    handlers.emphasis = toPmMark(emphMark, (node: any) => ({
+      [emphAttr]: node.data?.sourceDelimiter ?? '*',
     }));
   }
 
-  // code block
+  // strong / bold — read sourceDelimiter → map to schema attr name
+  const strongMark = m.strong ?? m.bold;
+  if (strongMark) {
+    const strongAttr = strongMark.spec.attrs?.sourceDelimiter
+      ? 'sourceDelimiter'
+      : 'strongDelimiter';
+    handlers.strong = toPmMark(strongMark, (node: any) => ({
+      [strongAttr]: node.data?.sourceDelimiter ?? '**',
+    }));
+  }
+
+  // heading — read sourceStyle → map to schema attr name
+  if (n.heading) {
+    const headingStyleAttr = n.heading.spec.attrs?.sourceStyle ? 'sourceStyle' : 'headingStyle';
+    handlers.heading = toPmNode(n.heading, (node: any) => ({
+      level: node.depth,
+      [headingStyleAttr]: node.data?.sourceStyle ?? 'atx',
+    }));
+  }
+
+  // code block — read sourceFenceChar + sourceFenceLength → map to schema attr names
   if (n.codeBlock) {
+    const fenceCharAttr = n.codeBlock.spec.attrs?.sourceFenceChar
+      ? 'sourceFenceChar'
+      : 'fenceDelimiter';
+    const fenceLenAttr = n.codeBlock.spec.attrs?.sourceFenceLength
+      ? 'sourceFenceLength'
+      : 'fenceLength';
     handlers.code = (node: any) => {
       const textContent = node.value ? [schema.text(node.value)] : [];
       return n.codeBlock.createAndFill(
-        { language: node.lang ?? null, meta: node.meta ?? null },
+        {
+          language: node.lang ?? null,
+          meta: node.meta ?? null,
+          [fenceCharAttr]: node.data?.sourceFenceChar ?? '`',
+          [fenceLenAttr]: node.data?.sourceFenceLength ?? 3,
+        },
         textContent,
       );
     };
   }
 
-  // thematicBreak / horizontalRule
+  // thematicBreak / horizontalRule — read sourceRaw → map to schema attr name
   const hrNode = n.thematicBreak ?? n.horizontalRule;
   if (hrNode) {
-    handlers.thematicBreak = () => hrNode.createAndFill();
+    const hrAttr = hrNode.spec.attrs?.sourceRaw ? 'sourceRaw' : 'horizontalRuleRaw';
+    handlers.thematicBreak = (node: any) =>
+      hrNode.createAndFill({
+        [hrAttr]: node.data?.sourceRaw ?? '---',
+      });
   }
 
-  // hardBreak / break
+  // hardBreak / break — read sourceStyle → map to schema attr name
   if (n.hardBreak) {
-    handlers.break = () => n.hardBreak.createAndFill();
+    const breakAttr = n.hardBreak.spec.attrs?.sourceStyle ? 'sourceStyle' : 'hardBreakStyle';
+    handlers.break = (node: any) =>
+      n.hardBreak.createAndFill({
+        [breakAttr]: node.data?.sourceStyle ?? 'spaces',
+      });
   }
 
-  // Lists
-  const listNode = n.list ?? n.bulletList;
+  // Lists — read bulletMarker + listMarkerDelimiter
+  // Pre-rename: separate bulletList + orderedList; Post-rename: unified list
   const listItemNode = n.listItem;
-  if (listNode) {
-    handlers.list = toPmNode(listNode, (node: any) => ({
+  if (n.list) {
+    // Unified list node (post D15)
+    handlers.list = toPmNode(n.list, (node: any) => ({
       ordered: !!node.ordered,
       start: node.start ?? 1,
       spread: !!node.spread,
+      bulletMarker: node.data?.bulletMarker ?? null,
+      listMarkerDelimiter: node.data?.listMarkerDelimiter ?? null,
     }));
+  } else {
+    // Pre-rename: route mdast list to bulletList or orderedList based on node.ordered
+    handlers.list = (node: any, _: any, state: any) => {
+      const children = state.all(node);
+      if (node.ordered && n.orderedList) {
+        return n.orderedList.createAndFill(
+          {
+            start: node.start ?? 1,
+            listMarkerDelimiter: node.data?.listMarkerDelimiter ?? '.',
+            ...(n.orderedList.spec.attrs?.loose != null ? { loose: !!node.spread } : {}),
+          },
+          children,
+        );
+      }
+      if (n.bulletList) {
+        return n.bulletList.createAndFill(
+          {
+            bulletMarker: node.data?.bulletMarker ?? '-',
+            ...(n.bulletList.spec.attrs?.loose != null ? { loose: !!node.spread } : {}),
+          },
+          children,
+        );
+      }
+      return null;
+    };
   }
   if (listItemNode) {
-    handlers.listItem = toPmNode(listItemNode, (node: any) => ({
-      checked: node.checked ?? null,
-      spread: !!node.spread,
-    }));
+    handlers.listItem = toPmNode(listItemNode);
   }
 
-  // Link mark
+  // ── Tier C custom handlers ──
+
+  // Link mark — inline style
   if (m.link) {
+    const styleAttr = m.link.spec.attrs?.sourceStyle ? 'sourceStyle' : 'linkStyle';
+    const refAttr = m.link.spec.attrs?.sourceRefLabel ? 'sourceRefLabel' : 'refLabel';
     handlers.link = toPmMark(m.link, (node: any) => ({
       href: node.url ?? '',
       title: node.title ?? null,
+      [styleAttr]: 'inline',
+      [refAttr]: null,
+    }));
+
+    // linkReference → same link mark but with reference style info
+    handlers.linkReference = toPmMark(m.link, (node: any) => ({
+      href: '',
+      title: null,
+      [styleAttr]: node.referenceType ?? 'shortcut',
+      [refAttr]: node.label ?? node.identifier ?? null,
     }));
   }
 
   // HTML block
   if (n.htmlBlock) {
-    handlers.html = (node: any) => n.htmlBlock.createAndFill({ value: node.value ?? '' });
+    const htmlAttr = n.htmlBlock.spec.attrs?.value ? 'value' : 'content';
+    handlers.html = (node: any) => n.htmlBlock.createAndFill({ [htmlAttr]: node.value ?? '' });
   }
 
   // Definition → linkDefinition atom (R12 CRITICAL override)
@@ -201,6 +276,37 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
         url: node.url ?? '',
         title: node.title ?? null,
       });
+  }
+
+  // MDX nodes — minimal passthrough (full coverage in US-008)
+  // These need to exist to prevent "unknown markdown node" errors
+  if (n.jsxComponent) {
+    handlers.mdxJsxFlowElement = (node: any) =>
+      n.jsxComponent.createAndFill({
+        name: node.name,
+        attributes: node.attributes ?? null,
+        value: '',
+      });
+  }
+  if (n.jsxInline) {
+    handlers.mdxJsxTextElement = (node: any) =>
+      n.jsxInline.createAndFill({
+        name: node.name,
+        attributes: node.attributes ?? null,
+        value: '',
+      });
+  }
+  // For MDX expressions and ESM, only register if schema has the node type
+  if (n.mdxExpression) {
+    handlers.mdxFlowExpression = (node: any) =>
+      n.mdxExpression.createAndFill({ value: node.value ?? '' });
+  }
+  if (n.mdxInlineExpression) {
+    handlers.mdxTextExpression = (node: any) =>
+      n.mdxInlineExpression.createAndFill({ value: node.value ?? '' });
+  }
+  if (n.mdxEsm) {
+    handlers.mdxjsEsm = (node: any) => n.mdxEsm.createAndFill({ value: node.value ?? '' });
   }
 
   // Frontmatter: keep ignored (handled via Y.Map, not PM schema)
@@ -225,55 +331,81 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.blockquote) nodeHandlers.blockquote = fromPmNode('blockquote');
 
   if (n.heading) {
+    const headingStyleAttr = n.heading.spec.attrs?.sourceStyle ? 'sourceStyle' : 'headingStyle';
     nodeHandlers.heading = fromPmNode('heading', (pmNode: any) => ({
       depth: pmNode.attrs.level,
+      data: { sourceStyle: pmNode.attrs[headingStyleAttr] },
     }));
   }
 
   if (n.codeBlock) {
+    const fenceCharAttr = n.codeBlock.spec.attrs?.sourceFenceChar
+      ? 'sourceFenceChar'
+      : 'fenceDelimiter';
+    const fenceLenAttr = n.codeBlock.spec.attrs?.sourceFenceLength
+      ? 'sourceFenceLength'
+      : 'fenceLength';
     nodeHandlers.codeBlock = (pmNode: any) => ({
       type: 'code' as const,
       lang: pmNode.attrs.language ?? null,
       meta: pmNode.attrs.meta ?? null,
       value: pmNode.textContent ?? '',
+      data: {
+        sourceFenceChar: pmNode.attrs[fenceCharAttr],
+        sourceFenceLength: pmNode.attrs[fenceLenAttr],
+      },
     });
   }
 
-  const hrNode = n.thematicBreak ?? n.horizontalRule;
-  if (hrNode) {
+  const hrNodeSer = n.thematicBreak ?? n.horizontalRule;
+  if (hrNodeSer) {
     const name = n.thematicBreak ? 'thematicBreak' : 'horizontalRule';
-    nodeHandlers[name] = () => ({ type: 'thematicBreak' as const });
+    const hrAttr = hrNodeSer.spec.attrs?.sourceRaw ? 'sourceRaw' : 'horizontalRuleRaw';
+    nodeHandlers[name] = (pmNode: any) => ({
+      type: 'thematicBreak' as const,
+      data: { sourceRaw: pmNode.attrs[hrAttr] },
+    });
   }
 
   if (n.hardBreak) {
-    nodeHandlers.hardBreak = () => ({ type: 'break' as const });
+    const breakAttr = n.hardBreak.spec.attrs?.sourceStyle ? 'sourceStyle' : 'hardBreakStyle';
+    nodeHandlers.hardBreak = (pmNode: any) => ({
+      type: 'break' as const,
+      data: { sourceStyle: pmNode.attrs[breakAttr] },
+    });
   }
 
   // Lists
-  const listNode = n.list ?? n.bulletList;
-  if (listNode) {
-    const listName = n.list ? 'list' : 'bulletList';
-    nodeHandlers[listName] = fromPmNode('list', (pmNode: any) => ({
+  if (n.list) {
+    nodeHandlers.list = fromPmNode('list', (pmNode: any) => ({
       ordered: pmNode.attrs.ordered ?? false,
       start: pmNode.attrs.ordered ? (pmNode.attrs.start ?? 1) : null,
       spread: pmNode.attrs.spread ?? false,
+      data: {
+        bulletMarker: pmNode.attrs.bulletMarker,
+        listMarkerDelimiter: pmNode.attrs.listMarkerDelimiter,
+      },
     }));
-  }
-
-  // orderedList → list with ordered: true (for pre-rename schema)
-  if (n.orderedList && !n.list) {
-    nodeHandlers.orderedList = fromPmNode('list', (pmNode: any) => ({
-      ordered: true,
-      start: pmNode.attrs.start ?? 1,
-      spread: pmNode.attrs.spread ?? false,
-    }));
+  } else {
+    if (n.bulletList) {
+      nodeHandlers.bulletList = fromPmNode('list', (pmNode: any) => ({
+        ordered: false,
+        spread: pmNode.attrs.loose ?? false,
+        data: { bulletMarker: pmNode.attrs.bulletMarker },
+      }));
+    }
+    if (n.orderedList) {
+      nodeHandlers.orderedList = fromPmNode('list', (pmNode: any) => ({
+        ordered: true,
+        start: pmNode.attrs.start ?? 1,
+        spread: pmNode.attrs.loose ?? false,
+        data: { listMarkerDelimiter: pmNode.attrs.listMarkerDelimiter },
+      }));
+    }
   }
 
   if (n.listItem) {
-    nodeHandlers.listItem = fromPmNode('listItem', (pmNode: any) => ({
-      checked: pmNode.attrs.checked ?? null,
-      spread: pmNode.attrs.spread ?? false,
-    }));
+    nodeHandlers.listItem = fromPmNode('listItem');
   }
 
   // Table
@@ -294,9 +426,10 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   // HTML block
   if (n.htmlBlock) {
+    const htmlAttr = n.htmlBlock.spec.attrs?.value ? 'value' : 'content';
     nodeHandlers.htmlBlock = (pmNode: any) => ({
       type: 'html' as const,
-      value: pmNode.attrs.value,
+      value: pmNode.attrs[htmlAttr],
     });
   }
 
@@ -311,17 +444,25 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // Marks
-  const emphMark = m.emphasis ?? m.italic;
-  if (emphMark) {
+  // Marks — carry fidelity data back to mdast
+  const serEmphMark = m.emphasis ?? m.italic;
+  if (serEmphMark) {
     const name = m.emphasis ? 'emphasis' : 'italic';
-    markHandlers[name] = fromPmMark('emphasis');
+    const emphAttr = serEmphMark.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'emphDelimiter';
+    markHandlers[name] = fromPmMark('emphasis', (mark: any) => ({
+      data: { sourceDelimiter: mark.attrs[emphAttr] },
+    }));
   }
 
-  const strongMark = m.strong ?? m.bold;
-  if (strongMark) {
+  const serStrongMark = m.strong ?? m.bold;
+  if (serStrongMark) {
     const name = m.strong ? 'strong' : 'bold';
-    markHandlers[name] = fromPmMark('strong');
+    const strongAttr = serStrongMark.spec.attrs?.sourceDelimiter
+      ? 'sourceDelimiter'
+      : 'strongDelimiter';
+    markHandlers[name] = fromPmMark('strong', (mark: any) => ({
+      data: { sourceDelimiter: mark.attrs[strongAttr] },
+    }));
   }
 
   if (m.code) {
@@ -338,12 +479,27 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (m.link) {
-    markHandlers.link = (mark: any, _parent: any, children: any[]) => ({
-      type: 'link' as const,
-      url: mark.attrs.href ?? '',
-      title: mark.attrs.title ?? null,
-      children,
-    });
+    const linkStyleAttr = m.link.spec.attrs?.sourceStyle ? 'sourceStyle' : 'linkStyle';
+    const linkRefAttr = m.link.spec.attrs?.sourceRefLabel ? 'sourceRefLabel' : 'refLabel';
+    markHandlers.link = (mark: any, _parent: any, children: any[]) => {
+      const style = mark.attrs[linkStyleAttr];
+      if (style === 'inline' || !style) {
+        return {
+          type: 'link' as const,
+          url: mark.attrs.href ?? '',
+          title: mark.attrs.title ?? null,
+          children,
+        };
+      }
+      // Reference link
+      return {
+        type: 'linkReference' as const,
+        identifier: (mark.attrs[linkRefAttr] ?? '').toLowerCase(),
+        label: mark.attrs[linkRefAttr],
+        referenceType: style,
+        children,
+      };
+    };
   }
 
   return { nodeHandlers, markHandlers };
