@@ -4,6 +4,7 @@ import type { ResolvedPos } from '@tiptap/pm/model';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import { ReactRenderer } from '@tiptap/react';
+import type { SuggestionProps } from '@tiptap/suggestion';
 import fuzzysort from 'fuzzysort';
 import { WikiLinkSuggestionMenu } from '../wiki-link-suggestion/WikiLinkSuggestionMenu';
 import { buildUnresolvedWikiLinkAttrs } from './wiki-link-helpers';
@@ -162,6 +163,33 @@ export function createWikiLinkSuggestionPlugin(editor: Editor): Plugin {
     const { mode, pageTarget } = parseQuery(query);
     if (mode === 'anchor') return anchorFetchingFor === pageTarget;
     return !pagesLoaded;
+  }
+
+  const selectedIndex = 0;
+
+  function computeMenuProps(
+    props: SuggestionProps<WikiLinkSuggestionItem>,
+    loadingOverride: boolean | null,
+    onSelect: (item: WikiLinkSuggestionItem) => void,
+  ) {
+    const { mode, pageTarget, anchorQuery } = parseQuery(props.query ?? '');
+    const loading =
+      loadingOverride !== null
+        ? loadingOverride
+        : mode === 'anchor'
+          ? !cachedHeadings.has(pageTarget)
+          : !pagesLoaded;
+    return {
+      items: props.items,
+      query: props.query ?? '',
+      selectedIndex,
+      onSelect,
+      loading,
+      error: mode === 'page' ? fetchError : null,
+      mode,
+      pageTarget,
+      anchorQuery,
+    };
   }
 
   function insertWikiLink(
