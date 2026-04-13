@@ -3,6 +3,7 @@ import type { HeadingEntry } from '@inkeep/open-knowledge-core';
 import {
   buildAnchorItems,
   buildSuggestionItems,
+  computeFallbackAttrs,
   type PageItem,
   parseQuery,
   wikiLinkMatcher,
@@ -153,6 +154,65 @@ describe('buildAnchorItems', () => {
     expect(buildAnchorItems('my-doc', single, '')).toEqual([
       { kind: 'anchor', docName: 'my-doc', level: 4, text: 'Deep Section', slug: 'deep-section' },
     ]);
+  });
+});
+
+describe('computeFallbackAttrs', () => {
+  test('returns null for empty query (unslugable)', () => {
+    expect(computeFallbackAttrs('')).toBeNull();
+  });
+
+  test('returns null for whitespace-only query', () => {
+    expect(computeFallbackAttrs('   ')).toBeNull();
+  });
+
+  test('page mode: derives unresolved link attrs from query', () => {
+    expect(computeFallbackAttrs('My New Page')).toEqual({
+      target: 'my-new-page',
+      alias: 'My New Page',
+      anchor: null,
+    });
+  });
+
+  test('page mode: slug equals original when already slugified', () => {
+    expect(computeFallbackAttrs('already-slug')).toEqual({
+      target: 'already-slug',
+      alias: null,
+      anchor: null,
+    });
+  });
+
+  test('anchor mode: inserts target + anchor when both present', () => {
+    expect(computeFallbackAttrs('release-notes#changes')).toEqual({
+      target: 'release-notes',
+      alias: null,
+      anchor: 'changes',
+    });
+  });
+
+  test('anchor mode: anchor null when only hash is typed', () => {
+    expect(computeFallbackAttrs('release-notes#')).toEqual({
+      target: 'release-notes',
+      alias: null,
+      anchor: null,
+    });
+  });
+
+  test('anchor mode: anchor null when anchor query is whitespace-only', () => {
+    expect(computeFallbackAttrs('release-notes#   ')).toEqual({
+      target: 'release-notes',
+      alias: null,
+      anchor: null,
+    });
+  });
+
+  test('leading hash is treated as page mode, not anchor mode', () => {
+    // parseQuery only treats `#` as anchor separator when it has a non-empty left side
+    expect(computeFallbackAttrs('#bar')).toEqual({
+      target: 'bar',
+      alias: '#bar',
+      anchor: null,
+    });
   });
 });
 

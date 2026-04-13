@@ -90,6 +90,23 @@ export function buildAnchorItems(
 }
 
 /**
+ * Derive wiki-link attrs from a raw query for fallback insertion — used when
+ * Enter is pressed with no item selected. Anchor mode inserts `{ target, anchor }`;
+ * page mode falls back to unresolved link attrs (null if query is empty/unslugable).
+ *
+ * Pure function — exported for testability.
+ */
+export function computeFallbackAttrs(
+  query: string,
+): { target: string; alias: string | null; anchor: string | null } | null {
+  const { mode, pageTarget, anchorQuery } = parseQuery(query);
+  if (mode === 'anchor' && pageTarget) {
+    return { target: pageTarget, alias: null, anchor: anchorQuery.trim() || null };
+  }
+  return buildUnresolvedWikiLinkAttrs(query);
+}
+
+/**
  * Custom `findSuggestionMatch` for `@tiptap/suggestion` — detects `[[` paired
  * delimiters using the same regex as the original ProseMirror plugin. The query
  * includes `#` so anchor mode (`page#heading`) works transparently.
@@ -296,16 +313,7 @@ export function configureWikiLinkSuggestion(editor: Editor) {
       const fallbackInsert = () => {
         if (!currentProps) return;
         const { editor, range } = currentProps;
-        const query = currentProps.query ?? '';
-        const { mode, pageTarget, anchorQuery } = parseQuery(query);
-
-        let attrs: { target: string; alias: string | null; anchor: string | null } | null = null;
-        if (mode === 'anchor' && pageTarget) {
-          attrs = { target: pageTarget, alias: null, anchor: anchorQuery.trim() || null };
-        } else {
-          attrs = buildUnresolvedWikiLinkAttrs(query);
-        }
-
+        const attrs = computeFallbackAttrs(currentProps.query ?? '');
         if (!attrs) return;
 
         try {
