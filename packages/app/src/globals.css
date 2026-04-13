@@ -432,6 +432,7 @@
   font-family: var(--font-mono);
   font-size: 0.875em;
   line-height: 1.6;
+  @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
 }
 
 /* Inline code */
@@ -489,6 +490,7 @@
 .ProseMirror .tableWrapper {
   overflow-x: auto;
   margin: 0.5em 0;
+  @apply scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
 }
 
 .ProseMirror table {
@@ -556,6 +558,7 @@
 .cm-editor {
   min-height: 200px;
   font-size: 14px;
+  font-family: var(--font-mono);
 }
 
 .cm-editor .cm-content {
@@ -564,6 +567,26 @@
 
 .cm-editor.cm-focused {
   outline: none;
+}
+
+.cm-scroller {
+  @apply font-mono! scrollbar-thin scrollbar-track-transparent scrollbar-thumb-muted-foreground/30 dark:scrollbar-thumb-muted-foreground/50;
+}
+
+.cm-gutters.cm-gutters-before {
+  @apply border-none!;
+}
+
+.cm-gutters {
+  @apply text-muted-foreground/80!;
+}
+
+.cm-lineNumbers .cm-gutterElement {
+  padding: 0 4px 0 16px !important;
+}
+
+.cm-line {
+  padding-left: 16px !important;
 }
 
 /* ─────────────────────────────────────────────────────────────
