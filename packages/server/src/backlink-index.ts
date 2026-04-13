@@ -45,7 +45,7 @@ interface SerializedBranchGraphState {
   forward: Record<string, string[]>;
 }
 
-export interface BacklinkIndexOptions {
+interface BacklinkIndexOptions {
   projectDir: string;
   contentDir: string;
   contentFilter?: ContentFilter;
