@@ -13,6 +13,9 @@ export interface ReconciliationMetrics {
   branchSwitchCount: number;
   parkCount: number;
   gitAutoSaveFailureCount: number;
+  cc1BroadcastCount: number;
+  cc1SubscriberCount: number;
+  cc1LastSeq: Record<string, number>;
 }
 
 const counters: ReconciliationMetrics = {
@@ -24,6 +27,9 @@ const counters: ReconciliationMetrics = {
   branchSwitchCount: 0,
   parkCount: 0,
   gitAutoSaveFailureCount: 0,
+  cc1BroadcastCount: 0,
+  cc1SubscriberCount: 0,
+  cc1LastSeq: {},
 };
 
 export function incrementReconcile(): void {
@@ -58,8 +64,20 @@ export function incrementGitAutoSaveFailure(): void {
   counters.gitAutoSaveFailureCount++;
 }
 
+export function incrementCC1Broadcast(): void {
+  counters.cc1BroadcastCount++;
+}
+
+export function setCC1SubscriberCount(count: number): void {
+  counters.cc1SubscriberCount = count;
+}
+
+export function setCC1LastSeq(channel: string, seq: number): void {
+  counters.cc1LastSeq[channel] = seq;
+}
+
 export function getMetrics(): ReconciliationMetrics {
-  return { ...counters };
+  return { ...counters, cc1LastSeq: { ...counters.cc1LastSeq } };
 }
 
 export function resetMetrics(): void {
@@ -71,4 +89,7 @@ export function resetMetrics(): void {
   counters.branchSwitchCount = 0;
   counters.parkCount = 0;
   counters.gitAutoSaveFailureCount = 0;
+  counters.cc1BroadcastCount = 0;
+  counters.cc1SubscriberCount = 0;
+  counters.cc1LastSeq = {};
 }

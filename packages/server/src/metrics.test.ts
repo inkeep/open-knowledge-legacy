@@ -65,8 +65,12 @@ describe('reconciliation metrics', () => {
     incrementPark();
     resetMetrics();
     const m = getMetrics();
-    for (const value of Object.values(m)) {
-      expect(value).toBe(0);
+    for (const [key, value] of Object.entries(m)) {
+      if (key === 'cc1LastSeq') {
+        expect(value).toEqual({});
+      } else {
+        expect(value).toBe(0);
+      }
     }
   });
 });
