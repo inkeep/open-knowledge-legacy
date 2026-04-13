@@ -1,10 +1,14 @@
-import { autoUpdate, computePosition, flip, offset, size } from '@floating-ui/dom';
 import { Extension } from '@tiptap/core';
 import { PluginKey } from '@tiptap/pm/state';
 import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion';
 import { filterItems, type SlashCommandItem, slashCommandItems } from '../slash-command/items';
 import { SlashCommandMenu } from '../slash-command/SlashCommandMenu';
+import {
+  createSuggestionPopup,
+  destroySuggestionPopup,
+  type SuggestionPositionState,
+} from './suggestion-floating-ui';
 
 const slashCommandKey = new PluginKey('slashCommand');
 
@@ -106,62 +110,25 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         },
 
         command: ({ editor, range, props: item }) => {
-          editor.chain().focus().deleteRange(range).run();
           try {
+            editor.chain().focus().deleteRange(range).run();
             item.command(editor);
           } catch (err) {
-            console.error(`SlashCommand: command "${item.name}" threw an error`, err);
+            // deleteRange dispatches as its own transaction, then item.command runs.
+            // If item.command throws, the trigger text is already consumed — this is
+            // intentional (user selected an item). The try/catch ensures neither call
+            // crashes the editor.
+            console.error(`[slash-command] command "${item.name}" threw an error`, err);
           }
         },
 
         render: () => {
           let renderer: ReactRenderer<typeof SlashCommandMenu> | null = null;
-          let popup: HTMLDivElement | null = null;
           let currentProps: SuggestionProps<SlashCommandItem> | null = null;
           let selectedIndex = 0;
-          let stopAutoUpdate: (() => void) | null = null;
+          const posState: SuggestionPositionState = { popup: null, stopAutoUpdate: null };
 
-          const virtualEl = {
-            getBoundingClientRect: () => currentProps?.clientRect?.() ?? new DOMRect(),
-            get contextElement() {
-              return currentProps?.editor.view.dom;
-            },
-          };
-
-          const doPosition = () => {
-            if (!popup) return;
-            computePosition(virtualEl, popup, {
-              placement: 'bottom-start',
-              middleware: [
-                offset(4),
-                flip(),
-                size({
-                  apply({ availableHeight }) {
-                    if (popup) {
-                      popup.style.setProperty(
-                        '--suggestion-menu-max-height',
-                        `${Math.min(availableHeight, window.innerHeight * 0.4)}px`,
-                      );
-                    }
-                  },
-                }),
-              ],
-            })
-              .then(({ x, y }) => {
-                if (popup) {
-                  popup.style.left = `${x}px`;
-                  popup.style.top = `${y}px`;
-                }
-              })
-              .catch((err) => {
-                if (popup) {
-                  console.warn(
-                    'SlashCommand: computePosition failed while menu is still active',
-                    err,
-                  );
-                }
-              });
-          };
+          let doPosition: (() => void) | null = null;
 
           const rerender = () => {
             if (!renderer || !currentProps) return;
@@ -178,10 +145,9 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
               currentProps = props;
               selectedIndex = 0;
 
-              popup = document.createElement('div');
-              popup.style.position = 'fixed';
-              popup.style.zIndex = '50';
-              document.body.appendChild(popup);
+              const result = createSuggestionPopup(() => currentProps, 'slash-command');
+              posState.popup = result.popup;
+              doPosition = result.doPosition;
 
               renderer = new ReactRenderer(SlashCommandMenu, {
                 props: {
@@ -192,16 +158,17 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
                 },
                 editor: props.editor,
               });
-              popup.appendChild(renderer.element);
-              stopAutoUpdate = autoUpdate(virtualEl, popup, doPosition);
-              doPosition();
+              result.popup.appendChild(renderer.element);
+              // startAutoUpdate after content is in popup — autoUpdate fires
+              // doPosition synchronously on setup, no separate doPosition() needed
+              posState.stopAutoUpdate = result.startAutoUpdate();
             },
 
             onUpdate(props: SuggestionProps<SlashCommandItem>) {
               currentProps = props;
               selectedIndex = Math.min(selectedIndex, Math.max(0, props.items.length - 1));
               rerender();
-              doPosition();
+              doPosition?.();
             },
 
             onKeyDown({ event }: SuggestionKeyDownProps) {
@@ -234,11 +201,9 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
             },
 
             onExit() {
-              // Clean up positioning first (must run even if renderer.destroy throws)
-              stopAutoUpdate?.();
-              stopAutoUpdate = null;
-              popup?.remove();
-              popup = null;
+              // Positioning cleanup first (stop autoUpdate → remove popup DOM)
+              destroySuggestionPopup(posState);
+              doPosition = null;
               // React cleanup last — if destroy() throws, DOM is already clean
               renderer?.destroy();
               renderer = null;

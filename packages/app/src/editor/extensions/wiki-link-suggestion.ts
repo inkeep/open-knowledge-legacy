@@ -1,4 +1,3 @@
-import { autoUpdate, computePosition, flip, offset, size } from '@floating-ui/dom';
 import type { HeadingEntry } from '@inkeep/open-knowledge-core';
 import type { Editor } from '@tiptap/core';
 import type { ResolvedPos } from '@tiptap/pm/model';
@@ -7,6 +6,11 @@ import { ReactRenderer } from '@tiptap/react';
 import Suggestion, { type SuggestionKeyDownProps, type SuggestionProps } from '@tiptap/suggestion';
 import fuzzysort from 'fuzzysort';
 import { WikiLinkSuggestionMenu } from '../wiki-link-suggestion/WikiLinkSuggestionMenu';
+import {
+  createSuggestionPopup,
+  destroySuggestionPopup,
+  type SuggestionPositionState,
+} from './suggestion-floating-ui';
 import { buildUnresolvedWikiLinkAttrs } from './wiki-link-helpers';
 
 export const wikiLinkSuggestionKey = new PluginKey('wikiLinkSuggestion');
@@ -234,49 +238,11 @@ export function configureWikiLinkSuggestion(editor: Editor) {
 
     render: () => {
       let renderer: ReactRenderer<typeof WikiLinkSuggestionMenu> | null = null;
-      let popup: HTMLDivElement | null = null;
       let currentProps: SuggestionProps<WikiLinkSuggestionItem> | null = null;
       let selectedIndex = 0;
-      let stopAutoUpdate: (() => void) | null = null;
+      const posState: SuggestionPositionState = { popup: null, stopAutoUpdate: null };
 
-      const virtualEl = {
-        getBoundingClientRect: () => currentProps?.clientRect?.() ?? new DOMRect(),
-        get contextElement() {
-          return currentProps?.editor.view.dom;
-        },
-      };
-
-      const doPosition = () => {
-        if (!popup) return;
-        computePosition(virtualEl, popup, {
-          placement: 'bottom-start',
-          middleware: [
-            offset(4),
-            flip(),
-            size({
-              apply({ availableHeight }) {
-                if (popup) {
-                  popup.style.setProperty(
-                    '--suggestion-menu-max-height',
-                    `${Math.min(availableHeight, window.innerHeight * 0.4)}px`,
-                  );
-                }
-              },
-            }),
-          ],
-        })
-          .then(({ x, y }) => {
-            if (popup) {
-              popup.style.left = `${x}px`;
-              popup.style.top = `${y}px`;
-            }
-          })
-          .catch((err) => {
-            if (popup) {
-              console.warn('[wiki-link-suggestion] computePosition failed', err);
-            }
-          });
-      };
+      let doPosition: (() => void) | null = null;
 
       const onSelect = (item: WikiLinkSuggestionItem) => {
         currentProps?.command(item);
@@ -336,17 +302,18 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           currentProps = props;
           selectedIndex = 0;
 
-          popup = document.createElement('div');
-          popup.style.position = 'fixed';
-          popup.style.zIndex = '50';
-          document.body.appendChild(popup);
+          const result = createSuggestionPopup(() => currentProps, 'wiki-link-suggestion');
+          posState.popup = result.popup;
+          doPosition = result.doPosition;
 
           renderer = new ReactRenderer(WikiLinkSuggestionMenu, {
             props: computeMenuProps(props, true, onSelect),
             editor: props.editor,
           });
-          popup.appendChild(renderer.element);
-          stopAutoUpdate = autoUpdate(virtualEl, popup, doPosition);
+          result.popup.appendChild(renderer.element);
+          // startAutoUpdate after content is in popup — autoUpdate fires
+          // doPosition synchronously on setup
+          posState.stopAutoUpdate = result.startAutoUpdate();
         },
 
         onBeforeUpdate(props: SuggestionProps<WikiLinkSuggestionItem>) {
@@ -363,14 +330,14 @@ export function configureWikiLinkSuggestion(editor: Editor) {
           currentProps = props;
           selectedIndex = 0;
           rerender(null);
-          doPosition();
+          doPosition?.();
         },
 
         onUpdate(props: SuggestionProps<WikiLinkSuggestionItem>) {
           currentProps = props;
           selectedIndex = Math.min(selectedIndex, Math.max(0, props.items.length - 1));
           rerender(null);
-          doPosition();
+          doPosition?.();
         },
 
         onKeyDown({ event }: SuggestionKeyDownProps) {
@@ -405,11 +372,9 @@ export function configureWikiLinkSuggestion(editor: Editor) {
         },
 
         onExit() {
-          // Clean up positioning first (must run even if renderer.destroy throws)
-          stopAutoUpdate?.();
-          stopAutoUpdate = null;
-          popup?.remove();
-          popup = null;
+          // Positioning cleanup first (stop autoUpdate → remove popup DOM)
+          destroySuggestionPopup(posState);
+          doPosition = null;
           // React cleanup last — if destroy() throws, DOM is already clean
           renderer?.destroy();
           renderer = null;

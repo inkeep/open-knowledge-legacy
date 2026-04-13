@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import type { SlashCommandItem } from './items';
 
 export interface SlashCommandMenuProps {
@@ -15,6 +15,11 @@ export function SlashCommandMenu({
   onSelect,
 }: SlashCommandMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
+  const activeDescendant =
+    selectedIndex >= 0 && selectedIndex < items.length
+      ? `${listboxId}-option-${selectedIndex}`
+      : undefined;
 
   // Scroll selected item into view
   useEffect(() => {
@@ -31,7 +36,9 @@ export function SlashCommandMenu({
     return (
       <div
         ref={containerRef}
+        role="status"
         className="w-56 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
+        onMouseDown={(e) => e.preventDefault()}
       >
         No results
       </div>
@@ -53,14 +60,23 @@ export function SlashCommandMenu({
     }
   }
 
+  const selectedItem =
+    selectedIndex >= 0 && selectedIndex < items.length ? items[selectedIndex] : null;
+
   return (
     <div
       ref={containerRef}
       role="listbox"
       aria-label="Slash commands"
+      aria-activedescendant={activeDescendant}
+      tabIndex={-1}
+      onMouseDown={(e) => e.preventDefault()}
       className="w-56 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
       style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
     >
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {selectedItem ? selectedItem.label : ''}
+      </span>
       {categories.map((cat) => (
         <fieldset key={cat.key} className="border-0 p-0 m-0 min-w-0">
           <legend className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
@@ -73,6 +89,7 @@ export function SlashCommandMenu({
             return (
               <button
                 key={item.name}
+                id={`${listboxId}-option-${idx}`}
                 type="button"
                 role="option"
                 aria-selected={isSelected}
