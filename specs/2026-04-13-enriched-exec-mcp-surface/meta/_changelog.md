@@ -4,6 +4,16 @@ Append-only process history. Most recent first.
 
 ---
 
+## 2026-04-14 — D31: prescribe aggressive wiki-linking across MCP surfaces
+
+Open Knowledge's value compounds with link density — backlinks are the primary agent navigation surface, and under-linked documents become islands. Prior INSTRUCTIONS barely mentioned wiki-links; no nudge existed toward over-linking, redlinks, or `[[Page]]` vs `[text](./page.md)`.
+
+**D31 LOCKED** — MCP contract is now prescriptive about wiki-linking across every authoring surface: INSTRUCTIONS connect-time text, `write_document` / `edit_document` tool descriptions, and `research` / `consolidate` / `init-content` workflow bodies. `ingest` intentionally unchanged (raw preservation rule forbids interpreting external content).
+
+Also caught a D26/D27 loose end: `init-content.ts` was silently stale — still referenced `.open-knowledge/catalogs/*/INDEX.md` (deleted by D26) and scaffold subdirs (deleted by D27). Rewritten to interpolate live `content.dir` (D28 pattern extended to init-content) and drop the dead catalog-frontmatter step.
+
+Shipped alongside V0-24.3 on `impl/v0-24` (commits 05a89d1, 4ff2754, 0420042). No open questions.
+
 ## 2026-04-14 — D30: directory enrichment (V0-24.3)
 
 Post-`[V0-24.2]` catalog teardown uncovered that `exec("ls <dir>")` against a folder containing only subdirectories returned empty `enrichedPaths` — agents got folder names with zero metadata. The persisted `INDEX.md` catalogs used to fill this role; D26 removed them without the promised on-demand replacement.
