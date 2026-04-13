@@ -49,6 +49,7 @@ import type {
   MdxjsEsm,
   MdxTextExpression,
 } from 'mdast-util-mdx';
+import { GUARD_OPEN_BRACE } from './autolink-void-html-guard.ts';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseMd, serializeMd } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
@@ -104,6 +105,37 @@ export class MarkdownManager {
       pmMarkHandlers: this.pmMarkHandlers,
     });
     return doc.toJSON() as JSONContent;
+  }
+
+  /**
+   * Crash-safe parse: never throws. Returns degraded content on failure.
+   *
+   * Use this on code paths where a throw = user-visible data loss:
+   *   - Server persistence (onLoadDocument) — better to show degraded text
+   *     than an empty document
+   *   - Any caller that can't keep "last valid state" like Observer B does
+   *
+   * On failure, retries with all `{` protected via PUA sentinel (defeats
+   * acorn's "Could not parse expression" error while preserving all other
+   * markdown parsing). If that also fails, returns raw text as a paragraph.
+   */
+  parseSafe(markdown: string): JSONContent {
+    try {
+      return this.parse(markdown);
+    } catch {
+      // Retry with all { protected — remark-mdx expression parser can't
+      // claim them, restoreFromMdx() converts PUA back to { in the tree
+      try {
+        const safeMd = markdown.replaceAll('{', GUARD_OPEN_BRACE);
+        return this.parse(safeMd);
+      } catch {
+        // Last resort: raw text as paragraph
+        return {
+          type: 'doc',
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
+        };
+      }
+    }
   }
 
   /**
