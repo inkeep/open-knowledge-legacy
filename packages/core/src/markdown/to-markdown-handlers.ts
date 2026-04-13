@@ -87,8 +87,13 @@ export const toMarkdownHandlers: Record<string, any> = {
 
   /**
    * link: write URL verbatim (no `&` escaping in URLs).
+   * Autolinks (data.sourceStyle === 'autolink') short-circuit to `<url>` form.
    */
   link(node: any, _parent: any, state: any, info: any) {
+    // Autolink form — promoted by autolink-promotion.ts transformer
+    if (node.data?.sourceStyle === 'autolink') {
+      return `<${node.url ?? ''}>`;
+    }
     const tracker = state.createTracker(info);
     const exit = state.enter('link');
     const subexit = state.enter('label');
@@ -122,23 +127,24 @@ export const toMarkdownHandlers: Record<string, any> = {
   },
 
   /**
-   * thematicBreak: emit node.data.sourceRaw verbatim, EXCEPT when at doc
-   * start — in that position `---` is indistinguishable from empty YAML
-   * frontmatter under `remark-frontmatter`, and re-parsing would tokenize
-   * the block differently. Normalize doc-start `---` thematicBreaks to
-   * `***` to guarantee idempotent round-trip (I3/I4/I5/I7).
+   * thematicBreak: emit node.data.sourceRaw verbatim, EXCEPT at doc start.
    *
-   * Fidelity trade: a user authoring a document that begins with `---`
-   * intending a thematicBreak (not frontmatter) will see it persisted as
-   * `***`. Documented as NG10. Non-doc-start thematicBreaks preserve
-   * `sourceRaw` faithfully.
+   * TWO complementary protections against remark-frontmatter ambiguity:
+   *
+   * 1. Parse-side: docStartThematicFixPlugin converts `---\n\n---` (empty
+   *    yaml) back to thematicBreak nodes so they're not silently dropped.
+   *
+   * 2. Serialize-side (THIS handler): doc-start `---` thematicBreaks are
+   *    normalized to `***` because `---` at position 0 triggers remark-
+   *    frontmatter interference on re-parse — even when NOT matched as
+   *    yaml, remark-frontmatter's presence causes remark-gfm to mis-parse
+   *    subsequent list content as paragraphs. Using `***` avoids the
+   *    trigger character entirely. NG10 documented in AGENTS.md.
+   *
+   * Non-doc-start thematicBreaks preserve `sourceRaw` faithfully.
    */
   thematicBreak(node: any, _parent: any, state: { indexStack: number[] }) {
     const sourceRaw = node.data?.sourceRaw;
-    // Detect "at doc start": top-level parent (indexStack.length === 1) and
-    // first child (indexStack[0] === 0). When both hold AND the preserved
-    // form starts with `---`, normalize to `***` to avoid frontmatter
-    // ambiguity on re-parse.
     const isDocStart =
       Array.isArray(state?.indexStack) &&
       state.indexStack.length === 1 &&
@@ -257,24 +263,19 @@ export const toMarkdownHandlers: Record<string, any> = {
  *   - `<` — mdast-util-to-markdown escapes to prevent re-parse as inline HTML
  *     or JSX; our R23 `protectFromMdx` guard already handles those tokenizers,
  *     so escaping `<` in serialized text produces a false positive on re-parse.
- *   - `:` — mdast-util-to-markdown escapes to prevent re-parse as autolink
- *     scheme; our R23 guard already tames autolinks, so the escape adds a
- *     backslash that our autolink regex rejects on re-parse (breaking idempotence
- *     of `<url>` text when the URL body was preserved as literal text by the
- *     guard-and-restore path).
+ *
+ * Note: `:` and `@` strips were previously needed when autolinks survived as
+ * literal `<url>` TEXT in PM (the text handler would otherwise escape them,
+ * breaking idempotence). After the autolink-promotion transformer (autolink-
+ * promotion.ts), autolinks are semantic `link` nodes — safeText never sees
+ * `<url>` as text content, so `:` and `@` escaping follows the remark-stringify
+ * default (safe for non-autolink text).
  */
 function safeText(state: any, value: string, info: any): string {
   const originalUnsafe = state.unsafe;
   state.unsafe = originalUnsafe.filter((u: any) => {
     if (u.character === '&' && u.after === '[#A-Za-z]') return false;
     if (u.character === '<') return false;
-    if (u.character === ':') return false;
-    // `@` is escaped in the default unsafe list because remark-gfm's email
-    // autolink-literal would re-claim `user@host` on re-parse. Our R23 guard
-    // protects wrapped autolinks via GUARD_AT so we do not need the escape,
-    // and keeping it would produce `<mailto:a\@b.com>` which is not
-    // byte-identical and breaks idempotence through the autolink guard.
-    if (u.character === '@') return false;
     return true;
   });
   try {

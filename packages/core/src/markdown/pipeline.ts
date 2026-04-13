@@ -34,7 +34,9 @@ import { VFile } from 'vfile';
 
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
+import { autolinkPromotionPlugin } from './autolink-promotion.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
+import { docStartThematicFixPlugin } from './doc-start-thematic-fix.ts';
 import { positionSlicePlugin } from './position-slice.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
@@ -102,6 +104,8 @@ export function parseMd(source: string, opts: PipelineOptions): PmNode {
     .use(remarkGfm)
     .use(remarkWikiLink)
     .use(restoreFromMdx) // R23: Restore protected patterns after MDX parsing
+    .use(autolinkPromotionPlugin) // Promote <scheme:uri> text → semantic link nodes
+    .use(docStartThematicFixPlugin) // NG10: empty yaml at doc-start → thematicBreak
     .use(positionSlicePlugin)
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {

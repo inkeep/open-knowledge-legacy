@@ -49,10 +49,11 @@ describe('to-markdown: code block fence preservation', () => {
 });
 
 describe('to-markdown: thematic break preservation', () => {
-  // NG10: doc-start `---` is indistinguishable from empty YAML frontmatter
-  // under remark-frontmatter; normalize to `***` for idempotent round-trip.
-  // Non-doc-start `---` preserves sourceRaw.
-  test('doc-start --- normalizes to *** (NG10)', () => {
+  // NG10: doc-start `---` thematicBreak normalizes to `***` on serialize
+  // to avoid remark-frontmatter interference on re-parse. The parse-side
+  // docStartThematicFixPlugin handles the complementary case (empty yaml
+  // at doc start → thematicBreak). Both protections work together.
+  test('doc-start --- normalizes to *** (NG10 serialize-side)', () => {
     expect(roundTrip('---\n')).toBe('***\n');
   });
 

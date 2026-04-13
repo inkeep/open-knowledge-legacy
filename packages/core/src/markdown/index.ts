@@ -289,7 +289,7 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     handlers.link = toPmMark(m.link, (node: any) => ({
       href: node.url ?? '',
       title: node.title ?? null,
-      linkStyle: 'inline',
+      linkStyle: node.data?.sourceStyle ?? 'inline',
       refLabel: null,
     }));
 
@@ -549,6 +549,16 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (m.link) {
     markHandlers.link = (mark: any, _parent: any, children: any[]) => {
       const style = mark.attrs.linkStyle;
+      // Autolink form: serialize as <url>
+      if (style === 'autolink') {
+        return {
+          type: 'link' as const,
+          url: mark.attrs.href ?? '',
+          title: null,
+          children,
+          data: { sourceStyle: 'autolink' },
+        };
+      }
       if (style === 'inline' || !style) {
         return {
           type: 'link' as const,
