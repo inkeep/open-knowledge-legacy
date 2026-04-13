@@ -116,8 +116,9 @@ describe('buildTree', () => {
         targetPath: 'bar.md',
       },
     ]);
-    const bar = tree.find((n) => n.name === 'bar')!;
-    const foo = tree.find((n) => n.name === 'foo')!;
+    const bar = tree.find((n) => n.name === 'bar');
+    const foo = tree.find((n) => n.name === 'foo');
+    if (!bar || !foo) throw new Error('expected bar and foo in tree');
 
     expect(foo.isSymlink).toBe(true);
     expect(foo.canonicalDocName).toBe('bar');
