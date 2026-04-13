@@ -20,6 +20,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
+import type { BacklinkEntry, GitCommit } from '../../content/enrichment.ts';
 import { enrichPath } from '../../content/enrichment.ts';
 import type { ShadowCommit } from '../../content/shadow-log.ts';
 import type { ServerInstance } from './shared.ts';
@@ -46,9 +47,9 @@ export interface ReadDocumentDeps {
   serverUrl: string | undefined;
 }
 
-function formatHistory(entries: ShadowCommit[] | null): string {
+function formatShadowHistory(entries: ShadowCommit[] | null): string {
   if (!entries || entries.length === 0) return '';
-  const lines: string[] = ['', '### Recent activity', ''];
+  const lines: string[] = ['', '### Recent activity (OK edits)', ''];
   for (const e of entries) {
     const who =
       e.writerClassification === 'agent'
@@ -62,9 +63,25 @@ function formatHistory(entries: ShadowCommit[] | null): string {
   return lines.join('\n');
 }
 
-function formatBacklinkCount(count: number | null): string {
-  if (count === null) return '';
-  return `**Backlinks:** ${count}`;
+function formatProjectHistory(entries: GitCommit[] | null): string {
+  if (!entries || entries.length === 0) return '';
+  const lines: string[] = ['', '### Commit history (project git)', ''];
+  for (const e of entries) {
+    const hash = e.hash.slice(0, 7);
+    lines.push(`- ${hash} ${e.date} ${e.authorName} — ${e.subject}`);
+  }
+  return lines.join('\n');
+}
+
+function formatBacklinks(backlinks: BacklinkEntry[] | null): string {
+  if (!backlinks || backlinks.length === 0) return '';
+  const lines: string[] = ['', `### Backlinks (${backlinks.length})`, ''];
+  for (const b of backlinks) {
+    const title = b.title ? ` — "${b.title}"` : '';
+    const snippet = b.snippet ? ` — "${b.snippet}"` : '';
+    lines.push(`- ${b.source}${title}${snippet}`);
+  }
+  return lines.join('\n');
 }
 
 function relativePath(input: string): string {
@@ -103,11 +120,15 @@ export async function buildReadResult(
   if (description) lines.push(`**Description:** ${description}`);
   if (tags.length > 0) lines.push(`**Tags:** ${tags.join(', ')}`);
   lines.push(`**Path:** ${relPath}`);
-  const backlinkLine = formatBacklinkCount(meta.backlinkCount);
-  if (backlinkLine) lines.push(backlinkLine);
 
-  const historySection = formatHistory(meta.history);
-  if (historySection) lines.push(historySection);
+  const shadowSection = formatShadowHistory(meta.history);
+  if (shadowSection) lines.push(shadowSection);
+
+  const projectSection = formatProjectHistory(meta.projectHistory);
+  if (projectSection) lines.push(projectSection);
+
+  const backlinksSection = formatBacklinks(meta.backlinks);
+  if (backlinksSection) lines.push(backlinksSection);
 
   lines.push('', '### Content', '', content);
   return lines.join('\n');

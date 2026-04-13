@@ -18,7 +18,23 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { parseFrontmatter } from '../utils/frontmatter.ts';
+import {
+  type GitCommit,
+  type ProjectHistorySource,
+  readProjectGitLog,
+} from './project-log.ts';
 import { type HistorySource, readShadowLog, type ShadowCommit } from './shadow-log.ts';
+
+export type { GitCommit, ProjectHistorySource } from './project-log.ts';
+
+/** Full backlink entry surfaced in rich enrichment. */
+export interface BacklinkEntry {
+  /** docName of the source that links to this path. */
+  source: string;
+  title?: string;
+  /** Short excerpt from the source around the link, when the server provides one. */
+  snippet?: string | null;
+}
 
 /**
  * Unified enrichment shape. Fields are nullable when unavailable or
@@ -31,25 +47,39 @@ export interface EnrichedMeta {
   description?: string;
   tags: string[];
   /**
-   * Backlink count.
-   *   - `null` on multi-path output or when Hocuspocus is unreachable (FR9)
-   *   - `number` when populated via `/api/backlinks`
+   * Backlink count. Null on multi-path output or when Hocuspocus is
+   * unreachable (FR9). Populated on single-path rich enrichment.
    */
   backlinkCount: number | null;
   /**
-   * Recent activity on this path, merged across per-writer refs.
-   *   - `null` on multi-path output (FR14 N-amplification avoidance)
-   *   - `[]` when the shadow repo is present but has no edits touching the path
-   *   - `ShadowCommit[]` when populated
+   * Full backlink list. Null on multi-path output (avoids N-amplification)
+   * or when Hocuspocus is unreachable. Populated on single-path rich.
+   */
+  backlinks: BacklinkEntry[] | null;
+  /**
+   * Recent OK-edit activity on this path, merged across shadow-repo's
+   * per-writer refs. Null on multi-path output. `[]` when shadow repo is
+   * present but has no edits touching the path.
    */
   history: ShadowCommit[] | null;
   /**
-   * Three distinct values per FR15/R3:
    *   - `'shadow-repo'`         — history comes from a live shadow repo (may be `[]`)
    *   - `'shadow-repo-absent'`  — no shadow repo exists for this project
    *   - `null`                  — history field is `null` (multi-path output)
    */
   historySource: HistorySource | null;
+  /**
+   * Project-git commit history for this path — durable authored commits
+   * from the project's own `.git/` (not the shadow repo). Null on
+   * multi-path output.
+   */
+  projectHistory: GitCommit[] | null;
+  /**
+   *   - `'git'`         — project is a git repo (history may be `[]` for new files)
+   *   - `'git-absent'`  — project has no `.git/`
+   *   - `null`          — field not populated (multi-path output)
+   */
+  projectHistorySource: ProjectHistorySource | null;
 }
 
 export interface EnrichPathDeps {
@@ -92,15 +122,40 @@ async function readFrontmatter(
   }
 }
 
-async function fetchBacklinkCount(
+/**
+ * Fetch the full backlinks list from the Hocuspocus server. Returns `null`
+ * when no serverUrl is configured or the request fails — callers treat
+ * null as "degrade gracefully" per FR9.
+ */
+async function fetchBacklinks(
   serverUrl: string | undefined,
   docName: string,
-): Promise<number | null> {
+): Promise<BacklinkEntry[] | null> {
   if (!serverUrl) return null;
   const result = await httpGet(serverUrl, `/api/backlinks?docName=${encodeURIComponent(docName)}`);
   if (!result.ok) return null;
   const raw = (result.backlinks ?? result.results ?? result.links) as unknown;
-  return Array.isArray(raw) ? raw.length : 0;
+  if (!Array.isArray(raw)) return [];
+  const entries: BacklinkEntry[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    const source =
+      typeof rec.docName === 'string'
+        ? rec.docName
+        : typeof rec.source === 'string'
+          ? rec.source
+          : typeof rec.page === 'string'
+            ? rec.page
+            : undefined;
+    if (!source) continue;
+    entries.push({
+      source,
+      title: typeof rec.title === 'string' ? rec.title : undefined,
+      snippet: typeof rec.snippet === 'string' ? rec.snippet : null,
+    });
+  }
+  return entries;
 }
 
 /**
@@ -118,43 +173,54 @@ export async function enrichPath(
   const rich = options.includeRichFields === true;
 
   const fmPromise = readFrontmatter(absPath);
-  const richPromises = rich
-    ? Promise.all([
-        fetchBacklinkCount(deps.serverUrl, pathToDocName(relPath)).catch(() => null),
-        readShadowLog(deps.projectDir, relPath, historyDepth).catch(() => ({
-          commits: [],
-          source: 'shadow-repo' as HistorySource,
-        })),
-      ])
-    : Promise.resolve([null, null] as [null, null]);
-
-  const [fm, richResult] = await Promise.all([fmPromise, richPromises]);
 
   const base = {
     path: relPath,
-    title: fm?.title,
-    description: fm?.description,
-    tags: fm?.tags ?? [],
+    title: undefined as string | undefined,
+    description: undefined as string | undefined,
+    tags: [] as string[],
   };
 
-  if (!rich || richResult === null || (richResult[0] === null && richResult[1] === null)) {
-    // Slim shape: all rich fields null
+  if (!rich) {
+    const fm = await fmPromise;
     return {
       ...base,
+      title: fm?.title,
+      description: fm?.description,
+      tags: fm?.tags ?? [],
       backlinkCount: null,
+      backlinks: null,
       history: null,
       historySource: null,
+      projectHistory: null,
+      projectHistorySource: null,
     };
   }
 
-  const [backlinkCount, shadowResult] = richResult as [
-    number | null,
-    { commits: ShadowCommit[]; source: HistorySource },
-  ];
+  // Rich mode — fan out all four data sources in parallel.
+  const [fm, backlinks, shadow, project] = await Promise.all([
+    fmPromise,
+    fetchBacklinks(deps.serverUrl, pathToDocName(relPath)).catch(() => null),
+    readShadowLog(deps.projectDir, relPath, historyDepth).catch(() => ({
+      commits: [] as ShadowCommit[],
+      source: 'shadow-repo' as HistorySource,
+    })),
+    readProjectGitLog(deps.projectDir, relPath, historyDepth).catch(() => ({
+      commits: [] as GitCommit[],
+      source: 'git' as ProjectHistorySource,
+    })),
+  ]);
+
   return {
     ...base,
-    backlinkCount,
-    history: shadowResult.commits,
-    historySource: shadowResult.source,
+    title: fm?.title,
+    description: fm?.description,
+    tags: fm?.tags ?? [],
+    backlinkCount: backlinks?.length ?? null,
+    backlinks,
+    history: shadow.commits,
+    historySource: shadow.source,
+    projectHistory: project.commits,
+    projectHistorySource: project.source,
   };
 }

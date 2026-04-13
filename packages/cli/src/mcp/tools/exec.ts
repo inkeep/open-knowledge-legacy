@@ -120,7 +120,13 @@ function formatEnrichedBlock(enriched: EnrichedMeta[]): string {
               : `${h.writerClassification}: ${h.writerName}`;
         return `${h.hash.slice(0, 7)} [${who}] ${h.message}`;
       });
-      parts.push(`recent: ${entries.join(' · ')}`);
+      parts.push(`OK edits: ${entries.join(' · ')}`);
+    }
+    if (m.projectHistory && m.projectHistory.length > 0) {
+      const entries = m.projectHistory.map(
+        (c) => `${c.hash.slice(0, 7)} ${c.authorName}: ${c.subject}`,
+      );
+      parts.push(`commits: ${entries.join(' · ')}`);
     }
     lines.push(`- ${parts.join(' — ')}`);
   }
@@ -200,8 +206,11 @@ export async function buildExecResult(
           path: p,
           tags: [],
           backlinkCount: null,
+          backlinks: null,
           history: null,
           historySource: null,
+          projectHistory: null,
+          projectHistorySource: null,
         }),
       ),
     ),
