@@ -27,7 +27,7 @@ cd your-project
 npx @inkeep/open-knowledge init
 ```
 
-This scaffolds the `.open-knowledge/` directory structure and registers the MCP server in your project's `.mcp.json`.
+This scaffolds the `.open-knowledge/` directory structure, registers the MCP server in your project's `.mcp.json`, and prints a content preview showing which files the watcher will track.
 
 The `.mcp.json` entry that gets written:
 
@@ -51,9 +51,10 @@ The command is idempotent -- safe to run again without side effects. Pass `--for
 
 ```bash
 npx @inkeep/open-knowledge start
+npx @inkeep/open-knowledge start --open  # also opens the editor in your browser
 ```
 
-This starts the collaborative editor at `http://localhost:3000`. The port is configurable via `.open-knowledge/config.yml`.
+This starts the collaborative editor at `http://localhost:3000`. The port is configurable via `.open-knowledge/config.yml`. The `--open` flag launches your default browser automatically (macOS, Linux, and Windows).
 
 <Callout type="info">
 Starting the editor is optional. AI agents work without it -- the MCP server operates in disk-only mode when no editor is running.
@@ -100,6 +101,16 @@ The agent now has access to three workflow tools:
   config.yml         — Workspace configuration overrides
   .gitignore         — Excludes cache/
 ```
+
+## Preview content scope
+
+To see which files Open Knowledge will track -- without starting the server or changing anything -- run:
+
+```bash
+npx @inkeep/open-knowledge preview
+```
+
+This works before or after `init` and reflects the current state of your config. Useful after editing `content.include` or `content.exclude` in `.open-knowledge/config.yml`.
 
 ## Next steps
 

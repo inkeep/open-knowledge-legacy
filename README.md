@@ -54,6 +54,7 @@ bun run build
 ```bash
 bun packages/cli/dist/cli.mjs start
 bun packages/cli/dist/cli.mjs init
+bun packages/cli/dist/cli.mjs preview
 bun packages/cli/dist/cli.mjs mcp
 ```
 
