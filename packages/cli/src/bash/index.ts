@@ -183,26 +183,34 @@ export async function gitLog(path: string, count: number, since?: string): Promi
  * Returns empty array when no matches (grep exits 1 on no match; we treat that as empty).
  */
 export async function grep(pattern: string, opts: GrepOptions = {}): Promise<GrepMatch[]> {
+  // Use execFile (not exec/runShell) to bypass shell parsing entirely — each arg
+  // is passed directly to the grep process, eliminating shell injection risk
+  // even if the pattern or paths contain special characters.
   const args: string[] = ['-rn'];
   if (opts.caseInsensitive ?? true) args.push('-i');
   // Fixed-string matching — treats the pattern literally, no regex surprises.
   args.push('-F');
   for (const inc of opts.include ?? []) {
-    args.push(`--include=${shellEscape(inc)}`);
+    args.push(`--include=${inc}`);
   }
   for (const exc of opts.exclude ?? []) {
-    args.push(`--exclude=${shellEscape(exc)}`);
+    args.push(`--exclude=${exc}`);
     // Also exclude matching directories (common for node_modules, .git etc.)
-    args.push(`--exclude-dir=${shellEscape(exc)}`);
+    args.push(`--exclude-dir=${exc}`);
   }
-  args.push('--', shellEscape(pattern));
+  args.push('--', pattern);
 
-  const searchPaths = opts.paths?.length ? opts.paths.map(shellEscape) : ['.'];
-  const cmd = `grep ${args.join(' ')} ${searchPaths.join(' ')}`;
+  const searchPaths = opts.paths?.length ? opts.paths : ['.'];
+  args.push(...searchPaths);
 
   let stdout = '';
   try {
-    stdout = await runShell(cmd);
+    const result = await execFileAsync('grep', args, {
+      cwd: projectDir,
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 30_000,
+    });
+    stdout = result.stdout;
   } catch (err) {
     // grep exits 1 when no matches found — not an error for us.
     // exitCode 2+ means actual error (bad pattern, unreadable file, etc.)

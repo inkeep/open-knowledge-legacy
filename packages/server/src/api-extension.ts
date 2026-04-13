@@ -255,6 +255,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const rawDocName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
+      if (!isSafeDocName(rawDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
       const docName = resolveAlias(rawDocName);
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
@@ -327,9 +331,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       const position = pos === 'prepend' ? 'prepend' : pos === 'replace' ? 'replace' : 'append';
       const rawDocName = (body as Record<string, unknown>).docName;
-      const resolvedDocName = resolveAlias(
-        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc',
-      );
+      const effectiveDocName =
+        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc';
+      if (!isSafeDocName(effectiveDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const resolvedDocName = resolveAlias(effectiveDocName);
       const dc = await sessionManager.getSession(resolvedDocName);
       const timestamp = new Date().toISOString();
 
@@ -380,6 +388,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const rawDocName = url.searchParams.get('docName') || 'test-doc';
+      if (!isSafeDocName(rawDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
       const docName = resolveAlias(rawDocName);
       const dc = await sessionManager.getSession(docName);
       const content = dc.document.getText('source').toString();
@@ -601,9 +613,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'replace field required' });
         return;
       }
-      const docName = resolveAlias(
-        typeof bodyDocName === 'string' && bodyDocName.length > 0 ? bodyDocName : 'test-doc',
-      );
+      const effectivePatchDocName =
+        typeof bodyDocName === 'string' && bodyDocName.length > 0 ? bodyDocName : 'test-doc';
+      if (!isSafeDocName(effectivePatchDocName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      const docName = resolveAlias(effectivePatchDocName);
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
 
@@ -844,7 +860,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
       if (rawBody.length > 0) {
-        const body = JSON.parse(rawBody.toString()) as Record<string, unknown>;
+        let body: Record<string, unknown>;
+        try {
+          body = JSON.parse(rawBody.toString()) as Record<string, unknown>;
+        } catch {
+          json(res, 400, { ok: false, error: 'Invalid JSON' });
+          return;
+        }
         if (Array.isArray(body.writers)) {
           writers = (body.writers as Array<Record<string, string>>).map((w) => {
             const id = w.id ?? 'unknown';
@@ -853,8 +875,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             }
             return {
               id,
-              name: w.name ?? 'unknown',
-              email: w.email ?? 'noreply@openknowledge.local',
+              name: (w.name ?? 'unknown').replace(/[\r\n]/g, ''),
+              email: (w.email ?? 'noreply@openknowledge.local').replace(/[\r\n]/g, ''),
             };
           });
         }

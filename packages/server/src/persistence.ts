@@ -17,6 +17,7 @@ import { type BacklinkIndex, extractWikiLinksFromProsemirrorJson } from './backl
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
+import { incrementGitAutoSaveFailure } from './metrics.ts';
 import type { ShadowRef, WriterIdentity } from './shadow-repo.ts';
 import { commitWip, shadowGit } from './shadow-repo.ts';
 
@@ -185,6 +186,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         );
       } catch (e) {
         consecutiveGitFailures++;
+        incrementGitAutoSaveFailure();
         log.error(
           { err: e, attempt: consecutiveGitFailures },
           `[persistence] Shadow commit failed (attempt ${consecutiveGitFailures})`,
@@ -247,6 +249,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       );
     } catch (e) {
       consecutiveGitFailures++;
+      incrementGitAutoSaveFailure();
       log.error(
         { err: e, attempt: consecutiveGitFailures },
         `[persistence] Git commit failed (attempt ${consecutiveGitFailures})`,
