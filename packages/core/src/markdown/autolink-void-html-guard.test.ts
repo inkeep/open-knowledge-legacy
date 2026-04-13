@@ -102,6 +102,9 @@ describe('R23 guard: exhaustive < context coverage', () => {
     ['<Icon />', 'self-closing MDX'],
     ['<Widget\n  title="hello"\n/>', 'multi-line self-closing JSX'],
     ['<Card\n  variant="warning"\n  />', 'multi-line self-closing with trailing space'],
+    ['<Image src="https://example.com?a=1&b=2" />', 'self-closing with URL in attr'],
+    ['<Chart data="https://api.example.com/v1" />', 'self-closing with URL path in attr'],
+    ['<Link href="/path/to/page" />', 'self-closing with relative path in attr'],
 
     // Bare < (the PR #95 regression class — must NOT crash)
     ['<', 'bare < at EOF'],

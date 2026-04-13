@@ -40,7 +40,7 @@ export function syncTextToFragment(document: Document): void {
   const fullText = ytext.toString();
   try {
     const { frontmatter, body } = stripFrontmatter(fullText);
-    const parsedJson = mdManager.parse(body);
+    const parsedJson = mdManager.parseSafe(body);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const xmlFragment = document.getXmlFragment('default');
     const meta = { mapping: new Map(), isOMark: new Map() };
