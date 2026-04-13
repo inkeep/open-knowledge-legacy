@@ -1,4 +1,5 @@
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
+import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 interface PageListContextValue {
   /** Set of known docNames (filename without .md extension). */
@@ -53,6 +54,9 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: run only on mount
   useEffect(() => {
     void refetch();
+    return subscribeToDocumentsChanged(() => {
+      refetch();
+    });
   }, []);
 
   return <PageListContext value={{ pages, loading, error, refetch }}>{children}</PageListContext>;

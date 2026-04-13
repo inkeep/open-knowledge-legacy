@@ -10,12 +10,15 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import { type HeadingEntry, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import {
@@ -25,9 +28,9 @@ import {
   syncTextToFragment,
 } from './agent-sessions.ts';
 import type { BacklinkIndex } from './backlink-index.ts';
-import type { FileIndexEntry } from './file-watcher.ts';
+import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
-import { safeContentPath } from './persistence.ts';
+import { deleteReconciledBase, isWithinContentDir, safeContentPath } from './persistence.ts';
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
@@ -42,6 +45,102 @@ export function safeSubdir(baseDir: string, subdir: string): string {
     throw new Error(`Invalid directory: ${subdir}`);
   }
   return resolved;
+}
+
+export type ContentEntryKind = 'file' | 'folder';
+
+export interface RenamedDocMapping {
+  fromDocName: string;
+  toDocName: string;
+}
+
+export function isValidRelativeContentPath(path: string): boolean {
+  if (!path || path.startsWith('/') || path.includes('\\') || path.includes('\x00')) {
+    return false;
+  }
+
+  return path.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
+}
+
+export function listAffectedDocNames(
+  index: ReadonlyMap<string, FileIndexEntry>,
+  kind: ContentEntryKind,
+  path: string,
+): string[] {
+  const docNames = [...index.keys()].filter((docName) =>
+    kind === 'file' ? docName === path : docName === path || docName.startsWith(`${path}/`),
+  );
+  docNames.sort((a, b) => a.localeCompare(b));
+  return docNames;
+}
+
+export function remapDocNameForRename(
+  docName: string,
+  kind: ContentEntryKind,
+  fromPath: string,
+  toPath: string,
+): string {
+  if (kind === 'file') return toPath;
+  if (docName === fromPath) return toPath;
+  return `${toPath}${docName.slice(fromPath.length)}`;
+}
+
+/**
+ * Ensures `fullPath` does not escape `resolvedContentDir` via symlinks (matches persistence
+ * symlink-escape checks). Walks up with dirname when the leaf is missing so destinations like
+ * `link/new.md` are rejected if `link` resolves outside the content dir.
+ *
+ * Uses `realpathSync(resolvedContentDir)` as the boundary anchor so platform normalization
+ * (e.g. macOS `/var` → `/private/var`) matches `realpathSync` of paths under it.
+ */
+function assertNoSymlinkEscape(fullPath: string, resolvedContentDir: string): void {
+  let contentRoot: string;
+  try {
+    contentRoot = realpathSync(resolvedContentDir);
+  } catch {
+    return;
+  }
+
+  let cur = fullPath;
+  for (;;) {
+    try {
+      const canonical = realpathSync(cur);
+      if (!isWithinContentDir(canonical, contentRoot)) {
+        throw new Error('symlink-escape: path resolves outside content directory');
+      }
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ELOOP') {
+        throw new Error('symlink-escape: symlink cycle in path');
+      }
+      if (code !== 'ENOENT') throw err;
+      const parent = dirname(cur);
+      if (parent === cur) throw err;
+      if (parent !== resolvedContentDir && !parent.startsWith(`${resolvedContentDir}${sep}`)) {
+        throw err;
+      }
+      cur = parent;
+    }
+  }
+}
+
+function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, path: string): string {
+  if (!isValidRelativeContentPath(path)) {
+    throw new Error('path must be a relative content path');
+  }
+
+  const resolvedContentDir = resolve(contentDir);
+  const relativePath = kind === 'file' ? `${path}.md` : path;
+  const fullPath = resolve(resolvedContentDir, relativePath);
+
+  if (fullPath !== resolvedContentDir && !fullPath.startsWith(`${resolvedContentDir}${sep}`)) {
+    throw new Error('path must not escape content directory');
+  }
+
+  assertNoSymlinkEscape(fullPath, resolvedContentDir);
+
+  return fullPath;
 }
 
 export interface ApiExtensionOptions {
@@ -228,6 +327,57 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   function resolveAlias(docName: string): string {
     return getAliasMap?.().get(docName) ?? docName;
+  }
+
+  async function captureAndCloseDocuments(docNames: string[]): Promise<Map<string, string>> {
+    const liveContents = new Map<string, string>();
+
+    for (const docName of docNames) {
+      const document = hocuspocus.documents.get(docName);
+      if (document) {
+        liveContents.set(docName, document.getText('source').toString());
+      }
+    }
+
+    for (const docName of docNames) {
+      await sessionManager.closeSession(docName).catch((err) => {
+        console.warn(`[file-ops] Failed to close agent session for ${docName}:`, err);
+      });
+    }
+
+    for (const docName of docNames) {
+      const document = hocuspocus.documents.get(docName);
+      deleteReconciledBase(docName);
+      if (!document) continue;
+      hocuspocus.closeConnections(docName);
+      await hocuspocus.unloadDocument(document);
+    }
+
+    return liveContents;
+  }
+
+  function syncRenamedDocsToDisk(
+    renamed: RenamedDocMapping[],
+    liveContents: ReadonlyMap<string, string>,
+  ): void {
+    for (const { fromDocName, toDocName } of renamed) {
+      const filePath = safeContentPath(toDocName, contentDir);
+      const liveContent = liveContents.get(fromDocName);
+      if (typeof liveContent === 'string') {
+        writeFileSync(filePath, liveContent, 'utf-8');
+      }
+
+      const finalContent =
+        typeof liveContent === 'string'
+          ? liveContent
+          : existsSync(filePath)
+            ? readFileSync(filePath, 'utf-8')
+            : null;
+
+      if (typeof finalContent === 'string') {
+        registerWrite(filePath, contentHash(finalContent));
+      }
+    }
   }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -529,6 +679,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (e) {
       console.error('[forward-links]', e);
       json(res, 500, { ok: false, error: 'Failed to read forward links' });
+    }
+  }
+
+  async function handleLinkGraph(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const { nodes, links } = backlinkIndex.getLinkGraph();
+      const enrichedNodes = nodes.map((id) => ({
+        id,
+        label: readPageTitleForDocName(id),
+      }));
+      json(res, 200, { ok: true, nodes: enrichedNodes, links });
+    } catch (e) {
+      console.error('[link-graph]', e);
+      json(res, 500, { ok: false, error: 'Failed to read link graph' });
     }
   }
 
@@ -1122,6 +1294,168 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleRenamePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+
+      const { kind, fromPath, toPath } = body as Record<string, unknown>;
+      if (kind !== 'file' && kind !== 'folder') {
+        json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
+        return;
+      }
+      if (typeof fromPath !== 'string' || typeof toPath !== 'string') {
+        json(res, 400, { ok: false, error: 'fromPath and toPath are required' });
+        return;
+      }
+      if (!isValidRelativeContentPath(fromPath) || !isValidRelativeContentPath(toPath)) {
+        json(res, 400, { ok: false, error: 'Paths must be relative content paths' });
+        return;
+      }
+      if (fromPath === toPath) {
+        json(res, 200, { ok: true, renamed: [] });
+        return;
+      }
+
+      const sourcePath = resolveContentEntryPath(contentDir, kind, fromPath);
+      const destinationPath = resolveContentEntryPath(contentDir, kind, toPath);
+
+      if (!existsSync(sourcePath)) {
+        json(res, 404, { ok: false, error: `${kind} does not exist` });
+        return;
+      }
+      if (existsSync(destinationPath)) {
+        json(res, 409, { ok: false, error: 'Destination already exists' });
+        return;
+      }
+
+      const sourceStat = statSync(sourcePath);
+      if (
+        (kind === 'file' && !sourceStat.isFile()) ||
+        (kind === 'folder' && !sourceStat.isDirectory())
+      ) {
+        json(res, 400, { ok: false, error: `Source path is not a ${kind}` });
+        return;
+      }
+
+      const affectedDocNames = listAffectedDocNames(getFileIndex(), kind, fromPath);
+      const renamed: RenamedDocMapping[] =
+        kind === 'file'
+          ? [{ fromDocName: fromPath, toDocName: toPath }]
+          : affectedDocNames.map((docName) => ({
+              fromDocName: docName,
+              toDocName: remapDocNameForRename(docName, kind, fromPath, toPath),
+            }));
+
+      const liveContents = await captureAndCloseDocuments(
+        renamed.map(({ fromDocName }) => fromDocName),
+      );
+
+      mkdirSync(dirname(destinationPath), { recursive: true });
+      renameSync(sourcePath, destinationPath);
+      syncRenamedDocsToDisk(renamed, liveContents);
+
+      json(res, 200, { ok: true, renamed });
+    } catch (e) {
+      console.error('[rename-path]', e);
+      json(res, 500, { ok: false, error: 'Failed to rename path' });
+    }
+  }
+
+  async function handleDeletePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+
+      const { kind, path } = body as Record<string, unknown>;
+      if (kind !== 'file' && kind !== 'folder') {
+        json(res, 400, { ok: false, error: 'kind must be "file" or "folder"' });
+        return;
+      }
+      if (typeof path !== 'string' || !isValidRelativeContentPath(path)) {
+        json(res, 400, { ok: false, error: 'path must be a relative content path' });
+        return;
+      }
+
+      const targetPath = resolveContentEntryPath(contentDir, kind, path);
+      if (!existsSync(targetPath)) {
+        json(res, 404, { ok: false, error: `${kind} does not exist` });
+        return;
+      }
+
+      const targetStat = statSync(targetPath);
+      if (
+        (kind === 'file' && !targetStat.isFile()) ||
+        (kind === 'folder' && !targetStat.isDirectory())
+      ) {
+        json(res, 400, { ok: false, error: `Target path is not a ${kind}` });
+        return;
+      }
+
+      const deletedDocNames =
+        kind === 'file' ? [path] : listAffectedDocNames(getFileIndex(), kind, path);
+
+      await captureAndCloseDocuments(deletedDocNames);
+
+      if (kind === 'file') {
+        unlinkSync(targetPath);
+      } else {
+        rmSync(targetPath, { recursive: true, force: false });
+      }
+
+      json(res, 200, { ok: true, deletedDocNames });
+    } catch (e) {
+      console.error('[delete-path]', e);
+      json(res, 500, { ok: false, error: 'Failed to delete path' });
+    }
+  }
+
   async function handlePages(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -1154,11 +1488,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/documents': handleDocumentList,
     '/api/backlinks': handleBacklinks,
     '/api/forward-links': handleForwardLinks,
+    '/api/link-graph': handleLinkGraph,
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
     '/api/pages': handlePages,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
+    '/api/rename-path': handleRenamePath,
+    '/api/delete-path': handleDeletePath,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
