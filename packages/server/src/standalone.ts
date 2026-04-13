@@ -574,13 +574,19 @@ export function createServer(options: ServerOptions): ServerInstance {
       // subscriptions if destroy() is called during startup (e.g., Ctrl+C).
       // Bounded to 5s so destroy() doesn't hang indefinitely if init is stuck
       // (e.g., waiting for a shadow repo git lock held by another process).
-      await Promise.race([
-        ready.catch((err) => log.debug({ err }, '[server] init incomplete during shutdown')),
-        new Promise<void>((r) => setTimeout(r, 5_000)),
-      ]).then(
-        () => {},
-        () => log.warn({}, '[server] init did not complete within 5s during shutdown'),
-      );
+      const initSettled = await Promise.race([
+        ready.then(
+          () => 'completed' as const,
+          (err) => {
+            log.debug({ err }, '[server] init incomplete during shutdown');
+            return 'failed' as const;
+          },
+        ),
+        new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), 5_000)),
+      ]);
+      if (initSettled === 'timeout') {
+        log.warn({}, '[server] init did not complete within 5s during shutdown');
+      }
 
       // Capture after ready so the count reflects documents loaded during init
       const documentCount = hocuspocus.documents.size;
