@@ -98,7 +98,8 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
 
 export function formatPreviewBlock(result: PreviewResult, cwd: string): string {
   const lines: string[] = [];
-  const displayDir = `./${relative(cwd, result.contentDir) || '.'}`;
+  const rel = relative(cwd, result.contentDir);
+  const displayDir = rel === '' ? './' : `./${rel}`;
 
   lines.push('Content:');
   lines.push(`  Found ${result.totalCount} markdown files in ${displayDir}`);
