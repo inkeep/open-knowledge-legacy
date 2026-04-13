@@ -54,7 +54,11 @@ async function getMenuState(page: Page) {
     if (!menu) return { open: false } as const;
     const items = Array.from(menu.querySelectorAll('[role="option"]'));
     const groups = Array.from(menu.querySelectorAll('[role="group"]'));
-    const legends = groups.map((g) => g.getAttribute('aria-label') ?? '');
+    const legends = groups.map((g) => {
+      const labelledBy = g.getAttribute('aria-labelledby');
+      if (labelledBy) return document.getElementById(labelledBy)?.textContent?.trim() ?? '';
+      return g.getAttribute('aria-label') ?? '';
+    });
     return {
       open: true,
       itemCount: items.length,
