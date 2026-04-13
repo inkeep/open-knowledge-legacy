@@ -343,47 +343,52 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         metaMap.set('frontmatter', frontmatter);
       }
 
-      const json = mdManager.parse(body);
-      if (json) {
-        const xmlFragment = document.getXmlFragment('default');
-        log.info(
-          { documentName, fragmentLength: xmlFragment.length },
-          `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
+      let json: ReturnType<typeof mdManager.parse>;
+      try {
+        json = mdManager.parse(body);
+      } catch (err) {
+        log.error(
+          { err, documentName, bodyLength: body.length },
+          `[persistence] Failed to parse ${documentName} — document will load empty`,
         );
-        if (xmlFragment.length === 0) {
-          const pmNode = schema.nodeFromJSON(json);
-          updateYFragment(document, xmlFragment, pmNode, {
-            mapping: new Map(),
-            isOMark: new Map(),
-          });
-          log.info(
-            { filePath, children: xmlFragment.length },
-            `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
-          );
-          // Watch for unexpected mutations
-          xmlFragment.observeDeep(() => {
-            log.info(
-              { documentName, fragmentLength: xmlFragment.length },
-              `[persistence] MUTATION on ${documentName}: fragment.length=${xmlFragment.length}`,
-            );
-          });
-        } else {
-          log.info(
-            { documentName, children: xmlFragment.length },
-            `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
-          );
-        }
-        // Use normalized serialization as the base so onStoreDocument doesn't
-        // false-positive on the first store after load. Raw file content may
-        // differ from TipTap's output (blank lines, trailing newlines, list
-        // formatting) without any actual content change.
-        const normalizedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
-        setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
-      } else {
-        // Unparseable body (empty file etc.) — fall back to raw so reconciliation
-        // has a base to work with if a watcher event fires later.
         setReconciledBase(documentName, raw);
+        return;
       }
+
+      const xmlFragment = document.getXmlFragment('default');
+      log.info(
+        { documentName, fragmentLength: xmlFragment.length },
+        `[persistence] onLoadDocument ${documentName}: fragment.length=${xmlFragment.length} before update`,
+      );
+      if (xmlFragment.length === 0) {
+        const pmNode = schema.nodeFromJSON(json);
+        updateYFragment(document, xmlFragment, pmNode, {
+          mapping: new Map(),
+          isOMark: new Map(),
+        });
+        log.info(
+          { filePath, children: xmlFragment.length },
+          `[persistence] Loaded ${filePath} into Y.Doc (${xmlFragment.length} children)`,
+        );
+        // Watch for unexpected mutations
+        xmlFragment.observeDeep(() => {
+          log.info(
+            { documentName, fragmentLength: xmlFragment.length },
+            `[persistence] MUTATION on ${documentName}: fragment.length=${xmlFragment.length}`,
+          );
+        });
+      } else {
+        log.info(
+          { documentName, children: xmlFragment.length },
+          `[persistence] Skipped load for ${documentName} — fragment already has ${xmlFragment.length} children`,
+        );
+      }
+      // Use normalized serialization as the base so onStoreDocument doesn't
+      // false-positive on the first store after load. Raw file content may
+      // differ from TipTap's output (blank lines, trailing newlines, list
+      // formatting) without any actual content change.
+      const normalizedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+      setReconciledBase(documentName, prependFrontmatter(frontmatter, normalizedBody));
     },
 
     async onStoreDocument({ document, documentName }) {
@@ -424,7 +429,14 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
           let isBrokenSymlink = false;
           try {
             isBrokenSymlink = lstatSync(requestedPath).isSymbolicLink();
-          } catch {}
+          } catch (lstatErr) {
+            if ((lstatErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+              log.warn(
+                { err: lstatErr, path: requestedPath },
+                '[persistence] lstat failed during broken-symlink check',
+              );
+            }
+          }
           if (isBrokenSymlink) {
             console.warn(`[persistence] broken-symlink fallback`, {
               docName: documentName,

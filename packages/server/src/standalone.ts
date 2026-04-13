@@ -249,16 +249,16 @@ export function createServer(options: ServerOptions): ServerInstance {
                 applyToDoc(docName, result.newContent);
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
+                backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+                void backlinkIndex.saveToDisk().catch((err) => {
+                  console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
+                });
               } catch (e) {
                 log.error(
                   { err: e, docName },
                   `[reconcile] failed to apply clean content to Y.Doc for ${docName}`,
                 );
               }
-              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-              void backlinkIndex.saveToDisk().catch((err) => {
-                console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
-              });
               break;
 
             case 'merged':
@@ -266,16 +266,16 @@ export function createServer(options: ServerOptions): ServerInstance {
                 applyToDoc(docName, result.newContent);
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
+                backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+                void backlinkIndex.saveToDisk().catch((err) => {
+                  console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
+                });
               } catch (e) {
                 log.error(
                   { err: e, docName },
                   `[reconcile] failed to apply merged content to Y.Doc for ${docName}`,
                 );
               }
-              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-              void backlinkIndex.saveToDisk().catch((err) => {
-                console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
-              });
               break;
 
             case 'conflicts': {
@@ -294,16 +294,19 @@ export function createServer(options: ServerOptions): ServerInstance {
                     resolution: 'pending',
                   });
                 }
+                backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+                void backlinkIndex.saveToDisk().catch((err) => {
+                  console.warn(
+                    `[backlinks] Failed to persist conflict update for ${docName}:`,
+                    err,
+                  );
+                });
               } catch (e) {
                 log.error(
                   { err: e, docName },
                   `[reconcile] failed to apply conflict content to Y.Doc for ${docName}`,
                 );
               }
-              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-              void backlinkIndex.saveToDisk().catch((err) => {
-                console.warn(`[backlinks] Failed to persist conflict update for ${docName}:`, err);
-              });
               break;
             }
 

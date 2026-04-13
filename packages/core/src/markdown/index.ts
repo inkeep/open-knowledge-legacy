@@ -67,7 +67,13 @@ export class MarkdownManager {
    * Serialize TipTap JSONContent to a markdown string.
    */
   serialize(json: JSONContent): string {
-    const doc = PmNode.fromJSON(this.schema, json);
+    let doc: PmNode;
+    try {
+      doc = PmNode.fromJSON(this.schema, json);
+    } catch (err) {
+      const msg = `MarkdownManager.serialize() failed: schema rejected JSONContent (type=${json.type}, childCount=${json.content?.length ?? 0})`;
+      throw new Error(msg, { cause: err });
+    }
     return serializeMd(doc, {
       schema: this.schema,
       handlers: this.handlers,
@@ -205,68 +211,57 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // ── Tier B fidelity handlers — read node.data.* from position-slice walker ──
 
-  // emphasis — read sourceDelimiter → map to schema attr name
+  // emphasis — sourceDelimiter attr (EmphasisFidelity extension)
   if (m.emphasis) {
-    const emphAttr = m.emphasis.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'emphDelimiter';
     handlers.emphasis = toPmMark(m.emphasis, (node: any) => ({
-      [emphAttr]: node.data?.sourceDelimiter ?? '*',
+      sourceDelimiter: node.data?.sourceDelimiter ?? '*',
     }));
   }
 
-  // strong — read sourceDelimiter → map to schema attr name
+  // strong — sourceDelimiter attr (StrongFidelity extension)
   if (m.strong) {
-    const strongAttr = m.strong.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'strongDelimiter';
     handlers.strong = toPmMark(m.strong, (node: any) => ({
-      [strongAttr]: node.data?.sourceDelimiter ?? '**',
+      sourceDelimiter: node.data?.sourceDelimiter ?? '**',
     }));
   }
 
-  // heading — read sourceStyle → map to schema attr name
+  // heading — headingStyle attr (HeadingFidelity extension)
   if (n.heading) {
-    const headingStyleAttr = n.heading.spec.attrs?.sourceStyle ? 'sourceStyle' : 'headingStyle';
     handlers.heading = toPmNode(n.heading, (node: any) => ({
       level: node.depth,
-      [headingStyleAttr]: node.data?.sourceStyle ?? 'atx',
+      headingStyle: node.data?.sourceStyle ?? 'atx',
     }));
   }
 
-  // code block — read sourceFenceChar + sourceFenceLength → map to schema attr names
+  // code block — fenceDelimiter + fenceLength attrs (CodeBlockFidelity extension)
   if (n.codeBlock) {
-    const fenceCharAttr = n.codeBlock.spec.attrs?.sourceFenceChar
-      ? 'sourceFenceChar'
-      : 'fenceDelimiter';
-    const fenceLenAttr = n.codeBlock.spec.attrs?.sourceFenceLength
-      ? 'sourceFenceLength'
-      : 'fenceLength';
     handlers.code = (node: any) => {
       const textContent = node.value ? [schema.text(node.value)] : [];
       return n.codeBlock.createAndFill(
         {
           language: node.lang ?? null,
           meta: node.meta ?? null,
-          [fenceCharAttr]: node.data?.sourceFenceChar ?? '`',
-          [fenceLenAttr]: node.data?.sourceFenceLength ?? 3,
+          fenceDelimiter: node.data?.sourceFenceChar ?? '`',
+          fenceLength: node.data?.sourceFenceLength ?? 3,
         },
         textContent,
       );
     };
   }
 
-  // thematicBreak — read sourceRaw → map to schema attr name
+  // thematicBreak — sourceRaw attr (ThematicBreakFidelity extension)
   if (n.thematicBreak) {
-    const hrAttr = n.thematicBreak.spec.attrs?.sourceRaw ? 'sourceRaw' : 'horizontalRuleRaw';
     handlers.thematicBreak = (node: any) =>
       n.thematicBreak.createAndFill({
-        [hrAttr]: node.data?.sourceRaw ?? '---',
+        sourceRaw: node.data?.sourceRaw ?? '---',
       });
   }
 
-  // hardBreak / break — read sourceStyle → map to schema attr name
+  // hardBreak / break — hardBreakStyle attr (HardBreakFidelity extension)
   if (n.hardBreak) {
-    const breakAttr = n.hardBreak.spec.attrs?.sourceStyle ? 'sourceStyle' : 'hardBreakStyle';
     handlers.break = (node: any) =>
       n.hardBreak.createAndFill({
-        [breakAttr]: node.data?.sourceStyle ?? 'spaces',
+        hardBreakStyle: node.data?.sourceStyle ?? 'spaces',
       });
   }
 
@@ -289,30 +284,27 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // ── Tier C custom handlers ──
 
-  // Link mark — inline style
+  // Link mark — linkStyle + refLabel attrs (LinkFidelity extension)
   if (m.link) {
-    const styleAttr = m.link.spec.attrs?.sourceStyle ? 'sourceStyle' : 'linkStyle';
-    const refAttr = m.link.spec.attrs?.sourceRefLabel ? 'sourceRefLabel' : 'refLabel';
     handlers.link = toPmMark(m.link, (node: any) => ({
       href: node.url ?? '',
       title: node.title ?? null,
-      [styleAttr]: 'inline',
-      [refAttr]: null,
+      linkStyle: 'inline',
+      refLabel: null,
     }));
 
     // linkReference → same link mark but with reference style info
     handlers.linkReference = toPmMark(m.link, (node: any) => ({
       href: '',
       title: null,
-      [styleAttr]: node.referenceType ?? 'shortcut',
-      [refAttr]: node.label ?? node.identifier ?? null,
+      linkStyle: node.referenceType ?? 'shortcut',
+      refLabel: node.label ?? node.identifier ?? null,
     }));
   }
 
-  // HTML block
+  // HTML block — content attr (HtmlBlockFidelity extension)
   if (n.htmlBlock) {
-    const htmlAttr = n.htmlBlock.spec.attrs?.value ? 'value' : 'content';
-    handlers.html = (node: any) => n.htmlBlock.createAndFill({ [htmlAttr]: node.value ?? '' });
+    handlers.html = (node: any) => n.htmlBlock.createAndFill({ content: node.value ?? '' });
   }
 
   // Definition → linkRefDef/linkDefinition atom (R12 CRITICAL override)
@@ -416,45 +408,36 @@ function buildPmToMdastHandlers(schema: Schema): {
   if (n.blockquote) nodeHandlers.blockquote = fromPmNode('blockquote');
 
   if (n.heading) {
-    const headingStyleAttr = n.heading.spec.attrs?.sourceStyle ? 'sourceStyle' : 'headingStyle';
     nodeHandlers.heading = fromPmNode('heading', (pmNode: any) => ({
       depth: pmNode.attrs.level,
-      data: { sourceStyle: pmNode.attrs[headingStyleAttr] },
+      data: { sourceStyle: pmNode.attrs.headingStyle },
     }));
   }
 
   if (n.codeBlock) {
-    const fenceCharAttr = n.codeBlock.spec.attrs?.sourceFenceChar
-      ? 'sourceFenceChar'
-      : 'fenceDelimiter';
-    const fenceLenAttr = n.codeBlock.spec.attrs?.sourceFenceLength
-      ? 'sourceFenceLength'
-      : 'fenceLength';
     nodeHandlers.codeBlock = (pmNode: any) => ({
       type: 'code' as const,
       lang: pmNode.attrs.language ?? null,
       meta: pmNode.attrs.meta ?? null,
       value: pmNode.textContent ?? '',
       data: {
-        sourceFenceChar: pmNode.attrs[fenceCharAttr],
-        sourceFenceLength: pmNode.attrs[fenceLenAttr],
+        sourceFenceChar: pmNode.attrs.fenceDelimiter,
+        sourceFenceLength: pmNode.attrs.fenceLength,
       },
     });
   }
 
   if (n.thematicBreak) {
-    const hrAttr = n.thematicBreak.spec.attrs?.sourceRaw ? 'sourceRaw' : 'horizontalRuleRaw';
     nodeHandlers.thematicBreak = (pmNode: any) => ({
       type: 'thematicBreak' as const,
-      data: { sourceRaw: pmNode.attrs[hrAttr] },
+      data: { sourceRaw: pmNode.attrs.sourceRaw },
     });
   }
 
   if (n.hardBreak) {
-    const breakAttr = n.hardBreak.spec.attrs?.sourceStyle ? 'sourceStyle' : 'hardBreakStyle';
     nodeHandlers.hardBreak = (pmNode: any) => ({
       type: 'break' as const,
-      data: { sourceStyle: pmNode.attrs[breakAttr] },
+      data: { sourceStyle: pmNode.attrs.hardBreakStyle },
     });
   }
 
@@ -494,12 +477,11 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // HTML block
+  // HTML block — content attr (HtmlBlockFidelity extension)
   if (n.htmlBlock) {
-    const htmlAttr = n.htmlBlock.spec.attrs?.value ? 'value' : 'content';
     nodeHandlers.htmlBlock = (pmNode: any) => ({
       type: 'html' as const,
-      value: pmNode.attrs[htmlAttr],
+      value: pmNode.attrs.content,
     });
   }
 
@@ -540,16 +522,14 @@ function buildPmToMdastHandlers(schema: Schema): {
 
   // Marks — carry fidelity data back to mdast
   if (m.emphasis) {
-    const emphAttr = m.emphasis.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'emphDelimiter';
     markHandlers.emphasis = fromPmMark('emphasis', (mark: any) => ({
-      data: { sourceDelimiter: mark.attrs[emphAttr] },
+      data: { sourceDelimiter: mark.attrs.sourceDelimiter },
     }));
   }
 
   if (m.strong) {
-    const strongAttr = m.strong.spec.attrs?.sourceDelimiter ? 'sourceDelimiter' : 'strongDelimiter';
     markHandlers.strong = fromPmMark('strong', (mark: any) => ({
-      data: { sourceDelimiter: mark.attrs[strongAttr] },
+      data: { sourceDelimiter: mark.attrs.sourceDelimiter },
     }));
   }
 
@@ -567,10 +547,8 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (m.link) {
-    const linkStyleAttr = m.link.spec.attrs?.sourceStyle ? 'sourceStyle' : 'linkStyle';
-    const linkRefAttr = m.link.spec.attrs?.sourceRefLabel ? 'sourceRefLabel' : 'refLabel';
     markHandlers.link = (mark: any, _parent: any, children: any[]) => {
-      const style = mark.attrs[linkStyleAttr];
+      const style = mark.attrs.linkStyle;
       if (style === 'inline' || !style) {
         return {
           type: 'link' as const,
@@ -582,8 +560,8 @@ function buildPmToMdastHandlers(schema: Schema): {
       // Reference link
       return {
         type: 'linkReference' as const,
-        identifier: (mark.attrs[linkRefAttr] ?? '').toLowerCase(),
-        label: mark.attrs[linkRefAttr],
+        identifier: (mark.attrs.refLabel ?? '').toLowerCase(),
+        label: mark.attrs.refLabel,
         referenceType: style,
         children,
       };

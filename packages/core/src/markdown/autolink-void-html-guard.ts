@@ -70,6 +70,12 @@ const LOWERCASE_HTML_TAG_RE = /<([a-z][a-z0-9]*)(\s[^>]*)?\/?>/g;
 
 /**
  * Protect autolinks and HTML from MDX claiming.
+ *
+ * COUPLING NOTE: safeText() in to-markdown-handlers.ts strips escaping rules
+ * for `<`, `:`, and `@` because this guard handles those characters on parse.
+ * If a character is removed from protection here, the corresponding strip in
+ * safeText() must also be removed — otherwise the serializer will produce
+ * unescaped output for that character.
  */
 export function protectFromMdx(source: string): string {
   let result = source;
@@ -121,34 +127,29 @@ export function protectFromMdx(source: string): string {
  * Restore protected autolinks and HTML after parsing.
  * Runs as a unified transformer on the mdast tree.
  */
+/** Check whether a string contains any PUA sentinel character. */
+function hasSentinels(s: string): boolean {
+  return (
+    s.includes('\uE000') || s.includes('\uE001') || s.includes('\uE002') || s.includes('\uE003')
+  );
+}
+
 export function restoreFromMdx() {
   return (tree: Root) => {
     visit(tree, (node: any) => {
       // Restore in text values
-      if (
-        typeof node.value === 'string' &&
-        (node.value.includes('\uE000') || node.value.includes('\uE001'))
-      ) {
+      if (typeof node.value === 'string' && hasSentinels(node.value)) {
         node.value = restoreString(node.value);
       }
       // Restore in URL fields
-      if (
-        typeof node.url === 'string' &&
-        (node.url.includes('\uE000') || node.url.includes('\uE001'))
-      ) {
+      if (typeof node.url === 'string' && hasSentinels(node.url)) {
         node.url = restoreString(node.url);
       }
       // Restore in title and alt fields
-      if (
-        typeof node.title === 'string' &&
-        (node.title.includes('\uE000') || node.title.includes('\uE001'))
-      ) {
+      if (typeof node.title === 'string' && hasSentinels(node.title)) {
         node.title = restoreString(node.title);
       }
-      if (
-        typeof node.alt === 'string' &&
-        (node.alt.includes('\uE000') || node.alt.includes('\uE001'))
-      ) {
+      if (typeof node.alt === 'string' && hasSentinels(node.alt)) {
         node.alt = restoreString(node.alt);
       }
     });

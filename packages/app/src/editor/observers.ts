@@ -443,8 +443,15 @@ export function setupObservers(deps: ObserverDeps): () => void {
         // valid state and the next keystroke will re-trigger Observer B. Log at
         // debug level; do NOT fire onSyncError (that's reserved for actual sync
         // failures, not transient live-typing parse noise).
-        console.debug('[Observer B] Parse skipped (partial/invalid markdown):', parseErr);
-        return;
+        //
+        // Only swallow genuinely transient parse errors (SyntaxError from acorn/mdx).
+        // Non-transient errors (TypeError, RangeError from handler bugs) must propagate
+        // to onSyncError via the outer catch so regressions are visible.
+        if (parseErr instanceof SyntaxError) {
+          console.debug('[Observer B] Parse skipped (partial/invalid markdown):', parseErr);
+          return;
+        }
+        throw parseErr;
       }
 
       // Schema validation errors (e.g., malformed PM JSON from a handler bug) are

@@ -162,10 +162,6 @@ export const toMarkdownHandlers: Record<string, any> = {
    */
   code(node: any) {
     const fenceChar = node.data?.sourceFenceChar;
-    if (fenceChar === 'indent') {
-      const lines = String(node.value ?? '').split('\n');
-      return lines.map((l: string) => `    ${l}`).join('\n');
-    }
     const char = fenceChar === '~' ? '~' : '`';
     const len = Math.max(3, node.data?.sourceFenceLength ?? 3);
     const fence = char.repeat(len);
@@ -248,6 +244,11 @@ export const toMarkdownHandlers: Record<string, any> = {
 /**
  * Emit text through state.safe with NG5-specific strips applied to the
  * mdast-util-to-markdown unsafe list.
+ *
+ * COUPLING NOTE: The `<`, `:`, and `@` strips below depend on
+ * protectFromMdx() in autolink-void-html-guard.ts guarding those characters
+ * on parse. If a character is removed from the guard, the corresponding strip
+ * here must also be removed — otherwise re-parse will mis-tokenize the output.
  *
  * We preserve authoring-form fidelity by removing escapes the pipeline does
  * not need:
