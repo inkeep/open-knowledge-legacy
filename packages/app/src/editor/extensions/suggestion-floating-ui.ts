@@ -15,8 +15,9 @@ export interface SuggestionPositionState {
  * - doPosition: trigger repositioning (call from onUpdate)
  * - startAutoUpdate: call AFTER appending renderer content to preserve
  *   content-before-autoUpdate ordering (autoUpdate fires doPosition
- *   synchronously on setup — must run after popup has content so size
- *   middleware computes correct max-height)
+ *   synchronously on setup — must run after popup has content so
+ *   flip/placement middleware see the populated element's dimensions,
+ *   not an empty container's)
  *
  * Uses `popup.isConnected` guards in async callbacks because computePosition
  * is async (returns Promise). The `.then()` can resolve after cleanup has

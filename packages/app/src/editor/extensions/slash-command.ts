@@ -112,12 +112,13 @@ export const SlashCommand = Extension.create<SlashCommandOptions>({
         command: ({ editor, range, props: item }) => {
           try {
             editor.chain().focus().deleteRange(range).run();
+          } catch (err) {
+            console.error(`[slash-command] deleteRange failed for "${item.name}"`, err);
+            return;
+          }
+          try {
             item.command(editor);
           } catch (err) {
-            // deleteRange dispatches as its own transaction, then item.command runs.
-            // If item.command throws, the trigger text is already consumed — this is
-            // intentional (user selected an item). The try/catch ensures neither call
-            // crashes the editor.
             console.error(`[slash-command] command "${item.name}" threw an error`, err);
           }
         },

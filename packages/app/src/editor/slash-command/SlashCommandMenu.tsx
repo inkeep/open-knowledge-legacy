@@ -21,6 +21,10 @@ export function SlashCommandMenu({
       ? `${listboxId}-option-${selectedIndex}`
       : undefined;
 
+  // Prevent any click on the popup (buttons or empty space) from stealing focus
+  // from the editor — without this, Backspace events go to the popup instead.
+  const preventFocusSteal = (e: React.MouseEvent) => e.preventDefault();
+
   // Scroll selected item into view
   useEffect(() => {
     const container = containerRef.current;
@@ -40,7 +44,7 @@ export function SlashCommandMenu({
         aria-live="polite"
         className="w-56 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
         style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
-        onMouseDown={(e) => e.preventDefault()}
+        onMouseDown={preventFocusSteal}
       >
         No results
       </div>
@@ -72,7 +76,7 @@ export function SlashCommandMenu({
       aria-label="Slash commands"
       aria-activedescendant={activeDescendant}
       tabIndex={-1}
-      onMouseDown={(e) => e.preventDefault()}
+      onMouseDown={preventFocusSteal}
       className="w-56 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
       style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
     >
@@ -86,10 +90,11 @@ export function SlashCommandMenu({
         {selectedItem ? selectedItem.label : ''}
       </span>
       {categories.map((cat) => (
-        <fieldset key={cat.key} className="border-0 p-0 m-0 min-w-0">
-          <legend className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+        // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA listbox pattern requires role="group" for option groups — <fieldset> is non-standard inside role="listbox"
+        <div key={cat.key} role="group" aria-label={categoryLabels[cat.key] ?? cat.key}>
+          <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
             {categoryLabels[cat.key] ?? cat.key}
-          </legend>
+          </div>
           {cat.items.map((item) => {
             const idx = indexMap.get(item) ?? 0;
             const isSelected = idx === selectedIndex;
@@ -117,7 +122,7 @@ export function SlashCommandMenu({
               </button>
             );
           })}
-        </fieldset>
+        </div>
       ))}
     </div>
   );
