@@ -14,10 +14,11 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { ContentFilter } from './content-filter.ts';
+import { isWithinContentDir } from './persistence.ts';
 import { containsConflictMarkers } from './reconciliation.ts';
 
 /** Subscription handle compatible with both @parcel/watcher and chokidar backends. */
@@ -48,6 +49,9 @@ export type DiskEvent =
 export interface FileIndexEntry {
   size: number;
   modified: string;
+  canonicalPath: string;
+  inode: number;
+  aliases: string[];
 }
 
 export interface WatcherHandle {
@@ -55,6 +59,8 @@ export interface WatcherHandle {
   unsubscribe: () => Promise<void>;
   /** Read the current file index — filtered snapshot of known content files. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
+  /** Map from alias docName → canonical docName (only symlink entries). */
+  getAliasMap: () => ReadonlyMap<string, string>;
 }
 
 // ─── Write tracker ───────────────────────────────────────────────────────────
@@ -138,6 +144,7 @@ export async function classifyEvents(
   rawEvents: RawFileEvent[],
   contentDir: string,
   contentFilter?: ContentFilter,
+  aliasMap?: ReadonlyMap<string, string>,
 ): Promise<DiskEvent[]> {
   const deletes: RawFileEvent[] = [];
   const creates: RawFileEvent[] = [];
@@ -194,6 +201,11 @@ export async function classifyEvents(
     }
   }
 
+  function resolveDocName(rawPath: string): string {
+    const raw = pathToDocName(rawPath, contentDir);
+    return aliasMap?.get(raw) ?? raw;
+  }
+
   const results: DiskEvent[] = [];
   const pairedCreates = new Set<string>();
   const pairedDeletes = new Set<string>();
@@ -218,8 +230,8 @@ export async function classifyEvents(
           kind: 'rename',
           oldPath: del.path,
           newPath: create.path,
-          oldDocName: pathToDocName(del.path, contentDir),
-          newDocName: pathToDocName(create.path, contentDir),
+          oldDocName: resolveDocName(del.path),
+          newDocName: resolveDocName(create.path),
           content,
         });
         break;
@@ -234,7 +246,7 @@ export async function classifyEvents(
     results.push({
       kind: 'delete',
       path: del.path,
-      docName: pathToDocName(del.path, contentDir),
+      docName: resolveDocName(del.path),
     });
   }
 
@@ -250,14 +262,14 @@ export async function classifyEvents(
       results.push({
         kind: 'conflict',
         path: create.path,
-        docName: pathToDocName(create.path, contentDir),
+        docName: resolveDocName(create.path),
         content,
       });
     } else {
       results.push({
         kind: 'create',
         path: create.path,
-        docName: pathToDocName(create.path, contentDir),
+        docName: resolveDocName(create.path),
         content,
       });
     }
@@ -274,14 +286,14 @@ export async function classifyEvents(
       results.push({
         kind: 'conflict',
         path: update.path,
-        docName: pathToDocName(update.path, contentDir),
+        docName: resolveDocName(update.path),
         content,
       });
     } else {
       results.push({
         kind: 'update',
         path: update.path,
-        docName: pathToDocName(update.path, contentDir),
+        docName: resolveDocName(update.path),
         content,
       });
     }
@@ -319,20 +331,94 @@ function seedLastKnownHashes(
   contentDir: string,
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
+  aliasMap: Map<string, string>,
+  visitedInodes?: Set<number>,
 ): void {
+  const visited = visitedInodes ?? new Set<number>();
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        // Skip directories the content filter excludes (gitignore/config only, not include patterns)
+      const lst = lstatSync(fullPath);
+
+      if (lst.isSymbolicLink()) {
+        let canonical: string;
+        try {
+          canonical = realpathSync(fullPath);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === 'ENOENT' || code === 'ELOOP') {
+            console.warn(`[file-watcher] Broken/cyclic symlink at ${fullPath}, skipping`);
+          } else {
+            console.warn(`[file-watcher] Failed to resolve symlink ${fullPath}:`, e);
+          }
+          continue;
+        }
+
+        if (!isWithinContentDir(canonical, contentDir)) {
+          console.warn(`[file-watcher] Symlink escape: ${fullPath} → ${canonical}, skipping`);
+          continue;
+        }
+
+        try {
+          const canonStat = statSync(canonical);
+          if (visited.has(canonStat.ino)) {
+            // Inode already visited — register alias if it's a file
+            if (canonStat.isFile() && entry.name.endsWith('.md')) {
+              const aliasDocName = pathToDocName(fullPath, contentDir);
+              const canonicalDocName = pathToDocName(canonical, contentDir);
+              aliasMap.set(aliasDocName, canonicalDocName);
+              const existing = fileIndex.get(canonicalDocName);
+              if (existing && !existing.aliases.includes(aliasDocName)) {
+                existing.aliases.push(aliasDocName);
+              }
+            }
+            continue;
+          }
+          visited.add(canonStat.ino);
+
+          if (canonStat.isDirectory()) {
+            seedLastKnownHashes(canonical, contentDir, contentFilter, fileIndex, aliasMap, visited);
+          } else if (canonStat.isFile() && entry.name.endsWith('.md')) {
+            if (contentFilter) {
+              const relPath = relative(contentDir, canonical);
+              if (contentFilter.isExcluded(relPath)) continue;
+            }
+            const aliasDocName = pathToDocName(fullPath, contentDir);
+            const canonicalDocName = pathToDocName(canonical, contentDir);
+            aliasMap.set(aliasDocName, canonicalDocName);
+
+            try {
+              const content = readFileSync(canonical, 'utf-8');
+              const hash = contentHash(content);
+              lastKnownHash.set(canonical, hash);
+              fileIndex.set(canonicalDocName, {
+                size: canonStat.size,
+                modified: canonStat.mtime.toISOString(),
+                canonicalPath: canonical,
+                inode: canonStat.ino,
+                aliases: [aliasDocName],
+              });
+            } catch (err) {
+              const code = (err as NodeJS.ErrnoException).code;
+              if (code !== 'ENOENT') {
+                console.warn(`[file-watcher] Failed to seed hash for ${canonical}:`, err);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`[file-watcher] Failed to stat symlink target ${canonical}:`, e);
+        }
+      } else if (lst.isDirectory()) {
         if (contentFilter) {
           const relPath = relative(contentDir, fullPath);
           if (contentFilter.isDirExcluded(relPath)) continue;
         }
-        seedLastKnownHashes(fullPath, contentDir, contentFilter, fileIndex);
-      } else if (entry.isFile() && entry.name.endsWith('.md')) {
-        // Skip files the content filter excludes
+        seedLastKnownHashes(fullPath, contentDir, contentFilter, fileIndex, aliasMap, visited);
+      } else if (lst.isFile() && entry.name.endsWith('.md')) {
+        if (visited.has(lst.ino)) continue;
+        visited.add(lst.ino);
+
         if (contentFilter) {
           const relPath = relative(contentDir, fullPath);
           if (contentFilter.isExcluded(relPath)) continue;
@@ -341,12 +427,13 @@ function seedLastKnownHashes(
           const content = readFileSync(fullPath, 'utf-8');
           lastKnownHash.set(fullPath, contentHash(content));
 
-          // Populate file index
           const docName = pathToDocName(fullPath, contentDir);
-          const stat = statSync(fullPath);
           fileIndex.set(docName, {
-            size: stat.size,
-            modified: stat.mtime.toISOString(),
+            size: lst.size,
+            modified: lst.mtime.toISOString(),
+            canonicalPath: fullPath,
+            inode: lst.ino,
+            aliases: [],
           });
         } catch (err) {
           const code = (err as NodeJS.ErrnoException).code;
@@ -383,9 +470,13 @@ export function updateFileIndex(
     case 'update':
     case 'conflict': {
       const docName = pathToDocName(event.path, contentDir);
+      const existing = fileIndex.get(docName);
       fileIndex.set(docName, {
         size: Buffer.byteLength(event.content, 'utf-8'),
         modified: new Date().toISOString(),
+        canonicalPath: existing?.canonicalPath ?? event.path,
+        inode: existing?.inode ?? 0,
+        aliases: existing?.aliases ?? [],
       });
       break;
     }
@@ -397,10 +488,14 @@ export function updateFileIndex(
     case 'rename': {
       const oldDocName = pathToDocName(event.oldPath, contentDir);
       const newDocName = pathToDocName(event.newPath, contentDir);
+      const existing = fileIndex.get(oldDocName);
       fileIndex.delete(oldDocName);
       fileIndex.set(newDocName, {
         size: Buffer.byteLength(event.content, 'utf-8'),
         modified: new Date().toISOString(),
+        canonicalPath: existing?.canonicalPath ?? event.newPath,
+        inode: existing?.inode ?? 0,
+        aliases: existing?.aliases ?? [],
       });
       break;
     }
@@ -419,11 +514,12 @@ async function handleRawEvents(
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
+  aliasMap?: ReadonlyMap<string, string>,
 ): Promise<void> {
   const mdEvents = rawEvents.filter((e) => e.path.endsWith('.md'));
   if (mdEvents.length === 0) return;
 
-  const diskEvents = await classifyEvents(mdEvents, contentDir, contentFilter);
+  const diskEvents = await classifyEvents(mdEvents, contentDir, contentFilter, aliasMap);
 
   for (const event of diskEvents) {
     let isSelf = false;
@@ -459,6 +555,7 @@ async function startParcelWatcher(
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
+  aliasMap: ReadonlyMap<string, string>,
 ): Promise<AsyncSubscription | null> {
   let parcel: typeof import('@parcel/watcher');
   try {
@@ -490,6 +587,7 @@ async function startParcelWatcher(
             contentFilter,
             fileIndex,
             onDiskEvent,
+            aliasMap,
           );
         } catch (handleErr) {
           console.error('[file-watcher] parcel batch error:', handleErr);
@@ -512,6 +610,7 @@ async function startChokidarWatcher(
   contentFilter: ContentFilter | undefined,
   fileIndex: Map<string, FileIndexEntry>,
   onDiskEvent: (event: DiskEvent) => Promise<void>,
+  aliasMap: ReadonlyMap<string, string>,
 ): Promise<AsyncSubscription> {
   const { watch } = await import('chokidar');
   console.warn('[file-watcher] @parcel/watcher unavailable, using chokidar fallback');
@@ -545,8 +644,8 @@ async function startChokidarWatcher(
         const batch = pendingEvents;
         pendingEvents = [];
         batchTimer = null;
-        handleRawEvents(batch, contentDir, contentFilter, fileIndex, onDiskEvent).catch((err) =>
-          console.error('[file-watcher] chokidar batch error:', err),
+        handleRawEvents(batch, contentDir, contentFilter, fileIndex, onDiskEvent, aliasMap).catch(
+          (err) => console.error('[file-watcher] chokidar batch error:', err),
         );
       }, BATCH_WINDOW_MS);
     }
@@ -589,20 +688,33 @@ export async function startWatcher(
   contentFilter?: ContentFilter,
 ): Promise<WatcherHandle> {
   const fileIndex = new Map<string, FileIndexEntry>();
+  const aliasMap = new Map<string, string>();
 
-  seedLastKnownHashes(contentDir, contentDir, contentFilter, fileIndex);
+  seedLastKnownHashes(contentDir, contentDir, contentFilter, fileIndex, aliasMap);
 
   const evictionInterval = setInterval(evictStaleTrackerEntries, WRITE_TRACKER_TTL_MS);
 
   let subscription: AsyncSubscription;
   let backend: WatcherBackend;
   try {
-    const parcelSub = await startParcelWatcher(contentDir, contentFilter, fileIndex, onDiskEvent);
+    const parcelSub = await startParcelWatcher(
+      contentDir,
+      contentFilter,
+      fileIndex,
+      onDiskEvent,
+      aliasMap,
+    );
     if (parcelSub) {
       subscription = parcelSub;
       backend = 'parcel';
     } else {
-      subscription = await startChokidarWatcher(contentDir, contentFilter, fileIndex, onDiskEvent);
+      subscription = await startChokidarWatcher(
+        contentDir,
+        contentFilter,
+        fileIndex,
+        onDiskEvent,
+        aliasMap,
+      );
       backend = 'chokidar';
     }
   } catch (e) {
@@ -623,6 +735,9 @@ export async function startWatcher(
     },
     getFileIndex() {
       return fileIndex;
+    },
+    getAliasMap() {
+      return aliasMap;
     },
   };
 }
