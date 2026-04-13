@@ -23,11 +23,7 @@
     "rules": {
       "recommended": true,
       "suspicious": {
-        "noReactForwardRef": "error",
-        // Disabled: the remark/micromark/unified pipeline uses `any` extensively
-        // for AST node types that are not fully typed in their declarations.
-        // 157 pre-existing violations; re-enable when upstream types improve.
-        "noExplicitAny": "off"
+        "noReactForwardRef": "error"
       },
       "style": {
         "noRestrictedImports": {

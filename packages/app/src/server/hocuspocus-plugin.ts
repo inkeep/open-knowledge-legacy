@@ -194,6 +194,7 @@ export function hocuspocusPlugin(): Plugin {
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
           // Let the Hocuspocus onRequest extensions handle API routes
+          // biome-ignore lint/suspicious/noExplicitAny: Vite middleware types don't match Hocuspocus hook signature
           await hocuspocus.hooks('onRequest', { request: req, response: res } as any);
           if (res.writableEnded) return;
         }

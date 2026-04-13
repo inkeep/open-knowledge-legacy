@@ -19,7 +19,7 @@ const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
 
 /** Wait for the active provider to be connected and synced */
 async function waitForProvider(page: import('@playwright/test').Page) {
-  await page.waitForFunction(() => Boolean((window as any).__activeProvider?.isSynced), {
+  await page.waitForFunction(() => Boolean(window.__activeProvider?.isSynced), {
     timeout: 15_000,
   });
 }
@@ -27,7 +27,7 @@ async function waitForProvider(page: import('@playwright/test').Page) {
 /** Get the current Y.Text content from the provider */
 async function getYText(page: import('@playwright/test').Page): Promise<string> {
   return page.evaluate(() => {
-    const provider = (window as any).__activeProvider;
+    const provider = window.__activeProvider;
     return provider?.document?.getText('source')?.toString() ?? '';
   });
 }
