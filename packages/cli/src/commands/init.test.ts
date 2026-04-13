@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { loadConfig } from '../config/loader.ts';
 import { previewContent } from '../content/preview.ts';
 import { ALL_EDITOR_IDS } from './editors.ts';
 import { formatInitResult, runInit } from './init.ts';
@@ -417,6 +418,31 @@ describe('runInit', () => {
       const output = formatInitResult(result, testDir);
       expect(output).toContain('Found 0 markdown files');
       expect(output).not.toContain('Sample:');
+    });
+
+    it('loadConfig + previewContent integration: preview picks up scaffolded config', () => {
+      writeFileSync(join(testDir, 'readme.md'), '# Readme');
+      mkdirSync(join(testDir, 'docs'));
+      writeFileSync(join(testDir, 'docs', 'guide.md'), '# Guide');
+
+      const result = runInit({ cwd: testDir, mcp: false });
+
+      const { config } = loadConfig(testDir);
+      const contentDir = resolve(testDir, config.content.dir);
+      const preview = previewContent({
+        projectDir: testDir,
+        contentDir,
+        include: config.content.include,
+        exclude: config.content.exclude,
+      });
+      result.preview = preview;
+
+      expect(preview.totalCount).toBeGreaterThanOrEqual(2);
+      expect(preview.sample.some((p) => p.includes('readme.md'))).toBe(true);
+
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('Content:');
+      expect(output).toContain(`Found ${preview.totalCount} markdown files`);
     });
   });
 });

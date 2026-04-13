@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createContentFilter } from '@inkeep/open-knowledge-server';
 
@@ -73,7 +73,33 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
 
-      if (entry.isDirectory()) {
+      if (entry.isSymbolicLink()) {
+        let canonical: string;
+        try {
+          canonical = realpathSync(fullPath);
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code === 'ENOENT' || code === 'ELOOP') {
+            warnings.push(`broken or cyclic symlink: ${relative(contentDir, fullPath)}`);
+          }
+          continue;
+        }
+        let resolved: ReturnType<typeof statSync>;
+        try {
+          resolved = statSync(canonical);
+        } catch {
+          continue;
+        }
+        if (resolved.isDirectory()) {
+          const relPath = relative(contentDir, fullPath);
+          if (filter.isDirExcluded(relPath)) continue;
+          walk(fullPath);
+        } else if (resolved.isFile()) {
+          const relPath = relative(contentDir, fullPath);
+          if (filter.isExcluded(relPath)) continue;
+          files.push(relPath);
+        }
+      } else if (entry.isDirectory()) {
         const relPath = relative(contentDir, fullPath);
         if (filter.isDirExcluded(relPath)) continue;
         walk(fullPath);

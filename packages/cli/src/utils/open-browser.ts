@@ -5,6 +5,6 @@ export function openBrowser(url: string): void {
     process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
   execFile(cmd, args, (err) => {
-    if (err) console.warn(`Could not auto-open browser; visit ${url} manually`);
+    if (err) console.warn(`Could not auto-open browser (${err.message}); visit ${url} manually`);
   });
 }

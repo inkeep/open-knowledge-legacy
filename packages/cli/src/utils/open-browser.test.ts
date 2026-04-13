@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import * as cp from 'node:child_process';
-import { openBrowser } from '../utils/open-browser.ts';
+import { openBrowser } from './open-browser.ts';
 
 describe('openBrowser', () => {
   let execFileSpy: ReturnType<typeof spyOn>;
@@ -60,7 +60,7 @@ describe('openBrowser', () => {
     openBrowser('http://localhost:3000');
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      'Could not auto-open browser; visit http://localhost:3000 manually',
+      'Could not auto-open browser (ENOENT); visit http://localhost:3000 manually',
     );
     consoleSpy.mockRestore();
   });

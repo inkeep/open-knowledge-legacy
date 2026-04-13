@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { previewContent } from './preview.ts';
@@ -167,5 +167,40 @@ describe('previewContent', () => {
 
     expect(result.totalCount).toBe(1);
     expect(result.sample).toEqual(['readme.md']);
+  });
+
+  it('counts symlinked files and traverses symlinked directories', () => {
+    writeFileSync(join(testDir, 'real.md'), '# Real');
+    mkdirSync(join(testDir, 'real-dir'));
+    writeFileSync(join(testDir, 'real-dir', 'nested.md'), '# Nested');
+
+    symlinkSync(join(testDir, 'real.md'), join(testDir, 'link.md'));
+    symlinkSync(join(testDir, 'real-dir'), join(testDir, 'link-dir'));
+
+    const result = previewContent({
+      projectDir: testDir,
+      contentDir: testDir,
+      include: ['**/*.md'],
+      exclude: [],
+    });
+
+    expect(result.totalCount).toBe(4);
+    expect(result.warnings).toEqual([]);
+  });
+
+  it('warns on broken symlinks instead of throwing', () => {
+    writeFileSync(join(testDir, 'real.md'), '# Real');
+    symlinkSync(join(testDir, 'nonexistent.md'), join(testDir, 'broken-link.md'));
+
+    const result = previewContent({
+      projectDir: testDir,
+      contentDir: testDir,
+      include: ['**/*.md'],
+      exclude: [],
+    });
+
+    expect(result.totalCount).toBe(1);
+    expect(result.warnings.length).toBe(1);
+    expect(result.warnings[0]).toContain('broken or cyclic symlink');
   });
 });
