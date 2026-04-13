@@ -5,26 +5,14 @@ import { join } from 'node:path';
 import {
   BacklinkIndex,
   type ExtractedWikiLink,
-  extractWikiLinksFromProsemirrorJson,
+  extractWikiLinksFromMarkdown,
 } from './backlink-index.ts';
 
-describe('extractWikiLinksFromProsemirrorJson', () => {
+describe('extractWikiLinksFromMarkdown', () => {
   test('extracts wiki-link targets with context snippets', () => {
-    const json = {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [
-            { type: 'text', text: 'Alpha links to ' },
-            { type: 'wikiLink', attrs: { target: 'beta', alias: null, anchor: null } },
-            { type: 'text', text: ' for deployment notes.' },
-          ],
-        },
-      ],
-    };
-
-    expect(extractWikiLinksFromProsemirrorJson(json)).toEqual<ExtractedWikiLink[]>([
+    expect(extractWikiLinksFromMarkdown('Alpha links to [[beta]] for deployment notes.\n')).toEqual<
+      ExtractedWikiLink[]
+    >([
       {
         target: 'beta',
         snippet: 'Alpha links to beta for deployment notes.',
@@ -32,24 +20,122 @@ describe('extractWikiLinksFromProsemirrorJson', () => {
     ]);
   });
 
-  test('handles multiple links in the same paragraph without duplicating sources', () => {
-    const json = {
-      type: 'doc',
-      content: [
-        {
-          type: 'paragraph',
-          content: [
-            { type: 'wikiLink', attrs: { target: 'alpha', alias: 'Alpha', anchor: null } },
-            { type: 'text', text: ' and ' },
-            { type: 'wikiLink', attrs: { target: 'beta', alias: null, anchor: 'heading' } },
-          ],
-        },
-      ],
-    };
+  test('ignores wiki-links inside fenced code blocks and inline code', () => {
+    const markdown = [
+      'See [[alpha]].',
+      '',
+      '```ts',
+      'const example = "[[beta]]";',
+      '```',
+      '',
+      'Inline `[[gamma]]` should not count.',
+    ].join('\n');
 
-    expect(extractWikiLinksFromProsemirrorJson(json)).toEqual([
-      { target: 'alpha', snippet: 'Alpha and beta#heading' },
-      { target: 'beta', snippet: 'Alpha and beta#heading' },
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      {
+        target: 'alpha',
+        snippet: 'See alpha.',
+      },
+    ]);
+  });
+
+  test('tolerates colon ranges that remark-directive would claim', () => {
+    const markdown = '**Current (slash-command.ts:108-115):**\n\nSee [[beta]].\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      {
+        target: 'beta',
+        snippet: 'See beta.',
+      },
+    ]);
+  });
+
+  test('ignores wiki-links inside tilde fenced code blocks', () => {
+    const markdown = [
+      'See [[alpha]].',
+      '',
+      '~~~js',
+      'const x = "[[beta]]";',
+      '~~~',
+      '',
+      'And [[gamma]].',
+    ].join('\n');
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'alpha', snippet: 'See alpha.' },
+      { target: 'gamma', snippet: 'And gamma.' },
+    ]);
+  });
+
+  test('fence-length matching: longer closing fence ends a shorter opening fence', () => {
+    // CommonMark: a closing fence must be at least as long as the opening fence.
+    // A longer closing fence is valid. A shorter closing fence does NOT close the block.
+    const markdown = [
+      'Before [[alpha]].',
+      '````ts',
+      '[[inside]]',
+      '```',
+      '[[also-inside]]',
+      '````',
+      'After [[beta]].',
+    ].join('\n');
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'alpha', snippet: 'Before alpha.' },
+      { target: 'beta', snippet: 'After beta.' },
+    ]);
+  });
+
+  test('extracts multiple wiki-links from the same line', () => {
+    const markdown = 'See [[alpha]] and [[beta]] for more.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'alpha', snippet: 'See alpha and beta for more.' },
+      { target: 'beta', snippet: 'See alpha and beta for more.' },
+    ]);
+  });
+
+  test('handles anchor syntax [[page#heading]]', () => {
+    const markdown = 'See [[guide#installation]] for setup.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'guide', snippet: 'See guide#installation for setup.' },
+    ]);
+  });
+
+  test('handles alias syntax [[page|display text]]', () => {
+    const markdown = 'See [[guide|the guide]] for setup.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'guide', snippet: 'See the guide for setup.' },
+    ]);
+  });
+
+  test('handles combined anchor and alias syntax [[page#section|display]]', () => {
+    const markdown = 'See [[API#auth|Auth Docs]] for setup.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'API', snippet: 'See Auth Docs for setup.' },
+    ]);
+  });
+
+  test('backslash-escaped opening bracket suppresses wiki-link', () => {
+    // \[ escapes the first bracket; the second [ is a standalone char, so [[page]]
+    // appears as literal text in the snippet and is not extracted as a link.
+    const markdown = 'Not a link: \\[[page]] but [[real]] is.\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'real', snippet: 'Not a link: [[page]] but real is.' },
+    ]);
+  });
+
+  test('inline code with multi-backtick delimiter: shorter run does not close span', () => {
+    // CommonMark §6.1: closing backtick string must be exactly the same length.
+    // `` `foo``bar` `` — the '``' inside does NOT close the single-backtick span.
+    const markdown = 'See `foo``bar` and [[target]].\n';
+
+    expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
+      { target: 'target', snippet: 'See foo``bar and target.' },
     ]);
   });
 });
@@ -167,6 +253,33 @@ describe('BacklinkIndex', () => {
       const reloaded = new BacklinkIndex({ projectDir, contentDir });
       expect(await reloaded.loadFromDisk()).toBe(true);
       expect(reloaded.getBacklinks('beta')).toEqual([
+        {
+          source: 'alpha',
+          snippet: 'See beta.',
+        },
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rebuildFromDisk uses raw markdown scanning instead of the full parser', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-rebuild-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      writeFileSync(
+        join(contentDir, 'alpha.md'),
+        '**Current (slash-command.ts:108-115):**\n\nSee [[beta]].\n',
+        'utf-8',
+      );
+      writeFileSync(join(contentDir, 'beta.md'), '# Beta\n', 'utf-8');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.rebuildFromDisk();
+
+      expect(index.getBacklinks('beta')).toEqual([
         {
           source: 'alpha',
           snippet: 'See beta.',
