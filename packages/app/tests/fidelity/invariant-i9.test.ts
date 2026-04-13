@@ -15,16 +15,15 @@
  * the issue is downstream of the guard (handler bug, schema gap, etc.).
  */
 
-import { describe, expect, test } from 'bun:test';
+import { describe, test } from 'bun:test';
 import { VFileMessage } from '@inkeep/open-knowledge-core';
 import * as fc from 'fast-check';
 import remarkMdx from 'remark-mdx';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
-import { NUM_RUNS, PBT_TIMEOUT_MS } from './helpers';
-
 // Import the guard via relative path — workspace packages don't expose subpath exports
 import { protectFromMdx } from '../../../../packages/core/src/markdown/autolink-void-html-guard.ts';
+import { NUM_RUNS, PBT_TIMEOUT_MS } from './helpers';
 
 /**
  * Parse with remark-parse + remark-mdx only (no PM conversion).
@@ -59,9 +58,15 @@ function isGuardGap(err: unknown): boolean {
 const guardTriggerText = fc
   .array(
     fc.oneof(
-      { weight: 3, arbitrary: fc.constantFrom(...'abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n') },
+      {
+        weight: 3,
+        arbitrary: fc.constantFrom(
+          ...'abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\n',
+        ),
+      },
       { weight: 2, arbitrary: fc.constantFrom(...'<>{}/') },
       { weight: 1, arbitrary: fc.constantFrom(...'[]()\\:@`#*_$~!&"\'=') },
+      { weight: 1, arbitrary: fc.constant('\n\n') }, // paragraph break — exercises brace flush
     ),
     { maxLength: 200 },
   )
@@ -73,17 +78,45 @@ const mixedMarkdownDangerous = fc
     fc.oneof(
       // Valid markdown fragments
       fc.constantFrom(
-        '# Heading', '**bold**', '*italic*', '`code`', '> quote',
-        '- item', '1. item', '---', '```\ncode\n```',
-        '<https://url>', '[[WikiLink]]', '<br>', '<div>x</div>',
-        '<Callout>body</Callout>', '<Icon />', '<!-- comment -->',
-        '{expression}', '{/* comment */}', ':::note\ncontent\n:::',
+        '# Heading',
+        '**bold**',
+        '*italic*',
+        '`code`',
+        '> quote',
+        '- item',
+        '1. item',
+        '---',
+        '```\ncode\n```',
+        '<https://url>',
+        '[[WikiLink]]',
+        '<br>',
+        '<div>x</div>',
+        '<Callout>body</Callout>',
+        '<Icon />',
+        '<!-- comment -->',
+        '{expression}',
+        '{/* comment */}',
+        ':::note\ncontent\n:::',
       ),
       // Dangerous fragments
       fc.constantFrom(
-        '<', '< ', '<foo', '<foo bar', '{', '{ ', '{{', '{a',
-        '</', '</foo', '<Component', '<$', '<_', '<<<',
-        'a<b', 'text {unclosed', '<50ms',
+        '<',
+        '< ',
+        '<foo',
+        '<foo bar',
+        '{',
+        '{ ',
+        '{{',
+        '{a',
+        '</',
+        '</foo',
+        '<Component',
+        '<$',
+        '<_',
+        '<<<',
+        'a<b',
+        'text {unclosed',
+        '<50ms',
       ),
       // Random text with trigger chars
       guardTriggerText.map((s) => s.slice(0, 40)),
@@ -105,9 +138,9 @@ describe('I9 — guard completeness: protectFromMdx() eliminates crash patterns'
             if (isGuardGap(err)) {
               throw new Error(
                 `Guard gap: protectFromMdx() failed to protect input.\n` +
-                `Input: ${JSON.stringify(s.slice(0, 100))}\n` +
-                `Protected: ${JSON.stringify(protected_.slice(0, 100))}\n` +
-                `Error: ${(err as Error).message}`,
+                  `Input: ${JSON.stringify(s.slice(0, 100))}\n` +
+                  `Protected: ${JSON.stringify(protected_.slice(0, 100))}\n` +
+                  `Error: ${(err as Error).message}`,
               );
             }
             // Non-gap errors (acorn, etc.) are acceptable
@@ -131,8 +164,8 @@ describe('I9 — guard completeness: protectFromMdx() eliminates crash patterns'
             if (isGuardGap(err)) {
               throw new Error(
                 `Guard gap on mixed input.\n` +
-                `Input: ${JSON.stringify(s.slice(0, 200))}\n` +
-                `Error: ${(err as Error).message}`,
+                  `Input: ${JSON.stringify(s.slice(0, 200))}\n` +
+                  `Error: ${(err as Error).message}`,
               );
             }
           }
@@ -156,8 +189,8 @@ describe('I9 — guard completeness: protectFromMdx() eliminates crash patterns'
               if (isGuardGap(err)) {
                 throw new Error(
                   `Guard gap (seed ${seed}).\n` +
-                  `Input: ${JSON.stringify(s.slice(0, 100))}\n` +
-                  `Error: ${(err as Error).message}`,
+                    `Input: ${JSON.stringify(s.slice(0, 100))}\n` +
+                    `Error: ${(err as Error).message}`,
                 );
               }
             }

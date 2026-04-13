@@ -317,15 +317,7 @@ export const dangerousInline = fc.oneof(
 
 /** Dangerous inline INSIDE a mark (emphasis, strong, strikethrough, code). */
 export const wrappedDangerous = fc
-  .tuple(
-    fc.constantFrom(
-      ['*', '*'],
-      ['**', '**'],
-      ['~~', '~~'],
-      ['`', '`'],
-    ),
-    dangerousInline,
-  )
+  .tuple(fc.constantFrom(['*', '*'], ['**', '**'], ['~~', '~~'], ['`', '`']), dangerousInline)
   .map(([[open, close], inner]) => `${open}${inner}${close}`);
 
 /** Dangerous inline adjacent to valid inline content. */
@@ -344,24 +336,23 @@ export const mixedInlineDangerous = fc
 export const containerWithDangerous = fc
   .tuple(
     fc.constantFrom('> ', '- ', '1. '),
-    fc.array(
-      fc.oneof(dangerousInline, wrappedDangerous, phrase),
-      { minLength: 1, maxLength: 3 },
-    ),
+    fc.array(fc.oneof(dangerousInline, wrappedDangerous, phrase), { minLength: 1, maxLength: 3 }),
   )
   .map(([prefix, parts]) => parts.map((p) => `${prefix}${p}`).join('\n'));
 
 /** Truncated constructs — half-typed patterns that a user would create mid-edit. */
 export const truncatedConstruct = fc.oneof(
   // Unclosed paired JSX with body content
-  fc.tuple(
-    safeWord.map((n) => n.charAt(0).toUpperCase() + n.slice(1)),
-    phrase,
-  ).map(([name, body]) => `<${name}>${body}`),
+  fc
+    .tuple(
+      safeWord.map((n) => n.charAt(0).toUpperCase() + n.slice(1)),
+      phrase,
+    )
+    .map(([name, body]) => `<${name}>${body}`),
   // Unclosed code fence
-  fc.constantFrom('js', 'ts', 'python').chain((lang) =>
-    phrase.map((code) => `\`\`\`${lang}\n${code}`),
-  ),
+  fc
+    .constantFrom('js', 'ts', 'python')
+    .chain((lang) => phrase.map((code) => `\`\`\`${lang}\n${code}`)),
   // Unclosed container directive
   safeWord.chain((name) => phrase.map((body) => `:::${name}\n${body}`)),
   // Truncated link
@@ -379,10 +370,10 @@ export const truncatedConstruct = fc.oneof(
 export const mdxWithDangerousContent = fc
   .tuple(
     safeWord.map((n) => n.charAt(0).toUpperCase() + n.slice(1)),
-    fc.array(
-      fc.oneof(dangerousInline, phrase, bold, autolink, wikiLink),
-      { minLength: 1, maxLength: 3 },
-    ),
+    fc.array(fc.oneof(dangerousInline, phrase, bold, autolink, wikiLink), {
+      minLength: 1,
+      maxLength: 3,
+    }),
   )
   .map(([name, parts]) => `<${name}>\n\n${parts.join(' ')}\n\n</${name}>`);
 
@@ -403,6 +394,4 @@ export const interleavedDoc = fc
 /** Deeply nested: blockquote containing list containing marks containing dangerous chars. */
 export const deeplyNested = fc
   .tuple(dangerousInline, phrase, dangerousInline)
-  .map(
-    ([d1, text, d2]) => `> - **${text} ${d1}**\n> - *${d2} ${text}*`,
-  );
+  .map(([d1, text, d2]) => `> - **${text} ${d1}**\n> - *${d2} ${text}*`);

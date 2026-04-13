@@ -78,6 +78,22 @@ describe('Guard self-consistency', () => {
     TIMEOUT,
   );
 
+  test('braces across paragraph break are treated as unmatched', () => {
+    const input = '{\n\n}text';
+    const protected_ = protectFromMdx(input);
+    // Opening { should be protected since } is in a different paragraph
+    expect(protected_[0]).toBe('\uE004');
+    // The rest should be unchanged (} is just text, not a closing brace)
+    expect(protected_.slice(1)).toBe('\n\n}text');
+  });
+
+  test('braces within same paragraph remain matched', () => {
+    const input = '{expr}\nmore text';
+    const protected_ = protectFromMdx(input);
+    // No paragraph break — braces should remain as-is (matched pair)
+    expect(protected_).toBe('{expr}\nmore text');
+  });
+
   test(
     'multi-seed text round-trip (5 seeds)',
     () => {
