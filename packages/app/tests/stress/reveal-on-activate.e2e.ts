@@ -1,0 +1,113 @@
+import { expect, type Page, test } from '@playwright/test';
+
+const port = process.env.VITE_PORT || '5173';
+const BASE = `http://localhost:${port}`;
+
+const sidebar = (page: Page) => page.locator('[data-slot="sidebar-container"]');
+const folderButton = (page: Page) => page.getByRole('button', { name: 'sidebar-folder' });
+
+test.beforeEach(async () => {
+  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
+});
+
+test('direct URL load reveals nested doc on first paint', async ({ page }) => {
+  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
+
+  const activeRow = sidebar(page).locator('[aria-current="page"]');
+  await expect(activeRow).toHaveCount(1);
+  await expect(activeRow).toContainText('nested-doc.md');
+});
+
+test('hash navigation reveals nested doc (simulates graph/wikilink click)', async ({ page }) => {
+  await page.goto(BASE);
+  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
+
+  await page.evaluate(() => {
+    window.location.hash = '#/sidebar-folder/nested-doc';
+  });
+
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 10_000 });
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
+
+  const activeRow = sidebar(page).locator('[aria-current="page"]');
+  await expect(activeRow).toHaveCount(1);
+  await expect(activeRow).toContainText('nested-doc.md');
+});
+
+test('manual collapse is honored until next activation', async ({ page }) => {
+  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
+
+  await folderButton(page).click();
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
+  await expect(sidebar(page).getByText('nested-doc.md')).toHaveCount(0);
+
+  await page.waitForTimeout(1000);
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('activation overrides prior manual collapse (D1)', async ({ page }) => {
+  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+
+  await folderButton(page).click();
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
+
+  await page.evaluate(() => {
+    window.location.hash = '#/test-doc';
+  });
+  await page.waitForTimeout(500);
+
+  await page.evaluate(() => {
+    window.location.hash = '#/sidebar-folder/nested-doc';
+  });
+
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 10_000 });
+  await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'true');
+});
+
+test('roving tabindex: active row has tabIndex=0, others have tabIndex=-1', async ({ page }) => {
+  await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+
+  const activeRow = sidebar(page).locator('[aria-current="page"]');
+  await expect(activeRow).toHaveAttribute('tabindex', '0');
+
+  const otherFileBtn = sidebar(page).locator(
+    '[data-slot="sidebar-menu-button"]:has-text("test-doc.md")',
+  );
+  await expect(otherFileBtn).toHaveAttribute('tabindex', '-1');
+
+  await expect(folderButton(page)).toHaveAttribute('tabindex', '-1');
+});
+
+test('activation does not steal focus from the editor', async ({ page }) => {
+  await page.goto(`${BASE}/#/test-doc`);
+  await page.getByText('test-doc.md').waitFor({ state: 'visible', timeout: 15_000 });
+  await page.waitForSelector('.ProseMirror', { timeout: 15_000 });
+
+  await page.locator('.ProseMirror').focus();
+  const editorFocused = await page.evaluate(() =>
+    document.activeElement?.classList.contains('ProseMirror'),
+  );
+  expect(editorFocused).toBe(true);
+
+  await page.evaluate(() => {
+    window.location.hash = '#/sidebar-folder/nested-doc';
+  });
+  await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 10_000 });
+
+  const focusInSidebar = await page.evaluate(() => {
+    const active = document.activeElement;
+    return !!active?.closest('[data-slot="sidebar-container"]');
+  });
+  expect(focusInSidebar).toBe(false);
+});
