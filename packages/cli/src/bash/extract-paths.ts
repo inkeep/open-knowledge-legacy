@@ -158,13 +158,3 @@ export function extractReferencedPaths(stdout: string, stages: Stage[]): string[
   }
   return out;
 }
-
-/** Drop the `isWikiPath` filter inside ls extraction — exec.ts classifies by stat. */
-export function isLsProducer(stages: Stage[]): boolean {
-  for (let i = stages.length - 1; i >= 0; i--) {
-    if (PRODUCER_COMMANDS.has(stages[i].command)) {
-      return stages[i].command === 'ls';
-    }
-  }
-  return false;
-}

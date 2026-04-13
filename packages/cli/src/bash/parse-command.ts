@@ -98,8 +98,11 @@ const FIND_FLAG_DENY: ReadonlySet<string> = new Set([
   '-okdir',
 ]);
 
-// Injection vectors that may survive shell-quote.parse (notably backticks).
-const SUSPICIOUS_STRING_RE = /[`]|\$\(|\$\{/;
+// Injection vectors that may survive shell-quote.parse: backticks, command
+// substitution `$(...)`, variable expansion `${...}`, and ANSI-C quoting
+// `$'...'` (which bash evaluates escape sequences in, distinct from plain
+// single-quoted strings).
+const SUSPICIOUS_STRING_RE = /[`]|\$\(|\$\{|\$'/;
 
 type ShellOpToken = {
   op?: string;

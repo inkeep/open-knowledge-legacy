@@ -19,7 +19,6 @@
  *
  * Public surface:
  *   - setProjectDir / getProjectDir — module state set once at startup
- *   - cat(path) — direct `fs.readFile`, bypasses the interpreter for speed
  *   - shellEscape — POSIX-safe arg quoting (retained for callers building
  *     display strings)
  *   - createBashInstance(projectDir?) — a fresh `Bash` scoped to projectDir
@@ -30,7 +29,6 @@
  *
  * Spec: SPEC.md FR18 + D14 + D15.
  */
-import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Bash, ReadWriteFs } from 'just-bash';
 
@@ -57,21 +55,6 @@ export function shellEscape(arg: string): string {
   if (arg === '') return "''";
   if (/^[\w.\-/]+$/.test(arg)) return arg;
   return `'${arg.replace(/'/g, "'\\''")}'`;
-}
-
-// ── cat (direct fs.readFile, bypasses interpreter) ──────────────────────
-
-/**
- * Read a file as UTF-8 directly via fs — no interpreter round-trip.
- * Path is resolved against `projectDir` if relative. Throws when the resolved
- * path escapes the project directory.
- */
-export async function cat(path: string): Promise<string> {
-  const abs = resolve(projectDir, path);
-  if (!abs.startsWith(`${projectDir}/`) && abs !== projectDir) {
-    throw new Error(`Path outside project root: ${path}`);
-  }
-  return readFile(abs, 'utf-8');
 }
 
 // ── just-bash primitives ────────────────────────────────────────────────

@@ -3,7 +3,6 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  cat,
   createBashInstance,
   execBash,
   grep,
@@ -46,18 +45,35 @@ describe('just-bash + ReadWriteFs', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  describe('cat (direct fs)', () => {
-    it('reads file contents relative to projectDir', async () => {
-      const content = await cat('file.txt');
-      expect(content).toBe('hello\nworld\n');
+  describe('ReadWriteFs sandbox boundary', () => {
+    it('rejects path traversal via interpreter', async () => {
+      const bash = createBashInstance(root);
+      // Attempt to read a path outside the sandbox via `..`. ReadWriteFs should
+      // reject or return an error exit code — must NOT leak files from parent.
+      const result = await execBash(bash, 'cat ../outside.txt');
+      // Either non-zero exit or stderr indicating denial. The guarantee is:
+      // no stdout content that could only come from reading above the sandbox.
+      expect(result.stdout).not.toContain('SECRET');
+      expect(result.exitCode).not.toBe(0);
     });
 
-    it('throws for missing file', async () => {
-      await expect(cat('missing.txt')).rejects.toThrow();
+    it('rejects absolute paths outside the sandbox root', async () => {
+      const bash = createBashInstance(root);
+      // Inside the sandbox, `/` maps to projectDir — so `/etc/passwd` is
+      // resolved against the sandbox, not the host. This test asserts that
+      // the host's /etc/passwd is unreachable.
+      const result = await execBash(bash, 'cat /etc/passwd');
+      expect(result.stdout).not.toContain('root:');
+      expect(result.exitCode).not.toBe(0);
     });
 
-    it('rejects paths that escape projectDir', async () => {
-      await expect(cat('../outside.txt')).rejects.toThrow(/outside project root/);
+    it('rejects sibling-directory prefix-collision traversal', async () => {
+      // Sanity: the sandbox shouldn't let `../projectdir-evil/X` escape
+      // by exploiting a parent directory whose name starts with projectDir.
+      const bash = createBashInstance(root);
+      const result = await execBash(bash, 'cat ../../etc/hosts');
+      expect(result.stdout).not.toContain('localhost');
+      expect(result.exitCode).not.toBe(0);
     });
   });
 

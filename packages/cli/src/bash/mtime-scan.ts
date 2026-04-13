@@ -29,6 +29,7 @@ const SKIP_DIRS: ReadonlySet<string> = new Set([
   'node_modules',
   '.changeset',
   '.claude',
+  '.agents',
   'dist',
   'build',
 ]);

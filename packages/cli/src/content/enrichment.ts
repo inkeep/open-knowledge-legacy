@@ -15,7 +15,7 @@
  */
 import type { Dirent } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { basename, resolve } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
 import { z } from 'zod';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { parseFrontmatter } from '../utils/frontmatter.ts';
@@ -324,9 +324,10 @@ async function scanDirectory(absDir: string, projectDir: string): Promise<DirSca
         try {
           const st = await stat(absFile);
           if (!result.mostRecent || st.mtimeMs > result.mostRecent.mtimeMs) {
-            const relPath = absFile.startsWith(projectDir)
-              ? absFile.slice(projectDir.length).replace(/^\/+/, '')
-              : absFile;
+            const rel = relative(projectDir, absFile);
+            // Normalize to forward-slashes — project-root-relative paths in
+            // EnrichedMeta are always POSIX-form (agents and bash consume them).
+            const relPath = rel.split(/[\\/]/).filter(Boolean).join('/');
             result.mostRecent = { absPath: absFile, relPath, mtimeMs: st.mtimeMs };
           }
         } catch {}
