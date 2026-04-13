@@ -123,9 +123,12 @@ function sentence(lineIdx: number, wordCount: number, unicode: boolean): string 
  * - Line 10: empty line
  * - Lines 11-16: code block (``` + 4 code lines + ```)
  * - Line 17: empty line
- * - Lines 18-19: short paragraph (2 lines)
+ * - Line 18: wiki-link paragraph (~5% frequency — atom-node coverage)
+ * - Line 19: short paragraph
  *
- * This produces ~60% prose, ~20% lists, ~20% code — realistic report distribution.
+ * Per 20-line block: 7 prose lines (35%), 4 list lines (20%), 6 code lines
+ * incl. fences (30%), 3 blank lines (15%). One of the prose lines is a wiki-link
+ * paragraph (atom-node coverage) — included in the prose share.
  */
 export function generateMarkdown(lineCount: number, options: GenerateMarkdownOptions = {}): string {
   const { unicode = false, noTrailingNewline = false } = options;
@@ -170,6 +173,14 @@ export function generateMarkdown(lineCount: number, options: GenerateMarkdownOpt
         lines.push('```');
         break;
       case 18:
+        if (unicode) {
+          lines.push(`See [[页面-${blockIdx}#セクション|エイリアス]] ${sentence(i, 5, unicode)}.`);
+        } else {
+          lines.push(
+            `See [[page-${blockIdx}#section|Alias ${blockIdx}]] ${sentence(i, 5, unicode)}.`,
+          );
+        }
+        break;
       case 19:
         lines.push(`${sentence(i, 8, unicode)}.`);
         break;
