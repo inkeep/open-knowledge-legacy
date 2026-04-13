@@ -112,7 +112,7 @@ const backlinkIndex = new BacklinkIndex({
 // need git tracking of their throwaway content, so disable it outright.
 const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 
-export const hocuspocus = new Hocuspocus({
+const hocuspocus = new Hocuspocus({
   quiet: true,
   debounce: 2000,
   maxDebounce: 10000,

@@ -18,7 +18,7 @@ const slashCommandKey = new PluginKey('slashCommand');
  * The slash command is pluggable — downstream branches can register additional
  * item sources and category labels without modifying this extension.
  */
-export interface SlashCommandOptions {
+interface SlashCommandOptions {
   /**
    * Item source functions. Each is called on every trigger and its results
    * are merged into the menu. Default: `[() => slashCommandItems]` (the

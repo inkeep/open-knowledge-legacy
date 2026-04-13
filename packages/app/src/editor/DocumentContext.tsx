@@ -2,7 +2,7 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import { ProviderPool, type SyncState } from './provider-pool';
 
-export interface DocumentContextValue {
+interface DocumentContextValue {
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
   syncState: SyncState;
