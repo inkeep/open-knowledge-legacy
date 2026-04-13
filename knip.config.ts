@@ -28,5 +28,8 @@ export default {
         'postcss', // Bundled in Next.js
       ],
     },
+    'packages/cli': {
+      entry: 'src/cli.ts',
+    },
   },
 } satisfies KnipConfig;
