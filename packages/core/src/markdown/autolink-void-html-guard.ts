@@ -168,10 +168,13 @@ export function protectFromMdx(source: string): string {
 
     const tagName = tagMatch[1];
 
-    // Check for self-closing: <TagName ... />
-    const lineEnd = rest.indexOf('\n');
-    const lineContent = lineEnd === -1 ? rest : rest.slice(0, lineEnd);
-    if (/\/>/.test(lineContent)) {
+    // Check for self-closing: <TagName ... /> (may span multiple lines)
+    // Multi-line self-closing JSX like `<Widget\n  attr="x"\n/>` has the
+    // `/>` on a later line. Search up to the next paragraph break (blank line)
+    // — JSX tags don't span paragraph breaks.
+    const nextBlankLine = rest.search(/\n\s*\n/);
+    const searchRegion = nextBlankLine === -1 ? rest : rest.slice(0, nextBlankLine);
+    if (/\/>/.test(searchRegion)) {
       return match; // Self-closing — safe for mdx-jsx
     }
 
