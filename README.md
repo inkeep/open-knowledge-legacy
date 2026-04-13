@@ -11,8 +11,8 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ```bash
 cd your-project
-npx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP server
-npx @inkeep/open-knowledge start     # Start the editor at http://localhost:3000
+bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP server
+bunx @inkeep/open-knowledge start     # Start the editor at http://localhost:3000
 ```
 
 After `init`, open your project in an MCP-compatible editor (Claude Code, Cursor, Windsurf) and approve the `open-knowledge` server. AI agents work immediately -- `start` is optional (the MCP server operates in disk-only mode without it).
