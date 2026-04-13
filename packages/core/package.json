@@ -10,6 +10,7 @@
     }
   },
   "dependencies": {
+    "vfile-message": "^4.0.3",
     "@handlewithcare/remark-prosemirror": "0.1.5",
     "@tiptap/core": "^3.22.3",
     "@tiptap/pm": "^3.22.3",
@@ -45,6 +46,8 @@
     "test": "bun test"
   },
   "devDependencies": {
+    "mdast-util-directive": "^3.1.0",
+    "mdast-util-mdx": "^3.0.0",
     "@types/mdast": "^4.0.4",
     "typescript": "^5.9.3"
   }
