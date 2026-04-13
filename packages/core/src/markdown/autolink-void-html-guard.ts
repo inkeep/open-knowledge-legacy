@@ -172,10 +172,19 @@ export function protectFromMdx(source: string): string {
     // Multi-line self-closing JSX like `<Widget\n  attr="x"\n/>` has the
     // `/>` on a later line. Search up to the next paragraph break (blank line)
     // — JSX tags don't span paragraph breaks.
+    //
+    // STRICT: only pass through if the content between <Tag and /> contains
+    // no stray `/` (which confuses remark-mdx's JSX parser). Valid self-closing
+    // patterns: `<Tag/>`, `<Tag />`, `<Tag attr="val"/>`.
     const nextBlankLine = rest.search(/\n\s*\n/);
     const searchRegion = nextBlankLine === -1 ? rest : rest.slice(0, nextBlankLine);
-    if (/\/>/.test(searchRegion)) {
-      return match; // Self-closing — safe for mdx-jsx
+    const selfCloseIdx = searchRegion.lastIndexOf('/>');
+    if (selfCloseIdx > 0) {
+      // Content between tag name and `/>` — check for stray `/`
+      const betweenContent = searchRegion.slice(tagMatch[0].length - 1, selfCloseIdx);
+      if (!betweenContent.includes('/')) {
+        return match; // Self-closing — safe for mdx-jsx
+      }
     }
 
     // Check for matching close tag: </TagName>
@@ -193,21 +202,36 @@ export function protectFromMdx(source: string): string {
   // matching `}`) crashes with "Unexpected end of file in expression".
   // Protect ALL unmatched `{` with a PUA sentinel.
   //
-  // Strategy: classic stack pairing. Push each `{` position; pop on `}`.
-  // After the scan, any positions remaining on the stack are unmatched.
-  // This correctly handles `{{`, `{{{`, `{a {b}`, etc.
+  // Strategy: classic stack pairing with paragraph-break awareness. Push
+  // each `{` position; pop on `}`. On blank lines (\n\n), flush the stack
+  // — treat all open braces as unmatched because remark-mdx's expression
+  // parser can't reliably match `{…}` across paragraph breaks (the flow
+  // expression tokenizer fails when `}` has trailing content on its line).
+  // This correctly handles `{{`, `{{{`, `{a{b}`, `{\n\n}text`, etc.
   {
+    const unmatchedPositions: number[] = [];
     const stack: number[] = [];
     for (let i = 0; i < result.length; i++) {
+      // Paragraph break: flush open braces as unmatched
+      if (result[i] === '\n' && result[i + 1] === '\n') {
+        unmatchedPositions.push(...stack);
+        stack.length = 0;
+        // Skip past consecutive newlines
+        while (result[i + 1] === '\n') i++;
+        continue;
+      }
       if (result[i] === '{') {
         stack.push(i);
       } else if (result[i] === '}') {
-        if (stack.length > 0) stack.pop(); // matched pair
+        if (stack.length > 0) stack.pop(); // matched pair within same block
       }
     }
-    if (stack.length > 0) {
+    // Any remaining at EOF are also unmatched
+    unmatchedPositions.push(...stack);
+
+    if (unmatchedPositions.length > 0) {
       const chars = [...result];
-      for (const pos of stack) {
+      for (const pos of unmatchedPositions) {
         chars[pos] = GUARD_OPEN_BRACE;
       }
       result = chars.join('');

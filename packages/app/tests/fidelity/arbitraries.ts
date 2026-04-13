@@ -164,6 +164,87 @@ export const listWithMarks = fc
   .array(paragraphWithMarks, { minLength: 2, maxLength: 3 })
   .map((items) => items.map((item) => `- ${item}`).join('\n'));
 
+// ─── MDX + extension constructs (feature-interaction testing) ───
+
+/** Autolink: <scheme:uri>. */
+export const autolink = fc
+  .tuple(fc.constantFrom('https', 'http', 'mailto', 'ftp'), safeWord)
+  .map(([scheme, path]) => `<${scheme}://${path}.example.com>`);
+
+/** Wiki link: [[Page]], [[Page#Anchor]], [[Page|Alias]]. */
+export const wikiLink = fc.oneof(
+  safeWord.map((page) => `[[${page}]]`),
+  fc.tuple(safeWord, safeWord).map(([page, anchor]) => `[[${page}#${anchor}]]`),
+  fc.tuple(safeWord, phrase).map(([page, alias]) => `[[${page}|${alias}]]`),
+);
+
+/** Self-closing MDX component. */
+export const mdxSelfClosing = fc.oneof(
+  fc.constant('<Icon />'),
+  safeWord.map((name) => `<${name.charAt(0).toUpperCase()}${name.slice(1)} />`),
+);
+
+/** Paired MDX component with text body. */
+export const mdxPaired = fc
+  .tuple(
+    safeWord.map((n) => n.charAt(0).toUpperCase() + n.slice(1)),
+    phrase,
+  )
+  .map(([name, body]) => `<${name}>\n\n${body}\n\n</${name}>`);
+
+/** Leaf directive (::name). */
+export const leafDirective = safeWord.map((name) => `::${name}`);
+
+/** Container directive (:::name\ncontent\n:::). */
+export const containerDirective = fc
+  .tuple(safeWord, phrase)
+  .map(([name, body]) => `:::${name}\n${body}\n:::`);
+
+/** GFM strikethrough. */
+const strikethrough = phrase.map((text) => `~~${text}~~`);
+
+/** GFM table. */
+export const table = fc
+  .tuple(
+    fc.array(safeWord, { minLength: 2, maxLength: 4 }),
+    fc.array(fc.array(safeWord, { minLength: 2, maxLength: 4 }), { minLength: 1, maxLength: 3 }),
+  )
+  .map(([headers, rows]) => {
+    const headerRow = `| ${headers.join(' | ')} |`;
+    const separator = `| ${headers.map(() => '---').join(' | ')} |`;
+    const dataRows = rows
+      .map((row) => `| ${row.slice(0, headers.length).join(' | ')} |`)
+      .join('\n');
+    return `${headerRow}\n${separator}\n${dataRows}`;
+  });
+
+/** Inline content including extension constructs. */
+const richInlineContent = fc.oneof(
+  phrase,
+  bold,
+  italic,
+  inlineCode,
+  link,
+  autolink,
+  wikiLink,
+  strikethrough,
+  // Dangerous inline patterns (test guard interactions)
+  fidelityText,
+);
+
+/** Paragraph with rich inline content (feature interactions). */
+export const paragraphWithRichInline = fc
+  .array(richInlineContent, { minLength: 1, maxLength: 4 })
+  .map((parts) => parts.join(' '));
+
+/** Nested blockquote (blockquote containing a list or paragraph with marks). */
+export const nestedBlockquote = fc.oneof(
+  paragraphWithMarks.map((text) => `> ${text}`),
+  fc
+    .array(phrase, { minLength: 2, maxLength: 3 })
+    .map((items) => items.map((item) => `> - ${item}`).join('\n')),
+);
+
 // ─── Composite ───
 
 /** Any supported block construct (includes non-default delimiter forms). */
@@ -190,7 +271,24 @@ export const block = fc.oneof(
   linkRefDef,
 );
 
+/** Extended block set including MDX, directives, tables, and nested constructs. */
+export const blockExtended = fc.oneof(
+  block,
+  mdxSelfClosing.map((c) => `${c}\n`),
+  mdxPaired,
+  leafDirective,
+  containerDirective,
+  table,
+  paragraphWithRichInline,
+  nestedBlockquote,
+);
+
 /** A complete markdown document (1-5 blocks separated by blank lines). */
 export const markdownDoc = fc
   .array(block, { minLength: 1, maxLength: 5 })
+  .map((blocks) => blocks.join('\n\n'));
+
+/** Extended document with MDX, directives, and feature interactions. */
+export const markdownDocExtended = fc
+  .array(blockExtended, { minLength: 1, maxLength: 5 })
   .map((blocks) => blocks.join('\n\n'));
