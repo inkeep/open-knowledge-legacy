@@ -75,12 +75,12 @@ const FileTreeNode: FC<{
   onCancelRename,
   onDelete,
 }) => {
+  const isFile = node.kind === 'file';
   const [collapsed, setCollapsed] = useState(() => {
-    if (!selectedPath || node.kind === 'file') return true;
+    if (!selectedPath || isFile) return true;
     return !selectedPath.startsWith(`${node.path}/`) && selectedPath !== node.path;
   });
 
-  const isFile = node.kind === 'file';
   const isActive = isFile && node.path === selectedPath;
   const isEditing = editingPath === node.path;
   const isBusy = busyPath === node.path;
