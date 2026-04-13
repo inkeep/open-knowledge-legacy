@@ -20,7 +20,7 @@ async function fetchForwardLinks(docName: string): Promise<string[]> {
   const res = await fetch(`/api/forward-links?docName=${encodeURIComponent(docName)}`);
   if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
   const data = (await res.json()) as ForwardLinksResponse;
-  if (!data.ok) throw new Error(data.error ?? 'Failed to load forward links');
+  if (!data.ok) throw new Error(data.error ?? 'Failed to load outgoing links');
   return data.forwardLinks ?? [];
 }
 
@@ -43,13 +43,13 @@ export function ForwardLinksPanel({
   return (
     <Panel className={className}>
       <PanelHeader>
-        <PanelTitle>Forward Links</PanelTitle>
+        <PanelTitle>Outgoing Links</PanelTitle>
         <PanelCount>{links.length}</PanelCount>
       </PanelHeader>
       <PanelBody aria-busy={isLoading}>
         {error ? (
           <PanelError>
-            {error instanceof Error ? error.message : 'Failed to load forward links'}
+            {error instanceof Error ? error.message : 'Failed to load outgoing links'}
           </PanelError>
         ) : links.length === 0 && !isLoading ? (
           <PanelEmpty>This page doesn't link to anything yet.</PanelEmpty>
