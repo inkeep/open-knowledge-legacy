@@ -6,7 +6,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { useState } from 'react';
 
-// Re-export types and functions from core for backwards compatibility
+// Re-export types for backwards compatibility
 export type { AwarenessState, AwarenessUser };
 
 // --- React hook ---
