@@ -441,6 +441,10 @@ lsof -i :5173                     # Check what's using default port
 
 Each worktree has its own content directory. The test harness creates a fresh `tmpDir` per test run — no shared state between worktrees.
 
+**ProseMirror-model duplication in nested worktrees:** Worktrees at `.claude/worktrees/X/` are nested inside the parent repo directory. Bun resolves workspace packages (e.g., `@inkeep/open-knowledge-core`) by walking up the directory tree — finding the parent repo's `packages/core/` and its `node_modules/` first, not the worktree's. When the parent's `prosemirror-model` instance differs from the worktree's, `PmNode.fromJSON()` fails with "looks like multiple versions of prosemirror-model were loaded."
+
+**Fix:** Run `bun install` from the worktree root to create worktree-local `node_modules/`. The dev server is unaffected (Vite `resolve.dedupe` handles it). For test files, prefer direct relative imports (`../../packages/core/src/...`) over workspace imports (`@inkeep/open-knowledge-core`). See `reports/bun-prosemirror-model-dedup/REPORT.md`.
+
 ### Multi-agent local workflows
 
 This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:

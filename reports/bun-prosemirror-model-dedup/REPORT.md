@@ -88,11 +88,13 @@ The error is NOT about different versions — it's about **different physical mo
 
 **Recommended approach (ranked by priority):**
 
-1. **Document per-worktree `bun install` requirement** in CLAUDE.md's "Worktree isolation" section. This is the immediate fix for all developers experiencing the issue.
+1. **Run `bun install` per-worktree** — creates worktree-local `node_modules/` so resolution finds packages before walking up to the parent. Documented in CLAUDE.md "Worktree isolation."
 
-2. **Migrate to `configVersion: 1` (isolated installs)** by running `bun install --config-version=1` and regenerating `bun.lock`. This switches to pnpm-style virtual store with symlinks — one physical copy per version. The lockfile format changes, requiring all developers to re-install. This is the root cause fix.
+2. **Use direct imports in test files** — `../../packages/core/src/...` instead of `@inkeep/open-knowledge-core`. Direct imports resolve from the current directory (worktree), not via workspace resolution (parent).
 
-3. **`parseSafe()` on server paths** (already applied in PR #101) provides crash resistance regardless of dedup state — files with `{non-JS}` degrade gracefully instead of showing blank.
+3. **`parseSafe()` on server paths** (already applied in PR #101) — crash-safe fallback for files with `{non-JS}` content. Degrades gracefully instead of showing blank documents.
+
+**NOT recommended: `configVersion: 1` isolated installs.** Tested and rejected — isolated installs change the node_modules structure but do NOT fix the root cause (bun resolving `@inkeep/open-knowledge-core` to the parent repo's `packages/core/` via directory hierarchy walking). Additionally, isolated installs in bun monorepos have [known stability issues](https://github.com/oven-sh/bun/issues/22846) (hangs during install) and [version resolution bugs](https://github.com/oven-sh/bun/issues/22681).
 
 ### 5. Real-World Patterns
 
@@ -104,9 +106,9 @@ The error is NOT about different versions — it's about **different physical mo
 
 ## Limitations & Open Questions
 
-### Not Fully Confirmed
-- Whether `configVersion: 1` fully eliminates the issue for workspace package imports (needs testing after migration)
-- Whether bun's ESM dedup-by-URL is deterministic in the two-copy hoisted layout, or if it's a race condition
+### Confirmed During Investigation
+- `configVersion: 1` (isolated installs) does NOT fix the issue — tested in this PR. The root cause is workspace resolution walking up the directory tree, not install mode.
+- Direct imports (`./packages/core/src/...`) resolve correctly; only workspace imports (`@inkeep/open-knowledge-core`) fail in nested worktrees.
 
 ### Out of Scope
 - General bun vs node comparison
