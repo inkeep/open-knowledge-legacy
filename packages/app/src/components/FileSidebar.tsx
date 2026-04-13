@@ -121,7 +121,7 @@ const FileTreeNode: FC<{
     <div
       className={cn(
         'flex h-8 items-center gap-2 rounded-md px-2',
-        nested ? 'ml-2' : undefined,
+        !nested && 'ml-2',
         isActive && 'bg-sidebar-accent text-sidebar-accent-foreground',
       )}
     >
@@ -296,7 +296,7 @@ export function FileSidebar() {
           toPath: nextPath,
         }),
       });
-      const data = (await res.json()) as RenamePathResponse;
+      const data: RenamePathResponse = await res.json();
 
       if (!res.ok || !data.ok) {
         setError(data.error ?? 'Failed to rename path');
@@ -384,7 +384,7 @@ export function FileSidebar() {
           </SidebarMenuItem>
           {error && documents.length > 0 && (
             <SidebarMenuItem>
-              <span className="text-xs text-destructive">{error}</span>
+            <span role="alert" className="text-xs text-destructive">{error}</span>
             </SidebarMenuItem>
           )}
         </SidebarMenu>
