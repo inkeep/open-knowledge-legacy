@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import type { SlashCommandItem } from './items';
 
 export interface SlashCommandMenuProps {
@@ -15,6 +15,15 @@ export function SlashCommandMenu({
   onSelect,
 }: SlashCommandMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
+  const activeDescendant =
+    selectedIndex >= 0 && selectedIndex < items.length
+      ? `${listboxId}-option-${selectedIndex}`
+      : undefined;
+
+  // Prevent any click on the popup (buttons or empty space) from stealing focus
+  // from the editor — without this, Backspace events go to the popup instead.
+  const preventFocusSteal = (e: React.MouseEvent) => e.preventDefault();
 
   // Scroll selected item into view
   useEffect(() => {
@@ -31,7 +40,11 @@ export function SlashCommandMenu({
     return (
       <div
         ref={containerRef}
+        role="status"
+        aria-live="polite"
         className="w-56 rounded-lg border bg-popover p-2 shadow-md text-sm text-muted-foreground"
+        style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
+        onMouseDown={preventFocusSteal}
       >
         No results
       </div>
@@ -53,19 +66,38 @@ export function SlashCommandMenu({
     }
   }
 
+  const selectedItem =
+    selectedIndex >= 0 && selectedIndex < items.length ? items[selectedIndex] : null;
+
   return (
     <div
       ref={containerRef}
       role="listbox"
       aria-label="Slash commands"
+      aria-activedescendant={activeDescendant}
+      tabIndex={-1}
+      onMouseDown={preventFocusSteal}
       className="w-56 overflow-y-auto subtle-scrollbar rounded-lg border bg-popover p-1 shadow-md"
       style={{ maxHeight: 'var(--suggestion-menu-max-height, 40vh)' }}
     >
+      {/*
+        Live region announces the selected item on arrow navigation. Required
+        because aria-activedescendant on the listbox is inert — focus stays in
+        ProseMirror's contenteditable, and screen readers only announce
+        activedescendant on the focused element.
+      */}
+      <span className="sr-only" aria-live="polite" aria-atomic="true">
+        {selectedItem ? selectedItem.label : ''}
+      </span>
       {categories.map((cat) => (
-        <fieldset key={cat.key} className="border-0 p-0 m-0 min-w-0">
-          <legend className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+        // biome-ignore lint/a11y/useSemanticElements: WAI-ARIA listbox pattern requires role="group" for option groups — <fieldset> is non-standard inside role="listbox"
+        <div key={cat.key} role="group" aria-labelledby={`${listboxId}-group-${cat.key}`}>
+          <div
+            id={`${listboxId}-group-${cat.key}`}
+            className="px-2 py-1.5 text-xs font-semibold text-muted-foreground"
+          >
             {categoryLabels[cat.key] ?? cat.key}
-          </legend>
+          </div>
           {cat.items.map((item) => {
             const idx = indexMap.get(item) ?? 0;
             const isSelected = idx === selectedIndex;
@@ -73,6 +105,7 @@ export function SlashCommandMenu({
             return (
               <button
                 key={item.name}
+                id={`${listboxId}-option-${idx}`}
                 type="button"
                 role="option"
                 aria-selected={isSelected}
@@ -92,7 +125,7 @@ export function SlashCommandMenu({
               </button>
             );
           })}
-        </fieldset>
+        </div>
       ))}
     </div>
   );
