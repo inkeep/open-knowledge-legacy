@@ -1,0 +1,15 @@
+diff --git a/lib/mdast-util-to-prosemirror.js b/lib/mdast-util-to-prosemirror.js
+index 1234567..abcdefg 100644
+--- a/lib/mdast-util-to-prosemirror.js
++++ b/lib/mdast-util-to-prosemirror.js
+@@ -167,7 +167,9 @@
+                 return schema.text(node.value);
+             },
+             text (node) {
+-                const result = schema.text(replaceNewlines(trimLines(String(node.value))));
++                const value = replaceNewlines(trimLines(String(node.value)));
++                if (!value) return null;
++                const result = schema.text(/^\s+$/.test(value) ? value.replace(/ /g, '\u00A0') : value);
+                 return result;
+             },
+             ...handlers,

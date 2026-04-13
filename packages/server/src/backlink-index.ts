@@ -1,11 +1,9 @@
 import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import { getWikiLinkText, sharedExtensions, stripFrontmatter } from '@inkeep/open-knowledge-core';
-import { MarkdownManager } from '@tiptap/markdown';
+import { getWikiLinkText, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import type { ContentFilter } from './content-filter.ts';
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+import { mdManager } from './md-manager.ts';
 
 interface PMNodeJson {
   type?: string;

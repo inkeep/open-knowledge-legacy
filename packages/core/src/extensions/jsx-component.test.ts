@@ -1,84 +1,65 @@
+/**
+ * Tests for jsxComponent PM node — native MDX form (post-migration).
+ *
+ * The old code-fence form (```jsx-component) is replaced by native MDX via remark-mdx.
+ * These tests verify the jsxComponent PM node works correctly with the new pipeline.
+ */
 import { describe, expect, test } from 'bun:test';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
-import { fenceFor } from './jsx-component';
+import { MarkdownManager } from '../markdown/index.ts';
 import { sharedExtensions } from './shared';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-describe('fenceFor', () => {
-  test('returns 3 backticks for content with no backticks', () => {
-    expect(fenceFor('<Button>Click me</Button>')).toBe('```');
+describe('jsxComponent schema', () => {
+  test('jsxComponent node exists in schema', () => {
+    expect(schema.nodes.jsxComponent).toBeDefined();
   });
 
-  test('returns 4 backticks when content contains triple backticks', () => {
-    expect(fenceFor('some code\n```\nmore code')).toBe('````');
+  test('jsxComponent is an atom node', () => {
+    expect(schema.nodes.jsxComponent.spec.atom).toBe(true);
   });
 
-  test('returns 5 backticks when content contains 4 backticks', () => {
-    expect(fenceFor('````example````')).toBe('`````');
-  });
-
-  test('returns 3 backticks for content with single/double backticks only', () => {
-    expect(fenceFor('`inline` and ``double``')).toBe('```');
+  test('jsxComponent has content attribute', () => {
+    expect(schema.nodes.jsxComponent.spec.attrs?.content).toBeDefined();
   });
 });
 
-describe('jsx-component renderMarkdown', () => {
-  test('serializes content without backticks using 3-backtick fence', () => {
-    const json = {
-      type: 'doc',
-      content: [{ type: 'jsxComponent', attrs: { content: '<Button>Click</Button>' } }],
-    };
-    const md = mdManager.serialize(json);
-    expect(md).toContain('```jsx-component');
-    expect(md).not.toContain('````');
+describe('jsxComponent via native MDX', () => {
+  test('self-closing MDX component stores raw source in content', () => {
+    const md = '<Button variant="primary" />\n';
+    const json = mdManager.parse(md);
+    const jsxNode = json.content?.find((n: any) => n.type === 'jsxComponent');
+    expect(jsxNode).toBeDefined();
+    expect(jsxNode?.attrs.content).toContain('Button');
   });
 
-  test('serializes content with triple backticks using 4-backtick fence', () => {
-    const json = {
-      type: 'doc',
-      content: [
-        {
-          type: 'jsxComponent',
-          attrs: { content: 'example:\n```js\nconst x = 1;\n```' },
-        },
-      ],
-    };
-    const md = mdManager.serialize(json);
-    expect(md).toContain('````jsx-component');
+  test('self-closing MDX component round-trips', () => {
+    const md = '<Button variant="primary" />\n';
+    const result = mdManager.serialize(mdManager.parse(md));
+    expect(result.trim()).toBe(md.trim());
+  });
+
+  test('MDX component with expression attr round-trips', () => {
+    const md = '<Chart data={items} />\n';
+    const result = mdManager.serialize(mdManager.parse(md));
+    expect(result.trim()).toBe(md.trim());
+  });
+
+  test('MDX component with member expression round-trips', () => {
+    const md = '<Docs.Link href="/api" />\n';
+    const result = mdManager.serialize(mdManager.parse(md));
+    expect(result.trim()).toBe(md.trim());
   });
 });
 
-describe('jsx-component round-trip', () => {
-  test('content with no backticks round-trips through parse→serialize', () => {
-    const original = '```jsx-component\n<Button variant="primary">Go</Button>\n```';
-    const parsed = mdManager.parse(original);
-    const pmNode = schema.nodeFromJSON(parsed);
-    expect(pmNode.firstChild?.type.name).toBe('jsxComponent');
-    expect(pmNode.firstChild?.attrs.content).toBe('<Button variant="primary">Go</Button>');
-    const serialized = mdManager.serialize(parsed);
-    expect(serialized.trim()).toBe(original);
-  });
-
-  test('content with triple backticks round-trips through parse→serialize', () => {
-    const original = '````jsx-component\ncode:\n```js\nconst x = 1;\n```\n````';
-    const parsed = mdManager.parse(original);
-    const pmNode = schema.nodeFromJSON(parsed);
-    expect(pmNode.firstChild?.type.name).toBe('jsxComponent');
-    expect(pmNode.firstChild?.attrs.content).toContain('```js');
-    const serialized = mdManager.serialize(parsed);
-    expect(serialized.trim()).toBe(original);
-  });
-
-  test('content with 4 backticks round-trips through parse→serialize', () => {
-    const original = '`````jsx-component\n````example\nstuff\n````\n`````';
-    const parsed = mdManager.parse(original);
-    const pmNode = schema.nodeFromJSON(parsed);
-    expect(pmNode.firstChild?.type.name).toBe('jsxComponent');
-    expect(pmNode.firstChild?.attrs.content).toContain('````');
-    const serialized = mdManager.serialize(parsed);
-    expect(serialized.trim()).toBe(original);
+describe('jsxComponent insertJsxComponent command', () => {
+  test('command is available in extension', () => {
+    // The insertJsxComponent command is defined in JsxComponent extension
+    const ext = sharedExtensions.find(
+      (e: any) => e.name === 'jsxComponent' || e.config?.name === 'jsxComponent',
+    );
+    expect(ext).toBeDefined();
   });
 });

@@ -8,9 +8,8 @@
  * Uses Y.Doc directly (no WebSocket) — same CRDT layer as the browser.
  */
 import { describe, expect, test } from 'bun:test';
-import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { MarkdownManager, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from './extensions/shared';

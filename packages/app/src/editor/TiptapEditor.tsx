@@ -6,10 +6,10 @@ import {
   FLASH_DEBOUNCE_MS,
   FLASH_DURATION_MS,
   hasNewEntries,
+  MarkdownManager,
 } from '@inkeep/open-knowledge-core';
 import { Extension } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
-import { MarkdownManager } from '@tiptap/markdown';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef } from 'react';

@@ -4,9 +4,10 @@
  * Extends @tiptap/extension-hard-break (preserving setHardBreak command
  * and Shift+Enter shortcut) and adds the hardBreakStyle attribute to
  * distinguish backslash from two-space hard breaks.
+ *
+ * Markdown parsing/serialization is handled by the unified pipeline (packages/core/src/markdown/).
  */
 
-import type { MarkdownParseHelpers, MarkdownToken } from '@tiptap/core';
 import HardBreak from '@tiptap/extension-hard-break';
 
 export const HardBreakFidelity = HardBreak.extend({
@@ -17,18 +18,5 @@ export const HardBreakFidelity = HardBreak.extend({
       ...this.parent?.(),
       hardBreakStyle: { default: 'backslash' },
     };
-  },
-
-  markdownTokenName: 'br',
-
-  parseMarkdown(token: MarkdownToken, helpers: MarkdownParseHelpers) {
-    const raw = token.raw ?? '';
-    const style = raw.startsWith('\\') ? 'backslash' : 'spaces';
-    return helpers.createNode('hardBreak', { hardBreakStyle: style });
-  },
-
-  renderMarkdown(node: Record<string, any>) {
-    const style = node.attrs?.hardBreakStyle ?? 'backslash';
-    return style === 'backslash' ? '\\\n' : '  \n';
   },
 });

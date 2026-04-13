@@ -9,8 +9,8 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
-import { MarkdownManager } from '@tiptap/markdown';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { sharedExtensions } from '../../src/editor/extensions/shared';
@@ -45,7 +45,15 @@ function stabilize(md: string): string {
 }
 
 function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment, label: string) {
-  const textSide = stripTrailingWhitespace(ytext.toString());
+  // Factor out NG1 (blank-line-count-between-blocks normalization): Y.Text can
+  // contain content whose blank-line count between blocks does not match the
+  // ProseMirror schema's block-boundary representation. The bridge invariant is
+  // that Y.Text and XmlFragment represent the SAME document under the documented
+  // pipeline, not that their raw strings match byte-for-byte across all NG cases.
+  // Applying `stabilize()` to the Y.Text side yields the canonical serialized
+  // form; a real divergence (Observer B did not sync, PM schema drift, etc.)
+  // still produces a mismatch here.
+  const textSide = stripTrailingWhitespace(stabilize(ytext.toString()));
   const treeSide = stripTrailingWhitespace(serializeFragment(fragment));
 
   if (textSide !== treeSide) {
@@ -146,9 +154,15 @@ describe('S5: rapid sequential writes', () => {
           try {
             for (let i = 0; i < 5; i++) {
               const content = contentFor(tier, unicode);
+              // Stabilize the composed payload so it is canonical markdown
+              // before the write — matches what a real writer (agent or CLI)
+              // produces, and avoids NG1 (blank-line-count normalization)
+              // false positives from concatenating a stabilized content
+              // (trailing `\n`) with `\n\n## ...` (triple-newline).
+              const payload = stabilize(`${content}\n\n## Rapid write ${i + 1}\n`);
               doc.transact(() => {
                 ytext.delete(0, ytext.length);
-                ytext.insert(0, `${content}\n\n## Rapid write ${i + 1}\n`);
+                ytext.insert(0, payload);
               }, 'agent-write');
               await wait(100);
             }

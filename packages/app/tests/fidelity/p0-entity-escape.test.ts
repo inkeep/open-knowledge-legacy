@@ -11,8 +11,7 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import { sharedExtensions } from '@inkeep/open-knowledge-core';
-import { MarkdownManager } from '@tiptap/markdown';
+import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
@@ -91,12 +90,11 @@ describe('backslash escape — byte-identical round-trip', () => {
   });
 });
 
-// ─── Version pin (R14) ───
+// ─── Version pin — remark-prosemirror (R20, replaces old @tiptap/markdown pin) ───
 
-describe('@tiptap/markdown version pin', () => {
-  test('MarkdownManager.prototype.encodeTextForMarkdown exists (patch applied)', () => {
-    // If the patch was applied, encodeTextForMarkdown should exist as a method.
-    // Access via prototype — this verifies the patched dist was loaded.
-    expect(typeof (MarkdownManager.prototype as any).encodeTextForMarkdown).toBe('function');
+describe('remark-prosemirror version pin', () => {
+  test('MarkdownManager has parse and serialize methods (unified pipeline)', () => {
+    expect(typeof MarkdownManager.prototype.parse).toBe('function');
+    expect(typeof MarkdownManager.prototype.serialize).toBe('function');
   });
 });

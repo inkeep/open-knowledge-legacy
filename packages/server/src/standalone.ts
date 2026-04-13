@@ -1,8 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
-import { prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
-import { MarkdownManager } from '@tiptap/markdown';
+import { prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
@@ -12,6 +11,7 @@ import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { getLogger } from './logger.ts';
+import { mdManager } from './md-manager.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -45,8 +45,6 @@ import {
   type ShadowRef,
   shadowGit,
 } from './shadow-repo.ts';
-
-const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
 export interface ServerOptions {
   port?: number;
@@ -251,16 +249,16 @@ export function createServer(options: ServerOptions): ServerInstance {
                 applyToDoc(docName, result.newContent);
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
+                backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+                void backlinkIndex.saveToDisk().catch((err) => {
+                  console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
+                });
               } catch (e) {
                 log.error(
                   { err: e, docName },
                   `[reconcile] failed to apply clean content to Y.Doc for ${docName}`,
                 );
               }
-              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-              void backlinkIndex.saveToDisk().catch((err) => {
-                console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
-              });
               break;
 
             case 'merged':
@@ -268,16 +266,16 @@ export function createServer(options: ServerOptions): ServerInstance {
                 applyToDoc(docName, result.newContent);
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
+                backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+                void backlinkIndex.saveToDisk().catch((err) => {
+                  console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
+                });
               } catch (e) {
                 log.error(
                   { err: e, docName },
                   `[reconcile] failed to apply merged content to Y.Doc for ${docName}`,
                 );
               }
-              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-              void backlinkIndex.saveToDisk().catch((err) => {
-                console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
-              });
               break;
 
             case 'conflicts': {
@@ -296,16 +294,19 @@ export function createServer(options: ServerOptions): ServerInstance {
                     resolution: 'pending',
                   });
                 }
+                backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
+                void backlinkIndex.saveToDisk().catch((err) => {
+                  console.warn(
+                    `[backlinks] Failed to persist conflict update for ${docName}:`,
+                    err,
+                  );
+                });
               } catch (e) {
                 log.error(
                   { err: e, docName },
                   `[reconcile] failed to apply conflict content to Y.Doc for ${docName}`,
                 );
               }
-              backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
-              void backlinkIndex.saveToDisk().catch((err) => {
-                console.warn(`[backlinks] Failed to persist conflict update for ${docName}:`, err);
-              });
               break;
             }
 

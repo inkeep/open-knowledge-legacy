@@ -33,11 +33,7 @@ const blockTypes: BlockType[] = [
     name: 'paragraph',
     label: 'Text',
     icon: Pilcrow,
-    isActive: (editor) =>
-      editor.isActive('paragraph') &&
-      !editor.isActive('bulletList') &&
-      !editor.isActive('orderedList') &&
-      !editor.isActive('taskList'),
+    isActive: (editor) => editor.isActive('paragraph') && !editor.isActive('list'),
     command: (editor) => editor.chain().focus().setParagraph().run(),
   },
   {
@@ -65,21 +61,26 @@ const blockTypes: BlockType[] = [
     name: 'bulletList',
     label: 'Bullet List',
     icon: List,
-    isActive: (editor) => editor.isActive('bulletList'),
+    isActive: (editor) =>
+      editor.isActive('list', { ordered: false }) &&
+      !editor.isActive('listItem', { checked: true }) &&
+      !editor.isActive('listItem', { checked: false }),
     command: (editor) => editor.chain().focus().toggleBulletList().run(),
   },
   {
     name: 'orderedList',
     label: 'Ordered List',
     icon: ListOrdered,
-    isActive: (editor) => editor.isActive('orderedList'),
+    isActive: (editor) => editor.isActive('list', { ordered: true }),
     command: (editor) => editor.chain().focus().toggleOrderedList().run(),
   },
   {
     name: 'taskList',
     label: 'Task List',
     icon: ListTodo,
-    isActive: (editor) => editor.isActive('taskList'),
+    isActive: (editor) =>
+      editor.isActive('listItem', { checked: true }) ||
+      editor.isActive('listItem', { checked: false }),
     command: (editor) => editor.chain().focus().toggleTaskList().run(),
   },
   {

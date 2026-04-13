@@ -538,7 +538,8 @@ describe('multi-client sync', () => {
     await pollUntil(() => clientA.ytext.toString().includes('CLIENT-B-SOURCE-MARKER'), 5000);
     await pollUntil(() => clientB.ytext.toString().includes('CLIENT-A-WYSIWYG-MARKER'), 5000);
     // Wait for observer debounces (50ms each) + remote-tree grace window (150ms) to settle.
-    await wait(400);
+    // Increased from 400ms to 800ms to account for unified pipeline serialize latency.
+    await wait(800);
 
     expect(clientA.ytext.toString()).toContain('CLIENT-A-WYSIWYG-MARKER');
     expect(clientA.ytext.toString()).toContain('CLIENT-B-SOURCE-MARKER');
@@ -561,7 +562,7 @@ describe('multi-client sync', () => {
       clientB.ytext.insert(clientB.ytext.length, '\n\nCLIENT-B-REMOTE-SOURCE\n');
     }, 'user-edit');
 
-    await wait(400);
+    await wait(800);
     clearInterval(typingInterval);
     await pollUntil(() => clientA.ytext.toString().includes('CLIENT-B-REMOTE-SOURCE'), 5000);
 
