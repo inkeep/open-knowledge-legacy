@@ -130,3 +130,23 @@ User requested one more review. Spot-check caught substantial drift from four re
 - §13 Rollout table — L2 → L2-aggressive.
 
 Changelog entry for audit trail. No decision changes in this sweep — all drift corrections, no semantic shifts.
+
+## 2026-04-14 — PR #103 review round + architectural sideband (D19-D23)
+
+Bot review + Amy/Tim session produced 5 new decisions (D19-D23) and 3 new requirements (FR20, FR21, updated FR14). No existing decisions reverted, but FR6, FR7, FR10, FR12, FR14, FR15 revised; §5 interaction-state matrix expanded to cover category-specific error messages; §9 data model rewrote the `EnrichedMeta` shape as a single nullable interface; §14 risks updated; §16 Agent Constraints for both PRs updated.
+
+**D19 — `catalogCategory` removed.** Team (Amy + Tim) decided to retire folder-level INDEX.md frontmatter catalogs. Per-file frontmatter is source of truth; catalog is on-demand view. V0-24 impact: drop the field, skip the data fetch.
+
+**D20 — Unified `EnrichedMeta` with nullable fields** (bot review 🟠 #2). Not a discriminated union on cardinality. Agents get one shape with `null` where data is unavailable or deliberately omitted.
+
+**D21 — Error messages differentiated by denial category** (bot review 🟠 #1). Six categories: `unknown_command`, `write_blocked`, `shell_construct_blocked`, `path_traversal`, `output_overflow`, `security_invariant_violation`. Each carries an actionable next-step in `content` and a machine-parsable shape in `structuredContent.error`.
+
+**D22 / FR20 — Shadow-repo layout shared via server exports** (bot review 🟠 #3). DEP-1 adds `getShadowRepoPath`, `getWipRefPattern`, `parseWriterId` to `packages/server/src/shadow-repo.ts`; CLI imports them. Eliminates CLI-side layout reimplementation.
+
+**D23 / FR21 — Defense-in-depth backstop via post-exec mtime-scan** (bot review 🟠 #4). Not subprocess isolation (that would reintroduce the cost D14 paid to avoid). Bounded scan, <10ms typical, aborts with `security_invariant_violation` on any write.
+
+**Minor fixes** (bot review 🟡): precise tool count (15); `/api/shadow-log` references removed from scope (D18's no-endpoint decision preserved); FR12 tool-description token budget (≤120 tokens); A1 rollback-communication plan added; §8 Current State distinguishes FR18 (just-bash swap) from D12 (gitLog→readShadowLog) as separate PRs.
+
+**Consider items accepted** (bot review 💭): FR10 INSTRUCTIONS include WHY rationale; tool-description tiering per FR12; A1 `mcp_instructions_version` bump for rollback communication.
+
+**Implementation status:** US-001 through US-004 committed on `implement/enriched-exec-mcp-surface` branch (deps, readShadowLog, shared enrichPath, migrate read_document/search); US-005 WIP stashed. With the spec updated, implementation will restart from clean state using the revised EnrichedMeta shape and FR20/FR21 additions.
