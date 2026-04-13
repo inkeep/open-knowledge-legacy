@@ -10,3 +10,8 @@
 - Content config uses glob-based `include`/`exclude` patterns per `specs/2026-04-11-content-config-unification/SPEC.md`.
 - Completed all 7 completeness criteria for both parts. Merged into single story folder per user preference.
 - Items: 8 Decided, 5 Open (TQ1, TQ4, PQ7, TQ7, TQ8), 2 Parked (XQ1, XQ2, XQ4), 5 Assumed (PQ6, TQ3, TQ5, TQ6, TQ9).
+
+## 2026-04-12 (rationalization)
+
+- **Split:** Part A (onboarding) is now owned by `projects/day-0-editor-completeness/PROJECT.md` as story **ED-4**. Part B (project switching) remains here as standalone sibling bet. Content preserved intact for traceability.
+- Rationale: Part A is "within-project day-0 completeness" (the editor's first-run experience). Part B is "cross-project navigation" (a different concern). The new project decomposes day-0 editor completeness; Part B is explicitly scoped out of it.
