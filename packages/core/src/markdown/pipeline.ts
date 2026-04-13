@@ -33,6 +33,7 @@ import { unified } from 'unified';
 
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
+import { positionSlicePlugin } from './position-slice.ts';
 
 export interface PipelineOptions {
   schema: Schema;
@@ -56,7 +57,7 @@ export function parseMd(source: string, opts: PipelineOptions): PmNode {
     .use(remarkMdx)
     .use(remarkDirective)
     .use(remarkGfm)
-    // Position-slice walker slot: plugged in by US-003
+    .use(positionSlicePlugin)
     .use(remarkProseMirror, {
       schema: opts.schema,
       handlers: opts.handlers,
