@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-import { Button } from '@/components/ui/button';
 import {
   Panel,
   PanelBody,
@@ -57,10 +56,9 @@ export function OutlinePanel({ docName, className = '' }: { docName: string; cla
         ) : (
           <div className="flex flex-col gap-0.5">
             {headings.map((heading, index) => (
-              <Button
+              <div
                 // biome-ignore lint/suspicious/noArrayIndexKey: headings are positionally stable per load
                 key={index}
-                variant="ghost"
                 className={cn(
                   'h-auto w-full justify-start truncate rounded-md py-1 text-left text-sm font-normal text-muted-foreground',
                   heading.level === 1 && 'font-medium text-foreground',
@@ -68,7 +66,7 @@ export function OutlinePanel({ docName, className = '' }: { docName: string; cla
                 style={{ paddingLeft: `${(heading.level - 1) * 12 + 8}px`, paddingRight: '8px' }}
               >
                 {heading.text}
-              </Button>
+              </div>
             ))}
           </div>
         )}

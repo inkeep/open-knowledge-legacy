@@ -115,7 +115,7 @@ export function GraphView({
   const isDark = resolvedTheme === 'dark';
   const bgColor = isDark ? 'hsl(0 0% 4%)' : 'hsl(0 0% 100%)';
   const defaultNodeColor = isDark ? '#6b7280' : '#9ca3af';
-  const activeNodeColor = '#8b5cf6';
+  const activeNodeColor = isDark ? '#69a3ff' : '#3784ff';
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
 

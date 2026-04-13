@@ -39,7 +39,7 @@ function PanelCount({ className, ...props }: React.ComponentProps<'p'>) {
     <p
       data-slot="panel-count"
       className={cn(
-        'mt-0.5 text-xs text-muted-foreground font-mono bg-muted-foreground/5 rounded-md px-2 py-1',
+        'text-xs text-muted-foreground font-mono bg-muted-foreground/5 rounded-md px-2 py-1',
         className,
       )}
       {...props}

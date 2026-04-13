@@ -1,7 +1,8 @@
-import { CornerDownLeft, CornerUpRight, ListTree } from 'lucide-react';
+import { CornerDownLeft, CornerUpRight, ListTree, Network } from 'lucide-react';
 import { useState } from 'react';
 import { BacklinksPanel } from '@/components/BacklinksPanel';
 import { ForwardLinksPanel } from '@/components/ForwardLinksPanel';
+import { GraphPanel } from '@/components/GraphPanel';
 import { OutlinePanel } from '@/components/OutlinePanel';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -10,12 +11,13 @@ import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import { cn } from '@/lib/utils';
 
-type PanelTab = 'outline' | 'backlinks' | 'forward-links';
+type PanelTab = 'outline' | 'backlinks' | 'forward-links' | 'graph';
 
 const TABS: { id: PanelTab; label: string; Icon: typeof ListTree }[] = [
   { id: 'outline', label: 'Outline', Icon: ListTree },
   { id: 'backlinks', label: 'Backlinks', Icon: CornerDownLeft },
-  { id: 'forward-links', label: 'Forward Links', Icon: CornerUpRight },
+  { id: 'forward-links', label: 'Outgoing Links', Icon: CornerUpRight },
+  { id: 'graph', label: 'Graph', Icon: Network },
 ];
 
 interface EditorAreaProps {
@@ -88,6 +90,7 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
           {activeTab === 'outline' && <OutlinePanel docName={activeDocName} />}
           {activeTab === 'backlinks' && <BacklinksPanel docName={activeDocName} />}
           {activeTab === 'forward-links' && <ForwardLinksPanel docName={activeDocName} />}
+          {activeTab === 'graph' && <GraphPanel activeDocName={activeDocName} />}
         </div>
       </aside>
     </div>
