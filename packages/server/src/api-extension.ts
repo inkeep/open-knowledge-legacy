@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname, resolve } from 'node:path';
+import { dirname, relative, resolve } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import { type HeadingEntry, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 import {
@@ -50,6 +50,8 @@ export interface ApiExtensionOptions {
   contentDir: string;
   /** Accessor for the watcher's in-memory file index. GET /api/documents reads from this. */
   getFileIndex: () => ReadonlyMap<string, FileIndexEntry>;
+  /** Accessor for the alias map (alias docName → canonical docName). */
+  getAliasMap?: () => ReadonlyMap<string, string>;
   /**
    * When true, register test-only routes (currently `/api/test-reset`).
    * Defaults to `false` — these routes allow any client to destroy document
@@ -196,6 +198,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     sessionManager,
     contentDir,
     getFileIndex,
+    getAliasMap,
     enableTestRoutes = false,
     shadowRef,
     projectRoot,
@@ -223,6 +226,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  function resolveAlias(docName: string): string {
+    return getAliasMap?.().get(docName) ?? docName;
+  }
+
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -246,8 +253,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Invalid JSON' });
         return;
       }
-      const docName =
+      const rawDocName =
         typeof body.docName === 'string' && body.docName.length > 0 ? body.docName : 'test-doc';
+      const docName = resolveAlias(rawDocName);
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
       const content =
@@ -318,9 +326,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const position = pos === 'prepend' ? 'prepend' : pos === 'replace' ? 'replace' : 'append';
-      const docName = (body as Record<string, unknown>).docName;
-      const resolvedDocName =
-        typeof docName === 'string' && docName.length > 0 ? docName : 'test-doc';
+      const rawDocName = (body as Record<string, unknown>).docName;
+      const resolvedDocName = resolveAlias(
+        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc',
+      );
       const dc = await sessionManager.getSession(resolvedDocName);
       const timestamp = new Date().toISOString();
 
@@ -370,7 +379,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const docName = url.searchParams.get('docName') || 'test-doc';
+      const rawDocName = url.searchParams.get('docName') || 'test-doc';
+      const docName = resolveAlias(rawDocName);
       const dc = await sessionManager.getSession(docName);
       const content = dc.document.getText('source').toString();
       json(res, 200, { ok: true, docName, content });
@@ -402,7 +412,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       // Read from the watcher's in-memory file index (instant, no filesystem scan)
       const index = getFileIndex();
-      const documents: { docName: string; size: number; modified: string }[] = [];
+      const documents: {
+        docName: string;
+        size: number;
+        modified: string;
+        isSymlink: boolean;
+        canonicalDocName: string | null;
+        targetPath: string | null;
+      }[] = [];
 
       for (const [docName, entry] of index) {
         // Filter by dir prefix if specified
@@ -412,7 +429,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           docName,
           size: entry.size,
           modified: entry.modified,
+          isSymlink: false,
+          canonicalDocName: null,
+          targetPath: null,
         });
+
+        // Emit alias entries for this canonical file
+        for (const alias of entry.aliases) {
+          if (dir && !alias.startsWith(`${dir}/`) && alias !== dir) continue;
+          const targetRelPath = relative(contentDir, entry.canonicalPath);
+          documents.push({
+            docName: alias,
+            size: entry.size,
+            modified: entry.modified,
+            isSymlink: true,
+            canonicalDocName: docName,
+            targetPath: targetRelPath,
+          });
+        }
       }
 
       documents.sort((a, b) => a.docName.localeCompare(b.docName));
@@ -558,7 +592,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
-      const { find, replace, docName: rawDocName } = body as Record<string, unknown>;
+      const { find, replace, docName: bodyDocName } = body as Record<string, unknown>;
       if (typeof find !== 'string' || find.length === 0) {
         json(res, 400, { ok: false, error: 'find field required' });
         return;
@@ -567,8 +601,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'replace field required' });
         return;
       }
-      const docName =
-        typeof rawDocName === 'string' && rawDocName.length > 0 ? rawDocName : 'test-doc';
+      const docName = resolveAlias(
+        typeof bodyDocName === 'string' && bodyDocName.length > 0 ? bodyDocName : 'test-doc',
+      );
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
 
@@ -617,7 +652,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const docName = url.searchParams.get('docName') || 'test-doc';
+      const docName = resolveAlias(url.searchParams.get('docName') || 'test-doc');
       if (!sessionManager.hasSession(docName)) {
         json(res, 200, { ok: true, canUndo: false, canRedo: false });
         return;
@@ -641,13 +676,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      let docName = 'test-doc';
+      let rawDocName = 'test-doc';
       try {
         const raw = await readBody(req);
         if (raw.length > 0) {
           try {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-            if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+            if (typeof body.docName === 'string' && body.docName.length > 0)
+              rawDocName = body.docName;
           } catch {
             json(res, 400, { ok: false, error: 'Invalid JSON body' });
             return;
@@ -657,6 +693,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 413, { ok: false, error: 'Payload too large' });
         return;
       }
+      const docName = resolveAlias(rawDocName);
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
       if (!um.canUndo()) {
@@ -685,13 +722,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      let docName = 'test-doc';
+      let rawDocName = 'test-doc';
       try {
         const raw = await readBody(req);
         if (raw.length > 0) {
           try {
             const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-            if (typeof body.docName === 'string' && body.docName.length > 0) docName = body.docName;
+            if (typeof body.docName === 'string' && body.docName.length > 0)
+              rawDocName = body.docName;
           } catch {
             json(res, 400, { ok: false, error: 'Invalid JSON body' });
             return;
@@ -701,6 +739,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 413, { ok: false, error: 'Payload too large' });
         return;
       }
+      const docName = resolveAlias(rawDocName);
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
       if (!um.canRedo()) {
@@ -730,7 +769,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const docName = url.searchParams.get('docName') ?? 'test-doc';
+      const docName = resolveAlias(url.searchParams.get('docName') ?? 'test-doc');
 
       // Path traversal guard — reuse the canonical validator from persistence.ts.
       // Throws `Invalid document name: ${docName}` for names that escape contentDir;

@@ -161,6 +161,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     sessionManager,
     contentDir,
     getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
+    getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
     enableTestRoutes,
     shadowRef,
     projectRoot: projectDir,

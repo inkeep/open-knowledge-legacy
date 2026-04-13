@@ -119,7 +119,13 @@ function buildFileIndex(dir: string, base = ''): ReadonlyMap<string, FileIndexEn
       }
     } else if (entry.isFile() && entry.name.endsWith('.md')) {
       const st = statSync(join(dir, entry.name));
-      index.set(rel.slice(0, -3), { size: st.size, modified: st.mtime.toISOString() });
+      index.set(rel.slice(0, -3), {
+        size: st.size,
+        modified: st.mtime.toISOString(),
+        canonicalPath: join(dir, entry.name),
+        inode: st.ino,
+        aliases: [],
+      });
     }
   }
   return index;

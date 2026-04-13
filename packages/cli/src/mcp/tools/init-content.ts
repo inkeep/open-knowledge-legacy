@@ -97,6 +97,8 @@ Depending on the project, consider articles covering:
 
 - Catalogs in \`.open-knowledge/catalogs/\` auto-regenerate as you write articles — the file watcher picks up changes
 - Read \`.open-knowledge/catalogs/INDEX.md\` to verify the knowledge base is navigable
+- Use \`read_document\` on a sample article to confirm frontmatter parses correctly (you should see title, description, and tags in the enriched output)
+- Use \`search\` to check that common terms from the codebase are findable across the articles you wrote
 - Ensure every article has frontmatter with at minimum \`title\` and \`description\`
 
 ## Non-goals

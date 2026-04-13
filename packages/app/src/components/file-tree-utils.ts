@@ -4,6 +4,9 @@ export interface DocEntry {
   docName: string;
   size: number;
   modified: string;
+  isSymlink?: boolean;
+  canonicalDocName?: string | null;
+  targetPath?: string | null;
 }
 
 export interface TreeNode {
@@ -11,6 +14,9 @@ export interface TreeNode {
   path: string;
   kind: 'folder' | 'file';
   children: TreeNode[];
+  isSymlink?: boolean;
+  canonicalDocName?: string | null;
+  targetPath?: string | null;
 }
 
 /**
@@ -36,6 +42,11 @@ export function buildTree(documents: DocEntry[]): TreeNode[] {
           path,
           kind: isFile ? 'file' : 'folder',
           children: [],
+          ...(isFile && {
+            isSymlink: doc.isSymlink,
+            canonicalDocName: doc.canonicalDocName,
+            targetPath: doc.targetPath,
+          }),
         };
         children.push(node);
       }

@@ -7,9 +7,9 @@
  * Hocuspocus config: debounce=2000, maxDebounce=10000 (L1)
  * Git commit debounced separately: 30s idle after last disk write (L2)
  */
-import { existsSync, readFileSync, unlinkSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
-import { dirname, relative, resolve } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
+import { mkdir, realpath, rename, writeFile } from 'node:fs/promises';
+import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import {
   prependFrontmatter,
@@ -52,6 +52,10 @@ export function safeContentPath(documentName: string, contentDir: string): strin
     throw new Error(`Invalid document name: ${documentName}`);
   }
   return filePath;
+}
+
+export function isWithinContentDir(p: string, contentDir: string): boolean {
+  return p === contentDir || p.startsWith(contentDir + sep);
 }
 
 /**
@@ -133,7 +137,13 @@ export interface PersistenceHandle {
 }
 
 export function createPersistenceExtension(options?: PersistenceOptions): PersistenceHandle {
-  const contentDir = options?.contentDir ?? process.cwd();
+  const contentDirRaw = options?.contentDir ?? process.cwd();
+  let contentDir: string;
+  try {
+    contentDir = realpathSync(contentDirRaw);
+  } catch {
+    contentDir = contentDirRaw;
+  }
   const projectDir = options?.projectDir ?? process.cwd();
   const shadowRef = options?.shadowRef;
   const contentRoot = options?.contentRoot ?? (relative(projectDir, contentDir) || 'content');
@@ -316,6 +326,22 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const filePath = safeContentPath(documentName, contentDir);
       if (!existsSync(filePath)) return;
 
+      try {
+        const canonical = realpathSync(filePath);
+        if (!isWithinContentDir(canonical, contentDir)) {
+          console.warn(
+            `[persistence] symlink-escape on load: ${filePath} → ${canonical}, refusing`,
+          );
+          return;
+        }
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ELOOP') {
+          console.warn(`[persistence] Symlink cycle on load: ${filePath}, refusing`);
+          return;
+        }
+      }
+
       const raw = readFileSync(filePath, 'utf-8');
       const { frontmatter, body } = stripFrontmatter(raw);
 
@@ -394,14 +420,50 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         );
       }
 
-      const filePath = safeContentPath(documentName, contentDir);
-      const tmpPath = `${filePath}.tmp`;
+      const requestedPath = safeContentPath(documentName, contentDir);
+      await mkdir(dirname(requestedPath), { recursive: true });
 
+      let canonicalPath: string;
       try {
-        await mkdir(dirname(filePath), { recursive: true });
+        canonicalPath = await realpath(requestedPath);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT') {
+          let isBrokenSymlink = false;
+          try {
+            isBrokenSymlink = lstatSync(requestedPath).isSymbolicLink();
+          } catch {}
+          if (isBrokenSymlink) {
+            console.warn(`[persistence] broken-symlink fallback`, {
+              docName: documentName,
+              reason: 'broken-symlink',
+            });
+          }
+          canonicalPath = requestedPath;
+        } else if (code === 'ELOOP') {
+          console.error(`[persistence] Symlink cycle at ${requestedPath}`);
+          throw new Error(`Symlink cycle detected at ${requestedPath}`);
+        } else {
+          throw e;
+        }
+      }
+
+      if (!isWithinContentDir(canonicalPath, contentDir)) {
+        const msg = `symlink-escape: ${requestedPath} resolves to ${canonicalPath} outside ${contentDir}`;
+        console.error(`[persistence] ${msg}`, {
+          docName: documentName,
+          originalPath: requestedPath,
+          canonical: canonicalPath,
+          contentDir,
+        });
+        throw new Error(msg);
+      }
+
+      const tmpPath = `${canonicalPath}.tmp.${crypto.randomUUID()}`;
+      try {
         await writeFile(tmpPath, markdown, 'utf-8');
-        await rename(tmpPath, filePath);
-        registerWrite(filePath, contentHash(markdown));
+        await rename(tmpPath, canonicalPath);
+        registerWrite(canonicalPath, contentHash(markdown));
       } catch (e) {
         try {
           unlinkSync(tmpPath);
@@ -412,8 +474,8 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         throw e;
       }
       log.info(
-        { filePath, bytes: markdown.length },
-        `[persistence] Wrote ${filePath} (${markdown.length} bytes)`,
+        { filePath: canonicalPath, bytes: markdown.length },
+        `[persistence] Wrote ${canonicalPath} (${markdown.length} bytes)`,
       );
 
       // Update reconciled base after successful store

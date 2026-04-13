@@ -9,7 +9,6 @@ schema_version: 1
 
 - **[AGENTS](AGENTS.md)**
 - **[ARCHITECTURE](ARCHITECTURE.md)**
-- **[CLAUDE](CLAUDE.md)**
 - **[PROJECT](PROJECT.md)**
 - **[README](README.md)**
 - **[STORIES](STORIES.md)**
@@ -20,6 +19,7 @@ schema_version: 1
 - **[evidence](.open-knowledge/catalogs/evidence/INDEX.md)** (11 articles)
 - **[meta](.open-knowledge/catalogs/meta/INDEX.md)** (8 articles)
 - **[packages](.open-knowledge/catalogs/packages/INDEX.md)** (2 articles)
-- **[reports](.open-knowledge/catalogs/reports/INDEX.md)** (945 articles)
-- **[specs](.open-knowledge/catalogs/specs/INDEX.md)** (154 articles)
-- **[tmp](.open-knowledge/catalogs/tmp/INDEX.md)** (32 articles)
+- **[projects](.open-knowledge/catalogs/projects/INDEX.md)** (2 articles)
+- **[reports](.open-knowledge/catalogs/reports/INDEX.md)** (953 articles)
+- **[specs](.open-knowledge/catalogs/specs/INDEX.md)** (164 articles)
+- **[tmp](.open-knowledge/catalogs/tmp/INDEX.md)** (42 articles)
