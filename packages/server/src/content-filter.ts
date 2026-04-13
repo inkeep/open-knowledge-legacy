@@ -7,7 +7,8 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, extname, join, relative } from 'node:path';
+import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import ignore, { type Ignore } from 'ignore';
 import picomatch from 'picomatch';
 import { isSystemDoc } from './cc1-broadcast.ts';
@@ -34,6 +35,10 @@ export interface ContentFilter {
   isDirExcluded(relativePath: string): boolean;
   /** Relative glob patterns for @parcel/watcher ignore option (best-effort). */
   getWatcherIgnoreGlobs(): string[];
+  /** Increment refcount for a directory containing an included .md file. */
+  incrementMdDir(dir: string): void;
+  /** Decrement refcount for a directory; removes key when count reaches 0. */
+  decrementMdDir(dir: string): void;
 }
 
 /**
@@ -116,21 +121,43 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
     (p) => p.length > 0 && !p.startsWith('!') && !p.startsWith('#'),
   );
 
+  // --- Sibling-asset refcount map (D11) ---
+  // Count of included .md files per directory (contentDir-relative).
+  // '' represents the contentDir root itself.
+  const dirCount = new Map<string, number>();
+
+  function isGitignoreExcluded(relativePath: string): boolean {
+    const projectRelPath = contentRelPrefix ? `${contentRelPrefix}/${relativePath}` : relativePath;
+    return ig.ignores(projectRelPath);
+  }
+
+  // Walk contentDir at construct time to populate dirCount.
+  populateDirCount(contentDir, '', isIncluded, isGitignoreExcluded, dirCount);
+
   return {
     isExcluded(relativePath: string): boolean {
-      // Reserved system doc names are always excluded
+      // (0) Reserved system doc names are always excluded (e.g. __system__.md)
       const docName = relativePath.replace(/\.md$/, '');
       if (isSystemDoc(docName)) return true;
-      // relativePath is relative to contentDir (what the watcher provides).
-      // 1. Include check uses contentDir-relative path (patterns like **/*.md)
-      if (!isIncluded(relativePath)) return true;
-      // 2. Exclude check uses projectDir-relative path (gitignore patterns)
-      if (contentOutsideProject) return false;
-      const projectRelPath = contentRelPrefix
-        ? `${contentRelPrefix}/${relativePath}`
-        : relativePath;
-      if (ig.ignores(projectRelPath)) return true;
-      return false;
+
+      // D11 4-step ordered logic:
+      // (1) gitignore/exclude wins — but skip when contentDir is outside projectDir
+      //     (test-isolation case: gitignore rules from projectDir don't apply).
+      if (!contentOutsideProject && isGitignoreExcluded(relativePath)) return true;
+
+      // (2) include-pattern match → include
+      if (isIncluded(relativePath)) return false;
+
+      // (3) sibling-asset rule: extension in ASSET_EXTENSIONS AND dir has included .md
+      const ext = extname(relativePath).slice(1).toLowerCase();
+      if (ASSET_EXTENSIONS.has(ext)) {
+        const dir = dirname(relativePath);
+        const normalizedDir = dir === '.' ? '' : dir;
+        if ((dirCount.get(normalizedDir) ?? 0) > 0) return false;
+      }
+
+      // (4) else → exclude
+      return true;
     },
 
     isDirExcluded(relativePath: string): boolean {
@@ -144,7 +171,56 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
     getWatcherIgnoreGlobs(): string[] {
       return watcherIgnoreGlobs;
     },
+
+    incrementMdDir(dir: string): void {
+      const normalizedDir = dir === '.' ? '' : dir;
+      dirCount.set(normalizedDir, (dirCount.get(normalizedDir) ?? 0) + 1);
+    },
+
+    decrementMdDir(dir: string): void {
+      const normalizedDir = dir === '.' ? '' : dir;
+      const current = dirCount.get(normalizedDir) ?? 0;
+      if (current <= 1) {
+        dirCount.delete(normalizedDir);
+      } else {
+        dirCount.set(normalizedDir, current - 1);
+      }
+    },
   };
+}
+
+/**
+ * Walk contentDir to count included .md files per directory.
+ * Populates the refcount map used by the sibling-asset inclusion rule (D11).
+ */
+function populateDirCount(
+  dir: string,
+  relPath: string,
+  isIncluded: (path: string) => boolean,
+  isGitignoreExcluded: (path: string) => boolean,
+  dirCount: Map<string, number>,
+): void {
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const childRel = relPath ? `${relPath}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      if (entry.name === '.git') continue;
+      populateDirCount(join(dir, entry.name), childRel, isIncluded, isGitignoreExcluded, dirCount);
+    } else if (
+      entry.isFile() &&
+      extname(entry.name).toLowerCase() === '.md' &&
+      isIncluded(childRel) &&
+      !isGitignoreExcluded(childRel)
+    ) {
+      const normalizedDir = relPath === '' ? '' : relPath;
+      dirCount.set(normalizedDir, (dirCount.get(normalizedDir) ?? 0) + 1);
+    }
+  }
 }
 
 /**

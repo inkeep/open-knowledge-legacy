@@ -440,4 +440,162 @@ describe('ContentFilter', () => {
       }
     });
   });
+
+  describe('sibling-asset inclusion rule (D11)', () => {
+    test('includes allowlisted asset when sibling .md exists', () => {
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
+      expect(filter.isExcluded('docs/photo.jpg')).toBe(false);
+      expect(filter.isExcluded('docs/photo.jpeg')).toBe(false);
+      expect(filter.isExcluded('docs/anim.gif')).toBe(false);
+      expect(filter.isExcluded('docs/image.webp')).toBe(false);
+    });
+
+    test('includes SVG asset when sibling .md exists (D12)', () => {
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('docs/diagram.svg')).toBe(false);
+    });
+
+    test('excludes allowlisted asset when no sibling .md exists', () => {
+      mkdirSync(join(projectDir, 'assets'));
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('assets/foo.png')).toBe(true);
+    });
+
+    test('excludes non-allowlisted extension even with sibling .md', () => {
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('docs/script.js')).toBe(true);
+      expect(filter.isExcluded('docs/data.json')).toBe(true);
+    });
+
+    test('exclude takes precedence over sibling-asset rule', () => {
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: ['**/*.png'],
+      });
+
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(true);
+    });
+
+    test('gitignore takes precedence over sibling-asset rule', () => {
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'guide.md'), '# Guide');
+      writeFileSync(join(projectDir, '.gitignore'), '*.png\n');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(true);
+    });
+
+    test('refcount lifecycle: increment then decrement returns to original', () => {
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(true);
+
+      filter.incrementMdDir('docs');
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
+
+      filter.decrementMdDir('docs');
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(true);
+    });
+
+    test('refcount handles multiple .md files in same directory', () => {
+      mkdirSync(join(projectDir, 'docs'));
+      writeFileSync(join(projectDir, 'docs', 'a.md'), '# A');
+      writeFileSync(join(projectDir, 'docs', 'b.md'), '# B');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('docs/img.png')).toBe(false);
+
+      filter.decrementMdDir('docs');
+      expect(filter.isExcluded('docs/img.png')).toBe(false);
+
+      filter.decrementMdDir('docs');
+      expect(filter.isExcluded('docs/img.png')).toBe(true);
+    });
+
+    test('sibling-asset rule works for root-level files', () => {
+      writeFileSync(join(projectDir, 'readme.md'), '# README');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('logo.png')).toBe(false);
+    });
+
+    test('sibling-asset rule with contentDir different from projectDir', () => {
+      const contentDir = join(projectDir, 'content');
+      mkdirSync(join(contentDir, 'docs'), { recursive: true });
+      writeFileSync(join(contentDir, 'docs', 'guide.md'), '# Guide');
+
+      const filter = createContentFilter({
+        projectDir,
+        contentDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      expect(filter.isExcluded('docs/screenshot.png')).toBe(false);
+      expect(filter.isExcluded('docs/script.js')).toBe(true);
+    });
+  });
 });
