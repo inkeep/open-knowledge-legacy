@@ -34,6 +34,7 @@ import { VFile } from 'vfile';
 
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
+import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { positionSlicePlugin } from './position-slice.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
@@ -53,6 +54,9 @@ export interface PipelineOptions {
  * Parse a markdown string to a ProseMirror document node.
  */
 export function parseMd(source: string, opts: PipelineOptions): PmNode {
+  // R23: Protect autolinks and void HTML from remark-mdx claiming
+  const protected_ = protectFromMdx(source);
+
   const processor = unified()
     .use(remarkParse)
     .use(remarkFrontmatter, ['yaml'])
@@ -60,15 +64,19 @@ export function parseMd(source: string, opts: PipelineOptions): PmNode {
     .use(remarkDirective)
     .use(remarkGfm)
     .use(remarkWikiLink)
+    .use(restoreFromMdx) // R23: Restore protected patterns after MDX parsing
     .use(positionSlicePlugin)
     .use(remarkProseMirror, {
       schema: opts.schema,
       handlers: opts.handlers,
     } as RemarkProseMirrorOptions);
 
-  // Create VFile so the position-slice walker can access the source text
-  const file = new VFile(source);
+  // Create VFile so the position-slice walker can access the ORIGINAL source text
+  // (not the protected version) for accurate position slicing
+  const file = new VFile(protected_);
   const tree = processor.parse(file);
+  // Override file.value with original source for position-slice walker
+  file.value = source;
   const transformed = processor.runSync(tree, file);
   const doc = (processor as unknown as { stringify(tree: unknown): PmNode }).stringify(transformed);
   return doc;
