@@ -342,8 +342,10 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     };
   }
 
-  // MDX nodes — store raw source for byte-identical round-trip (US-008)
+  // MDX + expression + directive nodes — all stored as jsxComponent atoms
+  // with raw source for byte-identical round-trip (US-008, D12)
   if (n.jsxComponent) {
+    // MDX JSX elements
     handlers.mdxJsxFlowElement = (node: any) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? '',
@@ -352,9 +354,8 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? '',
       });
-  }
-  // MDX expressions and ESM — store in jsxComponent content
-  if (n.jsxComponent) {
+
+    // MDX expressions and ESM
     handlers.mdxFlowExpression = (node: any) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? `{${node.value ?? ''}}`,
@@ -367,10 +368,8 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? node.value ?? '',
       });
-  }
 
-  // Directive nodes — store raw source for round-trip (D12: registered day one)
-  if (n.jsxComponent) {
+    // Directive nodes
     handlers.containerDirective = (node: any) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? '',

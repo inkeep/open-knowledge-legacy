@@ -140,6 +140,50 @@ describe('Observer B: Y.Text → XmlFragment', () => {
     // Observer B should still be functional after handling the update
     cleanup();
   });
+
+  test('Observer B skips incomplete MDX gracefully and recovers on next valid write', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, '# Heading\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    await wait();
+
+    // XmlFragment should have the heading
+    const beforeJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const beforeMd = mdManager.serialize(beforeJson);
+    expect(beforeMd).toContain('# Heading');
+
+    // Write incomplete MDX to Y.Text — remark-mdx/acorn will throw a parse error.
+    // Observer B should catch this and keep XmlFragment at its last valid state.
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, '<Chart data={[1,2,\n');
+    }, 'user-edit');
+
+    await wait();
+
+    // XmlFragment should still contain the heading (last valid state preserved)
+    const duringJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const duringMd = mdManager.serialize(duringJson);
+    expect(duringMd).toContain('# Heading');
+
+    // Write valid markdown — Observer B should recover
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, 'Recovered content\n');
+    }, 'user-edit');
+
+    await wait();
+
+    const afterJson = yXmlFragmentToProsemirrorJSON(fragment);
+    const afterMd = mdManager.serialize(afterJson);
+    expect(afterMd).toContain('Recovered content');
+
+    cleanup();
+  });
 });
 
 describe('WikiLink bridge regression', () => {

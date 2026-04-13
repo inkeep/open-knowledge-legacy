@@ -20,12 +20,9 @@
 
 import { findParentNode, InputRule, mergeAttributes, Node, wrappingInputRule } from '@tiptap/core';
 import type { NodeType, Node as PmNode } from '@tiptap/pm/model';
+import { liftListItem as pmLiftListItem, wrapInList as pmWrapInList } from '@tiptap/pm/schema-list';
 import type { EditorState, Transaction } from '@tiptap/pm/state';
 import { findWrapping } from '@tiptap/pm/transform';
-import {
-  liftListItem as pmLiftListItem,
-  wrapInList as pmWrapInList,
-} from 'prosemirror-schema-list';
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {

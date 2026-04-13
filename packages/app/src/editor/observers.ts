@@ -433,10 +433,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
         return;
       }
 
-      let pmNode: ReturnType<typeof schema.nodeFromJSON>;
+      let parsedJson: ReturnType<typeof mdManager.parse>;
       try {
-        const parsedJson = mdManager.parse(body);
-        pmNode = schema.nodeFromJSON(parsedJson);
+        parsedJson = mdManager.parse(body);
       } catch (parseErr) {
         // MDX expression attributes (e.g., `<Chart data={[1,2,3]} />`) and other
         // partial syntax can cause remark-mdx / acorn parse failures while the user
@@ -447,6 +446,11 @@ export function setupObservers(deps: ObserverDeps): () => void {
         console.debug('[Observer B] Parse skipped (partial/invalid markdown):', parseErr);
         return;
       }
+
+      // Schema validation errors (e.g., malformed PM JSON from a handler bug) are
+      // NOT transient — they indicate a pipeline regression and must reach onSyncError
+      // via the outer catch. Kept outside the parse try/catch deliberately.
+      const pmNode = schema.nodeFromJSON(parsedJson);
 
       doc.transact(() => {
         const meta = { mapping: new Map(), isOMark: new Map() };
