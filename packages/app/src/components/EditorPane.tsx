@@ -6,16 +6,24 @@ import { PageListProvider } from './PageListContext';
 import type { TimelineEntry } from './TimelinePanel';
 import { TimelinePanel } from './TimelinePanel';
 
+/**
+ * Editor mode enum (TQ8) — single source of truth for the 3-state editor.
+ * Replaces the prior `isSourceMode: boolean` + `previewEntry: TimelineEntry | null`
+ * two-boolean encoding. Booleans don't scale past 2 states.
+ */
+export type EditorMode = 'wysiwyg' | 'source' | 'diff';
+
 export function EditorPane() {
-  const [isSourceMode, setIsSourceMode] = useState(false);
+  const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Remembers which editing mode to restore after exiting diff preview. */
+  const modeBeforeDiffRef = useRef<'wysiwyg' | 'source'>('wysiwyg');
 
-  // Clean up error dismissal timer on unmount
   useEffect(() => {
     return () => {
       if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
@@ -26,16 +34,27 @@ export function EditorPane() {
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
+      // "Now" clicked — exit diff mode, restore prior editing mode
       setPreviewEntry(null);
+      setEditorMode(modeBeforeDiffRef.current);
     } else {
+      if (editorMode !== 'diff') {
+        modeBeforeDiffRef.current = editorMode === 'source' ? 'source' : 'wysiwyg';
+      }
       setPreviewEntry(entry);
+      setEditorMode('diff');
     }
     setRestoreError(null);
   }
 
   function handleExitPreview() {
     setPreviewEntry(null);
+    setEditorMode(modeBeforeDiffRef.current);
     setRestoreError(null);
+  }
+
+  function handleModeChange(mode: 'wysiwyg' | 'source') {
+    setEditorMode(mode);
   }
 
   async function handleSaveVersion() {
@@ -66,6 +85,7 @@ export function EditorPane() {
       });
       if (res.ok) {
         setPreviewEntry(null);
+        setEditorMode(modeBeforeDiffRef.current);
         setRestoreError(null);
       } else {
         setRestoreError('Restore failed — document unchanged');
@@ -74,7 +94,8 @@ export function EditorPane() {
       }
     } catch {
       setRestoreError('Restore failed — document unchanged');
-      setTimeout(() => setRestoreError(null), 4000);
+      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
+      errorTimerRef.current = setTimeout(() => setRestoreError(null), 4000);
     }
     setRestoring(false);
   }
@@ -82,8 +103,8 @@ export function EditorPane() {
   return (
     <PageListProvider>
       <EditorHeader
-        isSourceMode={isSourceMode}
-        onSourceModeChange={setIsSourceMode}
+        editorMode={editorMode}
+        onModeChange={handleModeChange}
         onTimelineToggle={() => setTimelineOpen((o) => !o)}
         onSaveVersion={handleSaveVersion}
         saving={saving}
@@ -94,7 +115,7 @@ export function EditorPane() {
         onRestore={handleRestore}
       />
       <EditorArea
-        isSourceMode={isSourceMode}
+        editorMode={editorMode}
         previewEntry={previewEntry}
         onNoDiff={handleExitPreview}
       />

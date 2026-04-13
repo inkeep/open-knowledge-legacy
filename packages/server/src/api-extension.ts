@@ -40,8 +40,18 @@ import {
   syncTextToFragment,
 } from './agent-sessions.ts';
 
-/** Transaction origin for rollback — colocated with AGENT_WRITE_ORIGIN for discoverability. */
-const ROLLBACK_ORIGIN = 'rollback-apply';
+/**
+ * Transaction origin for rollback (TQ10 — typed LocalTransactionOrigin).
+ *
+ * skipStoreHooks: false — L1 persistence SHOULD fire after rollback so the
+ * restored content reaches disk through the normal pipeline. The file-watcher's
+ * registerWrite hash check prevents the self-write from re-triggering reconciliation.
+ */
+const ROLLBACK_ORIGIN = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'rollback-apply' },
+};
 
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
@@ -325,39 +335,6 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
-}
-
-/**
- * Handle syncTextToFragment failure after an undo/redo CRDT operation by
- * attempting compensation (reverse the operation) and responding with a
- * structured error. Shared between the undo and redo handlers so the
- * compensation protocol stays in sync.
- */
-function handleCompensationError(
-  res: ServerResponse,
-  syncErr: unknown,
-  compensateFn: () => void,
-  label: string,
-): void {
-  let compensationFailed = false;
-  try {
-    compensateFn();
-  } catch (compensateErr) {
-    compensationFailed = true;
-    console.error(`[${label}] Compensation also failed:`, compensateErr);
-  }
-  console.error(`[${label}]`, syncErr);
-  json(res, 500, {
-    ok: false,
-    error: `Sync failed after ${label.replace('agent-', '')}`,
-    compensationFailed,
-    ...(compensationFailed
-      ? {
-          warning:
-            'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
-        }
-      : {}),
-  });
 }
 
 function json(res: ServerResponse, status: number, data: unknown): void {
@@ -995,135 +972,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       console.error('[agent-patch]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleAgentUndoStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const docName = resolveAlias(url.searchParams.get('docName') || 'test-doc');
-      if (isSystemDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      if (!sessionManager.hasSession(docName)) {
-        json(res, 200, { ok: true, canUndo: false, canRedo: false });
-        return;
-      }
-      const um = sessionManager.getExistingUndoManager(docName);
-      json(res, 200, {
-        ok: true,
-        canUndo: um?.canUndo() ?? false,
-        canRedo: um?.canRedo() ?? false,
-      });
-    } catch (e) {
-      console.error('[agent-undo-status]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawDocName = 'test-doc';
-      try {
-        const raw = await readBody(req);
-        if (raw.length > 0) {
-          try {
-            const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-            if (typeof body.docName === 'string' && body.docName.length > 0)
-              rawDocName = body.docName;
-          } catch {
-            json(res, 400, { ok: false, error: 'Invalid JSON body' });
-            return;
-          }
-        }
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      const dc = await sessionManager.getSession(docName);
-      const um = sessionManager.getUndoManager(dc);
-      if (!um.canUndo()) {
-        json(res, 200, { ok: false, canUndo: false, canRedo: um.canRedo() });
-        return;
-      }
-      um.undo();
-      try {
-        syncTextToFragment(dc.document);
-      } catch (syncErr) {
-        handleCompensationError(res, syncErr, () => um.redo(), 'agent-undo');
-        return;
-      }
-      console.log('[agent-undo] Undo performed');
-      json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
-    } catch (e) {
-      console.error('[agent-undo]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleAgentRedo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawDocName = 'test-doc';
-      try {
-        const raw = await readBody(req);
-        if (raw.length > 0) {
-          try {
-            const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-            if (typeof body.docName === 'string' && body.docName.length > 0)
-              rawDocName = body.docName;
-          } catch {
-            json(res, 400, { ok: false, error: 'Invalid JSON body' });
-            return;
-          }
-        }
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      const dc = await sessionManager.getSession(docName);
-      const um = sessionManager.getUndoManager(dc);
-      if (!um.canRedo()) {
-        json(res, 200, { ok: false, canUndo: um.canUndo(), canRedo: false });
-        return;
-      }
-      um.redo();
-      try {
-        syncTextToFragment(dc.document);
-      } catch (syncErr) {
-        handleCompensationError(res, syncErr, () => um.undo(), 'agent-redo');
-        return;
-      }
-      console.log('[agent-redo] Redo performed');
-      json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
-    } catch (e) {
-      console.error('[agent-redo]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -2134,9 +1982,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
-    '/api/agent-undo-status': handleAgentUndoStatus,
-    '/api/agent-undo': handleAgentUndo,
-    '/api/agent-redo': handleAgentRedo,
     '/api/save-version': handleSaveVersion,
     '/api/history': handleHistory,
     '/api/diff': handleDiff,

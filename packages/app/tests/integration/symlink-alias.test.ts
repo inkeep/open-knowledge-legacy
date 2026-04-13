@@ -14,14 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from '@inkeep/open-knowledge-server';
 import { WebSocketServer } from 'ws';
-import {
-  agentPatch,
-  agentRedo,
-  agentUndo,
-  agentWriteMd,
-  type TestServer,
-  wait,
-} from './test-harness';
+import { agentPatch, agentWriteMd, type TestServer, wait } from './test-harness';
 
 let server: TestServer;
 
@@ -233,55 +226,9 @@ describe('QA-013: agent-patch via alias', () => {
   });
 });
 
-// ─── QA-014: agent-undo-status via alias ───
-
-describe('QA-014: agent-undo-status via alias', () => {
-  test('undo-status via alias queries canonical session', async () => {
-    // Write content via canonical to establish undo history
-    await agentWriteMd(server.port, '# Undo Test', { docName: 'target', position: 'replace' });
-    await wait(300);
-
-    // Check undo status via alias
-    const res = await fetch(`http://localhost:${server.port}/api/agent-undo-status?docName=foo`);
-    const body = (await res.json()) as { ok: boolean; canUndo: boolean; canRedo: boolean };
-    expect(body.ok).toBe(true);
-    expect(body.canUndo).toBe(true);
-  });
-});
-
-// ─── QA-003: Agent workflow through alias: write, undo, redo ───
-
-describe('QA-003: agent write + undo + redo through alias', () => {
-  test('full agent workflow via alias all route to canonical Y.Doc', async () => {
-    // Reset to clean state
-    await agentWriteMd(server.port, '# Base', { docName: 'target', position: 'replace' });
-    await wait(300);
-
-    // Write via alias
-    await agentWriteMd(server.port, '# From Alias', { docName: 'foo', position: 'replace' });
-    await wait(300);
-
-    let readRes = await fetch(`http://localhost:${server.port}/api/document?docName=target`);
-    let body = (await readRes.json()) as { ok: boolean; content: string };
-    expect(body.content).toContain('From Alias');
-
-    // Undo via alias
-    await agentUndo(server.port, 'foo');
-    await wait(300);
-
-    readRes = await fetch(`http://localhost:${server.port}/api/document?docName=target`);
-    body = (await readRes.json()) as { ok: boolean; content: string };
-    expect(body.content).not.toContain('From Alias');
-
-    // Redo via alias
-    await agentRedo(server.port, 'foo');
-    await wait(300);
-
-    readRes = await fetch(`http://localhost:${server.port}/api/document?docName=target`);
-    body = (await readRes.json()) as { ok: boolean; content: string };
-    expect(body.content).toContain('From Alias');
-  });
-});
+// QA-014 (agent-undo-status via alias) and QA-003 (agent write + undo + redo
+// through alias) removed in V0-16 TQ13 — broken agent-undo scaffold removed.
+// Proper per-origin undo ships in V0-14.
 
 // ─── QA-002: Alias and canonical route to same content via API ───
 

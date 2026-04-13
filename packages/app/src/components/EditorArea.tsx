@@ -8,16 +8,17 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
+import type { EditorMode } from './EditorPane';
 import { PreviewEditor } from './PreviewEditor';
 import type { TimelineEntry } from './TimelinePanel';
 
 interface EditorAreaProps {
-  isSourceMode: boolean;
+  editorMode: EditorMode;
   previewEntry: TimelineEntry | null;
   onNoDiff?: () => void;
 }
 
-export function EditorArea({ isSourceMode, previewEntry, onNoDiff }: EditorAreaProps) {
+export function EditorArea({ editorMode, previewEntry, onNoDiff }: EditorAreaProps) {
   const { activeDocName, activeProvider } = useDocumentContext();
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -34,7 +35,7 @@ export function EditorArea({ isSourceMode, previewEntry, onNoDiff }: EditorAreaP
 
     let cancelled = false;
     const sha = previewEntry.sha;
-    const docName = activeDocName; // narrowed by guard above
+    const docName = activeDocName;
     setPreviewLoading(true);
     setDiffLines(null);
 
@@ -83,7 +84,8 @@ export function EditorArea({ isSourceMode, previewEntry, onNoDiff }: EditorAreaP
     );
   }
 
-  const isPreviewMode = previewEntry !== null && previewEntry.sha !== '';
+  const isDiffMode = editorMode === 'diff';
+  const isSourceMode = editorMode === 'source';
 
   return (
     // Wrapper div takes flex-1 in the flex-col SidebarInset, giving ResizablePanelGroup
@@ -96,20 +98,19 @@ export function EditorArea({ isSourceMode, previewEntry, onNoDiff }: EditorAreaP
               className="subtle-scrollbar h-full overflow-y-auto"
               style={{ overflowAnchor: 'auto' }}
             >
-              {/* Diff preview — shown on top of (hidden) live editor */}
-              {isPreviewMode && previewLoading && (
+              {/* Diff view — shown when editorMode === 'diff' */}
+              {isDiffMode && previewLoading && (
                 <div className="flex items-center justify-center py-16">
                   <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
                 </div>
               )}
-              {isPreviewMode && !previewLoading && diffLines !== null && (
+              {isDiffMode && !previewLoading && diffLines !== null && (
                 <PreviewEditor lines={diffLines} />
               )}
 
-              {/* CSS-based show/hide — React Activity runs effect cleanup on 'hidden' which destroys
-                  the CodeMirror/TipTap views. display:none keeps DOM in document without triggering
-                  React's effect lifecycle, so both editors stay alive across mode switches. */}
-              <div style={{ display: isPreviewMode ? 'none' : undefined }}>
+              {/* CSS-based show/hide — display:none keeps DOM alive without triggering
+                  React's effect lifecycle, so both editors survive mode switches. */}
+              <div style={{ display: isDiffMode ? 'none' : undefined }}>
                 <div className={isSourceMode ? 'h-full' : 'hidden'}>
                   <SourceEditor
                     ytext={activeProvider.document.getText('source')}

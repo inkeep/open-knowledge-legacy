@@ -5,8 +5,8 @@ import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { AgentUndoButton } from '@/presence/AgentUndoButton';
 import { PresenceBar } from '@/presence/PresenceBar';
+import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 import { ThemeToggle } from './ThemeToggle';
@@ -14,8 +14,8 @@ import type { TimelineEntry } from './TimelinePanel';
 import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 
 interface EditorHeaderProps {
-  isSourceMode: boolean;
-  onSourceModeChange: (value: boolean) => void;
+  editorMode: EditorMode;
+  onModeChange: (mode: 'wysiwyg' | 'source') => void;
   onTimelineToggle: () => void;
   onSaveVersion: () => void;
   saving: boolean;
@@ -27,8 +27,8 @@ interface EditorHeaderProps {
 }
 
 export function EditorHeader({
-  isSourceMode,
-  onSourceModeChange,
+  editorMode,
+  onModeChange,
   onTimelineToggle,
   onSaveVersion,
   saving,
@@ -41,7 +41,7 @@ export function EditorHeader({
   const { activeDocName } = useDocumentContext();
 
   const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
-  const isPreviewMode = previewEntry !== null && previewEntry.sha !== '';
+  const isDiffMode = editorMode === 'diff';
   const [confirmingRestore, setConfirmingRestore] = useState(false);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: previewEntry is a prop; re-run on identity change is intentional
@@ -62,12 +62,13 @@ export function EditorHeader({
         <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
       </div>
 
-      {!isPreviewMode && (
+      {/* Normal editing mode: Visual/Markdown toggle */}
+      {!isDiffMode && (
         <ToggleGroup
           type="single"
-          value={isSourceMode ? 'source' : 'visual'}
+          value={editorMode === 'source' ? 'source' : 'visual'}
           onValueChange={(v) => {
-            if (v) onSourceModeChange(v === 'source');
+            if (v) onModeChange(v === 'source' ? 'source' : 'wysiwyg');
           }}
           aria-label="Editor mode"
           variant="segmented"
@@ -87,7 +88,8 @@ export function EditorHeader({
         </ToggleGroup>
       )}
 
-      {isPreviewMode && previewEntry && !confirmingRestore && (
+      {/* Diff mode: version label + controls */}
+      {isDiffMode && previewEntry && !confirmingRestore && (
         <div className="flex items-center gap-2 shrink-0">
           <span
             className={`text-xs ${restoreError ? 'text-destructive' : 'text-muted-foreground'}`}
@@ -104,7 +106,8 @@ export function EditorHeader({
         </div>
       )}
 
-      {isPreviewMode && previewEntry && confirmingRestore && (
+      {/* Restore confirmation */}
+      {isDiffMode && previewEntry && confirmingRestore && (
         <div className="flex items-center gap-2 shrink-0">
           <span className="text-xs text-muted-foreground">
             Replace current content with this version?
@@ -124,7 +127,7 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        {!isPreviewMode && (
+        {!isDiffMode && (
           <Button
             variant="ghost"
             size="sm"
@@ -146,7 +149,6 @@ export function EditorHeader({
           <Clock className="size-4" />
         </Button>
         <PresenceBar />
-        <AgentUndoButton />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
         <ThemeToggle />
       </div>
