@@ -168,8 +168,11 @@ export function positionSlicePlugin() {
         case 'mdxJsxTextElement':
         case 'mdxFlowExpression':
         case 'mdxTextExpression':
-        case 'mdxjsEsm': {
-          // Capture raw MDX source for byte-identical round-trip
+        case 'mdxjsEsm':
+        case 'containerDirective':
+        case 'leafDirective':
+        case 'textDirective': {
+          // Capture raw source for byte-identical round-trip
           node.data.sourceRaw = source.slice(startOff, endOff);
           break;
         }

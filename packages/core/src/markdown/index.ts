@@ -318,7 +318,10 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     };
   }
   if (listItemNode) {
-    handlers.listItem = toPmNode(listItemNode);
+    handlers.listItem = toPmNode(listItemNode, (node: any) => ({
+      checked: node.checked ?? null,
+      spread: !!node.spread,
+    }));
   }
 
   // ── Tier C custom handlers ──
@@ -400,6 +403,22 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
     handlers.mdxjsEsm = (node: any) =>
       n.jsxComponent.createAndFill({
         content: node.data?.sourceRaw ?? node.value ?? '',
+      });
+  }
+
+  // Directive nodes — store raw source for round-trip (D12: registered day one)
+  if (n.jsxComponent) {
+    handlers.containerDirective = (node: any) =>
+      n.jsxComponent.createAndFill({
+        content: node.data?.sourceRaw ?? '',
+      });
+    handlers.leafDirective = (node: any) =>
+      n.jsxComponent.createAndFill({
+        content: node.data?.sourceRaw ?? '',
+      });
+    handlers.textDirective = (node: any) =>
+      n.jsxComponent.createAndFill({
+        content: node.data?.sourceRaw ?? '',
       });
   }
 
@@ -509,7 +528,10 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (n.listItem) {
-    nodeHandlers.listItem = fromPmNode('listItem');
+    nodeHandlers.listItem = fromPmNode('listItem', (pmNode: any) => ({
+      checked: pmNode.attrs.checked ?? null,
+      spread: pmNode.attrs.spread ?? false,
+    }));
   }
 
   // Table

@@ -198,8 +198,12 @@ export const toMarkdownHandlers: Record<string, any> = {
 
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
-      const marker = ordered ? `${counter + i}${delim}` : (node.data?.bulletMarker ?? bullet);
-      const pad = ' '.repeat(marker.length + 1);
+      const baseMarker = ordered ? `${counter + i}${delim}` : (node.data?.bulletMarker ?? bullet);
+      // GFM task-list checkbox
+      let marker = baseMarker;
+      if (child.checked === true) marker += ' [x]';
+      else if (child.checked === false) marker += ' [ ]';
+      const pad = ' '.repeat(baseMarker.length + 1);
       const itemContent = state.containerFlow(child, {
         before: '\n',
         after: '\n',
