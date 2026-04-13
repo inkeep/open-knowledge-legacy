@@ -2,14 +2,14 @@
 
 **Last verified:** 2026-04-13
 **Traces to:** Consolidates 4 prior planning surfaces (see Provenance)
-**Appetite:** Now phase = 6-8 weeks; Next/Later TBD
+**Appetite:** TBD
 **Scope discipline:** This document covers UNFINISHED work only. Already-shipped foundations are referenced as substrate, not enumerated as stories.
 
 ---
 
 ## Strategic context
 
-**Situation.** Open Knowledge's foundational stack is shipping fast — multi-file documents, provider pool, wiki-links + backlinks, file watcher with ContentFilter, shadow repo for attribution, bidirectional observer sync, dark mode, markdown source-text fidelity, graceful shutdown data-loss fix, symlink-safe sync, multi-editor MCP config, enriched read tools. 20+ PRs merged in the 48 hours before this plan was written. The CRDT-collaborative MDX editor with agent co-creation via MCP is real and runnable today.
+**Situation.** Open Knowledge's foundational stack is shipping fast — multi-file documents, provider pool, wiki-links + backlinks, file watcher with ContentFilter, shadow repo for attribution, bidirectional observer sync, dark mode, markdown source-text fidelity, graceful shutdown data-loss fix, symlink-safe sync, multi-editor MCP config, enriched read tools. Shipping velocity is high. The CRDT-collaborative MDX editor with agent co-creation via MCP is real and runnable today.
 
 **Complication.** Despite shipping velocity, the product is not yet "v0 launchable" — it cannot be shown publicly without embarrassing day-0 gaps and silent data-integrity bugs. Three classes of unfinished work block public launch:
 1. **Existence-stakes UX** — users cannot delete, rename, move, or duplicate files from the UI; cannot Cmd+Z their own typo (`StarterKit.undoRedo: false`); cannot find a doc by name in a 50+ doc KB; see "No files yet" with no affordance on first run.
@@ -20,7 +20,7 @@ The intersection: each of these classes alone is fixable; together they form a "
 
 **Resolution.** A single "v0 launch" project that consolidates the four prior planning surfaces (see Provenance), focuses exclusively on unfinished work, and phases into Now (must-have for launch) / Next (should-have to feel complete) / Later (polish + gated). Each story carries its own ownership signal and current PR/spec status so the team can pick up work without re-discovery.
 
-**Operating model — feature owners ship UX; Sarah polishes after. Sarah blocks nobody.** Feature owners own UX tightly bound to their feature's scope and ship it functional + to a high-quality bar. Sarah reviews and polishes after — she is NOT in the critical path for any story. No exceptions. Sarah's concentrated ownership is cross-cutting patterns (panel-docking, keyboard shortcut scheme, visual design language) which she publishes as reference docs asynchronously — feature owners can ship without them and Sarah pattern-reconciles after. See "Team ownership reference" for per-person scope.
+**Operating model — feature owners are empowered to ship.** Each feature owner owns the UX tightly bound to their feature and ships it functional + to a high-quality bar. Sarah focuses on cross-cutting design patterns (panel-docking, keyboard shortcut scheme, visual design language), novel UX surfaces (onboarding), and design reviews across the product. She publishes pattern references that feature owners build to, and provides design feedback as features ship.
 
 **Multi-dimensional value.**
 
@@ -38,7 +38,7 @@ Internal: closing the silent data-integrity bugs (V0-1 process safety, V0-12 slu
 - **[NEVER in v0]** Multi-human concurrent editing across devices. Architecture supports it via Yjs awareness; product is solo + AI for v0. Promote when: cloud sync infrastructure exists.
 - **[NEVER in v0]** Cloud SaaS / hosted backend. v0 is local-first. Promote: separate bet entirely.
 - **[NEVER in v0]** Plugin/extension marketplace. Custom React components via mdx-components.tsx is the extension model; no separate plugin API. Promote: not foreseen.
-- **[NOT NOW]** Full-text search system (Orama/FTS5/pgvector). Standalone bet — 8 research reports completed; 4-6 week system integration. Promote: when Now phase ships and search is the biggest remaining gap.
+- **[NOT NOW]** Full-text search system (Orama/FTS5/pgvector). Standalone bet — 8 research reports completed; separate project. Promote: when Now phase ships and search is the biggest remaining gap.
 - **[NOT NOW]** Electron native distribution. Already spec'd separately (`specs/2026-04-11-electron-desktop-app/`). v0 ships in CLI + web form. Promote: when Electron implementation begins (V0-20 desktop build prep is the gating story).
 - **[NOT NOW]** Multi-project switching (registry + `openknowledge list`/`open` + in-editor switcher). Cross-project navigation, separate bet. Lives as `stories/init-and-project-switching/` Part B. Promote: when v0 ships and users have multiple projects registered.
 - **[NOT NOW]** Tracked changes / inline suggestion mode (Google Docs-style green/red proposals). PROJECT.md PQ11 explicitly parked. Lives in a combined "agent-proposal review experience" design space with branching/draft UX (PQ9). Promote: dedicated design pass for the bundle.
@@ -154,6 +154,18 @@ Every agent-facing MCP tool must return **enriched data beyond what native tools
 
 Each section below contains one team member's ownership summary, their stories in priority order (Now → Next → Later → Reach), and cross-references to shared stories owned by others.
 
+**Jump to person:** [Miles](#miles--collaboration--shadow-git--presence) · [Mike](#mike--knowledge-graph--content--search) · [Andrew](#andrew--platform--ops--system-level-infrastructure) · [Tim](#tim--agent-infrastructure--mcp--virtualization) · [Dima](#dima--sidebar--crud--docs-system-engineering) · [Sarah](#sarah--head-of-design--design-engineer) · [Nick](#nick--editor-internals--crdt--mdx-pipeline)
+
+| Person | Now | Next | Later | Reach |
+|--------|-----|------|-------|-------|
+| **[Miles](#miles--collaboration--shadow-git--presence)** | V0-14, V0-16 | V0-17 | | |
+| **[Mike](#mike--knowledge-graph--content--search)** | V0-8, V0-12 | V0-5, V0-11, V0-3, V0-21 | V0-13 | V0-25 |
+| **[Andrew](#andrew--platform--ops--system-level-infrastructure)** | V0-1, V0-2 | | V0-20 | |
+| **[Tim](#tim--agent-infrastructure--mcp--virtualization)** | | | | V0-24 |
+| **[Dima](#dima--sidebar--crud--docs-system-engineering)** | V0-4 | V0-9, V0-10 | V0-18, V0-19 | V0-22, V0-23 |
+| **[Sarah](#sarah--head-of-design--design-engineer)** | V0-6, V0-7 | | | |
+| **[Nick](#nick--editor-internals--crdt--mdx-pipeline)** | V0-14 prereq | | | |
+
 ---
 
 ### Miles — Collaboration / Shadow Git / Presence
@@ -195,7 +207,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Source.** Polished audit `stories/collaboration-capabilities-audit/STORY.md` §3 Area B + §6 dependency graph + §13 greenfield directive + §15 ownership split. `specs/2026-04-10-undo-architecture/SPEC.md` is the underlying spec (needs update to reflect greenfield reframe — D7 flipped, R7 dropped, AgentIdentity added).
 
-**Status.** Nick's TQ5/TQ6 starting now (zero-coordination, parallel with Miles's V0-16). Miles's UM wiring starts after V0-16 + TQ5 converge. Estimate: Nick's track ~1 week; Miles's UM wiring ~2 weeks after prerequisites land. Total calendar: ~3-4 weeks (parallelized with V0-16).
+**Status.** Nick's TQ5/TQ6 starting now (zero-coordination, parallel with Miles's V0-16). Miles's UM wiring starts after V0-16 + TQ5 converge.  ).
 
 ---
 
@@ -264,7 +276,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Owners.** **Miles** (all of V0-16). Nick consulted on TQ10 (typed origins shape) — one 5-minute conversation then independent.
 
-**Status.** **PR #39 open**, Miles owns delivery. Approved-with-suggestions; needs rebase + 17 review comments + greenfield expanded scope. Estimate: **3-4 weeks** (was 1-2 before greenfield expansion). Includes flash reconciliation, diff library integration, scaffold removal, and 8 architectural-precedent items.
+**Status.** **PR #39 open**, Miles owns delivery. Approved-with-suggestions; needs rebase + 17 review comments + greenfield expanded scope.  Includes flash reconciliation, diff library integration, scaffold removal, and 8 architectural-precedent items.
 
 **Lateral.** Coordinates with V0-14 on rollback-undo origin interaction (L2). Coordinates with V0-17 (persistence indicator) — if Timeline ships first, persistence indicator becomes a badge on the Timeline button.
 
@@ -272,7 +284,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Source.** Miles's audit Area A (full detail in `stories/collaboration-capabilities-audit/STORY.md` §3 Area A). PR #39 is the in-flight delivery.
 
-**Status / owner signals.** **PR #39 open**, Miles owns delivery. Approved-with-suggestions, 17 pending inline recommendations. Branch diverged from main at `1dd65a0`; needs rebase across PRs #61, #62, #65, #71. Estimate: 1-2 weeks of close-out (rebase + review + L1/L2 decisions), assuming Miles is the executor.
+**Status / owner signals.** **PR #39 open**, Miles owns delivery. Approved-with-suggestions, 17 pending inline recommendations. Branch diverged from main at `1dd65a0`; needs rebase across PRs #61, #62, #65, #71. 
 
 ---
 
@@ -299,7 +311,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Owners.** **Miles** end-to-end (1:1 with his change-attribution / shadow-git territory — feature-owner principle applies). Sarah consulted on visual design (dot + tooltip micro-interaction). Backend infra already shipped (PR #62 degraded-boot signal); Miles wires the UI.
 
-**Status.** Backend infrastructure shipped (PR #62 — degraded boot signal). UI not started. Estimate: 0.5-1 week.
+**Status.** Backend infrastructure shipped (PR #62 — degraded boot signal). UI not started.
 
 ---
 
@@ -345,7 +357,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Source.** Mike's PR #76 (`feat/graph_view` — 296 additions, 2 deletions, 7 files changed). Previously carved out of v0-launch as "parity-for-parity's-sake"; reframed 2026-04-13 to include as v0 story since Mike is actively shipping and the differentiation argument holds.
 
-**Status / owner signals.** **PR #76 OPEN**, Mike authored. Remaining work: PR review, performance validation at realistic KB sizes, layout/placement decision in `EditorArea.tsx` (panel vs overlay vs separate view), accessibility pass (keyboard navigation for graph). Estimate: 1-2 weeks of close-out, mostly review + polish of existing PR.
+**Status / owner signals.** **PR #76 OPEN**, Mike authored. Remaining work: PR review, performance validation at realistic KB sizes, layout/placement decision in `EditorArea.tsx` (panel vs overlay vs separate view), accessibility pass (keyboard navigation for graph). 
 
 ---
 
@@ -356,7 +368,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Value.** Customer-correctness: any user with non-ASCII content (Latin-accented, CJK, Cyrillic, Arabic, emoji-laden) is hitting a silent destructive bug today. Platform: the slug function is a shared identifier producer used in 4+ contexts (page targets, heading anchors, heading picker, unresolved-link creation) — fixing it once ripples atomically. **GTM (negative):** shipping international users a vault that destructively mangles links on every save is a trust cliff.
 
-**One-way door:** the rewrite cost of fixing this AFTER users accumulate content is linear in vault size. Every day delayed = more migration work.
+**One-way door:** the rewrite cost of fixing this AFTER users accumulate content is linear in vault size. Delayed fixing accumulates more content under the broken slug.
 
 **Constraints.**
 - Slug function lives in `@inkeep/open-knowledge-core`; `extractHeadings`, `HeadingAnchors`, `buildUnresolvedWikiLinkAttrs` all consume.
@@ -375,7 +387,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Source.** Mike's wiki-links-next Story 1 (full SCR + invariants + AC available in `stories/wiki-links-next/STORY.md` Story 1).
 
-**Status / owner signals.** Mike's. Scoped in detail. Migration path open. Estimate: ~1 week + migration testing.
+**Status / owner signals.** Mike's. Scoped in detail. Migration path open. 
 
 ---
 
@@ -404,7 +416,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Source.** ED-3 from day-0-editor-completeness + Mike's wiki-links-next Story 3 (consolidated; full detail in Mike's STORY.md Story 3 — invariants I1-I8, AC1-AC7, items table).
 
-**Status / owner signals.** Not started. Mike's Story 3 has detailed scoping. TQ5 staff-level decision needed (atomic strategy). Estimate: 2-3 weeks.
+**Status / owner signals.** Not started. Mike's Story 3 has detailed scoping. TQ5 staff-level decision needed (atomic strategy). 
 
 ---
 
@@ -434,7 +446,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Owners.** **Mike** owns delivery end-to-end (his knowledge-graph domain). Consumes Sarah's panel-docking pattern. Mike works with Dima on scroll/performance if active-state behavior differs from outline.
 
-**Status.** Not started. Backend APIs all exist and are tested (`/api/forward-links`, `/api/orphans`, `/api/hubs`). Pure frontend work. Estimate: 1-2 weeks.
+**Status.** Not started. Backend APIs all exist and are tested (`/api/forward-links`, `/api/orphans`, `/api/hubs`). Pure frontend work. 
 
 ---
 
@@ -458,7 +470,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Source.** Mike's wiki-links-next Story 4 (full detail in Mike's STORY.md Story 4 — invariants I1-I6, AC1-AC5).
 
-**Status / owner signals.** Not started. Mike's. Estimate: 1 week.
+**Status / owner signals.** Not started. Mike's. 
 
 ---
 
@@ -486,7 +498,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Owners.** **Mike** end-to-end (his knowledge-graph territory). MCP tool registration coordinates with Tim (dual-surface pattern — UI panel + MCP tool for agents).
 
-**Status.** Not started. Estimate: ~1 week (Tier 1 scope).
+**Status.** Not started. 
 
 ---
 
@@ -504,7 +516,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Constraints.** Depends on V0-12 slug correctness (Unicode bug propagates to false-negatives). Substring algorithm choice (Aho-Corasick vs regex) is implementation detail.
 
-**Source.** Mike's wiki-links-next Story 2 (full detail in Mike's STORY.md Story 2). Estimate: 1 week (after V0-12).
+**Source.** Mike's wiki-links-next Story 2 (full detail in Mike's STORY.md Story 2). 
 
 ---
 
@@ -551,7 +563,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Owners.** **Mike** end-to-end. His "schematizing config into proper SQLite → Drizzle → Zod" brainstorm item.
 
-**Status.** Not started. Estimate: 2-3 weeks (schema design + Drizzle setup + migrate backlink index + migrate file index + migrate config mirror + verify all consumers work). **Reach goal — lower priority than Mike's core v0 work** (V0-8 graph view close-out, V0-12 slug correctness, V0-3 BacklinksPanel push, V0-5 rename + link rewrite, V0-11 graph panels, V0-21 dead-link checking). Ship if Mike has capacity after core stories land. Becomes a prerequisite for the post-v0 search bet.
+**Status.** Not started.  **Reach goal — lower priority than Mike's core v0 work** (V0-8 graph view close-out, V0-12 slug correctness, V0-3 BacklinksPanel push, V0-5 rename + link rewrite, V0-11 graph panels, V0-21 dead-link checking). Ship if Mike has capacity after core stories land. Becomes a prerequisite for the post-v0 search bet.
 
 ---
 
@@ -587,7 +599,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Source.** Andrew's Story 1 (`projects/desktop-readiness/PROJECT.md`).
 
-**Status / owner signals.** Not started. Andrew authored the original scoping; assignable to him or a server-focused engineer. Estimate: ~1 week. Spec needed.
+**Status / owner signals.** Not started. Andrew authored the original scoping; assignable to him or a server-focused engineer.  Spec needed.
 
 ---
 
@@ -612,7 +624,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Owners.** **Andrew** (server-side push broadcast — the CC1 infrastructure, file-watcher-to-awareness plumbing). **Dima** (client-side sidebar subscriber — sidebar event handler, tree patch on events). Andrew sets the push contract; Dima consumes. Pattern is reusable: Mike's V0-3 (BacklinksPanel) and V0-11 (graph panels) adopt the same contract.
 
-**Status.** Spec drafted with 5 OQs unresolved (TQ2). Not started. Estimate: ~2 weeks (1 week spec resolution + 1 week implementation, split between Andrew server and Dima client).
+**Status.** Spec drafted with 5 OQs unresolved (TQ2). Not started. 
 
 ---
 
@@ -630,7 +642,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Constraints.** ProviderPool already accepts `wsUrl` override (TQ14). CJS build adds parallel output, ESM stays default (TQ15). Inherits PR #54 Track T2's `@parcel/watcher` → `chokidar` fallback.
 
-**Source.** Andrew's Story 5. Estimate: 0.5 week (~2-4 hours each item).
+**Source.** Andrew's Story 5.
 
 ---
 
@@ -663,8 +675,8 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 | Tier | What | Effort |
 |------|------|--------|
-| **Tier 1 (minimum reach)** | `grep`, `ls`, `cat` enriched — per-file metadata in output | ~1 week |
-| **Tier 2 (combinatorial)** | Pipe support (`grep | head`, `ls | sort -k modified`) | +0.5 week |
+| **Tier 1 (minimum reach)** | `grep`, `ls`, `cat` enriched — per-file metadata in output |
+| **Tier 2 (combinatorial)** | Pipe support (`grep | head`, `ls | sort -k modified`) |
 | **Tier 3 (full, post-v0)** | All read-only commands enriched + custom commands (`backlinks auth.md`, `orphans`, `dead-links`) | Larger scope |
 
 **Constraints.**
@@ -684,7 +696,7 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Owners.** **Tim** end-to-end. This is his "just-bash virtualization" brainstorm item brought to life.
 
-**Status.** Not started. Estimate: Tier 1 = ~1 week; Tier 2 = +0.5 week. **Reach goal — lower priority than Tim's core v0 work** (V0-4 MCP file-ops, CC9 enrichment audit, MCP initialization/discovery, harness integration). Ship if Tim has capacity after core lands. Depends on core semantic tools working first (enriched bash reuses the same enrichment pipeline).
+**Status.** Not started. 5 week. **Reach goal — lower priority than Tim's core v0 work** (V0-4 MCP file-ops, CC9 enrichment audit, MCP initialization/discovery, harness integration). Ship if Tim has capacity after core lands. Depends on core semantic tools working first (enriched bash reuses the same enrichment pipeline).
 
 ---
 
@@ -704,9 +716,9 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 **Territory:** Sidebar (UX + internals). CRUD on files/folders (V0-4). Tabbed file experience (Obsidian-style). Drag-and-drop markdown files. Docs site / Fumadocs maintenance. Long-term: "OK as WYSIWYG editor for a Fumadocs project" future bet (Nick consulting on MDX).
 
 **Feature owner for engineering-heavy UI stories (ships UX functional + high quality; Sarah reviews/polishes after):**
-- V0-9 Outline panel — Dima feature-owns build. Consumes Sarah's panel-docking pattern. Sarah reviews polish.
-- V0-10 Quick switcher (Cmd+K) — Dima feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk`). Designs result-source architecture himself; Mike consulted when search bet activates post-v0. Sarah reviews polish.
-- V0-18 Find and replace — Dima feature-owns (TipTap + CodeMirror coordination). Sarah reviews polish.
+- V0-9 Outline panel — Dima feature-owns build. Consumes Sarah's panel-docking pattern. 
+- V0-10 Quick switcher (Cmd+K) — Dima feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk`). Designs result-source architecture himself; Mike consulted when search bet activates post-v0. 
+- V0-18 Find and replace — Dima feature-owns (TipTap + CodeMirror coordination). 
 - V0-19 Word count + sidebar sort — Dima fully.
 
 **Engineering refactor owner:** Slash-command-generalization spec (still Draft) — pure engineering refactor. Block editor UX (future `block-editor-ux` spec).
@@ -736,7 +748,7 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Source.** ED-2 from day-0-editor-completeness + Andrew's Story 2a (consolidated).
 
-**Status / owner signals.** Not started. PR #40 (open spec) defines MCP write_file conventions — coordinate API shape. PR #53 (open) adds wiki-link context menu — UI pattern reusable. Estimate: 2-3 weeks.
+**Status / owner signals.** Not started. PR #40 (open spec) defines MCP write_file conventions — coordinate API shape. PR #53 (open) adds wiki-link context menu — UI pattern reusable. 
 
 ---
 
@@ -763,9 +775,9 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Source.** Originally bundled into day-0-editor-completeness ED-6; split out 2026-04-13 per Sarah-owns-outline-experience decision.
 
-**Owners.** **Dima** feature-owns end-to-end (scroll integration with TipTap + CodeMirror, IntersectionObserver active-heading detection, live-update state management, tree rendering, UX decisions). Consumes Sarah's panel-docking pattern doc if available; ships without it if not — Sarah pattern-reconciles later. Nick consulted on editor-side integration (ProseMirror scroll primitives in WYSIWYG mode). Sarah reviews polish after.
+**Owners.** **Dima** leads (scroll integration with TipTap + CodeMirror, IntersectionObserver active-heading detection, live-update state management, tree rendering, UX decisions). Builds to Sarah's panel-docking pattern. Nick consulted on editor-side integration (ProseMirror scroll primitives in WYSIWYG mode).
 
-**Status.** Not started. Backend API exists (`/api/page-headings`). Pure frontend work. Estimate: ~1-1.5 weeks.
+**Status.** Not started. Backend API exists (`/api/page-headings`). Pure frontend work. 5 weeks.
 
 ---
 
@@ -789,9 +801,9 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Source.** ED-5 from day-0-editor-completeness.
 
-**Owners.** **Dima** feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk` — used by Linear, Vercel; handles keyboard nav, fuzzy filtering, a11y). Designs result-source extensibility contract himself — Mike consulted when post-v0 search bet activates to ensure content results plug in cleanly. Sarah reviews polish after. Nextra has analogous command palette work Dima can draw from.
+**Owners.** **Dima** feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk` — used by Linear, Vercel; handles keyboard nav, fuzzy filtering, a11y). Designs result-source extensibility contract himself — Mike consulted when post-v0 search bet activates to ensure content results plug in cleanly.  Nextra has analogous command palette work Dima can draw from.
 
-**Status.** Not started. Library: `shadcn/ui Command` (wraps `cmdk`). Estimate: ~1-1.5 weeks.
+**Status.** Not started. Library: `shadcn/ui Command` (wraps `cmdk`). 5 weeks.
 
 ---
 
@@ -811,7 +823,7 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Source.** ED-7a from day-0-editor-completeness.
 
-**Owners.** **Dima** feature-owns end-to-end (TipTap search+replace extension wiring, CodeMirror search extension coordination, single Cmd+F across both modes, bridge-invariant preservation — consult Nick on CRDT write path, find-bar UX). Sarah reviews polish after. Estimate: ~1-1.5 weeks.
+**Owners.** **Dima** feature-owns end-to-end (TipTap search+replace extension wiring, CodeMirror search extension coordination, single Cmd+F across both modes, bridge-invariant preservation — consult Nick on CRDT write path, find-bar UX).  5 weeks.
 
 ---
 
@@ -824,7 +836,7 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Promote when:** Now+Next ship and qualitative feedback surfaces "feels unfinished" sentiment OR when a larger polish sprint is scheduled.
 
-**Source.** ED-7b from day-0-editor-completeness. Estimate: 0.5-1 week.
+**Source.** ED-7b from day-0-editor-completeness.
 
 **Owners.** **Dima** implements both (sort is trivial extension of his sidebar territory; word count is trivial Y.Text derivation). Sarah reviews word-count placement in the editor footer.
 
@@ -846,9 +858,9 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 - Tab persistence in `state.json` — depends on V0-7 session persistence (Andrew's primitives).
 - Closing a doc's tab doesn't delete the doc (obvious but worth stating).
 
-**Owners.** **Dima** end-to-end. Sarah reviews polish after.
+**Owners.** **Dima** end-to-end. 
 
-**Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
+**Status.** Not started.  **Reach goal — lower priority than Dima's core v0 work.**
 
 ---
 
@@ -867,9 +879,9 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Scope note on V0-4:** V0-4 (file organization ops) scopes "move" as context-menu / move-dialog. DnD is explicitly NOT in V0-4 — it's this separate reach story that builds on V0-4's backend.
 
-**Owners.** **Dima** end-to-end. Sarah reviews polish after.
+**Owners.** **Dima** end-to-end. 
 
-**Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
+**Status.** Not started.  **Reach goal — lower priority than Dima's core v0 work.**
 
 ---
 
@@ -890,13 +902,11 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 - Panel-docking visual + interaction pattern (consumed by V0-9 outline, V0-11 graph panels, future panels) — Sarah writes pattern doc; feature owners build to it
 - Keyboard shortcut scheme (Cmd+K, Cmd+F, Ctrl+\, future shortcuts — scheme + discoverability)
 - Visual design language (focus indicators, motion, error states — adopted across the product)
-- V0-10 palette result-source contract reviewed after Dima ships (Dima designs + builds end-to-end; Sarah reviews for pattern consistency)
+- V0-10 palette result-source contract reviewed after Dima ships (Dima designs + builds end-to-end)
 
-**Review + polish (not in the critical path):** Feature owners ship UX functional + high quality for their own features. Sarah reviews after and polishes — she does NOT gate implementation. If a feature owner's UX is tightly bound to their feature scope, they ship without waiting for Sarah.
+**Design reviews:** Provides design feedback across all features as they ship — pattern consistency, visual polish, interaction quality.
 
-**Go-to UX triager:** Default owner for UX questions that don't cleanly fit another feature area. Final call on UX tradeoffs and taste decisions when feature owners genuinely aren't sure. But feature owners should try first, ship functional, and Sarah polishes later.
-
-**Explicitly not Sarah's:** A11y as an engineering practice (Dima post-v0). Feature-specific UX gating (feature owners ship without waiting).
+**Design lead for cross-cutting UX:** Owner for UX questions that span multiple features or don't have a clear home. Final call on UX tradeoffs and taste decisions.
 
 #### Now
 
@@ -919,7 +929,7 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Source.** Andrew's Story 2b. **PR #41 is in flight** with 492 LOC already covering the TipTap plugin, busboy server endpoint, MIME validation, atomic writes — saves to flat `uploads/` (not per-doc).
 
-**Status / owner signals.** **PR #41 open**. Remaining work: design decisions (PQ4, PQ5 — directory naming, gitignore behavior) and adapting PR #41 to current codebase + content.exclude integration. Estimate: 1-2 weeks of close-out, mostly review + refactor of existing PR.
+**Status / owner signals.** **PR #41 open**. Remaining work: design decisions (PQ4, PQ5 — directory naming, gitignore behavior) and adapting PR #41 to current codebase + content.exclude integration. 
 
 ---
 
@@ -948,7 +958,7 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Owners (layered).** **Sarah** owns the feature end-to-end and the React UI (welcome screen, content scope confirmation, first-doc creation — highest-leverage first-impression novel UX). **Andrew** owns the platform primitives the spec consumes: `initContent()` extension for starter README, `state.json` schema + atomic writes + lock-coordinated writes (depends on V0-1), server endpoint for init status. Sarah writes the spec declaring primitive requirements; Andrew implements primitives; Sarah's React components consume them.
 
-**Status.** Part A onboarding scoped in detail. Auto-init shipped (PR #57). Starter doc + session persistence + React UI not started. Estimate: 2 weeks (Sarah ~1.5 weeks UI + Andrew ~0.5 week primitives after V0-1).
+**Status.** Part A onboarding scoped in detail. Auto-init shipped (PR #57). Starter doc + session persistence + React UI not started.
 
 ---
 
@@ -956,7 +966,7 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 #### Cross-references
 
-- **Cross-cutting patterns:** Panel-docking, keyboard shortcut scheme, visual design language — published asynchronously as reference docs. Feature owners consume; Sarah pattern-reconciles after.
+- **Cross-cutting patterns:** Panel-docking, keyboard shortcut scheme, visual design language — published as reference docs that feature owners build to.
 - **Review + polish:** Sarah reviews all features after they ship for pattern drift, visual inconsistencies, or polish opportunities. Not in the critical path.
 
 ---
@@ -994,7 +1004,7 @@ Items explicitly deprioritized to post-v0. Not stories in this project — futur
 
 ### Separate bets (each its own future project)
 
-- **Full-text search** — Mike's future project. 8 research reports completed. 4-6 week system integration (Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector). Promote when: v0 ships AND search becomes the biggest remaining gap.
+- **Full-text search** — Mike's future project. 8 research reports completed. separate project (Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector). Promote when: v0 ships AND search becomes the biggest remaining gap.
 - **User-facing version history UI (beyond Timeline)** — Miles's future project. Shadow repo was designed for attribution journaling; richer user-versioned history needs redesigned data model + UX. V0-16 Timeline covers the narrow scope for v0. Promote when: users demand richer history controls (named versions, per-file timeline, branch-based experiments).
 - **Electron native distribution** — Andrew's future project. V0-20 is the build-pipeline-prep gating story. Spec exists at `specs/2026-04-11-electron-desktop-app/`. Promote when: Electron implementation begins (DMG packaging spike).
 - **Multi-project switching (Part B of init-and-project-switching)** — separate bet. Registry at `~/.open-knowledge/projects.json`, CLI `list`/`open` commands, in-editor switcher. Cross-project navigation, not within-project. Promote when: v0 ships AND users have multiple projects registered.
@@ -1053,46 +1063,39 @@ V0-10 (Cmd+K), V0-11 (panels), V0-15 (flash), V0-18 (find/replace), V0-19 (sort+
 
 Owner signals where they exist (in-flight PR author or original story author). When no signal, marked "open assignment."
 
-| Story | Phase | Estimate | Owner(s) | Delivery vehicle | Status |
-|-------|-------|----------|----------|------------------|--------|
-| V0-1 process safety | Now | 1 wk | **Andrew** | Spec → impl | Not started, fully scoped |
-| V0-2 real-time sidebar | Now | 2 wk | **Andrew** (server push) + **Dima** (client sidebar) | Spec resolves 5 OQs → impl | Spec drafted (5 OQs) |
-| V0-3 BacklinksPanel push | Next | 1 wk | **Mike** (consumer) + **Andrew** push infra | Spec → impl | Source story in PR #72 bundle |
-| V0-4 file ops bundle | Now | 2-3 wk | **Dima** (UI + server API) + **Tim** (MCP tools) | Spec → impl | Not started |
-| V0-5 rename + link rewrite | Next | 2-3 wk | **Mike** (rewrite machinery) + **Dima** (sidebar trigger UX) | Spec → impl | Source story in PR #72 bundle |
-| V0-6 image paste | Now | 1-2 wk | **Sarah** | Close out PR #41 | In flight |
-| V0-7 onboarding + session + starter | Now | 2 wk | **Sarah** (feature + UI) + **Andrew** (state.json, init primitives) | Spec → impl | Part A scoped; rest not started |
-| V0-8 graph view | Now | 1-2 wk close-out | **Mike** | Close out PR #76 | In flight; 296 LOC, needs review + perf |
-| V0-9 outline panel | Next | 1-1.5 wk | **Dima** feature-owns | Spec → impl | NEW — consumes panel-docking pattern; Sarah reviews after |
-| V0-10 Cmd+K | Next | 1-1.5 wk | **Dima** feature-owns | Spec → impl | Uses `shadcn/ui Command` (wraps `cmdk`); Sarah reviews after |
-| V0-11 graph panels | Next | 1-2 wk | **Mike** (adopts Sarah's panel-docking pattern) | Spec → impl | Backend done, pure React |
-| V0-12 slug correctness | Now | 1 wk + migration | **Mike** | Spec → impl | Source story in PR #72 bundle |
-| V0-13 suggest_links | Later | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | Source story in PR #72 bundle |
-| V0-14 per-origin undo (three-UM + char-level Observer A) | Now | Nick ~1 wk (TQ5/TQ6 parallel) + Miles ~2 wk (UM wiring after V0-16) | **Nick** (TQ5 Observer A prerequisite) + **Miles** (three-UM wiring + AgentIdentity) | Parallel tracks → converge | Nick starting now; Miles after V0-16 |
-| ~~V0-15 activity flash verify~~ | ~~Later~~ | — | — | — | **SUBSUMED by V0-16** (TQ2/TQ12/TQ7 in expanded scope) |
-| V0-16 Timeline + Rollback (expanded greenfield scope) | Now | **3-4 wk** (was 1-2) | **Miles** (Nick consulted on TQ10 typed origins — 5 min) | PR #39 rebase + expanded | In flight; rebase + 17 comments + 8 architectural-precedent items + diff library + flash reconcile + scaffold removal |
-| V0-17 persistence indicator UI | Next | 0.5-1 wk | **Miles** (Sarah consulted on visual) | Spec → impl | Backend infra shipped (PR #62) |
-| V0-18 find/replace | Later | 1-1.5 wk | **Dima** feature-owns (Nick consulted on CRDT write path; Sarah reviews after) | Spec → impl | Not started |
-| V0-19 sort + word count | Later | 0.5-1 wk | **Dima** (Sarah reviews placement) | Spec → impl | Not started |
-| V0-20 desktop build prep | Later | 0.5 wk | **Andrew** (Nick: provider-pool.ts change) | Spec → impl | Gated on Electron starting |
-| V0-21 dead-link checking | Next | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | NEW — Tier 1 scope; Tier 2/3 post-v0 |
-| V0-22 tabbed file experience | **Reach** | 1-2 wk | **Dima** | Spec → impl | Lower P than Dima's core v0 work; ship if capacity |
-| V0-23 drag-and-drop files in sidebar | **Reach** | 1-2 wk | **Dima** | Spec → impl | Lower P; builds on V0-4 move backend |
-| V0-24 enriched just-bash MCP surface | **Reach** | 1-1.5 wk (Tier 1-2) | **Tim** | Prototype → evaluate | Lower P; explores XQ1 architecture; reuses internal bash/index.ts |
-| V0-25 SQLite + Drizzle + Zod schematization | **Reach** | 2-3 wk | **Mike** | Schema design → migrate | Lower P; prerequisite for post-v0 search bet (FTS5); replaces in-memory Maps + JSON cache |
+| Story | Phase | Owner(s) | Delivery vehicle | Status |
+|-------|-------|----------|------------------|--------|
+| V0-1 process safety | Now| **Andrew** | Spec → impl | Not started, fully scoped |
+| V0-2 real-time sidebar | Now| **Andrew** (server push) + **Dima** (client sidebar) | Spec resolves 5 OQs → impl | Spec drafted (5 OQs) |
+| V0-3 BacklinksPanel push | Next| **Mike** (consumer) + **Andrew** push infra | Spec → impl | Source story in PR #72 bundle |
+| V0-4 file ops bundle | Now| **Dima** (UI + server API) + **Tim** (MCP tools) | Spec → impl | Not started |
+| V0-5 rename + link rewrite | Next| **Mike** (rewrite machinery) + **Dima** (sidebar trigger UX) | Spec → impl | Source story in PR #72 bundle |
+| V0-6 image paste | Now| **Sarah** | Close out PR #41 | In flight |
+| V0-7 onboarding + session + starter | Now| **Sarah** (feature + UI) + **Andrew** (state.json, init primitives) | Spec → impl | Part A scoped; rest not started |
+| V0-8 graph view | Now| **Mike** | Close out PR #76 | In flight; 296 LOC, needs review + perf |
+| V0-9 outline panel | Next| **Dima** feature-owns | Spec → impl | NEW — consumes panel-docking pattern |
+| V0-10 Cmd+K | Next| **Dima** feature-owns | Spec → impl | Uses `shadcn/ui Command` (wraps `cmdk`) |
+| V0-11 graph panels | Next| **Mike** (adopts Sarah's panel-docking pattern) | Spec → impl | Backend done, pure React |
+| V0-12 slug correctness | Now| **Mike** | Spec → impl | Source story in PR #72 bundle |
+| V0-13 suggest_links | Later| **Mike** + **Tim** (MCP) | Spec → impl | Source story in PR #72 bundle |
+| V0-14 per-origin undo (three-UM + char-level Observer A) | Now | **Nick** (TQ5 Observer A prerequisite) + **Miles** (three-UM wiring + AgentIdentity) | Parallel tracks → converge | Nick starting now; Miles after V0-16 |
+| ~~V0-15 activity flash verify~~ | ~~Later~~ | — | — | **SUBSUMED by V0-16** (TQ2/TQ12/TQ7 in expanded scope) |
+| V0-16 Timeline + Rollback (expanded greenfield scope) | Now | **Miles** (Nick consulted on TQ10 typed origins — 5 min) | PR #39 rebase + expanded | In flight; rebase + 17 comments + 8 architectural-precedent items + diff library + flash reconcile + scaffold removal |
+| V0-17 persistence indicator UI | Next| **Miles** (Sarah consulted on visual) | Spec → impl | Backend infra shipped (PR #62) |
+| V0-18 find/replace | Later| **Dima** feature-owns (Nick consulted on CRDT write path) | Spec → impl | Not started |
+| V0-19 sort + word count | Later| **Dima** (Sarah reviews placement) | Spec → impl | Not started |
+| V0-20 desktop build prep | Later| **Andrew** (Nick: provider-pool.ts change) | Spec → impl | Gated on Electron starting |
+| V0-21 dead-link checking | Next| **Mike** + **Tim** (MCP) | Spec → impl | NEW — Tier 1 scope; Tier 2/3 post-v0 |
+| V0-22 tabbed file experience | **Reach**| **Dima** | Spec → impl | Lower P than Dima's core v0 work; ship if capacity |
+| V0-23 drag-and-drop files in sidebar | **Reach**| **Dima** | Spec → impl | Lower P; builds on V0-4 move backend |
+| V0-24 enriched just-bash MCP surface | **Reach**| **Tim** | Prototype → evaluate | Lower P; explores XQ1 architecture; reuses internal bash/index.ts |
+| V0-25 SQLite + Drizzle + Zod schematization | **Reach**| **Mike** | Schema design → migrate | Lower P; prerequisite for post-v0 search bet (FTS5); replaces in-memory Maps + JSON cache |
 
-**Sequencing for Now phase (9 stories, 6-8 weeks):**
-- Week 1-2: V0-1 (Andrew), V0-2 (Andrew/Dima — spec resolution), V0-12 (Mike) start in parallel
-- Week 1-3: In-flight close-outs land in parallel — V0-6 (Sarah, PR #41), V0-8 (Mike, PR #76), V0-16 (Miles, PR #39)
-- Week 2-4: V0-7 (Sarah UI + Andrew primitives) onboarding starts
-- Week 3-5: V0-4 (Dima + Tim) starts after V0-2 contract clear; V0-14 (Miles) starts in parallel (undo is independent of file ops)
-- Week 5-8: ship, integration test, polish
-
-**Parallel barrels:** ~3-4 active barrels at any time given 9 Now stories over 6-8 weeks. Three of nine are in-flight PR close-outs (V0-6, V0-8, V0-16) with different authors — they parallelize cheaply since the work is mostly review + polish. V0-2 and V0-7 are two-owner stories with clean handoff (Andrew primitives → Sarah/Dima consumers). V0-4 is two-owner (Dima UI + Tim MCP) sharing a backend API. Matches inferred team size (7-10 engineers).
+**Now phase parallelism:** Three of nine Now stories are in-flight PR close-outs (V0-6, V0-8, V0-16) with different authors — they parallelize naturally. V0-1 (Andrew), V0-2 (Andrew/Dima), V0-12 (Mike), V0-14 (Nick prerequisite track) can start in parallel. V0-4 (Dima + Tim) starts after V0-2's push contract is clear. See dependency graph above for full ordering.
 
 ## Rabbit holes
 
-**RH1: "Let's just add search while we're doing file ops."** Tempting because V0-4 touches the sidebar and search UI lives there too. But search is a 4-6 week system integration with 8 research reports dedicated to it. DO NOT add. Trigger search bet as a separate project once v0 ships.
+**RH1: "Let's just add search while we're doing file ops."** Tempting because V0-4 touches the sidebar and search UI lives there too. But search is a separate project with 8 research reports dedicated to it. DO NOT add. Trigger search bet as a separate project once v0 ships.
 
 **RH2: "Let's redesign the sidebar while we're rewriting it real-time (V0-2)."** Sidebar has known UX weaknesses. V0-2 adds the push primitive; temptation is to rebuild the whole sidebar. DO NOT. Schedule a separate sidebar-UX story for later.
 
@@ -1110,7 +1113,7 @@ Owner signals where they exist (in-flight PR author or original story author). W
 
 ## Pre-mortem
 
-**Most likely failure mode: Real-time sidebar (V0-2) takes longer than expected.** 5 OQs in spec, no resolved design. If spec drags, V0-4 and V0-5 UX degrade or ship with polling fallback. **Mitigation:** Budget V0-2 spec resolution as first 1-2 weeks of Now. Escalate if it drags.
+**Most likely failure mode: Real-time sidebar (V0-2) takes longer than expected.** 5 OQs in spec, no resolved design. If spec drags, V0-4 and V0-5 UX degrade or ship with polling fallback.**Mitigation:** Prioritize V0-2 spec resolution early in the Now phase.
 
 **Second-most likely: V0-4 scope creeps.** Story already includes delete + move + duplicate + new folder + MCP tools for all four. Adding folder-move-with-content variations, undo affordances, or trash blows the appetite. **Mitigation:** Hard scope line at spec — folder ops mirror file ops with no special cases; single confirmation modal for destructive ops; no trash in v0.
 
@@ -1122,7 +1125,7 @@ Owner signals where they exist (in-flight PR author or original story author). W
 
 **Sixth: Team capacity wrong.** Plan assumes 3-4 parallel barrels. If team is smaller or barrels saturated by other work, Now phase sequences serially → 12+ weeks. **Mitigation:** User confirmation of team size before committing to phasing. Or split Now into Now-1 + Now-2 with internal sequencing.
 
-**Seventh: Electron suddenly becomes urgent.** V0-20 (desktop build prep) in Later. If Electron implementation kicks off ahead of schedule, V0-20 promotes mid-flight. Acceptable churn — the work is small (~2-4 hours per item).
+**Seventh: Electron suddenly becomes urgent.** V0-20 (desktop build prep) in Later. If Electron implementation kicks off ahead of schedule, V0-20 promotes mid-flight. Acceptable churn.
 
 ## Evidence & References
 
@@ -1150,7 +1153,7 @@ Owner signals where they exist (in-flight PR author or original story author). W
 - **PR #41** (Sarah, open) — Image upload (V0-6 close-out)
 - **PR #36** (Andrew, open, 3 days stale) — OpenTelemetry instrumentation spec (out of v0 scope)
 - **PR #23** (Nick, open) — Typed component nodes (out of v0 scope)
-- **PR #12** (Dima, draft, 4 days stale) — Component slash insert (status unclear; needs triage)
+- **PR #12** (Dima, draft, draft) — Component slash insert (pending review)
 - **PR #81** — MERGED 2026-04-13: wiki-link menu flash bug fix
 
 **Merged since v0-launch was written (2026-04-13):** PR #81 (small bug fix, no v0 scope impact).
