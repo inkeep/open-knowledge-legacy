@@ -6,6 +6,7 @@ import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
+import { CC1Broadcaster, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
@@ -84,6 +85,7 @@ export interface ServerOptions {
 export interface ServerInstance {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
+  cc1Broadcaster: CC1Broadcaster;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
@@ -167,6 +169,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     backlinkIndex,
   });
   hocuspocus.configuration.extensions.push(apiExtension);
+
+  const cc1Broadcaster = new CC1Broadcaster(hocuspocus);
+  let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
@@ -614,6 +619,13 @@ export function createServer(options: ServerOptions): ServerInstance {
           log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
         }
 
+        // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
+        cc1Broadcaster.destroy();
+        if (systemDocConnection) {
+          systemDocConnection.disconnect();
+          systemDocConnection = null;
+        }
+
         // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
         try {
           await sessionManager.closeAll();
@@ -732,6 +744,14 @@ export function createServer(options: ServerOptions): ServerInstance {
           log.error({ err: e }, '[server] shadow repo check failed (transient?)');
         }
       }
+    }
+
+    // Pre-materialize __system__ Y.Doc so CC1 broadcaster has a target before
+    // any browser connects. Must happen before the file watcher starts.
+    try {
+      systemDocConnection = await hocuspocus.openDirectConnection(SYSTEM_DOC_NAME);
+    } catch (err) {
+      log.error({ err }, '[server] failed to open __system__ direct connection');
     }
 
     // Start file watcher (with content filter for gitignore + config exclude)
@@ -1006,5 +1026,5 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const ready = initAsync();
 
-  return { hocuspocus, sessionManager, destroy, ready, degraded };
+  return { hocuspocus, sessionManager, cc1Broadcaster, destroy, ready, degraded };
 }
