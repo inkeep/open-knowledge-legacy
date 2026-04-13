@@ -25,6 +25,7 @@ import {
   syncTextToFragment,
 } from './agent-sessions.ts';
 import type { BacklinkIndex } from './backlink-index.ts';
+import { isSystemDoc } from './cc1-broadcast.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
 import { safeContentPath } from './persistence.ts';
@@ -1068,6 +1069,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const fullPath = resolve(resolvedContentDir, filePath);
       if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
         json(res, 400, { ok: false, error: 'path must not escape content directory' });
+        return;
+      }
+      const candidateDocName = filePath.slice(0, -3);
+      if (isSystemDoc(candidateDocName)) {
+        json(res, 400, { ok: false, error: `'${candidateDocName}' is a reserved document name` });
         return;
       }
       mkdirSync(dirname(fullPath), { recursive: true });
