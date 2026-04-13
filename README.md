@@ -4,7 +4,7 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ## Prerequisites
 
-- [Bun](https://bun.sh) >= 1.3.11 **or** [Node.js](https://nodejs.org) >= 22
+- [Bun](https://bun.sh) >= 1.3.11
 - Git
 
 ## Quick Start
@@ -52,9 +52,9 @@ bun run build
 ### Run the CLI locally (after building)
 
 ```bash
-node packages/cli/dist/cli.mjs start
-node packages/cli/dist/cli.mjs init
-node packages/cli/dist/cli.mjs mcp
+bun packages/cli/dist/cli.mjs start
+bun packages/cli/dist/cli.mjs init
+bun packages/cli/dist/cli.mjs mcp
 ```
 
 ### Quality checks
