@@ -1,9 +1,24 @@
 # Project: Open Knowledge v0 Launch
 
-**Last verified:** 2026-04-13
-**Traces to:** Consolidates 4 prior planning surfaces (see Provenance)
-**Appetite:** TBD
-**Scope discipline:** This document covers UNFINISHED work only. Already-shipped foundations are referenced as substrate, not enumerated as stories.
+**Scope:** Unfinished work for v0 launch quality. Shipped foundations referenced as substrate, not enumerated.
+
+## Overview
+
+**Jump to person:** [Miles](#miles--collaboration--shadow-git--presence) · [Mike](#mike--knowledge-graph--content--search) · [Andrew](#andrew--platform--ops--system-level-infrastructure) · [Tim](#tim--agent-infrastructure--mcp--virtualization) · [Dima](#dima--sidebar--crud--docs-system-engineering) · [Sarah](#sarah--head-of-design--design-engineer) · [Nick](#nick--editor-internals--crdt--mdx-pipeline)
+
+| Person | Now | Next | Later | Reach |
+|--------|-----|------|-------|-------|
+| **[Miles](#miles--collaboration--shadow-git--presence)** | V0-14 per-origin undo, V0-16 Timeline | V0-17 persistence indicator | | |
+| **[Mike](#mike--knowledge-graph--content--search)** | V0-8 graph view, V0-12 slug correctness | V0-5 rename+backlink, V0-11 graph panels, V0-3 backlinks push, V0-21 dead-links | V0-13 suggest_links | V0-25 SQLite schema |
+| **[Andrew](#andrew--platform--ops--system-level-infrastructure)** | V0-1 process safety, V0-2 real-time sidebar | | V0-20 desktop build prep | |
+| **[Tim](#tim--agent-infrastructure--mcp--virtualization)** | | | | V0-24 enriched bash |
+| **[Dima](#dima--sidebar--crud--docs-system-engineering)** | V0-4 file ops | V0-9 outline, V0-10 Cmd+K | V0-18 find/replace, V0-19 sort+wc | V0-22 tabs, V0-23 DnD |
+| **[Sarah](#sarah--head-of-design--design-engineer)** | V0-6 image paste, V0-7 onboarding | | | |
+| **[Nick](#nick--editor-internals--crdt--mdx-pipeline)** | V0-14 prerequisite (Observer A) | | | |
+
+**Operating model:** Feature owners are empowered to ship UX within their scope. Sarah focuses on cross-cutting design patterns (panel-docking, keyboard shortcuts, visual language), novel UX surfaces (onboarding), and design reviews across the product.
+
+**Not in v0 scope:** Full-text search · Electron native distribution · Multi-project switching · Tracked changes / inline suggestions · Tags / custom CSS / keyboard customization · Multi-human concurrent editing · Cloud SaaS
 
 ---
 
@@ -18,21 +33,9 @@
 
 The intersection: each of these classes alone is fixable; together they form a "credibility cliff" between shipping foundations and shipping product. Closing all three in one coordinated push gets the editor to a state where it can be demoed, distributed to design partners, and used as the basis for evaluation. Ship them piecemeal and the product remains "impressive demo, embarrassing daily use" indefinitely.
 
-**Resolution.** A single "v0 launch" project that consolidates the four prior planning surfaces (see Provenance), focuses exclusively on unfinished work, and phases into Now (must-have for launch) / Next (should-have to feel complete) / Later (polish + gated). Each story carries its own ownership signal and current PR/spec status so the team can pick up work without re-discovery.
+**Resolution.** Each story phases into Now (must-have for launch) / Next (should-have to feel complete) / Later (polish + gated) / Reach (if capacity). Each story carries ownership and current PR/spec status so the team can pick up work without re-discovery.
 
-**Operating model — feature owners are empowered to ship.** Each feature owner owns the UX tightly bound to their feature and ships it functional + to a high-quality bar. Sarah focuses on cross-cutting design patterns (panel-docking, keyboard shortcut scheme, visual design language), novel UX surfaces (onboarding), and design reviews across the product. She publishes pattern references that feature owners build to, and provides design feedback as features ship.
-
-**Multi-dimensional value.**
-
-Customer-facing: end-user writers (P1) and developers using OK as a docs tool (P2) get a tool that doesn't trip them on basic operations. Demos work without scripted workarounds. Returning users land where they left off. Renames don't break things.
-
-Platform: the unfinished work establishes patterns the rest of the product inherits. The push-over-awareness primitive (used in V0-2 sidebar and V0-3 backlinks) is the reusable signaling pattern for every future derived-view UI. The dual UI + MCP surface for file ops (V0-4, V0-5) is the contract every future agent-callable file-level capability adopts. The lock file pattern (V0-1) extends to multi-window Electron without redesign.
-
-GTM: v0 launch is the threshold for showing the product externally — to design partners, to candidates, to potential users. The collaboration audit calls Timeline + Rollback (V0-16) and the file-ops gap "table-stakes for any docs author migrating from Obsidian/Notion." Without them, the product positions as a demo, not a tool.
-
-Internal: closing the silent data-integrity bugs (V0-1 process safety, V0-12 slug correctness, V0-5 managed rename) reduces the "support tax" of shipping a product where users hit corruption silently and we discover it weeks later from dogfood reports.
-
-**Intersection reasoning:** the platform dimension is load-bearing. If file ops ship as UI-only without the dual MCP surface, every future agent-facing file capability fragments. If the push-over-awareness pattern isn't established now (V0-2), every derived-view panel defaults to polling and we end up with five different real-time strategies. The customer outcomes are immediate; the platform patterns make them composable.
+**Key pattern decisions.** The unfinished work establishes patterns the rest of the product inherits. Push-over-awareness (V0-2) is the reusable signaling pattern for every future derived-view UI. Dual UI + MCP surface for file ops (V0-4, V0-5) is the contract every future agent-callable capability adopts. Lock file (V0-1) extends to multi-window Electron without redesign.
 
 **Bet-level non-goals.**
 - **[NEVER in v0]** Multi-human concurrent editing across devices. Architecture supports it via Yjs awareness; product is solo + AI for v0. Promote when: cloud sync infrastructure exists.
@@ -44,27 +47,6 @@ Internal: closing the silent data-integrity bugs (V0-1 process safety, V0-12 slu
 - **[NOT NOW]** Tracked changes / inline suggestion mode (Google Docs-style green/red proposals). PROJECT.md PQ11 explicitly parked. Lives in a combined "agent-proposal review experience" design space with branching/draft UX (PQ9). Promote: dedicated design pass for the bundle.
 - **[NOT NOW]** Tags / tag browser, custom CSS, keyboard customization, font size adjustment. Parity-for-parity's-sake or low-leverage features.
 - **[NOT NOW] "OK as a WYSIWYG editor for a Fumadocs project."** Future bet: a Fumadocs project (with fumadocs-ui components registered in `mdx-components.tsx`) can be opened by Open Knowledge as the editor. The editor recognizes fumadocs components, renders them with prop panels, persists changes back to the `.mdx` files. Positions OK as a Mintlify-class editor for the Fumadocs ecosystem. Owner: Dima long-term; Nick consults on generalizable MDX editing + built-in/custom component rendering. Promote when: v0 ships AND MDX pipeline (Nick's territory) stabilizes enough that the generalization surface is clean.
-
-## Provenance
-
-This project consolidates four prior planning surfaces into a single source of truth:
-
-| Source | Branch | Role | Disposition |
-|--------|--------|------|-------------|
-| `projects/desktop-readiness/` (Andrew) | `chore/restore-scoped-reports` | Original "ship desktop-ready foundations" decomposition (5 stories) | Stories 1, 2a, 2b, 3, 5 absorbed; dark mode dropped (shipped via PR #60). Source PROJECT.md should be retired when chore branch lands. |
-| `projects/day-0-editor-completeness/` (this branch) | `worktree-stories+init-and-project-switching` | "Close day-0 editor gaps" decomposition (7 stories) | All 7 stories absorbed (ED-1 through ED-7). Source directory deleted as part of this consolidation. |
-| `stories/wiki-links-next/` (prepared for Mike as decision-maker) | `feat/backlinks-landscape-and-stories` (PR #72, authored by Nick) | Wiki-link correctness + agent capability bundle (4 stories) | Stories 1, 3, 4 absorbed (slug correctness, managed rename + link rewrite, BacklinksPanel push). Story 2 (suggest_links MCP tool) absorbed as Later (agent capability, not user-blocking). Source bundle remains in PR #72 as the original framing; v0-launch is authoritative going forward. |
-| `stories/collaboration-capabilities-audit/` (Miles) | `feat/backlinks-landscape-and-stories` | Decision brief covering Timeline (Area A), Per-origin Undo (Area B), Presence (Area C), Suggestions (Area D parked) | Areas A, B, C absorbed as V0-16, V0-14, V0-15. Area D stays parked (PQ11). Source brief remains as the deeper rationale + per-area detail. |
-
-**Why one master, not four bets:** the four surfaces have ~40% direct overlap (file rename appears in three of them; real-time sidebar pattern in two; first-run experience in two). Consolidating eliminates duplicate scoping work and gives the team one PROJECT.md to plan against.
-
-**Coordination footprint:** Three in-flight PRs intersect v0-launch:
-- **PR #72** (Nick, draft) carries the wiki-links-next bundle — stories prepared for Mike as decision-maker. Mike needs to confirm absorption of his stories (V0-3, V0-5, V0-12, V0-13).
-- **PR #39** (Miles, open) is V0-16 Timeline delivery. Miles owns; v0 framing is close-out.
-- **PR #76** (Mike, open) is V0-8 Graph View delivery. Mike owns; v0 framing is close-out.
-- **PR #41** (Sarah, open) is V0-6 image paste delivery. Sarah owns; v0 framing is close-out.
-
-This master should be reviewed alongside all four PRs to ensure scoping is reflected. Andrew's `desktop-readiness` PROJECT.md on `chore/restore-scoped-reports` is unmerged — when that branch lands, the redundant directory should be removed in favor of this master.
 
 ## Items table
 
@@ -152,19 +134,7 @@ Every agent-facing MCP tool must return **enriched data beyond what native tools
 
 ## Team burndowns
 
-Each section below contains one team member's ownership summary, their stories in priority order (Now → Next → Later → Reach), and cross-references to shared stories owned by others.
-
-**Jump to person:** [Miles](#miles--collaboration--shadow-git--presence) · [Mike](#mike--knowledge-graph--content--search) · [Andrew](#andrew--platform--ops--system-level-infrastructure) · [Tim](#tim--agent-infrastructure--mcp--virtualization) · [Dima](#dima--sidebar--crud--docs-system-engineering) · [Sarah](#sarah--head-of-design--design-engineer) · [Nick](#nick--editor-internals--crdt--mdx-pipeline)
-
-| Person | Now | Next | Later | Reach |
-|--------|-----|------|-------|-------|
-| **[Miles](#miles--collaboration--shadow-git--presence)** | V0-14, V0-16 | V0-17 | | |
-| **[Mike](#mike--knowledge-graph--content--search)** | V0-8, V0-12 | V0-5, V0-11, V0-3, V0-21 | V0-13 | V0-25 |
-| **[Andrew](#andrew--platform--ops--system-level-infrastructure)** | V0-1, V0-2 | | V0-20 | |
-| **[Tim](#tim--agent-infrastructure--mcp--virtualization)** | | | | V0-24 |
-| **[Dima](#dima--sidebar--crud--docs-system-engineering)** | V0-4 | V0-9, V0-10 | V0-18, V0-19 | V0-22, V0-23 |
-| **[Sarah](#sarah--head-of-design--design-engineer)** | V0-6, V0-7 | | | |
-| **[Nick](#nick--editor-internals--crdt--mdx-pipeline)** | V0-14 prereq | | | |
+Each section below contains one team member's ownership summary, their stories in priority order (Now → Next → Later → Reach), and cross-references to shared stories owned by others. See [Overview](#overview) for the summary table.
 
 ---
 
@@ -205,7 +175,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Forward.** Per-agent identity enables future multi-agent UX (different colored cursors per agent, per-agent activity attribution in timeline, per-agent undo buttons).
 
-**Source.** Polished audit `stories/collaboration-capabilities-audit/STORY.md` §3 Area B + §6 dependency graph + §13 greenfield directive + §15 ownership split. `specs/2026-04-10-undo-architecture/SPEC.md` is the underlying spec (needs update to reflect greenfield reframe — D7 flipped, R7 dropped, AgentIdentity added).
+**Detail.** `stories/collaboration-capabilities-audit/STORY.md` §3 Area B. Spec: `specs/2026-04-10-undo-architecture/SPEC.md` (needs update to reflect greenfield decisions).
 
 **Status.** Nick's TQ5/TQ6 starting now (zero-coordination, parallel with Miles's V0-16). Miles's UM wiring starts after V0-16 + TQ5 converge.  ).
 
@@ -272,7 +242,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Forward.** Cross-doc activity feed (US-2a — S5's headline scenario) is the first natural extension. SafetyCheckpoint primitive (TQ14) reused by future apply-draft. Activity-map schema (TQ11) consumed by future agent-pass grouping (D9).
 
-**Source.** Polished audit `stories/collaboration-capabilities-audit/STORY.md` §3 Area A + §6 recommended sequence + §13 greenfield items + §15 ownership split.
+**Detail.** `stories/collaboration-capabilities-audit/STORY.md` §3 Area A.
 
 **Owners.** **Miles** (all of V0-16). Nick consulted on TQ10 (typed origins shape) — one 5-minute conversation then independent.
 
@@ -282,12 +252,11 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Forward.** Selective revert (US-2c) is the first natural extension. Cross-document activity feed (US-2a) — which PR #39 is per-document — is post-v0.
 
-**Source.** Miles's audit Area A (full detail in `stories/collaboration-capabilities-audit/STORY.md` §3 Area A). PR #39 is the in-flight delivery.
+**Detail.** `stories/collaboration-capabilities-audit/STORY.md` §3 Area A. Delivery: PR #39.
 
 **Status / owner signals.** **PR #39 open**, Miles owns delivery. Approved-with-suggestions, 17 pending inline recommendations. Branch diverged from main at `1dd65a0`; needs rebase across PRs #61, #62, #65, #71. 
 
 ---
-
 
 
 #### Next
@@ -307,7 +276,6 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Forward.** Foundation for future operational signals (sync status, agent activity status).
 
-**Source.** Andrew's Story 4 persistence indicator portion (dark mode dropped — shipped via PR #60, #63).
 
 **Owners.** **Miles** end-to-end (1:1 with his change-attribution / shadow-git territory — feature-owner principle applies). Sarah consulted on visual design (dot + tooltip micro-interaction). Backend infra already shipped (PR #62 degraded-boot signal); Miles wires the UI.
 
@@ -316,18 +284,7 @@ Each section below contains one team member's ownership summary, their stories i
 ---
 
 
-
 #### Subsumed
-
-### ~~V0-15: Activity flash verification + WYSIWYG/Source reconciliation~~ — SUBSUMED BY V0-16
-
-**Subsumed 2026-04-13.** Flash reconciliation (TQ2), shared flash primitive (TQ12), `prefers-reduced-motion` (TQ7), and Playwright E2E verification all ship as part of V0-16's expanded scope under greenfield directive. V0-15 as a separate story is no longer needed. See V0-16 §TQ2/TQ12/TQ7.
-
----
-
-
-
----
 
 ### Mike — Knowledge Graph / Content / Search
 
@@ -355,7 +312,7 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Forward.** Foundation for future graph-based features: clustering overlays, tag-colored nodes (if tags ship), semantic-similarity edges, agent navigation hints ("you're here; these clusters are related"). If search ships (separate bet), graph view could layer search results as a filter.
 
-**Source.** Mike's PR #76 (`feat/graph_view` — 296 additions, 2 deletions, 7 files changed). Previously carved out of v0-launch as "parity-for-parity's-sake"; reframed 2026-04-13 to include as v0 story since Mike is actively shipping and the differentiation argument holds.
+**Delivery.** PR #76. 
 
 **Status / owner signals.** **PR #76 OPEN**, Mike authored. Remaining work: PR review, performance validation at realistic KB sizes, layout/placement decision in `EditorArea.tsx` (panel vs overlay vs separate view), accessibility pass (keyboard navigation for graph). 
 
@@ -385,12 +342,11 @@ Each section below contains one team member's ownership summary, their stories i
 
 **Forward.** Sets precedent for every future identifier-producing function (heading IDs, wiki-link targets, future block IDs).
 
-**Source.** Mike's wiki-links-next Story 1 (full SCR + invariants + AC available in `stories/wiki-links-next/STORY.md` Story 1).
+**Detail.** `stories/wiki-links-next/STORY.md` Story 1 (full invariants + AC).
 
 **Status / owner signals.** Mike's. Scoped in detail. Migration path open. 
 
 ---
-
 
 
 #### Next
@@ -413,8 +369,7 @@ Each section below contains one team member's ownership summary, their stories i
 **Lateral.** Coordinates with V0-4 (shares backend machinery, dual-surface pattern). Shares rewrite infrastructure with V0-12 if PQ9 lands on option (a).
 
 **Forward.** Heading rename propagation (M5c — same machinery, different trigger). Move-to-subfolder (combined rename + path change). Future merge-pages.
-
-**Source.** ED-3 from day-0-editor-completeness + Mike's wiki-links-next Story 3 (consolidated; full detail in Mike's STORY.md Story 3 — invariants I1-I8, AC1-AC7, items table).
+md Story 3 — invariants I1-I8, AC1-AC7, items table).
 
 **Status / owner signals.** Not started. Mike's Story 3 has detailed scoping. TQ5 staff-level decision needed (atomic strategy). 
 
@@ -442,7 +397,6 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Forward.** Consumes "derived-view panel" pattern set by V0-9.
 
-**Source.** ED-6 from day-0-editor-completeness (reduced scope after outline panel extracted as V0-9).
 
 **Owners.** **Mike** owns delivery end-to-end (his knowledge-graph domain). Consumes Sarah's panel-docking pattern. Mike works with Dima on scroll/performance if active-state behavior differs from outline.
 
@@ -468,7 +422,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Forward.** Pattern is now proven across two consumers — V0-11 panels adopt with confidence.
 
-**Source.** Mike's wiki-links-next Story 4 (full detail in Mike's STORY.md Story 4 — invariants I1-I6, AC1-AC5).
+**Detail.** `stories/wiki-links-next/STORY.md` Story 4 (full invariants + AC).
 
 **Status / owner signals.** Not started. Mike's. 
 
@@ -494,14 +448,12 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Forward.** Foundation for future link-hygiene automation: agent auto-fix of dead links, scheduled audits, heading-rename propagation.
 
-**Source.** Raised 2026-04-13 as new scope (not in any prior planning surface).
 
 **Owners.** **Mike** end-to-end (his knowledge-graph territory). MCP tool registration coordinates with Tim (dual-surface pattern — UI panel + MCP tool for agents).
 
 **Status.** Not started. 
 
 ---
-
 
 
 #### Later
@@ -516,10 +468,9 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Constraints.** Depends on V0-12 slug correctness (Unicode bug propagates to false-negatives). Substring algorithm choice (Aho-Corasick vs regex) is implementation detail.
 
-**Source.** Mike's wiki-links-next Story 2 (full detail in Mike's STORY.md Story 2). 
+**Detail.** `stories/wiki-links-next/STORY.md` Story 2. 
 
 ---
-
 
 
 #### Reach
@@ -568,7 +519,6 @@ Each is a focused UI consuming an existing, tested endpoint.
 ---
 
 
-
 ---
 
 ### Andrew — Platform / Ops / System-level Infrastructure
@@ -596,8 +546,7 @@ Each is a focused UI consuming an existing, tested endpoint.
 **Lateral.** V0-7 (session persistence) depends on this — writing `state.json` without process exclusivity is a race condition.
 
 **Forward.** Electron multi-window lock collision dialog reads this lock file. Future cross-machine deployment (if ever) reuses the pattern.
-
-**Source.** Andrew's Story 1 (`projects/desktop-readiness/PROJECT.md`).
+md`).
 
 **Status / owner signals.** Not started. Andrew authored the original scoping; assignable to him or a server-focused engineer.  Spec needed.
 
@@ -620,14 +569,12 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Forward.** Enables V0-4/V0-5 file op UX, V0-11 graph panels with live updates, future tag browser.
 
-**Source.** ED-1 from day-0-editor-completeness; complementary to draft `specs/2026-04-11-sidebar-realtime-updates/`.
 
 **Owners.** **Andrew** (server-side push broadcast — the CC1 infrastructure, file-watcher-to-awareness plumbing). **Dima** (client-side sidebar subscriber — sidebar event handler, tree patch on events). Andrew sets the push contract; Dima consumes. Pattern is reusable: Mike's V0-3 (BacklinksPanel) and V0-11 (graph panels) adopt the same contract.
 
 **Status.** Spec drafted with 5 OQs unresolved (TQ2). Not started. 
 
 ---
-
 
 
 #### Later
@@ -642,10 +589,8 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Constraints.** ProviderPool already accepts `wsUrl` override (TQ14). CJS build adds parallel output, ESM stays default (TQ15). Inherits PR #54 Track T2's `@parcel/watcher` → `chokidar` fallback.
 
-**Source.** Andrew's Story 5.
 
 ---
-
 
 
 #### Cross-references (secondary owner)
@@ -692,14 +637,13 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Forward.** If this works well: post-v0, evaluate deprecating `read_document`, `list_documents`, `search` in favor of `exec("cat")`, `exec("ls")`, `exec("grep")`. Reduces tool count from ~14 to ~5 (exec + write_document + edit_document + undo + redo). Root PROJECT.md XQ1 resolves.
 
-**Source.** Root PROJECT.md XQ1 (open architectural question). Internal `bash/index.ts` already implements `runShell()`, `grep()`, `gitLog()`, `cat()` — enriched bash wraps these as an MCP-exposed surface.
+**Detail.** Root PROJECT.md XQ1 (open architectural question). Internal `bash/index.ts` provides the implementation substrate.
 
 **Owners.** **Tim** end-to-end. This is his "just-bash virtualization" brainstorm item brought to life.
 
 **Status.** Not started. 5 week. **Reach goal — lower priority than Tim's core v0 work** (V0-4 MCP file-ops, CC9 enrichment audit, MCP initialization/discovery, harness integration). Ship if Tim has capacity after core lands. Depends on core semantic tools working first (enriched bash reuses the same enrichment pipeline).
 
 ---
-
 
 
 #### Cross-references (secondary owner)
@@ -746,12 +690,10 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Forward.** Establishes the dual UI+MCP pattern for future file-level operations (archive, tag, batch ops).
 
-**Source.** ED-2 from day-0-editor-completeness + Andrew's Story 2a (consolidated).
 
 **Status / owner signals.** Not started. PR #40 (open spec) defines MCP write_file conventions — coordinate API shape. PR #53 (open) adds wiki-link context menu — UI pattern reusable. 
 
 ---
-
 
 
 #### Next
@@ -773,7 +715,6 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Forward.** Panel-docking visual language carries into every future panel: tag browser, future graph clusters, AI-suggestion surfaces, etc.
 
-**Source.** Originally bundled into day-0-editor-completeness ED-6; split out 2026-04-13 per Sarah-owns-outline-experience decision.
 
 **Owners.** **Dima** leads (scroll integration with TipTap + CodeMirror, IntersectionObserver active-heading detection, live-update state management, tree rendering, UX decisions). Builds to Sarah's panel-docking pattern. Nick consulted on editor-side integration (ProseMirror scroll primitives in WYSIWYG mode).
 
@@ -799,14 +740,12 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Forward.** Natural home for future command-palette commands (create doc, insert template, switch theme).
 
-**Source.** ED-5 from day-0-editor-completeness.
 
 **Owners.** **Dima** feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk` — used by Linear, Vercel; handles keyboard nav, fuzzy filtering, a11y). Designs result-source extensibility contract himself — Mike consulted when post-v0 search bet activates to ensure content results plug in cleanly.  Nextra has analogous command palette work Dima can draw from.
 
 **Status.** Not started. Library: `shadcn/ui Command` (wraps `cmdk`). 5 weeks.
 
 ---
-
 
 
 #### Later
@@ -821,7 +760,6 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Constraints.** TipTap and CodeMirror have separate search extensions; coordinated Cmd+F across modes (TQ12 OPEN). Must go through CRDT writes (bridge invariant).
 
-**Source.** ED-7a from day-0-editor-completeness.
 
 **Owners.** **Dima** feature-owns end-to-end (TipTap search+replace extension wiring, CodeMirror search extension coordination, single Cmd+F across both modes, bridge-invariant preservation — consult Nick on CRDT write path, find-bar UX).  5 weeks.
 
@@ -836,12 +774,10 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 
 **Promote when:** Now+Next ship and qualitative feedback surfaces "feels unfinished" sentiment OR when a larger polish sprint is scheduled.
 
-**Source.** ED-7b from day-0-editor-completeness.
 
 **Owners.** **Dima** implements both (sort is trivial extension of his sidebar territory; word count is trivial Y.Text derivation). Sarah reviews word-count placement in the editor footer.
 
 ---
-
 
 
 #### Reach
@@ -886,7 +822,6 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 ---
 
 
-
 #### Cross-references (secondary owner)
 
 - **V0-2** (real-time sidebar): Dima owns client-side subscriber (sidebar event handler, tree patch on events). Andrew is primary for server push infra — see Andrew section.
@@ -926,8 +861,7 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 **Lateral.** Shares `content.exclude` concern with V0-4 (CC7).
 
 **Forward.** Electron inherits unchanged (TipTap paste runs in any renderer). Drag-and-drop builds on the same endpoint.
-
-**Source.** Andrew's Story 2b. **PR #41 is in flight** with 492 LOC already covering the TipTap plugin, busboy server endpoint, MIME validation, atomic writes — saves to flat `uploads/` (not per-doc).
+ **PR #41 is in flight** with 492 LOC already covering the TipTap plugin, busboy server endpoint, MIME validation, atomic writes — saves to flat `uploads/` (not per-doc).
 
 **Status / owner signals.** **PR #41 open**. Remaining work: design decisions (PQ4, PQ5 — directory naming, gitignore behavior) and adapting PR #41 to current codebase + content.exclude integration. 
 
@@ -953,15 +887,13 @@ Research supports this (root PROJECT.md XQ1): "Dust.tt observed agents spontaneo
 **Lateral.** Part B of `stories/init-and-project-switching/` (multi-project switching) is a sibling bet — explicitly out of v0 scope. PR #57 already shipped auto-init; this story extends with the UI flow + starter doc + session persistence.
 
 **Forward.** Electron Project Navigator composes these components. Per-user state (window size/position) is a separate Electron concern that doesn't change this per-project model.
-
-**Source.** ED-4 from day-0-editor-completeness (Part A of init-and-project-switching) + Andrew's Story 3 (consolidated). **Story-depth detail in `stories/V0-7-onboarding/STORY.md`.**
+ **Story-depth detail in `stories/V0-7-onboarding/STORY.md`.**
 
 **Owners (layered).** **Sarah** owns the feature end-to-end and the React UI (welcome screen, content scope confirmation, first-doc creation — highest-leverage first-impression novel UX). **Andrew** owns the platform primitives the spec consumes: `initContent()` extension for starter README, `state.json` schema + atomic writes + lock-coordinated writes (depends on V0-1), server endpoint for init status. Sarah writes the spec declaring primitive requirements; Andrew implements primitives; Sarah's React components consume them.
 
 **Status.** Part A onboarding scoped in detail. Auto-init shipped (PR #57). Starter doc + session persistence + React UI not started.
 
 ---
-
 
 
 #### Cross-references
@@ -994,7 +926,7 @@ Items explicitly deprioritized to post-v0. Not stories in this project — futur
 
 ### Deprioritized engineering practices
 
-- **A11y as a formal engineering practice** (Dima future) — deprioritized 2026-04-13. Baseline a11y stays as engineering hygiene in v0: feature owners implement keyboard nav, semantic HTML, focus management as part of shipping. Sarah's designs remain accessible by default as design discipline. What moves post-v0:
+- **A11y as a formal engineering practice** (Dima future) — Baseline a11y stays as engineering hygiene in v0: feature owners implement keyboard nav, semantic HTML, focus management as part of shipping. Sarah's designs remain accessible by default as design discipline. What moves post-v0:
   - Formal WCAG AA compliance audit + checklist
   - `axe-core` in CI / Lighthouse audits as a gate
   - Playwright a11y test suite
@@ -1059,40 +991,6 @@ V0-10 (Cmd+K), V0-11 (panels), V0-15 (flash), V0-18 (find/replace), V0-19 (sort+
 
 **Critical path:** V0-1 → V0-7 (process safety unblocks session persistence). V0-2 → V0-4 → V0-5 (real-time sidebar unblocks file ops UX, file ops machinery enables rename).
 
-## Distribution table — who picks up what
-
-Owner signals where they exist (in-flight PR author or original story author). When no signal, marked "open assignment."
-
-| Story | Phase | Owner(s) | Delivery vehicle | Status |
-|-------|-------|----------|------------------|--------|
-| V0-1 process safety | Now| **Andrew** | Spec → impl | Not started, fully scoped |
-| V0-2 real-time sidebar | Now| **Andrew** (server push) + **Dima** (client sidebar) | Spec resolves 5 OQs → impl | Spec drafted (5 OQs) |
-| V0-3 BacklinksPanel push | Next| **Mike** (consumer) + **Andrew** push infra | Spec → impl | Source story in PR #72 bundle |
-| V0-4 file ops bundle | Now| **Dima** (UI + server API) + **Tim** (MCP tools) | Spec → impl | Not started |
-| V0-5 rename + link rewrite | Next| **Mike** (rewrite machinery) + **Dima** (sidebar trigger UX) | Spec → impl | Source story in PR #72 bundle |
-| V0-6 image paste | Now| **Sarah** | Close out PR #41 | In flight |
-| V0-7 onboarding + session + starter | Now| **Sarah** (feature + UI) + **Andrew** (state.json, init primitives) | Spec → impl | Part A scoped; rest not started |
-| V0-8 graph view | Now| **Mike** | Close out PR #76 | In flight; 296 LOC, needs review + perf |
-| V0-9 outline panel | Next| **Dima** feature-owns | Spec → impl | NEW — consumes panel-docking pattern |
-| V0-10 Cmd+K | Next| **Dima** feature-owns | Spec → impl | Uses `shadcn/ui Command` (wraps `cmdk`) |
-| V0-11 graph panels | Next| **Mike** (adopts Sarah's panel-docking pattern) | Spec → impl | Backend done, pure React |
-| V0-12 slug correctness | Now| **Mike** | Spec → impl | Source story in PR #72 bundle |
-| V0-13 suggest_links | Later| **Mike** + **Tim** (MCP) | Spec → impl | Source story in PR #72 bundle |
-| V0-14 per-origin undo (three-UM + char-level Observer A) | Now | **Nick** (TQ5 Observer A prerequisite) + **Miles** (three-UM wiring + AgentIdentity) | Parallel tracks → converge | Nick starting now; Miles after V0-16 |
-| ~~V0-15 activity flash verify~~ | ~~Later~~ | — | — | **SUBSUMED by V0-16** (TQ2/TQ12/TQ7 in expanded scope) |
-| V0-16 Timeline + Rollback (expanded greenfield scope) | Now | **Miles** (Nick consulted on TQ10 typed origins — 5 min) | PR #39 rebase + expanded | In flight; rebase + 17 comments + 8 architectural-precedent items + diff library + flash reconcile + scaffold removal |
-| V0-17 persistence indicator UI | Next| **Miles** (Sarah consulted on visual) | Spec → impl | Backend infra shipped (PR #62) |
-| V0-18 find/replace | Later| **Dima** feature-owns (Nick consulted on CRDT write path) | Spec → impl | Not started |
-| V0-19 sort + word count | Later| **Dima** (Sarah reviews placement) | Spec → impl | Not started |
-| V0-20 desktop build prep | Later| **Andrew** (Nick: provider-pool.ts change) | Spec → impl | Gated on Electron starting |
-| V0-21 dead-link checking | Next| **Mike** + **Tim** (MCP) | Spec → impl | NEW — Tier 1 scope; Tier 2/3 post-v0 |
-| V0-22 tabbed file experience | **Reach**| **Dima** | Spec → impl | Lower P than Dima's core v0 work; ship if capacity |
-| V0-23 drag-and-drop files in sidebar | **Reach**| **Dima** | Spec → impl | Lower P; builds on V0-4 move backend |
-| V0-24 enriched just-bash MCP surface | **Reach**| **Tim** | Prototype → evaluate | Lower P; explores XQ1 architecture; reuses internal bash/index.ts |
-| V0-25 SQLite + Drizzle + Zod schematization | **Reach**| **Mike** | Schema design → migrate | Lower P; prerequisite for post-v0 search bet (FTS5); replaces in-memory Maps + JSON cache |
-
-**Now phase parallelism:** Three of nine Now stories are in-flight PR close-outs (V0-6, V0-8, V0-16) with different authors — they parallelize naturally. V0-1 (Andrew), V0-2 (Andrew/Dima), V0-12 (Mike), V0-14 (Nick prerequisite track) can start in parallel. V0-4 (Dima + Tim) starts after V0-2's push contract is clear. See dependency graph above for full ordering.
-
 ## Rabbit holes
 
 **RH1: "Let's just add search while we're doing file ops."** Tempting because V0-4 touches the sidebar and search UI lives there too. But search is a separate project with 8 research reports dedicated to it. DO NOT add. Trigger search bet as a separate project once v0 ships.
@@ -1137,10 +1035,6 @@ Owner signals where they exist (in-flight PR author or original story author). W
 - [stories/init-and-project-switching/STORY.md](../../stories/init-and-project-switching/STORY.md) — Part A → V0-7; Part B stays as standalone sibling bet
 - [stories/wiki-links-next/STORY.md](../../stories/wiki-links-next/STORY.md) — Mike's bundle: Story 1 → V0-12, Story 2 → V0-13, Story 3 → V0-5, Story 4 → V0-3
 - [stories/collaboration-capabilities-audit/STORY.md](../../stories/collaboration-capabilities-audit/STORY.md) — Miles's audit: Area A → V0-16, Area B → V0-14, Area C → V0-15
-
-### Source Projects (superseded)
-- `projects/desktop-readiness/PROJECT.md` (on `chore/restore-scoped-reports`) — Andrew's 5-story decomposition; absorbed into v0-launch
-- `projects/day-0-editor-completeness/PROJECT.md` (this branch) — 7-story decomposition; absorbed into v0-launch (directory will be deleted)
 
 ### Sibling projects (NOT absorbed — coordinate via cross-reference)
 - [projects/server-bridge-hardening/PROJECT.md](../server-bridge-hardening/PROJECT.md) — Narrow wedge (test coverage + unification); waiting on PR #39 merge
