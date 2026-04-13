@@ -221,6 +221,10 @@ Per-person domain ownership. Stories in the Distribution table below map to thes
 - In v0: baseline a11y is engineering hygiene — Dima implements keyboard nav, focus management, semantic HTML as part of shipping his own stories. Each feature owner does the same for their own stories. No formal compliance sprint, no axe-core gate, no dedicated audit.
 - Post-v0 (when promoted): Dima owns the formal practice — tooling, standards, compliance audits, team education.
 
+**Reach goals (lower P than core v0 — ship if Dima has capacity):**
+- V0-22 Tabbed file experience (Obsidian-style — multi-doc tabs, tab state persistence)
+- V0-23 Drag-and-drop files in sidebar (builds on V0-4's move backend)
+
 **Long-term (Nick → Dima handoff):**
 - Typed component nodes (PR #23) — handoff when MDX pipeline clean
 - Component slash insert (PR #12) — handoff when MDX pipeline clean
@@ -372,7 +376,7 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 - Confirmation UX required for destructive operations (no version history → irreversible).
 - Folder operations mirror file operations; no special-case folder-move-with-content semantics in v0.
 
-**Lateral.** V0-5 (rename) shares most backend machinery and the dual-surface pattern.
+**Lateral.** V0-5 (rename) shares most backend machinery and the dual-surface pattern. **Scope note:** V0-4 scopes "move" as context-menu / move-dialog interaction. Drag-and-drop reorder/move in the sidebar tree is explicitly NOT V0-4 — that's V0-23 (reach goal, lower priority, builds on V0-4's backend).
 
 **Forward.** Establishes the dual UI+MCP pattern for future file-level operations (archive, tag, batch ops).
 
@@ -822,6 +826,50 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 ---
 
+## Stories — Reach (2 stories, Dima if capacity allows)
+
+**Phasing rationale:** These are in Dima's brainstormed ownership areas and would improve the v0 product, but are **lower priority than his core v0 work** (V0-4 CRUD, V0-2 sidebar client, V0-9 outline, V0-10 Cmd+K, V0-18 find/replace, V0-19 sort+word count). Ship if Dima has capacity after core stories land. Both depend on core v0 infrastructure shipping first (V0-4 for backend, V0-2 for real-time sidebar).
+
+---
+
+### V0-22: Tabbed file experience (Obsidian-style)
+
+**What.** Multiple documents open simultaneously as tabs above the editor. Tab bar shows open docs. Click tab to switch. Close tab (X button or middle-click). Remember open tabs across sessions via `state.json` (depends on V0-7 session persistence).
+
+**Value.** Customer: users can reference one doc while editing another — reduces sidebar navigation overhead. Matches Obsidian, VS Code, every editor users are coming from.
+
+**Constraints.**
+- Provider pool already supports multiple open docs (LRU from `specs/2026-04-10-provider-pool/`). Each tab = one active HocuspocusProvider.
+- Hash routing (`#/docName`) needs to extend or be replaced with tab-aware state management.
+- Tab persistence in `state.json` — depends on V0-7 session persistence (Andrew's primitives).
+- Closing a doc's tab doesn't delete the doc (obvious but worth stating).
+
+**Owners.** **Dima** end-to-end. Sarah reviews polish after.
+
+**Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
+
+---
+
+### V0-23: Drag-and-drop files in sidebar
+
+**What.** Drag files and folders within the sidebar tree to move them. Drag a file to a different folder → moves the file (same backend as V0-4 move). Drag a folder → moves the folder + contents. Visual drag preview, drop-target highlighting, prohibited-drop indication (e.g., can't drop a folder into itself).
+
+**Value.** Customer: intuitive organization matching every file manager. Faster than context-menu move for spatial thinkers. Obsidian and VS Code support this.
+
+**Constraints.**
+- Builds on V0-4's move backend — DnD is a **trigger** for the same `move_document` API, not a separate operation.
+- Needs V0-2 real-time sidebar to update correctly after moves.
+- DnD library: `@dnd-kit/core` or HTML5 drag API. Evaluate at impl time.
+- Must handle edge cases: drop onto root, drop onto self, deeply nested moves.
+
+**Scope note on V0-4:** V0-4 (file organization ops) scopes "move" as context-menu / move-dialog. DnD is explicitly NOT in V0-4 — it's this separate reach story that builds on V0-4's backend.
+
+**Owners.** **Dima** end-to-end. Sarah reviews polish after.
+
+**Status.** Not started. Estimate: 1-2 weeks. **Reach goal — lower priority than Dima's core v0 work.**
+
+---
+
 ## Post-v0 (out of v0-launch scope; tracked for future planning)
 
 Items explicitly deprioritized to post-v0. Not stories in this project — future bets or ongoing practices that pick up after v0 ships.
@@ -920,6 +968,8 @@ Owner signals where they exist (in-flight PR author or original story author). W
 | V0-19 sort + word count | Later | 0.5-1 wk | **Dima** (Sarah reviews placement) | Spec → impl | Not started |
 | V0-20 desktop build prep | Later | 0.5 wk | **Andrew** (Nick: provider-pool.ts change) | Spec → impl | Gated on Electron starting |
 | V0-21 dead-link checking | Next | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | NEW — Tier 1 scope; Tier 2/3 post-v0 |
+| V0-22 tabbed file experience | **Reach** | 1-2 wk | **Dima** | Spec → impl | Lower P than Dima's core v0 work; ship if capacity |
+| V0-23 drag-and-drop files in sidebar | **Reach** | 1-2 wk | **Dima** | Spec → impl | Lower P; builds on V0-4 move backend |
 
 **Sequencing for Now phase (9 stories, 6-8 weeks):**
 - Week 1-2: V0-1 (Andrew), V0-2 (Andrew/Dima — spec resolution), V0-12 (Mike) start in parallel
