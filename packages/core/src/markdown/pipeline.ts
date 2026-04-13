@@ -21,8 +21,8 @@ import {
   type RemarkProseMirrorOptions,
   remarkProseMirror,
 } from '@handlewithcare/remark-prosemirror';
+import type { Node as PmNode, Schema } from '@tiptap/pm/model';
 import type { Root as MdastRoot } from 'mdast';
-import type { Node as PmNode, Schema } from 'prosemirror-model';
 import remarkDirective from 'remark-directive';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';

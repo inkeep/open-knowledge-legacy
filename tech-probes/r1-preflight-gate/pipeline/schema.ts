@@ -2,8 +2,8 @@
  * ProseMirror schema for R1 probe. Includes nodes/marks matching the spec's
  * fidelity extension surface — enough to round-trip the 118 catalog + P0 cases.
  */
-import { Schema } from 'prosemirror-model';
-import type { NodeSpec, MarkSpec } from 'prosemirror-model';
+import { Schema } from '@tiptap/pm/model';
+import type { NodeSpec, MarkSpec } from '@tiptap/pm/model';
 
 const nodes: Record<string, NodeSpec> = {
   doc: { content: 'block*' },
