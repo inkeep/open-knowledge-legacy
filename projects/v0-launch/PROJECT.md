@@ -20,7 +20,7 @@ The intersection: each of these classes alone is fixable; together they form a "
 
 **Resolution.** A single "v0 launch" project that consolidates the four prior planning surfaces (see Provenance), focuses exclusively on unfinished work, and phases into Now (must-have for launch) / Next (should-have to feel complete) / Later (polish + gated). Each story carries its own ownership signal and current PR/spec status so the team can pick up work without re-discovery.
 
-**Operating pattern — design → implementation handoff.** For UI stories that are design-taste heavy in the spec but mechanical in the build, we operate a Sarah-specs / Dima-implements split. Sarah owns the design (visual, interaction, keyboard, a11y considerations) as a design spec; Dima implements to spec; Sarah reviews for fidelity. Feature owners (Miles, Mike, Andrew) own their features end-to-end including minor feature-specific UX. This is explicit for V0-9, V0-10, V0-18, V0-19. See the "Team ownership reference" section for per-person scope.
+**Operating model — feature owners ship UX; Sarah polishes after. Sarah blocks nobody.** Feature owners own UX tightly bound to their feature's scope and ship it functional + to a high-quality bar. Sarah reviews and polishes after — she is NOT in the critical path for any story. No exceptions. Sarah's concentrated ownership is cross-cutting patterns (panel-docking, keyboard shortcut scheme, visual design language) which she publishes as reference docs asynchronously — feature owners can ship without them and Sarah pattern-reconciles after. See "Team ownership reference" for per-person scope.
 
 **Multi-dimensional value.**
 
@@ -206,11 +206,11 @@ Per-person domain ownership. Stories in the Distribution table below map to thes
 - Docs site / Fumadocs maintenance
 - Long-term: "OK as WYSIWYG editor for a Fumadocs project" future bet (Nick consulting on MDX)
 
-**Implementation partner for Sarah-designed UX (design → impl handoff):**
-- V0-9 Outline panel — Sarah designs, Dima implements (scroll integration, active-heading detection, tree render)
-- V0-10 Quick switcher (Cmd+K) — Sarah designs, Dima implements (fuzzy match, performance, keyboard state machine)
-- V0-18 Find and replace — Sarah designs, Dima implements (TipTap + CodeMirror coordination)
-- V0-19 Word count + sidebar sort — Dima implements fully
+**Feature owner for engineering-heavy UI stories (ships UX functional + high quality; Sarah reviews/polishes after):**
+- V0-9 Outline panel — Dima feature-owns build (scroll integration, active-heading detection, tree render). Consumes Sarah's panel-docking pattern. Sarah reviews polish.
+- V0-10 Quick switcher (Cmd+K) — Dima feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk`). Designs result-source architecture himself; Mike consulted when search bet activates post-v0. Sarah reviews polish.
+- V0-18 Find and replace — Dima feature-owns (TipTap + CodeMirror coordination, CRDT write path). Sarah reviews polish.
+- V0-19 Word count + sidebar sort — Dima fully
 
 **Engineering refactor owner:**
 - Slash-command-generalization spec (still Draft) — pure engineering refactor, Dima owns
@@ -235,22 +235,24 @@ Per-person domain ownership. Stories in the Distribution table below map to thes
 - Frontmatter editing UX (future)
 - Persistence indicator visual design (consulted with Miles on V0-17)
 
-**Pattern ownership (cross-cutting):**
-- Panel-docking visual + interaction pattern (consumed by V0-9 outline, V0-11 graph panels, future panels)
+**Cross-cutting patterns (set once, ahead of implementation — not per-story):**
+- Panel-docking visual + interaction pattern (consumed by V0-9 outline, V0-11 graph panels, future panels) — Sarah writes pattern doc; feature owners build to it
 - Keyboard shortcut scheme (Cmd+K, Cmd+F, Ctrl+\, future shortcuts — scheme + discoverability)
 - Visual design language (focus indicators, motion, error states — adopted across the product)
+- V0-10 palette result-source contract reviewed after Dima ships (Dima designs + builds end-to-end; Sarah reviews for pattern consistency)
 
-**Design specs for Dima-implemented UI:**
-- V0-9 Outline panel design spec (Dima implements)
-- V0-10 Cmd+K design spec (Dima implements)
-- V0-18 Find/replace design spec (Dima implements)
-- Design reviews during implementation to catch UX regressions
+**Review + polish (not in the critical path):**
+- Feature owners ship UX functional + high quality for their own features
+- Sarah reviews after and polishes — she does NOT gate implementation
+- If a feature owner's UX is tightly bound to their feature scope, they ship without waiting for Sarah
+- Sarah reviews identify pattern drift, visual inconsistencies, or polish opportunities
 
 **Go-to UX triager:**
 - Default owner for UX questions that don't cleanly fit another feature area
-- Final call on UX tradeoffs, taste decisions, novel interaction design
+- Final call on UX tradeoffs and taste decisions when feature owners genuinely aren't sure
+- But feature owners should try first, ship functional, and Sarah polishes later
 
-**Explicitly not Sarah's:** A11y as an engineering practice (Dima owns tooling + compliance). Her designs remain accessible by default as part of her design discipline — table stakes for head-of-design, not a bucket she manages.
+**Explicitly not Sarah's:** A11y as an engineering practice (Dima post-v0). Her designs remain accessible by default as design discipline. Feature-specific UX gating (feature owners ship without waiting).
 
 ### Nick — Editor internals / CRDT / MDX pipeline
 
@@ -291,7 +293,7 @@ Per-person domain ownership. Stories in the Distribution table below map to thes
 | (meta) | Panel-docking visual + interaction pattern | **Sarah** (design) | V0-9, V0-11, future panels |
 | (meta) | Keyboard shortcut scheme | **Sarah** (design) | V0-10 Cmd+K, V0-18 Cmd+F, future shortcuts |
 | (meta) | A11y as engineering practice (post-v0) | **Dima** future (deprioritized for v0) | Baseline a11y stays as engineering hygiene in v0 (feature owners ship keyboard nav, semantic HTML, focus management as part of their feature) |
-| (meta) | Design → implementation handoff for UI stories | Pattern | V0-9, V0-10, V0-18, V0-19 |
+| (meta) | Feature owners ship UX; Sarah reviews/polishes after. **Sarah blocks nobody.** | Operating model | All stories. No exceptions. |
 
 ---
 
@@ -611,9 +613,9 @@ Walking skeleton: a new user runs `npx openknowledge`, sees onboarding (V0-7), c
 
 **Source.** Originally bundled into day-0-editor-completeness ED-6; split out 2026-04-13 per Sarah-owns-outline-experience decision.
 
-**Owners.** **Sarah designs** (panel-docking visual pattern + interaction spec + keyboard nav + active-state visual + a11y considerations in spec). **Dima implements** (scroll integration with TipTap + CodeMirror, IntersectionObserver active-heading detection, live-update state management, tree rendering). Sarah reviews implementation for fidelity. Nick consulted on editor-side integration (ProseMirror scroll primitives in WYSIWYG mode).
+**Owners.** **Dima** feature-owns end-to-end (scroll integration with TipTap + CodeMirror, IntersectionObserver active-heading detection, live-update state management, tree rendering, UX decisions). Consumes Sarah's panel-docking pattern doc if available; ships without it if not — Sarah pattern-reconciles later. Nick consulted on editor-side integration (ProseMirror scroll primitives in WYSIWYG mode). Sarah reviews polish after.
 
-**Status.** Not started. Backend API exists (`/api/page-headings`). Pure frontend work once Sarah's design spec is written. Estimate: Sarah design ~0.5 week + Dima impl ~1 week = ~1.5 weeks total.
+**Status.** Not started. Backend API exists (`/api/page-headings`). Pure frontend work. Estimate: ~1-1.5 weeks.
 
 ---
 
@@ -665,9 +667,9 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Source.** ED-5 from day-0-editor-completeness.
 
-**Owners.** **Sarah designs** (interaction model — what's in the palette, result ranking, keyboard flow, visual design, Cmd+K shortcut registration). **Dima implements** (fuzzy-match library integration + tuning, performance engineering for large fileIndex, keyboard state machine, overlay rendering via Floating UI, localStorage recents sync). Sarah reviews implementation. Nextra has analogous command palette work Dima can draw from.
+**Owners.** **Dima** feature-owns end-to-end. Uses `shadcn/ui Command` component (wraps `cmdk` — used by Linear, Vercel; handles keyboard nav, fuzzy filtering, a11y). Designs result-source extensibility contract himself — Mike consulted when post-v0 search bet activates to ensure content results plug in cleanly. Sarah reviews polish after. Nextra has analogous command palette work Dima can draw from.
 
-**Status.** Not started. Estimate: Sarah design ~0.5 week + Dima impl ~1 week = ~1.5 weeks total.
+**Status.** Not started. Library: `shadcn/ui Command` (wraps `cmdk`). Estimate: ~1-1.5 weeks.
 
 ---
 
@@ -772,9 +774,9 @@ Each is a focused UI consuming an existing, tested endpoint.
 
 **Constraints.** TipTap and CodeMirror have separate search extensions; coordinated Cmd+F across modes (TQ12 OPEN). Must go through CRDT writes (bridge invariant).
 
-**Source.** ED-7a from day-0-editor-completeness. Estimate: Sarah design ~0.5 week + Dima impl ~1-1.5 weeks.
+**Source.** ED-7a from day-0-editor-completeness.
 
-**Owners.** **Sarah designs** (find-bar visual + interaction, match highlighting style, replace-confirmation UX, keyboard flow). **Dima implements** (TipTap search+replace extension wiring, CodeMirror search extension coordination, single Cmd+F across both modes, bridge-invariant preservation — consult Nick on CRDT write path). Sarah reviews.
+**Owners.** **Dima** feature-owns end-to-end (TipTap search+replace extension wiring, CodeMirror search extension coordination, single Cmd+F across both modes, bridge-invariant preservation — consult Nick on CRDT write path, find-bar UX). Sarah reviews polish after. Estimate: ~1-1.5 weeks.
 
 ---
 
@@ -905,8 +907,8 @@ Owner signals where they exist (in-flight PR author or original story author). W
 | V0-6 image paste | Now | 1-2 wk | **Sarah** | Close out PR #41 | In flight |
 | V0-7 onboarding + session + starter | Now | 2 wk | **Sarah** (feature + UI) + **Andrew** (state.json, init primitives) | Spec → impl | Part A scoped; rest not started |
 | V0-8 graph view | Now | 1-2 wk close-out | **Mike** | Close out PR #76 | In flight; 296 LOC, needs review + perf |
-| V0-9 outline panel | Next | 1.5 wk | **Sarah** designs + **Dima** implements | Spec → impl | NEW — sets panel-docking pattern |
-| V0-10 Cmd+K | Next | 1.5 wk | **Sarah** designs + **Dima** implements | Spec → impl | Not started |
+| V0-9 outline panel | Next | 1-1.5 wk | **Dima** feature-owns | Spec → impl | NEW — consumes panel-docking pattern; Sarah reviews after |
+| V0-10 Cmd+K | Next | 1-1.5 wk | **Dima** feature-owns | Spec → impl | Uses `shadcn/ui Command` (wraps `cmdk`); Sarah reviews after |
 | V0-11 graph panels | Next | 1-2 wk | **Mike** (adopts Sarah's panel-docking pattern) | Spec → impl | Backend done, pure React |
 | V0-12 slug correctness | Now | 1 wk + migration | **Mike** | Spec → impl | Source story in PR #72 bundle |
 | V0-13 suggest_links | Later | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | Source story in PR #72 bundle |
@@ -914,7 +916,7 @@ Owner signals where they exist (in-flight PR author or original story author). W
 | V0-15 activity flash verify | Later | 0.5-1 wk | **Miles** (Nick consulted on plugin hosts) | Verification + small fix | Existing impl unverified |
 | V0-16 Timeline + Rollback | Now | 1-2 wk close-out | **Miles** (Nick consulted on SourceEditor diff view) | Close out PR #39 | In flight; needs rebase + 17 review comments |
 | V0-17 persistence indicator UI | Next | 0.5-1 wk | **Miles** (Sarah consulted on visual) | Spec → impl | Backend infra shipped (PR #62) |
-| V0-18 find/replace | Later | 1.5-2 wk | **Sarah** designs + **Dima** implements (Nick consulted on CRDT write path) | Spec → impl | Not started |
+| V0-18 find/replace | Later | 1-1.5 wk | **Dima** feature-owns (Nick consulted on CRDT write path; Sarah reviews after) | Spec → impl | Not started |
 | V0-19 sort + word count | Later | 0.5-1 wk | **Dima** (Sarah reviews placement) | Spec → impl | Not started |
 | V0-20 desktop build prep | Later | 0.5 wk | **Andrew** (Nick: provider-pool.ts change) | Spec → impl | Gated on Electron starting |
 | V0-21 dead-link checking | Next | 1 wk | **Mike** + **Tim** (MCP) | Spec → impl | NEW — Tier 1 scope; Tier 2/3 post-v0 |
