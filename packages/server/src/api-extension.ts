@@ -58,9 +58,7 @@ export function isValidRelativeContentPath(path: string): boolean {
     return false;
   }
 
-  return path
-    .split('/')
-    .every((segment) => segment && segment !== '.' && segment !== '..');
+  return path.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
 }
 
 export function listAffectedDocNames(
