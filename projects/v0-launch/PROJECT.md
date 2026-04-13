@@ -11,7 +11,7 @@
 | **[Miles](#miles--collaboration--shadow-git--presence)** | V0-14 per-origin undo (NO Observer A dep), V0-16 Timeline | V0-17 persistence indicator | | |
 | **[Mike](#mike--knowledge-graph--content--search)** | V0-8 graph view, V0-12 slug correctness | V0-5 rename+backlink, V0-11 graph panels, V0-3 backlinks push, V0-21 dead-links | V0-13 suggest_links | V0-25 SQLite schema |
 | **[Andrew](#andrew--platform--ops--system-level-infrastructure)** | V0-1 process safety, V0-2 real-time sidebar | | V0-20 desktop build prep | |
-| **[Tim](#tim--agent-infrastructure--mcp--virtualization)** | | | | V0-24 enriched bash |
+| **[Tim](#tim--agent-infrastructure--mcp--virtualization)** | V0-26 MCP completeness + harness integration | | | V0-24 enriched bash |
 | **[Dima](#dima--sidebar--crud--docs-system-engineering)** | V0-4 file ops | V0-9 outline, V0-10 Cmd+K | V0-18 find/replace, V0-19 sort+wc | V0-22 tabs, V0-23 DnD |
 | **[Sarah](#sarah--head-of-design--design-engineer)** | V0-6 image paste, V0-7 onboarding | | | |
 | **[Nick](#nick--editor-internals--crdt--mdx-pipeline)** | Observer A origin-aware diff (FR-4/US-3e, independent — does NOT block Miles) | | | |
@@ -528,7 +528,39 @@ md`).
 
 **Territory:** MCP tools for read/write/list for agent. Just-bash virtualization (grep, ls, etc. — open question XQ1). MCP initialization and discovery by Cursor, Claude Code/Cowork, Codex. Agent harness integration. Embedded web viewer integration. Computing virtualized information / cataloging / indexes for agents (frontmatter indexing, etc.). MCP tool surface for file operations (dual surface with V0-4, V0-5; Dima owns UI, Tim owns MCP). MCP `ingest` tool.
 
-**MCP enrichment quality bar (CC9 — Tim owns verification):** Every agent-facing MCP tool must return enriched data beyond native tools. Verify `list_documents` enrichment. Design enriched response shapes for V0-4 file-ops tools. Update MCP `instructions` field to direct agents to prefer OK MCP tools. See CC9 for full detail.
+**Now**
+
+#### V0-26: MCP tool completeness + agent harness integration
+
+**What to build.** Three workstreams that make the MCP surface v0-ready:
+
+**1. Enrich `list_documents` (CC9 gap).** Currently returns raw doc names only (Hocuspocus passthrough). Agents must N+1 call `read_document` on each to get metadata. Enhance to return per-doc metadata: title (from frontmatter), description, tags, backlink count, modified timestamp, catalog category. Matches the enrichment standard `read_document` and `search` already meet (PR #74).
+
+**2. Agent harness embedded web viewer integration.** Make the major agent harnesses aware of the OK editor for co-authoring:
+- Cursor's browser panel — open `localhost:PORT/#/docName` alongside the agent
+- Claude Code macOS app web view — same
+- Claude Desktop preview panel — same
+- MCP `instructions` field updated to tell agents: "prefer OK MCP tools over native Read/Grep/Glob for all KB operations" + "open the editor at `localhost:PORT/#/docName` to view documents during co-authoring"
+
+**3. V0-4 file-ops MCP tool surface.** Design and implement `delete_document`, `move_document`, `duplicate_document`, `create_folder` as MCP tools. Shared backend API with Dima's UI (CC2 dual surface). Enriched responses per CC9 (e.g., `delete_document` reports orphaned backlinks, `move_document` reports updated references — not just `{ok: true}`).
+
+**Value.** Customer (agent): agents using OK's MCP tools get strictly better results than native tools — the value prop of the MCP server. Without `list_documents` enrichment, agents waste turns on N+1 reads. Without harness integration, agents don't know how to show the editor alongside their work. Without file-ops MCP tools, agents fall back to native `Bash("rm")` which bypasses CRDT, provider pool, and rescue buffers.
+
+**Constraints.**
+- `list_documents` enrichment reuses the same frontmatter parsing + backlink index data that `read_document` already uses. No new data sources — just plumbing existing data into the response.
+- Harness integration is primarily MCP `instructions` + documentation, not code changes. The editor already runs on localhost; agents just need to know the URL pattern.
+- File-ops MCP tools share backend API with Dima's V0-4 UI — coordinate on API shape (CC2). Dima owns the server endpoints; Tim wraps them as MCP tools.
+- All MCP tool responses use consistent enrichment shape (CC9).
+
+**Lateral.** V0-4 (Dima) — shared backend API for file ops. CC9 — Tim owns the enrichment quality bar across all tools. V0-21 (Mike) — `find_dead_links` MCP tool registration is Tim's to wire.
+
+**Forward.** V0-24 (enriched just-bash, Reach) builds on the same enrichment pipeline Tim establishes here. Post-v0 search bet plugs content-search results into the MCP surface Tim owns.
+
+**Owners.** **Tim** end-to-end.
+
+**Status.** `list_documents` enrichment and MCP instructions update can start immediately (no dependencies). File-ops MCP tools coordinate with Dima's V0-4 backend API (starts after V0-2 push contract is clear). Harness integration is documentation + testing work.
+
+---
 
 **Reach**
 
