@@ -52,3 +52,23 @@ PR-review round from `inkeep-internal-ci` (4 findings + 1 consider). All factual
 7. **Frontmatter format**: converted YAML frontmatter to markdown-header format matching recent specs (`specs/2026-04-14-clone-from-github/SPEC.md`, `specs/2026-04-13-enriched-exec-mcp-surface/SPEC.md`). Style consistency with repo convention.
 
 No other findings. No design challenges reopened.
+
+## 2026-04-14 — implementation-discovery revision: Path A scope + Path B deferred (D12)
+
+During Phase 1 of `/implement`, reading `packages/server/src/api-extension.ts` and `packages/server/src/agent-sessions.ts` revealed that the current server has **no per-agent-session concept**. `AgentSessionManager.sessions` is `Map<docName, AgentDirectConnection>` (keyed by docName, not agentId); every write hardcodes `DEFAULT_AGENT_ID='claude-1'`. The spec's original framing assumed per-agent identity plumbing that doesn't exist.
+
+**Decision (D12, LOCKED):** ship **Path A** — single-agent nav using the existing hardcoded `DEFAULT_AGENT_ID`. Defer **Path B** (MCP→HTTP header-based multi-agent identity, ~115 LOC) as FW-7 with explicit extension-point notes. Defer **Path C** (per-(agent, doc) DirectConnections for in-doc cursor isolation + per-agent undo, ~500 LOC) as FW-8.
+
+**Consequences applied to SPEC.md:**
+
+- §2 Non-goals: added explicit Path B and Path C deferrals with scope and seam notes.
+- §3 Out of Scope: added FW-7 (Path B) at Explored tier with LOC estimate and trigger; added FW-8 (Path C) at Identified tier.
+- §5 surface-area map: row for `agent-sessions.ts` changed to "no change in Path A" with pointer to §6.2.1.
+- §6.2 code snippet: write-path caller now uses hardcoded `DEFAULT_AGENT_ID` / `'Claude'` with a "Path B seam" comment pointing to the new §6.2.1.
+- §6.2 prose: removed the "session-lifecycle hook" paragraph (no event to hook) and added a note that `clearFocus` is forward-compatibility with no Path A caller.
+- §6.2.1 (new subsection): documents the Path A current state, the two Path B seams (MCP client + server helper), and the minimal LOC estimates. Makes Path B single-seam upgrade path explicit.
+- §8 Acceptance criteria #7: two-concurrent-agents acceptance criterion annotated as unit-test-only in Path A; real integration test deferred to Path B.
+- §9 Decision log: added D12 (Path A scope) LOCKED.
+- §14 Implementation plan: step 3 (session-lifecycle wiring) struck through; step 4 updated to use `DEFAULT_AGENT_ID`.
+
+No architectural decisions reopened. The `AgentFocusBroadcaster` shape, the `AwarenessState.agentFocus` field, and all client-side logic are unchanged — they already take `agentId` as a first-class parameter, so Path B is a pure plumbing upgrade with no API-surface changes.
