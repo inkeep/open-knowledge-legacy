@@ -9,6 +9,7 @@ import {
   ZapIcon,
 } from 'lucide-react';
 import Link from 'next/link';
+import { StickyShowcase } from './sticky-showcase';
 
 export default function HomePage() {
   return (
@@ -16,6 +17,7 @@ export default function HomePage() {
       <Hero />
       <Pillars />
       <QuickStart />
+      <StickyShowcase />
       <HowItWorks />
       <Features />
       <Inspiration />
