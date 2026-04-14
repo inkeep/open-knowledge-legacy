@@ -2,64 +2,83 @@
 
 **Status:** Ready for Implementation
 **Owner(s):** Nick Gomez
-**Last updated:** 2026-04-13 (pm-3, post-audit)
-**Baseline commit:** `dfe9a49`
+**Last updated:** 2026-04-14 (bridge-invariant reframe post-PR-#39 merge)
+**Baseline commit:** rebased onto `origin/main` (db8a6d6 — PR #39 Timeline + rollbacks merged)
+**Tracking IDs:** TQ5 (Observer A refactor) + TQ6 (US-3e stress test) in `projects/v0-launch/PROJECT.md`
+**Primary consumer:** V0-14 (Miles's three-UndoManager architecture) — see `projects/v0-launch/PROJECT.md:107-148`
 **Links:**
+- V0-14 project entry: `projects/v0-launch/PROJECT.md` §Miles Now / §Nick Now
 - Upstream story: `stories/collaboration-capabilities-audit/STORY.md` §3 Area B, §15 Nick's track
-- Undo architecture spec: `specs/2026-04-10-undo-architecture/SPEC.md` (R5/R6 root causes)
-- Prior research (from observer-b-web-worker session): origin-laundering trace, Probe B perf data, XmlFragment events analysis
-- **New research (2026-04-13):** `reports/crdt-origin-laundering-prior-art/REPORT.md` — cross-ecosystem prior-art survey (y-prosemirror, slate-yjs, BlockSuite, BlockNote, Milkdown, Plate, Automerge-ProseMirror, academic literature)
+- Miles's undo architecture spec (noted in PROJECT.md:1154 as "needs reframe"): `specs/2026-04-10-undo-architecture/SPEC.md`
+- Prior research (observer-b-web-worker session): origin-laundering trace, Probe B perf data, XmlFragment events analysis
+- **Research (2026-04-13):** `reports/crdt-origin-laundering-prior-art/REPORT.md` — cross-ecosystem prior-art survey (y-prosemirror, slate-yjs, BlockSuite, BlockNote, Milkdown, Plate, Automerge-ProseMirror, academic literature)
 - Evidence: `./evidence/`
 
 ---
 
 ## 1) Problem statement
 
-**Situation.** Observer A syncs Y.XmlFragment → Y.Text by serializing the fragment to markdown, diffing against a baseline (`lastSyncedXmlMd`), and applying the delta to Y.Text. This serialize→diff→apply pattern works correctly for propagation — content reaches both representations.
+**Situation.** Observer A syncs Y.XmlFragment → Y.Text by serializing the fragment to markdown, diffing against a baseline (`lastSyncedXmlMd`), and applying the delta to Y.Text via `ytext.delete()` + `ytext.insert()` with origin `'sync-from-tree'`. Observer A is the primary client-side propagator for WYSIWYG → Source mirroring.
 
-**Complication.** The cycle **origin-launders CRDT Items**. When Observer A applies a diff hunk, it calls `ytext.delete()` + `ytext.insert()` within a transaction with origin `'sync-from-tree'`. This replaces agent-created Items (origin `'agent-write'`) with new Items (origin `'sync-from-tree'`). The Y.UndoManager, which tracks only `'agent-write'` origins, then:
-1. Finds the original agent Items (now marked deleted) → restores them
-2. Cannot touch the replacement `'sync-from-tree'` Items → they stay
-3. Both coexist → **zombie content** (~257 chars per undo cycle, measured in PR #34)
+**Complication.** The current implementation violates the **bridge quality invariant**:
 
-The root cause is NOT diff granularity — it's that Observer A's delete+reinsert overwrites Items that already had the correct content from the correct origin. Whether the overwrite is line-level or character-level, the new Items still get `'sync-from-tree'` origin.
+> *Sync operations must not replace CRDT Items whose content at the target position already matches what would be written.*
 
-Critically: **Y.js Items do not store transaction origins.** `Item.origin` is the CRDT causal origin (the Item to the left at insertion time), not the transaction origin string. There is no public API to read "which transaction created this Item" after the fact. (Evidence: `evidence/yjs-item-origin-model.md`)
+Whenever the diff emits a REMOVED+ADDED hunk for content that is already in Y.Text at that offset (e.g. agent writes that arrived via HocuspocusProvider sync and are now present in Y.Text but not yet in XmlFragment), Observer A destroys the existing Items and re-emits them under `'sync-from-tree'` origin. The new Items are semantically equivalent but have a different transaction origin than the Items they replaced. We call this **origin-laundering** — the bridge launders the transaction provenance that Y.UndoManager's `trackedOrigins` whitelist relies on.
 
-**Resolution.** Make Observer A **content-aware**: before applying a diff hunk, check whether Y.Text already contains the correct content at that position. If it does, skip the delete+reinsert — leave the existing Items (and their UndoManager tracking) untouched. Combined with rewriting the diverged path (`applyUserDelta`) to use DMP's `patch_make` + `patch_apply` (canonical three-way merge), which produces correctly merged output for same-line concurrent edits where the prior custom line-walk produced split lines.
+**Why this is a bridge-layer defect, not a symptom.** Any consumer that distinguishes Items by transaction origin — present or future — is structurally broken on any region Observer A has re-emitted. The consumer-facing symptom ("zombie content on agent undo," ~257 chars/cycle measured in PR #34 against the pre-V0-16 agent UndoManager) is one observable manifestation. The underlying property being violated is architectural: a sync bridge should preserve CRDT Items whose content is already correct.
 
-This delivers FR-4/US-3e (same-line interleaved undo) as an independent correctness improvement. It does NOT block Miles's undo implementation (FR-1/FR-2/FR-3/FR-5/FR-6 ship without it).
+**Current consumer status.** PR #39 (V0-16) removed the broken agent UndoManager scaffold. V0-14 (Miles, next up) reintroduces per-origin undo using the canonical Y.UndoManager API: `new Y.UndoManager(ytext, { trackedOrigins: new Set(['agent-write']) })` per-agent, keyed by `AgentIdentity.connectionId`. V0-14's correctness on the common case of concurrent editing depends on our bridge-invariant fix; without it, V0-14 ships with a silent contract violation whenever a user types on the same line an agent wrote to.
+
+**Why not per-character attribution?** The research report (`reports/crdt-origin-laundering-prior-art/REPORT.md`) surveys ecosystem alternatives. Yjs's data model stores transaction origin on the transaction, not on the Item — so "who wrote this character" is not recoverable post-hoc. (`evidence/yjs-item-origin-model.md`.) Per-character attribution would require a separate attribution side-table; that's a much larger architectural change (see Future Work). Content-comparison at the bridge layer is the minimal, evidence-based fix — it's how y-prosemirror avoids the equivalent pitfall (structural subtree diff, skip unchanged regions) and is unclaimed as a named pattern in the Yjs ecosystem (research report Finding 6).
+
+**Resolution.** Make Observer A preserve CRDT Items whose content already matches at the target position. Two code paths need this property:
+1. **Path A (simple, `currentText === lastSyncedXmlMd`):** Add a content-comparison gate — before each REMOVED+ADDED hunk, if the added content is already at `currentText[offset..]`, skip both operations.
+2. **Path B (diverged, `currentText !== lastSyncedXmlMd`):** Replace the custom line-walk with DMP's `patch_make` + `patch_apply` — the canonical three-way merge. DMP's fuzzy matching preserves Item-equal prefix/suffix regions and produces correctly merged content for same-line concurrent edits where the prior custom walk produced split lines (empirically verified, see D5).
+
+The invariant is testable today via Item introspection (construct a test-local `Y.UndoManager`, verify stack entries survive Observer A sync). No product UndoManager needs to exist for the test to run; V0-14 inherits correctness when it lands.
 
 ## 2) Goals
 
-- **G1.** Zero zombie content on agent undo when user and agent edit the same line. Measured: current ~257 chars/cycle → target 0 chars/cycle.
-- **G2.** Preserve bridge invariant: `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` after every Observer A sync.
-- **G3.** No regression on Observer A performance. Path A stays on line-level diff (`diffLinesFast` + content-comparison gate). Path B uses DMP `patch_apply`; patches are typically small, so expected at-or-below current line-walk cost. Implementation must re-measure both paths via `observers.stress.s4.test.ts` timing assertions; STOP_IF threshold (>20% Path A regression) triggers escalation back to spec.
-- **G4.** All existing stress/fuzz/bridge-matrix tests pass. New TQ6 stress test quantifies same-line collision behavior.
+- **G1. Bridge quality invariant holds: zero unnecessary Item replacement.** After any Observer A sync, every CRDT Item whose content at its position already matched what the sync would write is still present (same ID, same clock, not tombstoned). Measured via Item introspection in unit test + a test-local `Y.UndoManager(ytext, { trackedOrigins: new Set(['agent-write']) })` probe that asserts stack entries survive the sync. (Supersedes the prior "~257 chars/cycle zombie content" goal — that was a symptom of the same invariant violation, measurable against a consumer that was removed in V0-16 and reintroduced in V0-14.)
+- **G2. Content propagation bridge invariant preserved:** `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` after every Observer A sync. Unchanged from current behavior; asserted in bridge-matrix tests.
+- **G3. Correct three-way merge on same-line concurrent edits.** When Y.Text diverges from baseline (Path B), DMP `patch_apply` produces merged output that preserves both branches' changes on the same line. Measured empirically (DMP probe) and in TQ6 multi-client test.
+- **G4. No regression on Observer A performance.** Path A stays on line-level diff (`diffLinesFast` + content-comparison gate). Path B uses DMP `patch_apply`; patches are typically small, so expected at-or-below current line-walk cost. Implementation must re-measure both paths via `observers.stress.s4.test.ts` timing assertions; STOP_IF threshold (>20% Path A regression) triggers escalation back to spec.
+- **G5. V0-14 ships with correct undo behavior on concurrent edits.** Downstream goal; realized when Miles lands V0-14. Our fix is the prerequisite — V0-14's `trackedOrigins: Set(['agent-write'])` only holds its contract if Observer A stops laundering `'agent-write'` origins into `'sync-from-tree'` replacements.
+- **G6.** All existing stress/fuzz/bridge-matrix tests pass. New TQ6 stress test quantifies same-line collision behavior.
 
 ## 3) Non-goals
 
 - **[NEVER] NG1:** Changing Observer B, the persistence layer, or the file watcher. Observer A only.
 - **[NEVER] NG2:** Accessing Y.js internal Item structures (`_start`, `_item`). The fix uses only the public `ytext.toString()` + `ytext.delete()` + `ytext.insert()` API.
-- **[NEVER] NG3:** Changing the serialize→diff→apply architectural pattern. We optimize within it, not replace it.
-- **[NOT NOW] NG4:** XmlFragment event-driven sync (option c from the prior research). Would be a new pattern — first delta-processing code in the codebase. Higher complexity for marginal gain over content-aware diff.
-- **[NOT NOW] NG5:** Making this a prerequisite for Miles's undo. FR-1/FR-2/FR-3/FR-5/FR-6 ship independently.
+- **[NEVER] NG3:** Changing the serialize→diff→apply architectural pattern for Observer A's tree→text direction. We optimize within it, not replace it.
+- **[NEVER] NG4:** Changing V0-14's three-UndoManager architecture. Our fix operates at the bridge layer, upstream of any UndoManager. V0-14 uses standard `Y.UndoManager({ trackedOrigins })` API.
+- **[NEVER] NG5:** Fixing Miles's code. Miles owns V0-14 wiring (UMs, Cmd+Z keybindings, AgentIdentity). Our scope is `observers.ts` only — we ship the bridge invariant so his implementation doesn't need workarounds.
+- **[NOT NOW] NG6:** XmlFragment event-driven sync (option c from prior research). Would eliminate serialize→diff→apply entirely — much larger scope, first delta-processing code in the repo. Content-aware diff at the bridge layer gets ~95% of the benefit at ~20% of the complexity.
+- **[NOT NOW] NG7:** Per-character attribution side-table. Would eliminate the content-comparison heuristic entirely (dmonad's option #1 from the research report — bridge propagates original origin per character). Requires custom attribution layer; substantially larger architectural change. Flagged in Future Work.
+- **[NOT NOW] NG8:** Tracking `'rollback-apply'` origin in any UndoManager. D6(b) in PROJECT.md explicitly decides rollback is NOT undo-tracked (it's a coarse action, append-only via CRDT). Our spec acknowledges the origin exists but does not act on it.
 
 ## 4) Personas / consumers
 
-- **P1: Human editor** — Types in WYSIWYG while an agent writes via MCP on the same line. Expects Cmd+Z to undo only their characters, preserving the agent's.
-- **P2: AI agent (via MCP/API)** — Writes content that should be revertable by the human without zombie residue.
-- **P3: Observer pipeline developer** — Next person touching `observers.ts`. Inherits a cleaner model where Observer A doesn't unnecessarily overwrite content.
+- **P1: V0-14 per-agent UndoManager (Miles's work, immediate consumer).** Server-side `Y.UndoManager(ytext, { trackedOrigins: Set(['agent-write']) })` per connected agent. Requires that agent-origin Items in Y.Text stay agent-origin through the bridge cycle; breaks silently if Observer A re-emits them under `'sync-from-tree'`.
+- **P2: Human editor.** Types in WYSIWYG while an agent writes via MCP on the same line. Via V0-14: Cmd+Z undoes only their characters. Via agent undo: server reverts agent Items, user's content preserved. User never sees zombie content or duplicate characters.
+- **P3: AI agent (via MCP/API).** Writes content revertable by its own server-side UndoManager (V0-14). Same-line collisions merge cleanly; undo reverses only the agent's contribution.
+- **P4: Observer pipeline developer.** Next person touching `observers.ts`. Inherits a cleaner model: the bridge preserves Items by construction, no workarounds in consumers required.
+- **P5: Any future origin-preserving consumer.** Per-character attribution layer, selection-preservation layer, collaborative annotations — any mechanism that depends on Items retaining their transaction origin through the bridge. Precedent #9 (AGENTS.md) names the invariant so future work inherits it.
 
 ## 5) User journeys
 
-### P1 happy path (FR-4/US-3e)
+### P1+P2+P3 happy path (FR-4/US-3e): same-line interleaved undo under V0-14
 1. User is typing on line 5 in WYSIWYG
-2. Agent writes " World" at the end of line 5 via MCP (appears in real-time via CRDT sync)
-3. User continues typing
-4. User presses Cmd+Z — their last characters undo, agent's " World" preserved
-5. User clicks "Undo Agent Edit" — agent's " World" disappears, user's content preserved
-6. Zero zombie content in either direction
+2. Agent writes " World" at the end of line 5 via MCP (appears in real-time via CRDT sync; server writes Y.Text with `'agent-write'` origin → per-agent UM captures this Item)
+3. User continues typing (local XmlFragment mutations → Observer A syncs to Y.Text)
+4. **Our fix:** Observer A preserves the agent's Item where content still matches (content-gate on Path A) or merges via DMP `patch_apply` on Path B, preserving Item-equal prefix/suffix
+5. User presses Cmd+Z — WYSIWYG UM reverts their XmlFragment edits; agent's Y.Text Item is untouched
+6. Agent calls `undo_agent_edit` via MCP — per-agent UM reverts the agent's Item cleanly; user's content preserved
+7. **Zero zombie content in either direction** — because agent's Item retained its `'agent-write'` origin, UM could see and reverse it
+
+### Without our fix (failure mode this spec prevents)
+At step 4, Observer A re-emits agent content under `'sync-from-tree'` origin. At step 6, per-agent UM tries to revert `'agent-write'` Items; the original Items are marked deleted and get restored, but the `'sync-from-tree'` replacements are untouched → both coexist → zombie content. V0-14 silently fails on the common case.
 
 ## 6) Requirements
 
@@ -67,13 +86,13 @@ This delivers FR-4/US-3e (same-line interleaved undo) as an independent correctn
 
 | Priority | ID | Requirement | Acceptance criteria |
 |---|---|---|---|
-| Must | FR-1 | `applyIncrementalDiff` (Path A) adds a content-comparison gate before each delete+insert | Before `ytext.delete(offset, len)` + `ytext.insert(offset, value)`, check if `currentText.substring(offset, offset + len)` already equals the inserted `value`. If yes, skip. Verified by unit test. |
+| Must | FR-1 | `applyIncrementalDiff` (Path A) adds a content-comparison gate before each delete+insert | Before `ytext.delete(offset, len)` + `ytext.insert(offset, value)`, check if `currentText.substring(offset, offset + len)` already equals the inserted `value`. If yes, skip. This preserves Y.Text-side Item identity for ANY unchanged content region — not only same-line agent-written content but any region where Observer A's serialize→diff produces a no-op REMOVED+ADDED pair (e.g., untouched paragraphs, unchanged heading text). Verified by unit test. |
 | Must | FR-2 | `applyUserDelta` (Path B) is rewritten to use DMP `patch_make` + `patch_apply` (canonical three-way merge) | `patches = dmp.patch_make(lastSyncedXmlMd, newXmlMd)`; `[mergedText, results] = dmp.patch_apply(patches, currentText)`; apply `mergedText` via `applyByPrefixSuffix(ytext, currentText, mergedText)`. On any `false` in `results` (failed patch under extreme divergence), fall back to user-wins: discard that patch's delta and continue. Verified by unit test. (Locked D5.) |
 | Must | FR-3 | `applyUserDelta` produces correct merged result when user and agent edit the same line | Reproducible scenario (per audit F9): two-client multi-doc test. Client B's Y.Text receives a remote agent write to line N (`!transaction.local`); on Client A this triggers Observer A's else-branch which only refreshes `lastSyncedXmlMd` baseline (no Y.Text sync). Client A's user then types on line N in WYSIWYG → XmlFragment changes → `currentText !== lastSyncedXmlMd` → Path B fires → DMP `patch_make` + `patch_apply` produces merged content with both edits (e.g., "Hello world brave"). Verified empirically by DMP probe; full coverage in TQ6 multi-client variant. |
-| Must | FR-4 | Zero zombie content after agent undo on same-line concurrent edits | After FR-3 scenario + agent undo: agent's "brave" removed, user's "world" preserved, no extra characters remain. Verified by bridge-matrix undo-invariant test. |
+| Must | FR-4 | **Bridge quality invariant: Observer A preserves CRDT Items whose content at their position already matches what the sync would write.** | Architectural test (not behavioral): construct Y.Text with Items written under `'agent-write'` origin, attach a test-local `Y.UndoManager(ytext, { trackedOrigins: new Set(['agent-write']) })` as a probe, trigger Observer A, assert that after the sync (a) the UM's undo stack still contains entries, (b) `um.undo()` reverts to the pre-agent-write state (meaning the Items are still live CRDT Items, not replaced). Verified today without any product UndoManager existing. When V0-14 lands, the same property is observable through its per-agent UMs. |
 | Must | FR-5 | Bridge invariant holds after every Observer A sync | `stripTrailingWhitespace(ytext.toString()) === stripTrailingWhitespace(serialize(fragment))` after debounce settles. Verified by existing bridge-matrix test + new assertions. |
 | Must | FR-6 | No performance regression on Path A (simple path) | Path A stays on `diffLinesFast`. The content-comparison gate adds one `substring` comparison per diff hunk — O(hunk_size), negligible vs serialize cost. Verified by existing stress test timing assertions. |
-| Must | FR-7 | Path B emits a `safetyCheckpoint` event-map entry when DMP `patch_apply` reports any failed patch (`results.some(ok => !ok)`) | Entry written to `Y.Map('safety-events')` (separate from `Y.Map('activity')`). Shape per AGENTS.md precedent #3: `{ actor: 'observer-a', timestamp, action: { kind: 'merge-failed', metadata: {...patch counts} }, visibility: 'debug' }`. Diagnostic only; not user-facing in V0. Successful three-way merges DO NOT emit (they're normal Path B operation). (Locked D10.) |
+| Must | FR-7 | When DMP `patch_apply` reports any failed patch (`results.some(ok => !ok)`), emit an observable diagnostic via (a) `console.warn('[Observer A] patch_apply had N/M failed patches', metadata)` matching existing `observers.ts` console-precedent (lines 337/367/500), and (b) optionally invoke `ObserverDeps.onMergeFailed?(info)` if the consumer provided the callback. | No Y.Doc pollution. No new map. Matches existing observer diagnostic precedent. Consumer (e.g., a future debug panel in V0-14 or beyond) opts in via the callback. Test asserts `spyOn(console, 'warn')` catches the log and that `onMergeFailed` is invoked with correct shape when supplied. Locked D10 (revised). |
 
 ### Non-functional requirements
 
@@ -137,12 +156,12 @@ const dmp = new DiffMatchPatch();
 dmp.Match_Threshold = 0.5;
 
 function applyUserDelta(
-  doc: Y.Doc,
-  ytext: Y.Text,
+  deps: ObserverDeps,
   oldXmlMd: string,
   newXmlMd: string,
 ): void {
   if (oldXmlMd === newXmlMd) return;
+  const { ytext } = deps;
   const currentText = ytext.toString();
 
   // Three-way merge: patch built from base→user, applied to agent's diverged Y.Text.
@@ -155,21 +174,26 @@ function applyUserDelta(
   // Failed patches indicate the patch's context could not be located in agent's
   // text within Match_Threshold. patch_apply still returns mergedText with the
   // successful patches applied and failed ones skipped — that's "user-wins on what
-  // we could merge". Emit a safetyCheckpoint diagnostic so a future debug panel
-  // can surface these cases. Successful merges (results all true) are normal
-  // Path B operation and don't need a diagnostic.
+  // we could merge". Emit a console.warn (matches existing observers.ts
+  // diagnostic precedent at lines 337/367/500) and invoke the optional
+  // onMergeFailed callback for consumers who want structured signal.
+  // Successful three-way merges (results all true) are normal Path B operation
+  // and don't emit.
   if (results.some((ok: boolean) => !ok)) {
-    emitSafetyCheckpoint(doc, {
-      kind: 'merge-failed',
-      metadata: {
-        baseLen: oldXmlMd.length,
-        userLen: newXmlMd.length,
-        agentLen: currentText.length,
-        mergedLen: mergedText.length,
-        failedPatches: results.filter((ok: boolean) => !ok).length,
-        totalPatches: results.length,
-      },
-    });
+    const failedPatches = results.filter((ok: boolean) => !ok).length;
+    const info = {
+      failedPatches,
+      totalPatches: results.length,
+      baseLen: oldXmlMd.length,
+      userLen: newXmlMd.length,
+      agentLen: currentText.length,
+      mergedLen: mergedText.length,
+    } as const;
+    console.warn(
+      `[Observer A] patch_apply had ${failedPatches}/${results.length} failed patches`,
+      info,
+    );
+    deps.onMergeFailed?.(info);
   }
 
   if (mergedText === currentText) return;
@@ -180,96 +204,121 @@ function applyUserDelta(
 }
 ```
 
-**Caller-site change (per audit F6):** the call in `runObserverASync` becomes `applyUserDelta(doc, ytext, lastSyncedXmlMd, md)` — explicit `doc` parameter replaces fragile `ytext.doc!`. Trivial site change at observers.ts:331.
+**Caller-site change:** `applyUserDelta(deps, lastSyncedXmlMd, md)` — takes the full `ObserverDeps` handle instead of individual `doc`/`ytext` params, because it now needs access to the optional `onMergeFailed` callback. `runObserverASync` already closes over `deps`; trivial site change at observers.ts:331.
+
+**`ObserverDeps` interface addition (minor signature change to `observers.ts`):**
+```typescript
+interface ObserverDeps {
+  doc: Y.Doc;
+  xmlFragment: Y.XmlFragment;
+  ytext: Y.Text;
+  mdManager: MarkdownManager;
+  schema: Schema;
+  onSyncError?: (direction: 'tree-to-text' | 'text-to-tree', error: Error) => void;
+  /** Optional: invoked when DMP patch_apply reports one or more failed patches
+   *  during Observer A's Path B three-way merge. Diagnostic only — non-fatal.
+   *  Consumers (debug panel, V0-14 telemetry) opt in; omitted callback = no-op.
+   *  The same event is always logged via `console.warn`. */
+  onMergeFailed?: (info: {
+    failedPatches: number;
+    totalPatches: number;
+    baseLen: number;
+    userLen: number;
+    agentLen: number;
+    mergedLen: number;
+  }) => void;
+}
+```
+
+**No new files, no Y.Doc pollution, no naming collision with server-side `safetyCheckpoint` primitive** (D14).
 
 Why DMP: empirically validated on the FR-3 scenario (`base="Hello", user="Hello world", agent="Hello brave"` → merged `"Hello world brave"`). Custom walk produced two-line split — wrong. Research confirms no other Yjs editor has built a content-comparison three-way merge; DMP `patch_apply` is the canonical JS three-way merge algorithm, well-tested and used widely in collaborative-editing tooling.
 
 OQ-5 lock: user-wins on collision is DMP's default behavior. Verified: `base="a\nb\nc", user="a\nc" (deleted b), agent="a\nb!\nc" (modified b)` → `"a\nc"` — agent's modification dropped.
 
-D8 acknowledgment: exact-character overlap (`base="hello", user="hello!", agent="hello!"`) produces `"hello!!"` (duplicates). Inherent to three-way merge — both sides independently made the same change. Mitigation path is NG4 (XmlFragment event-driven sync), explicitly deferred.
+D8 acknowledgment: exact-character overlap (`base="hello", user="hello!", agent="hello!"`) produces `"hello!!"` (duplicates). Inherent to three-way merge — both sides independently made the same change. Mitigation path is NG6 (XmlFragment event-driven sync) or NG7 (per-character attribution), both explicitly deferred.
 
-### 7c) `safetyCheckpoint` event-map emission (FR-7, OQ-6 locked)
+### 7c) Failed-patch diagnostic (FR-7)
 
-**Why a NEW map (per audit F8/F17):** the existing `Y.Map('activity')` is keyed by `agentId` with single-entry-per-agent semantics (overwrites; consumed by `agent-flash-source.ts` + presence rendering). Mixing a UUID-keyed event log into the same map would conflict with consumers and risk feedback loops. The safety event channel uses its own map.
+**DROPPED** from earlier draft: the separate `safety-checkpoint.ts` helper + `Y.Map('safety-events')` channel.
+
+**Rationale (D14 LOCKED):**
+1. **Naming collision.** Main's `packages/server/src/shadow-repo.ts:254` already exports `safetyCheckpoint(shadow, contentRoot, params)` — the server-side WIP-snapshot primitive per AGENTS.md precedent #2 ("Name primitives for extensibility: `safetyCheckpoint({ action, context })` not `emitPreRollbackSnapshot()`"). The name is reserved for that primitive; reusing it on the client for a different purpose breaks precedent #2.
+2. **No consumer today.** The speculative "future debug panel" is not planned for V0. Building CRDT-persistent infrastructure for a non-existent consumer violates the greenfield directive (no infrastructure ahead of need).
+3. **Existing precedent is simpler.** `observers.ts` already uses `console.warn('[Observer A] ...')` for non-fatal sync diagnostics (lines 337, 367, 500). That's the right vocabulary here.
+
+**Implementation:** the diagnostic lives inline in `applyUserDelta` (see §7b code above) — `console.warn` + optional `ObserverDeps.onMergeFailed` callback. No separate helper file, no new Y.Map. When V0-14 or any future consumer wants structured reactivity, they pass the callback at observer-setup time.
+
+### 7d) Test plan (FR-1 through FR-7)
+
+**FR-4 architectural test — Item-preservation via test-local UndoManager (PRIMARY FR-4 test):**
 
 ```typescript
-// packages/app/src/editor/safety-checkpoint.ts (NEW)
-import type * as Y from 'yjs';
+// packages/app/src/editor/observers.test.ts (new test)
+test('FR-4: Observer A preserves agent-origin Items on content-matching sync', async () => {
+  const { doc, ytext, fragment } = createTestClient();
 
-export interface SafetyCheckpointAction {
-  kind: 'merge-collision' | 'merge-failed';
-  metadata: Record<string, unknown>;
-}
+  // 1. Agent writes content under 'agent-write' origin
+  doc.transact(() => {
+    ytext.insert(0, '# Hello\n\nAgent wrote this.\n');
+  }, 'agent-write');
 
-/**
- * Emit a structured safety-event entry. Writes to a DEDICATED `Y.Map('safety-events')`
- * — separate from the agent-keyed `Y.Map('activity')` to avoid schema collision and
- * feedback loops with presence consumers.
- *
- * Caller MUST be inside a Y transaction. The emit happens within that transaction,
- * so the event's CRDT origin matches the caller's origin (e.g. 'sync-from-tree').
- */
-export function emitSafetyCheckpoint(doc: Y.Doc, action: SafetyCheckpointAction): void {
-  const events = doc.getMap('safety-events');
-  const id = `safety-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  events.set(id, {
-    actor: 'observer-a',
-    timestamp: Date.now(),
-    action,
-    visibility: 'debug',  // not user-facing in V0; reserved for future debug panel
-  });
-}
+  // 2. Attach test-local UM as a probe for Item preservation.
+  //    (Mimics the V0-14 per-agent UM but lives only in this test.)
+  const um = new Y.UndoManager(ytext, { trackedOrigins: new Set(['agent-write']) });
+  expect(um.undoStack.length).toBe(1);
+
+  // 3. Trigger Observer A with content that matches Y.Text at its positions.
+  //    (Construct XmlFragment that serializes to the same markdown; sync runs.)
+  //    This is the Path A content-gate case.
+  await triggerObserverASync(fragment, ytext);
+
+  // 4. Bridge invariant preservation: UM stack still references live Items.
+  expect(um.undoStack.length).toBe(1);  // Stack entry survived the sync.
+  um.undo();                              // Undo must actually revert.
+  expect(ytext.toString()).toBe('');     // Items were live, not tombstoned.
+});
 ```
 
-Shape conforms to AGENTS.md precedent #3 (structured event schemas). No render-path consumer in V0 — the map is write-only until a future debugging panel is built. Per-doc memory grows by one entry per Path B failed patch; if growth becomes a concern, add eviction (FIFO with max 100 entries) — out of scope for this spec.
-
-**Emission gate (per audit F10):** emit ONLY when `patch_apply` reports a failed patch (`results.some(ok => !ok)`). That's the genuine "we couldn't apply the user delta cleanly under DMP's fuzzy match" signal. The earlier "is collision" heuristic was over-broad — it would have fired on every benign Path B merge. Successful three-way merges (no failed patches) are the expected normal Path B operation and don't need a diagnostic event.
-
-### 7d) Test plan (FR-3, FR-4, FR-5, FR-7)
+The same pattern with Path B (XmlFragment changed, triggering DMP merge) forms the Path B variant. These tests prove the bridge invariant WITHOUT any product UndoManager existing. When V0-14 lands, the per-agent UMs inherit the same guarantee.
 
 **TQ6 single-client (extends `observers.stress.s4.test.ts`):**
 - Agent writes to end of line N, user edits start of line N → assert merged Y.Text contains both edits
-- Agent undo fires → assert zero zombie content (FR-4)
-- User-deletes line + agent-modifies same line → assert user-wins (D9)
-- D8 characterization: `base="hello", user="hello!", agent="hello!"` → assert `"hello!!"` (per audit F13 — characterization test prevents silent regression)
-- After every Path B sync: assert `lastSyncedXmlMd === md` (the post-serialize XmlFragment string), per audit F11
+- D9 scenario: user-deletes line + agent-modifies same line → assert user-wins merge
+- D8 characterization: `base="hello", user="hello!", agent="hello!"` → assert merged = `"hello!!"` (prevents silent regression on the accepted duplication)
+- After every Path B sync: assert `lastSyncedXmlMd === md` (the post-serialize XmlFragment string) — guards against baseline drift (R4)
 - Bridge invariant assertion after each step (FR-5)
-- `Y.Map('safety-events')` size remains 0 after successful three-way merges; size grows by 1 only when DMP `patch_apply` reports a failed patch (FR-7)
+- FR-7: `spyOn(console, 'warn')` catches `'[Observer A] patch_apply had N/M failed patches'` only when `results` contains `false`; NOT called on successful three-way merges
 
-**TQ6 multi-client (extends `bridge-matrix.test.ts` per audit F12 + CLAUDE.md's "Observer bridge coverage" rule):**
-- Two clients connected to the same Y.Doc. Client A makes a local XmlFragment edit on line N. Concurrently, Client B's Y.Text receives a remote agent write to line N (arrives via WebSocket sync, `transaction.local === false`).
-- Client A's Observer A fires Path B (Y.Text diverged from baseline). Assert merged result preserves both edits.
-- Both clients' Y.Text + XmlFragment converge to the same content (assert via `assertBridgeInvariant` on each client).
-- Agent undo on the server fires → assert zero zombie content on both clients.
-
-**`safety-checkpoint.test.ts` unit:**
-- `emitSafetyCheckpoint(doc, action)` writes one entry to `Y.Map('safety-events')`
-- Entry conforms to AGENTS.md precedent #3 shape: `{ actor, timestamp, action: { kind, metadata }, visibility }`
-- Entry is NOT written to `Y.Map('activity')` (audit F8 — separate channels)
-- ID is unique across multiple emissions in the same tick
+**TQ6 multi-client (extends `bridge-matrix.test.ts` per CLAUDE.md's "Observer bridge coverage" rule):**
+- Two clients on the same Y.Doc. Client B receives a remote agent write to Y.Text on line N (`!transaction.local` on Client A); Client A's local user then types on line N in WYSIWYG → Observer A Path B fires
+- Assert merged result preserves both edits (DMP `patch_apply` correctness)
+- Bridge invariant holds on both clients (`assertBridgeInvariant` on each)
+- Attach test-local UMs with `trackedOrigins: Set(['agent-write'])` on Client A's ytext; assert that after Observer A fires, the UM's stack still references the agent's Items (the architectural FR-4 property in the multi-client scenario)
 
 **`observers.test.ts` extensions:**
-- **FR-1 unit:** content-gate skip path. Construct Y.Text with content matching what `applyIncrementalDiff` would re-insert; assert no `delete`/`insert` operations fire (count via Y.Text observer).
-- **FR-2 unit:** `applyUserDelta` (new signature `(doc, ytext, oldXmlMd, newXmlMd)`) returns Y.Text with merged content for the FR-3 scenario; assert `safety-events` map empty when `results=[true,...]`.
-- **A1 verification:** Construct Y.Text with three Items: A (origin `'agent-write'`), B (origin `'sync-from-tree'`), C (origin `'agent-write'`). Apply `applyByPrefixSuffix` such that the middle region (containing B) is replaced. Assert `Y.UndoManager` (tracking `'agent-write'`) still has both A and C in its stack — Items in matching prefix/suffix preserved.
+- **FR-1 unit:** content-gate skip path. Construct Y.Text with content matching what `applyIncrementalDiff` would re-insert; assert zero `delete`/`insert` operations fire (count via `ytext.observe()` callback).
+- **FR-2 unit:** `applyUserDelta(deps, oldXmlMd, newXmlMd)` returns Y.Text with merged content for the 5 DMP-probe scenarios (same-line collision, prepend+append, different lines, delete+modify, exact-char overlap).
+- **FR-7 unit:** supply `onMergeFailed` in `ObserverDeps`; run `applyUserDelta` with inputs that produce a failed patch (construct an agent-divergent currentText that DMP can't match within threshold); assert callback invoked with correct shape AND `console.warn` emitted.
+- **A1 verification (Item preservation through `applyByPrefixSuffix`):** construct Y.Text with three Items: A (`'agent-write'`), B (`'sync-from-tree'`), C (`'agent-write'`). Apply `applyByPrefixSuffix` such that only the middle region (containing B) is replaced. Assert `Y.UndoManager({ trackedOrigins: Set(['agent-write']) })` still has both A and C in its stack.
 
 **`observers.fuzz.test.ts` extension (R3 + A5 verification):**
-- Existing fuzz harness is extended with a new operator: random "agent rewrites paragraph N to ~50% different content" between user edits. Asserts:
-  - DMP `patch_apply` either succeeds (`results` all true) OR emits a `safety-events` entry (no silent drops).
-  - Bridge invariant holds after every fuzz step.
-  - When `results` contains `false`, the failed patch's delta is observably discarded (mergedText differs from naive concatenation).
-- Run with multiple `STRESS_FUZZ_SEED` values to cover divergence patterns the smoke tests don't reach.
+- New operator in the fuzz harness: "agent rewrites paragraph N to ~50% different content" between user edits. Asserts:
+  - Either DMP `patch_apply` succeeds (all `results` true) OR `onMergeFailed` fires (no silent drops)
+  - Bridge invariant holds after every fuzz step
+  - When `results` contains `false`, merged text is neither a naive concatenation nor identical to base/user/agent — DMP actually resolved what it could
+- Run across multiple `STRESS_FUZZ_SEED` values.
 
 ## 8) Open Questions
 
 | ID | Question | Type | Priority | Status |
 |---|---|---|---|---|
 | OQ-1 | ~~Does `diff_cleanupSemantic` in `diffCharsFast` produce optimal hunks for same-line collision scenarios?~~ | Technical | P0 | **SUPERSEDED by D5**: With DMP `patch_make`/`patch_apply` as the Path B algorithm, `diffCharsFast` may not be needed. `patch_make` internally applies both `diff_cleanupSemantic` and `diff_cleanupEfficiency` with tuned defaults. |
-| OQ-2 | In `applyUserDelta` rewrite, when user and agent overlap on the EXACT same characters (not just same line), what's the correct merge semantics? | Technical/Product | P0 | **INVESTIGATED**: DMP probe shows `patch_apply(diff("hello","hello!"), "hello!")` = `"hello!!"` — duplicates the `!`. Matches CRDT last-writer-wins semantics (both writes happened independently). Accepted as known limitation. Mitigation path: NG4 (XmlFragment event-driven sync) would eliminate. |
+| OQ-2 | In `applyUserDelta` rewrite, when user and agent overlap on the EXACT same characters (not just same line), what's the correct merge semantics? | Technical/Product | P0 | **RESOLVED → D8 LOCKED.** DMP probe shows `patch_apply(diff("hello","hello!"), "hello!")` = `"hello!!"` — duplicates the `!`. Inherent three-way-merge behavior; both sides independently made the same change. Accepted as known limitation. Mitigation paths NG6/NG7 deferred. |
 | OQ-3 | ~~Should the content-comparison gate compare the FULL hunk or just a hash?~~ | Technical | P2 | Deferred — full comparison at our scale (hunks typically <1KB). |
 | OQ-4 | Path B algorithm choice: DMP `patch_apply` vs. custom diff-walk. | Technical | P0 | **RESOLVED → D5 LOCKED.** Empirical probe `/tmp/dmp-probe.ts`. |
 | OQ-5 | User DELETES line that agent MODIFIED — which wins? | Product | P0 | **RESOLVED → D9 LOCKED (user-wins).** DMP default; matches existing comment in `applyUserDelta`. |
-| OQ-6 | Emit `safetyCheckpoint` on same-line collision? | Product | P2 | **RESOLVED → D10 LOCKED (yes).** New `safety-checkpoint.ts`, visibility=`'debug'`. |
+| OQ-6 | Emit observable diagnostic on same-line collision? | Product | P2 | **RESOLVED → D10 (revised 2026-04-14) + D14.** Original resolution proposed a `safety-checkpoint.ts` helper + `Y.Map('safety-events')`; dropped per D14 (naming collision + no consumer). Current resolution: `console.warn` + optional `ObserverDeps.onMergeFailed` callback. |
 | OQ-7 | Path A/B telemetry counter? | Technical | P2 | **RESOLVED → D11 LOCKED (no, user opted out).** |
 | OQ-8 | Content-gate pairing: adjacent only? | Technical | P1 | **RESOLVED → D7 LOCKED (adjacent-only).** |
 | OQ-9 | `diffCharsFast` helper still needed under D5? | Technical | P1 | **RESOLVED → D6 LOCKED (drop).** |
@@ -280,26 +329,31 @@ Shape conforms to AGENTS.md precedent #3 (structured event schemas). No render-p
 | ID | Decision | Type | Status | Rationale |
 |---|---|---|---|---|
 | D1 | Fix uses content comparison, not Item-origin inspection | Technical | LOCKED | Y.js Items don't store transaction origins. Content comparison achieves the same effect (preserving agent Items when content matches) using only the public API. Evidence: `evidence/yjs-item-origin-model.md` |
-| D2 | Path A stays on line-level diff; Path B moves to char-level | Technical | LOCKED | Probe B data: diffChars is 7x slower. Path A (~90% of fires) doesn't have the sub-line problem. Path B (~10%) does. Performance budget preserved. Evidence: `evidence/observer-a-two-paths.md` |
-| D3 | Approach: hybrid content-aware + char-level (option d) | Technical | LOCKED | Prior research evaluated 4 approaches. (a) char-level alone doesn't fix origin problem. (b) origin-aware alone doesn't improve three-way merge precision. (c) XmlFragment events is a new pattern, high complexity. (d) hybrid addresses both root causes within existing patterns. |
+| D2 | Path A stays on line-level diff + content-comparison gate; Path B uses DMP `patch_apply` three-way merge | Technical | LOCKED (refined 2026-04-14; D5 supersedes original "char-level" framing) | Path A (~90% of fires) doesn't have the sub-line problem; content-comparison gate adds ~O(hunk_size) substring comparison. Path B (~10%) does have sub-line needs; DMP `patch_apply` handles three-way merge canonically, preserving Item-equal prefix/suffix. Evidence: `evidence/observer-a-two-paths.md` + `/tmp/dmp-probe.ts`. |
+| D3 | Approach: hybrid content-aware gate + DMP three-way merge (evolved from "option d") | Technical | LOCKED (refined 2026-04-14) | Prior research evaluated 4 approaches. (a) char-level alone doesn't fix origin laundering. (b) origin-aware alone doesn't improve three-way merge precision. (c) XmlFragment events is a new pattern, high complexity. (d) hybrid addresses both root causes within existing patterns — original scoped as char-level diff, evolved to DMP `patch_apply` (D5) after probe showed it's the canonical three-way merge algorithm. |
 | D4 | Decoupled from Miles's undo | Product | LOCKED | First-principles analysis: FR-1/FR-2/FR-3/FR-5/FR-6 don't depend on Observer A. Only FR-4/US-3e does. See STORY.md §3 Area B decoupling analysis. |
 | D5 | Path B uses DMP `patch_make` + `patch_apply` (canonical three-way merge) instead of custom diff-walk | Technical | LOCKED (2026-04-13) | Empirical probe (`/tmp/dmp-probe.ts`) shows DMP correctly merges same-line collisions out of the box. Custom walk produces two-line split (wrong) on `base="Hello", user="Hello world", agent="Hello brave"`. DMP produces `"Hello world brave"` (correct). Research validation: no equivalent pattern in any surveyed CRDT editor (report Finding 6) — DMP patch_apply is the canonical JS three-way merge. |
 | D6 | Drop FR-7 (`diffCharsFast` helper) | Technical | LOCKED (2026-04-13) | Conditional on D5. With DMP patch_apply, no caller needs standalone char-level diff. Simplifies scope — removes new file `diff-chars-fast.ts` from SCOPE. |
 | D7 | Content-comparison gate (FR-1) uses adjacent REMOVED+ADDED pairing only | Technical | LOCKED | OQ-8 resolution. diffLines output structure makes non-adjacent REMOVED+ADDED always indicate genuine changes on both sides — gate wouldn't fire meaningfully on non-adjacent pairs. |
-| D8 | OQ-2 (exact-char overlap duplication) accepted as known limitation | Technical | LOCKED | DMP probe: `patch_apply(diff("hello","hello!"),"hello!")="hello!!"`. Inherent to three-way merge — both sides independently made the same change. Mitigation path is NG4 (XmlFragment event-driven sync), explicitly deferred. Logged in Future Work. |
+| D8 | OQ-2 (exact-char overlap duplication) accepted as known limitation | Technical | LOCKED | DMP probe: `patch_apply(diff("hello","hello!"),"hello!")="hello!!"`. Inherent to three-way merge — both sides independently made the same change. Mitigation paths NG6 (XmlFragment event-driven sync) and NG7 (per-character attribution) both explicitly deferred; flagged in Future Work. |
 | D9 | OQ-5: user-wins on user-delete-line + agent-modify-same-line | Product | LOCKED (2026-04-13) | DMP default behavior. Matches existing `applyUserDelta` comment ("the user's change wins"). Predictable, simple. Deferred from V0: conflict-marking UI (would need product design). |
-| D10 | OQ-6: emit `safetyCheckpoint` activity entry on Path B same-line collision | Product/Technical | LOCKED (2026-04-13) | New `safety-checkpoint.ts` helper. Activity-map shape per AGENTS.md precedent #3. Visibility: `'debug'` in V0 (no UI surface). Diagnostic enables future debug panel for "agent+user merged on line N" events. |
+| D10 (revised) | OQ-6: emit `console.warn` + optional `onMergeFailed` callback on DMP failed patches (NO Y.Doc pollution) | Product/Technical | LOCKED (2026-04-14, revised from earlier safety-checkpoint approach) | Earlier revision proposed a dedicated `Y.Map('safety-events')` + `emitSafetyCheckpoint` helper; that was dropped per D14 (naming collision with server-side `safetyCheckpoint` primitive + no consumer today). Current approach uses existing observers.ts console-warn precedent + optional callback hook in `ObserverDeps`. Consumers (V0-14 telemetry, future debug panel) opt in via callback without CRDT persistence. |
 | D11 | OQ-7: NO Path A/B telemetry counter in this spec | Technical | LOCKED (2026-04-13) | User explicitly opted out. Counter would verify A3 (~10% diverged-path rate) but adds noise without clear consumer. Can be added later if assumption is challenged. |
 | D12 | OQ-10: Document the three unclaimed patterns as AGENTS.md precedent #9 | Documentation | LOCKED (2026-04-13) | Strengthens architectural narrative. Cross-refs precedent #1 (typed transaction origins). Patterns: (a) content-comparison gate before CRDT delete+insert, (b) char-level diff as Item-preservation lever in serialize→diff→apply bridges, (c) origin-aware reconciliation at the bridge layer (vs. ingress filter). |
+| D13 | Framing: spec's property is an architectural bridge invariant, not a behavioral symptom | Architectural | LOCKED (2026-04-14) | The problem is "bridge replaces Items whose content already matches" — a layer-level invariant. The zombie-content symptom (~257 chars/cycle) was the OLD measurement against a consumer (agent UndoManager) that was removed in V0-16 and returns in V0-14. Architectural framing is testable today via Item introspection; independent of any product consumer shipping. See rewritten §1 Problem Statement and FR-4 acceptance criteria. |
+| D14 | No new `safety-checkpoint.ts` file, no new `Y.Map('safety-events')` channel | Technical | LOCKED (2026-04-14) | Four reasons: (1) Naming collision — server already exports `safetyCheckpoint` for the WIP-snapshot primitive (`packages/server/src/shadow-repo.ts:254`), which is the canonical use of the name per precedent #2. (2) No V0 consumer — the "future debug panel" was speculative; building CRDT-persistent infrastructure ahead of need violates greenfield discipline. (3) Existing observers.ts diagnostic precedent is `console.warn` (lines 337/367/500); matching that is simpler and consistent. (4) Prior-art warning: `Y.Map('conflicts')` (`standalone.ts:321/:992`) is the same write-only-Y.Map pattern already shipped — zero consumers in `packages/app/src/`, paying CRDT replication cost for a UI that never materialized. Don't repeat it. Structured reactivity provided via optional `ObserverDeps.onMergeFailed` callback — consumers opt in. |
+| D15 | Origin landscape acknowledged, not acted on | Documentation | LOCKED (2026-04-14) | PR #39 introduced `'rollback-apply'` origin (full Y.Text replacement, by-design untracked per D6(b) in PROJECT.md). V0-14 uses `'agent-write'` (tracked by per-agent UMs) + TipTap's `ySyncPluginKey` origin (WYSIWYG UM) + y-codemirror's local origin (Source UM). Our spec documents this landscape for context but does not alter any origin's treatment — our fix is below the origin layer (bridge invariant), applies uniformly to whatever origins exist now or later. |
 
 ## 10) Assumptions
 
 | ID | Assumption | Confidence | Verification plan |
 |---|---|---|---|
-| A1 | `applyByPrefixSuffix` preserves CRDT Items in the matching prefix/suffix regions | HIGH | Y.js delete/insert semantics: Items in untouched regions are never marked deleted. Verify empirically with a test that checks `Y.UndoManager` stack content after prefix/suffix application. |
+| A1 | `applyByPrefixSuffix` preserves CRDT Items in the matching prefix/suffix regions | HIGH — verifiable | Y.js delete/insert semantics: Items in untouched regions are never marked deleted. Verification: FR-4 test + A1 `observers.test.ts` extension using `Y.UndoManager` stack introspection (see §7d). |
 | A4 | DMP `patch_apply` correctly resolves three-way merge for our scenarios | HIGH | Empirical probe `/tmp/dmp-probe.ts` (2026-04-13): verified on 5 scenarios including FR-3 acceptance scenario (`"Hello world brave"`), user-prepend+agent-append, different-line edits, user-delete+agent-modify (user-wins), exact-char overlap (duplicates per D8). All produced expected merges with `results=[true]`. |
-| A5 | DMP `Match_Threshold=0.5` is appropriate for our typical divergence levels | MEDIUM | Pinned explicitly in code (audit F15). Could need tuning if agent edits drift markdown structure (e.g., wrap long lines). Verify with TQ6 fuzz extension that perturbs context heavily. |
-| A6 | After Path B, `lastSyncedXmlMd` is set to `md` (XmlFragment serialization), NOT `mergedText` (Y.Text content). This is unchanged by this spec — preserves the current observers.ts:335 behavior. | HIGH | Consequence: after Path B fires, `currentText` (Y.Text with mergedText) ≠ `lastSyncedXmlMd` (XmlFragment serialization). Subsequent Observer A triggers do NOT spuriously re-fire Path B: the early-return at observers.ts:302 (`if (lastSyncedXmlMd === md) return;`) exits when XmlFragment hasn't changed. Path B re-fires only if XmlFragment ALSO changes, in which case the new `oldXmlMd → newXmlMd` patch is applied against the merged Y.Text — correct behavior. Convergence to a fully-unified state requires Observer B to fire from another Y.Text local mutation — same dynamic as the existing implementation. **Not a regression.** Verified by TQ6 assertion: `lastSyncedXmlMd === md` after Path B. |
+| A5 | DMP `Match_Threshold=0.5` is appropriate for our typical divergence levels | MEDIUM | Pinned explicitly in code. Verify with fuzz extension (§7d) that perturbs agent context heavily. |
+| A6 | After Path B, `lastSyncedXmlMd` is set to `md` (XmlFragment serialization), NOT `mergedText` (Y.Text content). This is unchanged by this spec — preserves the current observers.ts:335 behavior. | HIGH | Consequence: after Path B fires, `currentText` (merged) ≠ `lastSyncedXmlMd` (XmlFragment). Subsequent Observer A triggers do NOT spuriously re-fire Path B: the early-return at observers.ts:302 (`if (lastSyncedXmlMd === md) return;`) exits when XmlFragment hasn't changed. Path B re-fires only if XmlFragment ALSO changes, in which case the new `oldXmlMd → newXmlMd` patch is applied against the merged Y.Text — correct. Full convergence to a unified state requires Observer B to fire from another Y.Text local mutation — same dynamic as existing implementation. Not a regression. Verified by TQ6 baseline assertion. |
+| A7 | V0-14 will use `Y.UndoManager(ytext, { trackedOrigins: Set(['agent-write']) })` per-agent, keyed by `AgentIdentity.connectionId` | HIGH | Documented in `projects/v0-launch/PROJECT.md:107-148` and `specs/2026-04-10-undo-architecture/SPEC.md`. Our fix is structural (bridge preserves Items regardless of consumer shape); if V0-14 deviates (e.g., adopts per-character attribution), our fix remains a correct bridge improvement but its strongest motivation decreases. |
+| A8 | Rollback transactions (origin `'rollback-apply'`) will NOT be tracked by any UndoManager | HIGH | PROJECT.md D6(b): rollback is coarse action, append-only, not undo-tracked. Our spec does not alter rollback's treatment — our fix operates uniformly across all origins. |
 
 ## 11) Risks
 
@@ -312,27 +366,33 @@ Shape conforms to AGENTS.md precedent #3 (structured event schemas). No render-p
 
 ## 12) Future Work
 
-- **[Explored]** XmlFragment event-driven sync (NG4). Investigated during prior research session. Would eliminate serialize→diff→apply entirely. Higher complexity, new pattern. The content-aware approach in this spec gets ~95% of the benefit at ~20% of the complexity. Revisit if exact-character overlap duplication (D8) becomes a reported user-facing issue.
-- **[Identified]** Per-character undo granularity. Currently UndoManager groups by `captureTimeout` (0 = one entry per transaction). Character-level Observer A creates finer-grained CRDT mutations, which could enable more granular undo in the future.
-- **[Noted]** Observer A serialize cost (~23ms at 10K blocks) remains the dominant cost. A future optimization could use incremental serialization (only re-serialize changed ProseMirror nodes). Out of scope — performance is within budget.
-- **[Identified]** Per-character agent attribution layer. Would enable dmonad's option #1 (propagate original origin through the bridge). Eliminates the need for content-comparison heuristics entirely. Bigger architectural project — requires Y.js XmlFragment-side metadata channel or custom attribution side-table.
-- **[Novelty documentation]** The three patterns named by this spec (content-comparison gate, char-diff Item-preservation, origin-aware bridge reconciliation) are unclaimed in academic + engineering literature as of 2026-04-13 per research report Finding 6. If these ship, worth documenting as architectural precedents in AGENTS.md (see OQ-10).
+- **[Explored]** XmlFragment event-driven sync (NG6). Would eliminate serialize→diff→apply for Observer A. Larger scope — first delta-processing code in the repo; research surveyed no Yjs editor that maintains two first-class Y types with bidirectional observers. Revisit only if exact-character overlap duplication (D8) becomes an observed user-facing issue.
+- **[Identified]** Per-character attribution layer (NG7 / dmonad option #1). Side-table that records origin per-character, letting Observer A propagate original origin through re-emission. Eliminates the content-comparison heuristic entirely. Large architectural project — consider if a future consumer (selective-undo semantics, per-author coloring, Peritext-style rich-text semantics) justifies the infrastructure.
+- **[Identified]** `onMergeFailed` consumer (V0-14 or beyond). The callback hook is spec'd but no V0 consumer supplies it. If V0-14 telemetry or a debug panel materializes, it's a zero-change integration.
+- **[Noted]** Observer A serialize cost (~23ms at 10K blocks) remains the dominant Path A cost. A future optimization could use incremental serialization (only re-serialize changed ProseMirror nodes). Out of scope — performance is within budget.
+- **[Identified]** Per-character undo granularity within V0-14. UndoManager's `captureTimeout` default groups rapid edits; finer granularity (one stack entry per character) could support selective-undo semantics. Dependent on V0-14 landing first.
 
 ## 13) Agent Constraints
 
 **SCOPE:**
-- `packages/app/src/editor/observers.ts` — `applyIncrementalDiff` (content-gate FR-1), `applyUserDelta` (DMP rewrite FR-2 — signature changes to `(doc, ytext, oldXmlMd, newXmlMd)`), keep `applyByPrefixSuffix` unchanged. Adds imports: `import DiffMatchPatch from 'diff-match-patch'` and `import { emitSafetyCheckpoint } from './safety-checkpoint'`. Caller site at `runObserverASync` updated to pass `doc` (line ~331).
-- `packages/app/src/editor/safety-checkpoint.ts` (NEW) — `emitSafetyCheckpoint` helper writing to `Y.Map('safety-events')` (NOT `Y.Map('activity')` — separate channel per audit F8/F17)
-- `packages/app/src/editor/safety-checkpoint.test.ts` (NEW) — unit tests for the helper
-- `packages/app/tests/stress/observers.stress.s4.test.ts` (extend with TQ6: same-line collision + user-delete-with-agent-modify + safetyCheckpoint emission assertions)
-- `packages/app/tests/integration/bridge-matrix.test.ts` (extend with undo-invariant assertions for FR-4 + multi-client TQ6 variant)
-- `packages/app/src/editor/observers.test.ts` (extend with FR-1 content-gate skip, FR-2 DMP patch_apply, A1 UndoManager-stack-preservation, safetyCheckpoint tests)
-- `packages/app/tests/stress/observers.fuzz.test.ts` (extend with agent-paragraph-rewrite operator for R3 + A5 verification)
-- `AGENTS.md` — add precedent #9 documenting the three patterns (D12)
+- `packages/app/src/editor/observers.ts` — Changes:
+  - `applyIncrementalDiff` (FR-1): add content-comparison gate per §7a
+  - `applyUserDelta` (FR-2): rewrite to use DMP `patch_make`+`patch_apply` per §7b. Signature changes to `(deps: ObserverDeps, oldXmlMd, newXmlMd)` — caller at `runObserverASync` (observers.ts:331) updated accordingly
+  - `ObserverDeps` interface: add optional `onMergeFailed?(info)` callback (FR-7)
+  - Imports: `import DiffMatchPatch from 'diff-match-patch'` at top of file (module-local instance with explicit `Match_Threshold = 0.5`)
+  - `applyByPrefixSuffix`, Observer A/B main loops, typing-defer state, all baseline-refresh logic — UNCHANGED
+- `packages/app/tests/stress/observers.stress.s4.test.ts` — extend with TQ6 scenarios (same-line collision, user-delete + agent-modify, D8 characterization, baseline assertion, FR-7 console.warn assertion)
+- `packages/app/tests/integration/bridge-matrix.test.ts` — extend with multi-client FR-4 Item-preservation test via test-local UndoManager
+- `packages/app/src/editor/observers.test.ts` — extend with FR-1 content-gate unit, FR-2 DMP patch_apply unit (5 scenarios), FR-4 architectural test with UndoManager probe, FR-7 `onMergeFailed` callback test, A1 `applyByPrefixSuffix` UM-stack-preservation test
+- `packages/app/tests/stress/observers.fuzz.test.ts` — extend with agent-paragraph-rewrite operator (R3 + A5)
+- `AGENTS.md` — precedent #9 (already landed in prior commit)
 
-**NOT in scope (per D6/D11):**
-- `packages/app/src/editor/diff-chars-fast.ts` — DROPPED. DMP `patch_apply` supersedes.
-- Path A/B telemetry counter — DROPPED.
+**NOT in scope:**
+- `packages/app/src/editor/safety-checkpoint.ts` / `.test.ts` — DROPPED per D14. No new file, no `Y.Map('safety-events')`. Diagnostic is `console.warn` + `ObserverDeps.onMergeFailed` callback.
+- `packages/app/src/editor/diff-chars-fast.ts` — DROPPED per D6. DMP `patch_apply` supersedes.
+- Path A/B telemetry counter — DROPPED per D11.
+- `projects/v0-launch/PROJECT.md:910` vocabulary update (still says "character-level diff refactor" — evolved to "origin-aware three-way merge via DMP `patch_apply`"). **Nick's project row to update separately — not part of this spec's file changes.**
+- AGENTS.md duplication fix (PR #39 duplicated the file lines 5-654 at 655+). **Miles's territory; flag separately.**
 
 **EXCLUDE:**
 - `packages/server/` — Observer A is client-side only
@@ -349,5 +409,6 @@ Shape conforms to AGENTS.md precedent #3 (structured event schemas). No render-p
 **ASK_FIRST:**
 - Before changing the `DiffChange` interface in `diff-lines-fast.ts` (consumed by `applyIncrementalDiff` Path A)
 - Before modifying `applyByPrefixSuffix` (shared helper used by both paths)
-- Before changing the `safety-events` map name or its entry shape (precedent #3 contract)
+- Before changing the `ObserverDeps.onMergeFailed` callback shape (contract for V0-14 and future debug-panel consumers)
 - Before mutating DMP instance properties (`Match_Threshold`, `Patch_DeleteThreshold`, etc.) — they affect three-way merge semantics
+- Before reintroducing a Y.Map for diagnostic events (D14 explicitly rejects this — if a future consumer needs CRDT-synced events, revisit D14 with fresh evidence)
