@@ -5,7 +5,6 @@ export {
   AgentSessionManager,
   applyAgentMarkdownWrite,
   colorFromSeed,
-  DEFAULT_AGENT_ID,
   iconFromClientName,
 } from './agent-sessions.ts';
 export {

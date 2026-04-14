@@ -47,9 +47,6 @@ export const AGENT_WRITE_ORIGIN = {
   context: { origin: 'agent-write' },
 } satisfies LocalTransactionOrigin;
 
-/** Default agent identity — used as fallback when no agentId is provided. */
-export const DEFAULT_AGENT_ID = 'claude-1';
-
 /** Deterministic color from a stable palette for a given seed string. */
 export function colorFromSeed(seed: string): string {
   const AGENT_COLORS = [
@@ -173,7 +170,7 @@ export class AgentSessionManager {
    */
   async getSession(
     docName: string,
-    agentId: string = DEFAULT_AGENT_ID,
+    agentId = 'claude-1',
     identity?: AgentSessionIdentity,
   ): Promise<AgentDirectConnection> {
     if (isSystemDoc(docName)) {
@@ -205,7 +202,7 @@ export class AgentSessionManager {
   }
 
   /** Check if a session exists without creating one. */
-  hasSession(docName: string, agentId: string = DEFAULT_AGENT_ID): boolean {
+  hasSession(docName: string, agentId = 'claude-1'): boolean {
     return this.sessions.has(this.sessionKey(docName, agentId));
   }
 
@@ -213,7 +210,7 @@ export class AgentSessionManager {
    * Disconnect and remove a specific agent session.
    * Clears awareness before disconnect.
    */
-  async closeSession(docName: string, agentId: string = DEFAULT_AGENT_ID): Promise<void> {
+  async closeSession(docName: string, agentId = 'claude-1'): Promise<void> {
     const key = this.sessionKey(docName, agentId);
     const dc = this.sessions.get(key);
     if (dc) {
