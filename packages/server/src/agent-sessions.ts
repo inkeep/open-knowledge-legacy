@@ -1,14 +1,16 @@
 /**
- * Agent session management — DirectConnection + UndoManager lifecycle.
+ * Agent session management — DirectConnection lifecycle.
  *
  * Each agent gets a persistent DirectConnection to the Hocuspocus server.
- * Sessions track awareness (presence bar shows agent), and a server-side
- * UndoManager tracks 'agent-write' origin for per-agent undo/redo.
+ * Sessions track awareness (presence bar shows agent).
+ *
+ * Per-agent undo is deferred to V0-14 (three-UndoManager architecture).
+ * The broken scaffold (UndoManager, undo/redo endpoints, AgentUndoButton)
+ * was removed in V0-16 per TQ13.
  */
 import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
-import * as Y from 'yjs';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
@@ -25,8 +27,20 @@ export interface AgentDirectConnection extends DirectConnection {
   document: Document;
 }
 
-/** Agent write origin — tracked by server-side UndoManager. */
-export const AGENT_WRITE_ORIGIN = 'agent-write';
+/**
+ * Agent write origin — typed LocalTransactionOrigin
+ *
+ * Passed to `document.transact(fn, AGENT_WRITE_ORIGIN)` in all agent write
+ * paths. Load-bearing for observer origin guards and future UndoManager scoping.
+ *
+ * skipStoreHooks: false — persistence SHOULD fire after agent writes so
+ * content reaches disk through the normal debounce pipeline.
+ */
+export const AGENT_WRITE_ORIGIN = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'agent-write' },
+};
 
 /** Default agent identity. Key used in Y.Map('activity'). */
 export const DEFAULT_AGENT_ID = 'claude-1';
@@ -48,9 +62,6 @@ export function syncTextToFragment(document: Document): void {
     updateYFragment(document, xmlFragment, pmNode, meta);
 
     // Enforce bridge invariant: ytext must be byte-equal to canonical serialization.
-    // Raw markdown may differ from round-tripped form (e.g., `## H\nP` → `## H\n\nP`).
-    // Without this, Observer A's guard (currentText === md) fails on the client,
-    // triggering content duplication via applyUserDelta with a stale baseline.
     const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
     const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
     if (canonicalFull !== fullText) {
@@ -76,38 +87,10 @@ export function syncTextToFragment(document: Document): void {
 
 export class AgentSessionManager {
   private sessions = new Map<string, AgentDirectConnection>();
-  private undoManagers = new Map<string, Y.UndoManager>();
   private hocuspocus: Hocuspocus;
 
   constructor(hocuspocus: Hocuspocus) {
     this.hocuspocus = hocuspocus;
-  }
-
-  /**
-   * Get or create a server-side UndoManager for agent writes on a document.
-   * Tracks Y.Text('source') with origin 'agent-write'.
-   *
-   * captureTimeout: 0 — each agent transaction is its own undo entry.
-   *   Diverges from spec Q11 ("use default 500ms"). Justified for the spike because every
-   *   /api/agent-write* HTTP call wraps exactly one dc.document.transact() call, so each
-   *   request is already one logical action — grouping would only matter if a single agent
-   *   action emitted multiple transactions (e.g., token streaming). Revisit when streaming
-   *   agent writes land: at that point 500ms grouping would better match "one agent reply =
-   *   one undo step" UX. Until then, 0ms is the simpler model.
-   */
-  getUndoManager(dc: AgentDirectConnection): Y.UndoManager {
-    const docName = dc.document.name;
-    let um = this.undoManagers.get(docName);
-    if (!um) {
-      const ytext = dc.document.getText('source');
-      um = new Y.UndoManager(ytext, {
-        trackedOrigins: new Set([AGENT_WRITE_ORIGIN]),
-        captureTimeout: 0,
-      });
-      this.undoManagers.set(docName, um);
-      log.info({ docName }, `[agent-undo] Created UndoManager for: ${docName}`);
-    }
-    return um;
   }
 
   /**
@@ -132,7 +115,6 @@ export class AgentSessionManager {
         mode: 'idle',
       });
       this.sessions.set(docName, dc);
-      this.getUndoManager(dc);
       log.info({ docName }, `[agent-session] Created persistent session for: ${docName}`);
     }
     return dc;
@@ -143,23 +125,12 @@ export class AgentSessionManager {
     return this.sessions.has(docName);
   }
 
-  /** Get UndoManager for a document if it exists. */
-  getExistingUndoManager(docName: string): Y.UndoManager | undefined {
-    return this.undoManagers.get(docName);
-  }
-
   /**
    * Disconnect and remove an agent session. Clears awareness before disconnect.
    */
   async closeSession(docName: string): Promise<void> {
     const dc = this.sessions.get(docName);
     if (dc) {
-      const um = this.undoManagers.get(docName);
-      if (um) {
-        um.destroy();
-        this.undoManagers.delete(docName);
-        log.info({ docName }, `[agent-undo] Destroyed UndoManager for: ${docName}`);
-      }
       dc.document.awareness.setLocalState(null);
       await dc.disconnect();
       this.sessions.delete(docName);

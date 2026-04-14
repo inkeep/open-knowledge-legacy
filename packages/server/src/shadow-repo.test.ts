@@ -12,6 +12,7 @@ import {
   parkBranch,
   readParkedState,
   type ShadowHandle,
+  saveVersion,
   shadowGit,
   type WriterIdentity,
 } from './shadow-repo';
@@ -368,8 +369,6 @@ describe('parkBranch', () => {
 });
 
 describe('saveVersion', () => {
-  const { saveVersion } = require('./shadow-repo') as typeof import('./shadow-repo');
-
   let projectRoot: string;
   let shadow: ShadowHandle;
   let contentDir: string;
@@ -405,39 +404,14 @@ describe('saveVersion', () => {
     shadow = await initShadowRepo(projectRoot);
   });
 
-  test('creates a commit on the project repo', async () => {
-    writeFileSync(resolve(contentDir, 'intro.md'), '# Updated\n');
-    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
-
-    expect(result.projectCommitSha).toHaveLength(40);
-
-    const git = simpleGit(projectRoot);
-    const msg = (await git.raw('log', '-1', '--format=%s', result.projectCommitSha)).trim();
-    expect(msg).toBe('Save Version: content update');
-  });
-
-  test('project commit has co-authored-by trailers', async () => {
-    writeFileSync(resolve(contentDir, 'intro.md'), '# Co-authored\n');
-    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human, agent]);
-
-    const git = simpleGit(projectRoot);
-    const body = (await git.raw('log', '-1', '--format=%B', result.projectCommitSha)).trim();
-    expect(body).toContain('Co-authored-by: cursor-agent <cursor@openknowledge.local>');
-
-    // Primary author is the human
-    const author = (await git.raw('log', '-1', '--format=%an', result.projectCommitSha)).trim();
-    expect(author).toBe('Nick Gomez');
-  });
-
   test('creates checkpoint ref in shadow', async () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Checkpoint\n');
-    const result = await saveVersion(shadow, projectRoot, 'content/docs', [human]);
-
-    expect(result.checkpointRef).toBe(`refs/checkpoints/main/${result.projectCommitSha}`);
+    const result = await saveVersion(shadow, 'content/docs', [human]);
 
     const sg = shadowGit(shadow);
     const checkpointSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
     expect(checkpointSha).toHaveLength(40);
+    expect(result.checkpointRef).toBe(`refs/checkpoints/main/${checkpointSha}`);
 
     // Checkpoint tree contains the content
     const tree = (await sg.raw('ls-tree', '-r', '--name-only', result.checkpointRef)).trim();
@@ -453,7 +427,7 @@ describe('saveVersion', () => {
     const wipBefore = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
     expect(wipBefore).toHaveLength(40);
 
-    await saveVersion(shadow, projectRoot, 'content/docs', [human]);
+    await saveVersion(shadow, 'content/docs', [human]);
 
     // WIP ref should be deleted (branch-scoped)
     let wipExists = true;
@@ -463,5 +437,130 @@ describe('saveVersion', () => {
       wipExists = false;
     }
     expect(wipExists).toBe(false);
+  });
+
+  test('multi-parent checkpoint preserves all writer chains', async () => {
+    // Both writers make WIP commits
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Human edit\n');
+    const humanWipSha = await commitWip(shadow, human, 'content/docs', 'WIP: human edit');
+
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Agent edit\n');
+    const agentWipSha = await commitWip(shadow, agent, 'content/docs', 'WIP: agent edit');
+
+    const result = await saveVersion(shadow, 'content/docs', [human, agent]);
+
+    const sg = shadowGit(shadow);
+
+    // Checkpoint commit should list both WIP SHAs as parents
+    const parentLine = (await sg.raw('log', '-1', '--format=%P', result.checkpointRef)).trim();
+    const parents = parentLine.split(' ').filter(Boolean);
+    expect(parents).toContain(humanWipSha);
+    expect(parents).toContain(agentWipSha);
+    expect(parents.length).toBe(2);
+
+    // --full-history from the checkpoint reaches both writer commits
+    const authorEmails = (
+      await sg.raw(
+        'log',
+        '--full-history',
+        '--author-date-order',
+        '--format=%ae',
+        result.checkpointRef,
+      )
+    )
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+
+    expect(authorEmails).toContain(human.email);
+    expect(authorEmails).toContain(agent.email);
+  });
+
+  test('checkpoint falls back to latest checkpoint when no WIP activity', async () => {
+    // First save version (creates first checkpoint)
+    writeFileSync(resolve(contentDir, 'intro.md'), '# v1\n');
+    await commitWip(shadow, human, 'content/docs', 'WIP: v1');
+    const result1 = await saveVersion(shadow, 'content/docs', [human]);
+
+    const sg = shadowGit(shadow);
+    const checkpoint1Sha = (await sg.raw('rev-parse', result1.checkpointRef)).trim();
+
+    // Second save version with NO WIP activity since last checkpoint
+    writeFileSync(resolve(contentDir, 'intro.md'), '# v2 (direct write, no WIP commit)\n');
+    const result2 = await saveVersion(shadow, 'content/docs', [human]);
+
+    // The second checkpoint should parent on the first checkpoint commit
+    const parentLine = (await sg.raw('log', '-1', '--format=%P', result2.checkpointRef)).trim();
+    const parents = parentLine.split(' ').filter(Boolean);
+    expect(parents).toContain(checkpoint1Sha);
+  });
+});
+
+describe('saveVersion — standalone mode', () => {
+  let standaloneRoot: string;
+  let shadow: ShadowHandle;
+  let contentDir: string;
+
+  const human: WriterIdentity = {
+    id: 'human-nick',
+    name: 'Nick Gomez',
+    email: 'nick@example.com',
+  };
+
+  beforeEach(async () => {
+    // Standalone: no project .git/ repo
+    standaloneRoot = resolve(tmpDir, 'standalone');
+    contentDir = resolve(standaloneRoot, 'content/docs');
+    mkdirSync(contentDir, { recursive: true });
+
+    shadow = await initShadowRepo(standaloneRoot);
+  });
+
+  test('creates shadow checkpoint', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Standalone\n');
+    await commitWip(shadow, human, 'content/docs', 'WIP: standalone edit');
+
+    const result = await saveVersion(shadow, 'content/docs', [human]);
+
+    // Shadow checkpoint ref exists and is valid
+    const sg = shadowGit(shadow);
+    const checkpointSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
+    expect(checkpointSha).toHaveLength(40);
+
+    expect(result.checkpointRef).toContain(checkpointSha);
+    expect(result.checkpointRef).toMatch(/^refs\/checkpoints\/main\//);
+
+    // Checkpoint tree contains the content
+    const tree = (await sg.raw('ls-tree', '-r', '--name-only', result.checkpointRef)).trim();
+    expect(tree).toContain('content/docs/intro.md');
+  });
+
+  test('WIP refs are reset after Save Version', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# v1\n');
+    await commitWip(shadow, human, 'content/docs', 'WIP: edit');
+
+    await saveVersion(shadow, 'content/docs', [human]);
+
+    const sg = shadowGit(shadow);
+    let wipExists = true;
+    try {
+      await sg.raw('rev-parse', 'refs/wip/main/human-nick');
+    } catch {
+      wipExists = false;
+    }
+    expect(wipExists).toBe(false);
+  });
+
+  test('checkpoint ref is named after shadow commit SHA', async () => {
+    writeFileSync(resolve(contentDir, 'intro.md'), '# Standalone ref naming\n');
+    await commitWip(shadow, human, 'content/docs', 'WIP: ref naming test');
+
+    const result = await saveVersion(shadow, 'content/docs', [human]);
+
+    const sg = shadowGit(shadow);
+    const actualSha = (await sg.raw('rev-parse', result.checkpointRef)).trim();
+
+    // The ref name must end with the shadow commit's own SHA
+    expect(result.checkpointRef).toBe(`refs/checkpoints/main/${actualSha}`);
   });
 });

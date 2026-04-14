@@ -52,17 +52,13 @@ import {
   DESCRIPTION as READ_DOCUMENT_DESCRIPTION,
   register as registerReadDocument,
 } from './read-document.ts';
-import {
-  DESCRIPTION as REDO_AGENT_EDIT_DESCRIPTION,
-  register as registerRedoAgentEdit,
-} from './redo-agent-edit.ts';
 import { DESCRIPTION as RESEARCH_DESCRIPTION, register as registerResearch } from './research.ts';
+import {
+  DESCRIPTION as ROLLBACK_DESCRIPTION,
+  register as registerRollbackToVersion,
+} from './rollback-to-version.ts';
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
 import type { ServerInstance } from './shared.ts';
-import {
-  register as registerUndoAgentEdit,
-  DESCRIPTION as UNDO_AGENT_EDIT_DESCRIPTION,
-} from './undo-agent-edit.ts';
 import {
   register as registerWriteDocument,
   DESCRIPTION as WRITE_DOCUMENT_DESCRIPTION,
@@ -82,8 +78,7 @@ export const TOOL_DESCRIPTIONS = {
   search: SEARCH_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
-  undo_agent_edit: UNDO_AGENT_EDIT_DESCRIPTION,
-  redo_agent_edit: REDO_AGENT_EDIT_DESCRIPTION,
+  rollback_to_version: ROLLBACK_DESCRIPTION,
   list_documents: LIST_DOCUMENTS_DESCRIPTION,
   get_backlinks: GET_BACKLINKS_DESCRIPTION,
   get_forward_links: GET_FORWARD_LINKS_DESCRIPTION,
@@ -125,8 +120,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   // Document tools — make HTTP calls to Hocuspocus
   registerWriteDocument(server, opts.serverUrl);
   registerEditDocument(server, opts.serverUrl);
-  registerUndoAgentEdit(server, opts.serverUrl);
-  registerRedoAgentEdit(server, opts.serverUrl);
+  registerRollbackToVersion(server, opts.serverUrl);
   registerListDocuments(server, opts.serverUrl);
   registerGetBacklinks(server, opts.serverUrl);
   registerGetForwardLinks(server, opts.serverUrl);

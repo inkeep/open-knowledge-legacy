@@ -22,8 +22,6 @@ import { markUserTyping } from '../../src/editor/observers';
 
 import {
   agentPatch,
-  agentRedo,
-  agentUndo,
   agentWriteMd,
   assertBridgeInvariant,
   createTestClient,
@@ -359,69 +357,9 @@ describe('W4: disk writes', () => {
 });
 
 // ─── Undo / Redo ───
-
-describe('undo / redo', () => {
-  test.concurrent('Undo→Y.Text: agent-undo reverts client Y.Text', async () => {
-    const client = await createTestClient(server.port);
-    try {
-      await agentWriteMd(server.port, '# Undo Target\n\nThis will be undone.', {
-        docName: client.docName,
-      });
-      await pollUntil(() => client.ytext.toString().includes('Undo Target'), 5000);
-      expect(client.ytext.toString()).toContain('Undo Target');
-
-      await agentUndo(server.port, client.docName);
-      await pollUntil(() => !client.ytext.toString().includes('Undo Target'), 5000);
-      expect(client.ytext.toString()).not.toContain('Undo Target');
-      expect(serializeFragment(client.fragment)).not.toContain('Undo Target');
-      assertBridgeInvariant(client.ytext, client.fragment);
-    } finally {
-      await client.cleanup();
-    }
-  });
-
-  test.concurrent('Undo→XmlFragment: agent-undo reverts client XmlFragment', async () => {
-    const client = await createTestClient(server.port);
-    try {
-      await agentWriteMd(server.port, '# Undo Fragment\n\nUndone in WYSIWYG.', {
-        docName: client.docName,
-      });
-      await pollUntil(() => serializeFragment(client.fragment).includes('Undo Fragment'), 5000);
-      expect(serializeFragment(client.fragment)).toContain('Undo Fragment');
-
-      await agentUndo(server.port, client.docName);
-      await pollUntil(() => !serializeFragment(client.fragment).includes('Undo Fragment'), 5000);
-      expect(serializeFragment(client.fragment)).not.toContain('Undo Fragment');
-      expect(client.ytext.toString()).not.toContain('Undo Fragment');
-      assertBridgeInvariant(client.ytext, client.fragment);
-    } finally {
-      await client.cleanup();
-    }
-  });
-
-  test.concurrent('Redo→all: agent-redo restores both surfaces', async () => {
-    const client = await createTestClient(server.port);
-    try {
-      await agentWriteMd(server.port, '# Redo Target\n\nRedo restores this.', {
-        docName: client.docName,
-      });
-      await pollUntil(() => client.ytext.toString().includes('Redo Target'), 5000);
-      expect(client.ytext.toString()).toContain('Redo Target');
-
-      await agentUndo(server.port, client.docName);
-      await pollUntil(() => !client.ytext.toString().includes('Redo Target'), 5000);
-      expect(client.ytext.toString()).not.toContain('Redo Target');
-
-      await agentRedo(server.port, client.docName);
-      await pollUntil(() => client.ytext.toString().includes('Redo Target'), 5000);
-      expect(client.ytext.toString()).toContain('Redo Target');
-      expect(serializeFragment(client.fragment)).toContain('Redo Target');
-      assertBridgeInvariant(client.ytext, client.fragment);
-    } finally {
-      await client.cleanup();
-    }
-  });
-});
+// Agent undo/redo endpoints were removed in V0-16 (TQ13: broken scaffold removal).
+// Per-agent undo is deferred to V0-14 (three-UndoManager architecture).
+// Integration tests will be re-added when the undo capability is rebuilt.
 
 // ─── Initial sync + test reset ───
 // These tests verify shared-state behavior and MUST use explicit 'test-doc'.

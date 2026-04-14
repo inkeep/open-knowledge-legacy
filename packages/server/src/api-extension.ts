@@ -26,9 +26,12 @@ import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
   type HeadingEntry,
+  stripFrontmatter,
   toWikiLinkSlug,
 } from '@inkeep/open-knowledge-core';
+import { updateYFragment } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
+import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import {
   AGENT_WRITE_ORIGIN,
@@ -36,12 +39,51 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+
+/**
+ * Transaction origin for rollback (TQ10 — typed LocalTransactionOrigin).
+ *
+ * skipStoreHooks: false — L1 persistence SHOULD fire after rollback so the
+ * restored content reaches disk through the normal pipeline. The file-watcher's
+ * registerWrite hash check prevents the self-write from re-triggering reconciliation.
+ */
+const ROLLBACK_ORIGIN = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'rollback-apply' },
+};
+
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
+import { mdManager, schema } from './md-manager.ts';
 import { getMetrics } from './metrics.ts';
-import { deleteReconciledBase, isWithinContentDir, safeContentPath } from './persistence.ts';
-import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
+import {
+  deleteReconciledBase,
+  isWithinContentDir,
+  safeContentPath,
+  setReconciledBase,
+} from './persistence.ts';
+import {
+  type ShadowRef,
+  safetyCheckpoint,
+  saveVersion,
+  shadowGit,
+  type WriterIdentity,
+} from './shadow-repo.ts';
+import { getDocumentHistory } from './timeline-query.ts';
+
+/** Validates a docName and builds a shadow-repo-safe path.
+ * Uses the same traversal check as safeContentPath (reject `..` and null bytes)
+ * but allows `/` for nested content directories (e.g. `test-content/test-doc`). */
+function safeDocPath(docName: string, contentRoot: string): { path: string } | { error: string } {
+  if (!docName || docName.includes('..') || docName.includes('\0')) {
+    return { error: 'Invalid document name' };
+  }
+  const normalized = contentRoot.replace(/^\.\//, '');
+  const path = normalized ? `${normalized}/${docName}.md` : `${docName}.md`;
+  return { path };
+}
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -286,7 +328,8 @@ export interface ApiExtensionOptions {
    */
   enableTestRoutes?: boolean;
   shadowRef?: ShadowRef;
-  projectRoot?: string;
+  /** Force-flush the L2 git commit debounce (e.g. after rollback). */
+  flushGitCommit?: () => Promise<void>;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
 }
@@ -302,39 +345,6 @@ async function readBody(req: IncomingMessage): Promise<Buffer> {
     chunks.push(chunk as Buffer);
   }
   return Buffer.concat(chunks);
-}
-
-/**
- * Handle syncTextToFragment failure after an undo/redo CRDT operation by
- * attempting compensation (reverse the operation) and responding with a
- * structured error. Shared between the undo and redo handlers so the
- * compensation protocol stays in sync.
- */
-function handleCompensationError(
-  res: ServerResponse,
-  syncErr: unknown,
-  compensateFn: () => void,
-  label: string,
-): void {
-  let compensationFailed = false;
-  try {
-    compensateFn();
-  } catch (compensateErr) {
-    compensationFailed = true;
-    console.error(`[${label}] Compensation also failed:`, compensateErr);
-  }
-  console.error(`[${label}]`, syncErr);
-  json(res, 500, {
-    ok: false,
-    error: `Sync failed after ${label.replace('agent-', '')}`,
-    compensationFailed,
-    ...(compensationFailed
-      ? {
-          warning:
-            'Document may be in an inconsistent state — CRDT operation applied but text sync failed and compensation also failed',
-        }
-      : {}),
-  });
 }
 
 function json(res: ServerResponse, status: number, data: unknown): void {
@@ -427,7 +437,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     getAliasMap,
     enableTestRoutes = false,
     shadowRef,
-    projectRoot,
+    flushGitCommit,
     contentRoot,
     backlinkIndex,
   } = options;
@@ -975,135 +985,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
-  async function handleAgentUndoStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
-      const docName = resolveAlias(url.searchParams.get('docName') || 'test-doc');
-      if (isSystemDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      if (!sessionManager.hasSession(docName)) {
-        json(res, 200, { ok: true, canUndo: false, canRedo: false });
-        return;
-      }
-      const um = sessionManager.getExistingUndoManager(docName);
-      json(res, 200, {
-        ok: true,
-        canUndo: um?.canUndo() ?? false,
-        canRedo: um?.canRedo() ?? false,
-      });
-    } catch (e) {
-      console.error('[agent-undo-status]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleAgentUndo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawDocName = 'test-doc';
-      try {
-        const raw = await readBody(req);
-        if (raw.length > 0) {
-          try {
-            const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-            if (typeof body.docName === 'string' && body.docName.length > 0)
-              rawDocName = body.docName;
-          } catch {
-            json(res, 400, { ok: false, error: 'Invalid JSON body' });
-            return;
-          }
-        }
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      const dc = await sessionManager.getSession(docName);
-      const um = sessionManager.getUndoManager(dc);
-      if (!um.canUndo()) {
-        json(res, 200, { ok: false, canUndo: false, canRedo: um.canRedo() });
-        return;
-      }
-      um.undo();
-      try {
-        syncTextToFragment(dc.document);
-      } catch (syncErr) {
-        handleCompensationError(res, syncErr, () => um.redo(), 'agent-undo');
-        return;
-      }
-      console.log('[agent-undo] Undo performed');
-      json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
-    } catch (e) {
-      console.error('[agent-undo]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
-  async function handleAgentRedo(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'POST') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
-    try {
-      let rawDocName = 'test-doc';
-      try {
-        const raw = await readBody(req);
-        if (raw.length > 0) {
-          try {
-            const body = JSON.parse(raw.toString()) as Record<string, unknown>;
-            if (typeof body.docName === 'string' && body.docName.length > 0)
-              rawDocName = body.docName;
-          } catch {
-            json(res, 400, { ok: false, error: 'Invalid JSON body' });
-            return;
-          }
-        }
-      } catch {
-        json(res, 413, { ok: false, error: 'Payload too large' });
-        return;
-      }
-      const docName = resolveAlias(rawDocName);
-      if (isSystemDoc(docName)) {
-        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
-        return;
-      }
-      const dc = await sessionManager.getSession(docName);
-      const um = sessionManager.getUndoManager(dc);
-      if (!um.canRedo()) {
-        json(res, 200, { ok: false, canUndo: um.canUndo(), canRedo: false });
-        return;
-      }
-      um.redo();
-      try {
-        syncTextToFragment(dc.document);
-      } catch (syncErr) {
-        handleCompensationError(res, syncErr, () => um.undo(), 'agent-redo');
-        return;
-      }
-      console.log('[agent-redo] Redo performed');
-      json(res, 200, { ok: true, canUndo: um.canUndo(), canRedo: um.canRedo() });
-    } catch (e) {
-      console.error('[agent-redo]', e);
-      json(res, 500, { ok: false, error: 'Internal server error' });
-    }
-  }
-
   async function handleTestReset(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -1169,7 +1050,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const shadow = shadowRef?.current;
-    if (!shadow || !projectRoot) {
+    if (!shadow) {
       json(res, 400, { ok: false, error: 'Shadow repo not configured' });
       return;
     }
@@ -1217,20 +1098,360 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const resolvedContentRoot = contentRoot ?? 'content';
-      const result = await saveVersion(shadow, projectRoot, resolvedContentRoot, writers);
+      const result = await saveVersion(shadow, resolvedContentRoot, writers);
 
-      console.log(
-        `[shadow] checkpoint ${result.checkpointRef} → project commit ${result.projectCommitSha.slice(0, 8)}`,
-      );
+      console.log(`[shadow] checkpoint ${result.checkpointRef}`);
 
       json(res, 200, {
         ok: true,
-        projectCommitSha: result.projectCommitSha,
         checkpointRef: result.checkpointRef,
       });
     } catch (e) {
       console.error('[save-version]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  // ── GET /api/history ─────────────────────────────────────────────────────
+  async function handleHistory(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const docName = url.searchParams.get('docName') ?? '';
+    const branch = url.searchParams.get('branch') ?? 'main';
+
+    if (!docName) {
+      json(res, 400, { ok: false, error: 'docName query parameter is required' });
+      return;
+    }
+
+    if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
+      json(res, 400, { ok: false, error: 'Invalid branch name' });
+      return;
+    }
+
+    const rawLimit = Number(url.searchParams.get('limit') ?? '50');
+    const rawOffset = Number(url.searchParams.get('offset') ?? '0');
+    const limit = Math.min(200, Number.isFinite(rawLimit) ? rawLimit : 50);
+    const offset = Number.isFinite(rawOffset) ? rawOffset : 0;
+    const type = url.searchParams.get('type') ?? undefined;
+    const author = url.searchParams.get('author') ?? undefined;
+    const excludeAuthor = url.searchParams.get('excludeAuthor') ?? undefined;
+
+    const t0 = Date.now();
+    try {
+      const resolvedContentRoot = contentRoot ?? 'content';
+      const result = await getDocumentHistory(
+        shadow,
+        {
+          docName,
+          branch,
+          limit,
+          offset,
+          type,
+          author,
+          excludeAuthor,
+        },
+        resolvedContentRoot,
+      );
+
+      const duration = Date.now() - t0;
+      console.log(
+        `[timeline] query docName=${docName} entries=${result.entries.length} duration=${duration}ms`,
+      );
+
+      json(res, 200, { ok: true, ...result });
+    } catch (e) {
+      console.error('[history]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
+  // ── GET /api/history/:sha ─────────────────────────────────────────────────
+  async function handleHistoryVersion(
+    req: IncomingMessage,
+    res: ServerResponse,
+    sha: string,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const docName = url.searchParams.get('docName') ?? '';
+
+    const resolvedContentRoot = contentRoot ?? 'content';
+    const pathResult = safeDocPath(docName, resolvedContentRoot);
+    if ('error' in pathResult) {
+      json(res, 400, { ok: false, error: pathResult.error });
+      return;
+    }
+    const docPath = pathResult.path;
+    const sg = shadowGit(shadow);
+
+    // Validate SHA format
+    if (!/^[0-9a-f]{40}$/i.test(sha)) {
+      json(res, 400, { ok: false, error: 'Invalid commit SHA' });
+      return;
+    }
+
+    try {
+      // Verify file exists at this commit
+      try {
+        await sg.raw('cat-file', '-e', `${sha}:${docPath}`);
+      } catch {
+        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
+        return;
+      }
+
+      const content = await sg.raw('show', `${sha}:${docPath}`);
+
+      // Resolve commit metadata
+      const logLine = (await sg.raw('log', '-1', '--format=%aI%x00%an', sha)).trim();
+      const [timestamp = '', author = ''] = logLine.split('\x00');
+
+      json(res, 200, { ok: true, sha, content, timestamp, author });
+    } catch (e) {
+      console.error('[history-version]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  // ── GET /api/diff ─────────────────────────────────────────────────────────
+  async function handleDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const docName = url.searchParams.get('docName') ?? '';
+    const from = url.searchParams.get('from') ?? '';
+    const to = url.searchParams.get('to') ?? '';
+
+    if (!to || !/^[0-9a-f]{40}$/i.test(to)) {
+      json(res, 400, { ok: false, error: "'to' must be a valid 40-char commit SHA" });
+      return;
+    }
+
+    const resolvedContentRoot = contentRoot ?? 'content';
+    const pathResult = safeDocPath(docName, resolvedContentRoot);
+    if ('error' in pathResult) {
+      json(res, 400, { ok: false, error: pathResult.error });
+      return;
+    }
+    const docPath = pathResult.path;
+    const sg = shadowGit(shadow);
+
+    try {
+      // Get "to" content
+      let toContent: string;
+      try {
+        toContent = await sg.raw('show', `${to}:${docPath}`);
+      } catch {
+        json(res, 404, { ok: false, error: 'Document did not exist at the target version' });
+        return;
+      }
+
+      // Get "from" content — either a commit SHA or current Y.Doc text
+      let fromContent: string;
+      if (from && /^[0-9a-f]{40}$/i.test(from)) {
+        try {
+          fromContent = await sg.raw('show', `${from}:${docPath}`);
+        } catch {
+          json(res, 404, { ok: false, error: 'Document did not exist at the source version' });
+          return;
+        }
+      } else {
+        // from omitted — read current Y.Doc content directly (avoids creating an agent session)
+        const doc = hocuspocus.documents.get(docName);
+        if (!doc) {
+          json(res, 409, {
+            ok: false,
+            error: 'Document is not currently open — open it in the editor first',
+          });
+          return;
+        }
+        fromContent = doc.getText('source').toString();
+      }
+
+      const changes = diffLines(fromContent, toContent);
+
+      // Build full-file line array: every line annotated as added/removed/unchanged
+      const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
+      let additions = 0;
+      let deletions = 0;
+      for (const change of changes) {
+        const changeLines = change.value.replace(/\n$/, '').split('\n');
+        const type = change.added ? 'added' : change.removed ? 'removed' : 'unchanged';
+        for (const text of changeLines) {
+          lines.push({ type, text });
+        }
+        if (change.added) additions += changeLines.length;
+        if (change.removed) deletions += changeLines.length;
+      }
+
+      json(res, 200, { ok: true, lines, additions, deletions });
+    } catch (e) {
+      console.error('[diff]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  // ── POST /api/rollback ────────────────────────────────────────────────────
+  async function handleRollback(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    let rawBody: Buffer;
+    try {
+      rawBody = await readBody(req);
+    } catch {
+      json(res, 413, { ok: false, error: 'Payload too large' });
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = rawBody.length > 0 ? JSON.parse(rawBody.toString()) : {};
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON' });
+      return;
+    }
+
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+      return;
+    }
+
+    const { docName: rawDocName, commitSha: rawSha } = body as Record<string, unknown>;
+    const docName = typeof rawDocName === 'string' ? rawDocName : '';
+    const commitSha = typeof rawSha === 'string' ? rawSha : '';
+
+    if (!docName) {
+      json(res, 400, { ok: false, error: 'docName required' });
+      return;
+    }
+    if (!commitSha || !/^[0-9a-f]{40}$/i.test(commitSha)) {
+      json(res, 400, { ok: false, error: 'commitSha must be a valid 40-char commit SHA' });
+      return;
+    }
+
+    const resolvedContentRoot = contentRoot ?? 'content';
+    const pathResult = safeDocPath(docName, resolvedContentRoot);
+    if ('error' in pathResult) {
+      json(res, 400, { ok: false, error: pathResult.error });
+      return;
+    }
+    const docPath = pathResult.path;
+    const sg = shadowGit(shadow);
+
+    const t0 = Date.now();
+    try {
+      // Verify file exists at this commit
+      try {
+        await sg.raw('cat-file', '-e', `${commitSha}:${docPath}`);
+      } catch {
+        json(res, 404, { ok: false, error: 'Document did not exist at this version' });
+        return;
+      }
+
+      const markdown = await sg.raw('show', `${commitSha}:${docPath}`);
+      const timestamp = new Date().toISOString();
+
+      // snapshot current state before the destructive rollback
+      await safetyCheckpoint(shadow, resolvedContentRoot, {
+        action: 'rollback',
+        context: { docName, targetSha: commitSha },
+      });
+
+      // Apply to live Y.Doc via updateYFragment (L1 persistence fires normally)
+      const document = hocuspocus.documents.get(docName);
+      if (!document) {
+        json(res, 409, {
+          ok: false,
+          error: 'Document is not currently open — open it in the editor first',
+        });
+        return;
+      }
+
+      const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
+      const parsedJson = mdManager.parse(mdBody);
+      const pmNode = schema.nodeFromJSON(parsedJson);
+      const xmlFragment = document.getXmlFragment('default');
+
+      document.transact(() => {
+        const meta = { mapping: new Map(), isOMark: new Map() };
+        updateYFragment(document, xmlFragment, pmNode, meta);
+
+        const ytext = document.getText('source');
+        const currentText = ytext.toString();
+        if (currentText !== markdown) {
+          ytext.delete(0, currentText.length);
+          ytext.insert(0, markdown);
+        }
+
+        // Update metadata map with restored frontmatter so persistence
+        // serializes the correct frontmatter on next L1 flush.
+        const metaMap = document.getMap('metadata');
+        metaMap.set('frontmatter', frontmatter);
+      }, ROLLBACK_ORIGIN);
+
+      setReconciledBase(docName, markdown);
+
+      // Force-flush L2 git commit so the restored version appears in the
+      // timeline immediately, rather than waiting for the 30s debounce.
+      if (flushGitCommit) {
+        flushGitCommit().catch((e) => {
+          console.warn('[rollback] flush git commit failed:', e);
+        });
+      }
+
+      const duration = Date.now() - t0;
+      console.log(
+        `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
+      );
+
+      json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
+    } catch (e) {
+      console.error('[rollback]', e);
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
     }
   }
 
@@ -1777,10 +1998,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,
-    '/api/agent-undo-status': handleAgentUndoStatus,
-    '/api/agent-undo': handleAgentUndo,
-    '/api/agent-redo': handleAgentRedo,
     '/api/save-version': handleSaveVersion,
+    '/api/history': handleHistory,
+    '/api/diff': handleDiff,
+    '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/rescue': handleRescueList,
   };
@@ -1802,12 +2023,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Dynamic routes: /api/rescue/:docName
+      // Dynamic routes
       if (url.startsWith('/api/rescue/')) {
         const docName = decodeURIComponent(url.slice('/api/rescue/'.length));
         if (docName) {
           await handleRescueGet(request, response, docName);
         }
+        return;
+      }
+
+      if (url.startsWith('/api/history/')) {
+        const sha = decodeURIComponent(url.slice('/api/history/'.length));
+        if (sha) {
+          await handleHistoryVersion(request, response, sha);
+        }
+        return;
       }
     },
   };
