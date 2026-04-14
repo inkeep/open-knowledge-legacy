@@ -316,10 +316,11 @@ Y.Doc
 └── Y.Map('activity')         ← agent write attribution
 ```
 
-### Two invariants
+### Three invariants
 
 1. **Bridge invariant:** `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` — must hold after every propagation path settles.
-2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See `observers.ts:244`)
+2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See `observers.ts:281`)
+3. **Item-preservation invariant:** Sync operations must not replace CRDT Items whose content at the target position already matches what would be written. Ensures `Y.UndoManager({ trackedOrigins })` consumers see correct origin attribution through bridge cycles. (See Architectural precedent #9.)
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
@@ -339,16 +340,17 @@ Y.Doc
 
 ### Observer A (XmlFragment → Y.Text)
 
-- File: `packages/app/src/editor/observers.ts:247`
+- File: `packages/app/src/editor/observers.ts:301`
 - Origin: `'sync-from-tree'`
-- Uses `diffLines` to compute incremental delta between `lastSyncedXmlMd` and current XmlFragment markdown
+- **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
+- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` to minimize CRDT mutations
 - Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes
 - Skips entirely for remote (non-local) transactions; refreshes `lastSyncedXmlMd` baseline only
 - Updates `lastSyncedXmlMd` after every successful sync
 
 ### Observer B (Y.Text → XmlFragment)
 
-- File: `packages/app/src/editor/observers.ts:342`
+- File: `packages/app/src/editor/observers.ts:396`
 - Origin: `'sync-from-text'`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
@@ -930,10 +932,11 @@ Y.Doc
 └── Y.Map('activity')         ← agent write attribution
 ```
 
-### Two invariants
+### Three invariants
 
 1. **Bridge invariant:** `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` — must hold after every propagation path settles.
-2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See `observers.ts:244`)
+2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See `observers.ts:281`)
+3. **Item-preservation invariant:** Sync operations must not replace CRDT Items whose content at the target position already matches what would be written. Ensures `Y.UndoManager({ trackedOrigins })` consumers see correct origin attribution through bridge cycles. (See Architectural precedent #9.)
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
@@ -953,16 +956,17 @@ Y.Doc
 
 ### Observer A (XmlFragment → Y.Text)
 
-- File: `packages/app/src/editor/observers.ts:247`
+- File: `packages/app/src/editor/observers.ts:301`
 - Origin: `'sync-from-tree'`
-- Uses `diffLines` to compute incremental delta between `lastSyncedXmlMd` and current XmlFragment markdown
+- **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
+- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` to minimize CRDT mutations
 - Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes
 - Skips entirely for remote (non-local) transactions; refreshes `lastSyncedXmlMd` baseline only
 - Updates `lastSyncedXmlMd` after every successful sync
 
 ### Observer B (Y.Text → XmlFragment)
 
-- File: `packages/app/src/editor/observers.ts:342`
+- File: `packages/app/src/editor/observers.ts:396`
 - Origin: `'sync-from-text'`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
