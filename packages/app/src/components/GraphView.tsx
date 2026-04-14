@@ -186,7 +186,6 @@ export function GraphView({
           lastSigRef.current = { nodes: nextNodeSig, links: nextLinkSig };
           setGraphSig({ nodes: nextNodeSig, links: nextLinkSig });
           setGraphData({ nodes: nextNodes, links: nextLinks });
-          onNodesChange?.(nextNodes);
         }
         setError(null);
         setLoading(false);
@@ -249,6 +248,10 @@ export function GraphView({
   useEffect(() => {
     onStatsChange?.(graphData.nodes.length, graphData.links.length, loading);
   }, [graphData, loading, onStatsChange]);
+
+  useEffect(() => {
+    onNodesChange?.(graphData.nodes);
+  }, [graphData, onNodesChange]);
 
   useEffect(() => {
     focusStateRef.current = {

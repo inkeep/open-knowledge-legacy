@@ -1,14 +1,5 @@
 import { colorForFolderPath, deriveIconColor } from '@inkeep/open-knowledge-core';
-import {
-  ChevronRight,
-  File,
-  Folder,
-  FolderOpen,
-  Link2,
-  Pencil,
-  Plus,
-  Trash2,
-} from 'lucide-react';
+import { ChevronRight, File, Folder, FolderOpen, Link2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { type FC, useEffect, useState } from 'react';
 import {
