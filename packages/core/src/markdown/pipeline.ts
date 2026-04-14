@@ -37,6 +37,7 @@ import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { docStartThematicFixPlugin } from './doc-start-thematic-fix.ts';
 import { positionSlicePlugin } from './position-slice.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
+import { unknownMdastGuardPlugin } from './unknown-mdast-guard.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 export interface PipelineOptions {
@@ -107,21 +108,28 @@ export function parseMd(source: string, opts: PipelineOptions): PmNode {
 }
 
 function createParseProcessor(opts: PipelineOptions) {
-  return unified()
-    .use(remarkParse)
-    .use(remarkFrontmatter, ['yaml'])
-    .use(remarkMdxAgnostic)
-    .use(remarkGfm)
-    .use(remarkWikiLink)
-    .use(restoreFromMdx) // R23: Restore protected patterns after MDX parsing
-    .use(autolinkPromotionPlugin) // Promote <scheme:uri> text → semantic link nodes
-    .use(docStartThematicFixPlugin) // NG10: empty yaml at doc-start → thematicBreak
-    .use(positionSlicePlugin)
-    .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
-    .use(remarkProseMirror, {
-      schema: opts.schema,
-      handlers: opts.handlers,
-    } as RemarkProseMirrorOptions);
+  return (
+    unified()
+      .use(remarkParse)
+      .use(remarkFrontmatter, ['yaml'])
+      .use(remarkMdxAgnostic)
+      .use(remarkGfm)
+      .use(remarkWikiLink)
+      .use(restoreFromMdx) // R23: Restore protected patterns after MDX parsing
+      .use(autolinkPromotionPlugin) // Promote <scheme:uri> text → semantic link nodes
+      .use(docStartThematicFixPlugin) // NG10: empty yaml at doc-start → thematicBreak
+      .use(positionSlicePlugin)
+      // R8 wildcard catch-all: replace any mdast node whose type is unknown to
+      // our handler table with `rawMdxFallbackMdast` so remark-prosemirror's
+      // throwing `unknown()` handler never fires. Runs AFTER positionSlice so
+      // node.data.sourceRaw is final, BEFORE ensureNonEmptyDoc + remarkProseMirror.
+      .use(unknownMdastGuardPlugin)
+      .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
+      .use(remarkProseMirror, {
+        schema: opts.schema,
+        handlers: opts.handlers,
+      } as RemarkProseMirrorOptions)
+  );
 }
 
 /**

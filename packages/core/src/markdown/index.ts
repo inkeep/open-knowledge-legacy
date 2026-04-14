@@ -535,6 +535,39 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   if (!handlers.inlineMath) handlers.inlineMath = inlineUnknownHandler;
   if (!handlers.footnoteReference) handlers.footnoteReference = inlineUnknownHandler;
 
+  // R8 wildcard: `unknownMdastGuardPlugin` in pipeline.ts substitutes any
+  // unknown-type mdast node with this synthetic type. We route it through
+  // blockUnknownHandler to produce a block-level rawMdxFallback — preserves
+  // surrounding structure instead of whole-doc fallback.
+  handlers.rawMdxFallbackMdast = (node: {
+    type: 'rawMdxFallbackMdast';
+    originalType: string;
+    value: string;
+    position?: { start: { offset: number }; end: { offset: number } };
+  }) => {
+    if (!n.rawMdxFallback) return null;
+    const span = node.position
+      ? {
+          start: node.position.start?.offset ?? 0,
+          end: node.position.end?.offset ?? 0,
+        }
+      : { start: 0, end: 0 };
+    console.warn(
+      JSON.stringify({
+        event: 'unknown-mdast-type',
+        type: node.originalType,
+        reason: `Unhandled mdast: ${node.originalType}`,
+      }),
+    );
+    return n.rawMdxFallback.createAndFill(
+      {
+        reason: `Unhandled mdast: ${node.originalType}`,
+        originalSpan: span,
+      },
+      node.value ? [schema.text(node.value)] : null,
+    );
+  };
+
   return handlers as RemarkProseMirrorOptions['handlers'];
 }
 

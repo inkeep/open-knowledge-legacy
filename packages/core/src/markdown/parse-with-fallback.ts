@@ -43,6 +43,16 @@ function parseRecursive(source: string, parse: ParseFn, depth: number): JSONCont
   } catch (e: unknown) {
     const offset = extractErrorOffset(e);
     if (offset === undefined) {
+      // Position-less error — covers PM-construction failures (RangeError from
+      // `prosemirror-model/schema.ts:201` "Invalid content for node X") and
+      // other errors that carry no `.place`/`.offset`. Before falling through
+      // to whole-doc, try per-block source splitting: if ANY top-level block
+      // parses clean, preserve it. This upgrades M2 from "zero whole-doc on
+      // clean files" to "zero whole-doc wherever per-block split can recover."
+      if (depth === 0) {
+        const perBlock = tryPerBlockFallback(source, parse, e);
+        if (perBlock) return perBlock;
+      }
       incrementWholeDocFallback();
       console.warn(
         JSON.stringify({
@@ -199,6 +209,131 @@ function findFallbackRegion(src: string, errorOffset: number): Region {
   const blockStart = nearestBlankLineBefore(src, errorOffset) ?? 0;
   const blockEnd = nearestBlankLineAfter(src, errorOffset) ?? src.length;
   return { start: blockStart, end: blockEnd };
+}
+
+// ── Per-block source splitting for position-less errors ───────────
+
+/**
+ * Split `source` into top-level blocks at blank-line boundaries (skipping
+ * fenced code regions which may contain blank lines internally). Returns
+ * an array of `{ src, start, end }` covering the full source with block
+ * offsets into the original string.
+ *
+ * Fence-awareness: a blank line INSIDE ``` fences is NOT a block boundary.
+ */
+interface SourceBlock {
+  src: string;
+  start: number;
+  end: number;
+}
+
+function splitSourceIntoBlocks(source: string): SourceBlock[] {
+  const fences = findFencedRegions(source);
+  const BLANK_RE = /\n[ \t]*\n/g;
+  const boundaries: number[] = [0];
+  for (const match of source.matchAll(BLANK_RE)) {
+    const blankStart = match.index;
+    if (isInsideFence(blankStart, fences)) continue;
+    boundaries.push(blankStart + match[0].length);
+  }
+  boundaries.push(source.length);
+  const blocks: SourceBlock[] = [];
+  for (let i = 0; i < boundaries.length - 1; i++) {
+    const start = boundaries[i];
+    const end = boundaries[i + 1];
+    if (end <= start) continue;
+    const src = source.slice(start, end);
+    if (!src.trim()) continue;
+    blocks.push({ src, start, end });
+  }
+  return blocks;
+}
+
+/**
+ * When the top-level parse throws without a position (PM-construction
+ * RangeError, etc.), split the source at blank-line block boundaries and
+ * parse each block independently. Failing blocks substitute a rawMdxFallback
+ * holding that block's raw text; succeeding blocks contribute their content.
+ *
+ * Returns `null` if per-block recovery didn't improve over whole-doc (e.g.,
+ * only one block, or every block fails). In that case, the caller falls
+ * through to whole-doc raw text.
+ *
+ * Ref-def hoisting (R11) applies across blocks: any `[label]: url` definitions
+ * in a successfully-parsed block are prepended to the source of subsequent
+ * blocks when they get parsed independently.
+ */
+function tryPerBlockFallback(
+  source: string,
+  parse: ParseFn,
+  originalErr: unknown,
+): JSONContent | null {
+  const blocks = splitSourceIntoBlocks(source);
+  // Single block means the whole source IS one block; per-block recovery
+  // degenerates to whole-doc.
+  if (blocks.length < 2) return null;
+
+  const merged: JSONContent[] = [];
+  let anySucceeded = false;
+  let anyFailed = false;
+  let hoistedRefDefs = '';
+
+  for (const block of blocks) {
+    const blockSource = hoistedRefDefs + block.src;
+    try {
+      const blockResult = parse(blockSource);
+      const children = (blockResult.content as JSONContent[] | undefined) ?? [];
+      // If the block parse succeeded, harvest its ref-defs for downstream blocks
+      hoistedRefDefs += hoistRefDefs(block.src);
+      // Filter out the synthetic empty-doc paragraph that appears for ref-def-only blocks
+      const nonEmpty = children.filter(
+        (c) => c.type !== 'paragraph' || (Array.isArray(c.content) && c.content.length > 0),
+      );
+      if (nonEmpty.length === 0 && children.length > 0) {
+        // Block was all ref-defs; contribute nothing to the rendered output
+        anySucceeded = true;
+        continue;
+      }
+      merged.push(...nonEmpty);
+      anySucceeded = true;
+    } catch {
+      incrementBlockFallback();
+      console.warn(
+        JSON.stringify({
+          event: 'mdx-block-fallback',
+          offset: block.start,
+          reason: `Per-block recovery after position-less error: ${
+            (originalErr as Error)?.message?.slice(0, 160) ?? 'unknown'
+          }`,
+        }),
+      );
+      merged.push({
+        type: 'rawMdxFallback',
+        attrs: {
+          reason: (originalErr as Error)?.message?.slice(0, 200) ?? 'Position-less parse error',
+          originalSpan: { start: block.start, end: block.end },
+        },
+        content: [{ type: 'text', text: block.src }],
+      });
+      anyFailed = true;
+    }
+  }
+
+  if (!anySucceeded) return null; // every block failed — no improvement over whole-doc
+  if (!anyFailed) {
+    // Per-block dispatch succeeded where top-level failed — emit the merged result.
+    // This can happen when a cross-block construct (e.g., a link reference
+    // resolved across blocks) caused the full-doc parse to fail but each block
+    // parses in isolation.
+    return {
+      type: 'doc',
+      content: merged.length > 0 ? merged : [{ type: 'paragraph', content: [] }],
+    };
+  }
+  return {
+    type: 'doc',
+    content: merged.length > 0 ? merged : [{ type: 'paragraph', content: [] }],
+  };
 }
 
 // ── Whole-doc raw text fallback ────────────────────────────────────

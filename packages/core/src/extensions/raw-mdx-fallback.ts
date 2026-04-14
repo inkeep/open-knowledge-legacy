@@ -73,6 +73,11 @@ export const RawMdxFallback = Node.create({
 
       const contentDOM = document.createElement('pre');
       contentDOM.classList.add('raw-mdx-fallback-content');
+      // Defensive depth: if the wrapper's contenteditable attr is ever removed
+      // or changed (CSS override, devtools, future refactor), the inner pre
+      // still blocks WYSIWYG edits. contenteditable only affects user input —
+      // ProseMirror's programmatic text writes are unaffected.
+      contentDOM.setAttribute('contenteditable', 'false');
       dom.appendChild(contentDOM);
 
       return {
