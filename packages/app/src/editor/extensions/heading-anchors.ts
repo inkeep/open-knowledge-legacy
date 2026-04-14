@@ -16,7 +16,7 @@
 import { Extension } from '@tiptap/core';
 import { Plugin } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
-import { toWikiLinkSlug } from './wiki-link-helpers';
+import { getHeadingSlug } from './wiki-link-helpers';
 
 export const HeadingAnchors = Extension.create({
   name: 'headingAnchors',
@@ -27,16 +27,12 @@ export const HeadingAnchors = Extension.create({
         props: {
           decorations(state) {
             const decos: Decoration[] = [];
-            const idCounts = new Map<string, number>();
+            const slugCounts = new Map<string, number>();
 
             state.doc.descendants((node, pos) => {
               if (node.type.name === 'heading') {
-                const base = toWikiLinkSlug(node.textContent);
-                if (!base) return;
-
-                const count = idCounts.get(base) ?? 0;
-                idCounts.set(base, count + 1);
-                const id = count === 0 ? base : `${base}-${count}`;
+                const id = getHeadingSlug(node.textContent, slugCounts);
+                if (!id) return;
 
                 decos.push(Decoration.node(pos, pos + node.nodeSize, { id }));
               }

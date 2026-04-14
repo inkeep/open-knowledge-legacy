@@ -10,6 +10,11 @@ describe('toWikiLinkSlug', () => {
     expect(toWikiLinkSlug('Nonexistent Page')).toBe('nonexistent-page');
     expect(toWikiLinkSlug('  Mixed_CASE  Page  ')).toBe('mixed-case-page');
   });
+
+  test('keeps Unicode-safe slugs stable across scripts', () => {
+    expect(toWikiLinkSlug('Café Menu')).toBe('cafe-menu');
+    expect(toWikiLinkSlug('東京 2026')).toBe('東京-2026');
+  });
 });
 
 describe('buildUnresolvedWikiLinkAttrs', () => {
@@ -17,6 +22,14 @@ describe('buildUnresolvedWikiLinkAttrs', () => {
     expect(buildUnresolvedWikiLinkAttrs('Nonexistent Page')).toEqual({
       target: 'nonexistent-page',
       alias: 'Nonexistent Page',
+      anchor: null,
+    });
+  });
+
+  test('uses the shared Unicode-safe slugger for unresolved links', () => {
+    expect(buildUnresolvedWikiLinkAttrs('Café Menu')).toEqual({
+      target: 'cafe-menu',
+      alias: 'Café Menu',
       anchor: null,
     });
   });

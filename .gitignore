@@ -42,3 +42,4 @@ playwright-report/
 blob-report/
 
 .open-knowledge/server.lock
+.openknowledge/

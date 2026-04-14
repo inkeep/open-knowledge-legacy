@@ -25,9 +25,9 @@ import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
+  getHeadingSlug,
   type HeadingEntry,
   stripFrontmatter,
-  toWikiLinkSlug,
 } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
@@ -370,11 +370,12 @@ function extractHeadings(content: string): HeadingEntry[] {
   }
 
   const headings: HeadingEntry[] = [];
+  const slugCounts = new Map<string, number>();
   for (const line of body.split('\n')) {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       const text = match[2].trim();
-      const slug = toWikiLinkSlug(text);
+      const slug = getHeadingSlug(text, slugCounts);
       if (slug) headings.push({ level: match[1].length, text, slug });
     }
   }
