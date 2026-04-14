@@ -21,6 +21,7 @@ import {
   updateServerLockPort,
   type WatcherHandle,
 } from '@inkeep/open-knowledge-server';
+import sirv from 'sirv';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
 import { parse as parseYaml } from 'yaml';
@@ -263,6 +264,15 @@ export function hocuspocusPlugin(): Plugin {
           if (res.writableEnded) return;
         }
         next();
+      });
+
+      // --- Filter-aware asset serving over contentDir (D9) ---
+      const contentSirv = sirv(CONTENT_DIR, { dev: true, dotfiles: false });
+      server.middlewares.use((req, res, next) => {
+        const rel = decodeURIComponent(req.url?.split('?')[0]?.replace(/^\//, '') ?? '');
+        if (!rel || contentFilter.isExcluded(rel)) return next();
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        contentSirv(req, res, next);
       });
 
       // --- Disk bridge: watch content directory for external .md changes ---

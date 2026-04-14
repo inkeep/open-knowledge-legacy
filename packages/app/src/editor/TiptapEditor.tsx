@@ -16,6 +16,7 @@ import { type FC, useEffect, useRef } from 'react';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import { sharedExtensions } from './extensions/shared.ts';
+import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';
 import { TableControlsMenu } from './table-controls/TableControlsMenu';
 
@@ -104,6 +105,12 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
       Collaboration.configure({
         document: provider.document,
       }),
+      Extension.create({
+        name: 'imageUploadDecoration',
+        addProseMirrorPlugins() {
+          return [uploadDecorationPlugin];
+        },
+      }),
       // Use yCursorPlugin from @tiptap/y-tiptap directly (same module as Collaboration v3)
       // to avoid ySyncPluginKey mismatch with y-prosemirror's yCursorPlugin
       Extension.create({
@@ -128,6 +135,12 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
   // Mark user typing on the editor DOM. Observer B uses this timestamp to defer
   // its tree-replacement sync while the user is actively editing, preventing concurrent
   // user edits from being obliterated by updateYFragment.
+  useEffect(() => {
+    const docName = provider.configuration.name;
+    setCurrentDocName(docName ?? null);
+    return () => setCurrentDocName(null);
+  }, [provider]);
+
   useEffect(() => {
     if (!editor) return;
     const dom = editor.view.dom;

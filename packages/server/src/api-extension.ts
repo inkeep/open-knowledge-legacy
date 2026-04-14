@@ -6,8 +6,10 @@
  */
 
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
@@ -16,11 +18,18 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
+  writeSync,
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname, relative, resolve, sep } from 'node:path';
+import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
-import { type HeadingEntry, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
+import {
+  ALLOWED_IMAGE_MIME_TYPES,
+  type HeadingEntry,
+  toWikiLinkSlug,
+} from '@inkeep/open-knowledge-core';
+import busboy from 'busboy';
+import { fileTypeFromBuffer } from 'file-type';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
@@ -35,6 +44,123 @@ import { deleteReconciledBase, isWithinContentDir, safeContentPath } from './per
 import { type ShadowRef, saveVersion, type WriterIdentity } from './shadow-repo.ts';
 
 const MAX_BODY_BYTES = 1_048_576; // 1 MB
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+const ALLOWED_MIME_TYPES: Set<string> = new Set(ALLOWED_IMAGE_MIME_TYPES);
+
+const GENERIC_PASTE_NAMES = /^(image\.(png|jpe?g|gif|webp)|Clipboard.*|Untitled.*)$/i;
+
+export function sanitizeFilename(name: string): string {
+  const base = name.replace(/[/\\]/g, '');
+  const ext = extname(base);
+  const stem = base.slice(0, base.length - ext.length);
+  const safeStem = stem.replace(/[^a-zA-Z0-9_\-.]/g, '_') || 'upload';
+  const safeExt = ext.replace(/[^a-zA-Z0-9_.]/g, '');
+  return safeStem + safeExt;
+}
+
+function writeUploadAtomic(destDir: string, sanitized: string, buffer: Buffer): string {
+  const ext = extname(sanitized);
+  const stem = sanitized.slice(0, sanitized.length - ext.length);
+  const candidates = [sanitized, ...Array.from({ length: 99 }, (_, i) => `${stem}-${i + 1}${ext}`)];
+
+  for (const name of candidates) {
+    const destPath = resolve(destDir, name);
+    try {
+      const fd = openSync(destPath, 'wx');
+      try {
+        writeSync(fd, buffer);
+      } finally {
+        closeSync(fd);
+      }
+      return name;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue;
+      throw err;
+    }
+  }
+  throw new Error('Could not find available filename after 100 attempts');
+}
+
+interface UploadResult {
+  filename: string;
+  mimeType: string;
+  buffer: Buffer;
+  parentDocName: string;
+}
+
+function readUploadBody(req: IncomingMessage, maxBytes: number): Promise<UploadResult> {
+  return new Promise((resolveP, reject) => {
+    let bb: ReturnType<typeof busboy>;
+    try {
+      bb = busboy({ headers: req.headers, limits: { fileSize: maxBytes, files: 1 } });
+    } catch (err) {
+      reject(err);
+      return;
+    }
+
+    let settled = false;
+    let filename = 'upload';
+    let mimeType = '';
+    let parentDocName = '';
+    const chunks: Buffer[] = [];
+    let exceeded = false;
+
+    bb.on('field', (name, val) => {
+      if (name === 'parentDocName') parentDocName = val;
+    });
+
+    bb.on('file', (_fieldname, file, info) => {
+      filename = info.filename || 'upload';
+      mimeType = info.mimeType || '';
+
+      file.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+
+      file.on('limit', () => {
+        exceeded = true;
+        req.unpipe(bb);
+        if (!settled) {
+          settled = true;
+          reject(new Error('Payload too large'));
+        }
+      });
+
+      file.on('error', (err) => {
+        if (!settled) {
+          settled = true;
+          reject(err);
+        }
+      });
+    });
+
+    bb.on('finish', () => {
+      if (!settled) {
+        if (exceeded) {
+          settled = true;
+          reject(new Error('Payload too large'));
+          return;
+        }
+        if (!mimeType && chunks.length === 0) {
+          settled = true;
+          reject(new Error('No file received'));
+          return;
+        }
+        settled = true;
+        resolveP({ filename, mimeType, buffer: Buffer.concat(chunks), parentDocName });
+      }
+    });
+
+    bb.on('error', (err) => {
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+    });
+
+    req.pipe(bb);
+  });
+}
 
 /**
  * Resolve a subdirectory path within a base directory, rejecting traversal attempts.
@@ -1515,6 +1641,123 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+
+    let uploadResult: UploadResult | undefined;
+    try {
+      uploadResult = await readUploadBody(req, MAX_UPLOAD_BYTES);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message === 'Payload too large') {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+      } else if (message === 'No file received') {
+        json(res, 400, { ok: false, error: 'No file received' });
+      } else {
+        json(res, 400, { ok: false, error: `Failed to parse upload: ${message}` });
+      }
+      return;
+    }
+
+    const { filename, buffer, parentDocName } = uploadResult;
+
+    if (!parentDocName) {
+      json(res, 400, { ok: false, error: 'parentDocName is required' });
+      return;
+    }
+
+    // D15: reject path-escape attempts
+    if (
+      parentDocName.includes('\x00') ||
+      parentDocName.includes('..') ||
+      parentDocName.startsWith('/')
+    ) {
+      json(res, 400, { ok: false, error: 'path-escape' });
+      return;
+    }
+
+    const resolvedContentDir = resolve(contentDir);
+    const destDir = resolve(resolvedContentDir, dirname(parentDocName));
+    if (!isWithinContentDir(destDir, resolvedContentDir)) {
+      json(res, 400, { ok: false, error: 'path-escape' });
+      return;
+    }
+
+    // Symlink escape check: realpath the dest dir and compare against realpath'd contentDir
+    try {
+      const realDestDir = realpathSync(destDir);
+      let realContentDir: string;
+      try {
+        realContentDir = realpathSync(resolvedContentDir);
+      } catch {
+        realContentDir = resolvedContentDir;
+      }
+      if (!isWithinContentDir(realDestDir, realContentDir)) {
+        json(res, 400, { ok: false, error: 'path-escape' });
+        return;
+      }
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
+        // Directory doesn't exist yet — will be created below; no symlink escape possible
+      } else {
+        json(res, 400, { ok: false, error: 'path-escape' });
+        return;
+      }
+    }
+
+    // Magic bytes check — ignore the client-supplied mimeType entirely
+    const fileTypeResult = await fileTypeFromBuffer(buffer);
+    let detectedMime: string | undefined = fileTypeResult?.mime;
+    let detectedExt: string | undefined = fileTypeResult?.ext;
+    // file-type can't detect SVG (text-based, no magic bytes) — check manually
+    if (!detectedMime) {
+      const head = buffer.subarray(0, 256).toString('utf-8').trimStart();
+      if (head.startsWith('<svg') || (head.startsWith('<?xml') && head.includes('<svg'))) {
+        detectedMime = 'image/svg+xml';
+        detectedExt = 'svg';
+      }
+    }
+    if (!detectedMime || !detectedExt || !ALLOWED_MIME_TYPES.has(detectedMime)) {
+      json(res, 400, {
+        ok: false,
+        error: `Unsupported file type${detectedMime ? `: ${detectedMime}` : ''}`,
+      });
+      return;
+    }
+
+    // D8: detect clipboard paste (generic/empty filename) → timestamp stem
+    let finalFilename: string;
+    if (!filename || filename === 'upload' || GENERIC_PASTE_NAMES.test(filename)) {
+      const now = new Date();
+      const ts = now
+        .toISOString()
+        .replace(/[-:T]/g, '')
+        .slice(0, 14)
+        .replace(/(\d{8})(\d{6})/, '$1-$2');
+      finalFilename = `pasted-${ts}.${detectedExt}`;
+    } else {
+      finalFilename = sanitizeFilename(filename);
+    }
+
+    mkdirSync(destDir, { recursive: true });
+
+    try {
+      const destFilename = writeUploadAtomic(destDir, finalFilename, buffer);
+      const relPath = relative(contentDir, resolve(destDir, destFilename));
+      console.log(`[upload] ok ${relPath} ${buffer.length}`);
+      json(res, 200, { ok: true, src: destFilename });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`[upload] error ${finalFilename} ${buffer.length} ${message}`);
+      json(res, 500, { ok: false, error: 'Failed to save file' });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
@@ -1528,6 +1771,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/create-page': handleCreatePage,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
+    '/api/upload-image': handleUploadImage,
     '/api/agent-write': handleAgentWrite,
     '/api/agent-write-md': handleAgentWriteMd,
     '/api/agent-patch': handleAgentPatch,

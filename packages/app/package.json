@@ -37,6 +37,10 @@
     "@tanstack/react-query": "^5.99.0",
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-collaboration": "^3.22.3",
+    "@tiptap/extension-collaboration-cursor": "3.0.0",
+    "@tiptap/extension-file-handler": "^3.22.3",
+    "@tiptap/extension-image": "^3.22.3",
+    "@tiptap/extension-link": "^3.22.3",
     "@tiptap/extension-placeholder": "^3.22.3",
     "@tiptap/pm": "^3.22.3",
     "@tiptap/react": "^3.22.3",
@@ -56,6 +60,7 @@
     "react-force-graph-2d": "^1.29.1",
     "react-resizable-panels": "^4.9.0",
     "shadcn": "^4.2.0",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.5.0",
     "tailwind-scrollbar": "^4.0.2",
     "tailwindcss": "^4.2.2",
@@ -80,6 +85,7 @@
     "babel-plugin-react-compiler": "0.0.0-experimental-a8e64ef-20260402",
     "commonmark.json": "^0.31.0",
     "fast-check": "^4.6.0",
+    "sirv": "^3.0.2",
     "typescript": "^5.9.3",
     "vite": "^8.0.0"
   }
