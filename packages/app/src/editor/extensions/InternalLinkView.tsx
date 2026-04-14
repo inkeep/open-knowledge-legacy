@@ -84,7 +84,14 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
     >
       <a
         href={hashHref}
-        className="cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current"
+        className={cn(
+          'cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+          isResolved
+            ? 'focus-visible:ring-sky-300'
+            : isUnresolved
+              ? 'focus-visible:ring-red-300'
+              : 'focus-visible:ring-ring',
+        )}
         onMouseDown={(e) => e.preventDefault()}
         onClick={handleClick}
       >
