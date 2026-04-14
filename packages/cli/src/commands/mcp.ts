@@ -53,10 +53,12 @@ export function discoverServerUrl(params: {
 
   const lock = readServerLock(lockDir);
   if (lock && lock.port > 0) {
-    // Lock-based discovery always uses 127.0.0.1: the lock file is local, so
-    // the server is on this machine. `host` is only meaningful for --port
+    // Lock-based discovery uses localhost: the lock file is local, so the
+    // server is on this machine. `localhost` resolves to whichever loopback
+    // the OS prefers (IPv4 127.0.0.1 or IPv6 ::1), avoiding mismatches when
+    // the server binds to IPv6 only. `host` is only meaningful for --port
     // overrides where the user may target a remote server.
-    const serverUrl = `ws://127.0.0.1:${lock.port}`;
+    const serverUrl = `ws://localhost:${lock.port}`;
     return {
       serverUrl,
       message: `connected to running instance at ${serverUrl} (pid ${lock.pid})`,
