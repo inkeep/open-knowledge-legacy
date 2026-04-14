@@ -12,6 +12,7 @@ import { ASSET_EXTENSIONS } from '@inkeep/open-knowledge-core';
 import ignore, { type Ignore } from 'ignore';
 import picomatch from 'picomatch';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import { isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
 export interface ContentFilterOptions {
   /** Project root directory (where .gitignore lives). */
@@ -139,8 +140,8 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
 
   return {
     isExcluded(relativePath: string): boolean {
-      // (0) Reserved system doc names are always excluded (e.g. __system__.md)
-      const docName = relativePath.replace(/\.md$/, '');
+      // (0) Reserved system doc names are always excluded (e.g. __system__.md / __system__.mdx)
+      const docName = stripDocExtension(relativePath);
       if (isSystemDoc(docName)) return true;
 
       // D11 4-step ordered logic:
@@ -216,7 +217,7 @@ function populateDirCount(
       populateDirCount(join(dir, entry.name), childRel, isIncluded, isGitignoreExcluded, dirCount);
     } else if (
       entry.isFile() &&
-      extname(entry.name).toLowerCase() === '.md' &&
+      isSupportedDocFile(entry.name) &&
       isIncluded(childRel) &&
       !isGitignoreExcluded(childRel)
     ) {

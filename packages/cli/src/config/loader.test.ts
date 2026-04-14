@@ -35,7 +35,7 @@ describe('loadConfig', () => {
     expect(sources).toHaveLength(0);
 
     // content globs
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.content.exclude).toEqual([]);
 
     // server
@@ -52,7 +52,7 @@ describe('loadConfig', () => {
     const { config } = loadConfig(testDir);
 
     expect(config.server.port).toBe(3000);
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.persistence.debounceMs).toBe(2000);
   });
 
@@ -72,7 +72,7 @@ describe('loadConfig', () => {
     // Comments-only YAML parses to null, so no source is recorded
     expect(sources).toHaveLength(0);
     expect(config.server.port).toBe(3000);
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
   });
 
   // ── Workspace overrides ─────────────────────────────────────────────
@@ -87,7 +87,7 @@ describe('loadConfig', () => {
     // sibling default preserved
     expect(config.server.host).toBe('localhost');
     // other sections untouched
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.persistence.debounceMs).toBe(2000);
   });
 
