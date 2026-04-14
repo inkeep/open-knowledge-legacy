@@ -1,10 +1,27 @@
+/**
+ * BlockDragHandle — app-only TipTap extension that renders a "⠿" gripper
+ * in the left margin on block hover, allowing drag-to-reorder of top-level blocks.
+ *
+ * Positioning: floating-ui `offset` middleware with:
+ *   - mainAxis: horizontal gap between handle and text edge
+ *   - crossAxis: dynamic vertical offset to center the handle on the first line.
+ *     Capped at MAX_FIRST_LINE_HEIGHT so multi-line blocks align with line 1.
+ *
+ * Keyboard alternative: Mod+Shift+↑/↓ via BlockMover extension.
+ */
 import { offset } from '@floating-ui/dom';
 import { DragHandle } from '@tiptap/extension-drag-handle';
+
+// Height of the handle element (matches .ok-drag-handle { height: 20px } in globals.css).
+const HANDLE_HEIGHT = 20;
+// Approximate max height of a single line at the largest heading size (h1, 1.5em × line-height 1.7).
+// Used to cap crossAxis so the handle aligns with the first line on multi-line blocks.
+const MAX_FIRST_LINE_HEIGHT = 44;
 
 function createHandleElement(): HTMLElement {
   const el = document.createElement('div');
   el.className = 'ok-drag-handle';
-  el.setAttribute('aria-label', 'Drag to reorder block');
+  el.setAttribute('aria-label', 'Drag to reorder block — keyboard: Mod+Shift+↑/↓');
   el.draggable = true;
 
   el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-grip-vertical-icon lucide-grip-vertical"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>`;
@@ -14,18 +31,11 @@ function createHandleElement(): HTMLElement {
 
 export const BlockDragHandle = DragHandle.configure({
   render: createHandleElement,
-  // offset({ mainAxis }) adds horizontal gap between handle and text edge.
-  // offset({ crossAxis }) nudges down to align with first text line
-  // (placement is "left-start" so default top is the block's top edge).
   computePositionConfig: {
     middleware: [
       offset(({ rects }) => ({
         mainAxis: 10,
-        // Center the handle on the first line of the block.
-        // For single-line blocks, rects.reference.height ≈ line-height.
-        // Cap at ~44px (h1 single line) so multi-line blocks don't push the
-        // handle too far down — we always want to align with the first line.
-        crossAxis: (Math.min(rects.reference.height, 44) - 20) / 2,
+        crossAxis: (Math.min(rects.reference.height, MAX_FIRST_LINE_HEIGHT) - HANDLE_HEIGHT) / 2,
       })),
     ],
   },

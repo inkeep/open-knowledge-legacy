@@ -574,7 +574,7 @@
   height: 20px;
   cursor: grab;
   opacity: 1;
-  transition: opacity 100ms ease;
+  transition: opacity 100ms var(--ease-out-strong);
   color: oklch(0.72 0 0);
   border-radius: 3px;
   user-select: none;

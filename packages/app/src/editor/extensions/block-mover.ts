@@ -1,12 +1,22 @@
+/**
+ * BlockMover — app-only TipTap extension providing keyboard shortcuts for
+ * reordering top-level blocks (paragraphs, headings, lists, components).
+ *
+ * Shortcuts:
+ *   - Mod-Shift-ArrowUp:   Move current block up one position
+ *   - Mod-Shift-ArrowDown: Move current block down one position
+ *
+ * App-only: pure UI interaction, no schema changes or persistence implications.
+ */
 import { Extension } from '@tiptap/core';
 import type { EditorState, Transaction } from '@tiptap/pm/state';
 import { TextSelection } from '@tiptap/pm/state';
 
 /**
- * Finds the top-level (depth-1) block that contains the current selection.
- * Returns { from, to, node } or null if not found.
+ * Returns the position range of the depth-1 block that contains the cursor,
+ * or null if the cursor is at the document root (depth 0).
  */
-function currentTopLevelBlock(state: EditorState): { from: number; to: number } | null {
+export function currentTopLevelBlock(state: EditorState): { from: number; to: number } | null {
   const { $from } = state.selection;
   if ($from.depth === 0) return null;
   const from = $from.before(1);
@@ -14,7 +24,7 @@ function currentTopLevelBlock(state: EditorState): { from: number; to: number } 
   return { from, to };
 }
 
-function moveBlockUp(
+export function moveBlockUp(
   state: EditorState,
   dispatch: ((tr: Transaction) => void) | undefined,
 ): boolean {
@@ -24,23 +34,20 @@ function moveBlockUp(
   const { from, to } = block;
   if (from === 0) return false; // already first block
 
-  // Find the block above
   const $above = state.doc.resolve(from - 1);
-  if ($above.depth === 0) return false; // no block above
+  if ($above.depth === 0) return false;
 
   const aboveFrom = $above.before(1);
-  const aboveTo = from; // == $above.after(1) + 1 (the separator)
-
+  // aboveTo === from: adjacent blocks share the same boundary position —
+  // there is no separator token between them in ProseMirror.
   const movingNode = state.doc.slice(from, to).content;
-  const aboveNode = state.doc.slice(aboveFrom, aboveTo - 1).content; // exclude the separator
+  const aboveNode = state.doc.slice(aboveFrom, from).content;
 
   if (!dispatch) return true;
 
   const tr = state.tr;
-  // Replace the two-block range with: movingBlock + aboveBlock
-  tr.replaceWith(aboveFrom, to, [...movingNode.content, ...aboveNode.content]);
+  tr.replaceWith(aboveFrom, to, movingNode.append(aboveNode));
 
-  // Keep cursor in the moved block (now at aboveFrom)
   const newBlockStart = aboveFrom + 1;
   const newBlockEnd = aboveFrom + movingNode.size;
   const cursorOffset = state.selection.from - from;
@@ -51,7 +58,7 @@ function moveBlockUp(
   return true;
 }
 
-function moveBlockDown(
+export function moveBlockDown(
   state: EditorState,
   dispatch: ((tr: Transaction) => void) | undefined,
 ): boolean {
@@ -61,22 +68,19 @@ function moveBlockDown(
   const { from, to } = block;
   if (to >= state.doc.content.size) return false; // already last block
 
-  // Find the block below
   const $below = state.doc.resolve(to + 1);
   if ($below.depth === 0) return false;
 
-  const belowFrom = to; // position right after current block
+  // belowFrom === to: adjacent blocks share the same boundary position.
   const belowTo = $below.after(1);
-
   const movingNode = state.doc.slice(from, to).content;
-  const belowNode = state.doc.slice(belowFrom + 1, belowTo).content; // skip separator
+  const belowNode = state.doc.slice(to, belowTo).content;
 
   if (!dispatch) return true;
 
   const tr = state.tr;
-  tr.replaceWith(from, belowTo, [...belowNode.content, ...movingNode.content]);
+  tr.replaceWith(from, belowTo, belowNode.append(movingNode));
 
-  // Keep cursor in the moved block (now at belowFrom + 1 - 1 + belowNode.size + 1 = ...)
   const newBlockStart = from + belowNode.size + 1;
   const newBlockEnd = from + belowNode.size + movingNode.size;
   const cursorOffset = state.selection.from - from;
