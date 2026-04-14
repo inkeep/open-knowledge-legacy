@@ -25,7 +25,7 @@
  * Spec: SPEC.md FR2 + FR3 + FR8 + D15 + D21.
  */
 import shellQuote from 'shell-quote';
-import { shellEscape } from './index.ts';
+import { shellEscape } from './shell-escape.ts';
 
 export type ErrorCategory =
   | 'unknown_command'
