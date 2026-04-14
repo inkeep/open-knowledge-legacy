@@ -1,6 +1,6 @@
-import { toWikiLinkSlug } from '@inkeep/open-knowledge-core';
+import { getHeadingSlug, toWikiLinkSlug } from '@inkeep/open-knowledge-core';
 
-export { toWikiLinkSlug };
+export { getHeadingSlug, toWikiLinkSlug };
 
 export function buildUnresolvedWikiLinkAttrs(query: string): {
   target: string;
