@@ -63,4 +63,21 @@ describe('parse-health metrics', () => {
     expect(h.ypsMismatch.block).toBe(0);
     expect(h.ypsMismatch.inline).toBe(0);
   });
+
+  test('ypsMismatch counters are bridged via globalThis (CJS patch ↔ ESM)', () => {
+    // The y-prosemirror R13 patch increments via `globalThis.__okYpsCounters`
+    // because patched CJS cannot import this ESM module. This test simulates
+    // the patch's increment path directly and asserts getParseHealth() reads it.
+    type GlobalWithCounters = typeof globalThis & {
+      __okYpsCounters?: { block: number; inline: number };
+    };
+    const g = globalThis as GlobalWithCounters;
+    g.__okYpsCounters = g.__okYpsCounters || { block: 0, inline: 0 };
+    g.__okYpsCounters.block += 5;
+    g.__okYpsCounters.inline += 2;
+
+    const h = getParseHealth();
+    expect(h.ypsMismatch.block).toBe(5);
+    expect(h.ypsMismatch.inline).toBe(2);
+  });
 });
