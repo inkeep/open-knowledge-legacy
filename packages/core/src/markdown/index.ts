@@ -178,12 +178,11 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Tier A passthrough
   if (n.paragraph) {
-    // Custom paragraph handler: lift sole block-level children (e.g., standalone images)
+    // Custom paragraph handler: lift block-level children (e.g., inline JSX components
+    // that map to a block-only PM node like jsxComponent) out of their paragraph wrapper
+    // so they produce valid PM doc content instead of crashing the schema.
     handlers.paragraph = (node: Paragraph, _: MdastParent, state: MdastToPmState) => {
-      const children = state.all(node);
-      const flatChildren = children.flat();
-      // If paragraph contains only block-level node(s) (e.g., images on own line),
-      // lift them out of the paragraph wrapper
+      const flatChildren = state.all(node).flat();
       const hasBlockChildren = flatChildren.some((c) => c?.isBlock && !c?.isInline);
       const hasInlineChildren = flatChildren.some(
         (c) => c?.isInline || c?.isText || c?.isTextblock,
@@ -191,8 +190,6 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       if (hasBlockChildren && !hasInlineChildren) {
         return flatChildren.length === 1 ? flatChildren[0] : flatChildren;
       }
-      // For mixed content: keep only inline-compatible children in the paragraph,
-      // and emit block children as siblings after the paragraph
       if (hasBlockChildren && hasInlineChildren) {
         const inlineOnly = flatChildren.filter((c) => !c?.isBlock || c?.isInline);
         const blockOnly = flatChildren.filter((c) => c?.isBlock && !c?.isInline);
