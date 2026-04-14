@@ -47,7 +47,6 @@ import type {
   MdxJsxTextElement,
   MdxTextExpression,
 } from 'mdast-util-mdx';
-import { incrementWholeDocFallback } from '../metrics/parse-health.ts';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseWithFallback } from './parse-with-fallback.ts';
 import { parseMd, serializeMd } from './pipeline.ts';
@@ -114,27 +113,20 @@ export class MarkdownManager {
    *     than an empty document
    *   - Any caller that can't keep "last valid state" like Observer B does
    *
-   * Under agnostic MDX mode (R1), balanced-brace expressions no longer crash
-   * (no acorn). The prior brace-retry tier is dead code and removed per R4.
-   * Fallback: whole-doc raw text as paragraph + R14 metric increment.
+   * Delegates to parseWithFallback (R6) so server-persistence load paths get
+   * block-level degradation — the dominant real-world failure class (tag
+   * mismatch `<Foo>...</Bar>`) degrades to a single rawMdxFallback node with
+   * surrounding structure preserved, instead of the whole document rendering
+   * as raw text. parseWithFallback's own inner catch still falls through to
+   * whole-doc raw text for position-less errors or MAX_SPLIT_DEPTH exhaustion,
+   * so the "never throws" contract is preserved.
+   *
+   * Spec §6 R6 Callers: "parseSafe (server persistence + agent-sessions),
+   * rollback endpoint, external-change.ts". NOT Observer B (freeze-on-failure
+   * is the live-typing UX).
    */
   parseSafe(markdown: string): JSONContent {
-    try {
-      return this.parse(markdown);
-    } catch (e) {
-      incrementWholeDocFallback();
-      console.warn(
-        JSON.stringify({
-          event: 'mdx-whole-doc-fallback',
-          reason: (e as Error)?.message ?? 'unknown',
-          errorType: (e as Error)?.constructor?.name ?? typeof e,
-        }),
-      );
-      return {
-        type: 'doc',
-        content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
-      };
-    }
+    return this.parseWithFallback(markdown);
   }
 
   /**
