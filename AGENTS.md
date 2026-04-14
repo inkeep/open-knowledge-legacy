@@ -292,6 +292,9 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
 - `src/editor/observers.ts` — Bidirectional observer sync
 - `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
+- `src/components/FileSidebar.tsx` — Sidebar shell; header `+` dropdown opens `NewItemDialog` for file/folder creation
+- `src/components/FileTree.tsx` — Tree rendering; folder-row "New file here" / "New folder here" context-menu entries, empty-state "Create your first page" CTA, subscribes to `documents-events` for immediate post-create refresh
+- `src/components/NewItemDialog.tsx` — Unified file/folder creation dialog (`kind: 'file' | 'folder'`); shared by header `+`, row context menu, empty-state CTA, `Cmd/Ctrl+Alt+N` shortcut, and broken wiki-link flow
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
