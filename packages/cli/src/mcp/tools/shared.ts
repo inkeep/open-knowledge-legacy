@@ -39,6 +39,33 @@ export const HOCUSPOCUS_NOT_RUNNING_ERROR =
   'Error: Hocuspocus server is not running. Start it with `open-knowledge start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';
 
 /**
+ * Normalize a user-supplied `docName`. The server treats `docName` as
+ * extension-less and appends `.md` itself when resolving to disk, so a caller
+ * that passes `"notes/meeting.md"` would otherwise produce `meeting.md.md`.
+ *
+ * Policy:
+ * - Trailing `.md` is stripped silently (permissive — native intuition wins).
+ * - Trailing `.mdx` / `.markdown` returns an error: the server's `.md`
+ *   hardcoding means these types aren't first-class yet. Tracked in V0-27.
+ * - Any other trailing `.x` is left alone; a dotted docName is valid.
+ */
+export function normalizeDocName(
+  raw: string,
+): { ok: true; docName: string } | { ok: false; error: string } {
+  if (raw.endsWith('.md')) {
+    return { ok: true, docName: raw.slice(0, -3) };
+  }
+  if (raw.endsWith('.mdx') || raw.endsWith('.markdown')) {
+    const ext = raw.endsWith('.mdx') ? '.mdx' : '.markdown';
+    return {
+      ok: false,
+      error: `Error: docName "${raw}" ends in "${ext}", but the server only supports ".md" today. Tracked in projects/v0-launch/PROJECT.md §V0-27 (extension-aware docName). Strip the extension and retry.`,
+    };
+  }
+  return { ok: true, docName: raw };
+}
+
+/**
  * HTTP GET helper for Hocuspocus API calls.
  * Returns `{ ok: false, error }` on network failure or non-JSON response.
  */

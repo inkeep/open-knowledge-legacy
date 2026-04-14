@@ -2,7 +2,13 @@
  * Tests for MCP shared helpers — textResult, httpGet, httpPost.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, httpPost, textResult } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpGet,
+  httpPost,
+  normalizeDocName,
+  textResult,
+} from './shared.ts';
 
 describe('textResult', () => {
   test('wraps text in MCP content array', () => {
@@ -25,6 +31,47 @@ describe('textResult', () => {
     expect(result).not.toHaveProperty('isError');
     const result2 = textResult('ok');
     expect(result2).not.toHaveProperty('isError');
+  });
+});
+
+describe('normalizeDocName', () => {
+  test('strips trailing .md silently', () => {
+    const result = normalizeDocName('notes/meeting.md');
+    expect(result).toEqual({ ok: true, docName: 'notes/meeting' });
+  });
+
+  test('leaves extension-less docName untouched', () => {
+    const result = normalizeDocName('notes/meeting');
+    expect(result).toEqual({ ok: true, docName: 'notes/meeting' });
+  });
+
+  test('rejects .mdx with a V0-27 pointer', () => {
+    const result = normalizeDocName('notes/meeting.mdx');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('.mdx');
+      expect(result.error).toContain('V0-27');
+    }
+  });
+
+  test('rejects .markdown with a V0-27 pointer', () => {
+    const result = normalizeDocName('notes/meeting.markdown');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('.markdown');
+      expect(result.error).toContain('V0-27');
+    }
+  });
+
+  test('leaves unrelated dotted names untouched', () => {
+    // A docName like "v1.0" is a legitimate extension-less name with a dot.
+    const result = normalizeDocName('releases/v1.0');
+    expect(result).toEqual({ ok: true, docName: 'releases/v1.0' });
+  });
+
+  test('handles root-level docName with .md', () => {
+    const result = normalizeDocName('PROJECT.md');
+    expect(result).toEqual({ ok: true, docName: 'PROJECT' });
   });
 });
 

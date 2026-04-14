@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, normalizeDocName, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] List version history for a document.',
@@ -59,8 +59,11 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
+      const normalized = normalizeDocName(args.docName);
+      if (!normalized.ok) return textResult(normalized.error, true);
+
       const params = new URLSearchParams();
-      params.set('docName', args.docName);
+      params.set('docName', normalized.docName);
       if (args.branch) params.set('branch', args.branch);
       if (args.limit != null) params.set('limit', String(args.limit));
       if (args.offset != null) params.set('offset', String(args.offset));

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, normalizeDocName, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find all pages that a given page links to.',
@@ -19,9 +19,11 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     },
     async (args: { docName: string }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const normalized = normalizeDocName(args.docName);
+      if (!normalized.ok) return textResult(normalized.error, true);
       const result = await httpGet(
         serverUrl,
-        `/api/forward-links?docName=${encodeURIComponent(args.docName)}`,
+        `/api/forward-links?docName=${encodeURIComponent(normalized.docName)}`,
       );
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...data } = result;
