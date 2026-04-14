@@ -2,6 +2,7 @@ import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
@@ -60,6 +61,16 @@ export function EditorPane() {
     handleExitPreview();
     toast.info('No changes since this version');
   }
+
+  // R7: rawMdxFallback click → switch to source mode so user can fix the broken MDX.
+  // SourceEditor separately listens for the same event to scroll to the offset.
+  useEffect(() => {
+    function onRawMdxNav() {
+      setEditorMode('source');
+    }
+    window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
+    return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
+  }, []);
 
   function handleModeChange(mode: 'wysiwyg' | 'source') {
     setEditorMode(mode);
