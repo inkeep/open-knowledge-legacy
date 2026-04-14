@@ -1,14 +1,20 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-13 by `generate-catalogue.ts`
-> 69 valid reports indexed
+> Auto-generated on 2026-04-14 by `generate-catalogue.ts`
+> 75 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [Bun Workspace ProseMirror-Model Deduplication](bun-prosemirror-model-dedup/REPORT.md) | 2026-04-13 | 3 files | module resolution, dependency dedu… | Bun, ProseMirror, TipTap, @tiptap/… |
 | [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md) | 2026-04-13 | 9 files | git-backed CMS architecture, markd… | TinaCMS, SSW, isomorphic-git, Plat… |
+| [R23 Autolink & NG10 Frontmatter: Prior Art Grounding f…](r23-autolink-and-ng10-prior-art/REPORT.md) | 2026-04-13 | 5 files | micromark construct priority, MDX … | remark-mdx, micromark-extension-md… |
+| [micromark + remark-prosemirror vs marked + @tiptap/mar…](tokenizer-comparison-micromark-vs-marked/REPORT.md) | 2026-04-12 | 4 files | markdown tokenizer architecture, t… | micromark, remark, @handlewithcare… |
 | [Backlinks, Typed Links, and UX Patterns: Landscape Acr…](backlinks-typed-links-and-ux-landscape/REPORT.md) | 2026-04-12 | 8 files | typed links, transclusion, backlin… | Roam Research, Org-roam, TiddlyWik… |
+| [mdast↔ProseMirror Bridge Library Source-Code Comparison](mdast-prosemirror-bridge-source-comparison/REPORT.md) | 2026-04-12 | 2 files | mdast ProseMirror bridge, source-t… | @handlewithcare/remark-prosemirror… |
+| [Symlink Handling in File-Sync / CRDT / Editor Pipelines](symlink-handling-file-sync-crdt/REPORT.md) | 2026-04-12 | 7 files | filesystem atomicity, symlink iden… | Node.js, @parcel/watcher, chokidar… |
+| [Architecturally-Ideal ProseMirror Schema for a CRDT Ma…](full-stack-pm-crdt-markdown-editor-ideal/REPORT.md) | 2026-04-12 | 6 files | editor schema design, CRDT collabo… | ProseMirror, TipTap, Y.js, remark,… |
 | [Markdown Construct Fidelity Catalog: 118-Case Test Tar…](markdown-construct-fidelity-catalog/REPORT.md) | 2026-04-11 | 6 files | markdown round-trip fidelity, bidi… | @tiptap/markdown, @tiptap/core, @t… |
 | [Electron Desktop App Operations: Versioning, Signing, …](electron-desktop-app-operations-2025/REPORT.md) | 2026-04-11 | 5 files | electron operations, desktop app r… | Electron, electron-builder, electr… |
 | [OSS Licensing Strategies for Open-Core Companies: Lice…](oss-licensing-strategies-open-core/REPORT.md) | 2026-04-11 | 6 files | open source licensing, open core s… | MIT License, Apache 2.0, AGPL-3.0,… |
@@ -81,6 +87,15 @@
 
 ## Report Details
 
+### [Bun Workspace ProseMirror-Model Deduplication](bun-prosemirror-model-dedup/REPORT.md)
+
+> Root cause analysis and fix recommendations for prosemirror-model duplication in bun workspaces — 'looks like multiple versions of prosemirror-model were loaded' error when importing through workspace packages. Covers bun module resolution mechanics, ProseMirror instanceof detection, TipTap @tiptap…
+
+- **Created:** 2026-04-13
+- **Topics:** module resolution, dependency deduplication, monorepo workspace
+- **Subjects:** Bun, ProseMirror, TipTap, @tiptap/pm
+- **Evidence files:** 3
+
 ### [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md)
 
 > Deep dive into TinaCMS's operational architecture outside the MDX pipeline — git integration via the Bridge/GitProvider seam, unknown-component degradation and error UX, absent real-time collaboration, agent/MCP posture, and SSW-era trajectory. Focused on what 7 years of git-backed markdown editing…
@@ -91,6 +106,25 @@
 - **Subjects:** TinaCMS, SSW, isomorphic-git, Plate, GitHub Contents API, Tina Cloud, Editorial Workflow
 - **Evidence files:** 9
 
+### [R23 Autolink & NG10 Frontmatter: Prior Art Grounding for Pipeline Refactor](r23-autolink-and-ng10-prior-art/REPORT.md)
+
+> Evidence-based grounding for the remark+MDX pipeline refactor. Validates which design assumptions for the R23 autolink workaround and NG10 frontmatter disambiguation hold against the MDX/remark ecosystem, and surfaces the architectural constraints that shape the final design.
+
+- **Created:** 2026-04-13
+- **Topics:** micromark construct priority, MDX autolink conflict, markdown fidelity preservation, frontmatter ambiguity, Unicode sentinels in URLs
+- **Subjects:** remark-mdx, micromark-extension-mdxjs, remark-frontmatter, mdast-util-from-markdown, mdast-util-to-markdown, prosemirror-markdown, Milkdown, Docusaurus, Astro
+- **Evidence files:** 5
+- **Warnings:** 1
+
+### [micromark + remark-prosemirror vs marked + @tiptap/markdown: Ecosystem Completeness for Greenfield Markdown CRDT Editor](tokenizer-comparison-micromark-vs-marked/REPORT.md)
+
+> Deep technical comparison of two markdown tokenizer stacks for a greenfield ProseMirror-based collaborative markdown editor. Framed around which ecosystem gives us more working third-party code and requires less patching/custom-writing to preserve correctness — not our-code migration cost. Covers M…
+
+- **Created:** 2026-04-12
+- **Topics:** markdown tokenizer architecture, third-party library completeness, round-trip fidelity, MDX support, CRDT markdown editor
+- **Subjects:** micromark, remark, @handlewithcare/remark-prosemirror, mdast-util-to-markdown, marked, @tiptap/markdown, MDX, unified, ProseMirror
+- **Evidence files:** 4
+
 ### [Backlinks, Typed Links, and UX Patterns: Landscape Across 9 Tools](backlinks-typed-links-and-ux-landscape/REPORT.md)
 
 > Factual landscape of how backlinks and wikilinks are architected, surfaced, and represented across 9 tools not fully covered by the existing wiki-links-backlinks-architecture report: Roam, Org-roam, TiddlyWiki, Tana, Anytype, Notion (deeper), Heptabase, Reflect, SilverBullet. Focused on four angles…
@@ -99,6 +133,33 @@
 - **Topics:** typed links, transclusion, backlink UX, link semantics, knowledge graph
 - **Subjects:** Roam Research, Org-roam, TiddlyWiki, Tana, Anytype, Notion, Heptabase, Reflect, SilverBullet, BlockSuite, Datomic, Datascript
 - **Evidence files:** 8
+
+### [mdast↔ProseMirror Bridge Library Source-Code Comparison](mdast-prosemirror-bridge-source-comparison/REPORT.md)
+
+> Source-code-level comparison of @handlewithcare/remark-prosemirror (v0.1.5) vs prosemirror-remark (v0.6.3) + prosemirror-unified (v0.8.4) for a greenfield ProseMirror-based CRDT markdown editor migration. Evaluates 10 dimensions: handler API, bidirectional support, attribute preservation, mark hand…
+
+- **Created:** 2026-04-12
+- **Topics:** mdast ProseMirror bridge, source-text fidelity, remark pipeline integration
+- **Subjects:** @handlewithcare/remark-prosemirror, prosemirror-remark, prosemirror-unified
+- **Evidence files:** 2
+
+### [Symlink Handling in File-Sync / CRDT / Editor Pipelines](symlink-handling-file-sync-crdt/REPORT.md)
+
+> Evidence-driven analysis of symlink semantics across rename(2), Node.js fs, watchers, editors, LSPs, and git — to drive the design of symlink-preserving persistence and realpath-based document identity in the open-knowledge server.
+
+- **Created:** 2026-04-12
+- **Topics:** filesystem atomicity, symlink identity, CRDT persistence, file watchers, TOCTOU security
+- **Subjects:** Node.js, @parcel/watcher, chokidar, write-file-atomic, VS Code, Obsidian, rust-analyzer, gopls, Hocuspocus, Yjs, git
+- **Evidence files:** 7
+
+### [Architecturally-Ideal ProseMirror Schema for a CRDT Markdown Editor with MDX](full-stack-pm-crdt-markdown-editor-ideal/REPORT.md)
+
+> Validated schema design for a greenfield ProseMirror-based CRDT markdown editor backed by the unified/remark pipeline, with MDX support. Synthesizes constraints from ProseMirror core, Y.js collaboration, the remark/micromark pipeline, the remark-prosemirror bridge library, CodeMirror source mode, a…
+
+- **Created:** 2026-04-12
+- **Topics:** editor schema design, CRDT collaboration, markdown fidelity, MDX support
+- **Subjects:** ProseMirror, TipTap, Y.js, remark, micromark, remark-prosemirror, CodeMirror, Milkdown, BlockNote, Plate
+- **Evidence files:** 6
 
 ### [Markdown Construct Fidelity Catalog: 118-Case Test Target Map for @tiptap/markdown + Yjs Bidirectional Round-Trip](markdown-construct-fidelity-catalog/REPORT.md)
 
@@ -118,7 +179,7 @@
 - **Topics:** electron operations, desktop app release pipeline, code signing, auto-update infrastructure
 - **Subjects:** Electron, electron-builder, electron-vite, electron-updater, Sentry, GitHub Actions, Apple Developer Program, Azure Trusted Signing
 - **Evidence files:** 5
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [OSS Licensing Strategies for Open-Core Companies: License Selection, Community Dynamics, and Business Model Interplay](oss-licensing-strategies-open-core/REPORT.md)
 
@@ -194,7 +255,6 @@
 - **Topics:** open core engineering, split licensing, npm obfuscation, AGPL linking exceptions
 - **Subjects:** Cal.com, Formbricks, Infisical, GitLab, Grafana, Documenso, Dub.co, Twenty, Appsmith, Mastra, Activepieces, n8n, Tldraw, Liveblocks, Firecrawl, napi-rs, terser, javascript-obfuscator
 - **Evidence files:** 5
-- **Warnings:** 1
 
 ### [CI Test Pipeline Patterns in TypeScript OSS Monorepos](ts-monorepo-ci-test-pipeline-patterns/REPORT.md)
 
@@ -304,7 +364,7 @@
 - **Topics:** CRDT migration assessment, Peritext rich text model, dual-view editor architecture, collaborative editor infrastructure
 - **Subjects:** Automerge, automerge-prosemirror, automerge-repo, automerge-codemirror, Yjs, TipTap, ProseMirror, Hocuspocus, Peritext, CodeMirror 6
 - **Evidence files:** 9
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Yjs Dual-Key Shimmer Analysis: Will Bidirectional Observer Sync Between Y.XmlFragment and Y.Text Actually Cascade?](yjs-dual-key-shimmer-analysis/REPORT.md)
 
@@ -323,7 +383,6 @@
 - **Topics:** source toggle architecture, CRDT dual representation, collaborative markdown editing, editor mode switching
 - **Subjects:** Yjs, TipTap, ProseMirror, CodeMirror 6, y-prosemirror, y-codemirror.next, Hocuspocus, Obsidian, AFFiNE, Automerge, Peritext
 - **Evidence files:** 5
-- **Warnings:** 1
 
 ### [KB Index and Navigation Patterns for AI Agents: How Agents Orient in Document Collections (2025-2026)](kb-index-navigation-patterns-for-agents/REPORT.md)
 
@@ -334,7 +393,6 @@
 - **Topics:** agent navigation, knowledge base indexing, progressive disclosure, context engineering, repo-map, CLAUDE.md, AGENTS.md, graph traversal, frontmatter metadata
 - **Subjects:** Claude Code, OpenAI Codex, Cursor, Aider, Augment Code, Windsurf, Devin, Context7, Obsidian, Andrej Karpathy, Dust.tt, LightRAG, GraphRAG, Anthropic
 - **Evidence files:** 9
-- **Warnings:** 1
 
 ### [Compiled Truth + Timeline: Content Conventions for Agent-Authored Knowledge Entries](compiled-truth-timeline-content-conventions/REPORT.md)
 
@@ -480,7 +538,6 @@
 - **Created:** 2026-04-04
 - **Topics:** wiki-link formats, backlink index architecture, knowledge graph navigation, CRDT collaboration, agent-native knowledge
 - **Subjects:** Obsidian, Logseq, Outline, AFFiNE, Foam, Dendron, Marksman, remark-wiki-link, TipTap, ProseMirror, Hocuspocus, Yjs, GraphRAG, Orama
-- **Warnings:** 1
 
 ### [Search Engine Decision: Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector for a CRDT-Backed Branchable Knowledge Platform](search-engine-decision/REPORT.md)
 
@@ -490,7 +547,6 @@
 - **Topics:** search engine selection, CRDT search integration, per-branch index caching, contentless search indexing, local-to-cloud migration
 - **Subjects:** Orama, SQLite FTS5, sqlite-vec, better-sqlite3, PGlite, pgvector, pg_textsearch, Yjs, Hocuspocus
 - **Evidence files:** 6
-- **Warnings:** 1
 
 ### [TipTap in 2026: Product Direction, Platform Ambitions, and Overlap with Agent-Native Knowledge Platforms](tiptap-2026-direction-overlap/REPORT.md)
 
@@ -509,7 +565,7 @@
 - **Topics:** component inventory comparison, block type analysis, editing feature gap analysis, knowledge platform architecture, component distribution
 - **Subjects:** Obsidian, Fumadocs, fumadocs-ui, fumadocs-core, shadcn/ui, Radix UI, MDX
 - **Evidence files:** 5
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Bun vs Node.js as Server Runtime for an Agent-Native Knowledge Platform](bun-vs-node-runtime/REPORT.md)
 
@@ -538,7 +594,7 @@
 - **Topics:** component prop extraction, visual editor prop panels, TypeScript to UI control mapping, auto-generated editing interfaces
 - **Subjects:** react-docgen-typescript, Storybook, Webstudio, Builder.io, Plasmic, TypeScript Compiler API
 - **Evidence files:** 6
-- **Warnings:** 3
+- **Warnings:** 2
 
 ### [MDX Round-Trip Fidelity Through CRDT-Backed Visual Editors](mdx-crdt-roundtrip-fidelity/REPORT.md)
 
@@ -623,7 +679,7 @@
 - **Topics:** MCP tool design, agent tool interfaces, filesystem vs semantic tools, progressive disclosure, tool explosion problem, agent performance benchmarks
 - **Subjects:** Claude Code, Cursor, Mintlify, Context7, Anthropic, SWE-agent, SocratiCode, Microsoft Research, MCP-Bench, Mem0, GitHub MCP Server, Notion MCP Server
 - **Evidence files:** 7
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Orama Deep Dive: A Source-Code-Level Assessment for Agent-Native Knowledge Platforms](orama-deep-dive/REPORT.md)
 
@@ -633,7 +689,7 @@
 - **Topics:** hybrid search internals, in-memory search engine, TypeScript search library, vector search implementation, search engine gap analysis
 - **Subjects:** Orama, OramaSearch Inc, Orama Cloud, OramaCore, Fumadocs
 - **Evidence files:** 11
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Fumadocs as Infrastructure for the Karpathy LLM Knowledge Base Workflow](fumadocs-karpathy-workflow-deep-dive/REPORT.md)
 
@@ -662,7 +718,7 @@
 - **Topics:** virtual filesystem MCP, agent tool surface overlap, filesystem abstraction backends, MCP tool design patterns, content search MCP tools, remote filesystem MCP tools
 - **Subjects:** Model Context Protocol, Claude Code, Mintlify ChromaFs, E2B, Daytona, Desktop Commander MCP, mcp-ripgrep, GitHub MCP Server, Replit MCP, Obsidian MCP, CodeSandbox MCP, filesystem-mcp-rs
 - **Evidence files:** 8
-- **Warnings:** 5
+- **Warnings:** 4
 
 ### [Git Worktrees as Draft Isolation for Knowledge Platforms: Lessons from Claude Code and the AI Coding Agent Landscape](claude-code-worktree-git-isolation/REPORT.md)
 
@@ -700,7 +756,7 @@
 - **Topics:** virtual filesystem for agents, custom filesystem backends, shell environment TypeScript, agent-native knowledge platform, MCP server architecture, MCP tool count agent performance, exec tool vs semantic tools, CRDT filesystem implementation
 - **Subjects:** just-bash, Vercel Labs, Mintlify ChromaFs, bash-tool, IFileSystem, just-bash-mcp, MCP structuredContent
 - **Evidence files:** 14
-- **Warnings:** 4
+- **Warnings:** 3
 
 ### [Fumadocs vs Mintlify: Architecture Deep Dive for Agent-Native Knowledge Platforms](fumadocs-vs-mintlify-architecture/REPORT.md)
 
@@ -729,7 +785,6 @@
 - **Topics:** knowledge consolidation, factual fidelity, multi-document synthesis, claim-level verification, information preservation, consensus mechanisms, multi-agent voting, incremental consolidation, cost-fidelity tradeoffs, production systems, recomposition patterns, outline-first generation, nuance preservation, confidence inflation, claim-to-document generation
 - **Subjects:** FActScore, MiniCheck, LLMxMapReduce, LangChain, LangGraph, AutoGen, CrewAI, Agent Zero, NEXUSSUM, GraphRAG, Perplexity, Elicit, Consensus, NotebookLM, Mem0, Zep/Graphiti, MemGPT, MetaFaith, FiC, WritingPath, PlanGen
 - **Evidence files:** 13
-- **Warnings:** 1
 
 ### [AI Coding Agent Tool Surfaces: How Agents Interface with Codebases](ai-coding-agent-tool-surfaces/REPORT.md)
 

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
+import { SystemDocSubscriber } from '@/components/SystemDocSubscriber';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
 import { docNameFromHash } from '@/lib/doc-hash';
@@ -30,6 +31,7 @@ function NavigationHandler() {
 export function App() {
   return (
     <DocumentProvider>
+      <SystemDocSubscriber />
       <NavigationHandler />
       <SidebarProvider className="h-screen overflow-hidden">
         <FileSidebar />

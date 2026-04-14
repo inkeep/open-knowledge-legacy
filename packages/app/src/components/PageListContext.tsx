@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, use, useEffect, useState } from 'react';
+import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 interface PageListContextValue {
@@ -10,9 +10,33 @@ interface PageListContextValue {
   error: string | null;
   /** Re-fetch the page list from the server. Call after creating a new page. */
   refetch: () => void;
+  /** Optimistically mark a page as present before watcher/index propagation settles. */
+  addPage: (docName: string) => void;
 }
 
 const PageListContext = createContext<PageListContextValue | null>(null);
+
+export function mergePageSets(
+  serverPages: ReadonlySet<string>,
+  optimisticPages: ReadonlySet<string>,
+) {
+  if (optimisticPages.size === 0) return new Set(serverPages);
+  const merged = new Set(serverPages);
+  for (const docName of optimisticPages) merged.add(docName);
+  return merged;
+}
+
+export function pruneConfirmedOptimisticPages(
+  optimisticPages: ReadonlySet<string>,
+  serverPages: ReadonlySet<string>,
+) {
+  if (optimisticPages.size === 0) return new Set<string>();
+  const pending = new Set<string>();
+  for (const docName of optimisticPages) {
+    if (!serverPages.has(docName)) pending.add(docName);
+  }
+  return pending;
+}
 
 async function loadPages(): Promise<Set<string>> {
   const r = await fetch('/api/pages');
@@ -31,35 +55,72 @@ function logLoadPagesError(err: unknown) {
 }
 
 export function PageListProvider({ children }: { children: ReactNode }) {
-  const [pages, setPages] = useState(new Set<string>());
+  const [serverPages, setServerPages] = useState(new Set<string>());
+  const [optimisticPages, setOptimisticPages] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const latestRequestIdRef = useRef(0);
 
   function refetch() {
+    const requestId = ++latestRequestIdRef.current;
     setLoading(true);
     void loadPages()
       .then((p) => {
-        setPages(p);
+        if (requestId !== latestRequestIdRef.current) return;
+        setServerPages(p);
+        setOptimisticPages((prev) => pruneConfirmedOptimisticPages(prev, p));
         setError(null);
       })
       .catch((err) => {
+        if (requestId !== latestRequestIdRef.current) return;
         logLoadPagesError(err);
         setError(err instanceof Error ? err.message : 'Failed to load pages');
       })
       .finally(() => {
+        if (requestId !== latestRequestIdRef.current) return;
         setLoading(false);
       });
+  }
+
+  function addPage(docName: string) {
+    setOptimisticPages((prev) => {
+      if (prev.has(docName)) return prev;
+      const next = new Set(prev);
+      next.add(docName);
+      return next;
+    });
+    setError(null);
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: run only on mount
   useEffect(() => {
     void refetch();
-    return subscribeToDocumentsChanged(() => {
-      refetch();
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') {
+        refetch();
+      }
+    };
+    window.addEventListener('focus', handleResume);
+    window.addEventListener('visibilitychange', handleResume);
+    const unsubscribe = subscribeToDocumentsChanged((channels) => {
+      if (channels.includes('files')) {
+        refetch();
+      }
     });
+    return () => {
+      window.removeEventListener('focus', handleResume);
+      window.removeEventListener('visibilitychange', handleResume);
+      unsubscribe();
+    };
   }, []);
 
-  return <PageListContext value={{ pages, loading, error, refetch }}>{children}</PageListContext>;
+  const pages = mergePageSets(serverPages, optimisticPages);
+
+  return (
+    <PageListContext value={{ pages, loading, error, refetch, addPage }}>
+      {children}
+    </PageListContext>
+  );
 }
 
 export function usePageList(): PageListContextValue {

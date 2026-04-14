@@ -385,6 +385,67 @@ describe('initial sync and test isolation', () => {
     }
   });
 
+  test('opening a file without edits does not rewrite disk in normalized form', async () => {
+    // Regression: Hocuspocus fires onStoreDocument after the first-pass
+    // observer sync that populates Y.Text from the freshly-loaded
+    // XmlFragment. That mutation is semantically a no-op, but without a
+    // gate the store handler rewrites the file in TipTap's normalized form
+    // (padded tables, added backslash-escapes, etc.), polluting the user's
+    // git working tree on mere file open.
+    //
+    // Tight (unpadded) GFM table — serialization pads columns to the widest
+    // cell, so this exact byte sequence differs from what TipTap emits.
+    // We use a unique docName so the file-watcher update event fires before
+    // the doc loads (no-op path, no reconciliation), and the subsequent
+    // load+store cycle compares against the serialized-at-load baseline.
+    const docName = `no-op-store-${crypto.randomUUID()}`;
+    const originalBytes = '# Title\n\n| A | B |\n| - | - |\n| 1 | 22 |\n';
+    const filePath = join(server.contentDir, `${docName}.md`);
+    writeFileSync(filePath, originalBytes, 'utf-8');
+    // Let the file-watcher's "no loaded doc" branch drain before we open it.
+    await wait(500);
+
+    const client = await createTestClient(server.port, docName);
+    try {
+      await pollUntil(() => client.ytext.toString().includes('Title'), 5000);
+      // Wait well past the server debounce (200ms) so any scheduled store
+      // has a chance to fire.
+      await wait(800);
+
+      const diskAfter = readTestDoc(server.contentDir, docName);
+      expect(diskAfter).toBe(originalBytes);
+    } finally {
+      await client.cleanup();
+    }
+  });
+
+  test('opening a file with frontmatter without edits does not rewrite disk', async () => {
+    // Companion to the preceding test — the no-op gate must hold on the
+    // frontmatter round-trip path too. `onLoadDocument` routes frontmatter
+    // through `stripFrontmatter` → `prependFrontmatter` before writing the
+    // reconciledBase; `onStoreDocument` does the same before comparing.
+    // A subtle byte-level drift (e.g. a stray newline between `---` and the
+    // body) would break the equality check for frontmatter files while
+    // leaving the non-frontmatter case passing.
+    const docName = `no-op-fm-${crypto.randomUUID()}`;
+    const originalBytes =
+      '---\ntitle: Test\ntags: [a, b]\n---\n\n# Content\n\n| A | B |\n| - | - |\n| 1 | 22 |\n';
+    const filePath = join(server.contentDir, `${docName}.md`);
+    writeFileSync(filePath, originalBytes, 'utf-8');
+    await wait(500);
+
+    const client = await createTestClient(server.port, docName);
+    try {
+      await pollUntil(() => client.ytext.toString().includes('Content'), 5000);
+      await wait(800);
+
+      const diskAfter = readTestDoc(server.contentDir, docName);
+      expect(diskAfter).toBe(originalBytes);
+    } finally {
+      await client.cleanup();
+    }
+  });
+
   test('test-reset isolates state between tests', async () => {
     await testReset(server.port);
     await wait(300);
@@ -628,6 +689,55 @@ describe('V2: external-write convergence window', () => {
       expect(textContent).toContain('Agent content');
 
       // Bridge invariant should hold after convergence
+      assertBridgeInvariant(client.ytext, client.fragment);
+    } finally {
+      await client.cleanup();
+    }
+  });
+});
+
+// ─── FR-4: Multi-client Item preservation ───
+
+describe('multi-client FR-4: agent-origin Items preserved through Observer A', () => {
+  test('server agent write + client user edit — both preserved, bridge holds', async () => {
+    const client = await createTestClient(server.port);
+
+    try {
+      // Step 1: Baseline via WYSIWYG
+      applyMarkdownToFragment(client, 'Line one.\n\nLine two.\n');
+      await wait(500);
+      expect(client.ytext.toString()).toContain('Line one');
+
+      // Step 2: Server-side agent write via HTTP API (appends content to Y.Text
+      // under 'agent-write' origin — same codepath as MCP agent writes).
+      // The server calls syncTextToFragment so both Y.Text and XmlFragment
+      // receive the agent content.
+      await agentWriteMd(server.port, 'Agent paragraph.\n', {
+        docName: client.docName,
+      });
+
+      // Wait for agent write to arrive on the client (both surfaces)
+      await pollUntil(() => client.ytext.toString().includes('Agent paragraph'), 5000);
+      await wait(500);
+
+      // Step 3: Client's user appends via WYSIWYG — an incremental edit,
+      // not a full tree replacement. Observer A fires; if Y.Text has diverged
+      // (e.g., timing of remote sync), Path B DMP merge handles it.
+      markUserTyping(client.doc);
+      const typingInterval = setInterval(() => markUserTyping(client.doc), 30);
+
+      appendParagraphToFragment(client, 'User added this.');
+
+      await wait(200);
+      clearInterval(typingInterval);
+      await wait(1000);
+
+      // Step 4: Both user edit and agent content should be present
+      const finalText = client.ytext.toString();
+      expect(finalText).toContain('User added this');
+      expect(finalText).toContain('Agent paragraph');
+
+      // Bridge invariant holds
       assertBridgeInvariant(client.ytext, client.fragment);
     } finally {
       await client.cleanup();

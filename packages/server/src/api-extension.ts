@@ -25,9 +25,9 @@ import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
+  getHeadingSlug,
   type HeadingEntry,
   stripFrontmatter,
-  toWikiLinkSlug,
 } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
@@ -56,7 +56,12 @@ const ROLLBACK_ORIGIN = {
 import { getParseHealth } from '@inkeep/open-knowledge-core';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
-import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
+import {
+  contentHash,
+  type FileIndexEntry,
+  registerWrite,
+  updateFileIndex,
+} from './file-watcher.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { getMetrics } from './metrics.ts';
 import {
@@ -331,8 +336,11 @@ export interface ApiExtensionOptions {
   shadowRef?: ShadowRef;
   /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
+  /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
+  getCurrentBranch?: () => string | null;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
+  signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -371,11 +379,12 @@ export function extractHeadings(content: string): HeadingEntry[] {
   }
 
   const headings: HeadingEntry[] = [];
+  const slugCounts = new Map<string, number>();
   for (const line of body.split('\n')) {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       const text = match[2].trim();
-      const slug = toWikiLinkSlug(text);
+      const slug = getHeadingSlug(text, slugCounts);
       if (slug) headings.push({ level: match[1].length, text, slug });
     }
   }
@@ -439,8 +448,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     enableTestRoutes = false,
     shadowRef,
     flushGitCommit,
+    getCurrentBranch,
     contentRoot,
     backlinkIndex,
+    signalChannel,
   } = options;
 
   function resolveDocPath(docName: string): string | null {
@@ -1035,7 +1046,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         void backlinkIndex.saveToDisk().catch((err) => {
           console.warn(`[backlinks] Failed to persist cache after test-reset for ${docName}:`, err);
         });
+        signalChannel?.('backlinks');
+        signalChannel?.('graph');
       }
+      signalChannel?.('files');
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);
@@ -1129,8 +1143,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const docName = url.searchParams.get('docName') ?? '';
-    const branch = url.searchParams.get('branch') ?? 'main';
-
+    const branch = url.searchParams.get('branch') ?? getCurrentBranch?.() ?? 'main';
     if (!docName) {
       json(res, 400, { ok: false, error: 'docName query parameter is required' });
       return;
@@ -1637,8 +1650,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       mkdirSync(dirname(fullPath), { recursive: true });
+      const initialContent = '';
       try {
-        writeFileSync(fullPath, '', { encoding: 'utf-8', flag: 'wx' });
+        writeFileSync(fullPath, initialContent, { encoding: 'utf-8', flag: 'wx' });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
           json(res, 409, { ok: false, error: 'File already exists' });
@@ -1647,6 +1661,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = filePath.slice(0, -3);
+      const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
+      if (fileIndex instanceof Map) {
+        updateFileIndex(
+          { kind: 'create', path: fullPath, docName, content: initialContent },
+          fileIndex as Map<string, FileIndexEntry>,
+        );
+      }
+      if (backlinkIndex) {
+        backlinkIndex.updateDocumentFromMarkdown(docName, initialContent);
+        void backlinkIndex.saveToDisk().catch((err) => {
+          console.warn(`[backlinks] Failed to persist create-page cache for ${docName}:`, err);
+        });
+        signalChannel?.('backlinks');
+        signalChannel?.('graph');
+      }
+      signalChannel?.('files');
       json(res, 200, { ok: true, docName });
     } catch (e) {
       console.error('[create-page]', e);

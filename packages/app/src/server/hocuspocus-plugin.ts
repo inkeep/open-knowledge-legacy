@@ -12,13 +12,17 @@ import {
   AgentSessionManager,
   acquireServerLock,
   BacklinkIndex,
+  CC1Broadcaster,
   createApiExtension,
   createContentFilter,
   createExternalChangeHandler,
+  createLiveDerivedIndexExtension,
   createPersistenceExtension,
   initShadowRepo,
+  readBranchFromHead,
   releaseServerLock,
   type ShadowRef,
+  SYSTEM_DOC_NAME,
   startWatcher,
   updateServerLockPort,
   type WatcherHandle,
@@ -153,6 +157,13 @@ let backlinkIndex: BacklinkIndex;
 export let hocuspocus: Hocuspocus;
 let sessionManager: AgentSessionManager;
 let persistence: ReturnType<typeof createPersistenceExtension>;
+let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
+let cc1Broadcaster: CC1Broadcaster;
+
+function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
+  cc1Broadcaster.signal(channel);
+}
+
 try {
   contentFilter = createContentFilter({
     projectDir: process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT,
@@ -183,6 +194,12 @@ try {
   });
 
   sessionManager = new AgentSessionManager(hocuspocus);
+  cc1Broadcaster = new CC1Broadcaster(hocuspocus);
+  const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
+    backlinkIndex,
+    signalChannel,
+  });
+  hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
   hocuspocus.configuration.extensions.push(
     createApiExtension({
@@ -195,7 +212,9 @@ try {
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
+      getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
       backlinkIndex,
+      signalChannel,
     }),
   );
 } catch (err) {
@@ -282,6 +301,13 @@ export function hocuspocusPlugin(): Plugin {
 
       (async () => {
         try {
+          if (!systemDocConnection) {
+            try {
+              systemDocConnection = await hocuspocus.openDirectConnection(SYSTEM_DOC_NAME);
+            } catch (err) {
+              console.error('[hocuspocus] Failed to open __system__ direct connection:', err);
+            }
+          }
           if (activeWatcher) {
             console.log('[hocuspocus] Unsubscribing previous file watcher (HMR restart)');
             const prev = activeWatcher;
@@ -293,13 +319,29 @@ export function hocuspocusPlugin(): Plugin {
             async (event) => {
               if (event.kind === 'update' || event.kind === 'create') {
                 backlinkIndex.updateDocumentFromMarkdown(event.docName, event.content);
+                if (event.kind === 'create') {
+                  signalChannel('files');
+                  signalChannel('backlinks');
+                  signalChannel('graph');
+                } else {
+                  signalChannel('backlinks');
+                  signalChannel('graph');
+                }
                 await handleExternalChange(event.docName, event.content);
               } else if (event.kind === 'delete') {
                 backlinkIndex.deleteDocument(event.docName);
+                signalChannel('files');
+                signalChannel('backlinks');
+                signalChannel('graph');
               } else if (event.kind === 'rename') {
                 backlinkIndex.renameDocument(event.oldDocName, event.newDocName, event.content);
+                signalChannel('files');
+                signalChannel('backlinks');
+                signalChannel('graph');
               } else if (event.kind === 'conflict') {
                 backlinkIndex.updateDocumentFromMarkdown(event.docName, event.content);
+                signalChannel('backlinks');
+                signalChannel('graph');
               }
               void backlinkIndex.saveToDisk().catch((err: unknown) => {
                 console.warn('[hocuspocus] Failed to persist backlink cache:', err);
@@ -315,6 +357,11 @@ export function hocuspocusPlugin(): Plugin {
             if (activeWatcher) {
               await activeWatcher.unsubscribe();
               activeWatcher = null;
+            }
+            cc1Broadcaster.destroy();
+            if (systemDocConnection) {
+              await systemDocConnection.disconnect();
+              systemDocConnection = null;
             }
           });
         } catch (err) {

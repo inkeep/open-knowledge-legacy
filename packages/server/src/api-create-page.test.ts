@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { createApiExtension } from './api-extension.ts';
+import { BacklinkIndex } from './backlink-index.ts';
+import type { FileIndexEntry } from './file-watcher.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -51,11 +53,17 @@ async function callCreatePage(
   contentDir: string,
   method: string,
   body: unknown,
+  options?: {
+    fileIndex?: Map<string, FileIndexEntry>;
+    backlinkIndex?: BacklinkIndex;
+  },
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
     hocuspocus: {} as unknown as Parameters<typeof createApiExtension>[0]['hocuspocus'],
     sessionManager: {} as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
     contentDir,
+    getFileIndex: () => options?.fileIndex ?? new Map<string, FileIndexEntry>(),
+    backlinkIndex: options?.backlinkIndex,
   });
   const req = makeReq(method, body);
   const { res, captured } = makeRes();
@@ -114,6 +122,26 @@ describe('POST /api/create-page', () => {
     expect(body.ok).toBe(true);
     expect(body.docName).toBe('nested/folder/my-page');
     expect(existsSync(join(dir, 'nested/folder/my-page.md'))).toBe(true);
+  });
+
+  test('updates the in-memory file index immediately when available', async () => {
+    const dir = setupTmpDir();
+    const fileIndex = new Map<string, FileIndexEntry>();
+
+    const result = await callCreatePage(dir, 'POST', { path: 'my-page.md' }, { fileIndex });
+
+    expect(result.status).toBe(200);
+    expect(fileIndex.has('my-page')).toBe(true);
+  });
+
+  test('updates the backlink index immediately when available', async () => {
+    const dir = setupTmpDir();
+    const backlinkIndex = new BacklinkIndex({ projectDir: dir, contentDir: dir });
+
+    const result = await callCreatePage(dir, 'POST', { path: 'Y.md' }, { backlinkIndex });
+
+    expect(result.status).toBe(200);
+    expect(backlinkIndex.getForwardLinks('Y')).toEqual([]);
   });
 
   test('returns 400 when path field is missing', async () => {

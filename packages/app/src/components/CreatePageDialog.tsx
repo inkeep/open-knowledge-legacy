@@ -1,17 +1,31 @@
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
+import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toWikiLinkSlug } from '@/editor/extensions/wiki-link-helpers';
+import { emitDocumentsChanged } from '@/lib/documents-events';
 
-function getSuggestedPath(target: string): string {
-  const hash = window.location.hash;
+function canUseTargetAsPathSegment(target: string): boolean {
+  const trimmed = target.trim();
+  return (
+    trimmed.length > 0 &&
+    !/[\\/\0<>:"|?*]/.test(trimmed) &&
+    !/[. ]$/.test(trimmed) &&
+    trimmed !== '.' &&
+    trimmed !== '..'
+  );
+}
+
+export function getSuggestedPath(target: string, locationHash = window.location.hash): string {
+  const hash = locationHash;
   const rest = hash.startsWith('#/') ? hash.slice(2) : '';
   const qmark = rest.indexOf('?');
   const currentDoc = qmark >= 0 ? rest.slice(0, qmark) : rest;
   const lastSlash = currentDoc.lastIndexOf('/');
   const dir = lastSlash > 0 ? currentDoc.slice(0, lastSlash + 1) : '';
-  return `${dir}${toWikiLinkSlug(target)}.md`;
+  const baseName = canUseTargetAsPathSegment(target) ? target.trim() : toWikiLinkSlug(target);
+  return `${dir}${baseName}.md`;
 }
 
 interface CreatePageDialogProps {
@@ -22,6 +36,7 @@ interface CreatePageDialogProps {
 }
 
 export function CreatePageDialog({ open, target, onOpenChange, onCreated }: CreatePageDialogProps) {
+  const { addPage } = usePageList();
   const [path, setPath] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -50,7 +65,10 @@ export function CreatePageDialog({ open, target, onOpenChange, onCreated }: Crea
         setError(data.error ?? 'Failed to create page');
         return;
       }
-      onCreated(data.docName ?? path.replace(/\.md$/, ''));
+      const createdDocName = data.docName ?? path.replace(/\.md$/, '');
+      addPage(createdDocName);
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
+      onCreated(createdDocName);
       onOpenChange(false);
     } catch {
       setBusy(false);

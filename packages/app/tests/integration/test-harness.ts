@@ -25,7 +25,11 @@ import { join } from 'node:path';
 
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
-import { createServer, type ServerInstance } from '@inkeep/open-knowledge-server';
+import {
+  createServer,
+  type ServerInstance,
+  type ServerOptions,
+} from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
@@ -60,7 +64,12 @@ export interface TestServer {
   cleanup: () => Promise<void>;
 }
 
-export async function createTestServer(): Promise<TestServer> {
+export interface CreateTestServerOptions {
+  debounce?: ServerOptions['debounce'];
+  maxDebounce?: ServerOptions['maxDebounce'];
+}
+
+export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
   // realpathSync resolves macOS /var → /private/var symlink so that
   // @parcel/watcher event paths match the contentDir used by pathToDocName.
   const contentDir = realpathSync(mkdtempSync(join(tmpdir(), 'ok-test-')));
@@ -71,8 +80,8 @@ export async function createTestServer(): Promise<TestServer> {
   const srv = createServer({
     contentDir,
     quiet: true,
-    debounce: 200,
-    maxDebounce: 1000,
+    debounce: options.debounce ?? 200,
+    maxDebounce: options.maxDebounce ?? 1000,
     gitEnabled: false,
     enableTestRoutes: true,
   });
