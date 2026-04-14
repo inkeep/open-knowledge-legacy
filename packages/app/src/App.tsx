@@ -3,30 +3,9 @@ import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
+import { docNameFromHash } from '@/lib/doc-hash';
 
-export function docNameFromHash(hash = window.location.hash): string | null {
-  if (hash.startsWith('#/')) {
-    const rest = hash.slice(2);
-    const qmark = rest.indexOf('?');
-    const encoded = qmark >= 0 ? rest.slice(0, qmark) : rest;
-    if (!encoded) return null;
-    // Browsers percent-encode spaces and non-ASCII in window.location.hash.
-    // Decode per path segment so docName matches the server's raw on-disk name
-    // (e.g. 'My Notes/Ideas — 2026/draft').
-    try {
-      return encoded.split('/').map(decodeURIComponent).join('/');
-    } catch {
-      // Malformed percent-encoding — fall back to raw string.
-      return encoded;
-    }
-  }
-  return null;
-}
-
-export function hashFromDocName(docName: string, anchor?: string | null): string {
-  const base = `#/${docName}`;
-  return anchor ? `${base}?anchor=${encodeURIComponent(anchor)}` : base;
-}
+export { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 
 /** Syncs window.location.hash ↔ DocumentContext.openDocument, unidirectionally:
  *  hash is the source of truth; all navigation sets the hash; this handler
@@ -38,7 +17,7 @@ function NavigationHandler() {
     onHashChange();
 
     function onHashChange() {
-      const docName = docNameFromHash();
+      const docName = docNameFromHash(window.location.hash);
       if (docName) openDocument(docName);
     }
     window.addEventListener('hashchange', onHashChange);

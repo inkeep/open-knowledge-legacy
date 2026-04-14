@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { docNameFromHash } from './App';
+import { docNameFromHash, hashFromDocName } from './doc-hash';
 
 describe('docNameFromHash', () => {
   test('returns null for empty hash', () => {
@@ -44,5 +44,23 @@ describe('docNameFromHash', () => {
 
   test('malformed segment falls back to entire raw string', () => {
     expect(docNameFromHash('#/good%20segment/%ZZ/other')).toBe('good%20segment/%ZZ/other');
+  });
+});
+
+describe('hashFromDocName', () => {
+  test('no anchor', () => {
+    expect(hashFromDocName('README')).toBe('#/README');
+  });
+
+  test('with anchor', () => {
+    expect(hashFromDocName('docs/guide', 'install')).toBe('#/docs/guide?anchor=install');
+  });
+
+  test('encodes anchor with special characters', () => {
+    expect(hashFromDocName('doc', 'hello world')).toBe('#/doc?anchor=hello%20world');
+  });
+
+  test('null anchor produces no query', () => {
+    expect(hashFromDocName('doc', null)).toBe('#/doc');
   });
 });
