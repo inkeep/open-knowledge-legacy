@@ -1,0 +1,7 @@
+$ npm view @inkeep/open-knowledge version dist-tags
+npm error code E404
+npm error 404 Not Found - GET https://registry.npmjs.org/@inkeep%2fopen-knowledge - Not found
+npm error 404
+npm error 404  '@inkeep/open-knowledge@*' is not in this registry.
+
+# As of 2026-04-14. README instructs users to run `bunx @inkeep/open-knowledge init` which would fail.

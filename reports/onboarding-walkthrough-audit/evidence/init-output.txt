@@ -1,0 +1,13 @@
+$ ./node_modules/.bin/open-knowledge init
+Content scaffolded at /private/tmp/ok-onboarding-test/fresh-project/.open-knowledge/
+  Created: AGENTS.md, .gitignore, config.yml
+
+MCP server configuration:
+  Claude Code   .mcp.json  registered
+
+Content:
+  Found 294 markdown files in ./
+  Scope: include=**/*.md  exclude=(none)
+  Sample: .open-knowledge/AGENTS.md, README.md, node_modules/@borewit/text-codec/README.md, node_modules/@clack/core/CHANGELOG.md, node_modules/@clack/core/README.md, …
+
+# Fresh project contained: README.md (1 file), package.json (no real docs), and the 293 transitive node_modules READMEs/CHANGELOGs

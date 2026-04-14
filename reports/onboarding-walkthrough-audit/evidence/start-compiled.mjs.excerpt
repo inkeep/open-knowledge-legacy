@@ -1,0 +1,13 @@
+// From /tmp/ok-onboarding-test/fresh-project/node_modules/@inkeep/open-knowledge/dist/commands/start.mjs:70-83
+// (compiled from packages/cli/src/commands/start.ts:99-113)
+const cliDir = import.meta.dirname ?? new URL(".", import.meta.url).pathname;
+// ^^^ At runtime this is: .../node_modules/@inkeep/open-knowledge/dist/commands/
+// ... because tsdown bundles start.ts into dist/commands/start.mjs, not dist/start.mjs
+const assetDir = [
+    resolve(cliDir, "public"),            // dist/commands/public  — MISSING
+    resolve(cliDir, "../../app/dist"),    // dist/app/dist          — MISSING
+    resolve(cliDir, "../../../app/dist")  // <proj>/app/dist        — MISSING
+].find((p) => existsSync(p));
+
+// Assets actually live at: dist/public/  (one level up from where we look)
+// Fix: resolve(cliDir, "../public") as the first entry.
