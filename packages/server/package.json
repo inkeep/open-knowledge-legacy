@@ -34,7 +34,6 @@
     "test": "bun test"
   },
   "devDependencies": {
-    "@types/diff": "^8.0.0",
     "@types/picomatch": "^4.0.3",
     "typescript": "^5.9.3"
   }
