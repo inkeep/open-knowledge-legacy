@@ -48,6 +48,50 @@ The intersection: each of these classes alone is fixable; together they form a "
 - **[NOT NOW]** Tags / tag browser, custom CSS, keyboard customization, font size adjustment. Parity-for-parity's-sake or low-leverage features.
 - **[NOT NOW] "OK as a WYSIWYG editor for a Fumadocs project."** Future bet: a Fumadocs project (with fumadocs-ui components registered in `mdx-components.tsx`) can be opened by Open Knowledge as the editor. The editor recognizes fumadocs components, renders them with prop panels, persists changes back to the `.mdx` files. Positions OK as a Mintlify-class editor for the Fumadocs ecosystem. Owner: Dima long-term; Nick consults on generalizable MDX editing + built-in/custom component rendering. Promote when: v0 ships AND MDX pipeline (Nick's territory) stabilizes enough that the generalization surface is clean.
 
+## Status at a glance (as of 2026-04-14)
+
+Story-level shipped / in-progress / remaining audit. Links point to merged PRs, open PRs, or the relevant spec. Methodology: cross-checked story headers against `git log` on `main` and open branches. See "Active PRs in flight" at the bottom for PR-level status.
+
+### Shipped (merged to main)
+- **V0-2 — server primitive only.** CC1 broadcaster, `__system__` Y.Doc, `isSystemDoc()` skip surface. [PR #106](https://github.com/inkeep/open-knowledge/pull/106) (88351e1). Client-side consumer (ProviderPool pin, `FileSidebar` subscriber) still pending — see `specs/2026-04-13-v0-2-sidebar-push/SPEC.md` §9-10.
+- **V0-4 — delete + rename.** Sidebar context menu, confirmation dialogs, rescue buffer. [PR #88](https://github.com/inkeep/open-knowledge/pull/88) (9eeb3b3). Move / duplicate / new-folder variants still pending.
+- **V0-6.** Image paste + asset resolution shipped with **sibling storage model** (not per-doc subfolder). Supersedes PR #41. [PR #112](https://github.com/inkeep/open-knowledge/pull/112) (20dfb13). **Note:** diverged from PQ4 — ships sibling storage, not `attachments/<docName>/`. Reconcile PQ4 or design.
+- **V0-8.** Force-directed graph view, theme-aware rendering. [PR #76](https://github.com/inkeep/open-knowledge/pull/76) (496a06d).
+- **V0-9.** Outline panel + clickable heading navigation + resizeable/collapsible docking. [PR #110](https://github.com/inkeep/open-knowledge/pull/110), [PR #116](https://github.com/inkeep/open-knowledge/pull/116); commits cc02cab, 1a3d6fa, a40ee65.
+- **V0-24.** Enriched `exec` MCP surface. Spec [PR #103](https://github.com/inkeep/open-knowledge/pull/103) (065ebc7), impl [PR #111](https://github.com/inkeep/open-knowledge/pull/111) (4fdc217).
+
+### Spec shipped; implementation pending
+- **V0-1.** Spec merged via [PR #99](https://github.com/inkeep/open-knowledge/pull/99) (cafed34). Lock file + MCP auto-discovery + CC8 shutdown ordering now documented in `CLAUDE.md`; `.gitignore` entry for `server.lock` landed (faf5a22) — impl likely underway. Verify `packages/server/src/server-lock.ts` + `process-alive.ts` coverage.
+
+### In progress
+- **V0-16.** [PR #39](https://github.com/inkeep/open-knowledge/pull/39) open on `feat/timeline`. Substantial progress (US-003…US-007 commits); blocked on rebase against main + 17 review comments + greenfield-directive expansion (TQ8/10/11/12/13).
+- **V0-26.** `list_documents` enrichment underway (CC9 workstream); harness integration + file-ops MCP tools queued.
+
+### Remaining — Now phase (must ship before v0 launch)
+- **V0-3** — consumer of V0-2's CC1 contract; ready to spec.
+- **V0-5** — blocked on TQ5 staff-level decision (atomic-rewrite strategy).
+- **V0-7** — blocked on V0-1 lock infra landing (CC6 sequencing).
+- **V0-10** — TQ11 parked; low-risk frontend-only work.
+- **V0-11** — backend endpoints done; pure frontend; adopts V0-9's panel-docking pattern.
+- **V0-12** — blocked on PQ9 (migration path for existing non-ASCII content).
+- **V0-13** — depends on V0-12 slug correctness.
+- **V0-14** — wires after V0-16 scaffold removal (TQ13).
+
+### Remaining — Next / Later / Reach
+- **V0-17** — UI wire-up over PR #62 infrastructure.
+- **V0-18** — blocked on TQ12 (mode-crossing coordination).
+- **V0-19** — trivial scope.
+- **V0-20** — gated on Electron spec promoting from Draft.
+- **V0-21** — Tier 1 only; surface existing unresolved wiki-link data.
+- **V0-22** — depends on V0-7 session persistence.
+- **V0-23** — builds on V0-4's move backend.
+- **V0-25** — reach goal; foundation for post-v0 search bet.
+
+### Ambiguous / open audit items
+- **V0-1 implementation status** — spec shipped; code-side verification still needed. The `server.lock` gitignore entry (faf5a22) suggests impl is at least underway.
+- **V0-6 design drift** — PQ4 scoped per-doc `attachments/<docName>/`; PR #112 shipped sibling storage. Decide whether to reconcile spec or update PQ4 to reflect shipped reality.
+- **V0-3 / V0-11 contract** — TQ3 says "first story sets the contract." V0-2 (PR #106) already shipped the contract; V0-3 and V0-11 are consumers. Revise TQ3 wording.
+
 ## Team burndowns
 
 Each section below contains one team member's ownership summary, their stories in priority order (Now → Next → Later → Reach), and cross-references to shared stories owned by others. See [Overview](#overview) for the summary table.
@@ -1079,18 +1123,31 @@ Every agent-facing MCP tool must return **enriched data beyond what native tools
 ### Sibling projects (NOT absorbed — coordinate via cross-reference)
 - [projects/server-bridge-hardening/PROJECT.md](../server-bridge-hardening/PROJECT.md) — Narrow wedge (test coverage + unification); waiting on PR #39 merge
 
-### Active PRs in flight (status as of 2026-04-13)
+### Active PRs in flight (status as of 2026-04-14)
 - **PR #75** (Nick, draft) — this PR: story decomposition + v0 master project
 - **PR #72** (Nick, draft) — wiki-links-next story bundle prepared for Mike as decision-maker (4 stories absorbed — V0-3, V0-5, V0-12, V0-13; bundle carries source-of-truth detail)
-- **PR #39** (Miles, open) — Timeline + Rollback (V0-16 close-out)
-- **PR #76** (Mike, open) — Graph view of links (V0-8 close-out)
-- **PR #41** (Sarah, open) — Image upload (V0-6 close-out)
-- **PR #36** (Andrew, open, 3 days stale) — OpenTelemetry instrumentation spec (out of v0 scope)
+- **PR #39** (Miles, open) — Timeline + Rollback (V0-16 close-out, in progress)
+- **PR #36** (Andrew, open, stale) — OpenTelemetry instrumentation spec (out of v0 scope)
 - **PR #23** (Nick, open) — Typed component nodes (out of v0 scope)
-- **PR #12** (Dima, draft, draft) — Component slash insert (pending review)
-- **PR #81** — MERGED 2026-04-13: wiki-link menu flash bug fix
+- **PR #12** (Dima, draft) — Component slash insert (pending review)
 
-**Merged since v0-launch was written (2026-04-13):** PR #81 (small bug fix, no v0 scope impact).
+**Merged since v0-launch was written (between 2026-04-13 and 2026-04-14):**
+- **PR #76** — Graph view of links — closes out V0-8
+- **PR #88** — V0-4 file ops (delete, rename) — partial V0-4 close-out
+- **PR #99** — V0-1 spec (server process safety: lock file + shutdown + MCP auto-discovery)
+- **PR #103** — V0-24 spec (enriched exec MCP surface)
+- **PR #106** — V0-2 spec + CC1 server primitive (sidebar push contract v1)
+- **PR #110** — Docked panel UX — unblocks V0-11 panel adoption; supports V0-9
+- **PR #111** — V0-24 implementation (enriched exec MCP surface)
+- **PR #112** — Image upload + asset resolution — closes out V0-6 (supersedes PR #41; sibling storage model, PQ4 divergence noted)
+- **PR #113** — Reveal active file in sidebar on any navigation entry point
+- **PR #114** — Remove dead catalog-generation code
+- **PR #115** — Internal markdown links as first-class KB links
+- **PR #116** — Make panel resizeable and collapsible — completes V0-9 polish
+- **PR #81** (earlier, 2026-04-13) — wiki-link menu flash bug fix, no v0 scope impact
+
+**Closed without merge since 2026-04-13:**
+- **PR #41** — Image upload, superseded by PR #112
 
 ### Specs referenced
 - `specs/2026-04-11-sidebar-realtime-updates/SPEC.md` — V0-2 (5 OQs to resolve)
