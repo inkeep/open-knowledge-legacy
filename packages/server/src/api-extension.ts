@@ -844,7 +844,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
       const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
       const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
-      const dc = await sessionManager.getSession(docName);
+      const dc = await sessionManager.getSession(docName, agentId, {
+        displayName: agentName,
+        colorSeed: rawAgentId ?? agentId,
+      });
       const timestamp = new Date().toISOString();
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
@@ -930,7 +933,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         typeof (body as Record<string, unknown>).agentName === 'string'
           ? ((body as Record<string, unknown>).agentName as string)
           : 'Claude';
-      const dc = await sessionManager.getSession(resolvedDocName);
+      const dc = await sessionManager.getSession(resolvedDocName, agentId, {
+        displayName: agentName,
+        colorSeed: rawAgentId ?? agentId,
+      });
       const timestamp = new Date().toISOString();
 
       dc.document.awareness.setLocalStateField('mode', 'editing');
@@ -1333,7 +1339,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         typeof (body as Record<string, unknown>).agentName === 'string'
           ? ((body as Record<string, unknown>).agentName as string)
           : 'Claude';
-      const dc = await sessionManager.getSession(docName);
+      const dc = await sessionManager.getSession(docName, agentId, {
+        displayName: agentName,
+        colorSeed: rawAgentId ?? agentId,
+      });
       const timestamp = new Date().toISOString();
 
       let notFound = false;

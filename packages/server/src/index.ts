@@ -1,9 +1,12 @@
 export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,
+  type AgentSessionIdentity,
   AgentSessionManager,
   applyAgentMarkdownWrite,
+  colorFromSeed,
   DEFAULT_AGENT_ID,
+  iconFromClientName,
 } from './agent-sessions.ts';
 export {
   type ApiExtensionOptions,
