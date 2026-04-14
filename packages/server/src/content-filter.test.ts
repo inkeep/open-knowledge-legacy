@@ -417,5 +417,27 @@ describe('ContentFilter', () => {
       expect(filter.isDirExcluded('generated')).toBe(true);
       expect(filter.isDirExcluded('tutorials')).toBe(false);
     });
+
+    test('handles contentDir completely outside projectDir (dotdot relative path)', async () => {
+      const externalContentDir = await mkdtemp(join(tmpdir(), 'content-filter-external-'));
+      try {
+        mkdirSync(join(externalContentDir, 'sub'), { recursive: true });
+        writeFileSync(join(externalContentDir, 'readme.md'), '# Hello');
+        writeFileSync(join(externalContentDir, 'sub', 'nested.md'), '# Nested');
+
+        const filter = createContentFilter({
+          projectDir,
+          contentDir: externalContentDir,
+          includePatterns: ['**/*.md'],
+          excludePatterns: [],
+        });
+
+        expect(filter.isExcluded('readme.md')).toBe(false);
+        expect(filter.isExcluded('sub/nested.md')).toBe(false);
+        expect(filter.isDirExcluded('sub')).toBe(false);
+      } finally {
+        await rm(externalContentDir, { recursive: true, force: true });
+      }
+    });
   });
 });

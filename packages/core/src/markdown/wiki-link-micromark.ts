@@ -7,7 +7,10 @@
  * Ported from tech-probes/wiki-link-micromark/ (20/20 tests pass, ~100 SLOC).
  */
 import type { CompileContext, Extension as FromMarkdownExtension } from 'mdast-util-from-markdown';
-import type { Construct, Extension, State, Tokenizer } from 'micromark-util-types';
+import type { Handle as ToMarkdownHandle } from 'mdast-util-to-markdown';
+import type { Construct, Extension, State, Token, Tokenizer } from 'micromark-util-types';
+import type { Processor } from 'unified';
+import type { WikiLinkMdast } from './mdast-augmentation.ts';
 
 // Augment micromark's TokenTypeMap with our custom token types
 declare module 'micromark-util-types' {
@@ -148,32 +151,40 @@ export function wikiLinkSyntax(): Extension {
 
 // ─────────────── mdast-util-from-markdown extension ───────────────
 
-function enterWikiLink(this: CompileContext, token: any) {
+function enterWikiLink(this: CompileContext, token: Token) {
   this.enter(
-    { type: 'wikiLink', value: '', data: { target: '', anchor: null, alias: null } } as any,
+    {
+      type: 'wikiLink',
+      value: '',
+      data: { target: '', anchor: null, alias: null },
+    } as unknown as Parameters<CompileContext['enter']>[0],
     token,
   );
 }
 
-function exitTarget(this: CompileContext, token: any) {
-  const node = this.stack[this.stack.length - 1] as any;
+function topWikiLink(ctx: CompileContext): WikiLinkMdast {
+  return ctx.stack[ctx.stack.length - 1] as unknown as WikiLinkMdast;
+}
+
+function exitTarget(this: CompileContext, token: Token) {
+  const node = topWikiLink(this);
   node.data.target = this.sliceSerialize(token).trim();
 }
 
-function exitAnchor(this: CompileContext, token: any) {
-  const node = this.stack[this.stack.length - 1] as any;
+function exitAnchor(this: CompileContext, token: Token) {
+  const node = topWikiLink(this);
   const raw = this.sliceSerialize(token).trim();
   node.data.anchor = raw.length ? raw : null;
 }
 
-function exitAlias(this: CompileContext, token: any) {
-  const node = this.stack[this.stack.length - 1] as any;
+function exitAlias(this: CompileContext, token: Token) {
+  const node = topWikiLink(this);
   const raw = this.sliceSerialize(token).trim();
   node.data.alias = raw.length ? raw : null;
 }
 
-function exitWikiLink(this: CompileContext, token: any) {
-  const node = this.stack[this.stack.length - 1] as any;
+function exitWikiLink(this: CompileContext, token: Token) {
+  const node = topWikiLink(this);
   const { target, anchor, alias } = node.data;
   node.value = alias ? alias : anchor ? `${target}#${anchor}` : target;
   this.exit(token);
@@ -191,20 +202,24 @@ export const wikiLinkFromMarkdown: FromMarkdownExtension = {
 };
 
 /** mdast-util-to-markdown extension (handlers + unsafe) */
-export const wikiLinkToMarkdown = {
-  handlers: {
-    wikiLink(node: any) {
-      const target = node.data?.target ?? '';
-      const anchor = node.data?.anchor;
-      const alias = node.data?.alias;
-      let out = `[[${target}`;
-      if (anchor) out += `#${anchor}`;
-      if (alias) out += `|${alias}`;
-      return `${out}]]`;
-    },
-  },
+const wikiLinkHandler: ToMarkdownHandle = (node) => {
+  const wiki = node as unknown as WikiLinkMdast;
+  const target = wiki.data?.target ?? '';
+  const anchor = wiki.data?.anchor;
+  const alias = wiki.data?.alias;
+  let out = `[[${target}`;
+  if (anchor) out += `#${anchor}`;
+  if (alias) out += `|${alias}`;
+  return `${out}]]`;
+};
+
+export const wikiLinkToMarkdown: {
+  handlers: Record<string, ToMarkdownHandle>;
+  unsafe: Array<{ character: string; inConstruct: string[] }>;
+} = {
+  handlers: { wikiLink: wikiLinkHandler },
   unsafe: [{ character: '[', inConstruct: ['phrasing'] }],
-} as any;
+};
 
 // ─────────────── remark plugin ───────────────
 
@@ -212,8 +227,12 @@ export const wikiLinkToMarkdown = {
  * Remark plugin that adds wiki-link syntax support.
  * Use: `.use(remarkWikiLink)`
  */
-export function remarkWikiLink(this: any) {
-  const data = this.data();
+export function remarkWikiLink(this: Processor) {
+  const data = this.data() as {
+    micromarkExtensions?: unknown[];
+    fromMarkdownExtensions?: unknown[];
+    toMarkdownExtensions?: unknown[];
+  };
 
   // Register micromark syntax extension
   if (!data.micromarkExtensions) data.micromarkExtensions = [];

@@ -35,6 +35,7 @@ import {
   switchReconciledBaseScope,
 } from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
+import { acquireServerLock, releaseServerLock } from './server-lock.ts';
 import {
   commitUpstreamImport,
   destroyShadowRepo,
@@ -96,6 +97,12 @@ export interface ServerInstance {
    * Possible values: `'shadow-repo'`, `'file-watcher'`, `'head-watcher'`.
    */
   readonly degraded: readonly string[];
+  /**
+   * Directory holding the server lock (`<contentDir>/.open-knowledge`).
+   * Callers update the lock's port field via `updateServerLockPort(lockDir, port)`
+   * once the HTTP listener has bound to a kernel-assigned port.
+   */
+  readonly lockDir: string;
 }
 
 export function createServer(options: ServerOptions): ServerInstance {
@@ -118,57 +125,73 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const log = getLogger('server');
 
-  // Create content filter — unified exclusion logic (gitignore + config.content.exclude)
-  const contentFilter = createContentFilter({
-    projectDir,
-    contentDir,
-    includePatterns,
-    excludePatterns,
-  });
-  const backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
-
-  // Mutable ref so deferred init (initAsync) propagates to persistence and API
-  const shadowRef: ShadowRef = { current: shadowRepo };
-
-  const persistenceOpts: PersistenceOptions = {
-    contentDir,
-    projectDir,
-    gitEnabled,
-    commitDebounceMs,
-    wipRef,
-    shadowRef,
-    contentRoot,
-    backlinkIndex,
-  };
-
-  const persistence = createPersistenceExtension(persistenceOpts);
-
-  const hocuspocus = new Hocuspocus({
-    quiet,
-    debounce,
-    maxDebounce,
-    extensions: [persistence.extension],
+  // Acquire server lock BEFORE any side effects (shadow repo init, file watcher,
+  // HTTP listen, etc.). Collides fast with another running server in the same
+  // contentDir. Port may be 0 here — the CLI rewrites it post-listen via
+  // `updateServerLockPort(lockDir, realPort)`. See V0-1 spec.
+  const lockDir = resolve(contentDir, '.open-knowledge');
+  acquireServerLock(lockDir, {
+    port: options.port ?? 0,
+    worktreeRoot: projectDir,
   });
 
-  const sessionManager = new AgentSessionManager(hocuspocus);
+  // Synchronous init — if any constructor throws, release the lock before propagating.
+  let contentFilter: ReturnType<typeof createContentFilter>;
+  let backlinkIndex: BacklinkIndex;
+  let shadowRef: ShadowRef;
+  let persistence: ReturnType<typeof createPersistenceExtension>;
+  let hocuspocus: Hocuspocus;
+  let sessionManager: AgentSessionManager;
+  try {
+    contentFilter = createContentFilter({
+      projectDir,
+      contentDir,
+      includePatterns,
+      excludePatterns,
+    });
+    backlinkIndex = new BacklinkIndex({ projectDir, contentDir, contentFilter });
 
-  // Add API extension — push directly onto the extensions array rather than
-  // calling hocuspocus.configure({ extensions: [...] }), which uses spread
-  // and would REPLACE the existing persistence extension.
-  // getFileIndex delegates to the watcher once it's ready (watcher starts async in initAsync).
-  const apiExtension = createApiExtension({
-    hocuspocus,
-    sessionManager,
-    contentDir,
-    getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
-    getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
-    enableTestRoutes,
-    shadowRef,
-    projectRoot: projectDir,
-    contentRoot,
-    backlinkIndex,
-  });
-  hocuspocus.configuration.extensions.push(apiExtension);
+    shadowRef = { current: shadowRepo };
+
+    const persistenceOpts: PersistenceOptions = {
+      contentDir,
+      projectDir,
+      gitEnabled,
+      commitDebounceMs,
+      wipRef,
+      shadowRef,
+      contentRoot,
+      backlinkIndex,
+    };
+
+    persistence = createPersistenceExtension(persistenceOpts);
+
+    hocuspocus = new Hocuspocus({
+      quiet,
+      debounce,
+      maxDebounce,
+      extensions: [persistence.extension],
+    });
+
+    sessionManager = new AgentSessionManager(hocuspocus);
+
+    const apiExtension = createApiExtension({
+      hocuspocus,
+      sessionManager,
+      contentDir,
+      getFileIndex: () => (watcher ? watcher.getFileIndex() : new Map()),
+      getAliasMap: () => (watcher ? watcher.getAliasMap() : new Map()),
+      enableTestRoutes,
+      shadowRef,
+      projectRoot: projectDir,
+      contentRoot,
+      backlinkIndex,
+    });
+    hocuspocus.configuration.extensions.push(apiExtension);
+  } catch (err) {
+    releaseServerLock(lockDir);
+    throw err;
+  }
 
   const cc1Broadcaster = new CC1Broadcaster(hocuspocus);
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
@@ -606,111 +629,127 @@ export function createServer(options: ServerOptions): ServerInstance {
       const documentCount = hocuspocus.documents.size;
 
       try {
-        // Phase 1: stop watchers FIRST so L1 disk writes don't trigger reconcile loops
         try {
-          if (headWatcher) {
-            await headWatcher.unsubscribe();
-            headWatcher = null;
-          }
-          if (watcher) {
-            await watcher.unsubscribe();
-            watcher = null;
-          }
-        } catch (err) {
-          phaseErrors.push({
-            phase: 'watcher-unsubscribe',
-            error: err instanceof Error ? err.message : String(err),
-          });
-          log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
-        }
-
-        // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
-        try {
-          cc1Broadcaster.destroy();
-          if (systemDocConnection) {
-            await systemDocConnection.disconnect();
-            systemDocConnection = null;
-          }
-        } catch (err) {
-          phaseErrors.push({
-            phase: 'cc1-teardown',
-            error: err instanceof Error ? err.message : String(err),
-          });
-          log.error({ err }, '[server] shutdown phase-1b CC1 teardown failed');
-        }
-
-        // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
-        try {
-          await sessionManager.closeAll();
-        } catch (err) {
-          phaseErrors.push({
-            phase: 'agent-session-drain',
-            error: err instanceof Error ? err.message : String(err),
-          });
-          log.error({ err }, '[server] shutdown phase-2 agent session drain failed');
-        }
-
-        // Phase 3: drain L1 (Y.Doc → markdown → disk) via afterUnloadDocument hook
-        try {
-          await flushAllStoresAndWait(destroyTimeoutMs);
-        } catch (err) {
-          phaseErrors.push({
-            phase: 'flush-all-stores',
-            error: err instanceof Error ? err.message : String(err),
-          });
-          log.error({ err }, '[server] shutdown phase-3 flush failed');
-        }
-
-        // Phase 4: drain L2 (disk → git) — only meaningful AFTER L1 has run
-        // Bounded to destroyTimeoutMs so a stuck git process doesn't hang shutdown.
-        let l2TimeoutId: ReturnType<typeof setTimeout> | undefined;
-        try {
-          await Promise.race([
-            (async () => {
-              await persistence.flushPendingGitCommit();
-              await persistence.waitForPendingCommits();
-            })(),
-            new Promise<void>((_, reject) => {
-              l2TimeoutId = setTimeout(
-                () => reject(new Error('L2 git flush timeout')),
-                destroyTimeoutMs,
-              );
-            }),
-          ]);
-        } catch (err) {
-          phaseErrors.push({
-            phase: 'git-commit-flush',
-            error: err instanceof Error ? err.message : String(err),
-          });
-          log.error({ err }, '[server] shutdown phase-4 git commit flush failed');
-        } finally {
-          if (l2TimeoutId !== undefined) clearTimeout(l2TimeoutId);
-        }
-      } finally {
-        // Phase 5: shadow repo release — ALWAYS runs
-        if (shadowRef.current) {
+          // Phase 1: stop watchers FIRST so L1 disk writes don't trigger reconcile loops
           try {
-            destroyShadowRepo(shadowRef.current);
+            if (headWatcher) {
+              await headWatcher.unsubscribe();
+              headWatcher = null;
+            }
+            if (watcher) {
+              await watcher.unsubscribe();
+              watcher = null;
+            }
           } catch (err) {
             phaseErrors.push({
-              phase: 'shadow-repo-release',
+              phase: 'watcher-unsubscribe',
               error: err instanceof Error ? err.message : String(err),
             });
-            log.error({ err }, '[server] shutdown phase-5 destroyShadowRepo failed');
+            log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
+          }
+
+          // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
+          try {
+            cc1Broadcaster.destroy();
+            if (systemDocConnection) {
+              await systemDocConnection.disconnect();
+              systemDocConnection = null;
+            }
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'cc1-teardown',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown phase-1b CC1 teardown failed');
+          }
+
+          // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
+          try {
+            await sessionManager.closeAll();
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'agent-session-drain',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown phase-2 agent session drain failed');
+          }
+
+          // Phase 3: drain L1 (Y.Doc → markdown → disk) via afterUnloadDocument hook
+          try {
+            await flushAllStoresAndWait(destroyTimeoutMs);
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'flush-all-stores',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown phase-3 flush failed');
+          }
+
+          // Phase 4: drain L2 (disk → git) — only meaningful AFTER L1 has run
+          // Bounded to destroyTimeoutMs so a stuck git process doesn't hang shutdown.
+          let l2TimeoutId: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              (async () => {
+                await persistence.flushPendingGitCommit();
+                await persistence.waitForPendingCommits();
+              })(),
+              new Promise<void>((_, reject) => {
+                l2TimeoutId = setTimeout(
+                  () => reject(new Error('L2 git flush timeout')),
+                  destroyTimeoutMs,
+                );
+              }),
+            ]);
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'git-commit-flush',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown phase-4 git commit flush failed');
+          } finally {
+            if (l2TimeoutId !== undefined) clearTimeout(l2TimeoutId);
+          }
+        } finally {
+          // Phase 5: shadow repo release — ALWAYS runs
+          if (shadowRef.current) {
+            try {
+              destroyShadowRepo(shadowRef.current);
+            } catch (err) {
+              phaseErrors.push({
+                phase: 'shadow-repo-release',
+                error: err instanceof Error ? err.message : String(err),
+              });
+              log.error({ err }, '[server] shutdown phase-5 destroyShadowRepo failed');
+            }
+          }
+
+          const durationMs = Date.now() - t0;
+          if (phaseErrors.length === 0) {
+            log.info(
+              { documentCount, durationMs },
+              `[server] shutdown flushed ${documentCount} documents in ${durationMs}ms`,
+            );
+          } else {
+            log.warn(
+              { documentCount, durationMs, phaseErrors },
+              `[server] shutdown flushed ${documentCount} documents in ${durationMs}ms with ${phaseErrors.length} phase error(s)`,
+            );
           }
         }
-
-        const durationMs = Date.now() - t0;
-        if (phaseErrors.length === 0) {
-          log.info(
-            { documentCount, durationMs },
-            `[server] shutdown flushed ${documentCount} documents in ${durationMs}ms`,
-          );
-        } else {
-          log.warn(
-            { documentCount, durationMs, phaseErrors },
-            `[server] shutdown flushed ${documentCount} documents in ${durationMs}ms with ${phaseErrors.length} phase error(s)`,
-          );
+      } finally {
+        // Phase 6 (CC8): release server lock LAST — after shadow repo release,
+        // agent session drain, L1/L2 flush. If an earlier phase threw, we still
+        // release so a subsequent start can succeed. Invariant: no other process
+        // may acquire this lock until every prior phase has run.
+        try {
+          releaseServerLock(lockDir);
+        } catch (err) {
+          phaseErrors.push({
+            phase: 'server-lock-release',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          log.error({ err }, '[server] shutdown phase-6 releaseServerLock failed');
         }
       }
     })();
@@ -1046,5 +1085,5 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const ready = initAsync();
 
-  return { hocuspocus, sessionManager, cc1Broadcaster, destroy, ready, degraded };
+  return { hocuspocus, sessionManager, cc1Broadcaster, destroy, ready, degraded, lockDir };
 }

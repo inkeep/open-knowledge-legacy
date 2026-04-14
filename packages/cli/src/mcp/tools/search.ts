@@ -10,7 +10,7 @@
 import { z } from 'zod';
 import { type GrepMatch, grep } from '../../bash/index.ts';
 import type { Config } from '../../config/schema.ts';
-import type { CatalogStore } from '../../content/catalog-store.ts';
+import { type EnrichedMeta, enrichPath } from '../../content/enrichment.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
@@ -29,9 +29,9 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export interface SearchDeps {
-  catalog: CatalogStore;
   projectDir: string;
   config: Config;
+  serverUrl?: string | undefined;
 }
 
 interface FileGroup {
@@ -77,12 +77,21 @@ export async function buildSearchResult(
 
   const groups = groupByFile(visible);
 
-  // Fetch metadata for each file (parallel).
-  const metaByPath = new Map<string, Awaited<ReturnType<CatalogStore['getArticleMeta']>>>();
+  // Per-file enrichment via shared helper (D4/D13). Slim shape per FR14 —
+  // no history, no backlinkCount, to avoid N-amplification on multi-file
+  // search output.
+  const metaByPath = new Map<string, EnrichedMeta>();
   await Promise.all(
     groups.map(async (g) => {
-      const meta = await deps.catalog.getArticleMeta(g.path).catch(() => null);
-      metaByPath.set(g.path, meta);
+      try {
+        const meta = await enrichPath(g.path, {
+          projectDir: deps.projectDir,
+          serverUrl: deps.serverUrl,
+        });
+        metaByPath.set(g.path, meta);
+      } catch {
+        // Enrichment failure is non-fatal — omit metadata for that file.
+      }
     }),
   );
 
@@ -96,7 +105,7 @@ export async function buildSearchResult(
     const meta = metaByPath.get(group.path);
     const title = meta?.title ?? group.path;
     lines.push(`### ${title} (${group.path})`);
-    if (meta?.tags.length) {
+    if (meta?.tags?.length) {
       lines.push(`Tags: ${meta.tags.join(', ')}`);
     }
     if (meta?.description) {

@@ -145,6 +145,16 @@ The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or
 
 **Writer lock:** Only one active writer instance may mutate a given shadow root. The lock file at `<shadowDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
 
+### Server process lock
+
+One `createServer()` instance at a time per content directory. The lock file at `<contentDir>/.open-knowledge/server.lock` contains `{ pid, hostname, port, startedAt, worktreeRoot }`. `acquireServerLock()` runs at the top of `createServer()` before any side effects; a live same-host PID holding the lock throws `ServerLockCollisionError`, stale locks (dead PID, different host, corrupt JSON) are replaced with a warning.
+
+`port: 0` is the sentinel for "starting, not yet bound." CLI/Vite callers invoke `updateServerLockPort(lockDir, realPort)` after `http.listen()` resolves so MCP discovery reads the real port. The mutation is ownership-guarded — a process whose pid does not match refuses to rewrite.
+
+`bun run dev` (Vite plugin) and `open-knowledge start` share this lock, so running both against the same content directory fails the second invocation fast. Different content directories are unaffected.
+
+**CC8 shutdown ordering.** The server lock is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release shadow lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited.
+
 ### Symlinks
 
 Symlinks inside the content directory are fully supported. Design rationale and edge-case catalog: [reports/symlink-handling-file-sync-crdt/REPORT.md](reports/symlink-handling-file-sync-crdt/REPORT.md).
@@ -188,6 +198,8 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating
 - `src/shadow-repo.ts` — `initShadowRepo()`, `commitWip()`, `commitUpstreamImport()`, `parkBranch()`, `readParkedState()`, `saveVersion()`
 - `src/shadow-lock.ts` — `acquireLock()` / `releaseLock()` for exclusive shadow-root writer access
+- `src/server-lock.ts` — `acquireServerLock()` / `updateServerLockPort()` / `readServerLock()` / `releaseServerLock()` + `ServerLockCollisionError`. One server per contentDir; advertises real port for MCP discovery
+- `src/process-alive.ts` — `isProcessAlive(pid)` shared between shadow-lock and server-lock
 - `src/head-watcher.ts` — `startHeadWatcher()`; tracks `lastKnownBranch`, classifies `BatchKind` (within-branch / cross-branch / detached-head)
 - `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
@@ -208,7 +220,7 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 |---------|-------------|
 | `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app |
 | `open-knowledge init` | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json` |
-| `open-knowledge mcp` | Start MCP stdio server (disk-only or connects to running Hocuspocus) |
+| `open-knowledge mcp` | Start MCP stdio server (disk-only or connects to running Hocuspocus — port auto-discovered via `server.lock`) |
 
 ### Config system
 
@@ -227,8 +239,9 @@ Hierarchical YAML in `.open-knowledge/` directories:
 ### Key files
 
 - `src/cli.ts` — Commander.js entry point (shebang), early color detection
-- `src/commands/start.ts` — start command (Hocuspocus + static assets + colored output)
-- `src/commands/mcp.ts` — MCP stdio server command
+- `src/commands/start.ts` — start command (Hocuspocus + static assets + colored output); calls `updateServerLockPort` post-listen; idempotent SIGINT/SIGTERM shutdown routed through `destroy()`
+- `src/commands/mcp.ts` — MCP stdio server command; `discoverServerUrl()` reads `<contentDir>/.open-knowledge/server.lock` for zero-config port discovery. Precedence: `--port` override > live lock with port > 0 > disk-only fallback
+- `src/config/paths.ts` — Shared `resolveContentDir(config, cwd)` / `resolveLockDir(contentDir)` so `start.ts` and `mcp.ts` cannot disagree on where the lock lives
 - `src/ui/colors.ts` — Color scheme + semantic helpers
 - `src/ui/banner.ts` — Startup banner rendering
 - `src/config/schema.ts` — Zod config schema with defaults
@@ -270,7 +283,7 @@ Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
 ### Dev mode
 
-The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173.
+The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173. The plugin participates in the same `server.lock` as the published CLI, so `bun run dev` and `open-knowledge start` against the same content directory are mutually exclusive — the second invocation fails fast with `ServerLockCollisionError`.
 
 ### Key files
 
@@ -459,6 +472,10 @@ lsof -i :5173                     # Check what's using default port
 
 Each worktree has its own content directory. The test harness creates a fresh `tmpDir` per test run — no shared state between worktrees.
 
+**ProseMirror-model duplication in nested worktrees:** Worktrees at `.claude/worktrees/X/` are nested inside the parent repo directory. Bun resolves workspace packages (e.g., `@inkeep/open-knowledge-core`) by walking up the directory tree — finding the parent repo's `packages/core/` and its `node_modules/` first, not the worktree's. When the parent's `prosemirror-model` instance differs from the worktree's, `PmNode.fromJSON()` fails with "looks like multiple versions of prosemirror-model were loaded."
+
+**Fix:** Run `bun install` from the worktree root to create worktree-local `node_modules/`. The dev server is unaffected (Vite `resolve.dedupe` handles it). For test files, prefer direct relative imports (`../../packages/core/src/...`) over workspace imports (`@inkeep/open-knowledge-core`). See `reports/bun-prosemirror-model-dedup/REPORT.md`.
+
 ### Multi-agent local workflows
 
 This repo supports multiple agents (or agents + manual dev servers) running concurrently without coordination:
@@ -554,7 +571,7 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 - **NG6:** Non-ambiguous backslash escapes (e.g., `\foo`) lose the backslash on round-trip — only CommonMark §2.4 structurally-ambiguous escapes are preserved via `escapeMark`
 - **NG7:** MDX `---` inside a JSX block parses as `thematicBreak` — escape to `\---` or wrap in code fence
 - **NG8:** Block-level GFM (tables, tasklists) inside inline `<Note>...</Note>` flattens to inline text — use `<Note>\n\n...\n\n</Note>` form for block children
-- **NG9:** Unicode Private Use Area characters U+E000, U+E001, and U+E002 in source content are reserved as internal sentinels by `autolink-void-html-guard.ts` (R23 MDX-vs-autolink/bare-HTML fix). U+E000 replaces `<` and U+E001 replaces `>` in protected patterns; U+E002 is injected as a per-character separator inside autolink URLs to defeat `remark-gfm`'s autolink-literal matcher (so `<https://url>` round-trips faithfully instead of being re-tokenized as a bare-URL link with `>` absorbed into the href). Source content containing these codepoints may be corrupted by the guard's restoration pass. U+E000/E001/E002 are not assigned by Unicode and are rare in legitimate content (some icon-font payloads use them); if encountered in real documents, the guard's sentinel bytes must be remapped to a less-contested PUA range.
+- **NG9:** Unicode Private Use Area characters U+E000–U+E004 in source content are reserved as internal sentinels by `autolink-void-html-guard.ts` (R23 guard). U+E000 replaces `<` in protected patterns, U+E001 replaces `>`, U+E002 replaces `:` inside autolink URLs (defeats remark-gfm autolink-literal), U+E003 replaces `@` inside autolink URLs (defeats remark-gfm email autolink), U+E004 replaces `{` in unmatched brace positions (defeats remark-mdx expression parser). Source content containing these codepoints may be corrupted by the guard's restoration pass. These PUA characters are not assigned by Unicode and are rare in legitimate content; if encountered in real documents, the guard's sentinel bytes must be remapped to a less-contested PUA range.
 - **NG10:** A thematicBreak at document start is normalized from `---` to `***` on serialize. `---` at document position 0 is indistinguishable from empty YAML frontmatter under `remark-frontmatter`; re-parsing `---\n\n<content>` tokenizes differently than `***\n\n<content>`, breaking idempotence (I3/I4/I5/I7). Non-doc-start thematicBreaks preserve `sourceRaw` faithfully. Implemented in `packages/core/src/markdown/to-markdown-handlers.ts:thematicBreak`.
 - **NG11:** Documents consisting only of ignore-typed mdast nodes (yaml frontmatter, toml frontmatter, footnoteDefinition) receive a synthesized empty paragraph so the PM doc satisfies `doc.content: 'block+'`. Observed input like `---\n\n---` (empty YAML frontmatter) or a file containing only `[label]: url` reference definitions without body content round-trips to an empty document. Implemented in `packages/core/src/markdown/pipeline.ts:ensureNonEmptyDoc`.
 

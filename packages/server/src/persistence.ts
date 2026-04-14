@@ -348,17 +348,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         metaMap.set('frontmatter', frontmatter);
       }
 
-      let json: ReturnType<typeof mdManager.parse>;
-      try {
-        json = mdManager.parse(body);
-      } catch (err) {
-        log.error(
-          { err, documentName, bodyLength: body.length },
-          `[persistence] Failed to parse ${documentName} — document will load empty`,
-        );
-        setReconciledBase(documentName, raw);
-        return;
-      }
+      // Use parseSafe() — never throws. On acorn/remark-mdx errors (e.g.,
+      // files with `{non-JS content}`), retries with all { protected. Better
+      // to show degraded content than an empty document.
+      const json = mdManager.parseSafe(body);
 
       const xmlFragment = document.getXmlFragment('default');
       log.info(

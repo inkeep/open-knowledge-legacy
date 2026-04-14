@@ -17,7 +17,6 @@
  * `register(...)` export, then import and call it from here.
  */
 import type { Config } from '../../config/schema.ts';
-import type { CatalogStore } from '../../content/catalog-store.ts';
 import {
   DESCRIPTION as CONSOLIDATE_DESCRIPTION,
   register as registerConsolidate,
@@ -26,6 +25,7 @@ import {
   DESCRIPTION as EDIT_DOCUMENT_DESCRIPTION,
   register as registerEditDocument,
 } from './edit-document.ts';
+import { DESCRIPTION as EXEC_DESCRIPTION, register as registerExec } from './exec.ts';
 import {
   DESCRIPTION as GET_BACKLINKS_DESCRIPTION,
   register as registerGetBacklinks,
@@ -73,6 +73,7 @@ export { textResult } from './shared.ts';
 
 /** Tool descriptions keyed by name — used by INSTRUCTIONS in server.ts to avoid duplication. */
 export const TOOL_DESCRIPTIONS = {
+  exec: EXEC_DESCRIPTION,
   'init-content': INIT_CONTENT_DESCRIPTION,
   ingest: INGEST_DESCRIPTION,
   research: RESEARCH_DESCRIPTION,
@@ -94,27 +95,31 @@ export interface RegisterAllToolsOptions {
   serverUrl?: string;
   projectDir: string;
   config: Config;
-  catalog: CatalogStore;
 }
 
 export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsOptions): void {
-  // Workflow tools — return instructional text, no server connection needed
-  registerInitContent(server);
-  registerIngest(server);
-  registerResearch(server);
-  registerConsolidate(server);
+  // exec — the primary surface (V0-24 / L2-aggressive per D2).
+  registerExec(server, {
+    projectDir: opts.projectDir,
+    serverUrl: opts.serverUrl,
+  });
 
-  // Enriched read/search — need catalog + filesystem + (optionally) Hocuspocus for backlinks
+  // Workflow tools — return instructional text, no server connection needed
+  registerInitContent(server, opts.config);
+  registerIngest(server, opts.config);
+  registerResearch(server, opts.config);
+  registerConsolidate(server, opts.config);
+
+  // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(server, {
-    catalog: opts.catalog,
     projectDir: opts.projectDir,
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
   registerSearch(server, {
-    catalog: opts.catalog,
     projectDir: opts.projectDir,
     config: opts.config,
+    serverUrl: opts.serverUrl,
   });
 
   // Document tools — make HTTP calls to Hocuspocus

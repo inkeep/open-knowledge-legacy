@@ -25,7 +25,7 @@ export const HtmlBlockFidelity = Node.create({
     return [{ tag: 'div[data-html-block]' }];
   },
 
-  renderHTML({ node }: any) {
+  renderHTML({ node }) {
     return ['div', { 'data-html-block': '', class: 'html-block' }, node.attrs.content];
   },
 });

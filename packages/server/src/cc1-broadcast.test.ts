@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import type { Hocuspocus } from '@hocuspocus/server';
 import {
   CC1_CONTRACT_VERSION,
   CC1Broadcaster,
@@ -51,7 +52,7 @@ describe('CC1Broadcaster', () => {
     mockHocuspocus = {
       documents: new Map([[SYSTEM_DOC_NAME, mockDoc]]),
     };
-    broadcaster = new CC1Broadcaster(mockHocuspocus as any);
+    broadcaster = new CC1Broadcaster(mockHocuspocus as unknown as Hocuspocus);
   });
 
   afterEach(() => {

@@ -71,7 +71,11 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
   }
 
   // Precompute the contentDir-to-projectDir prefix for path conversion.
+  // When contentDir is outside projectDir, the relative path starts with ".."
+  // and the `ignore` library rejects such paths. Skip gitignore-based exclusion
+  // entirely in that case — gitignore rules from projectDir do not apply.
   const contentRelPrefix = relative(projectDir, contentDir);
+  const contentOutsideProject = contentRelPrefix.startsWith('..');
 
   // Add config content.exclude patterns after .gitignore.
   // Config patterns are relative to contentDir, so prefix them when contentDir != projectDir.
@@ -121,6 +125,7 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
       // 1. Include check uses contentDir-relative path (patterns like **/*.md)
       if (!isIncluded(relativePath)) return true;
       // 2. Exclude check uses projectDir-relative path (gitignore patterns)
+      if (contentOutsideProject) return false;
       const projectRelPath = contentRelPrefix
         ? `${contentRelPrefix}/${relativePath}`
         : relativePath;
@@ -129,10 +134,7 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
     },
 
     isDirExcluded(relativePath: string): boolean {
-      // Only check exclusion rules (gitignore + config.exclude), not include patterns.
-      // Directories don't need to match **/*.md — we still want to traverse them.
-      // Check both with and without trailing slash — the `ignore` package distinguishes
-      // directory-specific patterns (e.g. `node_modules/`) from file patterns.
+      if (contentOutsideProject) return false;
       const projectRelPath = contentRelPrefix
         ? `${contentRelPrefix}/${relativePath}`
         : relativePath;
@@ -174,6 +176,11 @@ function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void
 
     const dirPath = join(dir, entry.name);
     const relToProject = relative(projectDir, dirPath);
+
+    // Skip directories outside projectDir — the `ignore` library rejects
+    // path.relative paths that start with "..". This happens when contentDir
+    // and projectDir are unrelated (e.g., broken-config tests).
+    if (relToProject.startsWith('..')) continue;
 
     // Skip directories that are already excluded by the bootstrap filter
     if (ig.ignores(relToProject) || ig.ignores(`${relToProject}/`)) continue;

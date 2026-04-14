@@ -12,6 +12,8 @@ export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Write markdown content to a document via the CRDT layer.',
   'Content is applied through Hocuspocus and propagated to all connected editors in real-time.',
   '',
+  '**Link liberally.** Every noun-phrase that names another document in this knowledge base should be a `[[wiki-link]]`, not plain prose. Backlinks are the primary navigation surface — underlinked documents become islands. Redlinks (links to pages that don\'t exist yet) are fine; they signal "this should exist." Prefer `[[Page Name]]` over Markdown `[text](./page.md)` — only wiki-links participate in the backlinks index.',
+  '',
   '**Parameters:**',
   '- `docName` — Document name (e.g., "my-doc" or "notes/meeting")',
   '- `markdown` — Markdown content to write',

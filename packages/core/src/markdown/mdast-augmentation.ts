@@ -58,8 +58,54 @@ declare module 'mdast' {
     bulletMarker?: string;
     listMarkerDelimiter?: string;
   }
-  /** Standalone `[[wiki]]` lines parse as root-level phrasing. */
+  /**
+   * WikiLinks are phrasing (inline) content at the micromark level (registered
+   * as a `text` construct). Declared in RootContentMap rather than
+   * PhrasingContentMap because the latter would add WikiLinkMdast to the
+   * Nodes union, and WikiLinkMdast doesn't satisfy Nodes' structural
+   * constraints — causing type errors in unist-util-visit callbacks.
+   * RootContentMap makes wikiLink a valid mdast node type without breaking
+   * the phrasing content type chain.
+   */
   interface RootContentMap {
     wikiLink: WikiLinkMdast;
+  }
+}
+
+// Augment MDX + directive node data interfaces with `sourceRaw` captured by the
+// position-slice walker (US-008, D12 — byte-identical MDX round-trip).
+declare module 'mdast-util-mdx-jsx' {
+  interface MdxJsxFlowElementData {
+    sourceRaw?: string;
+  }
+  interface MdxJsxTextElementData {
+    sourceRaw?: string;
+  }
+}
+
+declare module 'mdast-util-mdx-expression' {
+  interface MdxFlowExpressionData {
+    sourceRaw?: string;
+  }
+  interface MdxTextExpressionData {
+    sourceRaw?: string;
+  }
+}
+
+declare module 'mdast-util-mdxjs-esm' {
+  interface MdxjsEsmData {
+    sourceRaw?: string;
+  }
+}
+
+declare module 'mdast-util-directive' {
+  interface ContainerDirectiveData {
+    sourceRaw?: string;
+  }
+  interface LeafDirectiveData {
+    sourceRaw?: string;
+  }
+  interface TextDirectiveData {
+    sourceRaw?: string;
   }
 }

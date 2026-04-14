@@ -21,8 +21,8 @@ import {
   type RemarkProseMirrorOptions,
   remarkProseMirror,
 } from '@handlewithcare/remark-prosemirror';
+import type { Node as PmNode, Schema } from '@tiptap/pm/model';
 import type { Root as MdastRoot } from 'mdast';
-import type { Node as PmNode, Schema } from 'prosemirror-model';
 import remarkDirective from 'remark-directive';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
@@ -93,10 +93,22 @@ function ensureNonEmptyDoc(tree: MdastRoot): MdastRoot {
  * Parse a markdown string to a ProseMirror document node.
  */
 export function parseMd(source: string, opts: PipelineOptions): PmNode {
-  // R23: Protect autolinks and void HTML from remark-mdx claiming
+  // R23: Protect autolinks, void HTML, bare <, unmatched {, and other
+  // crash-triggering patterns from remark-mdx claiming.
   const protected_ = protectFromMdx(source);
+  const processor = createParseProcessor(opts);
 
-  const processor = unified()
+  // Create VFile so the position-slice walker can access the ORIGINAL source text
+  // (not the protected version) for accurate position slicing.
+  const file = new VFile(protected_);
+  const tree = processor.parse(file);
+  file.value = source;
+  const transformed = processor.runSync(tree, file);
+  return (processor as unknown as { stringify(tree: unknown): PmNode }).stringify(transformed);
+}
+
+function createParseProcessor(opts: PipelineOptions) {
+  return unified()
     .use(remarkParse)
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkMdx)
@@ -112,16 +124,6 @@ export function parseMd(source: string, opts: PipelineOptions): PmNode {
       schema: opts.schema,
       handlers: opts.handlers,
     } as RemarkProseMirrorOptions);
-
-  // Create VFile so the position-slice walker can access the ORIGINAL source text
-  // (not the protected version) for accurate position slicing
-  const file = new VFile(protected_);
-  const tree = processor.parse(file);
-  // Override file.value with original source for position-slice walker
-  file.value = source;
-  const transformed = processor.runSync(tree, file);
-  const doc = (processor as unknown as { stringify(tree: unknown): PmNode }).stringify(transformed);
-  return doc;
 }
 
 /**

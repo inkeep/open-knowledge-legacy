@@ -73,6 +73,14 @@ export {
   splitMarkdownBlocks,
 } from './reconciliation.ts';
 export {
+  acquireServerLock,
+  readServerLock,
+  releaseServerLock,
+  ServerLockCollisionError,
+  type ServerLockMetadata,
+  updateServerLockPort,
+} from './server-lock.ts';
+export {
   commitUpstreamImport,
   commitWip,
   initShadowRepo,

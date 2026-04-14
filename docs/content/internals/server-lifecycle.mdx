@@ -7,10 +7,13 @@ description: Startup initialization, graceful shutdown phases, and the data-loss
 
 ## Startup
 
-`createServer()` returns synchronously. Heavy initialization runs in the background and resolves through the `ready` promise.
+`createServer()` returns synchronously. The very first side effect is acquiring the server lock; heavy initialization then runs in the background and resolves through the `ready` promise.
 
 ```text
 createServer(options)          ← synchronous, returns ServerInstance
+  ├─ acquireServerLock         ← <contentDir>/.open-knowledge/server.lock
+  │                              (throws ServerLockCollisionError if a live
+  │                               same-host PID already holds it)
   ├─ Hocuspocus instance       ← immediate (in-memory)
   ├─ ContentFilter             ← immediate (compiled patterns)
   ├─ AgentSessionManager       ← immediate
@@ -22,11 +25,15 @@ createServer(options)          ← synchronous, returns ServerInstance
        └─ HEAD watcher start   ← @parcel/watcher subscribe on .git/ (if .git/ exists)
 ```
 
+The lock is written with `port: 0` as a "starting, not yet bound" sentinel. The CLI (`packages/cli/src/commands/start.ts`) and the Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) both call `updateServerLockPort(lockDir, realPort)` after `http.listen()` resolves so downstream tools (MCP, external clients) can read the actual port from the lock file.
+
+`ServerInstance.lockDir` is exposed on the returned instance for this purpose. Mutations are ownership-guarded — a process whose pid does not match the lock's refuses to rewrite it.
+
 Callers can `await serverInstance.ready` before accepting traffic, but it is not required -- Hocuspocus accepts WebSocket connections immediately and queues document loads until initialization completes.
 
 ## Graceful shutdown
 
-`destroy()` tears down the server in five ordered phases. Each phase has independent error handling so a failure in one phase does not skip subsequent phases.
+`destroy()` tears down the server in six ordered phases. Each phase has independent error handling so a failure in one phase does not skip subsequent phases.
 
 ```text
 destroy()
@@ -35,7 +42,8 @@ destroy()
   ├─ Phase 2: Drain sessions   ← AgentSessionManager.closeAll()
   ├─ Phase 3: L1 flush         ← flushAllStoresAndWait() — Y.Doc → markdown → disk
   ├─ Phase 4: L2 flush         ← flushPendingGitCommit() + waitForPendingCommits() — disk → git
-  └─ Phase 5: Shadow release   ← destroyShadowRepo() — always runs (finally block)
+  ├─ Phase 5: Shadow release   ← destroyShadowRepo() — always runs
+  └─ Phase 6: Server lock      ← releaseServerLock() — LAST, in finally block
 ```
 
 ### Phase ordering rationale
@@ -43,7 +51,8 @@ destroy()
 - **Phase 1 before Phase 3:** Watchers must stop before L1 writes hit disk, otherwise the file watcher detects the persistence write as an "external change" and triggers a reconciliation loop.
 - **Phase 2 before Phase 3:** Agent sessions hold DirectConnections to Y.Docs. Closing sessions first ensures no new writes arrive during the drain.
 - **Phase 3 before Phase 4:** L1 (`onStoreDocument`) writes markdown to disk and schedules the L2 git-commit timer. Running L2 before L1 would drain an empty commit queue, causing silent data loss.
-- **Phase 5 in finally:** The shadow repo writer lock must be released even if earlier phases throw.
+- **Phase 5 before Phase 6:** The shadow writer lock protects git plumbing; release it before the process-level server lock so a restart sees a clean shadow root even if Phase 6 throws.
+- **Phase 6 in finally:** The server lock is the final release and is wrapped in a `try/finally` around all prior phases. A mid-shutdown throw in Phase 1–5 must still release `server.lock`, otherwise the next start would see a stale lock from a process that cleanly exited. Ownership-guarded — only a process whose pid matches the lock's removes it.
 
 ### L1 drain: `flushAllStoresAndWait()`
 

@@ -5,6 +5,7 @@
  * the new unified pipeline.
  */
 import { describe, expect, test } from 'bun:test';
+import type { JSONContent } from '@tiptap/core';
 import { sharedExtensions } from '../extensions/shared.ts';
 import { MarkdownManager } from './index.ts';
 
@@ -14,7 +15,7 @@ function roundTrip(md: string): string {
   return mdManager.serialize(mdManager.parse(md));
 }
 
-function findInJson(json: any, type: string): any {
+function findInJson(json: JSONContent, type: string): JSONContent | null {
   if (json.type === type) return json;
   for (const child of json.content ?? []) {
     const found = findInJson(child, type);
