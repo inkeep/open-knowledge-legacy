@@ -348,9 +348,10 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         metaMap.set('frontmatter', frontmatter);
       }
 
-      // Use parseSafe() — never throws. On acorn/remark-mdx errors (e.g.,
-      // files with `{non-JS content}`), retries with all { protected. Better
-      // to show degraded content than an empty document.
+      // Use parseSafe() — never throws. On parse failure (e.g., broken MDX
+      // tags), falls through to whole-doc raw text as a single paragraph +
+      // R14 metric increment. Better to show degraded content than an empty
+      // document.
       const json = mdManager.parseSafe(body);
 
       const xmlFragment = document.getXmlFragment('default');

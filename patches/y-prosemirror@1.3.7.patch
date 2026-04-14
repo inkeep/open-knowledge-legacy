@@ -11,14 +11,14 @@ index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..66868191eef6d6581708edadbeb64f86
 -      /** @type {Y.Item} */ (el._item).delete(transaction);
 -    }, ySyncPluginKey);
 +    // R13 patch: substitute rawMdxFallback instead of destructive delete.
-+    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', e.message);
++    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', String(e && e.message || e));
 +    const isInline = schema.nodes[el.nodeName] && schema.nodes[el.nodeName].spec && schema.nodes[el.nodeName].spec.inline;
 +    if (!isInline && schema.nodes.rawMdxFallback) {
 +      try {
-+        const fallback = schema.node('rawMdxFallback', { reason: e.message }, [schema.text(el.nodeName)]);
++        const fallback = schema.node('rawMdxFallback', { reason: String(e && e.message || e) }, [schema.text(el.nodeName)]);
 +        meta.mapping.set(el, fallback);
 +        return fallback
-+      } catch (_fallbackErr) { console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', _fallbackErr.message); }
++      } catch (_fallbackErr) { console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', String(_fallbackErr && _fallbackErr.message || _fallbackErr)); }
 +    }
      meta.mapping.delete(el);
      return null
@@ -32,7 +32,7 @@ index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..66868191eef6d6581708edadbeb64f86
 -      /** @type {Y.Item} */ (text._item).delete(transaction);
 -    }, ySyncPluginKey);
 +    // R13 patch: log + skip instead of destructive delete for text nodes.
-+    console.warn('[y-prosemirror] schema.text() threw:', e.message);
++    console.warn('[y-prosemirror] schema.text() threw:', String(e && e.message || e));
      return null
    }
    // @ts-ignore
@@ -51,15 +51,15 @@ index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..45e367c1281b420e8b62b5b63851bc62
 +    // R13 patch: substitute rawMdxFallback instead of destructive delete.
 +    // The original code deleted the Y.Item, which is CRDT-permanent and
 +    // multi-peer broadcast. This patch preserves Y.Doc integrity.
-+    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', e.message)
++    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', String(e && e.message || e))
 +    const isInline = schema.nodes[el.nodeName] && schema.nodes[el.nodeName].spec && schema.nodes[el.nodeName].spec.inline
 +    if (!isInline && schema.nodes.rawMdxFallback) {
 +      try {
-+        const fallback = schema.node('rawMdxFallback', { reason: e.message }, [schema.text(el.nodeName)])
++        const fallback = schema.node('rawMdxFallback', { reason: String(e && e.message || e) }, [schema.text(el.nodeName)])
 +        meta.mapping.set(el, fallback)
 +        return fallback
 +      } catch (_fallbackErr) {
-+        console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', _fallbackErr.message)
++        console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', String(_fallbackErr && _fallbackErr.message || _fallbackErr))
 +      }
 +    }
 +    // Inline context or fallback substitution failed: skip without destructive delete
@@ -75,7 +75,7 @@ index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..45e367c1281b420e8b62b5b63851bc62
 -      /** @type {Y.Item} */ (text._item).delete(transaction)
 -    }, ySyncPluginKey)
 +    // R13 patch: log + skip instead of destructive delete for text nodes.
-+    console.warn('[y-prosemirror] schema.text() threw:', e.message)
++    console.warn('[y-prosemirror] schema.text() threw:', String(e && e.message || e))
      return null
    }
    // @ts-ignore

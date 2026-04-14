@@ -6,10 +6,9 @@
  * silent drop. Content is preserved AND developer signal is louder than
  * the previous throw-on-unknown behavior.
  *
- * TODO(US-004): Finalize R8 contract — unknown mdast types should produce
- * rawMdxFallback for block types and plain text for inline types. Until
- * US-004 lands the catch-all handler, known types parse without error
- * and the test verifies no silent drops.
+ * R8 contract (finalized in US-004): unknown mdast types produce
+ * rawMdxFallback for block types and plain text for inline types +
+ * console.warn structured event — no throw, no silent drop.
  */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';

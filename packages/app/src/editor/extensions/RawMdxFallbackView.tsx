@@ -24,6 +24,8 @@ export function RawMdxFallbackView({ node }: NodeViewProps) {
   const originalSpan = node.attrs.originalSpan as { start: number; end: number };
 
   function handleClick() {
+    // R13-created nodes inherit default {start:0, end:0} — skip navigation
+    if (originalSpan.start === 0 && originalSpan.end === 0) return;
     window.dispatchEvent(
       new CustomEvent<RawMdxNavDetail>(RAW_MDX_NAV_EVENT, {
         detail: { offset: originalSpan.start },

@@ -62,37 +62,48 @@ function parseRecursive(source: string, parse: ParseFn, depth: number): JSONCont
       }),
     );
 
-    const region = findFallbackRegion(source, offset);
-    const beforeSrc = source.slice(0, region.start);
-    const brokenSrc = source.slice(region.start, region.end);
-    const afterSrc = source.slice(region.end);
+    try {
+      const region = findFallbackRegion(source, offset);
+      const beforeSrc = source.slice(0, region.start);
+      const brokenSrc = source.slice(region.start, region.end);
+      const afterSrc = source.slice(region.end);
 
-    const beforeDoc = beforeSrc.trim()
-      ? parseRecursive(beforeSrc, parse, depth + 1)
-      : { type: 'doc' as const, content: [] };
-    const afterDoc = afterSrc.trim()
-      ? parseRecursive(hoistRefDefs(beforeSrc) + afterSrc, parse, depth + 1)
-      : { type: 'doc' as const, content: [] };
+      const beforeDoc = beforeSrc.trim()
+        ? parseRecursive(beforeSrc, parse, depth + 1)
+        : { type: 'doc' as const, content: [] };
+      const afterDoc = afterSrc.trim()
+        ? parseRecursive(hoistRefDefs(beforeSrc) + afterSrc, parse, depth + 1)
+        : { type: 'doc' as const, content: [] };
 
-    const fallbackNode: JSONContent = {
-      type: 'rawMdxFallback',
-      attrs: {
-        reason: (e as Error)?.message ?? 'parse error',
-        originalSpan: { start: region.start, end: region.end },
-      },
-      content: brokenSrc ? [{ type: 'text', text: brokenSrc }] : [],
-    };
+      const fallbackNode: JSONContent = {
+        type: 'rawMdxFallback',
+        attrs: {
+          reason: (e as Error)?.message ?? 'parse error',
+          originalSpan: { start: region.start, end: region.end },
+        },
+        content: brokenSrc ? [{ type: 'text', text: brokenSrc }] : [],
+      };
 
-    const merged: JSONContent[] = [
-      ...((beforeDoc.content as JSONContent[]) ?? []),
-      fallbackNode,
-      ...((afterDoc.content as JSONContent[]) ?? []),
-    ];
+      const merged: JSONContent[] = [
+        ...((beforeDoc.content as JSONContent[]) ?? []),
+        fallbackNode,
+        ...((afterDoc.content as JSONContent[]) ?? []),
+      ];
 
-    return {
-      type: 'doc',
-      content: merged.length > 0 ? merged : [{ type: 'paragraph', content: [] }],
-    };
+      return {
+        type: 'doc',
+        content: merged.length > 0 ? merged : [{ type: 'paragraph', content: [] }],
+      };
+    } catch (recoveryErr) {
+      incrementWholeDocFallback();
+      console.warn(
+        JSON.stringify({
+          event: 'mdx-whole-doc-fallback',
+          reason: `Recovery failed: ${(recoveryErr as Error)?.message ?? 'unknown'}`,
+        }),
+      );
+      return wholeDocRawText(source);
+    }
   }
 }
 
