@@ -17,7 +17,7 @@ export const DESCRIPTION = [
   '**Parameters:**',
   '- `docName` — Document name to restore',
   '- `commitSha` — The 40-character SHA of the shadow repo commit to restore to.',
-  '  Use `list_documents` + GET /api/history to find available versions.',
+  '  Use `get_history` to find available versions.',
 ].join('\n');
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {

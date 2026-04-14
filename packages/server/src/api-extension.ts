@@ -330,6 +330,8 @@ export interface ApiExtensionOptions {
   shadowRef?: ShadowRef;
   /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
+  /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
+  getCurrentBranch?: () => string | null;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
 }
@@ -436,6 +438,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     enableTestRoutes = false,
     shadowRef,
     flushGitCommit,
+    getCurrentBranch,
     contentRoot,
     backlinkIndex,
   } = options;
@@ -1126,8 +1129,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const docName = url.searchParams.get('docName') ?? '';
-    const branch = url.searchParams.get('branch') ?? 'main';
-
+    const branch = url.searchParams.get('branch') ?? getCurrentBranch?.() ?? 'main';
     if (!docName) {
       json(res, 400, { ok: false, error: 'docName query parameter is required' });
       return;
