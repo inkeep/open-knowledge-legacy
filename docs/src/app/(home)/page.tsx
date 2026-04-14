@@ -123,15 +123,6 @@ function Pillars() {
             </div>
           ))}
         </div>
-
-        <div className="mt-20 flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-6">
-          <div className="w-44 rounded-lg border border-[var(--slide-border)] py-3 text-center text-sm font-medium text-[var(--slide-text)]">
-            Open Source
-          </div>
-          <div className="w-72 rounded-lg border border-[var(--slide-border)] py-3 text-center text-sm font-medium text-[var(--slide-text)]">
-            Agent Platform (new)
-          </div>
-        </div>
       </div>
     </section>
   );
