@@ -8,7 +8,7 @@ import {
   type ServerLockMetadata,
   updateServerLockPort,
 } from '@inkeep/open-knowledge-server';
-import { OK_DIR } from '../constants';
+import { OK_DIR } from '../constants.ts';
 import { discoverServerUrl } from './mcp.ts';
 
 let tmpDir: string;

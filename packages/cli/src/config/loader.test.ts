@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { OK_DIR } from '../constants';
+import { OK_DIR } from '../constants.ts';
 import { loadConfig } from './loader';
 
 let testDir: string;

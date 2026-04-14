@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig } from '../config/loader.ts';
-import { OK_DIR } from '../constants';
+import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
 import { ALL_EDITOR_IDS } from './editors.ts';
 import { formatInitResult, runInit } from './init.ts';

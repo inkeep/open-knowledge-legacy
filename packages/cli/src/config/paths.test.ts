@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { OK_DIR } from '../constants';
-import { resolveContentDir, resolveLockDir } from './paths.ts';
+import { OK_DIR } from '../constants.ts';
 import type { Config } from './schema.ts';
 
 function makeConfig(dir: string): Config {
