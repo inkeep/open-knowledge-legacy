@@ -30,7 +30,23 @@ async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   return data.headings ?? [];
 }
 
-export function OutlinePanel({ docName, className = '' }: { docName: string; className?: string }) {
+export interface OutlineNavDetail {
+  index: number;
+  slug: string;
+  mode: 'wysiwyg' | 'source';
+}
+
+export const OUTLINE_NAV_EVENT = 'open-knowledge:outline-nav';
+
+export function OutlinePanel({
+  docName,
+  isSourceMode,
+  className = '',
+}: {
+  docName: string;
+  isSourceMode: boolean;
+  className?: string;
+}) {
   const {
     data: headings = [],
     isLoading,
@@ -58,17 +74,27 @@ export function OutlinePanel({ docName, className = '' }: { docName: string; cla
         ) : (
           <div className="flex flex-col gap-0.5">
             {headings.map((heading, index) => (
-              <div
+              <button
+                type="button"
                 // biome-ignore lint/suspicious/noArrayIndexKey: headings are positionally stable per load
                 key={index}
+                onClick={() => {
+                  const detail: OutlineNavDetail = {
+                    index,
+                    slug: heading.slug,
+                    mode: isSourceMode ? 'source' : 'wysiwyg',
+                  };
+                  window.dispatchEvent(new CustomEvent(OUTLINE_NAV_EVENT, { detail }));
+                }}
                 className={cn(
-                  'h-auto w-full justify-start truncate rounded-md py-1 text-left text-sm font-normal text-muted-foreground',
+                  'h-auto w-full cursor-pointer justify-start truncate rounded-md py-1 text-left text-sm font-normal text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                   heading.level === 1 && 'font-medium text-foreground',
                 )}
                 style={{ paddingLeft: `${(heading.level - 1) * 12 + 8}px`, paddingRight: '8px' }}
+                title={heading.text}
               >
                 {heading.text}
-              </div>
+              </button>
             ))}
           </div>
         )}

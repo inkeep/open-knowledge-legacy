@@ -90,7 +90,7 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
           onResize={(size) => setIsCollapsed(size.asPercentage === 0)}
           className="flex flex-col bg-muted/20"
         >
-          <DocPanel docName={activeDocName} />
+          <DocPanel docName={activeDocName} isSourceMode={isSourceMode} />
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
