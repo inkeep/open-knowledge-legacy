@@ -40,3 +40,5 @@ test-results/
 packages/app/test-results/
 playwright-report/
 blob-report/
+
+.open-knowledge/server.lock
