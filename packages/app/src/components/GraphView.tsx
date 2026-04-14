@@ -1,9 +1,11 @@
+import { colorForDocName } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-force-graph-2d';
 
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import { useDirectoryColorDepth } from '@/state/directory-color';
 import { buildGraphLabelDescriptors, pickGraphLabelText } from './graph-label-utils';
 import type { GraphData, GraphLink, GraphNode } from './graph-view-utils';
 
@@ -228,9 +230,10 @@ export function GraphView({
     return () => ro.disconnect();
   }, []);
 
+  const depth = useDirectoryColorDepth();
   const isDark = resolvedTheme === 'dark';
+  const theme = isDark ? ('dark' as const) : ('light' as const);
   const bgColor = isDark ? 'hsl(0 0% 4%)' : 'hsl(0 0% 100%)';
-  const defaultNodeColor = isDark ? '#6b7280' : '#9ca3af';
   const activeNodeColor = isDark ? '#69a3ff' : '#3784ff';
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
@@ -336,7 +339,9 @@ export function GraphView({
 
               ctx.beginPath();
               ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
-              ctx.fillStyle = isActive ? activeNodeColor : defaultNodeColor;
+              ctx.fillStyle = isActive
+                ? activeNodeColor
+                : colorForDocName(typeof node.id === 'string' ? node.id : '', { depth, theme });
               ctx.fill();
 
               if (isActive) {
