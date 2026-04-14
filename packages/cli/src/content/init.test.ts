@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { OK_DIR } from '../constants.ts';
 import {
   CLAUDE_MD_SECTION,
   initContent,
@@ -28,7 +29,7 @@ describe('initContent', () => {
   it('creates config-only .open-knowledge/ scaffold from scratch', () => {
     const result = initContent(testDir);
 
-    const okDir = join(testDir, '.open-knowledge');
+    const okDir = join(testDir, OK_DIR);
     expect(existsSync(okDir)).toBe(true);
     expect(existsSync(join(okDir, 'cache'))).toBe(true);
     expect(existsSync(join(okDir, 'AGENTS.md'))).toBe(true);
@@ -51,7 +52,7 @@ describe('initContent', () => {
     initContent(testDir);
 
     // Write custom content to AGENTS.md
-    const agentsPath = join(testDir, '.open-knowledge', 'AGENTS.md');
+    const agentsPath = join(testDir, OK_DIR, 'AGENTS.md');
     writeFileSync(agentsPath, 'custom content');
 
     // Second init
@@ -65,7 +66,7 @@ describe('initContent', () => {
   it('generates files with expected content', () => {
     initContent(testDir);
 
-    const okDir = join(testDir, '.open-knowledge');
+    const okDir = join(testDir, OK_DIR);
 
     // AGENTS.md describes the config-only scaffold + exec-first navigation
     const agents = readFileSync(join(okDir, 'AGENTS.md'), 'utf-8');
