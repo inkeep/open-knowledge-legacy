@@ -1412,7 +1412,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
-      const parsedJson = mdManager.parse(mdBody);
+      const parsedJson = mdManager.parseWithFallback(mdBody);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
 
