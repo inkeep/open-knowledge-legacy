@@ -16,7 +16,9 @@ import {
   createContentFilter,
   createExternalChangeHandler,
   createPersistenceExtension,
+  initShadowRepo,
   releaseServerLock,
+  type ShadowRef,
   startWatcher,
   updateServerLockPort,
   type WatcherHandle,
@@ -128,6 +130,19 @@ console.log(`[hocuspocus] content dir: ${CONTENT_DIR}`);
 // need git tracking of their throwaway content, so disable it outright.
 const isTestIsolated = Boolean(process.env.OK_TEST_CONTENT_DIR);
 
+// Shadow repo — initialized lazily. Deferred ref pattern matches standalone.ts.
+const shadowRef: ShadowRef = { current: undefined };
+if (!isTestIsolated) {
+  initShadowRepo(PROJECT_ROOT)
+    .then((shadow) => {
+      shadowRef.current = shadow;
+      console.log(`[dev] Shadow repo initialized at ${shadow.gitDir}`);
+    })
+    .catch((e) => {
+      console.warn('[dev] Shadow repo init failed (timeline features unavailable):', e);
+    });
+}
+
 // All throwable module-scope init runs inside this try. If anything fails we
 // release the lock synchronously before re-throwing, so a subsequent `bun run
 // dev` doesn't collide with an orphaned lock. Bindings are declared `let` so
@@ -137,14 +152,8 @@ let contentFilter: ReturnType<typeof createContentFilter>;
 let backlinkIndex: BacklinkIndex;
 export let hocuspocus: Hocuspocus;
 let sessionManager: AgentSessionManager;
+let persistence: ReturnType<typeof createPersistenceExtension>;
 try {
-  // Create content filter at module scope — unified exclusion (gitignore + config exclude).
-  // When OK_TEST_CONTENT_DIR is set (E2E test isolation), the content dir is an external
-  // tmpdir outside the project tree. Passing PROJECT_ROOT as projectDir would make
-  // content-filter compute `relative(projectDir, contentDir)` as a path with many `..`
-  // components, which the `ignore` npm library rejects. Treat the test content dir as
-  // its own project root — gitignore scanning becomes a no-op (the tmpdir has no
-  // .gitignore), which is semantically correct for isolated test runs.
   contentFilter = createContentFilter({
     projectDir: process.env.OK_TEST_CONTENT_DIR ? CONTENT_DIR : PROJECT_ROOT,
     contentDir: CONTENT_DIR,
@@ -157,27 +166,24 @@ try {
     contentFilter,
   });
 
+  persistence = createPersistenceExtension({
+    contentDir: CONTENT_DIR,
+    projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
+    contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+    gitEnabled: !isTestIsolated,
+    shadowRef,
+    backlinkIndex,
+  });
+
   hocuspocus = new Hocuspocus({
     quiet: true,
     debounce: 2000,
     maxDebounce: 10000,
-    extensions: [
-      createPersistenceExtension({
-        contentDir: CONTENT_DIR,
-        projectDir: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
-        contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
-        gitEnabled: !isTestIsolated,
-        backlinkIndex,
-      }).extension,
-    ],
+    extensions: [persistence.extension],
   });
 
   sessionManager = new AgentSessionManager(hocuspocus);
 
-  // Add API extension — push directly rather than using hocuspocus.configure()
-  // which replaces the extensions array via spread, losing the persistence extension.
-  // enableTestRoutes is safe here: this plugin only runs under `vite dev` (local
-  // development), never in production builds. E2E tests rely on /api/test-reset.
   hocuspocus.configuration.extensions.push(
     createApiExtension({
       hocuspocus,
@@ -186,17 +192,13 @@ try {
       getFileIndex: () => (activeWatcher ? activeWatcher.getFileIndex() : new Map()),
       getAliasMap: () => (activeWatcher ? activeWatcher.getAliasMap() : new Map()),
       enableTestRoutes: true,
-      // Mirror persistence's test-isolation handling so shadow-repo path calculation
-      // doesn't try to resolve paths through ../.. components when CONTENT_DIR is
-      // outside the worktree.
-      projectRoot: isTestIsolated ? CONTENT_DIR : PROJECT_ROOT,
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      shadowRef,
+      flushGitCommit: () => persistence.flushPendingGitCommit(),
       backlinkIndex,
     }),
   );
 } catch (err) {
-  // Belt-and-suspenders to the process.once('exit') handler: release synchronously
-  // so the next `bun run dev` in this contentDir doesn't see an orphan lock.
   try {
     releaseServerLock(LOCK_DIR);
   } catch (releaseErr) {

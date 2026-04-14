@@ -45,6 +45,7 @@ export { MarkdownManager } from './markdown/index.ts';
 // Types
 export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
+export type { DiffLine, DiffLineType, EntryType, TimelineEntry } from './types/timeline.ts';
 
 // Utils
 export {
