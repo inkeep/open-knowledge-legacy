@@ -17,6 +17,11 @@ describe('bucketKeyForPath', () => {
     expect(bucketKeyForPath('projects/alpha', 0)).toBeNull();
   });
 
+  test('returns null for negative depth', () => {
+    expect(bucketKeyForPath('a/b/c', -1)).toBeNull();
+    expect(bucketKeyForPath('a/b/c', -100)).toBeNull();
+  });
+
   test('returns null for empty path', () => {
     expect(bucketKeyForPath('', 1)).toBeNull();
   });

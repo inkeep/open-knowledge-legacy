@@ -20,7 +20,7 @@ function djb2(str: string): number {
 
 /** Prefix-truncation bucket: first `min(depth, segments.length)` segments, or null for flat-root / depth 0. */
 export function bucketKeyForPath(path: string, depth: number): string | null {
-  if (depth === 0) return null;
+  if (depth <= 0) return null;
   const segments = path.split('/').filter((s) => s.length > 0);
   if (segments.length === 0) return null;
   return segments.slice(0, Math.min(depth, segments.length)).join('/');
