@@ -1,8 +1,15 @@
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { GraphView } from '@/components/GraphView';
 import { Button } from '@/components/ui/button';
 import { Panel, PanelCount, PanelHeader, PanelTitle } from '@/components/ui/panel';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  MAX_DEPTH,
+  MIN_DEPTH,
+  useDirectoryColorDepth,
+  useSetDirectoryColorDepth,
+} from '@/state/directory-color';
 
 function getFullscreenElement(): Element | null {
   return (
@@ -46,6 +53,9 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
     };
   }, []);
 
+  const depth = useDirectoryColorDepth();
+  const setDepth = useSetDirectoryColorDepth();
+
   return (
     <Panel ref={panelRef} className={isFullscreen ? 'min-h-[100dvh] bg-background' : undefined}>
       <PanelHeader>
@@ -57,6 +67,42 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               <PanelCount>{stats.links} links</PanelCount>
             </div>
           )}
+        </div>
+        <div className="flex items-center gap-0.5">
+          <span className="text-xs text-muted-foreground select-none">Depth</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground hover:bg-accent"
+                aria-label="Decrease directory coloring depth"
+                disabled={depth <= MIN_DEPTH}
+                onClick={() => setDepth(depth - 1)}
+              >
+                <ChevronDown className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Decrease directory coloring depth</TooltipContent>
+          </Tooltip>
+          <span className="w-4 text-center text-xs tabular-nums text-muted-foreground select-none">
+            {depth}
+          </span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground hover:bg-accent"
+                aria-label="Increase directory coloring depth"
+                disabled={depth >= MAX_DEPTH}
+                onClick={() => setDepth(depth + 1)}
+              >
+                <ChevronUp className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Increase directory coloring depth</TooltipContent>
+          </Tooltip>
         </div>
         <Button
           variant="ghost"
