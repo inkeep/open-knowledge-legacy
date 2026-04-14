@@ -386,8 +386,17 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         typeof fmFromDoc === 'string' ? fmFromDoc : frontmatterCache.get(documentName) || '';
       const markdown = prependFrontmatter(frontmatter, body);
 
-      // Debug: detect duplication before writing
+      // Skip the write when the serialized output matches the load-time
+      // baseline. Hocuspocus fires onStoreDocument after any Y.Doc mutation,
+      // including the first-pass observer sync that populates Y.Text from the
+      // freshly-loaded XmlFragment — that mutation is semantically a no-op
+      // but would otherwise rewrite the file in normalized form (padded
+      // tables, added backslash-escapes, etc.), polluting the user's git
+      // working tree on mere file open.
       const currentBase = getReconciledBase(documentName);
+      if (currentBase !== undefined && markdown === currentBase) return;
+
+      // Debug: detect duplication before writing
       if (currentBase && markdown.length > currentBase.length * 1.5) {
         log.warn(
           { documentName, markdownLength: markdown.length, baseLength: currentBase.length },
