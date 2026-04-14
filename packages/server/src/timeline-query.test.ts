@@ -58,7 +58,7 @@ const agent: WriterIdentity = {
 describe('getDocumentHistory', () => {
   test('returns empty result when shadow has no commits', async () => {
     const { shadow } = await setup();
-    const result = await getDocumentHistory(shadow, { docName: 'intro' });
+    const result = await getDocumentHistory(shadow, { docName: 'intro' }, 'content/docs');
     expect(result.entries).toHaveLength(0);
     expect(result.total).toBe(0);
     expect(result.hasMore).toBe(false);
@@ -73,7 +73,7 @@ describe('getDocumentHistory', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Edit 2\n');
     await commitWip(shadow, human, 'content/docs', 'WIP: second human edit');
 
-    const result = await getDocumentHistory(shadow, { docName: 'intro' });
+    const result = await getDocumentHistory(shadow, { docName: 'intro' }, 'content/docs');
 
     expect(result.entries.length).toBe(2);
     expect(result.total).toBe(2);
@@ -96,7 +96,7 @@ describe('getDocumentHistory', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Checkpoint\n');
     await saveVersion(shadow, 'content/docs', [human]);
 
-    const result = await getDocumentHistory(shadow, { docName: 'intro' });
+    const result = await getDocumentHistory(shadow, { docName: 'intro' }, 'content/docs');
 
     const types = result.entries.map((e) => e.type);
     expect(types).toContain('wip');
@@ -116,7 +116,7 @@ describe('getDocumentHistory', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Human 2\n');
     await commitWip(shadow, human, 'content/docs', 'WIP: human edit 2');
 
-    const result = await getDocumentHistory(shadow, { docName: 'intro' });
+    const result = await getDocumentHistory(shadow, { docName: 'intro' }, 'content/docs');
 
     // All 3 entries should appear, from both authors
     expect(result.entries.length).toBe(3);
@@ -135,7 +135,11 @@ describe('getDocumentHistory', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# v2\n');
     await commitWip(shadow, human, 'content/docs', 'WIP: v2');
 
-    const result = await getDocumentHistory(shadow, { docName: 'intro', type: 'checkpoint' });
+    const result = await getDocumentHistory(
+      shadow,
+      { docName: 'intro', type: 'checkpoint' },
+      'content/docs',
+    );
 
     expect(result.entries.length).toBe(1);
     expect(result.entries[0]?.type).toBe('checkpoint');
@@ -150,10 +154,14 @@ describe('getDocumentHistory', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Agent\n');
     await commitWip(shadow, agent, 'content/docs', 'WIP: agent');
 
-    const result = await getDocumentHistory(shadow, {
-      docName: 'intro',
-      author: human.email,
-    });
+    const result = await getDocumentHistory(
+      shadow,
+      {
+        docName: 'intro',
+        author: human.email,
+      },
+      'content/docs',
+    );
 
     expect(result.entries.every((e) => e.authorEmail === human.email)).toBe(true);
     expect(result.entries.length).toBeGreaterThanOrEqual(1);
@@ -168,10 +176,14 @@ describe('getDocumentHistory', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Agent\n');
     await commitWip(shadow, agent, 'content/docs', 'WIP: agent');
 
-    const result = await getDocumentHistory(shadow, {
-      docName: 'intro',
-      excludeAuthor: agent.email,
-    });
+    const result = await getDocumentHistory(
+      shadow,
+      {
+        docName: 'intro',
+        excludeAuthor: agent.email,
+      },
+      'content/docs',
+    );
 
     expect(result.entries.every((e) => e.authorEmail !== agent.email)).toBe(true);
   });
@@ -184,16 +196,28 @@ describe('getDocumentHistory', () => {
       await commitWip(shadow, human, 'content/docs', `WIP: edit ${i}`);
     }
 
-    const page1 = await getDocumentHistory(shadow, { docName: 'intro', limit: 2, offset: 0 });
+    const page1 = await getDocumentHistory(
+      shadow,
+      { docName: 'intro', limit: 2, offset: 0 },
+      'content/docs',
+    );
     expect(page1.entries.length).toBe(2);
     expect(page1.total).toBe(5);
     expect(page1.hasMore).toBe(true);
 
-    const page2 = await getDocumentHistory(shadow, { docName: 'intro', limit: 2, offset: 2 });
+    const page2 = await getDocumentHistory(
+      shadow,
+      { docName: 'intro', limit: 2, offset: 2 },
+      'content/docs',
+    );
     expect(page2.entries.length).toBe(2);
     expect(page2.hasMore).toBe(true);
 
-    const page3 = await getDocumentHistory(shadow, { docName: 'intro', limit: 2, offset: 4 });
+    const page3 = await getDocumentHistory(
+      shadow,
+      { docName: 'intro', limit: 2, offset: 4 },
+      'content/docs',
+    );
     expect(page3.entries.length).toBe(1);
     expect(page3.hasMore).toBe(false);
   });
@@ -204,7 +228,7 @@ describe('getDocumentHistory', () => {
     writeFileSync(resolve(contentDir, 'intro.md'), '# Test\n');
     await commitWip(shadow, human, 'content/docs', 'WIP: field check');
 
-    const result = await getDocumentHistory(shadow, { docName: 'intro' });
+    const result = await getDocumentHistory(shadow, { docName: 'intro' }, 'content/docs');
     const entry = result.entries[0];
 
     expect(entry).toBeDefined();
@@ -240,7 +264,7 @@ describe('getDocumentHistory', () => {
 
     // The WIP commit is reachable from both the checkpoint ref and the (now-deleted) WIP ref
     // After save version, WIP ref is deleted but checkpoint ancestry still includes it
-    const result = await getDocumentHistory(shadow, { docName: 'intro' });
+    const result = await getDocumentHistory(shadow, { docName: 'intro' }, 'content/docs');
 
     // checkpoint + wip = 2 unique entries (no duplicates)
     const shas = result.entries.map((e) => e.sha);
