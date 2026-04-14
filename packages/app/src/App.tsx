@@ -3,6 +3,7 @@ import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { defaultInitialDir } from '@/components/file-tree-utils';
 import { isNewItemShortcut, NewItemDialog } from '@/components/NewItemDialog';
+import { PageListProvider } from '@/components/PageListContext';
 import { SystemDocSubscriber } from '@/components/SystemDocSubscriber';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
@@ -69,15 +70,17 @@ function NewItemShortcutHandler() {
 export function App() {
   return (
     <DocumentProvider>
-      <SystemDocSubscriber />
-      <NavigationHandler />
-      <NewItemShortcutHandler />
-      <SidebarProvider className="h-screen overflow-hidden">
-        <FileSidebar />
-        <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
-          <EditorPane />
-        </SidebarInset>
-      </SidebarProvider>
+      <PageListProvider>
+        <SystemDocSubscriber />
+        <NavigationHandler />
+        <NewItemShortcutHandler />
+        <SidebarProvider className="h-screen overflow-hidden">
+          <FileSidebar />
+          <SidebarInset className="overflow-hidden h-[calc(100vh-var(--layout-inset-offset))]">
+            <EditorPane />
+          </SidebarInset>
+        </SidebarProvider>
+      </PageListProvider>
     </DocumentProvider>
   );
 }

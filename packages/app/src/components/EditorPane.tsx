@@ -5,7 +5,6 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
-import { PageListProvider } from './PageListContext';
 import { TimelinePanel } from './TimelinePanel';
 
 /**
@@ -109,7 +108,7 @@ export function EditorPane() {
   }
 
   return (
-    <PageListProvider>
+    <>
       <EditorHeader
         editorMode={editorMode}
         onModeChange={handleModeChange}
@@ -137,6 +136,6 @@ export function EditorPane() {
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
       />
-    </PageListProvider>
+    </>
   );
 }
