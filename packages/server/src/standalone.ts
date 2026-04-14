@@ -8,6 +8,7 @@ import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
+import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
@@ -120,7 +121,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
-    includePatterns = ['**/*.md'],
+    includePatterns = ['**/*.md', '**/*.mdx'],
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
   } = options;
@@ -212,7 +213,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
     const rescueBase = resolve(shadowGitDir, 'rescue');
-    const filePath = resolve(rescueBase, `${docName}.md`);
+    const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) return null;
     return filePath;
   }

@@ -55,6 +55,7 @@ const ROLLBACK_ORIGIN = {
 
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import { getDocExtension } from './doc-extensions.ts';
 import {
   contentHash,
   type FileIndexEntry,
@@ -86,7 +87,8 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
     return { error: 'Invalid document name' };
   }
   const normalized = contentRoot.replace(/^\.\//, '');
-  const path = normalized ? `${normalized}/${docName}.md` : `${docName}.md`;
+  const ext = getDocExtension(docName);
+  const path = normalized ? `${normalized}/${docName}${ext}` : `${docName}${ext}`;
   return { path };
 }
 
@@ -305,7 +307,7 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   }
 
   const resolvedContentDir = resolve(contentDir);
-  const relativePath = kind === 'file' ? `${path}.md` : path;
+  const relativePath = kind === 'file' ? `${path}${getDocExtension(path)}` : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
 
   if (fullPath !== resolvedContentDir && !fullPath.startsWith(`${resolvedContentDir}${sep}`)) {
@@ -456,7 +458,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
     const resolvedContentDir = resolve(contentDir);
-    const filePath = resolve(resolvedContentDir, `${docName}.md`);
+    const filePath = resolve(resolvedContentDir, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${resolvedContentDir}/`) && filePath !== resolvedContentDir) {
       return null;
     }
@@ -1550,7 +1552,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
-    const filePath = resolve(rescueBase, `${docName}.md`);
+    const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
       res.writeHead(400);
       res.end('Invalid document name');
@@ -1878,7 +1880,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       for (const [docName] of index) {
         let title = docName;
         try {
-          const filePath = resolve(contentDir, `${docName}.md`);
+          const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch (err) {

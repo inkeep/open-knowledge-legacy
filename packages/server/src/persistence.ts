@@ -15,6 +15,7 @@ import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-cor
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
@@ -41,7 +42,8 @@ export function safeContentPath(documentName: string, contentDir: string): strin
   if (documentName.includes('\x00')) {
     throw new Error(`Invalid document name: ${documentName}`);
   }
-  const filePath = resolve(contentDir, `${documentName}.md`);
+  const ext = getDocExtension(documentName);
+  const filePath = resolve(contentDir, `${documentName}${ext}`);
   if (!filePath.startsWith(`${contentDir}/`)) {
     throw new Error(`Invalid document name: ${documentName}`);
   }
