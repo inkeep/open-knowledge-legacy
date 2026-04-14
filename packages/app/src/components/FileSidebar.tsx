@@ -4,6 +4,12 @@ import { FileTree } from '@/components/FileTree';
 import { defaultInitialDir } from '@/components/file-tree-utils';
 import { NewItemDialog } from '@/components/NewItemDialog';
 import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
   Sidebar,
   SidebarContent,
   SidebarHeader,
@@ -12,12 +18,6 @@ import {
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import {
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuRoot,
-  DropdownMenuTrigger,
-} from './ui/dropdown-menu';
 
 export function FileSidebar() {
   const { activeDocName } = useDocumentContext();

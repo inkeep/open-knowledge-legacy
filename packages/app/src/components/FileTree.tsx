@@ -457,7 +457,7 @@ export function FileTree({
         <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
         {onNewItem && (
           <Button variant="outline" size="sm" onClick={() => onNewItem('file', '')}>
-            Create your first page
+            Create your first file
           </Button>
         )}
       </div>

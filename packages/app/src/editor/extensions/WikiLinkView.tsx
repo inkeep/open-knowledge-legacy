@@ -22,16 +22,10 @@ import {
 } from '../../components/ui/dropdown-menu';
 import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { docNameFromHash } from '../../lib/doc-hash';
 import { cn } from '../../lib/utils';
 import { LinkTooltipHint } from '../link-tooltip';
 import { isResolvedWikiLinkTarget, toWikiLinkSlug } from './wiki-link-helpers';
-
-function activeDocNameFromHash(): string {
-  const hash = window.location.hash;
-  const rest = hash.startsWith('#/') ? hash.slice(2) : '';
-  const qmark = rest.indexOf('?');
-  return qmark >= 0 ? rest.slice(0, qmark) : rest;
-}
 
 // ── Heading picker ────────────────────────────────────────────────────────────
 
@@ -391,8 +385,13 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         kind="file"
-        initialDir={defaultInitialDir(activeDocNameFromHash())}
+        initialDir={defaultInitialDir(docNameFromHash(window.location.hash) ?? '')}
         suggestedName={`${toWikiLinkSlug(target)}.md`}
+        description={
+          <>
+            Create a page for <span className="font-medium text-foreground">[[{target}]]</span>
+          </>
+        }
         onCreated={handleCreated}
       />
 

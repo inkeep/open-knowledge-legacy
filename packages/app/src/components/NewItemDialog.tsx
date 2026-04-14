@@ -1,4 +1,5 @@
 import { Dialog } from 'radix-ui';
+import type { ReactNode } from 'react';
 import { useEffect, useId, useRef, useState } from 'react';
 import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,7 @@ export interface NewItemDialogProps {
   kind: 'file' | 'folder';
   initialDir: string;
   suggestedName?: string;
+  description?: ReactNode;
   onCreated: (docName: string) => void;
 }
 
@@ -43,6 +45,7 @@ export function NewItemDialog({
   kind,
   initialDir,
   suggestedName,
+  description,
   onCreated,
 }: NewItemDialogProps) {
   const { addPage } = usePageList();
@@ -51,6 +54,8 @@ export function NewItemDialog({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const errorId = useId();
+  const folderInputId = useId();
+  const fileInputId = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -116,7 +121,8 @@ export function NewItemDialog({
       addPage(docName);
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
       onCreated(docName);
-    } catch {
+    } catch (err) {
+      console.error('[NewItemDialog] create failed:', err);
       setBusy(false);
       setError('Network error — please try again');
     }
@@ -132,18 +138,22 @@ export function NewItemDialog({
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-border bg-background p-6 shadow-xl data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95">
           <Dialog.Title className="mb-1 text-base font-semibold">{title}</Dialog.Title>
           <Dialog.Description className="mb-4 text-sm text-muted-foreground">
-            Create in <span className="font-medium text-foreground">{dirDisplay}</span>
+            {description ?? (
+              <>
+                Create in <span className="font-medium text-foreground">{dirDisplay}</span>
+              </>
+            )}
           </Dialog.Description>
 
           <div className="mb-4 space-y-3">
             {kind === 'folder' && (
               <div>
-                <label className="mb-1.5 block text-sm font-medium" htmlFor="new-item-folder-name">
+                <label className="mb-1.5 block text-sm font-medium" htmlFor={folderInputId}>
                   Folder name
                 </label>
                 <Input
                   ref={folderInputRef}
-                  id="new-item-folder-name"
+                  id={folderInputId}
                   value={folderName}
                   onChange={(e) => {
                     setFolderName(e.target.value);
@@ -151,6 +161,8 @@ export function NewItemDialog({
                   }}
                   placeholder="folder-name"
                   autoFocus
+                  aria-describedby={error ? errorId : undefined}
+                  aria-invalid={error ? true : undefined}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -161,12 +173,12 @@ export function NewItemDialog({
               </div>
             )}
             <div>
-              <label className="mb-1.5 block text-sm font-medium" htmlFor="new-item-file-name">
+              <label className="mb-1.5 block text-sm font-medium" htmlFor={fileInputId}>
                 {kind === 'folder' ? 'First file name' : 'File name'}
               </label>
               <Input
                 ref={fileInputRef}
-                id="new-item-file-name"
+                id={fileInputId}
                 value={fileName}
                 onChange={(e) => {
                   setFileName(e.target.value);
