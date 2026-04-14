@@ -9,7 +9,8 @@ import { NodeViewWrapper } from '@tiptap/react';
 import { Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
-import { CreatePageDialog } from '../../components/CreatePageDialog';
+import { defaultInitialDir } from '../../components/file-tree-utils';
+import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
 import {
@@ -23,7 +24,14 @@ import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { cn } from '../../lib/utils';
 import { LinkTooltipHint } from '../link-tooltip';
-import { isResolvedWikiLinkTarget } from './wiki-link-helpers';
+import { isResolvedWikiLinkTarget, toWikiLinkSlug } from './wiki-link-helpers';
+
+function activeDocNameFromHash(): string {
+  const hash = window.location.hash;
+  const rest = hash.startsWith('#/') ? hash.slice(2) : '';
+  const qmark = rest.indexOf('?');
+  return qmark >= 0 ? rest.slice(0, qmark) : rest;
+}
 
 // ── Heading picker ────────────────────────────────────────────────────────────
 
@@ -379,10 +387,12 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
         </DropdownMenuRoot>
       </NodeViewWrapper>
 
-      <CreatePageDialog
+      <NewItemDialog
         open={createDialogOpen}
-        target={target}
         onOpenChange={setCreateDialogOpen}
+        kind="file"
+        initialDir={defaultInitialDir(activeDocNameFromHash())}
+        suggestedName={`${toWikiLinkSlug(target)}.md`}
         onCreated={handleCreated}
       />
 
