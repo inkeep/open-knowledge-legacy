@@ -447,6 +447,40 @@ describe('initial sync and test isolation', () => {
     }
   });
 
+  test('opening a file without edits does not rewrite disk in normalized form', async () => {
+    // Regression: Hocuspocus fires onStoreDocument after the first-pass
+    // observer sync that populates Y.Text from the freshly-loaded
+    // XmlFragment. That mutation is semantically a no-op, but without a
+    // gate the store handler rewrites the file in TipTap's normalized form
+    // (padded tables, added backslash-escapes, etc.), polluting the user's
+    // git working tree on mere file open.
+    //
+    // Tight (unpadded) GFM table — serialization pads columns to the widest
+    // cell, so this exact byte sequence differs from what TipTap emits.
+    // We use a unique docName so the file-watcher update event fires before
+    // the doc loads (no-op path, no reconciliation), and the subsequent
+    // load+store cycle compares against the serialized-at-load baseline.
+    const docName = `no-op-store-${crypto.randomUUID()}`;
+    const originalBytes = '# Title\n\n| A | B |\n| - | - |\n| 1 | 22 |\n';
+    const filePath = join(server.contentDir, `${docName}.md`);
+    writeFileSync(filePath, originalBytes, 'utf-8');
+    // Let the file-watcher's "no loaded doc" branch drain before we open it.
+    await wait(500);
+
+    const client = await createTestClient(server.port, docName);
+    try {
+      await pollUntil(() => client.ytext.toString().includes('Title'), 5000);
+      // Wait well past the server debounce (200ms) so any scheduled store
+      // has a chance to fire.
+      await wait(800);
+
+      const diskAfter = readTestDoc(server.contentDir, docName);
+      expect(diskAfter).toBe(originalBytes);
+    } finally {
+      await client.cleanup();
+    }
+  });
+
   test('test-reset isolates state between tests', async () => {
     await testReset(server.port);
     await wait(300);
