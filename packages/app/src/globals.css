@@ -275,6 +275,7 @@
 
 .tiptap-editor > div {
   grid-column: content;
+  position: relative;
 }
 
 /* Editor polish */
@@ -282,6 +283,10 @@
   outline: none;
   min-height: 200px;
   line-height: 1.7;
+  /* Extend hit area into left margin so the gap between text and the drag handle
+     does not prematurely hide it. padding-left compensates so text is unchanged. */
+  margin-left: -2.5rem;
+  padding-left: 2.5rem;
   @apply text-gray-800 dark:text-white/80;
 }
 
@@ -568,9 +573,9 @@
   width: 20px;
   height: 20px;
   cursor: grab;
-  opacity: 0;
+  opacity: 1;
   transition: opacity 100ms ease;
-  color: oklch(0.556 0 0);
+  color: oklch(0.72 0 0);
   border-radius: 3px;
   user-select: none;
 }
@@ -584,18 +589,18 @@
 }
 
 .dark .ok-drag-handle {
-  color: oklch(0.7 0 0);
+  color: oklch(0.5 0 0);
 }
 
 .dark .ok-drag-handle:hover {
   background-color: oklch(1 0 0 / 8%);
 }
 
-/* The drag-handle extension hides/shows the element itself — we rely on it
-   setting display:none/block. When it shows the element, fade it in. */
-.ok-drag-handle[style*="display: block"],
-.ok-drag-handle[style*="display:block"] {
-  opacity: 1;
+/* The extension hides via visibility:hidden (inline style). Fade out when hidden,
+   fade in when shown (extension clears the inline visibility style). */
+.ok-drag-handle[style*="visibility: hidden"],
+.ok-drag-handle[style*="visibility:hidden"] {
+  opacity: 0;
 }
 
 /* CodeMirror polish */
