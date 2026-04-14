@@ -81,6 +81,18 @@ The results:
 | `src/index.ts` | Excluded | Does not match `**/*.md` |
 | `dist/README.md` | Excluded | Gitignored |
 
+## Previewing content scope
+
+To see exactly which files match your current include/exclude rules:
+
+```bash
+npx @inkeep/open-knowledge preview
+```
+
+This is read-only -- it doesn't write anything or start a server. It uses the same `ContentFilter` as the file watcher, so the output matches what the editor sidebar will show.
+
+Works before `init` (uses schema defaults) and after config edits.
+
 ## Performance
 
 <Callout type="info">

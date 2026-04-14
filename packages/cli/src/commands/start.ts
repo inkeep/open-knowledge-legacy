@@ -202,14 +202,39 @@ export function startCommand(getConfig: () => Config): Command {
           'head-watcher': 'Git branch switches may cause document inconsistency',
         };
         ready
-          .then(() => {
-            if (degraded.length === 0) return;
-            console.log();
-            for (const id of degraded) {
-              const impact = DEGRADED_IMPACTS[id] ?? `${id} (check server logs for details)`;
-              console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
+          .then(async () => {
+            if (degraded.length > 0) {
+              console.log();
+              for (const id of degraded) {
+                const impact = DEGRADED_IMPACTS[id] ?? `${id} (check server logs for details)`;
+                console.warn(`  ${warning('\u26a0')} ${warning(id)}: ${dim(impact)}`);
+              }
+              console.log();
             }
-            console.log();
+
+            if (didAutoInit) {
+              try {
+                const { previewContent, formatPreviewBlock } = await import(
+                  '../content/preview.ts'
+                );
+                const preview = previewContent({
+                  projectDir: cwd,
+                  contentDir,
+                  include: config.content.include,
+                  exclude: config.content.exclude,
+                });
+                console.log(`\n${formatPreviewBlock(preview, cwd)}\n`);
+              } catch (e) {
+                console.warn(
+                  `Content preview unavailable: ${e instanceof Error ? e.message : String(e)}`,
+                );
+              }
+            }
+
+            if (opts.open) {
+              const { openBrowser } = await import('../utils/open-browser.ts');
+              openBrowser(localUrl);
+            }
           })
           .catch((err) => {
             console.error(
@@ -217,14 +242,6 @@ export function startCommand(getConfig: () => Config): Command {
             );
           });
       });
-
-      if (opts.open) {
-        const { execFile } = await import('node:child_process');
-        const url = `http://${config.server.host}:${config.server.port}`;
-        execFile('open', [url], (err) => {
-          if (err) console.error(`${error('Failed to open browser:')} ${err.message}`);
-        });
-      }
     });
 
   return cmd;
