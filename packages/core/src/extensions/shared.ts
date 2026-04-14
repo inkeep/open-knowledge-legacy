@@ -63,6 +63,6 @@ export const sharedExtensions = [
   TableRow,
   TableHeader,
   TableCell,
-  Image,
+  Image.configure({ inline: true }),
   Highlight,
 ];

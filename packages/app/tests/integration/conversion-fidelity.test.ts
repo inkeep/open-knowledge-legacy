@@ -144,6 +144,17 @@ const CONSTRUCTS: Array<{ name: string; input: string; stable?: boolean; note?: 
     input: '![Alt text](https://example.com/img.png)\n',
   },
   {
+    name: 'image preserves block separators between siblings',
+    input: '# Heading\n\n![alt](img.png)\n\n## Next\n\nPara text.\n',
+    stable: true,
+    note: 'Regression: image as PM block used to collapse adjacent block separators',
+  },
+  {
+    name: 'image inline within paragraph text',
+    input: 'Before ![alt](img.png) after.\n',
+    stable: true,
+  },
+  {
     name: 'blockquote',
     input: '> This is a blockquote.\n',
   },
