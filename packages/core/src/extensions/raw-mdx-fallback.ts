@@ -1,0 +1,85 @@
+import { Node } from '@tiptap/core';
+
+/**
+ * rawMdxFallback — block-level PM node holding raw markdown source when
+ * parsing fails for a specific block region.
+ *
+ * Shape: content-based (`atom: false, content: 'text*'`), not atom. This
+ * preserves Y.XmlElement identity under char-level edits in source mode,
+ * provides finer undo granularity, and matches the jsxInline pattern (R3).
+ * See SPEC §9 R5 + evidence/P3-source-trace.md.
+ *
+ * NodeView renders with `contenteditable: 'false'` — WYSIWYG cannot edit the
+ * inner text; edits route through source mode. Visual chrome (dashed border,
+ * badge, tooltip) ships in US-009 (RawMdxFallbackChrome.tsx); this is the
+ * minimal functional NodeView satisfying R5 + R7 structural requirements.
+ */
+export const RawMdxFallback = Node.create({
+  name: 'rawMdxFallback',
+  group: 'block',
+  atom: false,
+  content: 'text*',
+  isolating: true,
+  selectable: true,
+  defining: true,
+  priority: 60,
+
+  addAttributes() {
+    return {
+      reason: { default: '' },
+      originalSpan: { default: { start: 0, end: 0 } },
+    };
+  },
+
+  parseHTML() {
+    return [
+      {
+        tag: 'div[data-raw-mdx-fallback]',
+        getAttrs: (node) => {
+          if (typeof node === 'string') return false;
+          return {
+            reason: node.getAttribute('data-reason') || '',
+          };
+        },
+      },
+    ];
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      {
+        'data-raw-mdx-fallback': '',
+        'data-raw-badge': 'raw',
+        'data-reason': HTMLAttributes.reason,
+        contenteditable: 'false',
+        class: 'raw-mdx-fallback',
+      },
+      0,
+    ];
+  },
+
+  addNodeView() {
+    return ({ HTMLAttributes }) => {
+      const dom = document.createElement('div');
+      dom.setAttribute('data-raw-mdx-fallback', '');
+      dom.setAttribute('data-raw-badge', 'raw');
+      dom.setAttribute('contenteditable', 'false');
+      dom.classList.add('raw-mdx-fallback');
+
+      if (HTMLAttributes.reason) {
+        dom.setAttribute('data-reason', HTMLAttributes.reason);
+      }
+
+      const contentDOM = document.createElement('pre');
+      contentDOM.classList.add('raw-mdx-fallback-content');
+      dom.appendChild(contentDOM);
+
+      return {
+        dom,
+        contentDOM,
+        ignoreMutation: () => true,
+      };
+    };
+  },
+});

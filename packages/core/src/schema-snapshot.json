@@ -1,0 +1,296 @@
+{
+  "nodes": {
+    "paragraph": {
+      "attrs": {},
+      "content": "inline*",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "blockquote": {
+      "attrs": {},
+      "content": "block+",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "doc": {
+      "attrs": {},
+      "content": "block+",
+      "group": "",
+      "inline": false,
+      "atom": false
+    },
+    "text": {
+      "attrs": {},
+      "content": "",
+      "group": "inline",
+      "inline": false,
+      "atom": false
+    },
+    "table": {
+      "attrs": {},
+      "content": "tableRow+",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "tableRow": {
+      "attrs": {},
+      "content": "(tableCell | tableHeader)*",
+      "group": "",
+      "inline": false,
+      "atom": false
+    },
+    "tableHeader": {
+      "attrs": {
+        "colspan": {
+          "hasDefault": true
+        },
+        "rowspan": {
+          "hasDefault": true
+        },
+        "colwidth": {
+          "hasDefault": true
+        },
+        "align": {
+          "hasDefault": true
+        }
+      },
+      "content": "block+",
+      "group": "",
+      "inline": false,
+      "atom": false
+    },
+    "tableCell": {
+      "attrs": {
+        "colspan": {
+          "hasDefault": true
+        },
+        "rowspan": {
+          "hasDefault": true
+        },
+        "colwidth": {
+          "hasDefault": true
+        },
+        "align": {
+          "hasDefault": true
+        }
+      },
+      "content": "block+",
+      "group": "",
+      "inline": false,
+      "atom": false
+    },
+    "image": {
+      "attrs": {
+        "src": {
+          "hasDefault": true
+        },
+        "alt": {
+          "hasDefault": true
+        },
+        "title": {
+          "hasDefault": true
+        },
+        "width": {
+          "hasDefault": true
+        },
+        "height": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
+      "atom": false
+    },
+    "jsxComponent": {
+      "attrs": {
+        "content": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "block",
+      "inline": false,
+      "atom": true
+    },
+    "rawMdxFallback": {
+      "attrs": {
+        "reason": {
+          "hasDefault": true
+        },
+        "originalSpan": {
+          "hasDefault": true
+        }
+      },
+      "content": "text*",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "wikiLink": {
+      "attrs": {
+        "target": {
+          "hasDefault": true
+        },
+        "alias": {
+          "hasDefault": true
+        },
+        "anchor": {
+          "hasDefault": true
+        },
+        "resolved": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
+      "atom": true
+    },
+    "list": {
+      "attrs": {
+        "ordered": {
+          "hasDefault": true
+        },
+        "start": {
+          "hasDefault": true
+        },
+        "spread": {
+          "hasDefault": true
+        },
+        "bulletMarker": {
+          "hasDefault": true
+        },
+        "listMarkerDelimiter": {
+          "hasDefault": true
+        }
+      },
+      "content": "listItem+",
+      "group": "block list",
+      "inline": false,
+      "atom": false
+    },
+    "listItem": {
+      "attrs": {
+        "checked": {
+          "hasDefault": true
+        },
+        "spread": {
+          "hasDefault": true
+        }
+      },
+      "content": "paragraph block*",
+      "group": "",
+      "inline": false,
+      "atom": false
+    },
+    "codeBlock": {
+      "attrs": {
+        "language": {
+          "hasDefault": true
+        },
+        "fenceDelimiter": {
+          "hasDefault": true
+        },
+        "fenceLength": {
+          "hasDefault": true
+        }
+      },
+      "content": "text*",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "heading": {
+      "attrs": {
+        "level": {
+          "hasDefault": true
+        },
+        "headingStyle": {
+          "hasDefault": true
+        }
+      },
+      "content": "inline*",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "thematicBreak": {
+      "attrs": {
+        "sourceRaw": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "block",
+      "inline": false,
+      "atom": false
+    },
+    "htmlBlock": {
+      "attrs": {
+        "content": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "block",
+      "inline": false,
+      "atom": true
+    },
+    "linkRefDef": {
+      "attrs": {
+        "label": {
+          "hasDefault": true
+        },
+        "href": {
+          "hasDefault": true
+        },
+        "title": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "block",
+      "inline": false,
+      "atom": true
+    },
+    "hardBreak": {
+      "attrs": {
+        "hardBreakStyle": {
+          "hasDefault": true
+        }
+      },
+      "content": "",
+      "group": "inline",
+      "inline": true,
+      "atom": false
+    }
+  },
+  "extensionOrder": [
+    "jsxComponent",
+    "rawMdxFallback",
+    "wikiLink",
+    "list",
+    "listItem",
+    "emphasis",
+    "strong",
+    "codeBlock",
+    "heading",
+    "thematicBreak",
+    "link",
+    "htmlBlock",
+    "linkRefDef",
+    "hardBreak",
+    "escapeMark",
+    "starterKit",
+    "table",
+    "tableRow",
+    "tableHeader",
+    "tableCell",
+    "image",
+    "highlight"
+  ]
+}
