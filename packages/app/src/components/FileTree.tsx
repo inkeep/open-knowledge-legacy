@@ -17,6 +17,7 @@ import {
   type DocEntry,
   type TreeNode,
 } from '@/components/file-tree-utils';
+import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -452,8 +453,13 @@ export function FileTree({
 
   if (documents.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center py-8">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
         <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
+        {onNewItem && (
+          <Button variant="outline" size="sm" onClick={() => onNewItem('file', '')}>
+            Create your first page
+          </Button>
+        )}
       </div>
     );
   }
