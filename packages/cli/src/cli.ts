@@ -22,6 +22,7 @@ if (process.argv.includes('--no-color')) {
 import { Command } from 'commander';
 import { initCommand } from './commands/init.ts';
 import { mcpCommand } from './commands/mcp.ts';
+import { previewCommand } from './commands/preview.ts';
 import { startCommand } from './commands/start.ts';
 import { type Config, loadConfig } from './index.ts';
 
@@ -74,5 +75,9 @@ program.addCommand(mcp);
 
 // init command — stateless terminal setup, no config needed
 program.addCommand(initCommand());
+
+// preview command — read-only content scope inspection
+const preview = previewCommand(() => resolvedConfig);
+program.addCommand(preview);
 
 await program.parseAsync();

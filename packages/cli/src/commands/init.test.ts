@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { loadConfig } from '../config/loader.ts';
+import { previewContent } from '../content/preview.ts';
 import { ALL_EDITOR_IDS } from './editors.ts';
-import { runInit } from './init.ts';
+import { formatInitResult, runInit } from './init.ts';
 
 describe('runInit', () => {
   let testDir: string;
@@ -362,6 +364,85 @@ describe('runInit', () => {
       expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
       expect(existsSync(join(testDir, '.cursor', 'mcp.json'))).toBe(false);
       expect(existsSync(join(testDir, '.vscode', 'mcp.json'))).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Content preview integration (US-002)
+  // -----------------------------------------------------------------------
+
+  describe('content preview in init output', () => {
+    it('renders Content block with file count and sample when preview succeeds', () => {
+      writeFileSync(join(testDir, 'readme.md'), '# Readme');
+      mkdirSync(join(testDir, 'docs'));
+      writeFileSync(join(testDir, 'docs', 'guide.md'), '# Guide');
+
+      const result = runInit({ cwd: testDir, mcp: false });
+
+      const preview = previewContent({
+        projectDir: testDir,
+        contentDir: testDir,
+        include: ['**/*.md'],
+        exclude: [],
+      });
+      result.preview = preview;
+
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('Content:');
+      expect(output).toContain(`Found ${preview.totalCount} markdown files`);
+      expect(output).toContain('Scope: include=');
+      expect(output).toContain('Re-check anytime: open-knowledge preview');
+    });
+
+    it('renders warning line when preview is undefined with previewWarning', () => {
+      const result = runInit({ cwd: testDir, mcp: false });
+      result.preview = undefined;
+      result.previewWarning = 'something went wrong';
+
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('Content preview unavailable: something went wrong');
+      expect(output).not.toContain('Found');
+    });
+
+    it('omits Sample line when preview.totalCount is 0', () => {
+      const result = runInit({ cwd: testDir, mcp: false });
+      result.preview = {
+        totalCount: 0,
+        sample: [],
+        contentDir: testDir,
+        include: ['**/*.md'],
+        exclude: [],
+        warnings: [],
+      };
+
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('Found 0 markdown files');
+      expect(output).not.toContain('Sample:');
+    });
+
+    it('loadConfig + previewContent integration: preview picks up scaffolded config', () => {
+      writeFileSync(join(testDir, 'readme.md'), '# Readme');
+      mkdirSync(join(testDir, 'docs'));
+      writeFileSync(join(testDir, 'docs', 'guide.md'), '# Guide');
+
+      const result = runInit({ cwd: testDir, mcp: false });
+
+      const { config } = loadConfig(testDir);
+      const contentDir = resolve(testDir, config.content.dir);
+      const preview = previewContent({
+        projectDir: testDir,
+        contentDir,
+        include: config.content.include,
+        exclude: config.content.exclude,
+      });
+      result.preview = preview;
+
+      expect(preview.totalCount).toBeGreaterThanOrEqual(2);
+      expect(preview.sample.some((p) => p.includes('readme.md'))).toBe(true);
+
+      const output = formatInitResult(result, testDir);
+      expect(output).toContain('Content:');
+      expect(output).toContain(`Found ${preview.totalCount} markdown files`);
     });
   });
 });

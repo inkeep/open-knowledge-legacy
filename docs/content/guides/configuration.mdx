@@ -73,3 +73,13 @@ These take precedence over both YAML config files but are overridden by CLI flag
 ```bash
 npx @inkeep/open-knowledge start --port 8080
 ```
+
+## Verifying config changes
+
+After editing config, run `preview` to verify the resolved content scope:
+
+```bash
+npx @inkeep/open-knowledge preview
+```
+
+This prints the file count, applied include/exclude patterns, and a sample of matched paths -- useful for confirming that `content.include` or `content.exclude` changes had the intended effect.
