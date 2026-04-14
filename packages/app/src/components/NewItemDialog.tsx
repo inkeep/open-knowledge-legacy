@@ -172,7 +172,7 @@ export function NewItemDialog({
       const data = (await res.json()) as { ok: boolean; docName?: string; error?: string };
       setBusy(false);
       if (!data.ok) {
-        setError(data.error ?? 'Failed to create file');
+        setError(data.error ?? `Failed to create ${kind}`);
         setErrorField('form');
         return;
       }

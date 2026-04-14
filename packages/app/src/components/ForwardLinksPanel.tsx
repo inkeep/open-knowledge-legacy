@@ -61,10 +61,6 @@ export function ForwardLinksPanel({
     window.location.assign(hashFromDocName(target));
   }
 
-  function handleCreated(_docName: string) {
-    // Navigation is handled by NewItemDialog after creation
-  }
-
   return (
     <>
       <Panel className={className}>
@@ -121,7 +117,6 @@ export function ForwardLinksPanel({
         onOpenChange={(open: boolean) => {
           if (!open) setCreateTarget(null);
         }}
-        onCreated={handleCreated}
       />
     </>
   );
