@@ -12,6 +12,8 @@ export {
   FLASH_DURATION_MS,
   hasNewEntries,
 } from './constants/activity.ts';
+export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
+
 // Extensions
 export { CodeBlockFidelity } from './extensions/code-block-fidelity.ts';
 export { EmphasisFidelity, StrongFidelity } from './extensions/emphasis-fidelity.ts';

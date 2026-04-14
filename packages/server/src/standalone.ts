@@ -7,7 +7,7 @@ import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
-import { createContentFilter } from './content-filter.ts';
+import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
@@ -87,6 +87,7 @@ export interface ServerInstance {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   cc1Broadcaster: CC1Broadcaster;
+  contentFilter: ContentFilter;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
@@ -1085,5 +1086,14 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const ready = initAsync();
 
-  return { hocuspocus, sessionManager, cc1Broadcaster, destroy, ready, degraded, lockDir };
+  return {
+    hocuspocus,
+    sessionManager,
+    cc1Broadcaster,
+    contentFilter,
+    destroy,
+    ready,
+    degraded,
+    lockDir,
+  };
 }
