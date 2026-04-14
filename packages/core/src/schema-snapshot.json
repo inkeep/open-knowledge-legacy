@@ -130,6 +130,20 @@
       "inline": false,
       "atom": false
     },
+    "jsxInline": {
+      "attrs": {
+        "attributes": {
+          "hasDefault": true
+        },
+        "sourceRaw": {
+          "hasDefault": true
+        }
+      },
+      "content": "inline*",
+      "group": "inline",
+      "inline": true,
+      "atom": false
+    },
     "wikiLink": {
       "attrs": {
         "target": {
@@ -272,6 +286,7 @@
   "extensionOrder": [
     "jsxComponent",
     "rawMdxFallback",
+    "jsxInline",
     "wikiLink",
     "list",
     "listItem",

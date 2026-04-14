@@ -13,6 +13,7 @@ import { HardBreakFidelity } from './hard-break-fidelity.ts';
 import { HeadingFidelity } from './heading-fidelity.ts';
 import { HtmlBlockFidelity } from './html-block-fidelity.ts';
 import { JsxComponent } from './jsx-component.ts';
+import { JsxInline } from './jsx-inline.ts';
 import { LinkFidelity } from './link-fidelity.ts';
 import { LinkRefDefFidelity } from './link-ref-def-fidelity.ts';
 import { List, ListItem } from './list.ts';
@@ -25,6 +26,8 @@ export const sharedExtensions = [
   JsxComponent,
   // rawMdxFallback holds raw source for blocks that fail to parse (R5/R6).
   RawMdxFallback,
+  // jsxInline at T1 Layer 3 target shape (R3) — inline MDX like <Icon />.
+  JsxInline,
   // WikiLink also needs to register before StarterKit.
   WikiLink,
   // Unified list extension (D15) — replaces BulletListFidelity, OrderedListFidelity,
