@@ -55,7 +55,7 @@ const ROLLBACK_ORIGIN = {
 
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
-import { getDocExtension } from './doc-extensions.ts';
+import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
   contentHash,
   type FileIndexEntry,
@@ -1506,7 +1506,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const entries: { docName: string; timestamp: string; size: number }[] = [];
 
     try {
-      const files = readdirSync(rescueDir).filter((f) => f.endsWith('.md'));
+      const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
       for (const file of files) {
         const filePath = resolve(rescueDir, file);
         const stat = statSync(filePath);
@@ -1523,7 +1523,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
 
         entries.push({
-          docName: file.replace(/\.md$/, ''),
+          docName: stripDocExtension(file),
           timestamp: stat.mtime.toISOString(),
           size: stat.size,
         });
@@ -1614,8 +1614,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'path is required' });
         return;
       }
-      if (!filePath.endsWith('.md')) {
-        json(res, 400, { ok: false, error: 'path must end with .md' });
+      if (!isSupportedDocFile(filePath)) {
+        json(res, 400, { ok: false, error: 'path must end with .md or .mdx' });
         return;
       }
       if (
@@ -1633,7 +1633,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'path must not escape content directory' });
         return;
       }
-      const candidateDocName = filePath.slice(0, -3);
+      const candidateDocName = stripDocExtension(filePath);
       if (isSystemDoc(candidateDocName)) {
         json(res, 400, { ok: false, error: `'${candidateDocName}' is a reserved document name` });
         return;
@@ -1649,7 +1649,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
         throw err;
       }
-      const docName = filePath.slice(0, -3);
+      const docName = stripDocExtension(filePath);
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(

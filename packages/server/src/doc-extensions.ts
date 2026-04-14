@@ -31,8 +31,9 @@ export function isSupportedDocFile(path: string): boolean {
  * no supported extension is present (so plain docNames pass through).
  */
 export function stripDocExtension(path: string): string {
+  const lower = path.toLowerCase();
   for (const ext of SUPPORTED_DOC_EXTENSIONS) {
-    if (path.endsWith(ext)) return path.slice(0, -ext.length);
+    if (lower.endsWith(ext)) return path.slice(0, -ext.length);
   }
   return path;
 }

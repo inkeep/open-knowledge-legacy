@@ -50,6 +50,12 @@ describe('stripDocExtension', () => {
     expect(stripDocExtension('nested/foo.mdx')).toBe('nested/foo');
   });
 
+  test('is case-insensitive', () => {
+    expect(stripDocExtension('foo.MD')).toBe('foo');
+    expect(stripDocExtension('foo.MDX')).toBe('foo');
+    expect(stripDocExtension('nested/foo.Md')).toBe('nested/foo');
+  });
+
   test('passes through non-supported extensions untouched', () => {
     expect(stripDocExtension('foo.txt')).toBe('foo.txt');
     expect(stripDocExtension('releases/v1.0')).toBe('releases/v1.0');

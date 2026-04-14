@@ -47,6 +47,38 @@ describe('.mdx extension end-to-end', () => {
     }
   });
 
+  test('collision: when both .md and .mdx exist, .mdx wins and agent write targets .mdx', async () => {
+    const docName = `mdx-collision-${crypto.randomUUID()}`;
+    const mdPath = join(server.contentDir, `${docName}.md`);
+    const mdxPath = join(server.contentDir, `${docName}.mdx`);
+
+    // Create both files; .mdx should take precedence per industry convention.
+    writeFileSync(mdPath, '# MD content\n', 'utf-8');
+    writeFileSync(mdxPath, '# MDX content\n', 'utf-8');
+    await wait(600); // let watcher process both events
+
+    const client = await createTestClient(server.port, docName);
+    try {
+      // The CRDT should reflect the .mdx file (higher-precedence winner).
+      await pollUntil(() => client.ytext.toString().includes('MDX content'), 5000);
+      expect(client.ytext.toString()).not.toContain('MD content');
+
+      await agentWriteMd(server.port, '\n\nCollision append.\n', {
+        docName,
+        position: 'append',
+      });
+      await wait(800);
+
+      // Write-back must target the .mdx file, not the .md file.
+      const mdxAfter = readFileSync(mdxPath, 'utf-8');
+      const mdAfter = readFileSync(mdPath, 'utf-8');
+      expect(mdxAfter).toContain('Collision append');
+      expect(mdAfter).not.toContain('Collision append');
+    } finally {
+      await client.cleanup();
+    }
+  });
+
   test('agent write to a .mdx-backed docName writes back to the .mdx file', async () => {
     const docName = `mdx-writeback-${crypto.randomUUID()}`;
     const mdxPath = join(server.contentDir, `${docName}.mdx`);
