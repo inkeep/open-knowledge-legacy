@@ -46,7 +46,7 @@ export function OutlinePanel({ docName, className = '' }: { docName: string; cla
     <Panel className={className}>
       <PanelHeader>
         <PanelTitle>Outline</PanelTitle>
-        <PanelCount>{headings.length}</PanelCount>
+        {!isLoading && <PanelCount>{headings.length}</PanelCount>}
       </PanelHeader>
       <PanelBody className="px-2 py-2" aria-busy={isLoading}>
         {error ? (

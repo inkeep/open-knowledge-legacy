@@ -51,7 +51,7 @@ export function BacklinksPanel({
     <Panel className={className}>
       <PanelHeader>
         <PanelTitle>Backlinks</PanelTitle>
-        <PanelCount>{backlinks.length}</PanelCount>
+        {!isLoading && <PanelCount>{backlinks.length}</PanelCount>}
       </PanelHeader>
       <PanelBody aria-busy={isLoading}>
         {error ? (

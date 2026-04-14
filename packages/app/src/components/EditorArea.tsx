@@ -70,7 +70,9 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
                   variant="ghost"
                   size="icon"
                   role="tab"
+                  id={`tab-${id}`}
                   aria-selected={activeTab === id}
+                  aria-controls={`panel-${id}`}
                   aria-label={label}
                   onClick={() => setActiveTab(id)}
                   className={cn(
@@ -86,7 +88,12 @@ export function EditorArea({ isSourceMode }: EditorAreaProps) {
           ))}
         </div>
 
-        <div className="min-h-0 flex-1">
+        <div
+          role="tabpanel"
+          id={`panel-${activeTab}`}
+          aria-labelledby={`tab-${activeTab}`}
+          className="min-h-0 flex-1"
+        >
           {activeTab === 'outline' && <OutlinePanel docName={activeDocName} />}
           {activeTab === 'backlinks' && <BacklinksPanel docName={activeDocName} />}
           {activeTab === 'forward-links' && <ForwardLinksPanel docName={activeDocName} />}
