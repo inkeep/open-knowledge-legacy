@@ -1,4 +1,15 @@
-import { ChevronRight, File, Folder, FolderOpen, Link2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { colorForFolderPath, deriveIconColor } from '@inkeep/open-knowledge-core';
+import {
+  ChevronRight,
+  File,
+  Folder,
+  FolderOpen,
+  Link2,
+  Pencil,
+  Plus,
+  Trash2,
+} from 'lucide-react';
+import { useTheme } from 'next-themes';
 import { type FC, useEffect, useState } from 'react';
 import {
   applyDeleteToDocuments,
@@ -39,6 +50,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import { useDirectoryColorDepth } from '@/state/directory-color';
 
 interface RenamePathResponse {
   ok: boolean;
@@ -87,6 +99,8 @@ const FileTreeNode: FC<{
   onDelete,
   onNewItem,
 }) => {
+  const depth = useDirectoryColorDepth();
+  const { resolvedTheme } = useTheme();
   const isFile = node.kind === 'file';
   const expanded = !isFile && expandedPaths.has(node.path);
 
@@ -95,6 +109,14 @@ const FileTreeNode: FC<{
   const isBusy = busyPath === node.path;
   const anyActionBusy = busyPath !== null;
   const IconToUse = isFile ? File : !expanded ? Folder : FolderOpen;
+  const iconStroke = isFile
+    ? 'var(--color-muted-foreground)'
+    : deriveIconColor(
+        colorForFolderPath(node.path, {
+          depth,
+          theme: resolvedTheme === 'dark' ? 'dark' : 'light',
+        }),
+      );
   const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
   const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
   const target: FileTreeTarget = { kind: node.kind, path: node.path, name: node.name };
@@ -103,7 +125,7 @@ const FileTreeNode: FC<{
 
   const fileContent = (
     <>
-      <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+      <IconToUse className="size-4 shrink-0" stroke={iconStroke} />
       <span className="min-w-0 flex-1 truncate text-sm text-sidebar-foreground/70">
         {node.name}
         {isFile && '.md'}
@@ -134,7 +156,7 @@ const FileTreeNode: FC<{
         isActive && 'bg-sidebar-accent text-sidebar-accent-foreground',
       )}
     >
-      <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+      <IconToUse className="size-4 shrink-0" stroke={iconStroke} />
       <Input
         value={editingValue}
         autoFocus
