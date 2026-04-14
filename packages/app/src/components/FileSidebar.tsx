@@ -1,13 +1,34 @@
+import { Plus } from 'lucide-react';
+import { useState } from 'react';
 import { FileTree } from '@/components/FileTree';
+import { defaultInitialDir } from '@/components/file-tree-utils';
+import { NewItemDialog } from '@/components/NewItemDialog';
 import {
   Sidebar,
   SidebarContent,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { useDocumentContext } from '@/editor/DocumentContext';
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+} from './ui/dropdown-menu';
 
 export function FileSidebar() {
+  const { activeDocName } = useDocumentContext();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogKind, setDialogKind] = useState<'file' | 'folder'>('file');
+
+  function openNewItemDialog(kind: 'file' | 'folder') {
+    setDialogKind(kind);
+    setDialogOpen(true);
+  }
+
   return (
     <Sidebar variant="inset">
       <SidebarHeader>
@@ -16,12 +37,35 @@ export function FileSidebar() {
             <span className="text-sm text-sidebar-foreground/50 uppercase font-mono tracking-wider">
               Files
             </span>
+            <DropdownMenuRoot>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuAction aria-label="New file or folder">
+                  <Plus />
+                </SidebarMenuAction>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="right" align="start">
+                <DropdownMenuItem onSelect={() => openNewItemDialog('file')}>
+                  New file
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => openNewItemDialog('folder')}>
+                  New folder
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenuRoot>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
         <FileTree />
       </SidebarContent>
+
+      <NewItemDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        kind={dialogKind}
+        initialDir={defaultInitialDir(activeDocName)}
+        onCreated={() => {}}
+      />
     </Sidebar>
   );
 }
