@@ -1,4 +1,5 @@
 import type { Identity } from '../types/identity';
+import { safeLocalStorageGet, safeLocalStorageSet } from './local-storage.ts';
 
 // --- Constants ---
 
@@ -98,29 +99,6 @@ export function generateRandomColor(): string {
 }
 
 // --- Core ---
-
-/**
- * Safe localStorage getter — returns null on any access error (Safari private
- * browsing, iframe sandboxing, user-disabled storage). Without this guard, the
- * entire editor mount crashes in private browsing mode.
- */
-function safeLocalStorageGet(key: string): string | null {
-  try {
-    return localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-/** Safe localStorage setter — silently no-ops on error. */
-function safeLocalStorageSet(key: string, value: string): void {
-  try {
-    localStorage.setItem(key, value);
-  } catch {
-    // Swallow — QuotaExceededError in private browsing, etc.
-    // Identity stays fresh-per-session, which is the correct graceful degradation.
-  }
-}
 
 export function getIdentity(): Identity {
   const params = new URLSearchParams(window.location.search);
