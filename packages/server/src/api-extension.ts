@@ -61,6 +61,11 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import {
+  createManagedRenameRecoveryJournal,
+  type ManagedRenameSnapshot,
+  withManagedRenameRecovery,
+} from './managed-rename-journal.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { getMetrics } from './metrics.ts';
 import {
@@ -526,6 +531,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         registerWrite(filePath, contentHash(finalContent));
       }
     }
+  }
+
+  function buildManagedRenameSnapshots(
+    docNames: string[],
+    liveContents: ReadonlyMap<string, string>,
+  ): ManagedRenameSnapshot[] {
+    return docNames.map((docName) => {
+      const liveContent = liveContents.get(docName);
+      if (typeof liveContent === 'string') {
+        return { docName, content: liveContent };
+      }
+
+      const filePath = safeContentPath(docName, contentDir);
+      if (!existsSync(filePath)) {
+        throw new Error(`Cannot snapshot missing document: ${docName}`);
+      }
+
+      return {
+        docName,
+        content: readFileSync(filePath, 'utf-8'),
+      };
+    });
   }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1785,9 +1812,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         renamed.map(({ fromDocName }) => fromDocName),
       );
 
-      mkdirSync(dirname(destinationPath), { recursive: true });
-      renameSync(sourcePath, destinationPath);
-      syncRenamedDocsToDisk(renamed, liveContents);
+      const applyRename = (): void => {
+        mkdirSync(dirname(destinationPath), { recursive: true });
+        renameSync(sourcePath, destinationPath);
+        syncRenamedDocsToDisk(renamed, liveContents);
+      };
+
+      if (kind === 'file') {
+        const recoveryJournal = createManagedRenameRecoveryJournal({
+          sourceDocName: fromPath,
+          destinationDocName: toPath,
+          snapshots: buildManagedRenameSnapshots(
+            renamed.map(({ fromDocName }) => fromDocName),
+            liveContents,
+          ),
+        });
+        await withManagedRenameRecovery(contentDir, recoveryJournal, applyRename);
+      } else {
+        applyRename();
+      }
 
       json(res, 200, { ok: true, renamed });
     } catch (e) {

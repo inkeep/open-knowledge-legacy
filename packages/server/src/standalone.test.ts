@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as Y from 'yjs';
 import { loggerFactory, type PinoLogger } from './logger.ts';
+import {
+  createManagedRenameRecoveryJournal,
+  managedRenameJournalPath,
+  writeManagedRenameJournal,
+} from './managed-rename-journal.ts';
 import { initShadowRepo, shadowGit } from './shadow-repo.ts';
 import { createServer, type ServerInstance } from './standalone.ts';
 
@@ -512,6 +517,48 @@ describe('createServer() degraded signal', () => {
 
     await srv.ready;
     await srv.destroy();
+  });
+});
+
+describe('createServer() managed rename recovery', () => {
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), 'ok-managed-rename-recovery-'));
+  });
+
+  afterEach(async () => {
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('replays a pending managed rename journal before watcher startup', async () => {
+    writeFileSync(join(tmpDir, 'beta.md'), '# Alpha\n', 'utf-8');
+    writeFileSync(join(tmpDir, 'referrer.md'), 'See [[beta]].\n', 'utf-8');
+    writeManagedRenameJournal(
+      tmpDir,
+      createManagedRenameRecoveryJournal({
+        sourceDocName: 'alpha',
+        destinationDocName: 'beta',
+        snapshots: [
+          { docName: 'alpha', content: '# Alpha\n' },
+          { docName: 'referrer', content: 'See [[alpha]].\n' },
+        ],
+      }),
+    );
+
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    await server.ready;
+
+    expect(readFileSync(join(tmpDir, 'alpha.md'), 'utf-8')).toBe('# Alpha\n');
+    expect(readFileSync(join(tmpDir, 'referrer.md'), 'utf-8')).toBe('See [[alpha]].\n');
+    expect(existsSync(join(tmpDir, 'beta.md'))).toBe(false);
+    expect(existsSync(managedRenameJournalPath(tmpDir))).toBe(false);
+
+    await server.destroy();
   });
 });
 
