@@ -1,5 +1,7 @@
 import { ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
+import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
+import { GraphLegend } from '@/components/GraphLegend';
 import { GraphView } from '@/components/GraphView';
 import { Button } from '@/components/ui/button';
 import { Panel, PanelCount, PanelHeader, PanelTitle } from '@/components/ui/panel';
@@ -42,6 +44,8 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const panelRef = useRef<HTMLElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [stats, setStats] = useState<{ nodes: number; links: number } | null>(null);
+  const [graphNodes, setGraphNodes] = useState<Array<{ id: string }>>([]);
+  const { resolvedTheme } = useTheme();
 
   useEffect(() => {
     const sync = () => setIsFullscreen(getFullscreenElement() === panelRef.current);
@@ -114,14 +118,24 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
           {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
         </Button>
       </PanelHeader>
-      <GraphView
-        activeDocName={activeDocName}
-        isFullscreen={isFullscreen}
-        className="min-h-0 flex-1"
-        onStatsChange={(nodes, links, loading) => {
-          if (!loading) setStats({ nodes, links });
-        }}
-      />
+      <div className="relative min-h-0 flex-1">
+        <GraphView
+          activeDocName={activeDocName}
+          isFullscreen={isFullscreen}
+          className="min-h-0 flex-1"
+          onStatsChange={(nodes, links, loading) => {
+            if (!loading) setStats({ nodes, links });
+          }}
+          onNodesChange={setGraphNodes}
+        />
+        {isFullscreen && (
+          <GraphLegend
+            nodes={graphNodes}
+            depth={depth}
+            theme={resolvedTheme === 'dark' ? 'dark' : 'light'}
+          />
+        )}
+      </div>
     </Panel>
   );
 }

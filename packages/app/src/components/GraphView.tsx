@@ -130,11 +130,13 @@ export function GraphView({
   isFullscreen = false,
   className = '',
   onStatsChange,
+  onNodesChange,
 }: {
   activeDocName: string;
   isFullscreen?: boolean;
   className?: string;
   onStatsChange?: (nodes: number, links: number, loading: boolean) => void;
+  onNodesChange?: (nodes: Array<{ id: string }>) => void;
 }) {
   // force-graph mutates the objects it receives in-place during layout, so we compare
   // incoming API payloads against separate signatures before replacing graphData.
@@ -184,6 +186,7 @@ export function GraphView({
           lastSigRef.current = { nodes: nextNodeSig, links: nextLinkSig };
           setGraphSig({ nodes: nextNodeSig, links: nextLinkSig });
           setGraphData({ nodes: nextNodes, links: nextLinks });
+          onNodesChange?.(nextNodes);
         }
         setError(null);
         setLoading(false);
