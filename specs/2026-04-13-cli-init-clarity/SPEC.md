@@ -15,7 +15,7 @@
 
 ## 1) Problem statement
 
-**Situation.** `open-knowledge init` (`packages/cli/src/commands/init.ts`) scaffolds `.open-knowledge/`, registers the MCP server in selected editor configs (interactive multi-select), and prints a static summary of files written + a "Next steps" hint. Default content scope is `**/*.md` with empty excludes — every markdown file under the project root becomes editable content unless gitignored. The CLI never previews what that resolves to. `open-knowledge start` does have a `--open` flag (`start.ts:13,198-204`) but it is macOS-only (`execFile('open', [url])` — no `xdg-open` / `cmd /c start` fallback). `start` also auto-scaffolds `.open-knowledge/` on first run if missing (`start.ts:33-47`), so there are effectively two init paths in production today.
+**Situation.** `open-knowledge init` (`packages/cli/src/commands/init.ts`) scaffolds `.open-knowledge/`, registers the MCP server in selected editor configs (interactive multi-select), and prints a static summary of files written + a "Next steps" hint. Default content scope is `**/*.md` with empty excludes — every markdown file under the project root becomes editable content unless gitignored. The CLI never previews what that resolves to. `open-knowledge start` does have a `--open` flag (`start.ts:13,223-229`) but it is macOS-only (`execFile('open', [url])` — no `xdg-open` / `cmd /c start` fallback). `start` also auto-scaffolds `.open-knowledge/` on first run if missing (`start.ts:35-50`), so there are effectively two init paths in production today.
 
 **Complication.** Three legibility gaps intersect at first contact with the product:
 1. **Output describes mechanics, not consequences.** "Created AGENTS.md, .gitignore, config.yml" tells the user what the CLI did to itself, not what changed about their project. With `**/*.md` default, the user can't tell from output whether 5 docs or 500 vendored markdown files just became content.
@@ -66,8 +66,8 @@ R1 + R2 share the same `previewContent()` helper. R3 is independent and bundled 
 
 ### P2 happy path (pre-init inspection)
 1. User runs `open-knowledge preview` in a fresh repo.
-2. CLI loads config (defaults if no `.open-knowledge/`), runs `previewContent()`, prints the content block. No filesystem writes.
-3. User refines `config.yml` (or accepts defaults), then runs `open-knowledge init`.
+2. CLI loads config (schema defaults — `.open-knowledge/config.yml` does not exist yet), runs `previewContent()`, prints the content block. No filesystem writes.
+3. User either (a) accepts the defaults and runs `open-knowledge init`, or (b) manually creates `.open-knowledge/config.yml` with a narrower scope first, re-runs `preview` to confirm, then runs `init`. Path (b) is for users who want scope locked down before init's MCP-registration side effects; the preview output's config snippet doubles as the template to copy. `init` skips scaffold files that already exist (reports them under "Skipped (already exist)" rather than overwriting) so a hand-crafted `config.yml` survives.
 
 ### P3 happy path (post-init re-check)
 1. User added a `vendored-docs/` directory with 800 markdown files. Sidebar feels cluttered.
@@ -95,7 +95,7 @@ R1 + R2 share the same `previewContent()` helper. R3 is independent and bundled 
 - **Performance:** Preview enumeration completes in <2s for repos with up to 10k files (see A3 — verified during implementation). <500ms for typical repos (<500 files).
 - **Reliability:** Preview failure must not block init. Init's exit code reflects scaffold + MCP-write success only.
 - **Security/privacy:** Preview output is local-only (terminal). No telemetry. Sample paths shown verbatim — assume the user owns the terminal output.
-- **Operability:** No new logging surface needed; existing `getLogger('init')` covers warnings.
+- **Operability:** No new logging surface needed; existing `getLogger('init')` covers warnings. The Content block (both `init` and `preview`) prints to **stderr**, preserving stdout for a future `--json` mode (R6) and keeping shell pipelines pristine for P4. Warnings and errors also go to stderr. This matches Vite / npm / other CLIs that reserve stdout for machine-consumable output.
 - **Cost:** Filesystem walk only. No network.
 
 ## 7) Success metrics & instrumentation
@@ -109,31 +109,38 @@ R1 + R2 share the same `previewContent()` helper. R3 is independent and bundled 
 - `runInit()` (`init.ts:171`) returns `InitCommandResult` with `contentCreated`, `contentSkipped`, `editors[]`. No content-preview field.
 - `formatInitResult()` (`init.ts:232`) renders the scaffold + MCP summary. No content section.
 - `ContentFilter` lives at `packages/server/src/content-filter.ts`, `createContentFilter({projectDir, contentDir, includePatterns, excludePatterns})`. CLI declares `@inkeep/open-knowledge-server` as a workspace **devDependency**; `tsdown.config.ts` lists it under `deps.alwaysBundle`, so it ships inlined inside `dist/cli.mjs`. No runtime resolution needed.
-- `start --open` exists at `start.ts:13,198-204` — macOS-only via `execFile('open', [url])`. Failure logs `Failed to open browser: <err>` (not silent).
-- `start` auto-init at `start.ts:33-47` calls `runInit({cwd, mcp: false})` if `.open-knowledge/` missing.
+- `start --open` exists at `start.ts:13,223-229` — macOS-only via `execFile('open', [url])`. Failure logs `Failed to open browser: <err>` (not silent).
+- `start` auto-init at `start.ts:35-50` calls `runInit({cwd, mcp: false})` if `.open-knowledge/` missing.
 - File watcher's startup walk (`file-watcher.ts:seedLastKnownHashes`) uses the same `ContentFilter` — so a CLI preview that reuses `ContentFilter` will report exactly what the watcher indexes.
 - Configured defaults from `config/schema.ts:6-14` (verified): `content.include: ['**/*.md']`, `content.exclude: []`, `content.dir: '.'`.
 
 ## 9) Proposed solution (vertical slice)
 
 ### User experience / surfaces
-- **CLI output (init):** Append a "Content" block after the existing "MCP server configuration" block, before "Next steps":
+- **CLI output (init):** Append a "Content" block after the existing "MCP server configuration" block, before "Next steps". The block leads with a plain-English scope summary, then the raw pattern syntax for users who want precision. Example (project-wide scope, >N files):
   ```
   Content:
-    Found 50 markdown files in ./
+    Found 50 markdown files (all markdown in this project and subdirectories).
     Scope: include=**/*.md  exclude=(none)
     Sample: docs/intro.md, docs/api.md, README.md, …
 
-    To adjust, edit .open-knowledge/config.yml:
+    Looks broader than you want? Edit .open-knowledge/config.yml:
       content:
-        include: ["docs/**/*.md"]
-        exclude: []
+        include: ["docs/**/*.md"]   # narrow to one directory
+        # or:
+        exclude: ["vendor/**"]      # keep broad scope, skip noise
 
     Re-check anytime: open-knowledge preview
   ```
+  - **Plain-English line formula.** Derive the human summary from `(contentDir, include, exclude)`:
+    - Default (`contentDir: '.'`, `include: ['**/*.md']`, `exclude: []`) → "all markdown in this project and subdirectories"
+    - Narrowed contentDir (`contentDir: 'docs'`) → "all markdown under `docs/`"
+    - Non-empty exclude → append " (excluding N pattern(s))"
+  - **Broad-scope hint.** When scope is project-wide (`contentDir: '.'`, empty exclude) AND `totalCount > 20`, render "Looks broader than you want?" above the snippet. Otherwise render the neutral "To adjust, edit .open-knowledge/config.yml:" lead-in. The threshold and copy are tuned so narrow/intentional scopes don't get nudged.
+  - **Contextual snippet.** If `docs/` exists at the project root, the `include` example is `["docs/**/*.md"]`. Otherwise (no conventional content root detected), the snippet leads with an `exclude` example (e.g., `["vendor/**", "node_modules/**"]`) since narrowing by directory has no obvious target.
 - **CLI output (preview verb):** Same Content block. No "Next steps" suffix, no MCP/scaffold sections.
 - **CLI output (start --open):** No new output; behavior change only.
-- **CLI output (start auto-init):** When `start` triggers auto-init (`didAutoInit === true`), render the Content block AFTER the boxed banner, ready-on URL line, and degraded warnings (i.e., after `ready.then()` resolves and degraded warnings have rendered). Order keeps URL prominent; preview only on actual first-run.
+- **CLI output (start auto-init):** When `start` triggers auto-init (`didAutoInit === true`), render the Content block AFTER the boxed banner and ready-on URL line, but append an inline hint to the URL line ("→ run `open-knowledge preview` to inspect content scope") so users who click through the URL before the block renders still know how to re-check. The block itself renders after `ready.then()` resolves and degraded warnings have rendered. Rationale: URL prominence preserved for repeat users who know what they have; first-run users who miss the scrollback get a pointer to the `preview` verb. Gated by `didAutoInit` so this hint only fires on first-run-via-start.
 - **Errors:** Preview failures inside init print a single warning line and init still exits 0. Standalone `preview` exits 1 with the warning as the only output. `start --open` failure prints URL + "open manually" hint.
 
 ### Affected routes / pages
@@ -209,6 +216,10 @@ Shadow paths to test:
 | D7 | Preview renders on `start`'s auto-init path after `ready.then()` resolves | P | DIRECTED | No | Q1 — consistency across both first-run paths; placement after URL + degraded warnings keeps signal-to-noise tuned for repeat users | session §4 Q1, audit coherence note | Modify `start.ts` to call `previewContent()` inside (or after) the `ready.then()` block |
 | D8 | Preview enumerates `.open-knowledge/` content (matches watcher behavior) | P | LOCKED | No | Q5 — invariant: preview must match what the watcher indexes. ContentFilter handles `.open-knowledge/.gitignore` (excludes `cache/`) and traverses the rest | `evidence/current-init-cli-shape.md`, `content-filter.ts:loadNestedGitignores` | No special-casing in `previewContent()`; on fresh init the count is typically 1 (just `AGENTS.md`) since the scaffolded subdirs are empty |
 | D9 | NG6 narrows the original NG5: hidden auto-narrowing forbidden; explicit detected-with-preview defaults are Future Work | P | DIRECTED | No | Design challenge F1: original NG5 conflated hidden and explicit heuristics. Reframed to forbid only hidden magic; legible explicit defaults can be specced as their own change | design-challenge F1 | Future Work item "Smarter detected defaults" added to §15 |
+| D10 | Preview block leads with plain-English scope summary; broad-scope hint ("Looks broader than you want?") fires when `contentDir='.'` + empty exclude + `totalCount>20` | P | DIRECTED | No | Review finding §9 major: `**/*.md` glob is not self-evident to P1; neutral "To adjust" framing reads as success confirmation for first-time users in the default-broad case. Differentiating framing surfaces Nick's original complaint without changing defaults | PR #108 review (major finding) | `previewContent` returns enough structured data for the formatter to pick framing; threshold tunable |
+| D11 | Config snippet is contextual: `include: ["docs/**/*.md"]` when `docs/` exists, else `exclude` example | P | DIRECTED | No | Review finding §9 consider-1: fixed `docs/**/*.md` example is misleading in repos without a `docs/` directory | PR #108 review (consider) | Formatter needs `existsSync('docs')` check on project root |
+| D12 | Content block prints to stderr; stdout reserved for future `--json` mode | T | DIRECTED | No | Review finding §16 consider-2: informational output on stdout pollutes pipelines; aligns with Vite/npm conventions | PR #108 review (consider) | `previewContent`'s formatter writes to `process.stderr`; tests assert stream |
+| D13 | `start` auto-init path appends a `preview` hint to the URL line (not a full reorder) | P | DIRECTED | No | Review finding §9 minor-2: users who click URL before Content block renders still need a pointer to re-check scope. Reordering Content above URL would bury the URL for repeat users who know their scope | PR #108 review (minor) | URL line gets `→ run \`open-knowledge preview\` to inspect content scope` suffix when `didAutoInit === true` |
 
 ## 11) Open questions
 

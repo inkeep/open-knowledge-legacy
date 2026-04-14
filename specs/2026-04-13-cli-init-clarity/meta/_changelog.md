@@ -56,3 +56,23 @@
 - No pending items carried forward
 - Ready for `/implement` or hand-off to engineer
 
+## 2026-04-13 — PR #108 review feedback applied
+
+Applied reviewer suggestions (AI reviewer verdict: APPROVE WITH SUGGESTIONS):
+
+### Major (1 — applied)
+- **§9 preview output framing.** Block now leads with a plain-English scope summary derived from `(contentDir, include, exclude)`. When scope is project-wide + empty exclude + >20 files, framing switches from neutral "To adjust" to "Looks broader than you want?". Addresses reviewer concern that `**/*.md` glob reads as success confirmation to first-time users (Nick's original complaint). Logged as **D10**.
+
+### Minor (4 — applied)
+- **§1, §8 stale line numbers corrected.** `start.ts:198-204` → `223-229`; `start.ts:33-47` → `35-50`. Verified against current `start.ts`.
+- **§5 P2 chicken-and-egg.** P2 journey now notes that `.open-knowledge/config.yml` does not exist pre-init; path (b) documents manual config creation before init for users who want scope locked down before MCP registration. Cross-references `init`'s skip-if-exists behavior.
+- **§9 start auto-init ordering.** Instead of reordering (which buries the URL for repeat users), URL line gets an inline `→ run open-knowledge preview` hint when `didAutoInit === true`, so users who click through before the Content block renders still have a pointer. Logged as **D13**.
+
+### Consider (2 — applied)
+- **§9 contextual config snippet.** Snippet now conditional: `include: ["docs/**/*.md"]` when `docs/` exists, else `exclude` example. Logged as **D11**.
+- **§6 NFR stdout/stderr.** Content block prints to stderr; stdout reserved for future `--json` (R6). Aligns with Vite/npm conventions; preserves pipelines for P4. Logged as **D12**.
+
+### Deferred / acknowledged
+- Review discarded items (3) reviewed and confirmed not actionable.
+- 4 new decisions added (D10-D13); decision log now 13 entries.
+
