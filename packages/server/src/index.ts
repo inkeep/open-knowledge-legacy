@@ -43,6 +43,7 @@ export {
   type WatcherHandle,
   writeTracker,
 } from './file-watcher.ts';
+export { readBranchFromHead } from './head-watcher.ts';
 export {
   createLiveDerivedIndexExtension,
   LIVE_DERIVED_INDEX_DEBOUNCE_MS,

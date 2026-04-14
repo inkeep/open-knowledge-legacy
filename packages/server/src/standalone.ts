@@ -195,6 +195,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       enableTestRoutes,
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
+      getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       contentRoot,
       backlinkIndex,
       signalChannel,

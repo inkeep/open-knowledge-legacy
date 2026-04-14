@@ -25,9 +25,9 @@ import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
+  getHeadingSlug,
   type HeadingEntry,
   stripFrontmatter,
-  toWikiLinkSlug,
 } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
@@ -335,6 +335,8 @@ export interface ApiExtensionOptions {
   shadowRef?: ShadowRef;
   /** Force-flush the L2 git commit debounce (e.g. after rollback). */
   flushGitCommit?: () => Promise<void>;
+  /** Accessor for the current branch from the HEAD watcher. Returns null when unknown. */
+  getCurrentBranch?: () => string | null;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
@@ -376,11 +378,12 @@ export function extractHeadings(content: string): HeadingEntry[] {
   }
 
   const headings: HeadingEntry[] = [];
+  const slugCounts = new Map<string, number>();
   for (const line of body.split('\n')) {
     const match = line.match(/^(#{1,6})\s+(.+)$/);
     if (match) {
       const text = match[2].trim();
-      const slug = toWikiLinkSlug(text);
+      const slug = getHeadingSlug(text, slugCounts);
       if (slug) headings.push({ level: match[1].length, text, slug });
     }
   }
@@ -444,6 +447,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     enableTestRoutes = false,
     shadowRef,
     flushGitCommit,
+    getCurrentBranch,
     contentRoot,
     backlinkIndex,
     signalChannel,
@@ -1138,8 +1142,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     const docName = url.searchParams.get('docName') ?? '';
-    const branch = url.searchParams.get('branch') ?? 'main';
-
+    const branch = url.searchParams.get('branch') ?? getCurrentBranch?.() ?? 'main';
     if (!docName) {
       json(res, 400, { ok: false, error: 'docName query parameter is required' });
       return;
