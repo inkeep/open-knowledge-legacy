@@ -9,7 +9,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { createApiExtension, extractPageTitle } from './api-extension.ts';
+import { createApiExtension, extractHeadings, extractPageTitle } from './api-extension.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 
 describe('extractPageTitle', () => {
@@ -78,6 +78,31 @@ describe('extractPageTitle', () => {
   test('does not strip mismatched quotes from frontmatter title', () => {
     const content = '---\ntitle: "Mismatched\'\n---\n\nBody.';
     expect(extractPageTitle(content, 'filename')).toBe('"Mismatched\'');
+  });
+});
+
+describe('extractHeadings', () => {
+  test('deduplicates repeated heading slugs and strips frontmatter before scanning', () => {
+    const content = [
+      '---',
+      'title: Duplicate Heading Test',
+      '---',
+      '',
+      '# Notes',
+      '',
+      '## Notes',
+      '',
+      '## 東京',
+      '',
+      '## 東京',
+    ].join('\n');
+
+    expect(extractHeadings(content)).toEqual([
+      { level: 1, text: 'Notes', slug: 'notes' },
+      { level: 2, text: 'Notes', slug: 'notes-1' },
+      { level: 2, text: '東京', slug: '東京' },
+      { level: 2, text: '東京', slug: '東京-1' },
+    ]);
   });
 });
 

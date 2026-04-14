@@ -6,6 +6,10 @@ export interface HeadingEntry {
   slug: string;
 }
 
+const COMBINING_MARK_RE = /\p{M}+/gu;
+const NON_LETTER_OR_NUMBER_RE = /[^\p{L}\p{N}]+/gu;
+const EDGE_HYPHENS_RE = /^-+|-+$/g;
+
 /**
  * Convert arbitrary heading text to a URL-safe slug suitable for wiki link anchors.
  * Any run of non-alphanumeric characters becomes a single hyphen; leading/trailing
@@ -18,7 +22,21 @@ export interface HeadingEntry {
 export function toWikiLinkSlug(text: string): string {
   return text
     .trim()
+    .normalize('NFKD')
+    .replace(COMBINING_MARK_RE, '')
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(NON_LETTER_OR_NUMBER_RE, '-')
+    .replace(EDGE_HYPHENS_RE, '');
+}
+
+/** Reuse the same duplicate-slug suffixing across server and client heading IDs. */
+export function disambiguateSlug(baseSlug: string, slugCounts: Map<string, number>): string {
+  const count = slugCounts.get(baseSlug) ?? 0;
+  slugCounts.set(baseSlug, count + 1);
+  return count === 0 ? baseSlug : `${baseSlug}-${count}`;
+}
+
+export function getHeadingSlug(text: string, slugCounts: Map<string, number>): string {
+  const baseSlug = toWikiLinkSlug(text);
+  return baseSlug ? disambiguateSlug(baseSlug, slugCounts) : '';
 }
