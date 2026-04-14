@@ -1,6 +1,5 @@
 import {
   ArrowRightIcon,
-  BookOpenIcon,
   BrainCircuitIcon,
   GitBranchIcon,
   LayersIcon,
@@ -13,110 +12,168 @@ import Link from 'next/link';
 
 export default function HomePage() {
   return (
-    <main>
+    <main className="font-[family-name:var(--font-dm-sans)] selection:bg-[var(--slide-accent)]/20">
       <Hero />
-      <LogoCloud />
+      <Pillars />
+      <QuickStart />
       <HowItWorks />
       <Features />
       <Inspiration />
-      <OpenSource />
       <CTA />
-      <Footer />
+      <SiteFooter />
     </main>
   );
 }
 
 function Hero() {
   return (
-    <section className="relative overflow-hidden border-b border-fd-border">
-      <div className="pointer-events-none absolute inset-0 -z-10">
-        <div className="absolute inset-0 bg-gradient-to-b from-fd-background via-fd-background to-fd-background/80" />
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 h-[600px] w-[900px] rounded-full bg-fd-primary/5 blur-3xl" />
-        <div className="absolute top-40 right-0 h-[300px] w-[400px] rounded-full bg-fd-primary/3 blur-3xl" />
-      </div>
+    <section className="relative bg-[var(--slide-bg)] px-6 pt-32 pb-20 md:pt-44 md:pb-28">
+      <div
+        className="pointer-events-none absolute top-20 right-8 z-10 size-12 rounded-full md:top-24 md:right-16 md:size-16"
+        style={{ background: 'var(--slide-accent)' }}
+      />
 
-      <div className="mx-auto max-w-6xl px-6 pt-32 pb-20 text-center md:pt-44 md:pb-28">
-        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-fd-border bg-fd-muted/50 px-4 py-1.5 text-sm text-fd-muted-foreground">
-          <span className="relative flex size-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
-          </span>
+      <div className="mx-auto max-w-5xl">
+        <p className="mb-8 text-sm font-medium italic text-[var(--slide-accent)]">
           Now open source
-        </div>
+        </p>
 
-        <h1 className="mx-auto max-w-4xl text-4xl font-bold tracking-tight text-fd-foreground sm:text-6xl lg:text-7xl">
+        <h1 className="max-w-4xl text-4xl font-light tracking-tight text-[var(--slide-text)] sm:text-5xl lg:text-[4.25rem] lg:leading-[1.1]">
           Your knowledge, co-authored{' '}
-          <span className="bg-gradient-to-r from-fd-primary to-fd-primary/60 bg-clip-text text-transparent">
+          <span className="relative inline-block">
             by AI in real time
+            <svg
+              className="absolute -bottom-2 left-0 h-3 w-full"
+              viewBox="0 0 286 14"
+              fill="none"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M3 11C45 3.5 91.5 1.5 143 5.5C194.5 9.5 241 7 283 3"
+                stroke="var(--slide-accent)"
+                strokeWidth="5"
+                strokeLinecap="round"
+              />
+            </svg>
           </span>
         </h1>
 
-        <p className="mx-auto mt-6 max-w-2xl text-lg text-fd-muted-foreground md:text-xl">
+        <p className="mt-8 max-w-xl text-lg leading-relaxed text-[var(--slide-muted)]">
           An agent-native knowledge platform where humans and AI co-create. Rich editing, markdown
           in git, real-time CRDT collaboration — connected to any AI agent via MCP.
         </p>
 
-        <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
+        <div className="mt-10 flex flex-wrap items-center gap-4">
           <Link
             href="/docs"
-            className="inline-flex items-center gap-2 rounded-lg bg-fd-primary px-6 py-3 text-sm font-medium text-fd-primary-foreground shadow-lg shadow-fd-primary/25 transition-all hover:brightness-110"
+            className="slide-btn-accent inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-medium transition-opacity"
           >
             Get Started
             <ArrowRightIcon className="size-4" />
           </Link>
           <Link
             href="https://github.com/inkeep/open-knowledge"
-            className="inline-flex items-center gap-2 rounded-lg border border-fd-border bg-fd-card px-6 py-3 text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-accent"
+            className="slide-btn-outline inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-medium transition-colors"
           >
             <GitBranchIcon className="size-4" />
             View on GitHub
           </Link>
-        </div>
-
-        <div className="mx-auto mt-12 max-w-xl rounded-xl border border-fd-border bg-fd-card/80 p-4 backdrop-blur">
-          <div className="mb-3 flex items-center gap-2 border-b border-fd-border pb-3">
-            <div className="flex gap-1.5">
-              <div className="size-3 rounded-full bg-red-500/80" />
-              <div className="size-3 rounded-full bg-yellow-500/80" />
-              <div className="size-3 rounded-full bg-green-500/80" />
-            </div>
-            <span className="font-mono text-xs text-fd-muted-foreground">terminal</span>
-          </div>
-          <pre className="text-left text-sm leading-relaxed">
-            <code>
-              <span className="text-fd-muted-foreground">$</span>{' '}
-              <span className="text-fd-foreground">npx @inkeep/open-knowledge</span>
-              {'\n'}
-              <span className="text-emerald-500">
-                {'>'} Server running at http://localhost:5173
-              </span>
-              {'\n'}
-              <span className="text-emerald-500">{'>'} MCP server ready for agent connections</span>
-              {'\n'}
-              <span className="text-fd-muted-foreground">
-                {'>'} Watching ./content for changes...
-              </span>
-            </code>
-          </pre>
         </div>
       </div>
     </section>
   );
 }
 
-function LogoCloud() {
-  const techs = ['TipTap', 'Yjs', 'ProseMirror', 'CodeMirror', 'Hocuspocus', 'MCP'];
+function Pillars() {
+  const pillars = [
+    {
+      title: 'Knowledge\nEngine',
+      icon: PenToolIcon,
+      description: 'Understand your\nproduct & KB',
+    },
+    {
+      title: 'Agent\nIntelligence',
+      icon: BrainCircuitIcon,
+      description: 'Query for User-Specific\nContext',
+    },
+    {
+      title: 'Git-Native\nWorkflows',
+      icon: GitBranchIcon,
+      description: 'Update Systems &\nAutomate Tasks',
+    },
+  ];
+
   return (
-    <section className="border-b border-fd-border py-10">
-      <p className="mb-6 text-center text-xs font-medium uppercase tracking-widest text-fd-muted-foreground">
-        Built on
-      </p>
-      <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-4 px-6">
-        {techs.map((t) => (
-          <span key={t} className="text-sm font-medium text-fd-muted-foreground/80">
-            {t}
-          </span>
-        ))}
+    <section className="bg-[var(--slide-bg)] px-6 pb-24 md:pb-32">
+      <div className="mx-auto max-w-4xl">
+        <div className="grid gap-16 md:grid-cols-3 md:gap-12">
+          {pillars.map(({ title, icon: Icon, description }) => (
+            <div key={title} className="text-center">
+              <h3 className="whitespace-pre-line text-xl font-normal leading-snug text-[var(--slide-text)]">
+                {title}
+              </h3>
+              <div className="mx-auto my-10">
+                <Icon className="mx-auto size-16 text-[var(--slide-text)]" strokeWidth={0.8} />
+              </div>
+              <p className="whitespace-pre-line text-sm leading-relaxed text-[var(--slide-muted)]">
+                {description}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-20 flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-6">
+          <div className="w-44 rounded-lg border border-[var(--slide-border)] py-3 text-center text-sm font-medium text-[var(--slide-text)]">
+            Open Source
+          </div>
+          <div className="w-72 rounded-lg border border-[var(--slide-border)] py-3 text-center text-sm font-medium text-[var(--slide-text)]">
+            Agent Platform (new)
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function QuickStart() {
+  return (
+    <section className="bg-[var(--slide-bg)] px-6 pb-24 md:pb-32">
+      <div className="mx-auto max-w-2xl">
+        <div
+          className="rounded-xl p-5"
+          style={{
+            border: '1px solid var(--slide-border)',
+            backgroundColor: 'var(--slide-bg-elevated)',
+          }}
+        >
+          <div className="mb-3 flex items-center gap-2 border-b border-[var(--slide-border)] pb-3">
+            <div className="flex gap-1.5">
+              <div className="size-2.5 rounded-full bg-[#ff5f57]" />
+              <div className="size-2.5 rounded-full bg-[#febc2e]" />
+              <div className="size-2.5 rounded-full bg-[#28c840]" />
+            </div>
+            <span className="font-mono text-xs text-[var(--slide-muted)]">terminal</span>
+          </div>
+          <pre className="text-left text-sm leading-relaxed">
+            <code>
+              <span className="text-[var(--slide-muted)]">$</span>{' '}
+              <span className="text-[var(--slide-text)]">npx @inkeep/open-knowledge</span>
+              {'\n'}
+              <span className="text-emerald-600 dark:text-emerald-400">
+                {'>'} Server running at http://localhost:5173
+              </span>
+              {'\n'}
+              <span className="text-emerald-600 dark:text-emerald-400">
+                {'>'} MCP server ready for agent connections
+              </span>
+              {'\n'}
+              <span className="text-[var(--slide-muted)]">
+                {'>'} Watching ./content for changes...
+              </span>
+            </code>
+          </pre>
+        </div>
       </div>
     </section>
   );
@@ -155,30 +212,30 @@ function HowItWorks() {
   ];
 
   return (
-    <section className="py-24 md:py-32">
-      <div className="mx-auto max-w-6xl px-6">
-        <p className="mb-3 text-sm font-medium uppercase tracking-widest text-fd-primary">
+    <section className="border-t border-[var(--slide-border)] bg-[var(--slide-bg)] px-6 py-24 md:py-32">
+      <div className="mx-auto max-w-5xl">
+        <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
           How it works
         </p>
-        <h2 className="text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
+        <h2 className="text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
           From raw notes to structured knowledge
         </h2>
-        <p className="mt-4 max-w-2xl text-fd-muted-foreground">
+        <p className="mt-4 max-w-2xl text-[var(--slide-muted)]">
           Inspired by Andrej Karpathy&apos;s viral LLM knowledge base workflow — automated,
           real-time, and built for the way you actually think.
         </p>
 
-        <div className="mt-16 grid gap-8 md:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-16 grid gap-12 md:grid-cols-2 lg:grid-cols-4 lg:gap-8">
           {steps.map(({ step, title, description, icon: Icon }) => (
-            <div key={step} className="group relative">
-              <div className="mb-4 flex items-center gap-3">
-                <div className="flex size-10 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary transition-colors group-hover:bg-fd-primary group-hover:text-fd-primary-foreground">
-                  <Icon className="size-5" />
-                </div>
-                <span className="font-mono text-xs text-fd-muted-foreground">{step}</span>
+            <div key={step}>
+              <div className="mb-5 flex items-center gap-3">
+                <Icon className="size-6 text-[var(--slide-accent)]" strokeWidth={1.5} />
+                <span className="font-mono text-xs text-[var(--slide-muted)]">{step}</span>
               </div>
-              <h3 className="text-lg font-semibold text-fd-foreground">{title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-fd-muted-foreground">{description}</p>
+              <h3 className="text-lg font-medium text-[var(--slide-text)]">{title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-[var(--slide-muted)]">
+                {description}
+              </p>
             </div>
           ))}
         </div>
@@ -228,28 +285,25 @@ function Features() {
   ];
 
   return (
-    <section className="border-t border-fd-border bg-fd-muted/30 py-24 md:py-32">
-      <div className="mx-auto max-w-6xl px-6">
-        <div className="text-center">
-          <p className="mb-3 text-sm font-medium uppercase tracking-widest text-fd-primary">
+    <section className="bg-[var(--slide-bg)] px-6 py-24 md:py-32">
+      <div className="mx-auto max-w-5xl">
+        <div className="mb-16 text-center">
+          <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
             Features
           </p>
-          <h2 className="text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
+          <h2 className="text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
             Everything you need for AI-native knowledge
           </h2>
         </div>
 
-        <div className="mt-16 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-x-12 gap-y-14 sm:grid-cols-2 lg:grid-cols-3">
           {features.map(({ icon: Icon, title, description }) => (
-            <div
-              key={title}
-              className="group rounded-xl border border-fd-border bg-fd-card p-6 transition-all hover:border-fd-primary/30 hover:shadow-lg hover:shadow-fd-primary/5"
-            >
-              <div className="mb-4 flex size-10 items-center justify-center rounded-lg bg-fd-primary/10 text-fd-primary">
-                <Icon className="size-5" />
-              </div>
-              <h3 className="text-base font-semibold text-fd-foreground">{title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-fd-muted-foreground">{description}</p>
+            <div key={title}>
+              <Icon className="mb-4 size-8 text-[var(--slide-text)]" strokeWidth={1} />
+              <h3 className="text-base font-medium text-[var(--slide-text)]">{title}</h3>
+              <p className="mt-2 text-sm leading-relaxed text-[var(--slide-muted)]">
+                {description}
+              </p>
             </div>
           ))}
         </div>
@@ -260,70 +314,35 @@ function Features() {
 
 function Inspiration() {
   return (
-    <section className="py-24 md:py-32">
-      <div className="mx-auto max-w-4xl px-6">
-        <div className="relative rounded-2xl border border-fd-border bg-fd-card p-8 md:p-12">
-          <div className="absolute -top-4 left-8 rounded-full border border-fd-border bg-fd-background px-4 py-1 text-sm font-medium text-fd-primary">
-            Inspiration
-          </div>
-          <blockquote className="mt-2">
-            <p className="text-lg leading-relaxed text-fd-foreground md:text-xl">
-              &ldquo;A significant fraction of my recent token throughput is going less into
-              manipulating code, and more into manipulating knowledge. I think there is room here
-              for <span className="font-medium text-fd-primary">an incredible new product</span>{' '}
-              instead of a hacky collection of scripts.&rdquo;
-            </p>
-            <footer className="mt-6 flex items-center gap-3">
-              <div className="flex size-10 items-center justify-center rounded-full bg-fd-muted text-sm font-bold text-fd-muted-foreground">
-                AK
-              </div>
-              <div>
-                <div className="font-medium text-fd-foreground">Andrej Karpathy</div>
-                <Link
-                  href="https://x.com/karpathy/status/2039805659525644595"
-                  className="text-sm text-fd-muted-foreground transition-colors hover:text-fd-primary"
-                >
-                  on LLM Knowledge Bases
-                </Link>
-              </div>
-            </footer>
-          </blockquote>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function OpenSource() {
-  return (
-    <section className="border-t border-fd-border bg-fd-muted/30 py-24 md:py-32">
-      <div className="mx-auto max-w-4xl px-6 text-center">
-        <div className="mx-auto mb-6 flex size-14 items-center justify-center rounded-2xl bg-fd-primary/10">
-          <BookOpenIcon className="size-7 text-fd-primary" />
-        </div>
-        <h2 className="text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
-          Open source, open knowledge
-        </h2>
-        <p className="mx-auto mt-4 max-w-xl text-fd-muted-foreground">
-          The entire platform is MIT-licensed. Your knowledge lives as markdown files in git — no
-          vendor lock-in, no proprietary formats, no black boxes.
-        </p>
-        <div className="mt-10 flex flex-col items-center justify-center gap-4 sm:flex-row">
-          <Link
-            href="https://github.com/inkeep/open-knowledge"
-            className="inline-flex items-center gap-2 rounded-lg border border-fd-border bg-fd-card px-6 py-3 text-sm font-medium text-fd-foreground transition-colors hover:bg-fd-accent"
-          >
-            <GitBranchIcon className="size-4" />
-            Star on GitHub
-          </Link>
-          <Link
-            href="/docs"
-            className="inline-flex items-center gap-2 text-sm font-medium text-fd-primary transition-colors hover:text-fd-primary/80"
-          >
-            Read the docs
-            <ArrowRightIcon className="size-4" />
-          </Link>
-        </div>
+    <section className="border-t border-[var(--slide-border)] bg-[var(--slide-bg)] px-6 py-24 md:py-32">
+      <div className="mx-auto max-w-3xl">
+        <blockquote>
+          <p className="text-xl leading-relaxed font-light text-[var(--slide-text)] md:text-2xl">
+            &ldquo;A significant fraction of my recent token throughput is going less into
+            manipulating code, and more into manipulating knowledge. I think there is room here for{' '}
+            <span className="font-medium text-[var(--slide-accent)]">
+              an incredible new product
+            </span>{' '}
+            instead of a hacky collection of scripts.&rdquo;
+          </p>
+          <footer className="mt-8 flex items-center gap-3">
+            <div
+              className="flex size-10 items-center justify-center rounded-full text-sm font-bold"
+              style={{ backgroundColor: 'var(--slide-border)', color: 'var(--slide-muted)' }}
+            >
+              AK
+            </div>
+            <div>
+              <div className="font-medium text-[var(--slide-text)]">Andrej Karpathy</div>
+              <Link
+                href="https://x.com/karpathy/status/2039805659525644595"
+                className="text-sm text-[var(--slide-muted)] transition-colors hover:text-[var(--slide-accent)]"
+              >
+                on LLM Knowledge Bases
+              </Link>
+            </div>
+          </footer>
+        </blockquote>
       </div>
     </section>
   );
@@ -331,27 +350,36 @@ function OpenSource() {
 
 function CTA() {
   return (
-    <section className="py-24 md:py-32">
-      <div className="mx-auto max-w-4xl px-6 text-center">
-        <h2 className="text-3xl font-bold tracking-tight text-fd-foreground sm:text-4xl">
-          Start building your knowledge base
+    <section className="bg-[var(--slide-bg)] px-6 py-24 md:py-32">
+      <div className="mx-auto max-w-3xl text-center">
+        <h2 className="text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
+          Start building your{' '}
+          <span className="relative inline-block">
+            knowledge base
+            <svg
+              className="absolute -bottom-1 left-0 w-full"
+              viewBox="0 0 220 10"
+              fill="none"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M2 7C35 2 80 8 110 4C140 0 185 6 218 3"
+                stroke="var(--slide-accent)"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
         </h2>
-        <p className="mx-auto mt-4 max-w-xl text-fd-muted-foreground">
+        <p className="mx-auto mt-6 max-w-lg text-[var(--slide-muted)]">
           One command to get started. Connect your favorite AI agent and let the knowledge compile
           itself.
         </p>
-        <div className="mx-auto mt-8 max-w-md rounded-xl border border-fd-border bg-fd-card p-4">
-          <pre className="text-left text-sm">
-            <code>
-              <span className="text-fd-muted-foreground">$</span>{' '}
-              <span className="text-fd-foreground">npx @inkeep/open-knowledge</span>
-            </code>
-          </pre>
-        </div>
-        <div className="mt-8">
+        <div className="mt-10">
           <Link
             href="/docs"
-            className="inline-flex items-center gap-2 rounded-lg bg-fd-primary px-8 py-3.5 text-sm font-medium text-fd-primary-foreground shadow-lg shadow-fd-primary/25 transition-all hover:brightness-110"
+            className="slide-btn-accent inline-flex items-center gap-2 rounded-lg px-8 py-3.5 text-sm font-medium transition-opacity"
           >
             Get Started
             <ArrowRightIcon className="size-4" />
@@ -362,30 +390,24 @@ function CTA() {
   );
 }
 
-function Footer() {
+function SiteFooter() {
   return (
-    <footer className="border-t border-fd-border py-10">
-      <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 sm:flex-row">
-        <div className="flex items-center gap-2 text-sm text-fd-muted-foreground">
-          <BookOpenIcon className="size-4" />
-          <span>
-            Open Knowledge by{' '}
-            <Link href="https://inkeep.com" className="transition-colors hover:text-fd-foreground">
-              Inkeep
-            </Link>
-          </span>
-        </div>
-        <div className="flex items-center gap-6 text-sm text-fd-muted-foreground">
-          <Link href="/docs" className="transition-colors hover:text-fd-foreground">
+    <footer className="border-t border-[var(--slide-border)] bg-[var(--slide-bg)] px-6 py-10">
+      <div className="mx-auto flex max-w-5xl flex-col items-center justify-between gap-6 sm:flex-row">
+        <div className="flex items-center gap-6 text-sm text-[var(--slide-muted)]">
+          <Link href="/docs" className="transition-colors hover:text-[var(--slide-text)]">
             Docs
           </Link>
           <Link
             href="https://github.com/inkeep/open-knowledge"
-            className="transition-colors hover:text-fd-foreground"
+            className="transition-colors hover:text-[var(--slide-text)]"
           >
             GitHub
           </Link>
         </div>
+        <p className="text-xs font-medium uppercase tracking-[0.25em] text-[var(--slide-muted)]">
+          2026 Inkeep. Agents you can trust.
+        </p>
       </div>
     </footer>
   );

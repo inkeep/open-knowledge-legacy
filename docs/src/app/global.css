@@ -1,3 +1,42 @@
 @import "tailwindcss";
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
+
+@layer base {
+  :root {
+    --slide-bg: #f5f5f2;
+    --slide-bg-elevated: #ffffff;
+    --slide-text: #1a1a1a;
+    --slide-muted: #71717a;
+    --slide-accent: #3b5ef6;
+    --slide-border: #d4d4d0;
+  }
+
+  .dark {
+    --slide-bg: #0c0c0c;
+    --slide-bg-elevated: #171717;
+    --slide-text: #f0f0ee;
+    --slide-muted: #a1a1aa;
+    --slide-accent: #6b8afa;
+    --slide-border: #27272a;
+  }
+}
+
+.slide-btn-accent {
+  background-color: var(--slide-accent) !important;
+  color: #fff !important;
+}
+
+.slide-btn-accent:hover {
+  opacity: 0.9;
+}
+
+.slide-btn-outline {
+  border: 1px solid var(--slide-border) !important;
+  color: var(--slide-text) !important;
+  background: transparent !important;
+}
+
+.slide-btn-outline:hover {
+  background-color: color-mix(in srgb, var(--slide-text) 5%, transparent) !important;
+}
