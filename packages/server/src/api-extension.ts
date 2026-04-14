@@ -36,6 +36,7 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
+import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
@@ -398,6 +399,12 @@ export interface ApiExtensionOptions {
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
+  /**
+   * Optional. When present, agent write handlers publish the active doc on
+   * `__system__` awareness so clients can push-navigate to follow the agent.
+   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentFocusBroadcaster?: AgentFocusBroadcaster;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -471,6 +478,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     contentRoot,
     backlinkIndex,
     signalChannel,
+    agentFocusBroadcaster,
   } = options;
 
   function resolveDocPath(docName: string): string | null {
@@ -938,6 +946,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
+      // Path A: hardcoded identity. Path B seam — replace both args with
+      // readAgentIdentity(req) when FW-7 ships. See SPEC.md §6.2.1.
+      agentFocusBroadcaster?.setFocus(DEFAULT_AGENT_ID, {
+        agentName: 'Claude',
+        currentDoc: resolvedDocName,
+        writeKind: 'write',
+        ts: Date.now(),
+      });
+
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
@@ -1364,6 +1381,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
       }
+
+      // Path A: hardcoded identity. Path B seam — replace both args with
+      // readAgentIdentity(req) when FW-7 ships. See SPEC.md §6.2.1.
+      agentFocusBroadcaster?.setFocus(DEFAULT_AGENT_ID, {
+        agentName: 'Claude',
+        currentDoc: docName,
+        writeKind: 'edit',
+        ts: Date.now(),
+      });
+
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');

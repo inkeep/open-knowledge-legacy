@@ -60,10 +60,17 @@ export class AgentFocusBroadcaster {
     const awareness = this.resolveAwareness();
     if (!awareness) return;
     try {
-      const state = awareness.getLocalState() as { agentFocus?: Record<string, AgentFocusEntry> };
-      const current = state?.agentFocus ?? {};
-      const next = update(current);
-      awareness.setLocalStateField('agentFocus', next);
+      // y-protocols awareness.setLocalStateField is a no-op when local state is
+      // null (its source reads `getLocalState()` and guards `if (state !== null)`).
+      // The server-side Document's awareness starts null, so we always go through
+      // setLocalState with an explicit merge — this bootstraps state on the first
+      // call and preserves any non-agentFocus fields other subsystems may set.
+      const existing = (awareness.getLocalState() ?? {}) as {
+        agentFocus?: Record<string, AgentFocusEntry>;
+      };
+      const current = existing.agentFocus ?? {};
+      const nextFocus = update(current);
+      awareness.setLocalState({ ...existing, agentFocus: nextFocus });
     } catch (err) {
       this.log.error({ err }, '[agent-focus] awareness mutation failed');
     }
@@ -88,7 +95,7 @@ export class AgentFocusBroadcaster {
 type DocumentWithAwareness = {
   awareness: {
     getLocalState: () => Record<string, unknown> | null;
-    setLocalStateField: (field: string, value: unknown) => void;
+    setLocalState: (state: Record<string, unknown> | null) => void;
   };
 };
 

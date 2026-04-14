@@ -208,6 +208,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentRoot,
       backlinkIndex,
       signalChannel,
+      agentFocusBroadcaster,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
   } catch (err) {

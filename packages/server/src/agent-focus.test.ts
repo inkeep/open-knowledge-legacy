@@ -4,11 +4,11 @@ import { SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
 
 function makeMockAwareness() {
-  let state: Record<string, unknown> = {};
+  let state: Record<string, unknown> | null = null;
   return {
-    getLocalState: () => (Object.keys(state).length ? state : null),
-    setLocalStateField: (field: string, value: unknown) => {
-      state = { ...state, [field]: value };
+    getLocalState: () => state,
+    setLocalState: (next: Record<string, unknown> | null) => {
+      state = next;
     },
     _read: () => state,
   };
