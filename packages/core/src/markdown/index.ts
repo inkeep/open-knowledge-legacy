@@ -106,37 +106,24 @@ export class MarkdownManager {
   }
 
   /**
-   * Crash-safe parse: never throws. Returns degraded content on failure.
+   * Parse with block-level fallback (R6). Never throws.
    *
-   * Use this on code paths where a throw = user-visible data loss:
-   *   - Server persistence (onLoadDocument) — better to show degraded text
-   *     than an empty document
-   *   - Any caller that can't keep "last valid state" like Observer B does
+   * On parse failure with position info, splits source at the enclosing block
+   * boundary, replaces the failing block with rawMdxFallback, parses the
+   * halves recursively, and merges. On position-less error (e.g., PM-
+   * construction RangeError), splits at blank-line boundaries and dispatches
+   * each block independently. On MAX_SPLIT_DEPTH exhaustion or when every
+   * block fails, falls through to whole-doc raw text. The `never throws`
+   * contract is preserved across all paths.
    *
-   * Delegates to parseWithFallback (R6) so server-persistence load paths get
-   * block-level degradation — the dominant real-world failure class (tag
-   * mismatch `<Foo>...</Bar>`) degrades to a single rawMdxFallback node with
-   * surrounding structure preserved, instead of the whole document rendering
-   * as raw text. parseWithFallback's own inner catch still falls through to
-   * whole-doc raw text for position-less errors or MAX_SPLIT_DEPTH exhaustion,
-   * so the "never throws" contract is preserved.
+   * Use for all server-side R6 callers where throwing = user-visible data
+   * loss: server persistence (onLoadDocument), agent-sessions, rollback
+   * endpoint, external-change disk→CRDT bridge. NOT for Observer B, which
+   * uses freeze-on-failure for live-typing UX (retains the last-valid
+   * XmlFragment while the user is mid-type).
    *
-   * Spec §6 R6 Callers: "parseSafe (server persistence + agent-sessions),
-   * rollback endpoint, external-change.ts". NOT Observer B (freeze-on-failure
-   * is the live-typing UX).
-   */
-  parseSafe(markdown: string): JSONContent {
-    return this.parseWithFallback(markdown);
-  }
-
-  /**
-   * Parse with block-level fallback (R6). On parse failure with position info,
-   * splits source at the enclosing block boundary, replaces the failing block
-   * with rawMdxFallback, parses the halves recursively, and merges.
-   *
-   * Use this for callers that want degraded-but-structured content rather than
-   * whole-doc raw text: rollback endpoint, external-change disk→CRDT bridge.
-   * NOT for Observer B (which uses freeze-on-failure for live-typing UX).
+   * Supersedes the prior `parseSafe` API (removed as a redundant alias —
+   * one name per function, per greenfield precedent).
    */
   parseWithFallback(markdown: string): JSONContent {
     if (!markdown.trim()) {
@@ -467,15 +454,34 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
         });
     }
 
-    // MDX expressions and ESM
+    // MDX expressions
+    //
+    // - mdxFlowExpression (block-level `{expr}` on its own line) → jsxComponent
+    //   (block node, `atom: true`, raw source in `content` attr).
+    //
+    // - mdxTextExpression (inline `{expr}` in prose) → plain `text` node
+    //   carrying the raw expression verbatim. This is the correct level per
+    //   NG1 + agnostic-mode intent: "balanced-brace prose like `{ noServer: true }`
+    //   preserves the braces on parse → serialize round-trip." Mapping to
+    //   jsxComponent (block) would violate paragraph's `inline*` content
+    //   expression when the expression appears mid-prose (e.g., inside a
+    //   table cell that wraps content in a paragraph). The spec §8 matrix
+    //   showed mdxTextExpression → jsxComponent; that's an inherited
+    //   inconsistency from the pre-agnostic schema. Under agnostic mode,
+    //   inline expressions ARE just prose — emit them as text.
+    //
+    // Under agnostic MDX (R1), both text and flow expressions only tokenize
+    // on BALANCED braces. Unmatched `{` is preserved as prose by the R23
+    // guard. So `{ noServer: true }` round-trips: text → serialize → `{ noServer: true }`
+    // → parse → mdxTextExpression → text → ...
     handlers.mdxFlowExpression = (node: MdxFlowExpression) =>
       n.jsxComponent.createAndFill({
         content: rawFromData(node.data) ?? `{${node.value ?? ''}}`,
       });
-    handlers.mdxTextExpression = (node: MdxTextExpression) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? `{${node.value ?? ''}}`,
-      });
+    handlers.mdxTextExpression = (node: MdxTextExpression) => {
+      const source = rawFromData(node.data) ?? `{${node.value ?? ''}}`;
+      return schema.text(source);
+    };
     // mdxjsEsm handler removed (R4): agnostic mode never produces mdxjsEsm
     // nodes — ESM import/export re-parses as prose per NG1.
     // Directive handlers removed (D14): remark-directive removed from pipeline.
