@@ -51,9 +51,10 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
       <PanelHeader>
         <PanelTitle>Graph</PanelTitle>
         {stats && (
-          <PanelCount>
-            {stats.nodes} nodes, {stats.links} links
-          </PanelCount>
+          <div className="flex items-center gap-0.5">
+            <PanelCount>{stats.nodes} nodes</PanelCount>
+            <PanelCount>{stats.links} links</PanelCount>
+          </div>
         )}
         <Button
           variant="ghost"
