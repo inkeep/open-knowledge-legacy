@@ -14,7 +14,14 @@ import type {
   Hocuspocus,
   LocalTransactionOrigin,
 } from '@hocuspocus/server';
-import { applyByPrefixSuffix, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  applyByPrefixSuffix,
+  colorFromSeed,
+  prependFrontmatter,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
+
+export { colorFromSeed } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
@@ -46,23 +53,6 @@ export const AGENT_WRITE_ORIGIN = {
   skipStoreHooks: false,
   context: { origin: 'agent-write' },
 } satisfies LocalTransactionOrigin;
-
-/** Deterministic color from a stable palette for a given seed string. */
-export function colorFromSeed(seed: string): string {
-  const AGENT_COLORS = [
-    '#D97757',
-    '#5B8DEF',
-    '#43A047',
-    '#E53935',
-    '#8E24AA',
-    '#F4511E',
-    '#00897B',
-    '#3949AB',
-  ];
-  let hash = 0;
-  for (const ch of seed) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
-  return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length];
-}
 
 /** Map known MCP clientInfo.name values to icon identifiers. */
 export function iconFromClientName(name?: string): string {

@@ -105,9 +105,11 @@ export function getWipRefPattern(branch: string): string {
 
 /**
  * A single contributor entry extracted from a WIP commit message body.
- * Matches the shape written by contributor-tracker.ts's formatContributors().
+ * Matches the shape written by contributor-tracker.ts's formatContributorsFrom().
+ * v is optional for backward compatibility with pre-versioned commit messages.
  */
 export interface ShadowContributor {
+  v?: number;
   id: string;
   name: string;
   docs: string[];
@@ -132,8 +134,11 @@ export function parseContributors(body: string): ShadowContributor[] {
         parsed !== null &&
         typeof parsed === 'object' &&
         'id' in parsed &&
+        typeof (parsed as Record<string, unknown>).id === 'string' &&
         'name' in parsed &&
-        'docs' in parsed
+        typeof (parsed as Record<string, unknown>).name === 'string' &&
+        'docs' in parsed &&
+        Array.isArray((parsed as Record<string, unknown>).docs)
       ) {
         contributors.push(parsed as ShadowContributor);
       }

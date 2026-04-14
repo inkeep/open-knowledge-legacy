@@ -43,7 +43,13 @@ export function register(
         docName: normalized.docName,
         markdown: args.markdown,
         position: args.position,
-        ...(identity ? { agentId: identity.connectionId, agentName: identity.displayName } : {}),
+        ...(identity
+          ? {
+              agentId: identity.connectionId,
+              agentName: identity.displayName,
+              clientName: identity.clientInfo?.name,
+            }
+          : {}),
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       return textResult(`Written successfully (${args.position})`);

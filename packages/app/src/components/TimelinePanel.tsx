@@ -6,7 +6,7 @@
  * are collapsed behind a "Show N auto-saves" expander.
  * Current (pre-checkpoint) WIP entries are expanded by default at top.
  */
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
+import { colorFromSeed, type TimelineEntry } from '@inkeep/open-knowledge-core';
 import { ChevronDown, ChevronRight, Diamond, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -22,24 +22,6 @@ interface TimelinePanelProps {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const AGENT_PALETTE = [
-  '#D97757',
-  '#5B8DEF',
-  '#43A047',
-  '#E53935',
-  '#8E24AA',
-  '#F4511E',
-  '#00897B',
-  '#3949AB',
-];
-
-/** Deterministic hex color from contributor name — mirrors server-side colorFromSeed. */
-function colorFromSeed(seed: string): string {
-  let hash = 0;
-  for (const ch of seed) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
-  return AGENT_PALETTE[Math.abs(hash) % AGENT_PALETTE.length];
-}
 
 export function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString);

@@ -16,7 +16,7 @@ interface ContributorEntry {
 }
 
 /** Module-level accumulator — shared between api-extension and persistence. */
-const pendingContributors = new Map<string, ContributorEntry>();
+let pendingContributors = new Map<string, ContributorEntry>();
 
 /**
  * Record that an agent contributed to a document.
@@ -32,18 +32,46 @@ export function recordContributor(docName: string, agentId: string, displayName:
 }
 
 /**
- * Format pending contributors as JSON lines for a commit message body.
- * Each line: `ok-contributors: {"id":"...","name":"...","docs":["..."]}`
- *
- * Returns an empty string when no contributors are pending.
- * Does NOT clear the map (read-only — call clearContributors() after commit success).
+ * Atomically swap the live accumulator with a fresh empty map.
+ * Returns the snapshot of in-flight contributors at the moment of the swap.
+ * Callers (persistence.ts) hold the snapshot for commit; on failure they call
+ * restoreContributors(snapshot) to merge it back.
  */
-export function formatContributors(): string {
-  if (pendingContributors.size === 0) return '';
+export function swapContributors(): Map<string, ContributorEntry> {
+  const snapshot = pendingContributors;
+  pendingContributors = new Map();
+  return snapshot;
+}
+
+/**
+ * Merge a snapshot back into the live accumulator.
+ * Called by persistence.ts when a shadow commit fails (D16) to avoid losing
+ * attribution data accumulated between formatContributorsFrom() and commit failure.
+ */
+export function restoreContributors(snapshot: Map<string, ContributorEntry>): void {
+  for (const [agentId, entry] of snapshot) {
+    let live = pendingContributors.get(agentId);
+    if (!live) {
+      live = { agentId, displayName: entry.displayName, docs: new Set() };
+      pendingContributors.set(agentId, live);
+    }
+    for (const doc of entry.docs) live.docs.add(doc);
+  }
+}
+
+/**
+ * Format a contributor snapshot as JSON lines for a commit message body.
+ * Each line: `ok-contributors: {"v":1,"id":"...","name":"...","docs":["..."]}`
+ *
+ * Returns an empty string when the snapshot is empty.
+ */
+export function formatContributorsFrom(snapshot: Map<string, ContributorEntry>): string {
+  if (snapshot.size === 0) return '';
   const lines: string[] = [''];
-  for (const entry of pendingContributors.values()) {
+  for (const entry of snapshot.values()) {
     lines.push(
       `ok-contributors: ${JSON.stringify({
+        v: 1,
         id: entry.agentId,
         name: entry.displayName,
         docs: [...entry.docs],
@@ -54,8 +82,16 @@ export function formatContributors(): string {
 }
 
 /**
+ * @deprecated Use swapContributors() + formatContributorsFrom() + restoreContributors()
+ * for the race-free drain pattern. Kept for backward compatibility.
+ */
+export function formatContributors(): string {
+  return formatContributorsFrom(pendingContributors);
+}
+
+/**
+ * @deprecated Use swapContributors() for atomic drain. Kept for backward compatibility.
  * Clear the pending contributors map.
- * Call only after a successful commit to avoid losing attribution on commit failure.
  */
 export function clearContributors(): void {
   pendingContributors.clear();

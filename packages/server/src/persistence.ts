@@ -15,7 +15,11 @@ import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-cor
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
-import { clearContributors, formatContributors } from './contributor-tracker.ts';
+import {
+  formatContributorsFrom,
+  restoreContributors,
+  swapContributors,
+} from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
@@ -176,17 +180,19 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     const shadow = shadowRef?.current;
     if (shadow) {
       // L2 commits go to shadow repo
-      const contributors = formatContributors(); // read without clearing
+      const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
+      const contributors = formatContributorsFrom(snapshot);
       const message = `WIP auto-save ${new Date().toISOString()}${contributors}`;
       try {
         const sha = await commitWip(shadow, defaultWriter, contentRoot, message);
-        clearContributors(); // drain only after success (D16)
+        // snapshot discarded on success — new map already accumulating
         consecutiveGitFailures = 0;
         log.info(
           { sha: sha.slice(0, 8), writer: defaultWriter.id },
           `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${defaultWriter.id}`,
         );
       } catch (e) {
+        restoreContributors(snapshot); // merge snapshot back — don't lose attribution (D16)
         consecutiveGitFailures++;
         incrementGitAutoSaveFailure();
         log.error(

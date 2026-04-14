@@ -54,7 +54,13 @@ export function register(
         find: args.find,
         replace: args.replace,
         offset: args.offset,
-        ...(identity ? { agentId: identity.connectionId, agentName: identity.displayName } : {}),
+        ...(identity
+          ? {
+              agentId: identity.connectionId,
+              agentName: identity.displayName,
+              clientName: identity.clientInfo?.name,
+            }
+          : {}),
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       return textResult('Edit applied successfully');

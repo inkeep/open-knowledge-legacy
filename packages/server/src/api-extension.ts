@@ -556,7 +556,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     for (const docName of docNames) {
-      await sessionManager.closeSession(docName).catch((err) => {
+      await sessionManager.closeAllForDoc(docName).catch((err) => {
         console.warn(`[file-ops] Failed to close agent session for ${docName}:`, err);
       });
     }
@@ -806,6 +806,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
       return { renamed, rewrittenDocs };
     });
+
+  /** Extract agent identity fields shared across the three write endpoints. */
+  function extractAgentIdentity(body: Record<string, unknown>): {
+    rawAgentId: string | undefined;
+    agentId: string;
+    agentName: string;
+    clientName: string | undefined;
+  } {
+    const rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
+    const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+    const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
+    const clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
+    return { rawAgentId, agentId, agentName, clientName };
   }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -842,12 +855,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
-      const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
-      const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
+      const { rawAgentId, agentId, agentName, clientName } = extractAgentIdentity(body);
       const dc = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed: rawAgentId ?? agentId,
+        clientName,
       });
       const timestamp = new Date().toISOString();
       const content =
@@ -926,18 +938,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
-      const rawAgentId =
-        typeof (body as Record<string, unknown>).agentId === 'string'
-          ? ((body as Record<string, unknown>).agentId as string)
-          : undefined;
-      const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
-      const agentName =
-        typeof (body as Record<string, unknown>).agentName === 'string'
-          ? ((body as Record<string, unknown>).agentName as string)
-          : 'Claude';
+      const { rawAgentId, agentId, agentName, clientName } = extractAgentIdentity(
+        body as Record<string, unknown>,
+      );
       const dc = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
         colorSeed: rawAgentId ?? agentId,
+        clientName,
       });
       const timestamp = new Date().toISOString();
 
@@ -1333,18 +1340,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const rawAgentId =
-        typeof (body as Record<string, unknown>).agentId === 'string'
-          ? ((body as Record<string, unknown>).agentId as string)
-          : undefined;
-      const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
-      const agentName =
-        typeof (body as Record<string, unknown>).agentName === 'string'
-          ? ((body as Record<string, unknown>).agentName as string)
-          : 'Claude';
+      const { rawAgentId, agentId, agentName, clientName } = extractAgentIdentity(
+        body as Record<string, unknown>,
+      );
       const dc = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
         colorSeed: rawAgentId ?? agentId,
+        clientName,
       });
       const timestamp = new Date().toISOString();
 
