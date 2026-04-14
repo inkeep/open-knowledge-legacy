@@ -1,0 +1,81 @@
+diff --git a/dist/y-prosemirror.cjs b/dist/y-prosemirror.cjs
+index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..66868191eef6d6581708edadbeb64f8660e38d04 100644
+--- a/dist/y-prosemirror.cjs
++++ b/dist/y-prosemirror.cjs
+@@ -876,10 +876,16 @@ const createNodeFromYElement = (
+     meta.mapping.set(el, node);
+     return node
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (el.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (el._item).delete(transaction);
+-    }, ySyncPluginKey);
++    // R13 patch: substitute rawMdxFallback instead of destructive delete.
++    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', e.message);
++    const isInline = schema.nodes[el.nodeName] && schema.nodes[el.nodeName].spec && schema.nodes[el.nodeName].spec.inline;
++    if (!isInline && schema.nodes.rawMdxFallback) {
++      try {
++        const fallback = schema.node('rawMdxFallback', { reason: e.message }, [schema.text(el.nodeName)]);
++        meta.mapping.set(el, fallback);
++        return fallback
++      } catch (_fallbackErr) { /* fallthrough */ }
++    }
+     meta.mapping.delete(el);
+     return null
+   }
+@@ -911,10 +917,8 @@ const createTextNodesFromYText = (
+       nodes.push(schema.text(delta.insert, attributesToMarks(delta.attributes, schema)));
+     }
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (text.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (text._item).delete(transaction);
+-    }, ySyncPluginKey);
++    // R13 patch: log + skip instead of destructive delete for text nodes.
++    console.warn('[y-prosemirror] schema.text() threw:', e.message);
+     return null
+   }
+   // @ts-ignore
+diff --git a/src/plugins/sync-plugin.js b/src/plugins/sync-plugin.js
+index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..45e367c1281b420e8b62b5b63851bc623b9c08a5 100644
+--- a/src/plugins/sync-plugin.js
++++ b/src/plugins/sync-plugin.js
+@@ -802,10 +802,21 @@ export const createNodeFromYElement = (
+     meta.mapping.set(el, node)
+     return node
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (el.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (el._item).delete(transaction)
+-    }, ySyncPluginKey)
++    // R13 patch: substitute rawMdxFallback instead of destructive delete.
++    // The original code deleted the Y.Item, which is CRDT-permanent and
++    // multi-peer broadcast. This patch preserves Y.Doc integrity.
++    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', e.message)
++    const isInline = schema.nodes[el.nodeName] && schema.nodes[el.nodeName].spec && schema.nodes[el.nodeName].spec.inline
++    if (!isInline && schema.nodes.rawMdxFallback) {
++      try {
++        const fallback = schema.node('rawMdxFallback', { reason: e.message }, [schema.text(el.nodeName)])
++        meta.mapping.set(el, fallback)
++        return fallback
++      } catch (_fallbackErr) {
++        // Fallthrough — substitution itself failed
++      }
++    }
++    // Inline context or fallback substitution failed: skip without destructive delete
+     meta.mapping.delete(el)
+     return null
+   }
+@@ -837,10 +848,8 @@ const createTextNodesFromYText = (
+       nodes.push(schema.text(delta.insert, attributesToMarks(delta.attributes, schema)))
+     }
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (text.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (text._item).delete(transaction)
+-    }, ySyncPluginKey)
++    // R13 patch: log + skip instead of destructive delete for text nodes.
++    console.warn('[y-prosemirror] schema.text() threw:', e.message)
+     return null
+   }
+   // @ts-ignore
