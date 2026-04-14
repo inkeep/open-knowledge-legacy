@@ -26,6 +26,7 @@ export default {
       ],
     },
     'packages/cli': {
+      entry: 'scripts/*.ts',
       ignoreDependencies: [
         'ws', // looks like dynamic import isn't checked
         '@types/ws',
