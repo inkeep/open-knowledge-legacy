@@ -19,9 +19,10 @@ const TABS: { id: PanelTab; label: string; Icon: typeof ListTree }[] = [
 
 interface DocPanelProps {
   docName: string;
+  isSourceMode: boolean;
 }
 
-export function DocPanel({ docName }: DocPanelProps) {
+export function DocPanel({ docName, isSourceMode }: DocPanelProps) {
   const [activeTab, setActiveTab] = useState<PanelTab>('outline');
 
   return (
@@ -64,7 +65,7 @@ export function DocPanel({ docName }: DocPanelProps) {
         aria-labelledby={`tab-${activeTab}`}
         className="min-h-0 flex-1"
       >
-        {activeTab === 'outline' && <OutlinePanel docName={docName} />}
+        {activeTab === 'outline' && <OutlinePanel docName={docName} isSourceMode={isSourceMode} />}
         {activeTab === 'backlinks' && <BacklinksPanel docName={docName} />}
         {activeTab === 'forward-links' && <ForwardLinksPanel docName={docName} />}
         {activeTab === 'graph' && <GraphPanel activeDocName={docName} />}

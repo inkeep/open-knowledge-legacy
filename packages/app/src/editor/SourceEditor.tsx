@@ -1,8 +1,9 @@
 import { markdown } from '@codemirror/lang-markdown';
-import { Compartment, EditorState } from '@codemirror/state';
+import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
+import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 
 // Customize the dark editor surface colors here.
 const darkTheme = basicDarkInit({
@@ -105,6 +106,43 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
       effects: themeCompartment.reconfigure(resolvedTheme === 'dark' ? darkTheme : lightTheme),
     });
   }, [resolvedTheme]);
+
+  // Outline panel click → jump to the Nth heading line in the CodeMirror doc.
+  useEffect(() => {
+    function onNav(e: Event) {
+      const detail = (e as CustomEvent<OutlineNavDetail>).detail;
+      if (!detail || detail.mode !== 'source') return;
+      const view = viewRef.current;
+      if (!view) return;
+      const doc = view.state.doc;
+      let startLine = 1;
+      if (doc.lines >= 1 && doc.line(1).text === '---') {
+        for (let i = 2; i <= doc.lines; i++) {
+          if (doc.line(i).text === '---') {
+            startLine = i + 1;
+            break;
+          }
+        }
+      }
+      let seen = 0;
+      for (let i = startLine; i <= doc.lines; i++) {
+        const line = doc.line(i);
+        if (/^#{1,6}\s/.test(line.text)) {
+          if (seen === detail.index) {
+            view.dispatch({
+              selection: EditorSelection.cursor(line.from),
+              effects: EditorView.scrollIntoView(line.from, { y: 'start' }),
+            });
+            view.focus();
+            return;
+          }
+          seen++;
+        }
+      }
+    }
+    window.addEventListener(OUTLINE_NAV_EVENT, onNav);
+    return () => window.removeEventListener(OUTLINE_NAV_EVENT, onNav);
+  }, []);
 
   return <div ref={containerRef} className="source-editor h-full py-3" />;
 }

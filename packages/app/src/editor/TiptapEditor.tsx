@@ -13,6 +13,7 @@ import Collaboration from '@tiptap/extension-collaboration';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef } from 'react';
+import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import { sharedExtensions } from './extensions/shared.ts';
@@ -344,6 +345,22 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
       provider.off('synced', tryScroll);
     };
   }, [provider]);
+
+  // Outline panel click → scroll the Nth heading in the WYSIWYG DOM into view.
+  // Using index (not slug) keeps this robust to duplicate heading texts without
+  // re-implementing HeadingAnchors' dedup logic on the outline side.
+  useEffect(() => {
+    if (!editor) return;
+    function onNav(e: Event) {
+      const detail = (e as CustomEvent<OutlineNavDetail>).detail;
+      if (!detail || detail.mode !== 'wysiwyg' || !editor) return;
+      const headings = editor.view.dom.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
+      const target = headings[detail.index];
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    window.addEventListener(OUTLINE_NAV_EVENT, onNav);
+    return () => window.removeEventListener(OUTLINE_NAV_EVENT, onNav);
+  }, [editor]);
 
   // Read frontmatter from Y.Doc metadata map (set by server persistence on load)
   useEffect(() => {
