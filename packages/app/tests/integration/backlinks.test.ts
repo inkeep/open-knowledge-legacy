@@ -1,7 +1,7 @@
 import { test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { createTestServer, wait } from './test-harness';
+import { createTestClient, createTestServer, wait } from './test-harness';
 
 async function pollUntilAsync(
   condition: () => Promise<boolean>,
@@ -57,6 +57,45 @@ test('backlink endpoints update after persisted agent writes', async () => {
       );
     });
   } finally {
+    await server.cleanup();
+  }
+});
+
+test('backlink endpoints update from live client edits before persistence debounce', async () => {
+  const server = await createTestServer({ debounce: 1500, maxDebounce: 2000 });
+  const client = await createTestClient(server.port, 'alpha');
+  const startedAt = Date.now();
+
+  try {
+    client.ytext.insert(0, '# Alpha\n\nLinks to [[beta]].\n');
+
+    await pollUntilAsync(
+      async () => {
+        const res = await fetch(`http://localhost:${server.port}/api/backlinks?docName=beta`);
+        const data = (await res.json()) as {
+          ok: boolean;
+          backlinks?: Array<{ source: string; snippet: string | null }>;
+        };
+        return (
+          data.ok &&
+          Array.isArray(data.backlinks) &&
+          data.backlinks.some(
+            (entry) => entry.source === 'alpha' && entry.snippet === 'Links to beta.',
+          )
+        );
+      },
+      900,
+      50,
+    );
+
+    const elapsedMs = Date.now() - startedAt;
+    if (elapsedMs >= 1500) {
+      throw new Error(
+        `backlinks only updated after ${elapsedMs}ms, expected before store debounce`,
+      );
+    }
+  } finally {
+    await client.cleanup();
     await server.cleanup();
   }
 });

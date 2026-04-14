@@ -223,7 +223,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
   const anchor = normalizeNullableString(node.attrs.anchor);
   const label = getWikiLinkText({ target, alias, anchor });
   const source = renderWikiLink({ target, alias, anchor });
-  const { pages, loading, refetch } = usePageList();
+  const { pages, loading } = usePageList();
 
   const resolutionState =
     loading && pages.size === 0
@@ -264,7 +264,6 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
     if (docName !== target) {
       updateAttributes({ target: docName, alias: alias ?? label });
     }
-    refetch();
     window.location.hash = `#/${docName}`;
   }
 

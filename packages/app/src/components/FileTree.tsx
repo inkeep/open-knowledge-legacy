@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { emitDocumentsChanged } from '@/lib/documents-events';
+import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 
 interface RenamePathResponse {
@@ -292,10 +292,23 @@ export function FileTree() {
         });
 
     fetchDocs();
-    const interval = setInterval(fetchDocs, 5000);
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') {
+        void fetchDocs();
+      }
+    };
+    window.addEventListener('focus', handleResume);
+    window.addEventListener('visibilitychange', handleResume);
+    const unsubscribe = subscribeToDocumentsChanged((channels) => {
+      if (channels.includes('files')) {
+        void fetchDocs();
+      }
+    });
     return () => {
       active = false;
-      clearInterval(interval);
+      window.removeEventListener('focus', handleResume);
+      window.removeEventListener('visibilitychange', handleResume);
+      unsubscribe();
     };
   }, []);
 
@@ -337,7 +350,7 @@ export function FileTree() {
       for (const entry of renamed) closeDocument(entry.fromDocName);
 
       setDocuments((current) => applyRenameToDocuments(current, renamed));
-      emitDocumentsChanged();
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
       setEditingPath(null);
       setEditingValue('');
 
@@ -376,7 +389,7 @@ export function FileTree() {
       for (const docName of deleted) closeDocument(docName);
 
       setDocuments((current) => applyDeleteToDocuments(current, deletedDocNames));
-      emitDocumentsChanged();
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
 
       if (activeDocName && deleted.has(activeDocName)) window.location.hash = '';
       if (editingPath && (deleted.has(editingPath) || target.path === editingPath)) {

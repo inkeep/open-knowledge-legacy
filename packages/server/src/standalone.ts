@@ -11,6 +11,7 @@ import { type ContentFilter, createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
 import { mdManager } from './md-manager.ts';
 import {
@@ -143,6 +144,11 @@ export function createServer(options: ServerOptions): ServerInstance {
   let persistence: ReturnType<typeof createPersistenceExtension>;
   let hocuspocus: Hocuspocus;
   let sessionManager: AgentSessionManager;
+  let cc1Broadcaster: CC1Broadcaster | null = null;
+
+  function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
+    cc1Broadcaster?.signal(channel);
+  }
   try {
     contentFilter = createContentFilter({
       projectDir,
@@ -166,12 +172,16 @@ export function createServer(options: ServerOptions): ServerInstance {
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
+    const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
+      backlinkIndex,
+      signalChannel,
+    });
 
     hocuspocus = new Hocuspocus({
       quiet,
       debounce,
       maxDebounce,
-      extensions: [persistence.extension],
+      extensions: [persistence.extension, liveDerivedIndexExtension],
     });
 
     sessionManager = new AgentSessionManager(hocuspocus);
@@ -187,6 +197,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       flushGitCommit: () => persistence.flushPendingGitCommit(),
       contentRoot,
       backlinkIndex,
+      signalChannel,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
   } catch (err) {
@@ -194,7 +205,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     throw err;
   }
 
-  const cc1Broadcaster = new CC1Broadcaster(hocuspocus);
+  cc1Broadcaster = new CC1Broadcaster(hocuspocus);
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
@@ -237,7 +248,9 @@ export function createServer(options: ServerOptions): ServerInstance {
           void backlinkIndex.saveToDisk().catch((err) => {
             console.warn(`[backlinks] Failed to persist create for ${event.docName}:`, err);
           });
-          cc1Broadcaster.signal('files');
+          signalChannel('files');
+          signalChannel('backlinks');
+          signalChannel('graph');
           break;
         }
 
@@ -249,6 +262,8 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk().catch((err) => {
               console.warn(`[backlinks] Failed to persist closed-doc update for ${docName}:`, err);
             });
+            signalChannel('backlinks');
+            signalChannel('graph');
             return;
           }
 
@@ -272,6 +287,8 @@ export function createServer(options: ServerOptions): ServerInstance {
               void backlinkIndex.saveToDisk().catch((err) => {
                 console.warn(`[backlinks] Failed to persist noop update for ${docName}:`, err);
               });
+              signalChannel('backlinks');
+              signalChannel('graph');
               break;
 
             case 'clean':
@@ -283,6 +300,8 @@ export function createServer(options: ServerOptions): ServerInstance {
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
                 });
+                signalChannel('backlinks');
+                signalChannel('graph');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -302,6 +321,8 @@ export function createServer(options: ServerOptions): ServerInstance {
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
                 });
+                signalChannel('backlinks');
+                signalChannel('graph');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -335,6 +356,8 @@ export function createServer(options: ServerOptions): ServerInstance {
                     err,
                   );
                 });
+                signalChannel('backlinks');
+                signalChannel('graph');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -365,7 +388,9 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk().catch((err) => {
               console.warn(`[backlinks] Failed to persist closed-doc delete for ${docName}:`, err);
             });
-            cc1Broadcaster.signal('files');
+            signalChannel('files');
+            signalChannel('backlinks');
+            signalChannel('graph');
             return;
           }
 
@@ -403,7 +428,9 @@ export function createServer(options: ServerOptions): ServerInstance {
           // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
           await hocuspocus.unloadDocument(document);
-          cc1Broadcaster.signal('files');
+          signalChannel('files');
+          signalChannel('backlinks');
+          signalChannel('graph');
           break;
         }
 
@@ -428,7 +455,9 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
 
           log.info({ oldDocName, newDocName }, `[reconcile] rename: ${oldDocName} → ${newDocName}`);
-          cc1Broadcaster.signal('files');
+          signalChannel('files');
+          signalChannel('backlinks');
+          signalChannel('graph');
           break;
         }
 
@@ -651,7 +680,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
           try {
-            cc1Broadcaster.destroy();
+            cc1Broadcaster?.destroy();
             if (systemDocConnection) {
               await systemDocConnection.disconnect();
               systemDocConnection = null;

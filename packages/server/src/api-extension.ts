@@ -55,7 +55,12 @@ const ROLLBACK_ORIGIN = {
 
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
-import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
+import {
+  contentHash,
+  type FileIndexEntry,
+  registerWrite,
+  updateFileIndex,
+} from './file-watcher.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { getMetrics } from './metrics.ts';
 import {
@@ -332,6 +337,7 @@ export interface ApiExtensionOptions {
   flushGitCommit?: () => Promise<void>;
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
+  signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -440,6 +446,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     flushGitCommit,
     contentRoot,
     backlinkIndex,
+    signalChannel,
   } = options;
 
   function resolveDocPath(docName: string): string | null {
@@ -1034,7 +1041,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         void backlinkIndex.saveToDisk().catch((err) => {
           console.warn(`[backlinks] Failed to persist cache after test-reset for ${docName}:`, err);
         });
+        signalChannel?.('backlinks');
+        signalChannel?.('graph');
       }
+      signalChannel?.('files');
       json(res, 200, { ok: true });
     } catch (e) {
       console.error('[test-reset]', e);
@@ -1624,8 +1634,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       mkdirSync(dirname(fullPath), { recursive: true });
+      const initialContent = '';
       try {
-        writeFileSync(fullPath, '', { encoding: 'utf-8', flag: 'wx' });
+        writeFileSync(fullPath, initialContent, { encoding: 'utf-8', flag: 'wx' });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
           json(res, 409, { ok: false, error: 'File already exists' });
@@ -1634,6 +1645,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         throw err;
       }
       const docName = filePath.slice(0, -3);
+      const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
+      if (fileIndex instanceof Map) {
+        updateFileIndex(
+          { kind: 'create', path: fullPath, docName, content: initialContent },
+          fileIndex as Map<string, FileIndexEntry>,
+        );
+      }
+      if (backlinkIndex) {
+        backlinkIndex.updateDocumentFromMarkdown(docName, initialContent);
+        void backlinkIndex.saveToDisk().catch((err) => {
+          console.warn(`[backlinks] Failed to persist create-page cache for ${docName}:`, err);
+        });
+        signalChannel?.('backlinks');
+        signalChannel?.('graph');
+      }
+      signalChannel?.('files');
       json(res, 200, { ok: true, docName });
     } catch (e) {
       console.error('[create-page]', e);
