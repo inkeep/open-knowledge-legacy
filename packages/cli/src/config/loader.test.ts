@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { OK_DIR } from '../constants';
 import { loadConfig } from './loader';
 
 let testDir: string;
@@ -20,7 +21,7 @@ afterEach(() => {
 
 /** Helper: write a workspace config.yml inside testDir */
 function writeWorkspaceConfig(yaml: string) {
-  const configDir = resolve(testDir, '.open-knowledge');
+  const configDir = resolve(testDir, OK_DIR);
   mkdirSync(configDir, { recursive: true });
   writeFileSync(resolve(configDir, 'config.yml'), yaml, 'utf-8');
 }

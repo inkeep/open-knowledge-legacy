@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
+import { OK_DIR } from '../constants';
 import { resolveContentDir, resolveLockDir } from './paths.ts';
 import type { Config } from './schema.ts';
 
@@ -23,6 +24,6 @@ describe('resolveContentDir', () => {
 
 describe('resolveLockDir', () => {
   test('returns <contentDir>/.open-knowledge', () => {
-    expect(resolveLockDir('/tmp/project')).toBe(resolve('/tmp/project', '.open-knowledge'));
+    expect(resolveLockDir('/tmp/project')).toBe(resolve('/tmp/project', OK_DIR));
   });
 });
