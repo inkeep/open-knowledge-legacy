@@ -17,6 +17,7 @@ import {
   createExternalChangeHandler,
   createPersistenceExtension,
   initShadowRepo,
+  readBranchFromHead,
   releaseServerLock,
   type ShadowRef,
   startWatcher,
@@ -195,6 +196,7 @@ try {
       contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
       shadowRef,
       flushGitCommit: () => persistence.flushPendingGitCommit(),
+      getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
       backlinkIndex,
     }),
   );
