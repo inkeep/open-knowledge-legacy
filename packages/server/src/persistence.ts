@@ -13,7 +13,7 @@ import { dirname, relative, resolve, sep } from 'node:path';
 import type { Extension } from '@hocuspocus/server';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
-import { type BacklinkIndex, extractWikiLinksFromMarkdown } from './backlink-index.ts';
+import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
@@ -485,7 +485,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       setReconciledBase(documentName, markdown);
 
       if (backlinkIndex) {
-        backlinkIndex.updateDocument(documentName, extractWikiLinksFromMarkdown(body));
+        backlinkIndex.updateDocumentFromMarkdown(documentName, markdown);
         void backlinkIndex.saveToDisk().catch((err) => {
           console.warn(`[backlinks] Failed to persist cache for ${documentName}:`, err);
         });
