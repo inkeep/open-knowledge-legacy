@@ -61,8 +61,8 @@ export function ForwardLinksPanel({
     window.location.assign(hashFromDocName(target));
   }
 
-  function handleCreated(docName: string) {
-    window.location.assign(hashFromDocName(docName));
+  function handleCreated(_docName: string) {
+    // Navigation is handled by NewItemDialog after creation
   }
 
   return (

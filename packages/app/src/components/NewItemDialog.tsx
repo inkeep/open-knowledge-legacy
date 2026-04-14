@@ -11,6 +11,10 @@ export interface NewItemDialogProps {
   onOpenChange: (open: boolean) => void;
   kind: 'file' | 'folder';
   initialDir: string;
+  /**
+   * Pre-fills the file name input. Only applies when `kind === 'file'`;
+   * ignored when `kind === 'folder'` (folder always defaults to `index.md`).
+   */
   suggestedName?: string;
   description?: ReactNode;
   onCreated?: (docName: string) => void;
@@ -168,7 +172,7 @@ export function NewItemDialog({
       const data = (await res.json()) as { ok: boolean; docName?: string; error?: string };
       setBusy(false);
       if (!data.ok) {
-        setError(data.error ?? 'Failed to create page');
+        setError(data.error ?? 'Failed to create file');
         setErrorField('form');
         return;
       }
@@ -179,7 +183,7 @@ export function NewItemDialog({
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
       onCreated?.(docName);
     } catch (err) {
-      console.error('[NewItemDialog] create failed:', err);
+      console.warn('[NewItemDialog] create failed:', err);
       setBusy(false);
       setError('Network error — please try again');
       setErrorField('form');
@@ -254,7 +258,7 @@ export function NewItemDialog({
                   setFileName(e.target.value);
                   setError(null);
                 }}
-                placeholder="my-page.md"
+                placeholder="my-note.md"
                 autoFocus={kind === 'file'}
                 aria-describedby={
                   error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
@@ -269,7 +273,7 @@ export function NewItemDialog({
               />
             </div>
             {error && (
-              <p id={errorId} className="text-xs text-red-600 dark:text-red-400">
+              <p id={errorId} role="alert" className="text-xs text-red-600 dark:text-red-400">
                 {error}
               </p>
             )}

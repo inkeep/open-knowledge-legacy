@@ -203,7 +203,7 @@ const FileTreeNode: FC<{
                   if (!anyActionBusy) onNewItem('file', node.path);
                 }}
               >
-                <Plus />
+                <Plus aria-hidden="true" />
                 New file here
               </ContextMenuItem>
               <ContextMenuItem
@@ -212,7 +212,7 @@ const FileTreeNode: FC<{
                   if (!anyActionBusy) onNewItem('folder', node.path);
                 }}
               >
-                <Plus />
+                <Plus aria-hidden="true" />
                 New folder here
               </ContextMenuItem>
               <ContextMenuSeparator />
