@@ -1507,6 +1507,41 @@ describe('FR-1: content-comparison gate skips no-op replacements', () => {
 
     cleanup();
   });
+
+  // Regression guard for the offset-drift case documented at observers.ts:155-161.
+  // When Path A produces a multi-hunk diff where the first REMOVED+ADDED pair has
+  // mismatched lengths (change.value.length !== next.value.length), subsequent
+  // gate checks read a slightly shifted slice from the `currentText` snapshot.
+  // The documented invariant: drift is benign because (a) misses fall through to
+  // correct delete+insert branches, which operate on live ytext offsets, and (b)
+  // Path A only fires when Y.Text is in sync with baseline. This test pins the
+  // correctness — if a future refactor breaks the fall-through, the assertion
+  // that ytext converges to the expected content will catch it.
+  test('Path A multi-hunk diff with length-changing first hunk produces correct ytext', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Seed: three paragraphs, all three differ between the "before" and "after"
+    // serializations. First pair has mismatched lengths (AAA → AA), middle is
+    // unchanged, last pair is equal length (CCC → DDD).
+    applyMarkdown(doc, fragment, 'AAA\n\nBBB\n\nCCC\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    // Change XmlFragment so diffLines produces:
+    //   removed 'AAA\n\n' + added 'AA\n\n'  — length change, gate misses
+    //   unchanged 'BBB\n\n'
+    //   removed 'CCC\n' + added 'DDD\n'     — equal length, gate would read a
+    //                                         shifted slice from currentText
+    applyMarkdown(doc, fragment, 'AA\n\nBBB\n\nDDD\n');
+    await wait();
+
+    // Bridge invariant: ytext matches serialized XmlFragment after Observer A settles.
+    expect(ytext.toString().trim()).toBe('AA\n\nBBB\n\nDDD');
+
+    cleanup();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
@@ -1671,6 +1706,71 @@ describe('FR-2: applyUserDelta DMP three-way merge', () => {
     const finalText = ytext.toString();
     // D8 accepted: DMP duplicates the independently-applied "!" → "hello!!"
     expect(finalText).toContain('hello!!');
+    cleanup();
+  });
+
+  // Regression guard for the early-return path at observers.ts:266:
+  //   `if (mergedText === currentText) return;`
+  //
+  // This fires when DMP patch_apply returns output identical to the agent's
+  // diverged Y.Text — which happens when all user patches failed to locate
+  // their context within Match_Threshold (or all were already applied in the
+  // agent's text). The early return skips the subsequent applyByPrefixSuffix,
+  // which MUST NOT execute because with mergedText === currentText it would
+  // still compute zero delta — but an incorrectly-placed return (e.g., moved
+  // AFTER applyByPrefixSuffix) would walk the no-op change through the Y.Text
+  // delete/insert code path, potentially creating noise transactions.
+  //
+  // We force the path by constructing an agent text that shares no context
+  // with the baseline — DMP cannot locate the user's patch; mergedText equals
+  // the unchanged currentText.
+  test('early return produces zero CRDT mutations when merged text equals agent text', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Baseline paragraph one.\n\nBaseline paragraph two.\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent wholesale-replaces Y.Text with content sharing zero tokens with
+    // the baseline. DMP patch_apply will fail to locate any user patch context.
+    agentWriteToYText(doc, ytext, 'ZZZZ completely disjoint content.\n');
+
+    // Observe ytext mutations originated by Observer A (sync-from-tree).
+    let deleteCount = 0;
+    let insertCount = 0;
+    ytext.observe((event) => {
+      if (event.transaction.origin !== ORIGIN_TREE_TO_TEXT) return;
+      for (const delta of event.delta) {
+        if ('delete' in delta) deleteCount++;
+        if ('insert' in delta) insertCount++;
+      }
+    });
+
+    // Silence the expected console.warn for this test.
+    const origWarn = console.warn;
+    console.warn = () => {};
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User edits XmlFragment → Observer A Path B fires. All patches fail to
+    // match in the divergent agent text → mergedText === currentText → early
+    // return at observers.ts:266 skips the applyByPrefixSuffix call.
+    applyMarkdown(doc, fragment, 'Baseline paragraph one EDITED.\n\nBaseline paragraph two.\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    console.warn = origWarn;
+
+    // The early-return guard holds: zero sync-from-tree writes to ytext.
+    expect(deleteCount).toBe(0);
+    expect(insertCount).toBe(0);
+
     cleanup();
   });
 });
