@@ -137,19 +137,31 @@ interface ObserverDeps {
 function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: string): void {
   if (currentText === newText) return;
 
-  // No padding needed here — unlike `applyUserDelta` below, this function walks the
-  // diff with byte-level `delete(offset, len)` + `insert(offset, value)` operations.
-  // Even if `diffLines` produces a spurious `removed: X` + `added: X + Y` pair on an
-  // unterminated final line, deleting X then re-inserting X+Y at the same offset
-  // produces the correct net effect. The aliasing artifact cancels itself out.
-  //
-  // `applyUserDelta` is different: it walks line-by-line with content-matching
-  // (`indexOf`), which IS vulnerable to the aliasing because lines are treated as
-  // atoms. That function pads its inputs before diffing.
+  // No padding needed here — this function walks the diff with byte-level
+  // `delete(offset, len)` + `insert(offset, value)` operations. Even if `diffLines`
+  // produces a spurious `removed: X` + `added: X + Y` pair on an unterminated final
+  // line, deleting X then re-inserting X+Y at the same offset produces the correct
+  // net effect. The aliasing artifact cancels itself out.
   const changes = diffLines(currentText, newText);
   let offset = 0;
-  for (const change of changes) {
-    if (change.removed) {
+  for (let i = 0; i < changes.length; i++) {
+    const change = changes[i];
+    const next = changes[i + 1];
+    if (change.removed && next?.added) {
+      // Content-comparison gate (D7): if Y.Text already has the added content
+      // at this offset, skip both delete and insert — preserve CRDT Items.
+      const targetSlice = currentText.substring(offset, offset + next.value.length);
+      if (targetSlice === next.value) {
+        // No-op replacement; advance offset by the (now equal) length.
+        offset += next.value.length;
+        i++; // consume the paired ADDED
+        continue;
+      }
+      ytext.delete(offset, change.value.length);
+      ytext.insert(offset, next.value);
+      offset += next.value.length;
+      i++; // consume the paired ADDED
+    } else if (change.removed) {
       ytext.delete(offset, change.value.length);
     } else if (change.added) {
       ytext.insert(offset, change.value);
