@@ -481,6 +481,33 @@ describe('initial sync and test isolation', () => {
     }
   });
 
+  test('opening a file with frontmatter without edits does not rewrite disk', async () => {
+    // Companion to the preceding test — the no-op gate must hold on the
+    // frontmatter round-trip path too. `onLoadDocument` routes frontmatter
+    // through `stripFrontmatter` → `prependFrontmatter` before writing the
+    // reconciledBase; `onStoreDocument` does the same before comparing.
+    // A subtle byte-level drift (e.g. a stray newline between `---` and the
+    // body) would break the equality check for frontmatter files while
+    // leaving the non-frontmatter case passing.
+    const docName = `no-op-fm-${crypto.randomUUID()}`;
+    const originalBytes =
+      '---\ntitle: Test\ntags: [a, b]\n---\n\n# Content\n\n| A | B |\n| - | - |\n| 1 | 22 |\n';
+    const filePath = join(server.contentDir, `${docName}.md`);
+    writeFileSync(filePath, originalBytes, 'utf-8');
+    await wait(500);
+
+    const client = await createTestClient(server.port, docName);
+    try {
+      await pollUntil(() => client.ytext.toString().includes('Content'), 5000);
+      await wait(800);
+
+      const diskAfter = readTestDoc(server.contentDir, docName);
+      expect(diskAfter).toBe(originalBytes);
+    } finally {
+      await client.cleanup();
+    }
+  });
+
   test('test-reset isolates state between tests', async () => {
     await testReset(server.port);
     await wait(300);
