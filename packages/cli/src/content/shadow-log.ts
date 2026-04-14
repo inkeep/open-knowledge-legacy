@@ -11,9 +11,11 @@
  * Spec: SPEC.md FR15 + FR17 + D18.
  */
 import { resolve } from 'node:path';
+import type { ShadowContributor } from '@inkeep/open-knowledge-core';
 import {
   getShadowRepoPath,
   getWipRefPattern,
+  parseContributors,
   parseWriterId,
   type WriterClassification,
 } from '@inkeep/open-knowledge-core/shadow-repo-layout';
@@ -42,6 +44,8 @@ export interface ShadowCommit {
   message: string;
   /** Project branch this commit was recorded against. */
   branch: string;
+  /** Agent contributors parsed from the commit message body. Empty for pre-attribution commits. */
+  contributors: ShadowContributor[];
 }
 
 const GIT_TIMEOUT_MS = 5000;
@@ -91,7 +95,7 @@ async function logOnRef(
       'log',
       ref,
       `-${Math.max(1, limit * 2)}`,
-      '--format=%H|%aI|%an|%s',
+      '--format=%H%x00%aI%x00%an%x00%s%x00%B%x1e',
       '--',
       relPath,
     );
@@ -102,19 +106,19 @@ async function logOnRef(
   const writerId = writerIdFromRef(ref, branch);
   const parsed = parseWriterId(writerId);
   const commits: ShadowCommit[] = [];
-  for (const line of out.split('\n')) {
-    if (!line) continue;
-    const firstPipe = line.indexOf('|');
-    if (firstPipe < 0) continue;
-    const secondPipe = line.indexOf('|', firstPipe + 1);
-    if (secondPipe < 0) continue;
-    const thirdPipe = line.indexOf('|', secondPipe + 1);
-    if (thirdPipe < 0) continue;
+  for (const record of out.split('\x1e')) {
+    const trimmed = record.trimStart();
+    if (!trimmed) continue;
+    const parts = trimmed.split('\x00');
+    const [hash = '', date = '', writerName = '', message = '', rawBody = ''] = parts;
+    const sha = hash.trim();
+    if (sha.length !== 40) continue;
     commits.push({
-      hash: line.slice(0, firstPipe),
-      date: line.slice(firstPipe + 1, secondPipe),
-      writerName: line.slice(secondPipe + 1, thirdPipe),
-      message: line.slice(thirdPipe + 1),
+      hash: sha,
+      date,
+      writerName,
+      message,
+      contributors: parseContributors(rawBody),
       writerId,
       isAgent: parsed.isAgent,
       writerClassification: parsed.classification,

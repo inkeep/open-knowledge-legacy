@@ -10,6 +10,7 @@
 
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
+import { parseContributors } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import { getDocExtension } from './doc-extensions.ts';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
@@ -37,8 +38,12 @@ export interface HistoryResult {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** NUL-delimited format for `git log --format`. */
-const GIT_LOG_FORMAT = '%H%x00%aI%x00%an%x00%ae%x00%s';
+/**
+ * NUL-delimited format for `git log --format`.
+ * Fields: sha, authorDate, authorName, authorEmail, subject, rawBody (full message via %B).
+ * Records are terminated with ASCII Record Separator \x1e to handle multi-line commit bodies.
+ */
+const GIT_LOG_FORMAT = '%H%x00%aI%x00%an%x00%ae%x00%s%x00%B%x1e';
 
 const EMPTY: HistoryResult = { entries: [], total: 0, hasMore: false };
 
@@ -51,15 +56,24 @@ function classifyType(subject: string): EntryType {
 function parseGitLogOutput(raw: string): TimelineEntry[] {
   if (!raw.trim()) return [];
   return raw
-    .trim()
-    .split('\n')
-    .map((line) => {
-      const parts = line.split('\x00');
-      const [sha = '', timestamp = '', author = '', authorEmail = '', ...msgParts] = parts;
-      const message = msgParts.join('\x00');
-      return { sha, timestamp, author, authorEmail, type: classifyType(message), message };
+    .split('\x1e')
+    .map((record) => {
+      const trimmed = record.trimStart();
+      if (!trimmed) return null;
+      const parts = trimmed.split('\x00');
+      const [sha = '', timestamp = '', author = '', authorEmail = '', message = '', rawBody = ''] =
+        parts;
+      return {
+        sha: sha.trim(),
+        timestamp,
+        author,
+        authorEmail,
+        type: classifyType(message),
+        message,
+        contributors: parseContributors(rawBody),
+      };
     })
-    .filter((e) => e.sha.length === 40);
+    .filter((e): e is TimelineEntry => e !== null && e.sha.length === 40);
 }
 
 function toArray(val: string | string[] | undefined): string[] {

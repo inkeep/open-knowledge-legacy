@@ -277,6 +277,7 @@ export function TimelinePanel({
                     authorEmail: '',
                     type: 'wip',
                     message: '',
+                    contributors: [],
                   })
                 }
                 className="text-xs text-muted-foreground"
@@ -377,6 +378,7 @@ export function TimelinePanel({
                   authorEmail: '',
                   type: 'wip',
                   message: '',
+                  contributors: [],
                 })
               }
             >

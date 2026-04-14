@@ -104,6 +104,47 @@ export function getWipRefPattern(branch: string): string {
 }
 
 /**
+ * A single contributor entry extracted from a WIP commit message body.
+ * Matches the shape written by contributor-tracker.ts's formatContributors().
+ */
+export interface ShadowContributor {
+  id: string;
+  name: string;
+  docs: string[];
+}
+
+const OK_CONTRIBUTORS_PREFIX = 'ok-contributors: ';
+
+/**
+ * Parse `ok-contributors:` JSON lines from a commit message body (or full
+ * raw message text via `%B`). Skips blank lines and malformed JSON silently.
+ * Returns an empty array when the body is empty or contains no contributor lines.
+ */
+export function parseContributors(body: string): ShadowContributor[] {
+  if (!body) return [];
+  const contributors: ShadowContributor[] = [];
+  for (const line of body.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith(OK_CONTRIBUTORS_PREFIX)) continue;
+    try {
+      const parsed = JSON.parse(trimmed.slice(OK_CONTRIBUTORS_PREFIX.length)) as unknown;
+      if (
+        parsed !== null &&
+        typeof parsed === 'object' &&
+        'id' in parsed &&
+        'name' in parsed &&
+        'docs' in parsed
+      ) {
+        contributors.push(parsed as ShadowContributor);
+      }
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return contributors;
+}
+
+/**
  * Classify a writer id using the documented prefix convention. Unknown
  * prefixes (legacy commits, external git operations) classify as 'unknown'
  * and `isAgent` is `null` — agents reasoning about attribution should
