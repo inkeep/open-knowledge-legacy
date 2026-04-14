@@ -46,7 +46,7 @@ export function ForwardLinksPanel({
     <Panel className={className}>
       <PanelHeader>
         <PanelTitle>Outgoing Links</PanelTitle>
-        <PanelCount>{!isLoading && links.length}</PanelCount>
+        {!isLoading && <PanelCount>{links.length}</PanelCount>}
       </PanelHeader>
       <PanelBody aria-busy={isLoading}>
         {error ? (

@@ -61,7 +61,7 @@ export function BacklinksPanel({
         ) : backlinks.length === 0 && !isLoading ? (
           <PanelEmpty>No pages link here yet.</PanelEmpty>
         ) : (
-          <div className="space-y-2">
+          <div className="flex flex-col gap-2">
             {backlinks.map((backlink, index) => (
               <button
                 // biome-ignore lint/suspicious/noArrayIndexKey: rows are stable per poll; source may repeat if API adds multiple edges per source
