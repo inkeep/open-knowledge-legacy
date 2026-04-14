@@ -11,7 +11,7 @@ const IS_MAC =
   typeof navigator !== 'undefined' &&
   /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent || '');
 
-export const MOD_LABEL = IS_MAC ? '⌘' : 'Ctrl';
+const MOD_LABEL = IS_MAC ? '⌘' : 'Ctrl';
 
 export function LinkTooltipHint({ href }: { href: string }) {
   return (

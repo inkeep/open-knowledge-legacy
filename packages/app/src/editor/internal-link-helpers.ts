@@ -1,6 +1,6 @@
 import { type ResolvedInternalHref, resolveInternalHref } from '@inkeep/open-knowledge-core';
 
-export function getCurrentDocNameFromHash(locationHash = window.location.hash): string {
+function getCurrentDocNameFromHash(locationHash = window.location.hash): string {
   const hashMatch = locationHash.match(/^#\/([^?#]+)/);
   return hashMatch ? decodeURIComponent(hashMatch[1]) : '';
 }
