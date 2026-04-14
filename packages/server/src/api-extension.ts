@@ -42,6 +42,7 @@ import {
   applyAgentMarkdownWrite,
   DEFAULT_AGENT_ID,
 } from './agent-sessions.ts';
+import { recordContributor } from './contributor-tracker.ts';
 import { extractPageTitle } from './page-identity.ts';
 
 export { extractPageTitle } from './page-identity.ts';
@@ -865,6 +866,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        recordContributor(docName, agentId, agentName);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -952,6 +954,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        recordContributor(resolvedDocName, agentId, agentName);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -1379,6 +1382,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        if (!notFound) recordContributor(docName, agentId, agentName);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }

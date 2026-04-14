@@ -37,6 +37,12 @@ export {
   createContentFilter,
 } from './content-filter.ts';
 export {
+  clearContributors,
+  contributorCount,
+  formatContributors,
+  recordContributor,
+} from './contributor-tracker.ts';
+export {
   applyExternalChange,
   createExternalChangeHandler,
   FILE_WATCHER_ORIGIN,
