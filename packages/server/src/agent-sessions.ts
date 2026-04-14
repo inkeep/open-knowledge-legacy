@@ -9,6 +9,7 @@ import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server'
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
+import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
 
@@ -114,6 +115,9 @@ export class AgentSessionManager {
    * Sets agent awareness (name, color, type) on first open.
    */
   async getSession(docName: string): Promise<AgentDirectConnection> {
+    if (isSystemDoc(docName)) {
+      throw new Error(`Cannot create agent session for reserved doc: ${docName}`);
+    }
     let dc = this.sessions.get(docName);
     if (!dc) {
       dc = (await this.hocuspocus.openDirectConnection(docName)) as AgentDirectConnection;

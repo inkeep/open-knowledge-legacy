@@ -14,6 +14,7 @@ import type { Extension } from '@hocuspocus/server';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { type BacklinkIndex, extractWikiLinksFromMarkdown } from './backlink-index.ts';
+import { isSystemDoc } from './cc1-broadcast.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
 import { mdManager, schema } from './md-manager.ts';
@@ -314,6 +315,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
 
   const extension: Extension = {
     async onLoadDocument({ document, documentName, context: _context }) {
+      if (isSystemDoc(documentName)) return;
       log.info(
         { documentName, connections: document.getConnectionsCount?.() ?? '?' },
         `[persistence] onLoadDocument called for ${documentName} (connections: ${document.getConnectionsCount?.() ?? '?'})`,
@@ -388,6 +390,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     },
 
     async onStoreDocument({ document, documentName }) {
+      if (isSystemDoc(documentName)) return;
       if (isBatchInProgress()) return;
 
       const xmlFragment = document.getXmlFragment('default');

@@ -10,6 +10,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ignore, { type Ignore } from 'ignore';
 import picomatch from 'picomatch';
+import { isSystemDoc } from './cc1-broadcast.ts';
 
 export interface ContentFilterOptions {
   /** Project root directory (where .gitignore lives). */
@@ -117,6 +118,9 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
 
   return {
     isExcluded(relativePath: string): boolean {
+      // Reserved system doc names are always excluded
+      const docName = relativePath.replace(/\.md$/, '');
+      if (isSystemDoc(docName)) return true;
       // relativePath is relative to contentDir (what the watcher provides).
       // 1. Include check uses contentDir-relative path (patterns like **/*.md)
       if (!isIncluded(relativePath)) return true;

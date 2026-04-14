@@ -6,6 +6,7 @@ import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
+import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { createContentFilter } from './content-filter.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
@@ -85,6 +86,7 @@ export interface ServerOptions {
 export interface ServerInstance {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
+  cc1Broadcaster: CC1Broadcaster;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
   ready: Promise<void>;
@@ -191,6 +193,9 @@ export function createServer(options: ServerOptions): ServerInstance {
     throw err;
   }
 
+  const cc1Broadcaster = new CC1Broadcaster(hocuspocus);
+  let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
+
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
     const rescueBase = resolve(shadowGitDir, 'rescue');
@@ -231,6 +236,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           void backlinkIndex.saveToDisk().catch((err) => {
             console.warn(`[backlinks] Failed to persist create for ${event.docName}:`, err);
           });
+          cc1Broadcaster.signal('files');
           break;
         }
 
@@ -358,6 +364,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk().catch((err) => {
               console.warn(`[backlinks] Failed to persist closed-doc delete for ${docName}:`, err);
             });
+            cc1Broadcaster.signal('files');
             return;
           }
 
@@ -395,6 +402,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
           await hocuspocus.unloadDocument(document);
+          cc1Broadcaster.signal('files');
           break;
         }
 
@@ -419,6 +427,7 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
 
           log.info({ oldDocName, newDocName }, `[reconcile] rename: ${oldDocName} → ${newDocName}`);
+          cc1Broadcaster.signal('files');
           break;
         }
 
@@ -515,6 +524,7 @@ export function createServer(options: ServerOptions): ServerInstance {
         const rescueFailed: string[] = [];
         if (shadowRef.current) {
           for (const docName of stillLoaded) {
+            if (isSystemDoc(docName)) continue;
             try {
               const ours = serializeDoc(docName);
               if (ours === null) {
@@ -636,6 +646,21 @@ export function createServer(options: ServerOptions): ServerInstance {
               error: err instanceof Error ? err.message : String(err),
             });
             log.error({ err }, '[server] shutdown phase-1 watcher unsubscribe failed');
+          }
+
+          // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
+          try {
+            cc1Broadcaster.destroy();
+            if (systemDocConnection) {
+              await systemDocConnection.disconnect();
+              systemDocConnection = null;
+            }
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'cc1-teardown',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown phase-1b CC1 teardown failed');
           }
 
           // Phase 2: drain agent sessions (intrinsic per-session try/catch at agent-sessions.ts:168-177)
@@ -773,6 +798,18 @@ export function createServer(options: ServerOptions): ServerInstance {
       }
     }
 
+    // Pre-materialize __system__ Y.Doc so CC1 broadcaster has a target before
+    // any browser connects. Must happen before the file watcher starts.
+    try {
+      systemDocConnection = await hocuspocus.openDirectConnection(SYSTEM_DOC_NAME);
+    } catch (err) {
+      log.error(
+        { err },
+        '[server] failed to open __system__ direct connection — CC1 push disabled',
+      );
+      degraded.push('cc1-push');
+    }
+
     // Start file watcher (with content filter for gitignore + config exclude)
     try {
       watcher = await startWatcher(contentDir, onDiskEvent, contentFilter);
@@ -801,6 +838,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             const currentBranch = getActiveBranch();
             const docs: ParkableDoc[] = [];
             for (const [docName] of hocuspocus.documents) {
+              if (isSystemDoc(docName)) continue;
               const markdown = serializeDoc(docName);
               if (markdown === null) continue;
               const diskSnapshot = getReconciledBase(docName) ?? markdown;
@@ -855,6 +893,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
             // Reset all open Y.Docs from the target branch's disk content
             for (const [docName, document] of hocuspocus.documents) {
+              if (isSystemDoc(docName)) continue;
               try {
                 const filePath = safeContentPath(docName, contentDir);
                 if (!existsSync(filePath)) {
@@ -915,6 +954,7 @@ export function createServer(options: ServerOptions): ServerInstance {
             if (shadowRef.current && info.batchKind === 'cross-branch') {
               let restoredCount = 0;
               for (const [docName] of hocuspocus.documents) {
+                if (isSystemDoc(docName)) continue;
                 try {
                   const parked = await readParkedState(
                     shadowRef.current,
@@ -1045,5 +1085,5 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   const ready = initAsync();
 
-  return { hocuspocus, sessionManager, destroy, ready, degraded, lockDir };
+  return { hocuspocus, sessionManager, cc1Broadcaster, destroy, ready, degraded, lockDir };
 }

@@ -28,6 +28,7 @@ import {
   syncTextToFragment,
 } from './agent-sessions.ts';
 import type { BacklinkIndex } from './backlink-index.ts';
+import { isSystemDoc } from './cc1-broadcast.ts';
 import { contentHash, type FileIndexEntry, registerWrite } from './file-watcher.ts';
 import { getMetrics } from './metrics.ts';
 import { deleteReconciledBase, isWithinContentDir, safeContentPath } from './persistence.ts';
@@ -410,6 +411,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
       const content =
@@ -488,6 +493,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const resolvedDocName = resolveAlias(effectiveDocName);
+      if (isSystemDoc(resolvedDocName)) {
+        json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(resolvedDocName);
       const timestamp = new Date().toISOString();
 
@@ -543,6 +552,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const content = dc.document.getText('source').toString();
       json(res, 200, { ok: true, docName, content });
@@ -792,6 +805,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(effectivePatchDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
 
@@ -841,6 +858,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
       const docName = resolveAlias(url.searchParams.get('docName') || 'test-doc');
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       if (!sessionManager.hasSession(docName)) {
         json(res, 200, { ok: true, canUndo: false, canRedo: false });
         return;
@@ -882,6 +903,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
       if (!um.canUndo()) {
@@ -928,6 +953,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
       const docName = resolveAlias(rawDocName);
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
       const dc = await sessionManager.getSession(docName);
       const um = sessionManager.getUndoManager(dc);
       if (!um.canRedo()) {
@@ -1240,6 +1269,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const fullPath = resolve(resolvedContentDir, filePath);
       if (!fullPath.startsWith(`${resolvedContentDir}/`) && fullPath !== resolvedContentDir) {
         json(res, 400, { ok: false, error: 'path must not escape content directory' });
+        return;
+      }
+      const candidateDocName = filePath.slice(0, -3);
+      if (isSystemDoc(candidateDocName)) {
+        json(res, 400, { ok: false, error: `'${candidateDocName}' is a reserved document name` });
         return;
       }
       mkdirSync(dirname(fullPath), { recursive: true });

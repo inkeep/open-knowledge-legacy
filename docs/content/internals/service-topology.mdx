@@ -79,6 +79,12 @@ It contains:
 The shadow repo never touches the project's git ref namespace or object store. It is an isolated journal for auto-save and attribution.
 </Callout>
 
+## Derived-view push (CC1)
+
+A dedicated `__system__` Y.Doc carries push signals for derived views (file list, backlinks, future graph panels). The server pre-materializes it at startup via `openDirectConnection` so events that arrive before any browser connects have a broadcast target. When the file watcher emits a `create`, `delete`, or `rename`, the CC1 broadcaster debounces 100ms and broadcasts a pure signal -- `{v:1, ch:'files', seq}` -- to every connected client via `Document#broadcastStateless`. Clients respond by re-fetching the channel's REST endpoint rather than decoding a per-event payload.
+
+`__system__` is not a content doc. Every subsystem that keys off `documentName` short-circuits via the `isSystemDoc()` helper in `packages/server/src/cc1-broadcast.ts`, and `ContentFilter` rejects user-created `__system__.md` at admit time. V0-3 (backlinks) and V0-11 (graph panels) will inherit this contract on their own channels.
+
 ## Branch awareness
 
 The `reconciledBase` (three-way merge base) is scoped by branch name: `Map<branch, Map<docName, content>>`. When the HEAD watcher detects a branch switch:

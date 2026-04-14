@@ -338,8 +338,8 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     });
     await server.ready;
 
-    // No DirectConnections opened — hocuspocus.documents is empty.
-    // flushAllStoresAndWait short-circuits on documents.size === 0.
+    // Only the __system__ CC1 DirectConnection — no content documents loaded.
+    // flushAllStoresAndWait runs (documents.size === 1 for __system__), but completes fast.
     const startedAt = Date.now();
     await server.destroy();
     const elapsed = Date.now() - startedAt;
@@ -350,10 +350,10 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     // timeout" — 2s still proves the short-circuit fired.
     expect(elapsed).toBeLessThan(2_000);
 
-    // Shutdown log still emitted with documentCount === 0
+    // Shutdown log still emitted — documentCount is 1 (__system__ CC1 doc)
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.documentCount).toBe(0);
+    expect(shutdownLogs[0].payload.documentCount).toBe(1);
   });
 
   test('destroy() flushes multiple documents before resolving (multi-doc drain)', async () => {
@@ -403,10 +403,10 @@ describe('createServer().destroy() — graceful shutdown flush', () => {
     expect(await readFile(join(tmpDir, 'doc-b.md'), 'utf-8')).toContain('content B');
     expect(await readFile(join(tmpDir, 'doc-c.md'), 'utf-8')).toContain('content C');
 
-    // Shutdown log reports documentCount === 3 (all docs drained)
+    // Shutdown log reports documentCount === 4 (3 content docs + __system__ CC1 doc)
     const shutdownLogs = logCapture.getCalls('info', 'shutdown flushed');
     expect(shutdownLogs).toHaveLength(1);
-    expect(shutdownLogs[0].payload.documentCount).toBe(3);
+    expect(shutdownLogs[0].payload.documentCount).toBe(4);
   });
 });
 
