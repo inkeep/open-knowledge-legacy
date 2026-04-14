@@ -17,6 +17,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative } from 'node:path';
+import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { isWithinContentDir } from './persistence.ts';
 import { containsConflictMarkers } from './reconciliation.ts';
@@ -516,6 +517,8 @@ function seedLastKnownHashes(
  * to keep the index in sync with actual disk state.
  */
 export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileIndexEntry>): void {
+  const docName = event.kind === 'rename' ? event.newDocName : event.docName;
+  if (isSystemDoc(docName)) return;
   switch (event.kind) {
     case 'create':
     case 'update':

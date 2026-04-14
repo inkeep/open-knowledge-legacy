@@ -2,6 +2,7 @@ import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync } from 'n
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { getWikiLinkText, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 
 // Line-oriented variant: excludes \n since lines are pre-split.
@@ -301,6 +302,7 @@ export class BacklinkIndex {
   }
 
   updateDocument(docName: string, links: ExtractedWikiLink[], branch = this.activeBranch): void {
+    if (isSystemDoc(docName)) return;
     const state = this.getState(branch);
     const priorTargets = state.forward.get(docName) ?? new Set<string>();
 
@@ -339,6 +341,7 @@ export class BacklinkIndex {
   }
 
   deleteDocument(docName: string, branch = this.activeBranch): void {
+    if (isSystemDoc(docName)) return;
     const state = this.getState(branch);
     const targets = state.forward.get(docName) ?? new Set<string>();
     for (const target of targets) {
