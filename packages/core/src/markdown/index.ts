@@ -47,6 +47,7 @@ import type {
   MdxJsxTextElement,
   MdxTextExpression,
 } from 'mdast-util-mdx';
+import { incrementWholeDocFallback } from '../metrics/parse-health.ts';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseMd, serializeMd } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
@@ -120,8 +121,10 @@ export class MarkdownManager {
     try {
       return this.parse(markdown);
     } catch {
-      // R14: increment whole-doc fallback counter (wired in US-005)
-      // Whole-doc raw text fallback — last resort
+      incrementWholeDocFallback();
+      console.warn(
+        JSON.stringify({ event: 'mdx-whole-doc-fallback', reason: 'parseSafe catch-all' }),
+      );
       return {
         type: 'doc',
         content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],

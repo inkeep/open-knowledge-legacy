@@ -37,6 +37,15 @@ export {
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
 export { MarkdownManager } from './markdown/index.ts';
+export {
+  getParseHealth,
+  incrementBlockFallback,
+  incrementWholeDocFallback,
+  incrementYpsMismatchBlock,
+  incrementYpsMismatchInline,
+  type ParseHealthMetrics,
+  resetParseHealth,
+} from './metrics/parse-health.ts';
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
 // subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.
