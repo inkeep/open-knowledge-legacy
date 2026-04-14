@@ -198,3 +198,23 @@ describe('colorForFolderPath', () => {
     expect(alpha).not.toBe(beta);
   });
 });
+
+describe('hash distribution', () => {
+  test('common top-level directory prefixes map to at least 6 distinct colors', () => {
+    const prefixes = [
+      'src',
+      'docs',
+      'test',
+      'packages',
+      'projects',
+      'meetings',
+      'research',
+      'playbooks',
+      'ref',
+      'notes',
+    ];
+    const opts = { depth: 1, theme: 'light' as const };
+    const colors = new Set(prefixes.map((p) => colorForFolderPath(p, opts)));
+    expect(colors.size).toBeGreaterThanOrEqual(6);
+  });
+});

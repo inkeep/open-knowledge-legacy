@@ -14,7 +14,7 @@ export function GraphLegend({ nodes, depth, theme }: GraphLegendProps) {
     const key = bucketKeyForDocName(node.id, depth);
     if (key !== null) bucketSet.add(key);
   }
-  const buckets = [...bucketSet];
+  const buckets = [...bucketSet].sort();
 
   if (buckets.length === 0) return null;
 
