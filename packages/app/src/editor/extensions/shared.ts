@@ -11,15 +11,17 @@ import FileHandler from '@tiptap/extension-file-handler';
 import Placeholder from '@tiptap/extension-placeholder';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { HeadingAnchors } from './heading-anchors';
+import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';
 import { SlashCommand } from './slash-command';
 import { WikiLink } from './wiki-link';
 
-// Replace core extensions that have app-side NodeViews.
+// Replace core extensions that have app-side NodeViews or mark views.
 export const sharedExtensions = [
   ...coreExtensions.map((ext) => {
     if (ext.name === 'jsxComponent') return JsxComponent;
     if (ext.name === 'wikiLink') return WikiLink;
+    if (ext.name === 'link') return InternalLink;
     return ext;
   }),
   SlashCommand,

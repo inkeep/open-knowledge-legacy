@@ -10,6 +10,10 @@ import type { ContentFilter } from './content-filter.ts';
 // Sticky flag ('y') enables position-based matching via lastIndex.
 const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
 
+// Inline link form: [text](href) — excludes newlines in both text and href.
+// Sticky flag for position-based matching. Does NOT match reference-style [text][ref].
+const MD_LINK_RE = /\[([^\]\n]*)\]\(([^)\n]+)\)/y;
+
 interface InlineWikiLinkOccurrence {
   target: string;
   start: number;
@@ -207,6 +211,151 @@ function extractWikiLinksFromLine(line: string): {
   return { text: flatText, occurrences };
 }
 
+/**
+ * Resolve an href (from a markdown inline link) relative to a source docName.
+ * Returns the resolved docName (no `.md` extension, no leading `./`) or null if
+ * the href is external or escapes the content directory root.
+ *
+ * Resolution is pure string arithmetic — no filesystem access.
+ */
+export function resolveMarkdownHref(href: string, sourceDocName: string): string | null {
+  const trimmed = href.trim();
+  if (!trimmed) return null;
+
+  // External: URI scheme (http:, mailto:, etc.), protocol-relative, absolute, or anchor-only
+  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) return null;
+  if (trimmed.startsWith('//') || trimmed.startsWith('/') || trimmed.startsWith('#')) return null;
+
+  // Strip fragment and query before resolving the path
+  const withoutFragment = trimmed.split('#')[0] ?? '';
+  const pathPart = (withoutFragment.split('?')[0] ?? '').trim();
+  if (!pathPart) return null;
+
+  // Strip .md extension
+  const withoutExt = pathPart.endsWith('.md') ? pathPart.slice(0, -3) : pathPart;
+
+  // Build a path stack from dirname(sourceDocName), then apply href segments
+  const dirParts = dirname(sourceDocName) === '.' ? [] : dirname(sourceDocName).split('/');
+  for (const seg of withoutExt.split('/')) {
+    if (seg === '..') {
+      if (dirParts.length === 0) return null; // would escape content root
+      dirParts.pop();
+    } else if (seg !== '.' && seg !== '') {
+      dirParts.push(seg);
+    }
+  }
+
+  if (dirParts.length === 0) return null;
+  return dirParts.join('/');
+}
+
+function readMarkdownLink(
+  line: string,
+  start: number,
+): { text: string; href: string; nextIndex: number } | null {
+  MD_LINK_RE.lastIndex = start;
+  const match = MD_LINK_RE.exec(line);
+  if (!match) return null;
+  return {
+    text: match[1] ?? '',
+    href: match[2] ?? '',
+    nextIndex: start + match[0].length,
+  };
+}
+
+function extractMarkdownLinksFromLine(
+  line: string,
+  sourceDocName: string,
+): { text: string; occurrences: InlineWikiLinkOccurrence[] } {
+  let flatText = '';
+  const occurrences: InlineWikiLinkOccurrence[] = [];
+  let idx = leadingMarkdownPrefixLength(line);
+
+  while (idx < line.length) {
+    if (line[idx] === '\\' && idx + 1 < line.length) {
+      flatText += line[idx + 1];
+      idx += 2;
+      continue;
+    }
+
+    if (line[idx] === '`') {
+      const inlineCode = readInlineCode(line, idx);
+      if (inlineCode) {
+        flatText += inlineCode.text;
+        idx = inlineCode.nextIndex;
+        continue;
+      }
+    }
+
+    // Skip wiki-links so they're not double-counted as markdown links
+    if (line[idx] === '[' && line[idx + 1] === '[') {
+      const wikiLink = readWikiLink(line, idx);
+      if (wikiLink) {
+        flatText += getWikiLinkText(wikiLink);
+        idx = wikiLink.nextIndex;
+        continue;
+      }
+    }
+
+    if (line[idx] === '[') {
+      const mdLink = readMarkdownLink(line, idx);
+      if (mdLink) {
+        const resolvedDocName = resolveMarkdownHref(mdLink.href, sourceDocName);
+        if (resolvedDocName) {
+          const start = flatText.length;
+          flatText += mdLink.text;
+          occurrences.push({
+            target: resolvedDocName,
+            start,
+            end: start + mdLink.text.length,
+          });
+        } else {
+          // External link — add text to flat buffer without recording
+          flatText += mdLink.text;
+        }
+        idx = mdLink.nextIndex;
+        continue;
+      }
+    }
+
+    flatText += line[idx];
+    idx++;
+  }
+
+  return { text: flatText, occurrences };
+}
+
+export function extractMarkdownLinksFromMarkdown(
+  markdown: string,
+  sourceDocName: string,
+): ExtractedWikiLink[] {
+  const source = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  const lines = source.split('\n');
+  const links: ExtractedWikiLink[] = [];
+  let fence: FenceState | null = null;
+
+  for (const line of lines) {
+    if (fence) {
+      if (isFenceClose(line, fence)) fence = null;
+    } else {
+      const nextFence = matchFence(line);
+      if (nextFence) {
+        fence = nextFence;
+      } else {
+        const extracted = extractMarkdownLinksFromLine(line, sourceDocName);
+        links.push(
+          ...extracted.occurrences.map(({ target, start, end }) => ({
+            target,
+            snippet: snippetAround(extracted.text, start, end),
+          })),
+        );
+      }
+    }
+  }
+
+  return links;
+}
+
 export function extractWikiLinksFromMarkdown(markdown: string): ExtractedWikiLink[] {
   const source = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
   const lines = source.split('\n');
@@ -333,7 +482,12 @@ export class BacklinkIndex {
   updateDocumentFromMarkdown(docName: string, markdown: string, branch = this.activeBranch): void {
     try {
       const { body } = stripFrontmatter(markdown);
-      this.updateDocument(docName, extractWikiLinksFromMarkdown(body), branch);
+      const wikiLinks = extractWikiLinksFromMarkdown(body);
+      const mdLinks = extractMarkdownLinksFromMarkdown(body, docName);
+      // Merge: wiki links take precedence for duplicate targets (they have richer snippet context)
+      const seen = new Set(wikiLinks.map((l) => l.target));
+      const merged = [...wikiLinks, ...mdLinks.filter((l) => !seen.has(l.target))];
+      this.updateDocument(docName, merged, branch);
     } catch (err) {
       console.warn(`[backlinks] Failed to scan ${docName} for link extraction:`, err);
       this.deleteDocument(docName, branch);
@@ -479,7 +633,10 @@ export class BacklinkIndex {
       try {
         const markdown = readFileSync(filePath, 'utf-8');
         const { body } = stripFrontmatter(markdown);
-        const links = extractWikiLinksFromMarkdown(body);
+        const wikiLinks = extractWikiLinksFromMarkdown(body);
+        const mdLinks = extractMarkdownLinksFromMarkdown(body, docName);
+        const seen = new Set(wikiLinks.map((l) => l.target));
+        const links = [...wikiLinks, ...mdLinks.filter((l) => !seen.has(l.target))];
 
         const targets = new Set<string>();
         state.forward.set(docName, targets);
