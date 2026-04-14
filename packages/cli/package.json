@@ -47,6 +47,7 @@
     "@parcel/watcher": "^2.5.6"
   },
   "devDependencies": {
+    "@inkeep/open-knowledge-core": "workspace:*",
     "@inkeep/open-knowledge-server": "workspace:*",
     "@types/node": "^22.16.0",
     "@types/shell-quote": "^1.7.5",
