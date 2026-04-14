@@ -21,7 +21,7 @@ export const DESCRIPTION = [
   'preserving all history. All connected editors see the change in real-time.',
   '',
   '**Parameters:**',
-  '- `docName` — Document name to restore',
+  '- `docName` — Document name to restore, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `commitSha` — The 40-character SHA of the shadow repo commit to restore to.',
   '  Use `get_history` to find available versions.',
 ].join('\n');

@@ -15,7 +15,7 @@ export const DESCRIPTION = [
   'Each entry includes a commit SHA that can be passed to `rollback_to_version`.',
   '',
   '**Parameters:**',
-  '- `docName` — Document name to query history for',
+  '- `docName` — Document name to query history for, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `branch` (optional) — Branch name (default: current branch)',
   '- `limit` (optional) — Maximum entries to return (default 50, max 200)',
   '- `offset` (optional) — Number of entries to skip for pagination (default 0)',

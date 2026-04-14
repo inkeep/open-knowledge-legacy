@@ -40,26 +40,39 @@ describe('normalizeDocName', () => {
     expect(result).toEqual({ ok: true, docName: 'notes/meeting' });
   });
 
+  test('strips trailing .mdx silently', () => {
+    const result = normalizeDocName('notes/meeting.mdx');
+    expect(result).toEqual({ ok: true, docName: 'notes/meeting' });
+  });
+
+  test('strips uppercase .MD (case-insensitive)', () => {
+    const result = normalizeDocName('NOTES.MD');
+    expect(result).toEqual({ ok: true, docName: 'NOTES' });
+  });
+
+  test('strips mixed-case .Mdx (case-insensitive)', () => {
+    const result = normalizeDocName('Component.Mdx');
+    expect(result).toEqual({ ok: true, docName: 'Component' });
+  });
+
+  test('strips only one trailing extension (not recursive)', () => {
+    // `foo.md.md` strips once → `foo.md`; avoids over-eager stripping on paths
+    // that happen to have compound-looking extensions.
+    const result = normalizeDocName('notes/meeting.md.md');
+    expect(result).toEqual({ ok: true, docName: 'notes/meeting.md' });
+  });
+
   test('leaves extension-less docName untouched', () => {
     const result = normalizeDocName('notes/meeting');
     expect(result).toEqual({ ok: true, docName: 'notes/meeting' });
   });
 
-  test('rejects .mdx with a V0-27 pointer', () => {
-    const result = normalizeDocName('notes/meeting.mdx');
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toContain('.mdx');
-      expect(result.error).toContain('V0-27');
-    }
-  });
-
-  test('rejects .markdown with a V0-27 pointer', () => {
+  test('rejects .markdown — unsupported extension', () => {
     const result = normalizeDocName('notes/meeting.markdown');
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain('.markdown');
-      expect(result.error).toContain('V0-27');
+      expect(result.error).toContain('not a supported extension');
     }
   });
 

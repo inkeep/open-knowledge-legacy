@@ -7,7 +7,7 @@ export const DESCRIPTION = [
   'Returns forward links as JSON.',
   '',
   '**Parameters:**',
-  '- `docName` — Source page docName',
+  '- `docName` — Source page docName, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
 ].join('\n');
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {

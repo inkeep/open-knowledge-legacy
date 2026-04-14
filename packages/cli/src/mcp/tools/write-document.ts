@@ -15,7 +15,7 @@ export const DESCRIPTION = [
   '**Link liberally.** Every noun-phrase that names another document in this knowledge base should be a `[[wiki-link]]`, not plain prose. Backlinks are the primary navigation surface — underlinked documents become islands. Redlinks (links to pages that don\'t exist yet) are fine; they signal "this should exist." Prefer `[[Page Name]]` over Markdown `[text](./page.md)` — only wiki-links participate in the backlinks index.',
   '',
   '**Parameters:**',
-  '- `docName` — Document name without extension (e.g., "my-doc" or "notes/meeting"). A trailing `.md` is stripped; `.mdx` is not yet supported (see V0-27).',
+  '- `docName` — Document name, typically without extension (e.g., "my-doc" or "notes/meeting"). A trailing `.md` or `.mdx` is stripped automatically.',
   '- `markdown` — Markdown content to write',
   '- `position` — Where to insert: "append", "prepend", or "replace"',
 ].join('\n');

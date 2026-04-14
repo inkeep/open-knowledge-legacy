@@ -15,7 +15,7 @@ export const DESCRIPTION = [
   '**When rewriting prose, add `[[wiki-links]]` aggressively.** If the replacement mentions other documents or entities that should have their own page, link them as `[[Page Name]]`. Over-linking is the goal; underlinked documents lose their value in backlink-driven navigation.',
   '',
   '**Parameters:**',
-  '- `docName` — Document name without extension. A trailing `.md` is stripped; `.mdx` is not yet supported (see V0-27).',
+  '- `docName` — Document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `find` — Text to find (exact match)',
   '- `replace` — Replacement text',
 ].join('\n');

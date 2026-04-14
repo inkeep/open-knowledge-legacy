@@ -39,27 +39,36 @@ export const HOCUSPOCUS_NOT_RUNNING_ERROR =
   'Error: Hocuspocus server is not running. Start it with `open-knowledge start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';
 
 /**
- * Normalize a user-supplied `docName`. The server treats `docName` as
- * extension-less and appends `.md` itself when resolving to disk, so a caller
- * that passes `"notes/meeting.md"` would otherwise produce `meeting.md.md`.
+ * Normalize a user-supplied `docName`. The server keys documents by the
+ * extension-less docName, so a caller that passes `"notes/meeting.md"` would
+ * otherwise produce `meeting.md.md`. The server auto-detects the extension
+ * (`.md` vs `.mdx`) from what it finds on disk.
  *
  * Policy:
- * - Trailing `.md` is stripped silently (permissive — native intuition wins).
- * - Trailing `.mdx` / `.markdown` returns an error: the server's `.md`
- *   hardcoding means these types aren't first-class yet. Tracked in V0-27.
- * - Any other trailing `.x` is left alone; a dotted docName is valid.
+ * - Trailing `.md` / `.mdx` is stripped silently (case-insensitive).
+ * - Trailing `.markdown` returns an error — unsupported extension.
+ * - Any other trailing `.x` is left alone; a dotted docName is valid
+ *   (e.g. `releases/v1.0`).
+ *
+ * Note: when creating a new document, the server defaults to `.md` regardless
+ * of the suffix passed by the caller. To create a `.mdx` file, create it on
+ * disk first — the watcher will register the extension and subsequent writes
+ * will route to `.mdx` automatically.
  */
 export function normalizeDocName(
   raw: string,
 ): { ok: true; docName: string } | { ok: false; error: string } {
-  if (raw.endsWith('.md')) {
+  const lower = raw.toLowerCase();
+  if (lower.endsWith('.md')) {
     return { ok: true, docName: raw.slice(0, -3) };
   }
-  if (raw.endsWith('.mdx') || raw.endsWith('.markdown')) {
-    const ext = raw.endsWith('.mdx') ? '.mdx' : '.markdown';
+  if (lower.endsWith('.mdx')) {
+    return { ok: true, docName: raw.slice(0, -4) };
+  }
+  if (lower.endsWith('.markdown')) {
     return {
       ok: false,
-      error: `Error: docName "${raw}" ends in "${ext}", but the server only supports ".md" today. Tracked in projects/v0-launch/PROJECT.md §V0-27 (extension-aware docName). Strip the extension and retry.`,
+      error: `Error: docName "${raw}" ends in ".markdown", which is not a supported extension. Use ".md" or ".mdx", or strip the extension to let the server auto-detect.`,
     };
   }
   return { ok: true, docName: raw };

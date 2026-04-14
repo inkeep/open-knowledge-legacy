@@ -7,7 +7,7 @@ export const DESCRIPTION = [
   'Returns source page names, resolved titles, and context snippets as JSON.',
   '',
   '**Parameters:**',
-  '- `docName` — Target page docName (for example, "articles/project-alpha")',
+  '- `docName` — Target page docName, typically without extension (for example, "articles/project-alpha"). A trailing `.md` or `.mdx` is stripped automatically.',
 ].join('\n');
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {
