@@ -92,32 +92,39 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
   function handleClick(e: React.MouseEvent) {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
-      window.location.hash = hashHref.slice(1); // drop leading #
+      window.location.hash = hashHref.slice(1);
     }
-    // Plain click: ProseMirror handles cursor positioning via mousedown; no navigation.
+    // Plain click: ProseMirror handles cursor positioning via mousedown.
   }
 
+  const resolutionState = loading ? 'loading' : isResolved ? 'resolved' : 'unresolved';
+
   return (
-    <a
-      href={hashHref}
+    // Outer span mirrors WikiLinkView's chip structure so the existing
+    // .ProseMirror [data-resolution-state] a CSS carve-out resets link colours.
+    <span
       className={cn(
-        'mx-0.5 inline-flex max-w-full cursor-pointer select-none items-center rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+        'mx-0.5 inline-flex max-w-full select-none items-center rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
         isResolved &&
-          'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 focus-visible:ring-sky-300 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200',
+          'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200',
         isUnresolved &&
-          'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 focus-visible:ring-red-300 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60',
-        loading &&
-          'border-border bg-muted/60 text-muted-foreground hover:bg-muted focus-visible:ring-ring',
+          'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60',
+        loading && 'border-border bg-muted/60 text-muted-foreground hover:bg-muted',
       )}
-      title={`${href} — Cmd/Ctrl+click to navigate`}
       data-internal-link=""
+      data-resolution-state={resolutionState}
       data-doc-name={internal.docName}
       data-anchor={internal.anchor ?? ''}
-      data-resolved={isResolved ? 'true' : 'false'}
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={handleClick}
+      title={`${href} — Cmd/Ctrl+click to navigate`}
     >
-      <MarkViewContent />
-    </a>
+      <a
+        href={hashHref}
+        className="cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-current"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={handleClick}
+      >
+        <MarkViewContent />
+      </a>
+    </span>
   );
 }
