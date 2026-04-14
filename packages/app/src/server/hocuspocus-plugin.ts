@@ -185,20 +185,21 @@ try {
     shadowRef,
     backlinkIndex,
   });
-  const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
-    backlinkIndex,
-    signalChannel,
-  });
 
   hocuspocus = new Hocuspocus({
     quiet: true,
     debounce: 2000,
     maxDebounce: 10000,
-    extensions: [persistence.extension, liveDerivedIndexExtension],
+    extensions: [persistence.extension],
   });
 
   sessionManager = new AgentSessionManager(hocuspocus);
   cc1Broadcaster = new CC1Broadcaster(hocuspocus);
+  const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
+    backlinkIndex,
+    signalChannel,
+  });
+  hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
   hocuspocus.configuration.extensions.push(
     createApiExtension({

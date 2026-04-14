@@ -172,19 +172,21 @@ export function createServer(options: ServerOptions): ServerInstance {
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
-    const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
-      backlinkIndex,
-      signalChannel,
-    });
 
     hocuspocus = new Hocuspocus({
       quiet,
       debounce,
       maxDebounce,
-      extensions: [persistence.extension, liveDerivedIndexExtension],
+      extensions: [persistence.extension],
     });
+    cc1Broadcaster = new CC1Broadcaster(hocuspocus);
 
     sessionManager = new AgentSessionManager(hocuspocus);
+    const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
+      backlinkIndex,
+      signalChannel,
+    });
+    hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
     const apiExtension = createApiExtension({
       hocuspocus,
@@ -205,8 +207,6 @@ export function createServer(options: ServerOptions): ServerInstance {
     releaseServerLock(lockDir);
     throw err;
   }
-
-  cc1Broadcaster = new CC1Broadcaster(hocuspocus);
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */

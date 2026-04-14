@@ -1,16 +1,23 @@
-export const SYSTEM_DOC_NAME = '__system__';
-export const CC1_CONTRACT_VERSION = 1;
+import {
+  CC1_CONTRACT_VERSION,
+  type CC1Signal as ServerCC1Signal,
+  SYSTEM_DOC_NAME,
+} from '@inkeep/open-knowledge-server';
+
+export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
 export type DerivedViewChannel = 'files' | 'backlinks' | 'graph';
 
-export interface CC1Signal {
-  v: typeof CC1_CONTRACT_VERSION;
+export interface CC1Signal extends ServerCC1Signal {
   ch: DerivedViewChannel;
-  seq: number;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isDerivedViewChannel(value: unknown): value is DerivedViewChannel {
+  return value === 'files' || value === 'backlinks' || value === 'graph';
 }
 
 export function parseCC1Signal(payload: string): CC1Signal | null {
@@ -23,10 +30,7 @@ export function parseCC1Signal(payload: string): CC1Signal | null {
 
   if (!isObject(parsed)) return null;
   if (parsed.v !== CC1_CONTRACT_VERSION) return null;
-  if (
-    (parsed.ch !== 'files' && parsed.ch !== 'backlinks' && parsed.ch !== 'graph') ||
-    typeof parsed.seq !== 'number'
-  ) {
+  if (!isDerivedViewChannel(parsed.ch) || typeof parsed.seq !== 'number') {
     return null;
   }
 

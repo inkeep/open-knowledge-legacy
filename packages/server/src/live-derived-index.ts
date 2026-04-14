@@ -9,7 +9,7 @@ export const LIVE_DERIVED_INDEX_DEBOUNCE_MS = 100;
 
 export interface LiveDerivedIndexOptions {
   backlinkIndex: BacklinkIndex;
-  signalChannel?: (channel: 'backlinks' | 'graph') => void;
+  signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
   debounceMs?: number;
 }
 
@@ -51,9 +51,13 @@ export function createLiveDerivedIndexExtension(options: LiveDerivedIndexOptions
       docName,
       setTimeout(() => {
         pendingByDoc.delete(docName);
-        backlinkIndex.updateDocumentFromMarkdown(docName, serializeLiveDocument(document));
-        signalChannel?.('backlinks');
-        signalChannel?.('graph');
+        try {
+          backlinkIndex.updateDocumentFromMarkdown(docName, serializeLiveDocument(document));
+          signalChannel?.('backlinks');
+          signalChannel?.('graph');
+        } catch (err) {
+          console.error(`[live-derived-index] Failed to update backlinks for ${docName}:`, err);
+        }
       }, debounceMs),
     );
   }

@@ -96,7 +96,7 @@ export function ForwardLinksPanel({
                       <div className="truncate text-sm font-medium">{target}</div>
                       {unresolved ? (
                         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
-                          <FilePlus2 className="size-3 shrink-0" />
+                          <FilePlus2 className="size-3 shrink-0" aria-hidden="true" />
                           <span>Missing page. Click to create.</span>
                         </div>
                       ) : null}

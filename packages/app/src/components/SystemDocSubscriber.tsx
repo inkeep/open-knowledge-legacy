@@ -16,8 +16,17 @@ export function SystemDocSubscriber() {
       document: doc,
       onStateless: ({ payload }: { payload: string }) => {
         const signal = parseCC1Signal(payload);
-        if (!signal) return;
+        if (!signal) {
+          console.warn('[CC1] Unparseable stateless payload, skipping:', payload.slice(0, 100));
+          return;
+        }
         emitDocumentsChanged([signal.ch]);
+      },
+      onClose: ({ event }) => {
+        console.warn('[CC1] __system__ connection closed:', event.code, event.reason);
+      },
+      onDisconnect: () => {
+        console.warn('[CC1] __system__ disconnected - derived views may be stale');
       },
     });
 
