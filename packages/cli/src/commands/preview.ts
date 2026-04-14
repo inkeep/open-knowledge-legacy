@@ -1,6 +1,16 @@
-import { resolve } from 'node:path';
+/**
+ * `open-knowledge preview` — read-only content scope inspection.
+ *
+ * Prints the same Content block that `init` writes after scaffolding, but
+ * without side effects. Works pre-init (loads schema defaults), post-init
+ * (loads `.open-knowledge/config.yml`), and after config edits — re-running
+ * is the cheap way to verify an `include`/`exclude` change before restarting
+ * the server.
+ */
 import { Command } from 'commander';
+import { resolveContentDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
+import type { PreviewResult } from '../content/preview.ts';
 
 export function previewCommand(getConfig: () => Config): Command {
   return new Command('preview')
@@ -9,14 +19,21 @@ export function previewCommand(getConfig: () => Config): Command {
       const { previewContent, formatPreviewBlock } = await import('../content/preview.ts');
       const config = getConfig();
       const cwd = process.cwd();
-      const contentDir = resolve(cwd, config.content.dir);
+      const contentDir = resolveContentDir(config, cwd);
 
-      const result = previewContent({
-        projectDir: cwd,
-        contentDir,
-        include: config.content.include,
-        exclude: config.content.exclude,
-      });
+      let result: PreviewResult;
+      try {
+        result = previewContent({
+          projectDir: cwd,
+          contentDir,
+          include: config.content.include,
+          exclude: config.content.exclude,
+        });
+      } catch (e) {
+        console.error(`Content preview failed: ${e instanceof Error ? e.message : String(e)}`);
+        process.exitCode = 1;
+        return;
+      }
 
       process.stdout.write(`${formatPreviewBlock(result, cwd)}\n`);
 

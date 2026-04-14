@@ -1,3 +1,19 @@
+/**
+ * Content scope preview — enumerates the files the watcher will index, given
+ * a config snapshot, without spinning up the server.
+ *
+ * `previewContent()` is the load-bearing helper: it builds a `ContentFilter`
+ * from `@inkeep/open-knowledge-server` and walks `contentDir` mirroring the
+ * file-watcher's startup walk (`file-watcher.ts:seedLastKnownHashes`). Reusing
+ * the same filter is what makes the D8 invariant hold — the preview's count
+ * matches what the watcher will actually index, including nested `.gitignore`
+ * handling (so `.open-knowledge/cache/` is excluded automatically).
+ *
+ * Returns warnings rather than throwing — preview failure must never block
+ * init (D4 LOCKED). `formatPreviewBlock()` renders the result for both the
+ * `init` post-scaffold output and the standalone `open-knowledge preview`
+ * verb; keeping the formatter here ensures both surfaces stay byte-identical.
+ */
 import { existsSync, lstatSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createContentFilter } from '@inkeep/open-knowledge-server';
@@ -81,6 +97,10 @@ export function previewContent(opts: PreviewOptions): PreviewResult {
           const code = (e as NodeJS.ErrnoException).code;
           if (code === 'ENOENT' || code === 'ELOOP') {
             warnings.push(`broken or cyclic symlink: ${relative(contentDir, fullPath)}`);
+          } else {
+            warnings.push(
+              `cannot resolve symlink ${relative(contentDir, fullPath)}: ${code ?? 'unknown error'}`,
+            );
           }
           continue;
         }

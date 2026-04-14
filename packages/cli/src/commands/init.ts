@@ -415,8 +415,9 @@ export function initCommand(): Command {
       try {
         const { previewContent } = await import('../content/preview.ts');
         const { loadConfig } = await import('../config/loader.ts');
+        const { resolveContentDir } = await import('../config/paths.ts');
         const { config } = loadConfig(cwd);
-        const contentDir = resolve(cwd, config.content.dir);
+        const contentDir = resolveContentDir(config, cwd);
         result.preview = previewContent({
           projectDir: cwd,
           contentDir,

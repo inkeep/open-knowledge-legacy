@@ -1,3 +1,11 @@
+/**
+ * Cross-platform browser launcher used by `open-knowledge start --open`.
+ *
+ * Picks the platform-native launcher (`open` on macOS, `xdg-open` on Linux,
+ * `cmd /c start` on Windows) and shells out via `execFile`. Failure is
+ * non-fatal: the caller has already printed the URL, so we surface a hint
+ * and let the user open it manually rather than crashing the server.
+ */
 import { execFile } from 'node:child_process';
 
 export function openBrowser(url: string): void {
