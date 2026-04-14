@@ -20,7 +20,9 @@ import {
   DropdownMenuTrigger,
 } from '../../components/ui/dropdown-menu';
 import { Input } from '../../components/ui/input';
+import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { cn } from '../../lib/utils';
+import { LinkTooltipHint } from '../link-tooltip';
 import { isResolvedWikiLinkTarget } from './wiki-link-helpers';
 
 // ── Heading picker ────────────────────────────────────────────────────────────
@@ -278,69 +280,79 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
            * Chip — a <span> wrapper (not <button>) groups the primary click button
            * and the ⋯ trigger as siblings. Nesting <button> inside <button> is
            * invalid HTML and causes React hydration warnings.
+           *
+           * Tooltip surfaces the Cmd/Ctrl+click affordance (shared with
+           * InternalLinkView via LinkTooltipHint). 400 ms delay so hover over
+           * dense wiki-linked text doesn't spam tooltips.
            */}
-          <span
-            className={cn(
-              'group mx-0.5 inline-flex max-w-full select-none items-center gap-0.5 rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
-              resolved
-                ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
-                : unresolved
-                  ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60'
-                  : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted',
-            )}
-            data-target={target}
-            data-alias={alias ?? ''}
-            data-anchor={anchor ?? ''}
-            data-resolved={resolved ? 'true' : 'false'}
-            data-resolution-state={resolutionState}
-            title={source}
-          >
-            {/* Primary action — <a> so browsers show the URL in the status bar on hover.
+          <Tooltip delayDuration={400}>
+            <TooltipTrigger asChild>
+              <span
+                className={cn(
+                  'group mx-0.5 inline-flex max-w-full select-none items-center gap-0.5 rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
+                  resolved
+                    ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
+                    : unresolved
+                      ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60'
+                      : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted',
+                )}
+                data-target={target}
+                data-alias={alias ?? ''}
+                data-anchor={anchor ?? ''}
+                data-resolved={resolved ? 'true' : 'false'}
+                data-resolution-state={resolutionState}
+              >
+                {/* Primary action — <a> so browsers show the URL in the status bar on hover.
                 onMouseDown prevents the <a> from stealing focus from the editor
                 (focus fires on mousedown, before click), so Backspace keeps working. */}
-            <a
-              href={anchor ? `#/${target}?anchor=${encodeURIComponent(anchor)}` : `#/${target}`}
-              className={cn(
-                'cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
-                resolved
-                  ? 'focus-visible:ring-sky-300'
-                  : unresolved
-                    ? 'focus-visible:ring-red-300'
-                    : 'focus-visible:ring-ring',
-              )}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={(e) => {
-                e.preventDefault();
-                handlePrimaryClick();
-              }}
-            >
-              {label}
-            </a>
+                <a
+                  href={anchor ? `#/${target}?anchor=${encodeURIComponent(anchor)}` : `#/${target}`}
+                  className={cn(
+                    'cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+                    resolved
+                      ? 'focus-visible:ring-sky-300'
+                      : unresolved
+                        ? 'focus-visible:ring-red-300'
+                        : 'focus-visible:ring-ring',
+                  )}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handlePrimaryClick();
+                  }}
+                >
+                  {label}
+                </a>
 
-            {/* ⋯ menu trigger — shown on chip hover/focus-within, hidden (no space) otherwise.
+                {/* ⋯ menu trigger — shown on chip hover/focus-within, hidden (no space) otherwise.
                 data-[state=open]:inline-flex keeps it in layout while Radix measures
                 the trigger position — without this the menu appears at 0,0.
                 onMouseDown preventDefault stops the button from stealing editor focus. */}
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                className={cn(
-                  'hidden ml-0.5 shrink-0 items-center rounded-sm p-0.5',
-                  'group-hover:inline-flex group-focus-within:inline-flex data-[state=open]:inline-flex',
-                  'hover:bg-black/10 focus-visible:inline-flex focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current',
-                )}
-                aria-label="Link options"
-                onClick={(e) => e.stopPropagation()}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                onKeyDown={(e) => e.stopPropagation()}
-              >
-                <Ellipsis className="size-3" />
-              </button>
-            </DropdownMenuTrigger>
-          </span>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    className={cn(
+                      'hidden ml-0.5 shrink-0 items-center rounded-sm p-0.5',
+                      'group-hover:inline-flex group-focus-within:inline-flex data-[state=open]:inline-flex',
+                      'hover:bg-black/10 focus-visible:inline-flex focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-current',
+                    )}
+                    aria-label="Link options"
+                    onClick={(e) => e.stopPropagation()}
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    <Ellipsis className="size-3" />
+                  </button>
+                </DropdownMenuTrigger>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top" sideOffset={4}>
+              <LinkTooltipHint href={source} />
+            </TooltipContent>
+          </Tooltip>
 
           <DropdownMenuContent
             align="start"

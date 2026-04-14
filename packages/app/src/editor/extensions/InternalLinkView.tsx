@@ -12,7 +12,8 @@
  * navigate within the app on Cmd/Ctrl+click.
  *
  * Both variants surface the Cmd/Ctrl+click affordance via a shadcn Tooltip
- * (native `title` was too slow to appear and not touch-friendly).
+ * (native `title` was too slow to appear and not touch-friendly). The hint
+ * primitive (`LinkTooltipHint`) is shared with WikiLinkView.
  */
 import type { MarkViewProps } from '@tiptap/core';
 import { MarkViewContent } from '@tiptap/react';
@@ -25,31 +26,7 @@ import {
   resolveCurrentInternalHref,
   toInternalHashHref,
 } from '../internal-link-helpers';
-
-// ── Platform hint ─────────────────────────────────────────────────────────────
-
-const IS_MAC =
-  typeof navigator !== 'undefined' &&
-  /mac|iphone|ipad|ipod/i.test(navigator.platform || navigator.userAgent || '');
-const MOD_LABEL = IS_MAC ? '⌘' : 'Ctrl';
-
-// ── Tooltip hint ──────────────────────────────────────────────────────────────
-
-function LinkHint({ href, verb }: { href: string; verb: 'open' | 'navigate' }) {
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="max-w-[18rem] truncate opacity-90">{href}</span>
-      <span className="opacity-50">·</span>
-      <kbd
-        data-slot="kbd"
-        className="inline-flex items-center rounded-sm bg-background/15 px-1 py-0.5 font-medium text-[10px]"
-      >
-        {MOD_LABEL}+click
-      </kbd>
-      <span className="opacity-80">to {verb}</span>
-    </span>
-  );
-}
+import { LinkTooltipHint } from '../link-tooltip';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -78,7 +55,7 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
           </a>
         </TooltipTrigger>
         <TooltipContent side="top" sideOffset={4}>
-          <LinkHint href={href} verb="open" />
+          <LinkTooltipHint href={href} />
         </TooltipContent>
       </Tooltip>
     );
@@ -137,7 +114,7 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={4}>
-        <LinkHint href={href} verb="navigate" />
+        <LinkTooltipHint href={href} />
       </TooltipContent>
     </Tooltip>
   );
