@@ -340,16 +340,6 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
                 incrementConflict();
-                const conflictsMap = document.getMap('conflicts');
-                for (const c of result.conflicts) {
-                  conflictsMap.set(String(c.blockIndex), {
-                    blockIndex: c.blockIndex,
-                    base: c.base,
-                    ours: c.ours,
-                    theirs: c.theirs,
-                    resolution: 'pending',
-                  });
-                }
                 backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(
@@ -1017,19 +1007,6 @@ export function createServer(options: ServerOptions): ServerInstance {
                     case 'conflicts': {
                       applyToDoc(docName, outcome.newContent);
                       setReconciledBase(docName, outcome.newContent);
-                      const conflictDoc = hocuspocus.documents.get(docName);
-                      if (conflictDoc) {
-                        const conflictsMap = conflictDoc.getMap('conflicts');
-                        for (const c of outcome.conflicts) {
-                          conflictsMap.set(String(c.blockIndex), {
-                            blockIndex: c.blockIndex,
-                            base: c.base,
-                            ours: c.ours,
-                            theirs: c.theirs,
-                            resolution: 'pending',
-                          });
-                        }
-                      }
                       incrementConflict();
                       restoredCount++;
                       break;

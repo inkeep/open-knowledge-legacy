@@ -1444,8 +1444,9 @@ describe('applyUserDelta: divergence preservation', () => {
     //   old = "Alpha original text.\n\nBeta unchanged.\n"
     //   new = "Alpha MODIFIED text.\n\nBeta unchanged.\n"
     //   currentText = "Alpha original text.\n\nBeta unchanged.\n\nAgent tail line.\n"
-    // The delta is {remove: "Alpha original text", add: "Alpha MODIFIED text"},
-    // which applies to currentLines preserving "Agent tail line" at the end.
+    // DMP patch_make(old, new) produces a deletion patch for 'Alpha original text'
+    // and an insertion patch for 'Alpha MODIFIED text'. patch_apply against currentText
+    // preserves 'Agent tail line' because DMP only patches the regions the user changed.
     applyMarkdown(doc, fragment, 'Alpha MODIFIED text.\n\nBeta unchanged.\n');
 
     await wait(200);
@@ -1465,5 +1466,570 @@ describe('applyUserDelta: divergence preservation', () => {
     expect(finalText.split('Beta unchanged').length - 1).toBe(1);
 
     cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Group A (FR-1): Content-comparison gate in applyIncrementalDiff
+// ─────────────────────────────────────────────────────────────
+
+describe('FR-1: content-comparison gate skips no-op replacements', () => {
+  test('Observer A skips delete+insert when Y.Text already has the added content at offset', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Seed Y.Text with content matching what XmlFragment will serialize to
+    const md = '# Hello\n\nWorld.\n';
+    applyMarkdown(doc, fragment, md);
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    // Y.Text and XmlFragment are now in sync. Record Y.Text mutations.
+    let deleteCount = 0;
+    let insertCount = 0;
+    ytext.observe((event) => {
+      if (event.transaction.origin !== ORIGIN_TREE_TO_TEXT) return;
+      for (const delta of event.delta) {
+        if ('delete' in delta) deleteCount++;
+        if ('insert' in delta) insertCount++;
+      }
+    });
+
+    // Trigger Observer A by mutating XmlFragment to something that serializes
+    // identically to what's already in Y.Text (Path A fires, content gate should skip).
+    applyMarkdown(doc, fragment, md);
+    await wait();
+
+    // The content-gate should have skipped the paired delete+insert — zero mutations.
+    expect(deleteCount).toBe(0);
+    expect(insertCount).toBe(0);
+
+    cleanup();
+  });
+
+  // Regression guard for the offset-drift case documented at observers.ts:155-161.
+  // When Path A produces a multi-hunk diff where the first REMOVED+ADDED pair has
+  // mismatched lengths (change.value.length !== next.value.length), subsequent
+  // gate checks read a slightly shifted slice from the `currentText` snapshot.
+  // The documented invariant: drift is benign because (a) misses fall through to
+  // correct delete+insert branches, which operate on live ytext offsets, and (b)
+  // Path A only fires when Y.Text is in sync with baseline. This test pins the
+  // correctness — if a future refactor breaks the fall-through, the assertion
+  // that ytext converges to the expected content will catch it.
+  test('Path A multi-hunk diff with length-changing first hunk produces correct ytext', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Seed: three paragraphs, all three differ between the "before" and "after"
+    // serializations. First pair has mismatched lengths (AAA → AA), middle is
+    // unchanged, last pair is equal length (CCC → DDD).
+    applyMarkdown(doc, fragment, 'AAA\n\nBBB\n\nCCC\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    // Change XmlFragment so diffLines produces:
+    //   removed 'AAA\n\n' + added 'AA\n\n'  — length change, gate misses
+    //   unchanged 'BBB\n\n'
+    //   removed 'CCC\n' + added 'DDD\n'     — equal length, gate would read a
+    //                                         shifted slice from currentText
+    applyMarkdown(doc, fragment, 'AA\n\nBBB\n\nDDD\n');
+    await wait();
+
+    // Bridge invariant: ytext matches serialized XmlFragment after Observer A settles.
+    expect(ytext.toString().trim()).toBe('AA\n\nBBB\n\nDDD');
+
+    cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Group B (FR-2): DMP patch_apply three-way merge scenarios
+// ─────────────────────────────────────────────────────────────
+
+describe('FR-2: applyUserDelta DMP three-way merge', () => {
+  /** Directly mutate Y.Text with agent-write origin to create divergence. */
+  function agentWriteToYText(doc: Y.Doc, ytext: Y.Text, content: string) {
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, content);
+    }, 'agent-write');
+  }
+
+  test('B1: same-line collision merges both edits', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Hello\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent writes "Hello brave" to Y.Text (diverges from baseline "Hello")
+    agentWriteToYText(doc, ytext, 'Hello brave\n');
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User changes XmlFragment to "Hello world"
+    applyMarkdown(doc, fragment, 'Hello world\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    // DMP merges both: "Hello world brave" or equivalent preserving both edits
+    expect(finalText).toContain('world');
+    expect(finalText).toContain('brave');
+    cleanup();
+  });
+
+  test('B2: prepend + append preserves both', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Middle.\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent appends "Bottom." on a new line
+    agentWriteToYText(doc, ytext, 'Middle.\n\nBottom.\n');
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User prepends "Top." on a new line
+    applyMarkdown(doc, fragment, 'Top.\n\nMiddle.\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    expect(finalText).toContain('Top');
+    expect(finalText).toContain('Middle');
+    expect(finalText).toContain('Bottom');
+    cleanup();
+  });
+
+  test('B3: different-line edits preserve both', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Line A.\n\nLine B.\n\nLine C.\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent modifies line B
+    agentWriteToYText(doc, ytext, 'Line A.\n\nLine B modified.\n\nLine C.\n');
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User modifies line A
+    applyMarkdown(doc, fragment, 'Line A modified.\n\nLine B.\n\nLine C.\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    expect(finalText).toContain('Line A modified');
+    expect(finalText).toContain('Line B modified');
+    expect(finalText).toContain('Line C');
+    cleanup();
+  });
+
+  test('B4: user-delete + agent-modify same line — user-wins (D9)', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'a\n\nb\n\nc\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent modifies line b → "b!"
+    agentWriteToYText(doc, ytext, 'a\n\nb!\n\nc\n');
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User deletes line b entirely
+    applyMarkdown(doc, fragment, 'a\n\nc\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    expect(finalText).toContain('a');
+    expect(finalText).toContain('c');
+    // User-wins: b is gone (user's deletion trumps agent's modification)
+    expect(finalText).not.toContain('b');
+    cleanup();
+  });
+
+  test('B5: exact-char overlap — D8 duplication characterization', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Use a multi-line document so the overall texts differ, avoiding the
+    // currentText === md early-exit that absorbs single-line exact overlap.
+    applyMarkdown(doc, fragment, 'hello\n\nother line\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent adds "!" to hello AND changes "other line" → "agent line"
+    agentWriteToYText(doc, ytext, 'hello!\n\nagent line\n');
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User also adds "!" to hello (same overlap) but keeps "other line"
+    applyMarkdown(doc, fragment, 'hello!\n\nother line\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    // D8 accepted: DMP duplicates the independently-applied "!" → "hello!!"
+    expect(finalText).toContain('hello!!');
+    cleanup();
+  });
+
+  // Regression guard for the early-return path at observers.ts:266:
+  //   `if (mergedText === currentText) return;`
+  //
+  // This fires when DMP patch_apply returns output identical to the agent's
+  // diverged Y.Text — which happens when all user patches failed to locate
+  // their context within Match_Threshold (or all were already applied in the
+  // agent's text). The early return skips the subsequent applyByPrefixSuffix,
+  // which MUST NOT execute because with mergedText === currentText it would
+  // still compute zero delta — but an incorrectly-placed return (e.g., moved
+  // AFTER applyByPrefixSuffix) would walk the no-op change through the Y.Text
+  // delete/insert code path, potentially creating noise transactions.
+  //
+  // We force the path by constructing an agent text that shares no context
+  // with the baseline — DMP cannot locate the user's patch; mergedText equals
+  // the unchanged currentText.
+  test('early return produces zero CRDT mutations when merged text equals agent text', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    applyMarkdown(doc, fragment, 'Baseline paragraph one.\n\nBaseline paragraph two.\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent wholesale-replaces Y.Text with content sharing zero tokens with
+    // the baseline. DMP patch_apply will fail to locate any user patch context.
+    agentWriteToYText(doc, ytext, 'ZZZZ completely disjoint content.\n');
+
+    // Observe ytext mutations originated by Observer A (sync-from-tree).
+    let deleteCount = 0;
+    let insertCount = 0;
+    ytext.observe((event) => {
+      if (event.transaction.origin !== ORIGIN_TREE_TO_TEXT) return;
+      for (const delta of event.delta) {
+        if ('delete' in delta) deleteCount++;
+        if ('insert' in delta) insertCount++;
+      }
+    });
+
+    // Silence the expected console.warn for this test.
+    const origWarn = console.warn;
+    console.warn = () => {};
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User edits XmlFragment → Observer A Path B fires. All patches fail to
+    // match in the divergent agent text → mergedText === currentText → early
+    // return at observers.ts:266 skips the applyByPrefixSuffix call.
+    applyMarkdown(doc, fragment, 'Baseline paragraph one EDITED.\n\nBaseline paragraph two.\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    console.warn = origWarn;
+
+    // The early-return guard holds: zero sync-from-tree writes to ytext.
+    expect(deleteCount).toBe(0);
+    expect(insertCount).toBe(0);
+
+    cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Group C (FR-7): onMergeFailed diagnostic
+// ─────────────────────────────────────────────────────────────
+
+describe('FR-7: onMergeFailed diagnostic', () => {
+  test('no diagnostic on successful three-way merge', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const mergeFailed: Array<Record<string, number>> = [];
+    const cleanup = setupObservers({
+      doc,
+      xmlFragment: fragment,
+      ytext,
+      mdManager,
+      schema,
+      onMergeFailed: (info) => {
+        mergeFailed.push(info);
+      },
+    });
+
+    applyMarkdown(doc, fragment, 'Line one.\n\nLine two.\n');
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent appends on a separate line (easy merge)
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\nAgent line.\n');
+    }, 'agent-write');
+
+    const origWarn = console.warn;
+    const warnCalls: unknown[][] = [];
+    console.warn = (...args: unknown[]) => {
+      warnCalls.push(args);
+    };
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User edits a different line — clean merge
+    applyMarkdown(doc, fragment, 'Line one modified.\n\nLine two.\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    console.warn = origWarn;
+
+    // Successful merge — neither diagnostic should fire
+    const observerAWarns = warnCalls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('[Observer A] patch_apply had'),
+    );
+    expect(observerAWarns.length).toBe(0);
+    expect(mergeFailed.length).toBe(0);
+
+    cleanup();
+  });
+
+  test('diagnostic fires on failed patches (unmatchable agent text)', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const mergeFailed: Array<Record<string, number>> = [];
+    const cleanup = setupObservers({
+      doc,
+      xmlFragment: fragment,
+      ytext,
+      mdManager,
+      schema,
+      onMergeFailed: (info) => {
+        mergeFailed.push(info);
+      },
+    });
+
+    // Seed baseline via XmlFragment
+    applyMarkdown(doc, fragment, 'AAAA line one.\n\nAAAA line two.\n');
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent wholesale-replaces Y.Text with content sharing no tokens with baseline.
+    // This guarantees DMP patch_apply can't locate the original patch context.
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, 'ZZZZ completely different.\n\nZZZZ no match.\n');
+    }, 'agent-write');
+
+    const origWarn = console.warn;
+    const warnCalls: unknown[][] = [];
+    console.warn = (...args: unknown[]) => {
+      warnCalls.push(args);
+    };
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User modifies XmlFragment — Observer A Path B fires with unmatchable context
+    applyMarkdown(doc, fragment, 'AAAB line one.\n\nAAAA line two.\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    console.warn = origWarn;
+
+    // Failed patches — both console.warn and callback should fire
+    const observerAWarns = warnCalls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('[Observer A] patch_apply had'),
+    );
+    expect(observerAWarns.length).toBeGreaterThan(0);
+    expect(observerAWarns[0][0]).toMatch(/\[Observer A\] patch_apply had \d+\/\d+ failed patches/);
+
+    // onMergeFailed callback invoked with correct shape
+    expect(mergeFailed.length).toBeGreaterThan(0);
+    const info = mergeFailed[0];
+    expect(info).toHaveProperty('failedPatches');
+    expect(info).toHaveProperty('totalPatches');
+    expect(info).toHaveProperty('baseLen');
+    expect(info).toHaveProperty('userLen');
+    expect(info).toHaveProperty('agentLen');
+    expect(info).toHaveProperty('mergedLen');
+    expect(info.failedPatches).toBeGreaterThan(0);
+
+    cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Group D (FR-4): UndoManager probe — agent Items survive Observer A
+// ─────────────────────────────────────────────────────────────
+
+describe('FR-4: Observer A preserves agent-origin CRDT Items', () => {
+  test('Path A: content-gate preserves agent Items (UM stack survives sync)', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    // Attach test-local UM BEFORE agent write so it captures the mutation
+    const um = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Agent writes content under 'agent-write' origin
+    doc.transact(() => {
+      ytext.insert(0, '# Hello\n\nAgent wrote this.\n');
+    }, 'agent-write');
+    expect(um.undoStack.length).toBe(1);
+
+    // Update XmlFragment to match Y.Text content (Path A content-gate case)
+    applyMarkdown(doc, fragment, '# Hello\n\nAgent wrote this.\n');
+    await wait();
+
+    // UM stack must survive — Items were NOT replaced
+    expect(um.undoStack.length).toBe(1);
+    um.undo();
+    expect(ytext.toString()).toBe('');
+
+    um.destroy();
+    cleanup();
+  });
+
+  test('Path B: DMP merge preserves agent Items in non-overlapping regions', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Baseline
+    applyMarkdown(doc, fragment, 'Line one.\n');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Attach UM probe BEFORE agent write so it captures the mutation
+    const um = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Agent appends content
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\nAgent line.\n');
+    }, 'agent-write');
+    expect(um.undoStack.length).toBe(1);
+
+    // Defer Observer B
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User edits a different line (non-overlapping) — forces Path B
+    applyMarkdown(doc, fragment, 'Line one modified.\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    // Agent's Items should survive DMP merge (non-overlapping regions preserved
+    // by applyByPrefixSuffix)
+    expect(um.undoStack.length).toBe(1);
+
+    um.destroy();
+    cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// Group E (A1): applyByPrefixSuffix preserves outer Items
+// ─────────────────────────────────────────────────────────────
+
+describe('A1: applyByPrefixSuffix preserves Items in prefix/suffix regions', () => {
+  test('middle-region replacement preserves outer agent Items', () => {
+    const doc = new Y.Doc();
+    const ytext = doc.getText('source');
+
+    // Attach UM BEFORE transactions so it captures mutations
+    const um = new Y.UndoManager(ytext, {
+      trackedOrigins: new Set(['agent-write']),
+      captureTimeout: 0,
+    });
+
+    // Seed three distinct Items via three transactions
+    doc.transact(() => {
+      ytext.insert(0, 'AAA');
+    }, 'agent-write');
+    doc.transact(() => {
+      ytext.insert(3, 'BBB');
+    }, ORIGIN_TREE_TO_TEXT);
+    doc.transact(() => {
+      ytext.insert(6, 'CCC');
+    }, 'agent-write');
+
+    expect(ytext.toString()).toBe('AAABBBCCC');
+    // Two agent-write transactions → two stack entries
+    expect(um.undoStack.length).toBe(2);
+
+    // Simulate applyByPrefixSuffix effect: replace middle region only
+    doc.transact(() => {
+      ytext.delete(3, 3); // remove 'BBB'
+      ytext.insert(3, 'XXX'); // insert 'XXX'
+    }, ORIGIN_TREE_TO_TEXT);
+
+    expect(ytext.toString()).toBe('AAAXXXCCC');
+
+    // Both outer agent Items should survive — UM still tracks them
+    expect(um.undoStack.length).toBe(2);
+
+    // Undo sequence: last agent write (CCC) first, then first agent write (AAA)
+    um.undo(); // reverts CCC
+    expect(ytext.toString()).toBe('AAAXXX');
+    um.undo(); // reverts AAA
+    expect(ytext.toString()).toBe('XXX');
+
+    um.destroy();
   });
 });
