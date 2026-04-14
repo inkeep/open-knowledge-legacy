@@ -1,4 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import {
+  Panel,
+  PanelBody,
+  PanelCount,
+  PanelEmpty,
+  PanelError,
+  PanelHeader,
+  PanelTitle,
+} from '@/components/ui/panel';
 
 interface BacklinkItem {
   source: string;
@@ -12,6 +21,14 @@ interface BacklinksResponse {
   error?: string;
 }
 
+async function fetchBacklinks(docName: string): Promise<BacklinkItem[]> {
+  const res = await fetch(`/api/backlinks?docName=${encodeURIComponent(docName)}`);
+  if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
+  const data = (await res.json()) as BacklinksResponse;
+  if (!data.ok) throw new Error(data.error ?? 'Failed to load backlinks');
+  return data.backlinks ?? [];
+}
+
 export function BacklinksPanel({
   docName,
   className = '',
@@ -19,70 +36,32 @@ export function BacklinksPanel({
   docName: string;
   className?: string;
 }) {
-  const [backlinks, setBacklinks] = useState<BacklinkItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const res = await fetch(`/api/backlinks?docName=${encodeURIComponent(docName)}`);
-        if (!res.ok) {
-          if (cancelled) return;
-          setError(`Server error: ${res.status} ${res.statusText}`);
-          setLoading(false);
-          return;
-        }
-        const data = (await res.json()) as BacklinksResponse;
-        if (cancelled) return;
-        if (!data.ok) {
-          setError(data.error ?? 'Failed to load backlinks');
-          setLoading(false);
-          return;
-        }
-        setBacklinks(Array.isArray(data.backlinks) ? data.backlinks : []);
-        setError(null);
-        setLoading(false);
-      } catch (err) {
-        if (cancelled) return;
-        setError(err instanceof Error ? err.message : 'Failed to load backlinks');
-        setLoading(false);
-      }
-    }
-
-    setLoading(true);
-    void load();
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        void load();
-      }
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      window.clearInterval(interval);
-    };
-  }, [docName]);
+  const {
+    data: backlinks = [],
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: ['backlinks', docName],
+    queryFn: () => fetchBacklinks(docName),
+    refetchInterval: 2000,
+    refetchIntervalInBackground: false,
+  });
 
   return (
-    <section className={`flex h-full min-h-0 flex-col ${className}`}>
-      <div className="border-b border-border/60 px-4 py-4">
-        <h2 className="text-sm font-semibold tracking-tight text-foreground">Backlinks</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          {loading
-            ? 'Loading…'
-            : `${backlinks.length} ${backlinks.length === 1 ? 'page' : 'pages'} link here`}
-        </p>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-busy={loading}>
+    <Panel className={className}>
+      <PanelHeader>
+        <PanelTitle>Backlinks</PanelTitle>
+        {!isLoading && <PanelCount>{backlinks.length}</PanelCount>}
+      </PanelHeader>
+      <PanelBody aria-busy={isLoading}>
         {error ? (
-          <p className="text-sm text-destructive">{error}</p>
-        ) : backlinks.length === 0 && !loading ? (
-          <p className="text-sm text-muted-foreground">No pages link here yet.</p>
+          <PanelError>
+            {error instanceof Error ? error.message : 'Failed to load backlinks'}
+          </PanelError>
+        ) : backlinks.length === 0 && !isLoading ? (
+          <PanelEmpty>No pages link here yet.</PanelEmpty>
         ) : (
-          <div className="space-y-2">
+          <div className="flex flex-col gap-2">
             {backlinks.map((backlink, index) => (
               <button
                 // biome-ignore lint/suspicious/noArrayIndexKey: rows are stable per poll; source may repeat if API adds multiple edges per source
@@ -102,7 +81,7 @@ export function BacklinksPanel({
             ))}
           </div>
         )}
-      </div>
-    </section>
+      </PanelBody>
+    </Panel>
   );
 }
