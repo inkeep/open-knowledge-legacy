@@ -49,6 +49,7 @@ import type {
 } from 'mdast-util-mdx';
 import { incrementWholeDocFallback } from '../metrics/parse-health.ts';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
+import { parseWithFallback } from './parse-with-fallback.ts';
 import { parseMd, serializeMd } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
 
@@ -130,6 +131,22 @@ export class MarkdownManager {
         content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
       };
     }
+  }
+
+  /**
+   * Parse with block-level fallback (R6). On parse failure with position info,
+   * splits source at the enclosing block boundary, replaces the failing block
+   * with rawMdxFallback, parses the halves recursively, and merges.
+   *
+   * Use this for callers that want degraded-but-structured content rather than
+   * whole-doc raw text: rollback endpoint, external-change disk→CRDT bridge.
+   * NOT for Observer B (which uses freeze-on-failure for live-typing UX).
+   */
+  parseWithFallback(markdown: string): JSONContent {
+    if (!markdown.trim()) {
+      return { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
+    }
+    return parseWithFallback(markdown, { parse: (md) => this.parse(md) });
   }
 
   /**
