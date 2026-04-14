@@ -24,6 +24,7 @@ import { initCommand } from './commands/init.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
 import { startCommand } from './commands/start.ts';
+import { readCliVersion, updateCommand } from './commands/update.ts';
 import { type Config, loadConfig } from './index.ts';
 
 const program = new Command();
@@ -34,7 +35,7 @@ let resolvedConfig: Config;
 program
   .name('open-knowledge')
   .description('Local-first knowledge base with CRDT collaboration')
-  .version('0.0.1')
+  .version(readCliVersion())
   .option('--cwd <path>', 'Working directory')
   .option('--log-level <level>', 'Log level', 'info')
   .option('--no-color', 'Disable color output')
@@ -79,5 +80,8 @@ program.addCommand(initCommand());
 // preview command — read-only content scope inspection
 const preview = previewCommand(() => resolvedConfig);
 program.addCommand(preview);
+
+// update command — self-update from npm
+program.addCommand(updateCommand());
 
 await program.parseAsync();
