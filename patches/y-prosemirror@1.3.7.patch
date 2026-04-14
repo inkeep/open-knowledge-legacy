@@ -18,7 +18,7 @@ index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..66868191eef6d6581708edadbeb64f86
 +        const fallback = schema.node('rawMdxFallback', { reason: e.message }, [schema.text(el.nodeName)]);
 +        meta.mapping.set(el, fallback);
 +        return fallback
-+      } catch (_fallbackErr) { /* fallthrough */ }
++      } catch (_fallbackErr) { console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', _fallbackErr.message); }
 +    }
      meta.mapping.delete(el);
      return null
@@ -59,7 +59,7 @@ index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..45e367c1281b420e8b62b5b63851bc62
 +        meta.mapping.set(el, fallback)
 +        return fallback
 +      } catch (_fallbackErr) {
-+        // Fallthrough — substitution itself failed
++        console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', _fallbackErr.message)
 +      }
 +    }
 +    // Inline context or fallback substitution failed: skip without destructive delete

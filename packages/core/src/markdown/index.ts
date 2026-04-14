@@ -84,11 +84,11 @@ export class MarkdownManager {
   /**
    * Parse a markdown string to TipTap JSONContent.
    *
-   * May throw SyntaxError for inputs containing matched `{…}` with non-JS
-   * content (remark-mdx/acorn rejects them). This is expected — Observer B
-   * catches SyntaxError and keeps last valid XmlFragment state during live
-   * editing. The R23 guard prevents the more severe class of crash (bare
-   * unmatched `<` and `{` that cause "Unexpected end of file" errors).
+   * May throw for structurally invalid MDX (e.g., mismatched open/close tags
+   * like `<Foo>...</Bar>`). This is expected — Observer B catches errors and
+   * keeps last valid XmlFragment state during live editing. The R23 guard
+   * prevents the more severe class of crash (bare unmatched `<` and `{` that
+   * cause "Unexpected end of file" errors).
    */
   parse(markdown: string): JSONContent {
     if (!markdown.trim()) {
@@ -121,10 +121,14 @@ export class MarkdownManager {
   parseSafe(markdown: string): JSONContent {
     try {
       return this.parse(markdown);
-    } catch {
+    } catch (e) {
       incrementWholeDocFallback();
       console.warn(
-        JSON.stringify({ event: 'mdx-whole-doc-fallback', reason: 'parseSafe catch-all' }),
+        JSON.stringify({
+          event: 'mdx-whole-doc-fallback',
+          reason: (e as Error)?.message ?? 'unknown',
+          errorType: (e as Error)?.constructor?.name ?? typeof e,
+        }),
       );
       return {
         type: 'doc',

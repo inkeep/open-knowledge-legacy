@@ -17,7 +17,7 @@ export function RawMdxFallbackView({ node }: NodeViewProps) {
     >
       <span
         className="absolute top-1 right-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30"
-        title={`${reason} — click to open source mode`}
+        title={`${reason} — edit in source mode`}
       >
         raw
       </span>

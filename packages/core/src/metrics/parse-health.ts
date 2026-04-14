@@ -28,10 +28,19 @@ export function incrementWholeDocFallback(): void {
   metrics.parseFallback.wholeDoc++;
 }
 
+/**
+ * Increment ypsMismatch.block counter.
+ *
+ * NOTE: Currently unwired in production. The y-prosemirror patch (R13) uses
+ * console.warn because patched CJS cannot import from @inkeep/open-knowledge-core.
+ * These counters exist so the API shape is stable — wire via globalThis callback
+ * or import when the patch is ported to a fork/ESM wrapper.
+ */
 export function incrementYpsMismatchBlock(): void {
   metrics.ypsMismatch.block++;
 }
 
+/** See {@link incrementYpsMismatchBlock} for wiring status. */
 export function incrementYpsMismatchInline(): void {
   metrics.ypsMismatch.inline++;
 }

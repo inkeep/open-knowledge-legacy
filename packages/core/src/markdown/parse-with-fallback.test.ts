@@ -68,9 +68,12 @@ describe('parseWithFallback (R6)', () => {
     const src =
       '[link][ref1]\n\n[ref1]: https://example.com\n\n<Foo>broken</Bar>\n\nAnother [link][ref1]\n';
     const result = mdManager.parseWithFallback(src);
-    // The document should contain rawMdxFallback for the broken region
     const types = (result.content as { type: string }[]).map((n) => n.type);
     expect(types).toContain('rawMdxFallback');
+    // Verify link resolution survived the split — serialize and check
+    const serialized = mdManager.serialize(result);
+    expect(serialized).toContain('[ref1]: https://example.com');
+    expect(serialized).toContain('[link][ref1]');
   });
 
   test('code fence containing <Tag> is not mistaken for JSX', () => {
