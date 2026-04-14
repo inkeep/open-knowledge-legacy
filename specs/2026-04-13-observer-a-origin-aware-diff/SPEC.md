@@ -93,6 +93,7 @@ At step 4, Observer A re-emits agent content under `'sync-from-tree'` origin. At
 | Must | FR-5 | Bridge invariant holds after every Observer A sync | `stripTrailingWhitespace(ytext.toString()) === stripTrailingWhitespace(serialize(fragment))` after debounce settles. Verified by existing bridge-matrix test + new assertions. |
 | Must | FR-6 | No performance regression on Path A (simple path) | Path A stays on `diffLinesFast`. The content-comparison gate adds one `substring` comparison per diff hunk — O(hunk_size), negligible vs serialize cost. Verified by existing stress test timing assertions. |
 | Must | FR-7 | When DMP `patch_apply` reports any failed patch (`results.some(ok => !ok)`), emit an observable diagnostic via (a) `console.warn('[Observer A] patch_apply had N/M failed patches', metadata)` matching existing `observers.ts` console-precedent (lines 337/367/500), and (b) optionally invoke `ObserverDeps.onMergeFailed?(info)` if the consumer provided the callback. | No Y.Doc pollution. No new map. Matches existing observer diagnostic precedent. Consumer (e.g., a future debug panel in V0-14 or beyond) opts in via the callback. Test asserts `spyOn(console, 'warn')` catches the log and that `onMergeFailed` is invoked with correct shape when supplied. Locked D10 (revised). |
+| Must | FR-8 | **Remove `Y.Map('conflicts')` dead writes from `standalone.ts`.** Delete the `conflictsMap.set(...)` blocks at `standalone.ts:321-329` and `:992-1000`. | Zero consumers in `packages/app/src/` (verified via grep). Write-only Y.Map paying CRDT replication cost + unbounded doc growth for a conflict UI that never materialized. Reconciliation logic (`reconciliation.ts`), conflict counter (`incrementConflict()`), and the `{ kind: 'conflicts' }` return type are all preserved — only the dead Y.Map writes are removed. Side effects: zero negative, one positive (stops monotonic doc growth). Greenfield directive: don't ship write-only CRDT infrastructure without a consumer (D14 rationale point 4). Locked D16. |
 
 ### Non-functional requirements
 
@@ -343,6 +344,7 @@ The same pattern with Path B (XmlFragment changed, triggering DMP merge) forms t
 | D13 | Framing: spec's property is an architectural bridge invariant, not a behavioral symptom | Architectural | LOCKED (2026-04-14) | The problem is "bridge replaces Items whose content already matches" — a layer-level invariant. The zombie-content symptom (~257 chars/cycle) was the OLD measurement against a consumer (agent UndoManager) that was removed in V0-16 and returns in V0-14. Architectural framing is testable today via Item introspection; independent of any product consumer shipping. See rewritten §1 Problem Statement and FR-4 acceptance criteria. |
 | D14 | No new `safety-checkpoint.ts` file, no new `Y.Map('safety-events')` channel | Technical | LOCKED (2026-04-14) | Four reasons: (1) Naming collision — server already exports `safetyCheckpoint` for the WIP-snapshot primitive (`packages/server/src/shadow-repo.ts:254`), which is the canonical use of the name per precedent #2. (2) No V0 consumer — the "future debug panel" was speculative; building CRDT-persistent infrastructure ahead of need violates greenfield discipline. (3) Existing observers.ts diagnostic precedent is `console.warn` (lines 337/367/500); matching that is simpler and consistent. (4) Prior-art warning: `Y.Map('conflicts')` (`standalone.ts:321/:992`) is the same write-only-Y.Map pattern already shipped — zero consumers in `packages/app/src/`, paying CRDT replication cost for a UI that never materialized. Don't repeat it. Structured reactivity provided via optional `ObserverDeps.onMergeFailed` callback — consumers opt in. |
 | D15 | Origin landscape acknowledged, not acted on | Documentation | LOCKED (2026-04-14) | PR #39 introduced `'rollback-apply'` origin (full Y.Text replacement, by-design untracked per D6(b) in PROJECT.md). V0-14 uses `'agent-write'` (tracked by per-agent UMs) + TipTap's `ySyncPluginKey` origin (WYSIWYG UM) + y-codemirror's local origin (Source UM). Our spec documents this landscape for context but does not alter any origin's treatment — our fix is below the origin layer (bridge invariant), applies uniformly to whatever origins exist now or later. |
+| D16 | Remove `Y.Map('conflicts')` dead writes from `standalone.ts` (FR-8) | Technical | LOCKED (2026-04-14) | `Y.Map('conflicts')` (`standalone.ts:321/:992`) is a write-only Y.Map with zero consumers in `packages/app/src/` — the same anti-pattern D14 prevents us from introducing. CRDT replication cost (wire size, initial-sync payload, monotonic doc growth) paid forever for a conflict UI that never materialized. Reconciliation logic, conflict counter, and `{ kind: 'conflicts' }` return type preserved — only the dead Y.Map writes are removed. Per D14 rationale point (4): don't repeat this pattern; per greenfield directive: clean the existing instance too. |
 
 ## 10) Assumptions
 
@@ -386,16 +388,17 @@ The same pattern with Path B (XmlFragment changed, triggering DMP merge) forms t
 - `packages/app/src/editor/observers.test.ts` — extend with FR-1 content-gate unit, FR-2 DMP patch_apply unit (5 scenarios), FR-4 architectural test with UndoManager probe, FR-7 `onMergeFailed` callback test, A1 `applyByPrefixSuffix` UM-stack-preservation test
 - `packages/app/tests/stress/observers.fuzz.test.ts` — extend with agent-paragraph-rewrite operator (R3 + A5)
 - `AGENTS.md` — precedent #9 (already landed in prior commit)
+- `packages/server/src/standalone.ts` — FR-8 only: remove dead `Y.Map('conflicts')` writes at `:321-329` and `:992-1000`. No other changes to standalone.ts. Reconciliation logic, conflict counter, `{ kind: 'conflicts' }` return type all preserved.
 
 **NOT in scope:**
-- `packages/app/src/editor/safety-checkpoint.ts` / `.test.ts` — DROPPED per D14. No new file, no `Y.Map('safety-events')`. Diagnostic is `console.warn` + `ObserverDeps.onMergeFailed` callback.
-- `packages/app/src/editor/diff-chars-fast.ts` — DROPPED per D6. DMP `patch_apply` supersedes.
-- Path A/B telemetry counter — DROPPED per D11.
-- `projects/v0-launch/PROJECT.md:910` vocabulary update (still says "character-level diff refactor" — evolved to "origin-aware three-way merge via DMP `patch_apply`"). **Nick's project row to update separately — not part of this spec's file changes.**
-- AGENTS.md duplication fix (PR #39 duplicated the file lines 5-654 at 655+). **Miles's territory; flag separately.**
+- `packages/app/src/editor/safety-checkpoint.ts` / `.test.ts` — DROPPED per D14
+- `packages/app/src/editor/diff-chars-fast.ts` — DROPPED per D6
+- Path A/B telemetry counter — DROPPED per D11
+- `projects/v0-launch/PROJECT.md:910` vocabulary update — Nick's project row to update separately
+- AGENTS.md duplication fix (PR #39 bug) — Miles's territory; flag separately
 
 **EXCLUDE:**
-- `packages/server/` — Observer A is client-side only
+- `packages/server/` except `standalone.ts` FR-8 cleanup (scoped to dead Y.Map write removal)
 - `packages/core/` — no markdown pipeline changes
 - `packages/cli/` — no MCP changes
 - Observer B — not in scope
