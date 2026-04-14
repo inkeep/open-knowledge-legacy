@@ -13,7 +13,7 @@ export interface NewItemDialogProps {
   initialDir: string;
   suggestedName?: string;
   description?: ReactNode;
-  onCreated: (docName: string) => void;
+  onCreated?: (docName: string) => void;
 }
 
 export function validatePath(value: string): string | null {
@@ -98,6 +98,7 @@ export function NewItemDialog({
   const [folderName, setFolderName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [errorField, setErrorField] = useState<'folder' | 'file' | 'form' | null>(null);
   const errorId = useId();
   const folderInputId = useId();
   const fileInputId = useId();
@@ -107,6 +108,7 @@ export function NewItemDialog({
   useEffect(() => {
     if (open) {
       setError(null);
+      setErrorField(null);
       setBusy(false);
       setFolderName('');
       if (kind === 'file') {
@@ -121,12 +123,14 @@ export function NewItemDialog({
     return composeNewItemPath({ kind, initialDir, fileName, folderName });
   }
 
-  function getClientError(): string | null {
+  function getClientError(): { message: string; field: 'folder' | 'file' } | null {
     if (kind === 'folder') {
       const folderErr = validatePath(folderName.trim());
-      if (folderErr) return `Folder name: ${folderErr}`;
+      if (folderErr) return { message: `Folder name: ${folderErr}`, field: 'folder' };
     }
-    return validatePath(fileName.trim());
+    const fileErr = validatePath(fileName.trim());
+    if (fileErr) return { message: fileErr, field: 'file' };
+    return null;
   }
 
   const isSubmitDisabled = busy || !fileName.trim() || (kind === 'folder' && !folderName.trim());
@@ -134,12 +138,14 @@ export function NewItemDialog({
   async function handleCreate() {
     const clientError = getClientError();
     if (clientError) {
-      setError(clientError);
+      setError(clientError.message);
+      setErrorField(clientError.field);
       return;
     }
 
     setBusy(true);
     setError(null);
+    setErrorField(null);
     const path = composePath();
 
     try {
@@ -148,10 +154,22 @@ export function NewItemDialog({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),
       });
+      if (!res.ok) {
+        let msg = `Server error (HTTP ${res.status})`;
+        try {
+          const d = (await res.json()) as { error?: string };
+          if (d?.error) msg = d.error;
+        } catch {}
+        setBusy(false);
+        setError(msg);
+        setErrorField('form');
+        return;
+      }
       const data = (await res.json()) as { ok: boolean; docName?: string; error?: string };
       setBusy(false);
       if (!data.ok) {
         setError(data.error ?? 'Failed to create page');
+        setErrorField('form');
         return;
       }
       const docName = data.docName ?? path.replace(/\.md$/, '');
@@ -159,11 +177,12 @@ export function NewItemDialog({
       window.location.hash = `#/${docName}`;
       addPage(docName);
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
-      onCreated(docName);
+      onCreated?.(docName);
     } catch (err) {
       console.error('[NewItemDialog] create failed:', err);
       setBusy(false);
       setError('Network error — please try again');
+      setErrorField('form');
     }
   }
 
@@ -200,11 +219,23 @@ export function NewItemDialog({
                   }}
                   placeholder="folder-name"
                   autoFocus
-                  aria-describedby={error ? errorId : undefined}
-                  aria-invalid={error ? true : undefined}
+                  aria-describedby={
+                    error && (errorField === 'folder' || errorField === 'form')
+                      ? errorId
+                      : undefined
+                  }
+                  aria-invalid={
+                    error && (errorField === 'folder' || errorField === 'form') ? true : undefined
+                  }
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
+                      const folderErr = validatePath(folderName.trim());
+                      if (folderErr) {
+                        setError(`Folder name: ${folderErr}`);
+                        setErrorField('folder');
+                        return;
+                      }
                       fileInputRef.current?.focus();
                     }
                   }}
@@ -225,8 +256,12 @@ export function NewItemDialog({
                 }}
                 placeholder="my-page.md"
                 autoFocus={kind === 'file'}
-                aria-describedby={error ? errorId : undefined}
-                aria-invalid={error ? true : undefined}
+                aria-describedby={
+                  error && (errorField === 'file' || errorField === 'form') ? errorId : undefined
+                }
+                aria-invalid={
+                  error && (errorField === 'file' || errorField === 'form') ? true : undefined
+                }
                 onFocus={(e) => selectBasename(e.currentTarget)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !isSubmitDisabled) void handleCreate();

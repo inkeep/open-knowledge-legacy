@@ -62,7 +62,6 @@ function NewItemShortcutHandler() {
       onOpenChange={setDialogOpen}
       kind="file"
       initialDir={defaultInitialDir(activeDocName)}
-      onCreated={() => {}}
     />
   );
 }

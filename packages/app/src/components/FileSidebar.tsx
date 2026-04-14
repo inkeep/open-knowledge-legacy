@@ -66,7 +66,6 @@ export function FileSidebar() {
         onOpenChange={setDialogOpen}
         kind={dialogKind}
         initialDir={dialogInitialDir}
-        onCreated={() => {}}
       />
     </Sidebar>
   );
