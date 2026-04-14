@@ -23,9 +23,11 @@ export { HardBreakFidelity } from './extensions/hard-break-fidelity.ts';
 export { HeadingFidelity } from './extensions/heading-fidelity.ts';
 export { HtmlBlockFidelity } from './extensions/html-block-fidelity.ts';
 export { JsxComponent } from './extensions/jsx-component.ts';
+export { JsxInline } from './extensions/jsx-inline.ts';
 export { LinkFidelity } from './extensions/link-fidelity.ts';
 export { LinkRefDefFidelity } from './extensions/link-ref-def-fidelity.ts';
 export { List, ListItem, ListItemNode, ListNode } from './extensions/list.ts';
+export { RawMdxFallback } from './extensions/raw-mdx-fallback.ts';
 export { sharedExtensions } from './extensions/shared.ts';
 export { ThematicBreakFidelity } from './extensions/thematic-break-fidelity.ts';
 export {
