@@ -8,7 +8,7 @@ export interface GraphLabelDescriptor {
   topicLabel: string | null;
 }
 
-const SEGMENT_SPLIT_RE = /(?:\s+[—–|]\s+|:\s+)/g;
+const SEGMENT_SPLIT_RE = /(?:\s+[—–|]\s+|:\s+)/;
 
 export function buildGraphLabelDescriptors(nodes: GraphNode[]): Map<string, GraphLabelDescriptor> {
   const descriptors = new Map<string, GraphLabelDescriptor>();

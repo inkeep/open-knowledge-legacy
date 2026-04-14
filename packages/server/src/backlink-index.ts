@@ -565,10 +565,10 @@ export class BacklinkIndex {
     const queue: Array<{ docName: string; degree: number }> = [
       { docName: centerDocName, degree: 0 },
     ];
+    let queueIndex = 0;
 
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (!current) break;
+    while (queueIndex < queue.length) {
+      const current = queue[queueIndex++];
       if (current.degree >= maxDegrees) continue;
 
       const neighbors = new Set<string>([
