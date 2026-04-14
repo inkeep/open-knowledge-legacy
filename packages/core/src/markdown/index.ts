@@ -421,10 +421,35 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       n.jsxComponent.createAndFill({
         content: rawFromData(node.data) ?? '',
       });
-    handlers.mdxJsxTextElement = (node: MdxJsxTextElement) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? '',
-      });
+    // Inline JSX → jsxInline (R3) if available; block-lift fallback otherwise
+    if (n.jsxInline) {
+      handlers.mdxJsxTextElement = (
+        node: MdxJsxTextElement,
+        _: MdastParent,
+        state: MdastToPmState,
+      ) => {
+        const children = state.all(node as unknown as MdastNodes).flat();
+        const attrs = {
+          sourceRaw: rawFromData(node.data) ?? '',
+          attributes: (node.attributes ?? []).map((a) =>
+            'type' in a && a.type === 'mdxJsxExpressionAttribute'
+              ? { type: 'spread', value: a.value }
+              : {
+                  type: 'attr',
+                  name: (a as { name: string }).name,
+                  value: (a as { value: unknown }).value,
+                },
+          ),
+        };
+        return n.jsxInline.createAndFill(attrs, children.length > 0 ? children : null);
+      };
+    } else {
+      // Fallback: map to block jsxComponent if jsxInline not in schema
+      handlers.mdxJsxTextElement = (node: MdxJsxTextElement) =>
+        n.jsxComponent.createAndFill({
+          content: rawFromData(node.data) ?? '',
+        });
+    }
 
     // MDX expressions and ESM
     handlers.mdxFlowExpression = (node: MdxFlowExpression) =>
@@ -452,6 +477,47 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Frontmatter: keep ignored (handled via Y.Map, not PM schema)
   // yaml + toml are pre-ignored by the library — correct behavior
+
+  // R8: Unknown-mdast-type catch-all for types that remark plugins may produce
+  // but our handler table doesn't cover. Block unknowns → rawMdxFallback;
+  // inline unknowns → plain text node with source slice.
+  const blockUnknownHandler = (node: {
+    type: string;
+    position?: { start: { offset: number }; end: { offset: number } };
+    value?: string;
+  }) => {
+    const sourceRaw = node.value ?? node.type;
+    if (n.rawMdxFallback) {
+      console.warn(
+        JSON.stringify({
+          event: 'unknown-mdast-type',
+          type: node.type,
+          reason: `Unhandled block mdast: ${node.type}`,
+        }),
+      );
+      return n.rawMdxFallback.createAndFill(
+        { reason: `Unhandled block mdast: ${node.type}` },
+        sourceRaw ? [schema.text(sourceRaw)] : null,
+      );
+    }
+    return null;
+  };
+  const inlineUnknownHandler = (node: { type: string; value?: string }) => {
+    console.warn(
+      JSON.stringify({
+        event: 'unknown-mdast-type',
+        type: node.type,
+        reason: `Unhandled inline mdast: ${node.type}`,
+      }),
+    );
+    return schema.text(node.value ?? node.type);
+  };
+
+  // Known-possible block types that may appear from remark-gfm or other extensions
+  if (!handlers.math) handlers.math = blockUnknownHandler;
+  // Known-possible inline types
+  if (!handlers.inlineMath) handlers.inlineMath = inlineUnknownHandler;
+  if (!handlers.footnoteReference) handlers.footnoteReference = inlineUnknownHandler;
 
   return handlers as RemarkProseMirrorOptions['handlers'];
 }
@@ -567,6 +633,23 @@ function buildPmToMdastHandlers(schema: Schema): {
     nodeHandlers.jsxComponent = (pmNode: PmNode) => ({
       type: 'html' as const,
       value: pmNode.attrs.content ?? '',
+    });
+  }
+
+  // rawMdxFallback → emit inner text as html mdast node (preserves raw bytes)
+  if (n.rawMdxFallback) {
+    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => ({
+      type: 'html' as const,
+      value: pmNode.textContent ?? '',
+    });
+  }
+
+  // jsxInline → prefer sourceRaw for byte-identical round-trip; fallback to
+  // reconstructing from structured attributes
+  if (n.jsxInline) {
+    nodeHandlers.jsxInline = (pmNode: PmNode) => ({
+      type: 'html' as const,
+      value: pmNode.attrs.sourceRaw || pmNode.textContent || '',
     });
   }
 
