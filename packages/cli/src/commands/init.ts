@@ -17,7 +17,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { Command } from 'commander';
 import { OK_DIR } from '../constants.ts';
-import { initContent } from '../content/init.ts';
+import {
+  initContent,
+  type RootInstructionResult,
+  upsertRootInstructions,
+} from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
@@ -85,6 +89,8 @@ export interface InitCommandOptions {
   mcp?: boolean;
   force?: boolean;
   editors?: EditorId[];
+  /** Append/replace the Open Knowledge section in root CLAUDE.md + AGENTS.md (default: true). */
+  rootInstructions?: boolean;
   /** Override home directory (test-only, for Windsurf global path). */
   home?: string;
 }
@@ -94,6 +100,8 @@ export interface InitCommandResult {
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
+  /** Per-file root-instructions (CLAUDE.md / AGENTS.md) results. Empty when `--no-root-instructions`. */
+  rootInstructions: RootInstructionResult[];
   /** Content preview result (undefined if preview failed or was not run). */
   preview?: PreviewResult;
   // Backward-compat fields (derived from the Claude entry or first editor):
@@ -185,6 +193,7 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
       contentCreated: [],
       contentSkipped: [],
       editors: [],
+      rootInstructions: [],
       mcpAction: 'failed',
       mcpPath: fallbackPath,
       mcpError: `Content scaffolding failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -209,6 +218,10 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     editorResults.push(writeEditorMcpConfig(target, cwd, options.force ?? false, options.home));
   }
 
+  // 3. Append/replace the Open Knowledge section in root CLAUDE.md + AGENTS.md
+  const rootInstructions =
+    options.rootInstructions === false ? [] : upsertRootInstructions(cwd, options.force ?? false);
+
   // Derive backward-compat fields from the Claude entry (preferred) or first result
   const primary = editorResults.find((r) => r.editorId === 'claude') ??
     editorResults[0] ?? {
@@ -220,6 +233,7 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     contentCreated: contentResult.created,
     contentSkipped: contentResult.skipped,
     editors: editorResults,
+    rootInstructions,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
@@ -296,6 +310,33 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('');
       lines.push('For failed editors, add the MCP server entry manually. See:');
       lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
+    }
+
+    // Root instructions (CLAUDE.md / AGENTS.md) summary
+    if (result.rootInstructions.length > 0) {
+      const visible = result.rootInstructions.filter((r) => r.action !== 'skipped-symlink');
+      if (visible.length > 0) {
+        lines.push('');
+        lines.push('Root instructions:');
+        for (const r of visible) {
+          const rel = r.path.startsWith(cwd) ? relative(cwd, r.path) : r.path;
+          const pad = ' '.repeat(Math.max(1, 14 - r.file.length));
+          switch (r.action) {
+            case 'created':
+              lines.push(`  ${r.file}${pad}${rel}  created`);
+              break;
+            case 'appended':
+              lines.push(`  ${r.file}${pad}${rel}  appended Open Knowledge section`);
+              break;
+            case 'replaced':
+              lines.push(`  ${r.file}${pad}${rel}  replaced Open Knowledge section (--force)`);
+              break;
+            case 'skipped-existing':
+              lines.push(`  ${r.file}${pad}${rel}  already has Open Knowledge section`);
+              break;
+          }
+        }
+      }
     }
 
     // Content preview block (between MCP and Next steps)

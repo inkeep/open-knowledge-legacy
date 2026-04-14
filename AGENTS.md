@@ -66,6 +66,11 @@ These are patterns that ALL work in the repo should follow. Established during t
 6. **Mode state as enums.** Editor state machines use enums (`'wysiwyg' | 'source' | 'diff'`), not boolean flags that implicitly encode state. Booleans don't scale past 2 states.
 7. **Remove broken capabilities rather than shipping them.** A confidently-broken UI is worse than the absence of capability. If a feature scaffold is known to malfunction, remove it; don't ship it alongside the product.
 8. **Separate long-lived identity from short-lived session concerns.** Agent identity (who is this?) is long-lived — stable across conversations, derived from MCP connection primitives. Pass boundaries (what did they do in this burst?) are short-lived — derived from the product's own edit-history model (user-action-bounded grouping). Don't conflate them. See `stories/collaboration-capabilities-audit/ §14`.
+9. **Minimize CRDT mutation in sync bridges.** Bridges between CRDT representations (e.g., Y.XmlFragment ↔ Y.Text) must avoid replacing Items unnecessarily. Three concrete patterns enforce this:
+   (a) **Content-comparison gate before delete+insert** — if a sync would replace content with content that's already present at the same offset, skip both operations to preserve existing CRDT Items.
+   (b) **Finer-grained merge via DMP `patch_make`/`patch_apply` over line-level for divergent paths** — DMP's character-level matching shrinks the "blast radius" of Items replaced; `applyByPrefixSuffix` preserves matching prefix/suffix regions.
+   (c) **Origin-aware reconciliation at the bridge layer** — three-way merge (e.g., DMP `patch_apply`) lets bridge-side reconciliation preserve content from both writers without a custom diff-walk.
+   Why this exists as a precedent: research (`reports/crdt-origin-laundering-prior-art/REPORT.md`) confirms these three patterns are unclaimed in academic + engineering literature as of 2026-04-13. They're how Open Knowledge solves "origin-laundering" (sync bridges replacing tracked Items with untracked replacements) without per-character attribution. Applies wherever a CRDT bridge converts one Y type to another. See `specs/2026-04-13-observer-a-origin-aware-diff/SPEC.md` and precedent #1 (typed transaction origins) for related discipline.
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -311,10 +316,11 @@ Y.Doc
 └── Y.Map('activity')         ← agent write attribution
 ```
 
-### Two invariants
+### Three invariants
 
 1. **Bridge invariant:** `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` — must hold after every propagation path settles.
-2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See `observers.ts:244`)
+2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See the `lastSyncedXmlMd` declaration in `setupObservers()` in `observers.ts`.)
+3. **Item-preservation invariant:** Sync operations must not replace CRDT Items whose content at the target position already matches what would be written. Ensures `Y.UndoManager({ trackedOrigins })` consumers see correct origin attribution through bridge cycles. (See Architectural precedent #9.)
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
@@ -334,16 +340,17 @@ Y.Doc
 
 ### Observer A (XmlFragment → Y.Text)
 
-- File: `packages/app/src/editor/observers.ts:247`
+- File: `packages/app/src/editor/observers.ts:301`
 - Origin: `'sync-from-tree'`
-- Uses `diffLines` to compute incremental delta between `lastSyncedXmlMd` and current XmlFragment markdown
+- **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
+- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` to minimize CRDT mutations
 - Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes
 - Skips entirely for remote (non-local) transactions; refreshes `lastSyncedXmlMd` baseline only
 - Updates `lastSyncedXmlMd` after every successful sync
 
 ### Observer B (Y.Text → XmlFragment)
 
-- File: `packages/app/src/editor/observers.ts:342`
+- File: `packages/app/src/editor/observers.ts:396`
 - Origin: `'sync-from-text'`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
@@ -925,10 +932,11 @@ Y.Doc
 └── Y.Map('activity')         ← agent write attribution
 ```
 
-### Two invariants
+### Three invariants
 
 1. **Bridge invariant:** `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` — must hold after every propagation path settles.
-2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See `observers.ts:244`)
+2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See the `lastSyncedXmlMd` declaration in `setupObservers()` in `observers.ts`.)
+3. **Item-preservation invariant:** Sync operations must not replace CRDT Items whose content at the target position already matches what would be written. Ensures `Y.UndoManager({ trackedOrigins })` consumers see correct origin attribution through bridge cycles. (See Architectural precedent #9.)
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
@@ -948,16 +956,17 @@ Y.Doc
 
 ### Observer A (XmlFragment → Y.Text)
 
-- File: `packages/app/src/editor/observers.ts:247`
+- File: `packages/app/src/editor/observers.ts:301`
 - Origin: `'sync-from-tree'`
-- Uses `diffLines` to compute incremental delta between `lastSyncedXmlMd` and current XmlFragment markdown
+- **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
+- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` to minimize CRDT mutations
 - Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes
 - Skips entirely for remote (non-local) transactions; refreshes `lastSyncedXmlMd` baseline only
 - Updates `lastSyncedXmlMd` after every successful sync
 
 ### Observer B (Y.Text → XmlFragment)
 
-- File: `packages/app/src/editor/observers.ts:342`
+- File: `packages/app/src/editor/observers.ts:396`
 - Origin: `'sync-from-text'`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
@@ -1254,3 +1263,17 @@ bun run release          # Publish to npm
 - In React components, prefer Tailwind CSS utility classes via `className` instead of inline `style` props. Only use inline styles when there is no practical Tailwind expression for the requirement
 - Prefer existing shadcn components before building custom UI primitives. If the needed shadcn component is not installed yet, suggest installing it rather than reimplementing it from scratch
 
+
+<!-- open-knowledge:begin -->
+## Open Knowledge
+
+This repo uses Open Knowledge — agent-collaborative wiki tooling exposed via MCP. The scope of tracked content is `.open-knowledge/config.yml` (default: every `**/*.md` under the repo root).
+
+**Reading (wiki markdown).** Prefer the `exec` MCP tool over native `Read` / `Grep` / `Glob`. `exec` runs `cat` / `ls` / `grep` / `find` / `head` / `tail` / `wc` / `sort` / `uniq` / `cut` with pipes, and every returned path is enriched with frontmatter (title, description, tags), backlink count, and recent shadow-repo activity with agent-vs-human attribution. One tool covers read/list/search with attribution that native tools don't see. Examples: `exec("cat docs/auth.md")`, `exec("ls articles/")`, `exec("grep -rn oauth . | head -5")`.
+
+**Writing (wiki markdown).** Route all edits through `write_document` / `edit_document`. Native `Edit` / `sed` land as anonymous `upstream` imports — you lose agent attribution in the shadow-repo log.
+
+**Linking.** When authoring, link liberally with `[[Page Title]]` wiki-links. Redlinks are fine — they signal "this should exist." Every noun-phrase naming another document should be a link. Backlink density is how this knowledge base stays navigable for the next agent.
+
+**Non-wiki code (`.ts`, `.py`, configs, etc.).** Keep using native `Read` / `Edit` / `Grep` / `Bash`. The MCP tools are for markdown in `content.include`.
+<!-- open-knowledge:end -->

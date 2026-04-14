@@ -695,3 +695,52 @@ describe('V2: external-write convergence window', () => {
     }
   });
 });
+
+// ─── FR-4: Multi-client Item preservation ───
+
+describe('multi-client FR-4: agent-origin Items preserved through Observer A', () => {
+  test('server agent write + client user edit — both preserved, bridge holds', async () => {
+    const client = await createTestClient(server.port);
+
+    try {
+      // Step 1: Baseline via WYSIWYG
+      applyMarkdownToFragment(client, 'Line one.\n\nLine two.\n');
+      await wait(500);
+      expect(client.ytext.toString()).toContain('Line one');
+
+      // Step 2: Server-side agent write via HTTP API (appends content to Y.Text
+      // under 'agent-write' origin — same codepath as MCP agent writes).
+      // The server calls syncTextToFragment so both Y.Text and XmlFragment
+      // receive the agent content.
+      await agentWriteMd(server.port, 'Agent paragraph.\n', {
+        docName: client.docName,
+      });
+
+      // Wait for agent write to arrive on the client (both surfaces)
+      await pollUntil(() => client.ytext.toString().includes('Agent paragraph'), 5000);
+      await wait(500);
+
+      // Step 3: Client's user appends via WYSIWYG — an incremental edit,
+      // not a full tree replacement. Observer A fires; if Y.Text has diverged
+      // (e.g., timing of remote sync), Path B DMP merge handles it.
+      markUserTyping(client.doc);
+      const typingInterval = setInterval(() => markUserTyping(client.doc), 30);
+
+      appendParagraphToFragment(client, 'User added this.');
+
+      await wait(200);
+      clearInterval(typingInterval);
+      await wait(1000);
+
+      // Step 4: Both user edit and agent content should be present
+      const finalText = client.ytext.toString();
+      expect(finalText).toContain('User added this');
+      expect(finalText).toContain('Agent paragraph');
+
+      // Bridge invariant holds
+      assertBridgeInvariant(client.ytext, client.fragment);
+    } finally {
+      await client.cleanup();
+    }
+  });
+});
