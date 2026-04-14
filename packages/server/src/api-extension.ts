@@ -43,6 +43,7 @@ import {
   applyAgentMarkdownWrite,
   DEFAULT_AGENT_ID,
 } from './agent-sessions.ts';
+import { findHubCandidates } from './hub-candidates.ts';
 import { extractPageTitle } from './page-identity.ts';
 
 export { extractPageTitle } from './page-identity.ts';
@@ -501,6 +502,35 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * Soft orphan-hint (D7 / N1): when a written doc has zero backlinks AND a
+   * hub candidate exists in its folder tree, attach a hint suggesting the
+   * hub. Returns `undefined` when any prerequisite is unavailable (no
+   * backlinkIndex wired, target not in index, has backlinks, or no candidate).
+   * Non-throwing — a hint-computation failure must not fail the write.
+   */
+  function computeOrphanHints(
+    docName: string,
+  ): Array<{ type: 'orphan'; parentCandidates: string[]; message: string }> | undefined {
+    if (!backlinkIndex) return undefined;
+    try {
+      const backlinks = backlinkIndex.getBacklinks(docName);
+      if (backlinks.length > 0) return undefined;
+      const candidates = findHubCandidates(docName, getFileIndex());
+      if (candidates.length === 0) return undefined;
+      const wikiLinks = candidates.map((c) => `[[${c}]]`).join(', ');
+      return [
+        {
+          type: 'orphan',
+          parentCandidates: candidates,
+          message: `This doc is orphaned. Consider linking from a hub: ${wikiLinks}`,
+        },
+      ];
+    } catch {
+      return undefined;
+    }
+  }
+
   function resolveAlias(docName: string): string {
     return getAliasMap?.().get(docName) ?? docName;
   }
@@ -955,7 +985,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ts: Date.now(),
       });
 
-      json(res, 200, { ok: true, timestamp });
+      // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
+      // backlinks and a plausible hub exists in its folder tree, suggest the
+      // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
+      const hints = computeOrphanHints(resolvedDocName);
+
+      json(res, 200, { ok: true, timestamp, ...(hints ? { hints } : {}) });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
