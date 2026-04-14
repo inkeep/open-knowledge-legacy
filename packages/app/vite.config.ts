@@ -54,6 +54,12 @@ export default defineConfig({
     dedupe: [
       'react',
       'react-dom',
+      '@codemirror/state',
+      '@codemirror/view',
+      '@codemirror/language',
+      '@codemirror/commands',
+      '@codemirror/merge',
+      '@codemirror/lang-markdown',
       'prosemirror-changeset',
       'prosemirror-collab',
       'prosemirror-commands',
