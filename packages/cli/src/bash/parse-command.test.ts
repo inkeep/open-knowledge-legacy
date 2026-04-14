@@ -152,6 +152,13 @@ describe('augmentStagesWithExcludes — grep', () => {
     expect(stages[0].args).toContain('--exclude-dir=node_modules');
   });
 
+  test('injects on combined short flags regardless of order', () => {
+    for (const cmd of ['grep -inr oauth .', 'grep -nr oauth .', 'grep -nRi oauth .']) {
+      const stages = augmentStagesWithExcludes(parse(cmd));
+      expect(stages[0].args).toContain('--exclude-dir=node_modules');
+    }
+  });
+
   test('skips non-recursive grep', () => {
     const stages = augmentStagesWithExcludes(parse('grep oauth README.md'));
     expect(stages[0].args).not.toContain('--exclude-dir=node_modules');
@@ -198,6 +205,12 @@ describe('augmentStagesWithExcludes — find', () => {
     const stages = augmentStagesWithExcludes(parse('find . -not -path "*/foo/*" -name "*.md"'));
     // Only the user's -not should be present
     expect(stages[0].args.filter((a) => a === '-not').length).toBe(1);
+  });
+
+  test('still injects when user passes -path for inclusion (not exclusion)', () => {
+    const stages = augmentStagesWithExcludes(parse('find . -path "docs/*.md"'));
+    expect(stages[0].args).toContain('-not');
+    expect(stages[0].args.join(' ')).toContain('-not -path */node_modules/*');
   });
 
   test('skips when user already passed -prune', () => {

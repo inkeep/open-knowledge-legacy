@@ -205,8 +205,11 @@ export function upsertRootInstructions(
       continue;
     }
 
-    const separator = existing.endsWith('\n') ? '\n' : '\n\n';
-    writeFileSync(path, `${existing}${separator}${CLAUDE_MD_SECTION}\n`, 'utf-8');
+    // Normalize trailing newlines so the inserted section always has one
+    // blank line between it and prior content, regardless of how the host
+    // file was terminated on disk.
+    const trimmed = existing.replace(/\n*$/, '');
+    writeFileSync(path, `${trimmed}\n\n${CLAUDE_MD_SECTION}\n`, 'utf-8');
     results.push({ file: name, path, action: 'appended' });
   }
 

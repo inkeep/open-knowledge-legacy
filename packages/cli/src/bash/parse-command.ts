@@ -108,9 +108,11 @@ const FIND_STRATEGY: ExcludeStrategy = {
   command: 'find',
   // `find` is always recursive — augment unconditionally.
   applies: () => true,
-  // Respect user's own filtering: `-not`, `!`, `-prune`, or `-path` in the expression.
-  hasUserExcludes: (args) =>
-    args.slice(1).some((a) => a === '-not' || a === '!' || a === '-prune' || a === '-path'),
+  // Respect user's own filtering. Only `-not` / `!` / `-prune` unambiguously
+  // signal the user is managing exclusions — bare `-path` is also used for
+  // inclusion patterns (e.g. `find . -path "docs/*.md"`), so matching on it
+  // would wrongly disable injection for include-style commands.
+  hasUserExcludes: (args) => args.slice(1).some((a) => a === '-not' || a === '!' || a === '-prune'),
   buildExcludeArgs: (dirs) => {
     const out: string[] = [];
     for (const d of dirs) {

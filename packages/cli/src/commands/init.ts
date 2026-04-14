@@ -312,6 +312,33 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
     }
 
+    // Root instructions (CLAUDE.md / AGENTS.md) summary
+    if (result.rootInstructions.length > 0) {
+      const visible = result.rootInstructions.filter((r) => r.action !== 'skipped-symlink');
+      if (visible.length > 0) {
+        lines.push('');
+        lines.push('Root instructions:');
+        for (const r of visible) {
+          const rel = r.path.startsWith(cwd) ? relative(cwd, r.path) : r.path;
+          const pad = ' '.repeat(Math.max(1, 14 - r.file.length));
+          switch (r.action) {
+            case 'created':
+              lines.push(`  ${r.file}${pad}${rel}  created`);
+              break;
+            case 'appended':
+              lines.push(`  ${r.file}${pad}${rel}  appended Open Knowledge section`);
+              break;
+            case 'replaced':
+              lines.push(`  ${r.file}${pad}${rel}  replaced Open Knowledge section (--force)`);
+              break;
+            case 'skipped-existing':
+              lines.push(`  ${r.file}${pad}${rel}  already has Open Knowledge section`);
+              break;
+          }
+        }
+      }
+    }
+
     // Content preview block (between MCP and Next steps)
     if (result.preview) {
       lines.push('');
