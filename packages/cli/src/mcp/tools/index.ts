@@ -34,6 +34,10 @@ import {
   DESCRIPTION as GET_FORWARD_LINKS_DESCRIPTION,
   register as registerGetForwardLinks,
 } from './get-forward-links.ts';
+import {
+  DESCRIPTION as GET_HISTORY_DESCRIPTION,
+  register as registerGetHistory,
+} from './get-history.ts';
 import { DESCRIPTION as GET_HUBS_DESCRIPTION, register as registerGetHubs } from './get-hubs.ts';
 import {
   DESCRIPTION as GET_ORPHANS_DESCRIPTION,
@@ -57,6 +61,10 @@ import {
   DESCRIPTION as ROLLBACK_DESCRIPTION,
   register as registerRollbackToVersion,
 } from './rollback-to-version.ts';
+import {
+  register as registerSaveVersion,
+  DESCRIPTION as SAVE_VERSION_DESCRIPTION,
+} from './save-version.ts';
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
 import type { ServerInstance } from './shared.ts';
 import {
@@ -78,6 +86,8 @@ export const TOOL_DESCRIPTIONS = {
   search: SEARCH_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
+  get_history: GET_HISTORY_DESCRIPTION,
+  save_version: SAVE_VERSION_DESCRIPTION,
   rollback_to_version: ROLLBACK_DESCRIPTION,
   list_documents: LIST_DOCUMENTS_DESCRIPTION,
   get_backlinks: GET_BACKLINKS_DESCRIPTION,
@@ -120,6 +130,8 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   // Document tools — make HTTP calls to Hocuspocus
   registerWriteDocument(server, opts.serverUrl);
   registerEditDocument(server, opts.serverUrl);
+  registerGetHistory(server, opts.serverUrl);
+  registerSaveVersion(server, opts.serverUrl);
   registerRollbackToVersion(server, opts.serverUrl);
   registerListDocuments(server, opts.serverUrl);
   registerGetBacklinks(server, opts.serverUrl);
