@@ -852,7 +852,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      const { nodes, links } = backlinkIndex.getLinkGraph();
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const docName = url.searchParams.get('docName');
+      if (docName && !isSafeDocName(docName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+
+      const rawDegrees = url.searchParams.get('degrees');
+      if (rawDegrees && !docName) {
+        json(res, 400, { ok: false, error: 'docName is required when degrees is provided' });
+        return;
+      }
+
+      let nodes: string[];
+      let links: Array<{ source: string; target: string }>;
+
+      if (rawDegrees && docName) {
+        const degrees = Number.parseInt(rawDegrees, 10);
+        if (!Number.isFinite(degrees) || degrees < 0) {
+          json(res, 400, { ok: false, error: 'degrees must be a non-negative integer' });
+          return;
+        }
+
+        ({ nodes, links } = backlinkIndex.getLinkGraphNeighborhood(docName, degrees));
+      } else {
+        ({ nodes, links } = backlinkIndex.getLinkGraph());
+      }
+
       const enrichedNodes = nodes.map((id) => ({
         id,
         label: readPageTitleForDocName(id),

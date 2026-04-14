@@ -4,21 +4,8 @@ import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-for
 
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
-
-interface GraphNode {
-  id: string;
-  label: string;
-}
-
-interface GraphLink {
-  source: string;
-  target: string;
-}
-
-interface GraphData {
-  nodes: GraphNode[];
-  links: GraphLink[];
-}
+import { buildGraphLabelDescriptors, pickGraphLabelText } from './graph-label-utils';
+import type { GraphData, GraphLink, GraphNode } from './graph-view-utils';
 
 interface LinkGraphResponse {
   ok: boolean;
@@ -27,26 +14,138 @@ interface LinkGraphResponse {
   error?: string;
 }
 
+const FOCUS_ANIMATION_MS = 350;
+const FOCUS_RETRY_INTERVAL_MS = 120;
+const FOCUS_RETRY_DISTANCE_PX = 18;
+const FINAL_SETTLE_DRIFT_PX = 28;
+
+interface FocusState {
+  key: string;
+  lastX: number | null;
+  lastY: number | null;
+  lastAt: number;
+}
+
+function getActiveGraphNodeCoords({
+  nodes,
+  activeDocName,
+}: {
+  nodes: GraphNode[];
+  activeDocName: string;
+}): { x: number; y: number } | null {
+  const activeNode = nodes.find((node) => node.id === activeDocName) as
+    | NodeObject<GraphNode>
+    | undefined;
+  if (typeof activeNode?.x !== 'number' || typeof activeNode?.y !== 'number') return null;
+  return { x: activeNode.x, y: activeNode.y };
+}
+
+function shouldRunFinalSettle({
+  fg,
+  coords,
+  dimensions,
+}: {
+  fg: ForceGraphMethods<NodeObject<GraphNode>> | undefined;
+  coords: { x: number; y: number } | null;
+  dimensions: { width: number; height: number };
+}): boolean {
+  if (!fg || !coords || dimensions.width <= 0 || dimensions.height <= 0) return false;
+
+  const screen = fg.graph2ScreenCoords(coords.x, coords.y);
+  const drift = Math.hypot(screen.x - dimensions.width / 2, screen.y - dimensions.height / 2);
+
+  return drift >= FINAL_SETTLE_DRIFT_PX;
+}
+
+function maybeFocusActiveGraphNode({
+  fg,
+  nodes,
+  activeDocName,
+  zoom,
+  focusKey,
+  focusState,
+  force = false,
+  durationMs = FOCUS_ANIMATION_MS,
+}: {
+  fg: ForceGraphMethods<NodeObject<GraphNode>> | undefined;
+  nodes: GraphNode[];
+  activeDocName: string;
+  zoom: number;
+  focusKey: string;
+  focusState: FocusState;
+  force?: boolean;
+  durationMs?: number;
+}): FocusState {
+  const now = Date.now();
+  let nextState = focusState;
+
+  if (nextState.key !== focusKey) {
+    nextState = {
+      key: focusKey,
+      lastX: null,
+      lastY: null,
+      lastAt: 0,
+    };
+  } else if (!force && now - nextState.lastAt < FOCUS_RETRY_INTERVAL_MS) {
+    return nextState;
+  }
+
+  const coords = getActiveGraphNodeCoords({
+    nodes,
+    activeDocName,
+  });
+  if (!coords) return nextState;
+
+  const distance =
+    nextState.lastX === null || nextState.lastY === null
+      ? Number.POSITIVE_INFINITY
+      : Math.hypot(coords.x - nextState.lastX, coords.y - nextState.lastY);
+
+  if (!force && distance < FOCUS_RETRY_DISTANCE_PX && nextState.lastAt !== 0) {
+    return {
+      ...nextState,
+      lastAt: now,
+    };
+  }
+
+  if (!fg) return nextState;
+
+  fg.centerAt(coords.x, coords.y, durationMs);
+  if (Math.abs(fg.zoom() - zoom) > 0.01) {
+    fg.zoom(zoom, durationMs);
+  }
+
+  return {
+    key: focusKey,
+    lastX: coords.x,
+    lastY: coords.y,
+    lastAt: now,
+  };
+}
+
 export function GraphView({
   activeDocName,
+  isFullscreen = false,
   className = '',
   onStatsChange,
 }: {
   activeDocName: string;
+  isFullscreen?: boolean;
   className?: string;
   onStatsChange?: (nodes: number, links: number, loading: boolean) => void;
 }) {
-  // Single atomic state — graphData reference only changes when content changes,
-  // preventing force-graph's onFinishUpdate from re-firing its auto-zoom on every render.
+  // force-graph mutates the objects it receives in-place during layout, so we compare
+  // incoming API payloads against separate signatures before replacing graphData.
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
-  // Signatures of the last-applied API response, stored separately from graphData because
-  // force-graph mutates link objects in-place (replacing string IDs with node object refs),
-  // which would corrupt a comparison against the live graphData.links array.
+  const [graphSig, setGraphSig] = useState({ nodes: '', links: '' });
+  // Signatures of the last-applied API response, stored separately from rendered graph data because
+  // force-graph mutates link objects in-place (replacing string IDs with node object refs).
   const lastSigRef = useRef({ nodes: '', links: '' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<ForceGraphMethods<NodeObject<GraphNode>> | undefined>(undefined);
+  const focusStateRef = useRef<FocusState>({ key: '', lastX: null, lastY: null, lastAt: 0 });
   const [dimensions, setDimensions] = useState({ width: 320, height: 400 });
   const { resolvedTheme } = useTheme();
 
@@ -55,7 +154,13 @@ export function GraphView({
 
     async function load() {
       try {
-        const res = await fetch('/api/link-graph');
+        const params = new URLSearchParams();
+        if (!isFullscreen && activeDocName) {
+          params.set('docName', activeDocName);
+          params.set('degrees', '2');
+        }
+        const url = params.size > 0 ? `/api/link-graph?${params.toString()}` : '/api/link-graph';
+        const res = await fetch(url);
         if (!res.ok) {
           if (cancelled) return;
           setError(`Server error: ${res.status}`);
@@ -71,12 +176,12 @@ export function GraphView({
         }
         const nextNodes = data.nodes ?? [];
         const nextLinks = data.links ?? [];
-        const nextNodeSig = nextNodes.map((n) => n.id).join(',');
+        const nextNodeSig = nextNodes.map((n) => `${n.id}:${n.label}`).join(',');
         const nextLinkSig = nextLinks.map((l) => `${l.source}>${l.target}`).join(',');
         if (nextNodeSig !== lastSigRef.current.nodes || nextLinkSig !== lastSigRef.current.links) {
           lastSigRef.current = { nodes: nextNodeSig, links: nextLinkSig };
+          setGraphSig({ nodes: nextNodeSig, links: nextLinkSig });
           setGraphData({ nodes: nextNodes, links: nextLinks });
-          onStatsChange?.(nextNodes.length, nextLinks.length, false);
         }
         setError(null);
         setLoading(false);
@@ -87,7 +192,6 @@ export function GraphView({
       }
     }
 
-    onStatsChange?.(0, 0, true);
     setLoading(true);
     void load();
     const handleResume = () => {
@@ -109,7 +213,7 @@ export function GraphView({
       window.removeEventListener('visibilitychange', handleResume);
       unsubscribe();
     };
-  }, [onStatsChange]);
+  }, [activeDocName, isFullscreen]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -130,6 +234,36 @@ export function GraphView({
   const activeNodeColor = isDark ? '#69a3ff' : '#3784ff';
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
+  const activeNodeRingColor = isDark ? 'rgba(105,163,255,0.45)' : 'rgba(55,132,255,0.3)';
+  const focusZoom = isFullscreen ? 1.6 : 2.35;
+  const maxLabelWidthPx = isFullscreen ? 220 : 150;
+  const labelDescriptors = buildGraphLabelDescriptors(graphData.nodes);
+  const focusKey = `${activeDocName}|${focusZoom}|${graphSig.nodes}|${graphSig.links}`;
+
+  useEffect(() => {
+    onStatsChange?.(graphData.nodes.length, graphData.links.length, loading);
+  }, [graphData, loading, onStatsChange]);
+
+  useEffect(() => {
+    focusStateRef.current = {
+      key: focusKey,
+      lastX: null,
+      lastY: null,
+      lastAt: 0,
+    };
+    const animationFrame = window.requestAnimationFrame(() => {
+      focusStateRef.current = maybeFocusActiveGraphNode({
+        fg: fgRef.current,
+        nodes: graphData.nodes,
+        activeDocName,
+        zoom: focusZoom,
+        focusKey,
+        focusState: focusStateRef.current,
+        force: true,
+      });
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [focusKey, activeDocName, focusZoom, graphData.nodes]);
 
   return (
     <div ref={containerRef} className={cn('min-h-0 overflow-hidden', className)}>
@@ -149,30 +283,83 @@ export function GraphView({
             ref={fgRef}
             graphData={graphData}
             cooldownTicks={150}
-            onEngineStop={() => fgRef.current?.pauseAnimation()}
+            onEngineTick={() => {
+              focusStateRef.current = maybeFocusActiveGraphNode({
+                fg: fgRef.current,
+                nodes: graphData.nodes,
+                activeDocName,
+                zoom: focusZoom,
+                focusKey,
+                focusState: focusStateRef.current,
+              });
+            }}
+            onEngineStop={() => {
+              const coords = getActiveGraphNodeCoords({
+                nodes: graphData.nodes,
+                activeDocName,
+              });
+              if (
+                shouldRunFinalSettle({
+                  fg: fgRef.current,
+                  coords,
+                  dimensions,
+                })
+              ) {
+                focusStateRef.current = maybeFocusActiveGraphNode({
+                  fg: fgRef.current,
+                  nodes: graphData.nodes,
+                  activeDocName,
+                  zoom: focusZoom,
+                  focusKey,
+                  focusState: focusStateRef.current,
+                  force: true,
+                });
+              }
+              fgRef.current?.pauseAnimation();
+            }}
             width={dimensions.width}
             height={dimensions.height}
             backgroundColor={bgColor}
             nodeId="id"
-            nodeLabel="label"
+            nodeLabel={(node: NodeObject<GraphNode>) => node.label ?? node.id ?? ''}
             nodeRelSize={4}
-            nodeColor={(node: NodeObject<GraphNode>) =>
-              node.id === activeDocName ? activeNodeColor : defaultNodeColor
-            }
-            nodeCanvasObjectMode={() => 'after'}
+            nodeVal={(node: NodeObject<GraphNode>) => (node.id === activeDocName ? 18 : 6)}
+            nodeCanvasObjectMode={() => 'replace'}
             nodeCanvasObject={(
               node: NodeObject<GraphNode>,
               ctx: CanvasRenderingContext2D,
               globalScale: number,
             ) => {
-              if (globalScale < 1.8 || !node.x || !node.y) return;
-              const label = node.label ?? node.id ?? '';
+              if (typeof node.x !== 'number' || typeof node.y !== 'number') return;
+              const isActive = node.id === activeDocName;
+              const nodeRadius = isActive ? 8 : 5;
+
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
+              ctx.fillStyle = isActive ? activeNodeColor : defaultNodeColor;
+              ctx.fill();
+
+              if (isActive) {
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, nodeRadius + 2 / globalScale, 0, 2 * Math.PI, false);
+                ctx.strokeStyle = activeNodeRingColor;
+                ctx.lineWidth = 2 / globalScale;
+                ctx.stroke();
+              }
+
+              if (globalScale < 1.8) return;
               const fontSize = 10 / globalScale;
               ctx.font = `${fontSize}px system-ui, sans-serif`;
+              const label = pickGraphLabelText(
+                typeof node.id === 'string' ? labelDescriptors.get(node.id) : undefined,
+                maxLabelWidthPx,
+                (text) => ctx.measureText(text).width * globalScale,
+              );
+              if (!label) return;
               ctx.fillStyle = labelColor;
               ctx.textAlign = 'center';
               ctx.textBaseline = 'top';
-              ctx.fillText(label, node.x, node.y + 5);
+              ctx.fillText(label, node.x, node.y + nodeRadius + 2);
             }}
             linkColor={() => edgeColor}
             linkDirectionalArrowLength={3}

@@ -49,13 +49,15 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   return (
     <Panel ref={panelRef} className={isFullscreen ? 'min-h-[100dvh] bg-background' : undefined}>
       <PanelHeader>
-        <PanelTitle>Graph</PanelTitle>
-        {stats && (
-          <div className="flex items-center gap-0.5">
-            <PanelCount>{stats.nodes} nodes</PanelCount>
-            <PanelCount>{stats.links} links</PanelCount>
-          </div>
-        )}
+        <div className="flex min-w-0 items-center gap-2">
+          <PanelTitle>Graph</PanelTitle>
+          {stats && (
+            <div className="flex items-center gap-0.5">
+              <PanelCount>{stats.nodes} nodes</PanelCount>
+              <PanelCount>{stats.links} links</PanelCount>
+            </div>
+          )}
+        </div>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -68,6 +70,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
       </PanelHeader>
       <GraphView
         activeDocName={activeDocName}
+        isFullscreen={isFullscreen}
         className="min-h-0 flex-1"
         onStatsChange={(nodes, links, loading) => {
           if (!loading) setStats({ nodes, links });

@@ -552,6 +552,49 @@ export class BacklinkIndex {
     return { nodes: [...nodeSet].sort(), links };
   }
 
+  getLinkGraphNeighborhood(
+    centerDocName: string,
+    maxDegrees: number,
+    branch = this.activeBranch,
+  ): {
+    nodes: string[];
+    links: Array<{ source: string; target: string }>;
+  } {
+    const state = this.getState(branch);
+    const visited = new Set<string>([centerDocName]);
+    const queue: Array<{ docName: string; degree: number }> = [
+      { docName: centerDocName, degree: 0 },
+    ];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current) break;
+      if (current.degree >= maxDegrees) continue;
+
+      const neighbors = new Set<string>([
+        ...(state.forward.get(current.docName) ?? new Set<string>()),
+        ...(state.backward.get(current.docName)?.keys() ?? []),
+      ]);
+
+      for (const neighbor of neighbors) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        queue.push({ docName: neighbor, degree: current.degree + 1 });
+      }
+    }
+
+    const links: Array<{ source: string; target: string }> = [];
+    for (const [source, targets] of state.forward) {
+      if (!visited.has(source)) continue;
+      for (const target of targets) {
+        if (!visited.has(target)) continue;
+        links.push({ source, target });
+      }
+    }
+
+    return { nodes: [...visited].sort(), links };
+  }
+
   async saveToDisk(branch = this.activeBranch): Promise<void> {
     const filePath = this.cachePath(branch);
     mkdirSync(dirname(filePath), { recursive: true });

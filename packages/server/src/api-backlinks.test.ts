@@ -129,6 +129,49 @@ describe('graph endpoints', () => {
       expect(linkGraph.nodes.find((n) => n.id === 'beta')?.label).toBe('Beta');
       expect(linkGraph.links).toContainEqual({ source: 'alpha', target: 'beta' });
       expect(linkGraph.links).toHaveLength(1);
+
+      const oneHopGraph = JSON.parse(
+        (
+          await callRoute(
+            contentDir,
+            '/api/link-graph?docName=beta&degrees=1',
+            fileIndex,
+            backlinkIndex,
+          )
+        ).body,
+      ) as {
+        ok: boolean;
+        nodes: Array<{ id: string; label: string }>;
+        links: Array<{ source: string; target: string }>;
+      };
+
+      expect(oneHopGraph.ok).toBe(true);
+      expect(oneHopGraph.nodes.map((n) => n.id).sort()).toEqual(['alpha', 'beta']);
+      expect(oneHopGraph.links).toEqual([{ source: 'alpha', target: 'beta' }]);
+
+      const missingDocName = await callRoute(
+        contentDir,
+        '/api/link-graph?degrees=1',
+        fileIndex,
+        backlinkIndex,
+      );
+      expect(missingDocName.status).toBe(400);
+      expect(JSON.parse(missingDocName.body)).toEqual({
+        ok: false,
+        error: 'docName is required when degrees is provided',
+      });
+
+      const invalidDegrees = await callRoute(
+        contentDir,
+        '/api/link-graph?docName=beta&degrees=-1',
+        fileIndex,
+        backlinkIndex,
+      );
+      expect(invalidDegrees.status).toBe(400);
+      expect(JSON.parse(invalidDegrees.body)).toEqual({
+        ok: false,
+        error: 'degrees must be a non-negative integer',
+      });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
