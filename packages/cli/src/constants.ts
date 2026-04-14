@@ -1,9 +1,6 @@
 /** Root directory name for open-knowledge inside a project. */
 export const OK_DIR = '.open-knowledge';
 
-/** Auto-generated catalog filename placed in every content directory. */
-export const CATALOG_FILENAME = 'INDEX.md';
-
 /** Conventions file for agent navigation without MCP. */
 export const AGENTS_FILENAME = 'AGENTS.md';
 
