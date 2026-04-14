@@ -38,6 +38,8 @@ export function OutlinePanel({ docName, className = '' }: { docName: string; cla
   } = useQuery({
     queryKey: ['page-headings', docName],
     queryFn: () => fetchHeadings(docName),
+    refetchInterval: 2000,
+    refetchIntervalInBackground: false,
   });
 
   return (

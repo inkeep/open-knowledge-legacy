@@ -38,6 +38,8 @@ export function ForwardLinksPanel({
   } = useQuery({
     queryKey: ['forward-links', docName],
     queryFn: () => fetchForwardLinks(docName),
+    refetchInterval: 2000,
+    refetchIntervalInBackground: false,
   });
 
   return (
