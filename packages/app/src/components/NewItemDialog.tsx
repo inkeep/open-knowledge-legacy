@@ -16,7 +16,7 @@ export interface NewItemDialogProps {
   onCreated: (docName: string) => void;
 }
 
-function validatePath(value: string): string | null {
+export function validatePath(value: string): string | null {
   if (!value.trim()) return 'Name cannot be empty';
   if (value.includes('..')) return 'Path cannot contain ".."';
   if (value.startsWith('/')) return 'Path cannot start with "/"';
@@ -25,8 +25,53 @@ function validatePath(value: string): string | null {
   return null;
 }
 
-function ensureMdExtension(name: string): string {
+export function ensureMdExtension(name: string): string {
   return name.endsWith('.md') ? name : `${name}.md`;
+}
+
+/**
+ * Compose the final path to POST to /api/create-page.
+ * Trims fileName and folderName; auto-appends `.md`. Returns the canonical path
+ * relative to the content directory (no leading slash).
+ */
+export function composeNewItemPath(args: {
+  kind: 'file' | 'folder';
+  initialDir: string;
+  fileName: string;
+  folderName?: string;
+}): string {
+  const file = ensureMdExtension(args.fileName.trim());
+  if (args.kind === 'folder') {
+    const folder = (args.folderName ?? '').trim();
+    const base = args.initialDir ? `${args.initialDir}/${folder}` : folder;
+    return `${base}/${file}`;
+  }
+  return args.initialDir ? `${args.initialDir}/${file}` : file;
+}
+
+/**
+ * Pure predicate: does a keyboard event match the Cmd/Ctrl+Alt+N shortcut
+ * and is it coming from a target that is NOT an input/textarea/contenteditable?
+ * Used by the global NewItemShortcutHandler; exported for unit testing.
+ */
+export interface ShortcutEventLike {
+  // Use a duck-typed target shape so the predicate is trivially unit-testable
+  // without constructing real DOM events. Production callers pass
+  // KeyboardEvent which widens to this via a cast at the call site.
+  target: { tagName?: string; isContentEditable?: boolean } | null;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  key: string;
+}
+
+export function isNewItemShortcut(e: ShortcutEventLike): boolean {
+  const target = e.target;
+  if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) {
+    return false;
+  }
+  const modKey = e.metaKey || e.ctrlKey;
+  return Boolean(modKey && e.altKey && e.key.toLowerCase() === 'n');
 }
 
 function selectBasename(input: HTMLInputElement) {
@@ -73,13 +118,7 @@ export function NewItemDialog({
   }, [open, kind, suggestedName]);
 
   function composePath(): string {
-    const file = ensureMdExtension(fileName.trim());
-    if (kind === 'folder') {
-      const folder = folderName.trim();
-      const base = initialDir ? `${initialDir}/${folder}` : folder;
-      return `${base}/${file}`;
-    }
-    return initialDir ? `${initialDir}/${file}` : file;
+    return composeNewItemPath({ kind, initialDir, fileName, folderName });
   }
 
   function getClientError(): string | null {

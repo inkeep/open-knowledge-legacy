@@ -1,12 +1,9 @@
 import { useEffect, useState } from 'react';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
-<<<<<<< HEAD
-import { SystemDocSubscriber } from '@/components/SystemDocSubscriber';
-=======
 import { defaultInitialDir } from '@/components/file-tree-utils';
-import { NewItemDialog } from '@/components/NewItemDialog';
->>>>>>> cae5ce7 ([US-006] Add Cmd/Ctrl+Alt+N keyboard shortcut to open new-file dialog)
+import { isNewItemShortcut, NewItemDialog } from '@/components/NewItemDialog';
+import { SystemDocSubscriber } from '@/components/SystemDocSubscriber';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
 import { docNameFromHash } from '@/lib/doc-hash';
@@ -38,17 +35,18 @@ function NewItemShortcutHandler() {
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      const target = e.target as HTMLElement | null;
+      // KeyboardEvent.target is EventTarget|null — widen to the duck-typed
+      // ShortcutEventLike shape used by the pure predicate.
+      const target = e.target as { tagName?: string; isContentEditable?: boolean } | null;
       if (
-        target?.tagName === 'INPUT' ||
-        target?.tagName === 'TEXTAREA' ||
-        target?.isContentEditable
+        isNewItemShortcut({
+          target,
+          metaKey: e.metaKey,
+          ctrlKey: e.ctrlKey,
+          altKey: e.altKey,
+          key: e.key,
+        })
       ) {
-        return;
-      }
-
-      const modKey = e.metaKey || e.ctrlKey;
-      if (modKey && e.altKey && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         setDialogOpen(true);
       }
