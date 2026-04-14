@@ -92,6 +92,8 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/shared.ts` — sharedExtensions array (THE schema source of truth)
 - `src/extensions/frontmatter.ts` — strip/prepend frontmatter utilities for observer sync (Y.Text ↔ Y.Map bridge)
 - `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (schema only; markdown dispatch via `markdown/handlers.ts`)
+- `src/extensions/jsx-inline.ts` — JsxInline PM node for inline MDX elements (`content: 'text*'`, isolating)
+- `src/extensions/raw-mdx-fallback.ts` — RawMdxFallback PM node for degraded MDX blocks (`content: 'text*'`, atom-false)
 - `src/extensions/list.ts` — Unified list + listItem extension wrapping prosemirror-flat-list (D15)
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
@@ -191,6 +193,7 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | POST   | `/api/test-reset`             | Reset document (E2E test isolation, `?docName=` param)                    |
 | POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                    |
 | GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park) |
+| GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)          |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)       |
 | GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                         |
 
@@ -582,7 +585,7 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 ### Markdown pipeline dependency discipline
 
 - `@handlewithcare/remark-prosemirror` pinned to exact version `0.1.5` (no caret). A `bun patch` in `patches/` applies PR #3 fix (empty-text-node + NBSP whitespace preservation)
-- `remark-mdx` trio (`remark-mdx`, `mdast-util-mdx`, `micromark-extension-mdxjs`) pinned as a coupled unit — bump all three together
+- MDX agnostic pair (`mdast-util-mdx`, `micromark-extension-mdx`) pinned as a coupled unit — bump together. `micromark-extension-mdx` (agnostic mode, no acorn) replaced `micromark-extension-mdxjs` (strict mode)
 - **Upgrade protocol:** Before bumping any dependency, re-run the 118-case fidelity probe (`tech-probes/r1-preflight-gate/`) and full invariant suite (`bun run test:fidelity`). Verify the remark-prosemirror patch still applies cleanly
 - Failed patch surfaces at install time (fail-loud via `patchedDependencies`)
 - **Pre-flight probe baseline:** 97/118 whitespace-only, 13/13 P0 entity/escape — see `tech-probes/r1-preflight-gate/REPORT.md`
@@ -594,7 +597,7 @@ The markdown pipeline uses `unified + remark` for parsing and serialization, wit
 **Parse direction:**
 
 ```
-remark-parse → remark-frontmatter → remark-mdx → remark-directive →
+remark-parse → remark-frontmatter → remarkMdxAgnostic →
 remark-gfm → wiki-link micromark ext → [R23 autolink/void-HTML guard] →
 position-slice walker → remarkProseMirror (handlers map mdast → PM JSON)
 ```
@@ -607,7 +610,7 @@ fromProseMirror (PM JSON → mdast) → remark-stringify + custom mdast-util-to-
 
 **Handler tiers:**
 
-- **Tier A (passthrough):** root, paragraph, text, blockquote, table/row/cell, image, inlineCode, delete, directives
+- **Tier A (passthrough):** root, paragraph, text, blockquote, table/row/cell, image, inlineCode, delete
 - **Tier B (fidelity):** emphasis, strong, heading, code, thematicBreak, break, list, listItem — reads `node.data.*` from position-slice walker
 - **Tier C (custom):** link/linkReference, definition (R12 override), html, MDX nodes, wikiLink
 
@@ -624,6 +627,8 @@ fromProseMirror (PM JSON → mdast) → remark-stringify + custom mdast-util-to-
 - `packages/core/src/markdown/position-slice.ts` — source-form recovery walker
 - `packages/core/src/markdown/wiki-link-micromark.ts` — micromark tokenizer for `[[Page]]` syntax
 - `packages/core/src/markdown/autolink-void-html-guard.ts` — R23 regression fix
+- `packages/core/src/markdown/remark-mdx-agnostic.ts` — Agnostic MDX mode (no acorn validation)
+- `packages/core/src/markdown/parse-with-fallback.ts` — Block-level split-then-rejoin fallback for crash-class MDX
 - `packages/core/src/markdown/mdast-augmentation.ts` — TypeScript type augmentation for custom mdast types
 
 **Schema names (mdast-canonical, D16/D17):** `strong` (not bold), `emphasis` (not italic), `thematicBreak` (not horizontalRule). Unified `list` + `listItem` (not separate bulletList/orderedList/listItem).
@@ -737,6 +742,8 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/shared.ts` — sharedExtensions array (THE schema source of truth)
 - `src/extensions/frontmatter.ts` — strip/prepend frontmatter utilities for observer sync (Y.Text ↔ Y.Map bridge)
 - `src/extensions/jsx-component.ts` — JsxComponent TipTap extension (schema only; markdown dispatch via `markdown/handlers.ts`)
+- `src/extensions/jsx-inline.ts` — JsxInline PM node for inline MDX elements (`content: 'text*'`, isolating)
+- `src/extensions/raw-mdx-fallback.ts` — RawMdxFallback PM node for degraded MDX blocks (`content: 'text*'`, atom-false)
 - `src/extensions/list.ts` — Unified list + listItem extension wrapping prosemirror-flat-list (D15)
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
@@ -809,6 +816,7 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | POST   | `/api/test-reset`             | Reset document (E2E test isolation, `?docName=` param)                    |
 | POST   | `/api/save-version`           | Save Version — project repo commit + shadow checkpoint                    |
 | GET    | `/api/metrics/reconciliation` | Reconciliation counters (reconcile, conflict, batch, branch switch, park) |
+| GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)          |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)       |
 | GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                         |
 
@@ -1195,7 +1203,7 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 ### Markdown pipeline dependency discipline
 
 - `@handlewithcare/remark-prosemirror` pinned to exact version `0.1.5` (no caret). A `bun patch` in `patches/` applies PR #3 fix (empty-text-node + NBSP whitespace preservation)
-- `remark-mdx` trio (`remark-mdx`, `mdast-util-mdx`, `micromark-extension-mdxjs`) pinned as a coupled unit — bump all three together
+- MDX agnostic pair (`mdast-util-mdx`, `micromark-extension-mdx`) pinned as a coupled unit — bump together. `micromark-extension-mdx` (agnostic mode, no acorn) replaced `micromark-extension-mdxjs` (strict mode)
 - **Upgrade protocol:** Before bumping any dependency, re-run the 118-case fidelity probe (`tech-probes/r1-preflight-gate/`) and full invariant suite (`bun run test:fidelity`). Verify the remark-prosemirror patch still applies cleanly
 - Failed patch surfaces at install time (fail-loud via `patchedDependencies`)
 - **Pre-flight probe baseline:** 97/118 whitespace-only, 13/13 P0 entity/escape — see `tech-probes/r1-preflight-gate/REPORT.md`
@@ -1207,7 +1215,7 @@ The markdown pipeline uses `unified + remark` for parsing and serialization, wit
 **Parse direction:**
 
 ```
-remark-parse → remark-frontmatter → remark-mdx → remark-directive →
+remark-parse → remark-frontmatter → remarkMdxAgnostic →
 remark-gfm → wiki-link micromark ext → [R23 autolink/void-HTML guard] →
 position-slice walker → remarkProseMirror (handlers map mdast → PM JSON)
 ```
@@ -1220,7 +1228,7 @@ fromProseMirror (PM JSON → mdast) → remark-stringify + custom mdast-util-to-
 
 **Handler tiers:**
 
-- **Tier A (passthrough):** root, paragraph, text, blockquote, table/row/cell, image, inlineCode, delete, directives
+- **Tier A (passthrough):** root, paragraph, text, blockquote, table/row/cell, image, inlineCode, delete
 - **Tier B (fidelity):** emphasis, strong, heading, code, thematicBreak, break, list, listItem — reads `node.data.*` from position-slice walker
 - **Tier C (custom):** link/linkReference, definition (R12 override), html, MDX nodes, wikiLink
 
@@ -1237,6 +1245,8 @@ fromProseMirror (PM JSON → mdast) → remark-stringify + custom mdast-util-to-
 - `packages/core/src/markdown/position-slice.ts` — source-form recovery walker
 - `packages/core/src/markdown/wiki-link-micromark.ts` — micromark tokenizer for `[[Page]]` syntax
 - `packages/core/src/markdown/autolink-void-html-guard.ts` — R23 regression fix
+- `packages/core/src/markdown/remark-mdx-agnostic.ts` — Agnostic MDX mode (no acorn validation)
+- `packages/core/src/markdown/parse-with-fallback.ts` — Block-level split-then-rejoin fallback for crash-class MDX
 - `packages/core/src/markdown/mdast-augmentation.ts` — TypeScript type augmentation for custom mdast types
 
 **Schema names (mdast-canonical, D16/D17):** `strong` (not bold), `emphasis` (not italic), `thematicBreak` (not horizontalRule). Unified `list` + `listItem` (not separate bulletList/orderedList/listItem).
