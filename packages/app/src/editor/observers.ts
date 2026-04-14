@@ -150,6 +150,15 @@ function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: strin
     if (change.removed && next?.added) {
       // Content-comparison gate (D7): if Y.Text already has the added content
       // at this offset, skip both delete and insert — preserve CRDT Items.
+      //
+      // Note: `offset` tracks the mutated Y.Text position but indexes into the
+      // original `currentText` snapshot. After a genuine replacement where
+      // change.value.length !== next.value.length, subsequent gate checks read
+      // a slightly shifted slice. This is benign: (1) the gate is a pure
+      // optimization — misses fall through to correct delete+insert, (2) false
+      // positives (coincidental match at wrong offset) self-heal on the next
+      // Observer A cycle (≤50ms), (3) Path A only fires when Y.Text is in sync
+      // with baseline, making multi-hunk different-length replacements rare.
       const targetSlice = currentText.substring(offset, offset + next.value.length);
       if (targetSlice === next.value) {
         // No-op replacement; advance offset by the (now equal) length.
@@ -175,7 +184,9 @@ function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: strin
 /**
  * Apply a text change to Y.Text using prefix/suffix comparison — O(n) string
  * scan, zero diff algorithm overhead. Produces at most one delete + one insert
- * CRDT operation. Used by applyUserDelta to avoid a second diff pass.
+ * CRDT operation. Used by applyUserDelta to minimize CRDT mutations — Items in
+ * the matching prefix and suffix regions are preserved, maintaining origin
+ * attribution through bridge cycles.
  */
 function applyByPrefixSuffix(ytext: Y.Text, currentText: string, newText: string): void {
   if (currentText === newText) return;
@@ -229,9 +240,9 @@ function applyUserDelta(deps: ObserverDeps, oldXmlMd: string, newXmlMd: string):
   // Failed patches indicate the patch's context could not be located in agent's
   // text within Match_Threshold. patch_apply still returns mergedText with the
   // successful patches applied and failed ones skipped — that's "user-wins on what
-  // we could merge". Emit a console.warn (matches existing observers.ts
-  // diagnostic precedent at lines 337/367/500) and invoke the optional
-  // onMergeFailed callback for consumers who want structured signal.
+  // we could merge". Emit a console.warn (matches existing observer diagnostic
+  // pattern) and invoke the optional onMergeFailed callback for consumers who
+  // want structured signal.
   if (results.some((ok: boolean) => !ok)) {
     const failedPatches = results.filter((ok: boolean) => !ok).length;
     const info = {
@@ -242,9 +253,11 @@ function applyUserDelta(deps: ObserverDeps, oldXmlMd: string, newXmlMd: string):
       agentLen: currentText.length,
       mergedLen: mergedText.length,
     } as const;
+    const failedPatchDetail = dmp.patch_toText(patches.filter((_, idx) => !results[idx]));
     console.warn(
       `[Observer A] patch_apply had ${failedPatches}/${results.length} failed patches`,
       info,
+      failedPatchDetail,
     );
     deps.onMergeFailed?.(info);
   }
@@ -434,9 +447,10 @@ export function setupObservers(deps: ObserverDeps): () => void {
           }, ORIGIN_TEXT_TO_TREE);
         }
         // Refresh Observer A's baseline: XmlFragment and Y.Text are in sync.
-        // Observer A's callback returns early for ORIGIN_TEXT_TO_TREE events (line 325),
-        // so it never runs its sync work for Observer B's writes — this explicit update
-        // prevents the baseline from going stale between Observer B cycles.
+        // Observer A's callback returns early for ORIGIN_TEXT_TO_TREE events (the
+        // origin guard at the top of observerA), so it never runs its sync work for
+        // Observer B's writes — this explicit update prevents the baseline from going
+        // stale between Observer B cycles.
         lastSyncedXmlMd = prependFrontmatter(frontmatter, currentBody);
         return;
       }

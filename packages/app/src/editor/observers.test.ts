@@ -1732,6 +1732,74 @@ describe('FR-7: onMergeFailed diagnostic', () => {
 
     cleanup();
   });
+
+  test('diagnostic fires on failed patches (unmatchable agent text)', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const mergeFailed: Array<Record<string, number>> = [];
+    const cleanup = setupObservers({
+      doc,
+      xmlFragment: fragment,
+      ytext,
+      mdManager,
+      schema,
+      onMergeFailed: (info) => {
+        mergeFailed.push(info);
+      },
+    });
+
+    // Seed baseline via XmlFragment
+    applyMarkdown(doc, fragment, 'AAAA line one.\n\nAAAA line two.\n');
+    await wait();
+
+    const { markUserTyping } = await import('./observers');
+
+    // Agent wholesale-replaces Y.Text with content sharing no tokens with baseline.
+    // This guarantees DMP patch_apply can't locate the original patch context.
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, 'ZZZZ completely different.\n\nZZZZ no match.\n');
+    }, 'agent-write');
+
+    const origWarn = console.warn;
+    const warnCalls: unknown[][] = [];
+    console.warn = (...args: unknown[]) => {
+      warnCalls.push(args);
+    };
+
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+    markUserTyping(doc);
+
+    // User modifies XmlFragment — Observer A Path B fires with unmatchable context
+    applyMarkdown(doc, fragment, 'AAAB line one.\n\nAAAA line two.\n');
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    console.warn = origWarn;
+
+    // Failed patches — both console.warn and callback should fire
+    const observerAWarns = warnCalls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('[Observer A] patch_apply had'),
+    );
+    expect(observerAWarns.length).toBeGreaterThan(0);
+    expect(observerAWarns[0][0]).toMatch(/\[Observer A\] patch_apply had \d+\/\d+ failed patches/);
+
+    // onMergeFailed callback invoked with correct shape
+    expect(mergeFailed.length).toBeGreaterThan(0);
+    const info = mergeFailed[0];
+    expect(info).toHaveProperty('failedPatches');
+    expect(info).toHaveProperty('totalPatches');
+    expect(info).toHaveProperty('baseLen');
+    expect(info).toHaveProperty('userLen');
+    expect(info).toHaveProperty('agentLen');
+    expect(info).toHaveProperty('mergedLen');
+    expect(info.failedPatches).toBeGreaterThan(0);
+
+    cleanup();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────
