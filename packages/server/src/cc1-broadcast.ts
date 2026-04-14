@@ -1,4 +1,5 @@
 import type { Hocuspocus } from '@hocuspocus/server';
+import { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
 import { getLogger } from './logger.ts';
 import {
   incrementCC1Broadcast,
@@ -7,10 +8,9 @@ import {
   setCC1SubscriberCount,
 } from './metrics.ts';
 
-export const SYSTEM_DOC_NAME = '__system__';
-export const CC1_CONTRACT_VERSION = 1;
-
 const DEBOUNCE_MS = 100;
+
+export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
 export function isSystemDoc(documentName: string): boolean {
   return documentName === SYSTEM_DOC_NAME;

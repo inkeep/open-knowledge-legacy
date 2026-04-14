@@ -2,6 +2,7 @@ import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-force-graph-2d';
 
+import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 
 interface GraphNode {
@@ -89,13 +90,24 @@ export function GraphView({
     onStatsChange?.(0, 0, true);
     setLoading(true);
     void load();
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible') void load();
-    }, 5000);
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') {
+        void load();
+      }
+    };
+    window.addEventListener('focus', handleResume);
+    window.addEventListener('visibilitychange', handleResume);
+    const unsubscribe = subscribeToDocumentsChanged((channels) => {
+      if (channels.includes('files') || channels.includes('graph')) {
+        void load();
+      }
+    });
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      window.removeEventListener('focus', handleResume);
+      window.removeEventListener('visibilitychange', handleResume);
+      unsubscribe();
     };
   }, [onStatsChange]);
 

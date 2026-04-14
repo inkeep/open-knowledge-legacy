@@ -45,6 +45,11 @@ export {
 } from './file-watcher.ts';
 export { readBranchFromHead } from './head-watcher.ts';
 export {
+  createLiveDerivedIndexExtension,
+  LIVE_DERIVED_INDEX_DEBOUNCE_MS,
+  type LiveDerivedIndexOptions,
+} from './live-derived-index.ts';
+export {
   createTestLogger,
   getLogger,
   installTestLoggers,

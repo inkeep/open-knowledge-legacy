@@ -1,0 +1,205 @@
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { Hocuspocus } from '@hocuspocus/server';
+import type * as Y from 'yjs';
+import { applyExternalChange } from './external-change.ts';
+import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
+
+type Conn = Awaited<ReturnType<Hocuspocus['openDirectConnection']>>;
+
+function getDoc(conn: Conn): Y.Doc {
+  const doc = (conn as unknown as { document: Y.Doc }).document;
+  if (!doc) throw new Error('DirectConnection has no document');
+  return doc;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function makeOnChangePayload(
+  hp: Hocuspocus,
+  document: Y.Doc,
+  documentName: string,
+  transactionOrigin: unknown,
+) {
+  return {
+    clientsCount: 0,
+    connection: undefined,
+    context: {},
+    document,
+    documentName,
+    instance: hp,
+    requestHeaders: new Headers(),
+    requestParameters: new URLSearchParams(),
+    socketId: '',
+    transactionOrigin,
+    update: new Uint8Array(),
+  };
+}
+
+describe('createLiveDerivedIndexExtension', () => {
+  let hp: Hocuspocus;
+
+  beforeEach(() => {
+    hp = new Hocuspocus({ quiet: true });
+  });
+
+  test('skips file-watcher origin transactions', async () => {
+    const updateDocumentFromMarkdown = mock(() => {});
+    const signalChannel = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown } as unknown as never,
+      debounceMs: 5,
+      signalChannel,
+    });
+    const conn = await hp.openDirectConnection('skip-file-watcher');
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, 'skip-file-watcher', '# Hello\n\n[[beta]]\n');
+    await extension.onChange?.(
+      makeOnChangePayload(hp, doc, 'skip-file-watcher', {
+        source: 'local',
+        context: { origin: 'file-watcher' },
+      }),
+    );
+    await wait(20);
+
+    expect(updateDocumentFromMarkdown).not.toHaveBeenCalled();
+    expect(signalChannel).not.toHaveBeenCalled();
+    await conn.disconnect();
+  });
+
+  test('debounces rapid changes to a single update and preserves frontmatter', async () => {
+    const updateDocumentFromMarkdown = mock(() => {});
+    const signalChannel = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown } as unknown as never,
+      debounceMs: 5,
+      signalChannel,
+    });
+    const conn = await hp.openDirectConnection('debounced-doc');
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, 'debounced-doc', '---\ntitle: Debounced\n---\n# Hello\n\n[[beta]]\n');
+    const payload = makeOnChangePayload(hp, doc, 'debounced-doc', {
+      source: 'local',
+      context: { origin: 'agent-write' },
+    });
+
+    await extension.onChange?.(payload);
+    await extension.onChange?.(payload);
+    await extension.onChange?.(payload);
+    await wait(20);
+
+    expect(updateDocumentFromMarkdown).toHaveBeenCalledTimes(1);
+    expect(updateDocumentFromMarkdown).toHaveBeenCalledWith(
+      'debounced-doc',
+      '---\ntitle: Debounced\n---\n# Hello\n\n[[beta]]\n',
+    );
+    expect(signalChannel).toHaveBeenCalledTimes(2);
+    expect(signalChannel.mock.calls).toEqual([['backlinks'], ['graph']]);
+    await conn.disconnect();
+  });
+
+  test('beforeUnloadDocument cancels pending timers', async () => {
+    const updateDocumentFromMarkdown = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown } as unknown as never,
+      debounceMs: 20,
+    });
+    const conn = await hp.openDirectConnection('unload-doc');
+    const doc = getDoc(conn);
+
+    applyExternalChange(hp, 'unload-doc', '# Hello\n');
+    await extension.onChange?.(
+      makeOnChangePayload(hp, doc, 'unload-doc', {
+        source: 'local',
+        context: { origin: 'agent-write' },
+      }),
+    );
+    await extension.beforeUnloadDocument?.({
+      document: doc,
+      documentName: 'unload-doc',
+      instance: hp,
+    });
+    await wait(40);
+
+    expect(updateDocumentFromMarkdown).not.toHaveBeenCalled();
+    await conn.disconnect();
+  });
+
+  test('onDestroy clears pending timers across documents', async () => {
+    const updateDocumentFromMarkdown = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown } as unknown as never,
+      debounceMs: 20,
+    });
+    const first = await hp.openDirectConnection('destroy-a');
+    const second = await hp.openDirectConnection('destroy-b');
+    const firstDoc = getDoc(first);
+    const secondDoc = getDoc(second);
+
+    applyExternalChange(hp, 'destroy-a', '# A\n');
+    applyExternalChange(hp, 'destroy-b', '# B\n');
+    await extension.onChange?.(
+      makeOnChangePayload(hp, firstDoc, 'destroy-a', {
+        source: 'local',
+        context: { origin: 'agent-write' },
+      }),
+    );
+    await extension.onChange?.(
+      makeOnChangePayload(hp, secondDoc, 'destroy-b', {
+        source: 'local',
+        context: { origin: 'agent-write' },
+      }),
+    );
+    await extension.onDestroy?.({
+      instance: hp,
+      configuration: hp.configuration,
+      version: '',
+    });
+    await wait(40);
+
+    expect(updateDocumentFromMarkdown).not.toHaveBeenCalled();
+    await first.disconnect();
+    await second.disconnect();
+  });
+
+  test('logs and swallows callback errors', async () => {
+    const updateDocumentFromMarkdown = mock(() => {
+      throw new Error('boom');
+    });
+    const signalChannel = mock(() => {});
+    const extension = createLiveDerivedIndexExtension({
+      backlinkIndex: { updateDocumentFromMarkdown } as unknown as never,
+      debounceMs: 5,
+      signalChannel,
+    });
+    const conn = await hp.openDirectConnection('error-doc');
+    const doc = getDoc(conn);
+    const originalError = console.error;
+    const errorSpy = mock(() => {});
+    console.error = errorSpy;
+
+    try {
+      applyExternalChange(hp, 'error-doc', '# Error\n');
+      await extension.onChange?.(
+        makeOnChangePayload(hp, doc, 'error-doc', {
+          source: 'local',
+          context: { origin: 'agent-write' },
+        }),
+      );
+      await wait(20);
+
+      expect(updateDocumentFromMarkdown).toHaveBeenCalledTimes(1);
+      expect(signalChannel).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalled();
+      expect(errorSpy.mock.calls[0]?.[0]).toContain(
+        '[live-derived-index] Failed to update backlinks for error-doc:',
+      );
+    } finally {
+      console.error = originalError;
+      await conn.disconnect();
+    }
+  });
+});
