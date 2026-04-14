@@ -841,6 +841,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
+      const rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
+      const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+      const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
       const content =
@@ -852,11 +855,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
 
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Added: ${content.slice(0, 50)}`,
+            description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
       } finally {
@@ -918,6 +921,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
+      const rawAgentId =
+        typeof (body as Record<string, unknown>).agentId === 'string'
+          ? ((body as Record<string, unknown>).agentId as string)
+          : undefined;
+      const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+      const agentName =
+        typeof (body as Record<string, unknown>).agentName === 'string'
+          ? ((body as Record<string, unknown>).agentName as string)
+          : 'Claude';
       const dc = await sessionManager.getSession(resolvedDocName);
       const timestamp = new Date().toISOString();
 
@@ -927,11 +939,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           applyAgentMarkdownWrite(dc.document, markdown, position);
 
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Added: ${markdown.trim().slice(0, 50)}`,
+            description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
       } finally {
@@ -1312,6 +1324,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
+      const rawAgentId =
+        typeof (body as Record<string, unknown>).agentId === 'string'
+          ? ((body as Record<string, unknown>).agentId as string)
+          : undefined;
+      const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+      const agentName =
+        typeof (body as Record<string, unknown>).agentName === 'string'
+          ? ((body as Record<string, unknown>).agentName as string)
+          : 'Claude';
       const dc = await sessionManager.getSession(docName);
       const timestamp = new Date().toISOString();
 
@@ -1342,11 +1363,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           applyAgentMarkdownWrite(dc.document, newBody, 'replace');
 
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Patched: ${find.slice(0, 50)}`,
+            description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
       } finally {
