@@ -127,6 +127,9 @@ export function createContentFilter(opts: ContentFilterOptions): ContentFilter {
   const dirCount = new Map<string, number>();
 
   function isGitignoreExcluded(relativePath: string): boolean {
+    // When contentDir is outside projectDir, gitignore rules from projectDir
+    // do not apply — and the `ignore` library rejects paths starting with `..`.
+    if (contentOutsideProject) return false;
     const projectRelPath = contentRelPrefix ? `${contentRelPrefix}/${relativePath}` : relativePath;
     return ig.ignores(projectRelPath);
   }
