@@ -318,8 +318,8 @@ function Inspiration() {
       <div className="mx-auto max-w-3xl">
         <blockquote>
           <p className="text-xl leading-relaxed font-light text-[var(--slide-text)] md:text-2xl">
-            &ldquo;A significant fraction of my recent token throughput is going less into
-            manipulating code, and more into manipulating knowledge. I think there is room here for{' '}
+            &ldquo;You rarely ever write or edit the wiki manually, it&apos;s the domain of the LLM.
+            I think there is room here for{' '}
             <span className="font-medium text-[var(--slide-accent)]">
               an incredible new product
             </span>{' '}
