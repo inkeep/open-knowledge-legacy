@@ -31,12 +31,12 @@ describe('discoverServerUrl', () => {
     expect(result.message).toContain('no running instance');
   });
 
-  test('live lock with port > 0 → ws://127.0.0.1:<port>', () => {
+  test('live lock with port > 0 → ws://localhost:<port>', () => {
     acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     updateServerLockPort(lockDir, 5173);
 
     const result = discoverServerUrl({ lockDir, host: 'localhost', portOverride: undefined });
-    expect(result.serverUrl).toBe('ws://127.0.0.1:5173');
+    expect(result.serverUrl).toBe('ws://localhost:5173');
     expect(result.message).toContain('connected to running instance');
     expect(result.message).toContain('5173');
   });
