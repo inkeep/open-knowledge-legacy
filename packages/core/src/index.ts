@@ -4,6 +4,18 @@
 // instead of fragile constructor.name string comparison).
 export { VFileMessage } from 'vfile-message';
 
+// Color
+export {
+  bucketKeyForPath,
+  colorForDocName,
+  colorForFolderPath,
+  DIRECTORY_FALLBACK_DARK,
+  DIRECTORY_FALLBACK_LIGHT,
+  DIRECTORY_PALETTE_DARK,
+  DIRECTORY_PALETTE_LIGHT,
+  type DirectoryColorOptions,
+} from './color/index.ts';
+
 // Constants
 export {
   ACTIVITY_TTL_MS,
@@ -67,6 +79,7 @@ export {
   getIdentity,
   HUMAN_COLORS,
 } from './utils/identity.ts';
+export { safeLocalStorageGet, safeLocalStorageSet } from './utils/local-storage.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export {
   disambiguateSlug,
