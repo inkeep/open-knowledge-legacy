@@ -559,6 +559,45 @@
   @apply text-muted-foreground/60;
 }
 
+/* Drag handle */
+.ok-drag-handle {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  color: oklch(0.556 0 0);
+  border-radius: 3px;
+  user-select: none;
+}
+
+.ok-drag-handle:hover {
+  background-color: oklch(0 0 0 / 6%);
+}
+
+.ok-drag-handle:active {
+  cursor: grabbing;
+}
+
+.dark .ok-drag-handle {
+  color: oklch(0.7 0 0);
+}
+
+.dark .ok-drag-handle:hover {
+  background-color: oklch(1 0 0 / 8%);
+}
+
+/* The drag-handle extension hides/shows the element itself — we rely on it
+   setting display:none/block. When it shows the element, fade it in. */
+.ok-drag-handle[style*="display: block"],
+.ok-drag-handle[style*="display:block"] {
+  opacity: 1;
+}
+
 /* CodeMirror polish */
 .cm-editor {
   min-height: 200px;
