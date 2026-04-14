@@ -103,8 +103,11 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
+- `src/color/directory.ts` — `colorForDocName`, `colorForFolderPath`, `bucketKeyForPath` — pure path-to-color functions using prefix-truncation bucketing (shared primitive for graph + sidebar)
+- `src/color/palette.ts` — 12-color pastel palette arrays (light + dark theme variants) and fallback constants
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
+- `src/utils/local-storage.ts` — `safeLocalStorageGet`/`safeLocalStorageSet` (extracted from identity.ts; guards SecurityError, QuotaExceededError, missing window)
 
 **Key constraint:** `sharedExtensions` MUST stay in sync between core, server, and app — drift causes silent data corruption.
 
@@ -767,8 +770,11 @@ Shared extensions, types, constants, and pure utility functions. **No React or N
 - `src/extensions/escape-mark.ts` — EscapeMark PM mark for backslash-escape preservation (D20)
 - `src/extensions/*-fidelity.ts` — Source-text fidelity extensions preserving markers, delimiters, styles, and raw forms (schema + attrs only; markdown dispatch moved to `markdown/handlers.ts`)
 - `src/types/awareness.ts` — AwarenessState, AwarenessUser, ActivityEntry
+- `src/color/directory.ts` — `colorForDocName`, `colorForFolderPath`, `bucketKeyForPath` — pure path-to-color functions using prefix-truncation bucketing (shared primitive for graph + sidebar)
+- `src/color/palette.ts` — 12-color pastel palette arrays (light + dark theme variants) and fallback constants
 - `src/constants/activity.ts` — Flash timing constants + eviction utils
 - `src/utils/identity.ts` — getIdentity, generateRandomName, generateRandomColor
+- `src/utils/local-storage.ts` — `safeLocalStorageGet`/`safeLocalStorageSet` (extracted from identity.ts; guards SecurityError, QuotaExceededError, missing window)
 
 **Key constraint:** `sharedExtensions` MUST stay in sync between core, server, and app — drift causes silent data corruption.
 
