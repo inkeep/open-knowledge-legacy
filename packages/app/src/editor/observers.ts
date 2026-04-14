@@ -36,8 +36,16 @@ import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { prependFrontmatter, stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import DiffMatchPatch from 'diff-match-patch';
 import type * as Y from 'yjs';
 import { diffLinesFast as diffLines } from './diff-lines-fast';
+
+// Module-local instance so DMP tuning never collides with other importers
+// (e.g., diff-lines-fast.ts has its own instance). Match_Threshold pinned to
+// the DMP default (0.5) explicitly per audit F15 — depending on the default
+// would silently regress if a future module mutated the shared singleton.
+const dmp = new DiffMatchPatch();
+dmp.Match_Threshold = 0.5;
 
 export const ORIGIN_TREE_TO_TEXT = 'sync-from-tree';
 export const ORIGIN_TEXT_TO_TREE = 'sync-from-text';
@@ -107,6 +115,18 @@ interface ObserverDeps {
   mdManager: MarkdownManager;
   schema: Schema;
   onSyncError?: (direction: 'tree-to-text' | 'text-to-tree', error: Error) => void;
+  /** Optional: invoked when DMP patch_apply reports one or more failed patches
+   *  during Observer A's Path B three-way merge. Diagnostic only — non-fatal.
+   *  Consumers (debug panel, V0-14 telemetry) opt in; omitted callback = no-op.
+   *  The same event is always logged via `console.warn`. */
+  onMergeFailed?: (info: {
+    failedPatches: number;
+    totalPatches: number;
+    baseLen: number;
+    userLen: number;
+    agentLen: number;
+    mergedLen: number;
+  }) => void;
 }
 
 /**
@@ -168,84 +188,60 @@ function applyByPrefixSuffix(ytext: Y.Text, currentText: string, newText: string
 
 /**
  * Apply ONLY the user's delta to Y.Text, when Y.Text has diverged from the last
- * synced XmlFragment state. This is used in the race-condition path where another
- * source wrote to Y.Text between Observer A syncs. Known triggers: agent writes
- * (via `agent-write` origin), file-watcher disk events (via `file-watcher` origin),
- * and — critically — a remote peer's WYSIWYG edit arriving as a Y.Text-only
- * transaction while the local user is mid-sync on XmlFragment. This last trigger
- * was observed empirically during PR #43's multi-client test matrix merge and is
- * the reason single-client test coverage is insufficient for observer bridge changes.
+ * synced XmlFragment state (Path B). Uses DMP's canonical three-way merge:
  *
- * Strategy: compute the line-level diff between the old XmlFragment md and the new
- * XmlFragment md. For each added line, insert it at the corresponding line index in
- * Y.Text (matched by anchor lines before the insertion). For each removed line,
- * delete it from Y.Text (matched by content). This preserves any lines in Y.Text
- * that weren't in either old or new XmlFragment md — i.e., content from other sources.
+ *   - base   = oldXmlMd (lastSyncedXmlMd, the common ancestor)
+ *   - user   = newXmlMd (the user's branch via XmlFragment serialize)
+ *   - agent  = currentText (the agent's branch in Y.Text)
  *
- * This is not a perfect three-way merge, but it's correct for the common case of
- * "user appends/deletes lines while agent appends lines". When two sources modify
- * overlapping lines simultaneously, the user's change wins (applied last).
+ * DMP `patch_make(base, user)` computes the user's edits as patches, then
+ * `patch_apply(patches, agent)` applies them against the agent's diverged text.
+ * The result preserves Item-equal prefix/suffix via `applyByPrefixSuffix`.
+ *
+ * Known merge semantics (LOCKED decisions):
+ *   - D8: exact-character overlap (`base="hello", user="hello!", agent="hello!"`)
+ *     produces `"hello!!"` — inherent to three-way merge, both sides independently
+ *     made the same change. Mitigation paths NG6/NG7 deferred.
+ *   - D9: user-wins on collision — when user deletes a line that agent modified,
+ *     the deletion wins (DMP default behavior).
  */
-function applyUserDelta(ytext: Y.Text, oldXmlMd: string, newXmlMd: string): void {
+function applyUserDelta(deps: ObserverDeps, oldXmlMd: string, newXmlMd: string): void {
   if (oldXmlMd === newXmlMd) return;
-
+  const { ytext } = deps;
   const currentText = ytext.toString();
-  const currentLines = currentText.split('\n');
 
-  // Pad both sides with a trailing newline so diffLines aligns cleanly at line
-  // boundaries. Without padding, an unterminated final line in `old` ("foo" with no
-  // \n) aliases into a spurious "removed foo" + "added foo\n..." pair, which then
-  // causes the added block to re-insert content we intended to leave alone.
-  const oldPadded = oldXmlMd.endsWith('\n') ? oldXmlMd : `${oldXmlMd}\n`;
-  const newPadded = newXmlMd.endsWith('\n') ? newXmlMd : `${newXmlMd}\n`;
+  // Three-way merge: patch built from base→user, applied to agent's diverged Y.Text.
+  const patches = dmp.patch_make(oldXmlMd, newXmlMd);
+  const [mergedText, results] = dmp.patch_apply(patches, currentText);
 
-  // Compute line-level diff of the user's change: oldXmlMd → newXmlMd.
-  // With both inputs newline-terminated (padded above), diffLines treats each line as
-  // an atomic token — removed+added pairs never share prefix lines, so no overlap
-  // trimming is needed.
-  const changes = diffLines(oldPadded, newPadded);
-
-  // Walk the diff and apply each change to currentLines by matching context.
-  // This preserves any lines in currentText that aren't part of oldXmlMd → newXmlMd
-  // (e.g., lines from other sources that wrote to Y.Text between Observer A syncs).
-  const resultLines = [...currentLines];
-  let resultCursor = 0;
-
-  for (const change of changes) {
-    const changeLines = change.value.split('\n');
-    // diffLines includes a trailing empty string when value ends with \n
-    if (changeLines[changeLines.length - 1] === '') changeLines.pop();
-
-    if (change.removed) {
-      // Delete these lines from resultLines, matching by content
-      for (const line of changeLines) {
-        const idx = resultLines.indexOf(line, resultCursor);
-        if (idx >= 0) {
-          resultLines.splice(idx, 1);
-          // resultCursor stays at the same position (next line is now here)
-        }
-      }
-    } else if (change.added) {
-      // Insert these lines into resultLines at resultCursor
-      resultLines.splice(resultCursor, 0, ...changeLines);
-      resultCursor += changeLines.length;
-    } else {
-      // Unchanged — advance resultCursor past these context lines
-      for (const line of changeLines) {
-        const idx = resultLines.indexOf(line, resultCursor);
-        if (idx >= 0) {
-          resultCursor = idx + 1;
-        }
-      }
-    }
+  // Failed patches indicate the patch's context could not be located in agent's
+  // text within Match_Threshold. patch_apply still returns mergedText with the
+  // successful patches applied and failed ones skipped — that's "user-wins on what
+  // we could merge". Emit a console.warn (matches existing observers.ts
+  // diagnostic precedent at lines 337/367/500) and invoke the optional
+  // onMergeFailed callback for consumers who want structured signal.
+  if (results.some((ok: boolean) => !ok)) {
+    const failedPatches = results.filter((ok: boolean) => !ok).length;
+    const info = {
+      failedPatches,
+      totalPatches: results.length,
+      baseLen: oldXmlMd.length,
+      userLen: newXmlMd.length,
+      agentLen: currentText.length,
+      mergedLen: mergedText.length,
+    } as const;
+    console.warn(
+      `[Observer A] patch_apply had ${failedPatches}/${results.length} failed patches`,
+      info,
+    );
+    deps.onMergeFailed?.(info);
   }
 
-  const newText = resultLines.join('\n');
-  if (newText === currentText) return;
+  if (mergedText === currentText) return;
 
-  // Apply the result directly via prefix/suffix comparison — avoids a second
-  // diff pass that applyIncrementalDiff would perform.
-  applyByPrefixSuffix(ytext, currentText, newText);
+  // Apply via prefix/suffix to minimize CRDT mutations beyond what patch_apply already
+  // resolved. Items in the matching prefix/suffix are preserved (no delete fires for them).
+  applyByPrefixSuffix(ytext, currentText, mergedText);
 }
 
 /** Read frontmatter from Y.Doc metadata map. */
@@ -328,7 +324,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
         if (currentText === lastSyncedXmlMd) {
           applyIncrementalDiff(ytext, currentText, md);
         } else {
-          applyUserDelta(ytext, lastSyncedXmlMd, md);
+          applyUserDelta(deps, lastSyncedXmlMd, md);
         }
       }, ORIGIN_TREE_TO_TEXT);
 
