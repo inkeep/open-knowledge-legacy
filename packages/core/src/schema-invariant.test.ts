@@ -133,6 +133,16 @@ describe('R10: schema add-only invariant', () => {
     expect(current.extensionOrder).toEqual(snapshot.extensionOrder);
   });
 
+  test('rawMdxFallback node can be constructed at runtime (R13 patch guard)', () => {
+    // The y-prosemirror R13 patch substitutes rawMdxFallback on schema.node()
+    // throw. If this construction itself fails, the patch silently drops the
+    // node from the PM view. This test ensures the substitution path works.
+    const schema = getSchema(sharedExtensions);
+    const node = schema.node('rawMdxFallback', { reason: 'test' }, [schema.text('test')]);
+    expect(node.type.name).toBe('rawMdxFallback');
+    expect(node.textContent).toBe('test');
+  });
+
   test('snapshot matches current schema (regenerate if additive-only changes)', () => {
     // This catches NEW additions that haven't been committed to the snapshot.
     // When adding a new node/attr, regenerate the snapshot and verify the
