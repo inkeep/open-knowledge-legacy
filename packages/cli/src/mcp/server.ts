@@ -60,6 +60,15 @@ Examples:
 
 Allowlist (read-only): \`cat\`, \`ls\`, \`grep\`, \`find\`, \`head\`, \`tail\`, \`wc\`, \`sort\`, \`uniq\`, \`cut\`. Pipes (\`|\`) work between stages. Redirections, subshells, and writes are rejected with a category-specific error telling you the next step.
 
+### Scope searches — \`grep\` and \`find\` can be slow if unscoped
+
+Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real repo includes source code, build output, and dependencies. For wiki reads, scope deliberately:
+
+- **Filter to markdown:** \`grep -rn TERM --include="*.md" <dir>\` — skips every non-md file.
+- **Scope to a known knowledge dir:** \`grep -rn TERM reports/ specs/\` (or whatever folders the project uses) beats \`grep -rn TERM .\`.
+- **Bail early:** pipe through \`| head -20\` for bounded output. The server waits for the pipeline to finish before returning, so unscoped commands block on the slowest stage.
+- **Auto-prune (built in):** the server transparently adds \`--exclude-dir=\` for \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`.next\`, \`.turbo\`, \`coverage\`, etc. on recursive \`grep\`, and \`-not -path\` equivalents on \`find\`. This saves you from remembering them — but explicit scoping via \`--include\` or a narrower path is still dramatically faster on monorepos.
+
 ### Why \`exec\` over typed tools
 
 \`exec\` is the default because it subsumes \`read_document\` and \`search\` enrichment paths (same shared helper under the hood) and adds bash composition. The typed tools remain registered as **Typed call sites (advanced)** — present for callers that consume \`structuredContent\` with fixed shapes — but they're not recommended for common agent reads.

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseCommand } from './parse-command.ts';
+import { augmentStagesWithExcludes, parseCommand, serializeStages } from './parse-command.ts';
 
 function expectOk(
   cmd: string,
@@ -125,5 +125,108 @@ describe('parseCommand — env/var expansions pass-through (handled at runtime)'
     const result = parseCommand('cat ${HOME}/file');
     if ('error' in result) throw new Error('expected parse to succeed');
     expect(result.stages[0].command).toBe('cat');
+  });
+});
+
+describe('augmentStagesWithExcludes — grep', () => {
+  function parse(cmd: string) {
+    const r = parseCommand(cmd);
+    if ('error' in r) throw new Error(`parse error: ${r.error.message}`);
+    return r.stages;
+  }
+
+  test('injects --exclude-dir on recursive grep', () => {
+    const stages = augmentStagesWithExcludes(parse('grep -rn oauth .'));
+    expect(stages[0].args).toContain('--exclude-dir=node_modules');
+    expect(stages[0].args).toContain('--exclude-dir=.git');
+    expect(stages[0].args.indexOf('--exclude-dir=node_modules')).toBeGreaterThan(0);
+  });
+
+  test('injects on -R (dereference-recursive)', () => {
+    const stages = augmentStagesWithExcludes(parse('grep -Rn oauth .'));
+    expect(stages[0].args).toContain('--exclude-dir=node_modules');
+  });
+
+  test('injects on --recursive long form', () => {
+    const stages = augmentStagesWithExcludes(parse('grep --recursive oauth .'));
+    expect(stages[0].args).toContain('--exclude-dir=node_modules');
+  });
+
+  test('skips non-recursive grep', () => {
+    const stages = augmentStagesWithExcludes(parse('grep oauth README.md'));
+    expect(stages[0].args).not.toContain('--exclude-dir=node_modules');
+  });
+
+  test('respects user-provided --exclude-dir', () => {
+    const stages = augmentStagesWithExcludes(parse('grep -rn --exclude-dir=my-dir oauth .'));
+    expect(stages[0].args).toContain('--exclude-dir=my-dir');
+    // None of ours injected
+    expect(stages[0].args.filter((a) => a.startsWith('--exclude-dir=')).length).toBe(1);
+  });
+
+  test('serializeStages round-trips the augmented command', () => {
+    const stages = augmentStagesWithExcludes(parse('grep -rn oauth .'));
+    const cmd = serializeStages(stages);
+    expect(cmd).toMatch(/^grep /);
+    expect(cmd).toContain('--exclude-dir=node_modules');
+    expect(cmd).toContain('oauth');
+  });
+});
+
+describe('augmentStagesWithExcludes — find', () => {
+  function parse(cmd: string) {
+    const r = parseCommand(cmd);
+    if ('error' in r) throw new Error(`parse error: ${r.error.message}`);
+    return r.stages;
+  }
+
+  test('injects -not -path on find with expression', () => {
+    const stages = augmentStagesWithExcludes(parse('find . -name "*.md"'));
+    const joined = stages[0].args.join(' ');
+    expect(joined).toContain('-not -path */node_modules/*');
+    // Injection happens before the -name primary
+    expect(stages[0].args.indexOf('-not')).toBeLessThan(stages[0].args.indexOf('-name'));
+  });
+
+  test('injects when no path arg given', () => {
+    const stages = augmentStagesWithExcludes(parse('find -name "*.md"'));
+    expect(stages[0].args).toContain('-not');
+    expect(stages[0].args.indexOf('-not')).toBe(1);
+  });
+
+  test('skips when user already passed -not', () => {
+    const stages = augmentStagesWithExcludes(parse('find . -not -path "*/foo/*" -name "*.md"'));
+    // Only the user's -not should be present
+    expect(stages[0].args.filter((a) => a === '-not').length).toBe(1);
+  });
+
+  test('skips when user already passed -prune', () => {
+    const stages = augmentStagesWithExcludes(
+      parse('find . -path "*/node_modules" -prune -name "*.md"'),
+    );
+    // No additional -not injected
+    expect(stages[0].args.filter((a) => a === '-not').length).toBe(0);
+  });
+});
+
+describe('augmentStagesWithExcludes — pass-through', () => {
+  function parse(cmd: string) {
+    const r = parseCommand(cmd);
+    if ('error' in r) throw new Error(`parse error: ${r.error.message}`);
+    return r.stages;
+  }
+
+  test('cat / ls / head / tail unchanged', () => {
+    for (const cmd of ['cat a.md', 'ls docs/', 'head -n5 a.md', 'tail -n5 a.md']) {
+      const before = parse(cmd);
+      const after = augmentStagesWithExcludes(before);
+      expect(after[0].args).toEqual(before[0].args);
+    }
+  });
+
+  test('pipeline: only recursive grep stage is augmented', () => {
+    const stages = augmentStagesWithExcludes(parse('grep -rn oauth . | head -5'));
+    expect(stages[0].args).toContain('--exclude-dir=node_modules');
+    expect(stages[1].args).toEqual(['head', '-5']);
   });
 });
