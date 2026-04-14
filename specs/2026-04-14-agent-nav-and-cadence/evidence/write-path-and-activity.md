@@ -38,24 +38,30 @@ Both handlers in `packages/server/src/api-extension.ts:599, 914` follow the same
 
 ## What the spec adds
 
-A fourth side-effect on every write, in the handler alongside the Y.Text mutation:
+A fourth side-effect on every write, in the handler alongside the Y.Text mutation — publishing to the existing server-wide `__system__` `DirectConnection` (the one CC1 already owns), via a small `AgentFocusBroadcaster` helper:
 
 ```ts
-session.systemDc.awareness.setLocalStateField('agent', {
-  agentId, agentName, classification: 'agent',
+agentFocusBroadcaster.setFocus(agentId, {
+  agentName,
   currentDoc: targetPath,
   writeKind: 'write' | 'edit',
   ts: Date.now(),
 });
 ```
 
-Scope: `__system__` awareness → all clients. Existing per-doc signals unchanged. No CRDT writes to target doc beyond what already happens.
+Internally `setFocus` does `awareness.setLocalStateField('agentFocus', {...current, [agentId]: entry})` on the shared DC. The single-peer publisher surfaces all active agents as a map keyed by `agentId`.
+
+Scope: `__system__` awareness → all clients. Existing per-doc signals unchanged. No CRDT writes to target doc beyond what already happens. No new `DirectConnection`.
+
+## Why the shared DC — not per-agent
+
+`AgentSessionManager.getSession(docName)` at `packages/server/src/agent-sessions.ts:101-103` throws when `isSystemDoc(docName)` returns true (reserved-docname guard, per CLAUDE.md §CC1 cross-cutting skip policy). Opening a per-agent `DirectConnection` to `__system__` would require either bypassing this guard (breaks policy — every doc-keyed subsystem short-circuits through `isSystemDoc()`) or creating a parallel session-lifecycle path. Reusing the CC1-owned DC with a map-valued `agentFocus` field gives us N concurrent agents under a single `clientID`, with map-entry upsert/remove doing the isolation work that per-peer separation would otherwise handle natively.
 
 ## Agent session lifecycle hook
 
-`packages/server/src/agent-sessions.ts` owns `AgentSessionManager` — tracks per-agent `DirectConnection`s and `UndoManager`s. This is the right place to:
+`packages/server/src/agent-sessions.ts` owns `AgentSessionManager`. No new DC. Add two one-liners:
 
-- On `openAgentSession(agentId)`: also open `hocuspocus.openDirectConnection('__system__')` and stash the handle on the session record.
-- On `closeAgentSession(agentId)`: release the `__system__` DC (awareness auto-clears via protocol timeout, but explicit release is belt-and-suspenders).
+- On `openAgentSession(agentId)`: `agentFocusBroadcaster.setFocus(agentId, {agentName, currentDoc: null, writeKind: null, ts: Date.now()})` — advertises the agent's existence before it writes anything.
+- On `closeAgentSession(agentId)`: `agentFocusBroadcaster.clearFocus(agentId)` — removes the entry from the map.
 
-The handle is then available to write handlers via the session lookup.
+The `agentFocusBroadcaster` singleton is wired from server startup (same module that already wires the CC1 broadcaster's shared DC).
