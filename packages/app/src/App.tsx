@@ -22,7 +22,6 @@ function NavigationHandler() {
   const { openDocument } = useDocumentContext();
 
   useEffect(() => {
-    // Open initial doc on mount
     onHashChange();
 
     function onHashChange() {
