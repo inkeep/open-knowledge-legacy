@@ -16,7 +16,6 @@ export default function HomePage() {
     <main className="font-[family-name:var(--font-dm-sans)] selection:bg-[var(--slide-accent)]/20">
       <Hero />
       <Pillars />
-      <QuickStart />
       <StickyShowcase />
       <HowItWorks />
       <Features />
@@ -63,7 +62,7 @@ function Hero() {
 
         <p className="mt-8 max-w-xl text-lg leading-relaxed text-[var(--slide-muted)]">
           An agent-native knowledge platform where humans and AI co-create. Rich editing, markdown
-          in git, real-time CRDT collaboration — connected to any AI agent via MCP.
+          in git, real-time collaboration — connected to any AI agent via MCP.
         </p>
 
         <div className="mt-10 flex flex-wrap items-center gap-4">
@@ -130,49 +129,6 @@ function Pillars() {
   );
 }
 
-function QuickStart() {
-  return (
-    <section className="bg-[var(--slide-bg)] px-6 pb-24 md:pb-32">
-      <div className="mx-auto max-w-2xl">
-        <div
-          className="rounded-xl p-5"
-          style={{
-            border: '1px solid var(--slide-border)',
-            backgroundColor: 'var(--slide-bg-elevated)',
-          }}
-        >
-          <div className="mb-3 flex items-center gap-2 border-b border-[var(--slide-border)] pb-3">
-            <div className="flex gap-1.5">
-              <div className="size-2.5 rounded-full bg-[#ff5f57]" />
-              <div className="size-2.5 rounded-full bg-[#febc2e]" />
-              <div className="size-2.5 rounded-full bg-[#28c840]" />
-            </div>
-            <span className="font-mono text-xs text-[var(--slide-muted)]">terminal</span>
-          </div>
-          <pre className="text-left text-sm leading-relaxed">
-            <code>
-              <span className="text-[var(--slide-muted)]">$</span>{' '}
-              <span className="text-[var(--slide-text)]">npx @inkeep/open-knowledge</span>
-              {'\n'}
-              <span className="text-emerald-600 dark:text-emerald-400">
-                {'>'} Server running at http://localhost:5173
-              </span>
-              {'\n'}
-              <span className="text-emerald-600 dark:text-emerald-400">
-                {'>'} MCP server ready for agent connections
-              </span>
-              {'\n'}
-              <span className="text-[var(--slide-muted)]">
-                {'>'} Watching ./content for changes...
-              </span>
-            </code>
-          </pre>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function HowItWorks() {
   const steps = [
     {
@@ -215,8 +171,14 @@ function HowItWorks() {
           From raw notes to structured knowledge
         </h2>
         <p className="mt-4 max-w-2xl text-[var(--slide-muted)]">
-          Inspired by Andrej Karpathy&apos;s viral LLM knowledge base workflow — automated,
-          real-time, and built for the way you actually think.
+          Inspired by Andrej Karpathy&apos;s viral{' '}
+          <a
+            className="text-[var(--slide-accent)]"
+            href="https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f"
+          >
+            LLM knowledge base workflow
+          </a>{' '}
+          — automated, real-time, and built for the way you actually think.
         </p>
 
         <div className="mt-16 grid gap-12 md:grid-cols-2 lg:grid-cols-4 lg:gap-8">
