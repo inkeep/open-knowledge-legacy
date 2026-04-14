@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import {
   BacklinkIndex,
   type ExtractedWikiLink,
+  extractMarkdownLinksFromMarkdown,
   extractWikiLinksFromMarkdown,
+  resolveMarkdownHref,
 } from './backlink-index.ts';
 
 describe('extractWikiLinksFromMarkdown', () => {
@@ -308,6 +310,181 @@ describe('BacklinkIndex', () => {
       expect(links).toHaveLength(3);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ── resolveMarkdownHref ────────────────────────────────────────────────────────
+
+describe('resolveMarkdownHref', () => {
+  test('resolves same-directory relative link', () => {
+    expect(resolveMarkdownHref('./other', 'notes')).toBe('other');
+    expect(resolveMarkdownHref('./other.md', 'notes')).toBe('other');
+  });
+
+  test('resolves same-directory link without leading dot', () => {
+    expect(resolveMarkdownHref('sibling.md', 'notes')).toBe('sibling');
+  });
+
+  test('resolves into a subdirectory', () => {
+    expect(resolveMarkdownHref('./sub/page.md', 'notes')).toBe('sub/page');
+    expect(resolveMarkdownHref('sub/page', 'notes')).toBe('sub/page');
+  });
+
+  test('resolves parent-relative links', () => {
+    expect(resolveMarkdownHref('../overview.md', 'folder/page')).toBe('overview');
+    expect(resolveMarkdownHref('../sibling/other.md', 'folder/page')).toBe('sibling/other');
+  });
+
+  test('strips fragment and query before resolving', () => {
+    expect(resolveMarkdownHref('./page.md#section', 'notes')).toBe('page');
+    expect(resolveMarkdownHref('./page.md?q=1#frag', 'notes')).toBe('page');
+  });
+
+  test('returns null for external http/https links', () => {
+    expect(resolveMarkdownHref('https://example.com', 'notes')).toBeNull();
+    expect(resolveMarkdownHref('http://example.com/page', 'notes')).toBeNull();
+  });
+
+  test('returns null for mailto and other URI schemes', () => {
+    expect(resolveMarkdownHref('mailto:foo@bar.com', 'notes')).toBeNull();
+  });
+
+  test('returns null for protocol-relative URLs', () => {
+    expect(resolveMarkdownHref('//example.com/page', 'notes')).toBeNull();
+  });
+
+  test('returns null for absolute paths', () => {
+    expect(resolveMarkdownHref('/absolute/path.md', 'notes')).toBeNull();
+  });
+
+  test('returns null for anchor-only links', () => {
+    expect(resolveMarkdownHref('#section', 'notes')).toBeNull();
+  });
+
+  test('returns null when escaping content root', () => {
+    expect(resolveMarkdownHref('../../escape.md', 'folder/page')).toBeNull();
+    expect(resolveMarkdownHref('../../../way-out.md', 'deep/a/b')).toBeNull();
+  });
+});
+
+// ── extractMarkdownLinksFromMarkdown ──────────────────────────────────────────
+
+describe('extractMarkdownLinksFromMarkdown', () => {
+  test('extracts relative inline markdown links', () => {
+    const md = 'See [related](./other.md) for details.';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual<ExtractedWikiLink[]>([
+      { target: 'other', snippet: 'See related for details.' },
+    ]);
+  });
+
+  test('extracts multiple markdown links from the same line', () => {
+    const md = 'See [page A](./a.md) and [page B](./b.md) for more.';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual<ExtractedWikiLink[]>([
+      { target: 'a', snippet: 'See page A and page B for more.' },
+      { target: 'b', snippet: 'See page A and page B for more.' },
+    ]);
+  });
+
+  test('resolves links relative to the source doc directory', () => {
+    const md = 'See [overview](../overview.md).';
+    expect(extractMarkdownLinksFromMarkdown(md, 'folder/page')).toEqual([
+      { target: 'overview', snippet: 'See overview.' },
+    ]);
+  });
+
+  test('extracts internal links with optional titles', () => {
+    const md = 'See [overview](./overview.md "Project overview") for details.';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
+      { target: 'overview', snippet: 'See overview for details.' },
+    ]);
+  });
+
+  test('ignores external links', () => {
+    const md = 'Visit [example](https://example.com) and [local](./local.md).';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
+      { target: 'local', snippet: 'Visit example and local.' },
+    ]);
+  });
+
+  test('ignores image syntax while still extracting sibling links', () => {
+    const md = 'See ![diagram](./assets/diagram.png) and [docs](./docs.md).';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
+      { target: 'docs', snippet: expect.any(String) as string },
+    ]);
+  });
+
+  test('ignores links inside fenced code blocks', () => {
+    const md = ['See [page](./page.md).', '', '```', '[ignore](./ignore.md)', '```'].join('\n');
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
+      { target: 'page', snippet: 'See page.' },
+    ]);
+  });
+
+  test('ignores links inside inline code spans', () => {
+    const md = 'Use `[skip](./skip.md)` then [real](./real.md).';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
+      { target: 'real', snippet: expect.any(String) as string },
+    ]);
+  });
+
+  test('does not double-count wiki-links that precede markdown links', () => {
+    // [[wiki]] and [md](./other.md) in same line — wiki link is processed first
+    const md = '[[wiki]] links to [markdown](./other.md).';
+    const mdLinks = extractMarkdownLinksFromMarkdown(md, 'notes');
+    expect(mdLinks.map((l) => l.target)).toEqual(['other']);
+  });
+
+  test('returns empty array when no internal links present', () => {
+    expect(extractMarkdownLinksFromMarkdown('Just text.', 'notes')).toEqual([]);
+    expect(extractMarkdownLinksFromMarkdown('[ext](https://example.com)', 'notes')).toEqual([]);
+  });
+});
+
+// ── BacklinkIndex: markdown link integration ───────────────────────────────────
+
+describe('BacklinkIndex with markdown links', () => {
+  test('updateDocumentFromMarkdown indexes markdown links alongside wiki links', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'backlinks-md-'));
+    try {
+      const index = new BacklinkIndex({ projectDir: tmpDir, contentDir: tmpDir });
+      const md = 'See [[wikiTarget]] and [mdTarget](./md-target.md).';
+      index.updateDocumentFromMarkdown('source', md);
+      expect(index.getForwardLinks('source')).toContain('wikiTarget');
+      expect(index.getForwardLinks('source')).toContain('md-target');
+      expect(index.getBacklinks('wikiTarget').map((b) => b.source)).toContain('source');
+      expect(index.getBacklinks('md-target').map((b) => b.source)).toContain('source');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('rebuildFromDisk indexes markdown links', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'backlinks-rebuild-'));
+    try {
+      writeFileSync(join(tmpDir, 'source.md'), 'Links to [target](./target.md).\n', 'utf-8');
+      writeFileSync(join(tmpDir, 'target.md'), '# Target\n', 'utf-8');
+      const index = new BacklinkIndex({ projectDir: tmpDir, contentDir: tmpDir });
+      index.rebuildFromDisk();
+      expect(index.getBacklinks('target').map((b) => b.source)).toContain('source');
+      expect(index.getForwardLinks('source')).toContain('target');
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('wiki link wins for same target when both syntaxes link to the same page', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'backlinks-dedup-'));
+    try {
+      const index = new BacklinkIndex({ projectDir: tmpDir, contentDir: tmpDir });
+      // Both [[target]] and [text](./target.md) point to "target"
+      const md = '[[target]] and [text](./target.md).';
+      index.updateDocumentFromMarkdown('source', md);
+      const backlinks = index.getBacklinks('target');
+      // Only one backlink entry for "source" (no duplicate)
+      expect(backlinks.filter((b) => b.source === 'source')).toHaveLength(1);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
     }
   });
 });
