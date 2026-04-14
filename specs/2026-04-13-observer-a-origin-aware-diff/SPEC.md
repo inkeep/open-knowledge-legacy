@@ -93,7 +93,7 @@ At step 4, Observer A re-emits agent content under `'sync-from-tree'` origin. At
 | Must | FR-5 | Bridge invariant holds after every Observer A sync | `stripTrailingWhitespace(ytext.toString()) === stripTrailingWhitespace(serialize(fragment))` after debounce settles. Verified by existing bridge-matrix test + new assertions. |
 | Must | FR-6 | No performance regression on Path A (simple path) | Path A stays on `diffLinesFast`. The content-comparison gate adds one `substring` comparison per diff hunk — O(hunk_size), negligible vs serialize cost. Verified by existing stress test timing assertions. |
 | Must | FR-7 | When DMP `patch_apply` reports any failed patch (`results.some(ok => !ok)`), emit an observable diagnostic via (a) `console.warn('[Observer A] patch_apply had N/M failed patches', metadata)` matching existing `observers.ts` console-precedent (lines 337/367/500), and (b) optionally invoke `ObserverDeps.onMergeFailed?(info)` if the consumer provided the callback. | No Y.Doc pollution. No new map. Matches existing observer diagnostic precedent. Consumer (e.g., a future debug panel in V0-14 or beyond) opts in via the callback. Test asserts `spyOn(console, 'warn')` catches the log and that `onMergeFailed` is invoked with correct shape when supplied. Locked D10 (revised). |
-| Must | FR-8 | **Remove `Y.Map('conflicts')` dead writes from `standalone.ts`.** Delete the `conflictsMap.set(...)` blocks at `standalone.ts:321-329` and `:992-1000`. | Zero consumers in `packages/app/src/` (verified via grep). Write-only Y.Map paying CRDT replication cost + unbounded doc growth for a conflict UI that never materialized. Reconciliation logic (`reconciliation.ts`), conflict counter (`incrementConflict()`), and the `{ kind: 'conflicts' }` return type are all preserved — only the dead Y.Map writes are removed. Side effects: zero negative, one positive (stops monotonic doc growth). Greenfield directive: don't ship write-only CRDT infrastructure without a consumer (D14 rationale point 4). Locked D16. |
+| Must | FR-8 | **Remove `Y.Map('conflicts')` dead writes from `standalone.ts`.** Delete the two `conflictsMap` stanzas: (1) in the `case 'conflicts'` handler inside the file-watcher reconciliation path — the `const conflictsMap = document.getMap('conflicts'); for (...) { conflictsMap.set(...) }` block, and (2) in the `case 'conflicts'` handler inside the batch-restore path — the `const conflictDoc = hocuspocus.documents.get(docName); if (conflictDoc) { const conflictsMap = ... }` block. | Zero consumers in `packages/app/src/` (verified via grep). Write-only Y.Map paying CRDT replication cost + unbounded doc growth for a conflict UI that never materialized. Reconciliation logic (`reconciliation.ts`), conflict counter (`incrementConflict()`), and the `{ kind: 'conflicts' }` return type are all preserved — only the dead Y.Map writes are removed. Side effects: zero negative, one positive (stops monotonic doc growth). Greenfield directive: don't ship write-only CRDT infrastructure without a consumer (D14 rationale point 4). Locked D16. |
 
 ### Non-functional requirements
 
@@ -275,6 +275,10 @@ test('FR-4: Observer A preserves agent-origin Items on content-matching sync', a
   await triggerObserverASync(fragment, ytext);
 
   // 4. Bridge invariant preservation: UM stack still references live Items.
+  //    If this assertion FAILS (um.undo() doesn't revert to ''), it means
+  //    Observer A replaced agent-origin Items with sync-from-tree Items —
+  //    the UM's stack entries now reference tombstoned Items and undo is a
+  //    no-op. That's the origin-laundering bug this spec fixes.
   expect(um.undoStack.length).toBe(1);  // Stack entry survived the sync.
   um.undo();                              // Undo must actually revert.
   expect(ytext.toString()).toBe('');     // Items were live, not tombstoned.
@@ -388,7 +392,7 @@ The same pattern with Path B (XmlFragment changed, triggering DMP merge) forms t
 - `packages/app/src/editor/observers.test.ts` — extend with FR-1 content-gate unit, FR-2 DMP patch_apply unit (5 scenarios), FR-4 architectural test with UndoManager probe, FR-7 `onMergeFailed` callback test, A1 `applyByPrefixSuffix` UM-stack-preservation test
 - `packages/app/tests/stress/observers.fuzz.test.ts` — extend with agent-paragraph-rewrite operator (R3 + A5)
 - `AGENTS.md` — precedent #9 (already landed in prior commit)
-- `packages/server/src/standalone.ts` — FR-8 only: remove dead `Y.Map('conflicts')` writes at `:321-329` and `:992-1000`. No other changes to standalone.ts. Reconciliation logic, conflict counter, `{ kind: 'conflicts' }` return type all preserved.
+- `packages/server/src/standalone.ts` — FR-8 only: remove the two `conflictsMap` stanzas (file-watcher reconciliation path + batch-restore path). No other changes to standalone.ts. Reconciliation logic, conflict counter, `{ kind: 'conflicts' }` return type all preserved.
 
 **NOT in scope:**
 - `packages/app/src/editor/safety-checkpoint.ts` / `.test.ts` — DROPPED per D14
