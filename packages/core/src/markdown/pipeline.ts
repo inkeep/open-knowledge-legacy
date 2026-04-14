@@ -2,7 +2,7 @@
  * Unified pipeline factory.
  *
  * Parse direction:
- *   remark-parse → remark-frontmatter → remark-mdx → remark-directive →
+ *   remark-parse → remark-frontmatter → remarkMdxAgnostic →
  *   remark-gfm → [position-slice walker slot] → remarkProseMirror
  *
  * Serialize direction:
@@ -23,10 +23,8 @@ import {
 } from '@handlewithcare/remark-prosemirror';
 import type { Node as PmNode, Schema } from '@tiptap/pm/model';
 import type { Root as MdastRoot } from 'mdast';
-import remarkDirective from 'remark-directive';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
-import remarkMdx from 'remark-mdx';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { unified } from 'unified';
@@ -38,6 +36,7 @@ import { autolinkPromotionPlugin } from './autolink-promotion.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
 import { docStartThematicFixPlugin } from './doc-start-thematic-fix.ts';
 import { positionSlicePlugin } from './position-slice.ts';
+import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 export interface PipelineOptions {
@@ -111,8 +110,7 @@ function createParseProcessor(opts: PipelineOptions) {
   return unified()
     .use(remarkParse)
     .use(remarkFrontmatter, ['yaml'])
-    .use(remarkMdx)
-    .use(remarkDirective)
+    .use(remarkMdxAgnostic)
     .use(remarkGfm)
     .use(remarkWikiLink)
     .use(restoreFromMdx) // R23: Restore protected patterns after MDX parsing
@@ -139,8 +137,7 @@ export function serializeMd(doc: PmNode, opts: PipelineOptions): string {
   const processor = unified()
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkGfm)
-    .use(remarkMdx)
-    .use(remarkDirective)
+    .use(remarkMdxAgnostic)
     .use(remarkStringify, {
       bullet: '-',
       fences: true,

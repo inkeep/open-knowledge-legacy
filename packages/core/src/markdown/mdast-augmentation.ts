@@ -1,11 +1,10 @@
 /**
  * TypeScript module augmentation for custom mdast node types.
  *
- * MDX types (mdxJsxFlowElement, mdxJsxTextElement, etc.) and directive types
- * (containerDirective, leafDirective, textDirective) are already augmented by
- * their respective remark packages (remark-mdx, remark-directive).
+ * MDX types (mdxJsxFlowElement, mdxJsxTextElement, etc.) are already augmented
+ * by their respective remark packages (mdast-util-mdx-jsx, mdast-util-mdx-expression).
  *
- * We only need to augment for our custom wiki-link node type.
+ * We augment for: wiki-link node type, and sourceRaw data fields on MDX nodes.
  */
 
 // Re-export for convenience in handler files
@@ -92,20 +91,5 @@ declare module 'mdast-util-mdx-expression' {
   }
 }
 
-declare module 'mdast-util-mdxjs-esm' {
-  interface MdxjsEsmData {
-    sourceRaw?: string;
-  }
-}
-
-declare module 'mdast-util-directive' {
-  interface ContainerDirectiveData {
-    sourceRaw?: string;
-  }
-  interface LeafDirectiveData {
-    sourceRaw?: string;
-  }
-  interface TextDirectiveData {
-    sourceRaw?: string;
-  }
-}
+// mdxjsEsm augmentation removed (R4): agnostic mode never produces mdxjsEsm nodes.
+// Directive augmentations removed (D14): remark-directive removed from pipeline.

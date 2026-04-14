@@ -41,15 +41,12 @@ import type {
   Text,
   ThematicBreak,
 } from 'mdast';
-import type { ContainerDirective, LeafDirective, TextDirective } from 'mdast-util-directive';
 import type {
   MdxFlowExpression,
   MdxJsxFlowElement,
   MdxJsxTextElement,
-  MdxjsEsm,
   MdxTextExpression,
 } from 'mdast-util-mdx';
-import { GUARD_OPEN_BRACE } from './autolink-void-html-guard.ts';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseMd, serializeMd } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
@@ -115,26 +112,20 @@ export class MarkdownManager {
    *     than an empty document
    *   - Any caller that can't keep "last valid state" like Observer B does
    *
-   * On failure, retries with all `{` protected via PUA sentinel (defeats
-   * acorn's "Could not parse expression" error while preserving all other
-   * markdown parsing). If that also fails, returns raw text as a paragraph.
+   * Under agnostic MDX mode (R1), balanced-brace expressions no longer crash
+   * (no acorn). The prior brace-retry tier is dead code and removed per R4.
+   * Fallback: whole-doc raw text as paragraph + R14 metric increment.
    */
   parseSafe(markdown: string): JSONContent {
     try {
       return this.parse(markdown);
     } catch {
-      // Retry with all { protected — remark-mdx expression parser can't
-      // claim them, restoreFromMdx() converts PUA back to { in the tree
-      try {
-        const safeMd = markdown.replaceAll('{', GUARD_OPEN_BRACE);
-        return this.parse(safeMd);
-      } catch {
-        // Last resort: raw text as paragraph
-        return {
-          type: 'doc',
-          content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
-        };
-      }
+      // R14: increment whole-doc fallback counter (wired in US-005)
+      // Whole-doc raw text fallback — last resort
+      return {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
+      };
     }
   }
 
@@ -444,24 +435,9 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       n.jsxComponent.createAndFill({
         content: rawFromData(node.data) ?? `{${node.value ?? ''}}`,
       });
-    handlers.mdxjsEsm = (node: MdxjsEsm) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? node.value ?? '',
-      });
-
-    // Directive nodes
-    handlers.containerDirective = (node: ContainerDirective) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? '',
-      });
-    handlers.leafDirective = (node: LeafDirective) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? '',
-      });
-    handlers.textDirective = (node: TextDirective) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? '',
-      });
+    // mdxjsEsm handler removed (R4): agnostic mode never produces mdxjsEsm
+    // nodes — ESM import/export re-parses as prose per NG1.
+    // Directive handlers removed (D14): remark-directive removed from pipeline.
   }
 
   // Wiki-link → inline atom node
