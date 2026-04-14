@@ -15,12 +15,14 @@
  * Does NOT require Hocuspocus running. All diagnostic logging goes to stderr
  * (stdout is the MCP wire).
  */
+import { randomUUID } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { setProjectDir } from '../bash/index.ts';
 import type { Config } from '../config/schema.ts';
 import { MCP_SERVER_NAME, PACKAGE_VERSION } from '../constants.ts';
 import { dim } from '../ui/colors.ts';
+import type { AgentIdentity } from './agent-identity.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
 export interface McpServerOptions {
@@ -163,7 +165,33 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     : undefined;
   // Bash wrapper scopes all shell ops to projectDir (see bash/index.ts).
   setProjectDir(projectDir);
-  registerAllTools(server, { serverUrl: httpUrl, projectDir, config });
+
+  // --- Agent identity (Ref pattern — tool handlers read .current at call time)
+  const connectionId = randomUUID();
+  const label = process.env.AGENT_LABEL || undefined;
+
+  const identityRef: { current: AgentIdentity } = {
+    current: {
+      connectionId,
+      label,
+      displayName: label ?? 'Agent',
+      colorSeed: label ?? connectionId,
+    },
+  };
+
+  server.server.oninitialized = () => {
+    const clientInfo = server.server.getClientVersion();
+    identityRef.current = {
+      connectionId,
+      clientInfo: clientInfo ? { name: clientInfo.name, version: clientInfo.version } : undefined,
+      label,
+      displayName: label ?? clientInfo?.name ?? 'Agent',
+      colorSeed: label ?? clientInfo?.name ?? connectionId,
+    };
+    log(`Agent identity: ${identityRef.current.displayName} (${connectionId.slice(0, 8)})`);
+  };
+
+  registerAllTools(server, { serverUrl: httpUrl, projectDir, config, identityRef });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

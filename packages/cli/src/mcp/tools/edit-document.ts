@@ -5,6 +5,7 @@
  * in the Y.Text and replaces it, propagating to all connected editors.
  */
 import { z } from 'zod';
+import type { AgentIdentity } from '../agent-identity.ts';
 import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, normalizeDocName, textResult } from './shared.ts';
 
@@ -22,7 +23,11 @@ export const DESCRIPTION = [
   '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export function register(
+  server: ServerInstance,
+  serverUrl: string | undefined,
+  identityRef?: { current: AgentIdentity },
+): void {
   server.tool(
     'edit_document',
     DESCRIPTION,
@@ -43,11 +48,13 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
+      const identity = identityRef?.current;
       const result = await httpPost(serverUrl, '/api/agent-patch', {
         docName: normalized.docName,
         find: args.find,
         replace: args.replace,
         offset: args.offset,
+        ...(identity ? { agentId: identity.connectionId, agentName: identity.displayName } : {}),
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       return textResult('Edit applied successfully');

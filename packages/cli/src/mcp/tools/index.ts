@@ -18,6 +18,7 @@
  * `register(...)` export, then import and call it from here.
  */
 import type { Config } from '../../config/schema.ts';
+import type { AgentIdentity } from '../agent-identity.ts';
 import {
   DESCRIPTION as CONSOLIDATE_DESCRIPTION,
   register as registerConsolidate,
@@ -116,6 +117,7 @@ export interface RegisterAllToolsOptions {
   serverUrl?: string;
   projectDir: string;
   config: Config;
+  identityRef?: { current: AgentIdentity };
 }
 
 export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsOptions): void {
@@ -145,11 +147,11 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   registerSuggestLinks(server, opts.serverUrl);
 
   // Document tools — make HTTP calls to Hocuspocus
-  registerWriteDocument(server, opts.serverUrl);
-  registerEditDocument(server, opts.serverUrl);
+  registerWriteDocument(server, opts.serverUrl, opts.identityRef);
+  registerEditDocument(server, opts.serverUrl, opts.identityRef);
   registerRenameDocument(server, opts.serverUrl);
   registerGetHistory(server, opts.serverUrl);
-  registerSaveVersion(server, opts.serverUrl);
+  registerSaveVersion(server, opts.serverUrl, opts.identityRef);
   registerRollbackToVersion(server, opts.serverUrl);
   registerListDocuments(server, opts.serverUrl);
   registerGetBacklinks(server, opts.serverUrl);
