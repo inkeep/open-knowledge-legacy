@@ -1,8 +1,5 @@
-import {
-  CC1_CONTRACT_VERSION,
-  type CC1Signal as ServerCC1Signal,
-  SYSTEM_DOC_NAME,
-} from '@inkeep/open-knowledge-server';
+import { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
+import type { CC1Signal as ServerCC1Signal } from '@inkeep/open-knowledge-server';
 
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
