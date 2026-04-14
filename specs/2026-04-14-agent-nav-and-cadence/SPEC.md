@@ -26,6 +26,8 @@
 - **Multi-tab leader election** — single-tab behavior in v1. Each tab follows independently; if the user opens two tabs, both will nav, which is slightly messy but not broken (see Future Work).
 - **Hard enforcement of cadence** (rejecting orphan writes, throttling bursts) — nav flicker is a sufficient feedback signal for bad cadence. Escalate only if soft nudges fail.
 - **Presence-bar "follow this specific agent" click-to-override** — infrastructure exists (`PresenceBar.tsx`); deferred until multi-agent sessions are common enough to need the disambiguation.
+- **Multi-agent identity (Path B)** — for v1, all agent writes are attributed to the hardcoded `DEFAULT_AGENT_ID = 'claude-1'` (`packages/server/src/api-extension.ts`) regardless of which MCP client produced the write. The `agentFocus` map always has exactly one entry keyed by `'claude-1'`. Concurrent Claude Code sessions against the same server currently conflate — a pre-existing gap that nav surfaces as focus thrashing. Plumbing real per-MCP-session identity (Path B) is small (~115 LOC) but strictly additive; see FW-7. The `AgentFocusBroadcaster.setFocus(agentId, entry)` signature already takes `agentId` as a parameter, so Path A callers pass the hardcoded constant and Path B upgrade is a single-seam change. The two concurrent agents journey (J3-variant) and QA scenario (QA-006) are structurally exercisable via unit tests that seed the map with two entries; they become real integration scenarios when Path B ships.
+- **Per-(agent, doc) presence isolation (Path C)** — even with Path B, the existing per-doc `AgentDirectConnection` (shared across agents writing to that doc) keeps `awareness.user` hardcoded to a single `'Claude'` persona. Two agents editing the same doc disambiguate in the `agentFocus` map (correct for nav) but conflate in the per-doc presence cursor. Fix requires restructuring `AgentSessionManager` to (agentId, docName)-keyed sessions; ~500 LOC; see FW-8. Own spec, not this one.
 
 ### Non-goals (NEVER UNLESS)
 
@@ -38,8 +40,8 @@
 
 | ID | Item | Why |
 |----|------|-----|
-| IS-1 | Awareness state channel on `__system__` carrying `{agentId, agentName, classification, currentDoc, writeKind, ts}` per agent session | Core transport |
-| IS-2 | Server-side: reuse the existing CC1 `__system__` `DirectConnection`; publish a map-valued `agentFocus` awareness field keyed by `agentId`; upsert on every `write_document` / `edit_document` | How the agent's focus gets broadcast (no new DC, no `isSystemDoc` bypass) |
+| IS-1 | Awareness state channel on `__system__` carrying `agentFocus?: Record<agentId, AgentFocusEntry>` where `AgentFocusEntry` = `{agentName, currentDoc, writeKind, ts}`. In Path A (this spec) the map always has one entry keyed by `DEFAULT_AGENT_ID`. Shape is forward-compatible with Path B (multi-agent). | Core transport |
+| IS-2 | Server-side: reuse the existing CC1 `__system__` `DirectConnection`; publish the map-valued `agentFocus` awareness field via a new `AgentFocusBroadcaster` helper (`setFocus(agentId, entry)` / `clearFocus(agentId)`); upsert on every `write_document` / `edit_document`. Path A callers pass `DEFAULT_AGENT_ID`; Path B callers will pass an ID read from request headers. | How the agent's focus gets broadcast (no new DC, no `isSystemDoc` bypass) |
 | IS-3 | Client-side: extend `SystemDocSubscriber` to observe `__system__` awareness, compute primary focus (latest-wins + 300ms debounce), drive navigation via hash | How the browser consumes the signal |
 | IS-4 | Pin/unpin UI in editor chrome; pin state persisted in localStorage | User sovereignty over "am I following?" |
 | IS-5 | Pause-follow guard: suppress nav if user typed in the last 3 seconds | Don't yank focus during active editing |
@@ -56,6 +58,8 @@
 | FW-4 | Hard enforcement of cadence (throttle bursts, require hub update before next child write) | Noted | Soft nudges prove insufficient |
 | FW-5 | Session worklog doc (`worklog.md`) as an alternative narrative surface | Noted | Hub-maintenance pattern proves brittle |
 | FW-6 | Agent-visible "recent edits" summary in tool response | Noted | Agents show signs of losing track of their own edit history |
+| FW-7 | **Path B — Multi-agent identity plumbing** (MCP → HTTP). Generate a stable `agentId` per MCP process (e.g. `${hostname}-${pid}-${uuid8}`), read `agentName` from `OK_AGENT_NAME` env or default, send both as `x-ok-agent-id` / `x-ok-agent-name` headers on every MCP tool's `httpPost`. Server adds a `readAgentIdentity(req)` helper with `DEFAULT_AGENT_ID` fallback; all `activityMap.set()` and `agentFocusBroadcaster.setFocus(...)` call sites read from it. Unblocks: J3-variant (two concurrent agents), QA-006 as a real integration test. ~115 LOC, ~2h. | **Explored** | Observed friction: two Claude Code sessions against the same server conflate attribution; nav amplifies via focus thrashing. This is a pre-existing gap surfaced by this feature. |
+| FW-8 | **Path C — Per-(agent, doc) DirectConnection** for full in-doc presence isolation and per-agent undo. Restructure `AgentSessionManager` from `Map<docName, DC>` to `Map<(agentId, docName), DC>`. Touches `api-extension.ts` write paths, `agent-sessions.ts`, and presence-bar consumers. Enables distinct cursor personas per agent on the same doc. ~500 LOC; own spec. | Identified | Path B landed and in-doc cursor conflation becomes visible friction; or per-agent undo (V0-14) becomes P0. |
 
 ## 4. User journeys
 
@@ -106,7 +110,7 @@
 | File | Change |
 |------|--------|
 | `packages/server/src/api-extension.ts` | On `write_document` / `edit_document`, update per-agent awareness on `__system__` |
-| `packages/server/src/agent-sessions.ts` | On session start/end: call the shared `AgentFocusBroadcaster.setFocus` / `clearFocus`. No new DirectConnection. |
+| `packages/server/src/agent-sessions.ts` | **No change in Path A.** Existing sessions are per-doc, not per-agent; there is no per-agent-session lifecycle event to fire `setFocus` / `clearFocus` on. Path B (FW-7) plumbs identity through the write path instead. |
 | `packages/server/src/cc1-broadcast.ts` (or sibling `agent-focus.ts`) | New `AgentFocusBroadcaster` helper that owns map-valued `agentFocus` awareness updates on the shared `__system__` DC. |
 | `packages/core/src/types/awareness.ts` | Add optional `agentFocus?: Record<string, AgentFocusEntry>` field on `AwarenessState` + `AgentFocusEntry` interface. |
 | `packages/app/src/components/SystemDocSubscriber.tsx` | Extend to also subscribe to `__system__` awareness changes; drive nav |
@@ -182,19 +186,31 @@ export class AgentFocusBroadcaster {
 **Wired into the write path** (`packages/server/src/api-extension.ts`, inside the `write_document` / `edit_document` handlers after the Y.Text mutation):
 
 ```ts
-agentFocusBroadcaster.setFocus(agentId, {
-  agentName,
+// Path A: single agent identity via hardcoded DEFAULT_AGENT_ID.
+// Path B seam: replace the two args below with readAgentIdentity(req) — see §6.2.1.
+agentFocusBroadcaster.setFocus(DEFAULT_AGENT_ID, {
+  agentName: 'Claude',
   currentDoc: targetPath,
   writeKind: /* 'write' | 'edit' */,
   ts: Date.now(),
 });
 ```
 
-**Session lifecycle** (`packages/server/src/agent-sessions.ts`):
-- On agent-session open: `setFocus(agentId, {agentName, currentDoc: null, writeKind: null, ts: Date.now()})` to advertise the agent's existence (so presence-bar-style UIs can show them before they write).
-- On agent-session close: `clearFocus(agentId)` to remove the entry. (Server-wide DC is not released — it's owned by CC1.)
+This is strictly additive: no new DirectConnection, no `isSystemDoc` bypass, no session-manager change. The existing per-doc `AgentSessionManager` is untouched — we don't hook `open` / `close` in Path A because the current session model is keyed by docName, not by agent identity, so there is no per-agent-session "open" event to fire on (see §6.2.1). `clearFocus(agentId)` exists on the broadcaster for forward-compatibility; no Path A caller uses it today.
 
-This is strictly additive: no new DirectConnection, no `isSystemDoc` bypass, no session-manager change beyond the two-line open/close calls.
+### 6.2.1 Agent identity: Path A today, Path B seam
+
+**Current state (Path A, this spec).** Every write in `api-extension.ts` hardcodes `DEFAULT_AGENT_ID = 'claude-1'` as the `agentId` and `'Claude'` as the `agentName` (see `packages/server/src/api-extension.ts:581, 670, 977` for the existing hardcoded usage in `activityMap.set(...)`). The `agentFocus` map therefore always contains exactly one entry keyed by `'claude-1'`, moving from doc to doc as writes land. Nav works correctly; multi-agent journeys do not exercise real identity separation (see non-goal in §2 and FW-7).
+
+**Extension points for Path B (when we plumb real identity):**
+
+- **MCP client (1 seam, ~25 LOC):** generate a stable `agentId` on MCP server startup in `packages/cli/src/mcp/server.ts` (`${hostname}-${pid}-${uuid8}`), read `agentName` from `process.env.OK_AGENT_NAME` with `'Claude'` fallback, and add both as `x-ok-agent-id` / `x-ok-agent-name` headers to every outbound HTTP call from `packages/cli/src/mcp/tools/shared.ts:httpPost`.
+- **Server helper (1 seam, ~20 LOC):** introduce `readAgentIdentity(req)` in `packages/server/src/api-extension.ts` that returns `{agentId, agentName}` from headers with `DEFAULT_AGENT_ID` / `'Claude'` fallback. Replace every hardcoded `DEFAULT_AGENT_ID` site (existing activity writes and the new `setFocus` call) with `readAgentIdentity(req)`. Changing this one function's body moves the whole server from Path A to Path B.
+- **AgentFocusBroadcaster — no change:** `setFocus(agentId, entry)` already accepts `agentId` as a parameter; map is already keyed by it.
+
+That's the whole Path B plumbing — single-seam on the server, single-seam on the MCP client. Estimated ~115 LOC total (see FW-7). Not in scope for this spec, but the shape is intentional — nothing here has to be reopened when we pick it up.
+
+**Path C (FW-8) — per-(agent, doc) DirectConnections** is orthogonal to Path B and lives in its own future spec. It is required for in-doc cursor isolation and per-agent undo but not for correct multi-agent nav.
 
 ### 6.3 Client-side wiring
 
@@ -368,7 +384,7 @@ sequenceDiagram
 4. Given the human has pinned doc X, an agent write to doc Y does not trigger navigation. The pin badge shows "Agent on Y".
 5. When the human unpins, the browser immediately navigates to the current agent primary (if any).
 6. Given no active agent focus in the last 5 seconds, no navigation is triggered on stale entries.
-7. Two concurrent agents writing to different docs produce a nav sequence of latest-wins transitions, never both at once.
+7. Two concurrent agents writing to different docs produce a nav sequence of latest-wins transitions, never both at once. *(Exercised via unit test that seeds the `agentFocus` map with two distinct agentId entries. Real integration coverage is deferred until Path B / FW-7 plumbs per-MCP-session identity.)*
 
 ### Cadence + nudge
 
@@ -397,6 +413,7 @@ sequenceDiagram
 | D9 | Enforcement: soft nudge only; no hard throttle on bursts | **LOCKED** | Nav flicker IS the feedback signal. Hard enforcement risks agent thrashing against rules and degrades tool reliability. |
 | D10 | Awareness publication strategy: reuse CC1's single server-wide `__system__` `DirectConnection` with a map-valued `agentFocus` awareness field keyed by `agentId` (vs. per-agent `DirectConnection`) | **LOCKED** (revised from initial draft — was per-agent DC) | Per-agent DCs to `__system__` conflict with the `isSystemDoc()` guard in `AgentSessionManager.getSession()` (`agent-sessions.ts:101-103`). Reusing the CC1-owned DC avoids bypassing cross-cutting policy. Cost: we manage the agentId→entry map ourselves instead of getting per-peer separation from Yjs. Benefit: zero session-lifecycle change, zero new DC, policy compliance. |
 | D11 | AwarenessState extension shape: add parallel top-level `agentFocus?: Record<agentId, AgentFocusEntry>` (vs. nesting under `user`) | **LOCKED** | Preserves the existing identity/transient separation in `AwarenessState` (`user`, `mode`, `cursor`). `user` is single-peer; nav focus is multi-agent; nesting would be semantically wrong. Additive — existing awareness consumers ignore unknown fields. |
+| D12 | Identity scope for v1: Path A — single agent via hardcoded `DEFAULT_AGENT_ID='claude-1'` (vs. Path B multi-agent via MCP→HTTP header plumbing) | **LOCKED** (Path A) | Discovered during implementation: the current server has no per-agent-session concept — all writes hardcode `DEFAULT_AGENT_ID` in `api-extension.ts`. The `agentFocus` map shape already supports N agents (keyed by agentId), so Path A callers pass the hardcoded constant with zero loss of forward-compatibility. Path B (FW-7) is strictly additive and 1-seam on server + 1-seam on MCP client (~115 LOC, ~2h). Shipping Path A unblocks the nav primitive and reveals whether multi-agent pain is worth Path B cost. |
 
 ## 10. Assumptions
 
@@ -448,11 +465,9 @@ Order of operations for one PR:
 2. **Server — `AgentFocusBroadcaster`** (`packages/server/src/cc1-broadcast.ts` or new `agent-focus.ts`)
    - Owns a reference to the CC1-owned `__system__` DirectConnection.
    - `setFocus(agentId, entry)` / `clearFocus(agentId)` — upsert/remove the map entry via `awareness.setLocalStateField('agentFocus', ...)`.
-3. **Server — session-lifecycle wiring** (`packages/server/src/agent-sessions.ts`)
-   - On agent session open: call `setFocus(agentId, {agentName, currentDoc: null, ...})`.
-   - On agent session close: call `clearFocus(agentId)`.
+3. ~~Session-lifecycle wiring~~ — **not applicable in Path A.** No changes to `agent-sessions.ts`. The current `AgentSessionManager` keyed by docName has no per-agent-session lifecycle event to fire on. See §6.2.1.
 4. **Server — awareness update on writes** (`packages/server/src/api-extension.ts`)
-   - After `write_document` / `edit_document` Y.Text mutation, call `setFocus(agentId, {agentName, currentDoc: targetPath, writeKind, ts: Date.now()})`.
+   - After the `write_document` / `edit_document` Y.Text mutation (and activity Y.Map update), call `setFocus(DEFAULT_AGENT_ID, {agentName: 'Claude', currentDoc: targetPath, writeKind, ts: Date.now()})`. Single hardcoded identity in Path A; replace with `readAgentIdentity(req)` when Path B ships (FW-7).
 5. **Server — orphan hint in response** (`api-extension.ts`, `write_document` handler only)
    - Compute `findHubCandidates`, attach `hints` array when orphan + candidate exists.
 6. **Client — nav subscriber** (`packages/app/src/components/SystemDocSubscriber.tsx`)
