@@ -1,13 +1,8 @@
----
-title: Agent-driven browser navigation + cadence norms
-status: ready-for-implementation
-owner: Tim
-baseline: 892290a
-spec-date: 2026-04-14
----
-
 # Agent-driven browser navigation + cadence norms
 
+**Status:** ready-for-implementation
+**Owner(s):** Tim
+**Last updated:** 2026-04-14
 **Baseline commit:** `892290a`
 
 ## 1. Problem (SCR)
@@ -44,7 +39,7 @@ spec-date: 2026-04-14
 | ID | Item | Why |
 |----|------|-----|
 | IS-1 | Awareness state channel on `__system__` carrying `{agentId, agentName, classification, currentDoc, writeKind, ts}` per agent session | Core transport |
-| IS-2 | Server-side: per-agent `DirectConnection` to `__system__` at session start; awareness update on every `write_document` / `edit_document` | How the agent's focus gets broadcast |
+| IS-2 | Server-side: reuse the existing CC1 `__system__` `DirectConnection`; publish a map-valued `agentFocus` awareness field keyed by `agentId`; upsert on every `write_document` / `edit_document` | How the agent's focus gets broadcast (no new DC, no `isSystemDoc` bypass) |
 | IS-3 | Client-side: extend `SystemDocSubscriber` to observe `__system__` awareness, compute primary focus (latest-wins + 300ms debounce), drive navigation via hash | How the browser consumes the signal |
 | IS-4 | Pin/unpin UI in editor chrome; pin state persisted in localStorage | User sovereignty over "am I following?" |
 | IS-5 | Pause-follow guard: suppress nav if user typed in the last 3 seconds | Don't yank focus during active editing |
@@ -78,7 +73,7 @@ spec-date: 2026-04-14
 
 1. Human is typing in `docs/auth.md`.
 2. Agent writes to `reports/r1/evidence/a.md`.
-3. Last-keystroke was <3s ago → nav suppressed. Pin indicator briefly shows "Agent writing elsewhere".
+3. Last-keystroke was <3s ago → nav suppressed silently (no UI feedback — don't distract while the user is mid-edit). Agent's focus is still visible in the presence bar if the user glances at it.
 4. Human idles for 3s; next agent write triggers nav normally.
 
 ### J3 — Agent batching (undesired cadence — self-correcting)
@@ -111,7 +106,9 @@ spec-date: 2026-04-14
 | File | Change |
 |------|--------|
 | `packages/server/src/api-extension.ts` | On `write_document` / `edit_document`, update per-agent awareness on `__system__` |
-| `packages/server/src/agent-sessions.ts` | On session start: open per-agent `DirectConnection` to `__system__`, set initial awareness. On session end: release. |
+| `packages/server/src/agent-sessions.ts` | On session start/end: call the shared `AgentFocusBroadcaster.setFocus` / `clearFocus`. No new DirectConnection. |
+| `packages/server/src/cc1-broadcast.ts` (or sibling `agent-focus.ts`) | New `AgentFocusBroadcaster` helper that owns map-valued `agentFocus` awareness updates on the shared `__system__` DC. |
+| `packages/core/src/types/awareness.ts` | Add optional `agentFocus?: Record<string, AgentFocusEntry>` field on `AwarenessState` + `AgentFocusEntry` interface. |
 | `packages/app/src/components/SystemDocSubscriber.tsx` | Extend to also subscribe to `__system__` awareness changes; drive nav |
 | `packages/app/src/editor/DocumentContext.tsx` | New `pinnedDoc` + `isPinned` state; `setPinned(path)` action |
 | `packages/app/src/editor/` (new or existing chrome component) | Pin icon + badge |
@@ -121,54 +118,83 @@ spec-date: 2026-04-14
 
 ## 6. Technical design
 
-### 6.1 Transport — awareness on `__system__`
+### 6.1 Transport — awareness on `__system__` via the existing shared DirectConnection
 
-Yjs awareness is a per-Y.Doc side-channel where each peer publishes an ephemeral state keyed by its `clientID`. Already in use for presence (human cursors, mode). Its properties match our needs:
+Yjs awareness is a per-Y.Doc side-channel where each peer publishes an ephemeral state keyed by its `clientID`. Already in use for presence (human cursors, mode on content docs). Its properties match our needs:
 
-- **Global reach:** every client subscribes to `__system__` on mount (via `ProviderPool`), so an awareness update there is seen by every tab.
-- **Per-agent isolation:** each agent session gets its own `clientID`, so concurrent agents don't stomp each other's focus.
-- **Auto-expiry:** if an agent's connection drops, its awareness entry is timed out and removed by the protocol — no stale-focus cleanup code needed.
-- **No new transport:** the wire protocol, server infrastructure (pre-materialized `__system__` doc), and client subscription (`SystemDocSubscriber`) already exist.
+- **Global reach:** every client subscribes to `__system__` on mount (via `ProviderPool`), so an awareness update on that doc is seen by every tab.
+- **Auto-expiry:** if the server disconnects, the awareness entry is timed out and removed by the protocol — no stale-focus cleanup code on the connection layer.
+- **No new transport:** the wire protocol, the pre-materialized `__system__` `DirectConnection` (opened at startup for CC1 broadcast), and the client subscription (`SystemDocSubscriber`) already exist.
 
-**Awareness state shape (per agent session):**
+**Why reuse the CC1 broadcaster's `DirectConnection`, not one per agent.** `AgentSessionManager.getSession()` (`packages/server/src/agent-sessions.ts:101-103`) explicitly rejects `__system__` docnames via the `isSystemDoc()` cross-cutting guard — the reserved doc is never a legitimate agent-content target. Opening per-agent DirectConnections to `__system__` would either require bypassing that guard (breaks CLAUDE.md §CC1 policy — every doc-keyed subsystem short-circuits through `isSystemDoc()`) or creating a parallel session lifecycle. Instead, we reuse the single server-wide `__system__` DC already owned by the CC1 broadcaster and encode per-agent state as a map-valued awareness field. One `clientID`, N agents, zero changes to session lifecycle.
+
+**Extending (not adding) AwarenessState.** The existing type in `packages/core/src/types/awareness.ts` separates identity (`user: AwarenessUser`) from transient state (`mode`, `cursor`). Nav focus is *multi-agent* transient state and has no natural home in the single-peer `user` object. Add a parallel top-level key, matching the existing pattern:
 
 ```ts
-{
-  agentId: string;        // stable MCP-session-level ID
-  agentName: string;      // human-readable ('claude-1', etc.)
-  classification: 'agent'; // disambiguates from human peers on __system__
-  currentDoc: string | null;  // relative path from content root, or null between writes
-  writeKind: 'write' | 'edit' | null;  // which tool produced the update
-  ts: number;             // Date.now() — used by latest-wins
+// Added to AwarenessState (packages/core/src/types/awareness.ts)
+export interface AwarenessState {
+  user: AwarenessUser;
+  mode: 'wysiwyg' | 'source' | 'idle' | 'editing';
+  cursor?: { anchor: unknown; head: unknown };
+  // New — only present on __system__ awareness, set by the server-side
+  // CC1 DirectConnection. Keyed by agentId so concurrent agents coexist
+  // under the single shared clientID.
+  agentFocus?: Record<string, AgentFocusEntry>;
+}
+
+export interface AgentFocusEntry {
+  agentName: string;            // human-readable ('claude-1', etc.)
+  currentDoc: string | null;    // relative path from content root, null between writes
+  writeKind: 'write' | 'edit' | null;
+  ts: number;                   // Date.now() — used by latest-wins
 }
 ```
 
+On content docs, `agentFocus` stays absent; on `__system__` it's the single source of truth for "which agents are focused where."
+
 ### 6.2 Server-side wiring
 
-**On agent session open (`AgentSessionManager`):**
+The CC1 broadcaster already owns the server-side `__system__` `DirectConnection` (opened at startup in `standalone.ts`). Expose a small helper on it for agent-focus updates.
+
+**New helper in `packages/server/src/cc1-broadcast.ts` (or a sibling `agent-focus.ts` that shares the same DC handle):**
 
 ```ts
-// In addition to existing DirectConnection for agent's target docs
-const systemDc = await hocuspocus.openDirectConnection('__system__');
-systemDc.awareness.setLocalStateField('agent', {
-  agentId, agentName, classification: 'agent',
-  currentDoc: null, writeKind: null, ts: Date.now(),
-});
-agentSession.systemDc = systemDc;
+export class AgentFocusBroadcaster {
+  constructor(private systemDc: DirectConnection) {}
+
+  /** Upsert one agent's focus entry. Called after every write_document / edit_document. */
+  setFocus(agentId: string, entry: AgentFocusEntry): void {
+    const awareness = this.systemDc.document.awareness;
+    const current = (awareness.getLocalState()?.agentFocus ?? {}) as Record<string, AgentFocusEntry>;
+    awareness.setLocalStateField('agentFocus', { ...current, [agentId]: entry });
+  }
+
+  /** Remove one agent's entry on session close. */
+  clearFocus(agentId: string): void {
+    const awareness = this.systemDc.document.awareness;
+    const current = (awareness.getLocalState()?.agentFocus ?? {}) as Record<string, AgentFocusEntry>;
+    const { [agentId]: _dropped, ...rest } = current;
+    awareness.setLocalStateField('agentFocus', rest);
+  }
+}
 ```
 
-**On every `write_document` / `edit_document` (in `api-extension.ts` handlers, after the Y.Text mutation):**
+**Wired into the write path** (`packages/server/src/api-extension.ts`, inside the `write_document` / `edit_document` handlers after the Y.Text mutation):
 
 ```ts
-session.systemDc.awareness.setLocalStateField('agent', {
-  agentId, agentName, classification: 'agent',
+agentFocusBroadcaster.setFocus(agentId, {
+  agentName,
   currentDoc: targetPath,
-  writeKind: 'write' | 'edit',
+  writeKind: /* 'write' | 'edit' */,
   ts: Date.now(),
 });
 ```
 
-**On session close:** release `systemDc` (awareness auto-clears via protocol timeout; explicit release is belt-and-suspenders).
+**Session lifecycle** (`packages/server/src/agent-sessions.ts`):
+- On agent-session open: `setFocus(agentId, {agentName, currentDoc: null, writeKind: null, ts: Date.now()})` to advertise the agent's existence (so presence-bar-style UIs can show them before they write).
+- On agent-session close: `clearFocus(agentId)` to remove the entry. (Server-wide DC is not released — it's owned by CC1.)
+
+This is strictly additive: no new DirectConnection, no `isSystemDoc` bypass, no session-manager change beyond the two-line open/close calls.
 
 ### 6.3 Client-side wiring
 
@@ -191,17 +217,24 @@ useEffect(() => {
 }, [provider, activeDocName, pinned, lastUserKeystroke]);
 ```
 
-**`pickPrimary` (latest-wins):**
+**`pickPrimary` (latest-wins, reads the server's map-valued `agentFocus` field):**
 
 ```ts
 function pickPrimary(awareness: Awareness, now: number): string | null {
-  const agents = [...awareness.getStates().values()]
-    .map(s => s.agent)
-    .filter(a => a?.classification === 'agent' && a.currentDoc)
-    .filter(a => now - a.ts < 5000);
-  if (agents.length === 0) return null;
-  agents.sort((a, b) => b.ts - a.ts);
-  return agents[0].currentDoc;
+  // The server-side CC1 DC is the single peer that publishes agentFocus.
+  // Walk every awareness state, collect agentFocus entries from any that
+  // expose them (robust to clientID changes across server restarts).
+  const entries: AgentFocusEntry[] = [];
+  for (const state of awareness.getStates().values()) {
+    const focus = (state as AwarenessState).agentFocus;
+    if (!focus) continue;
+    for (const entry of Object.values(focus)) {
+      if (entry.currentDoc && now - entry.ts < 5000) entries.push(entry);
+    }
+  }
+  if (entries.length === 0) return null;
+  entries.sort((a, b) => b.ts - a.ts);
+  return entries[0].currentDoc;
 }
 ```
 
@@ -226,10 +259,10 @@ function pickPrimary(awareness: Awareness, now: number): string | null {
 ## Cadence — maintain hubs as you create children
 
 When you create or meaningfully edit a doc inside a folder that has a hub doc
-(`INDEX.md`, `REPORT.md`, `SPEC.md`, or any top-level doc in that folder),
-update the hub to reflect the change before moving to the next child. Write one
-child → update hub → write next child. Don't batch five children and then the
-hub.
+(`INDEX.md`, `README.md`, `REPORT.md`, `SPEC.md`, or a file whose name matches
+the folder name — e.g. `reports/r1/r1.md`), update the hub to reflect the
+change before moving to the next child. Write one child → update hub → write
+next child. Don't batch five children and then the hub.
 
 Why: the browser follows your focus in real time. Hub-as-you-go makes your
 work legible to the human watching — each pulse is a complete thought. Batched
@@ -362,14 +395,15 @@ sequenceDiagram
 | D7 | Tool nudge: `write_document` returns orphan + parent-candidate hint | **LOCKED** | Lightweight (no enforcement). Makes right behavior the path of least resistance. Cost: ~40 lines server-side. |
 | D8 | Explicit `open_file(path)` MCP tool | **DEFERRED** (Future Work FW-1) | Every meaningful agent action already emits a nav-worthy side-effect. Adding a tool is surface area for uncertain payoff. Revisit if read-heavy sessions become a common pattern. |
 | D9 | Enforcement: soft nudge only; no hard throttle on bursts | **LOCKED** | Nav flicker IS the feedback signal. Hard enforcement risks agent thrashing against rules and degrades tool reliability. |
-| D10 | Awareness clientID strategy: one DirectConnection per agent session (vs. one server-wide + custom agent list) | **LOCKED** | Matches Yjs awareness's native per-peer model. N concurrent agents = N entries, auto-expire, no custom list management. |
+| D10 | Awareness publication strategy: reuse CC1's single server-wide `__system__` `DirectConnection` with a map-valued `agentFocus` awareness field keyed by `agentId` (vs. per-agent `DirectConnection`) | **LOCKED** (revised from initial draft — was per-agent DC) | Per-agent DCs to `__system__` conflict with the `isSystemDoc()` guard in `AgentSessionManager.getSession()` (`agent-sessions.ts:101-103`). Reusing the CC1-owned DC avoids bypassing cross-cutting policy. Cost: we manage the agentId→entry map ourselves instead of getting per-peer separation from Yjs. Benefit: zero session-lifecycle change, zero new DC, policy compliance. |
+| D11 | AwarenessState extension shape: add parallel top-level `agentFocus?: Record<agentId, AgentFocusEntry>` (vs. nesting under `user`) | **LOCKED** | Preserves the existing identity/transient separation in `AwarenessState` (`user`, `mode`, `cursor`). `user` is single-peer; nav focus is multi-agent; nesting would be semantically wrong. Additive — existing awareness consumers ignore unknown fields. |
 
 ## 10. Assumptions
 
 | # | Assumption | Confidence | Verification plan |
 |---|-----------|------------|-------------------|
 | A1 | Opening a `DirectConnection` to `__system__` per agent session is cheap (local pipe; no wire cost) | HIGH | Confirmed by `CLAUDE.md` — `hocuspocus.openDirectConnection` is the documented pattern, already used for the server-side CC1 broadcaster. |
-| A2 | `__system__` awareness is not tracked by the existing cross-cutting `isSystemDoc()` skip helper in a way that would filter out agent awareness updates | MEDIUM | Read `cc1-broadcast.ts` to confirm `isSystemDoc` only guards CRDT content sync, not awareness. If it does guard awareness, we'd need to except agent-focus awareness. |
+| A2 | The CC1 broadcaster's `__system__` `DirectConnection` is safe to carry awareness updates (not just stateless CC1 broadcasts). Awareness is per-doc native Yjs state; `isSystemDoc()` is a content/persistence/reconciliation guard, not an awareness filter. | HIGH | Inspect `cc1-broadcast.ts` and confirm there's no awareness suppression on `__system__`. Should be a 5-minute check during implementation; the CC1 guard policy enumerated in CLAUDE.md targets subsystems that key off docName for content writes (persistence, file-watcher, backlink-index), not awareness. |
 | A3 | `SystemDocSubscriber` already has the `provider.awareness` reference, or can easily get it | HIGH | Component already uses `HocuspocusProvider`; awareness is a first-class provider field. |
 | A4 | 300ms debounce is tight enough to feel live but loose enough to coalesce reasonable bursts | MEDIUM | Instrumented user test (or dogfood session). Adjustable. If bursts are <100ms typical, 300ms may be too loose. |
 | A5 | Agent-classified awareness entries can be disambiguated from human-classified ones by a `classification: 'agent'` field | HIGH | Human awareness presumably doesn't set this field (or sets `'human'`); safe disambiguation. |
@@ -409,22 +443,27 @@ No backwards-compat concerns — awareness addition is a new field on a new clas
 
 Order of operations for one PR:
 
-1. **Server — per-agent `__system__` DirectConnection** (`packages/server/src/agent-sessions.ts`)
-   - On session start: open DC, set initial awareness.
-   - On session close: release.
-2. **Server — awareness update on writes** (`packages/server/src/api-extension.ts`)
-   - After `write_document` / `edit_document` Y.Text mutation, set `currentDoc` / `writeKind` / `ts`.
-3. **Server — orphan hint in response** (`api-extension.ts`, `write_document` handler only)
+1. **Core type extension** (`packages/core/src/types/awareness.ts`)
+   - Add `AgentFocusEntry` interface and optional `agentFocus?: Record<string, AgentFocusEntry>` on `AwarenessState`. Additive; no consumer update required.
+2. **Server — `AgentFocusBroadcaster`** (`packages/server/src/cc1-broadcast.ts` or new `agent-focus.ts`)
+   - Owns a reference to the CC1-owned `__system__` DirectConnection.
+   - `setFocus(agentId, entry)` / `clearFocus(agentId)` — upsert/remove the map entry via `awareness.setLocalStateField('agentFocus', ...)`.
+3. **Server — session-lifecycle wiring** (`packages/server/src/agent-sessions.ts`)
+   - On agent session open: call `setFocus(agentId, {agentName, currentDoc: null, ...})`.
+   - On agent session close: call `clearFocus(agentId)`.
+4. **Server — awareness update on writes** (`packages/server/src/api-extension.ts`)
+   - After `write_document` / `edit_document` Y.Text mutation, call `setFocus(agentId, {agentName, currentDoc: targetPath, writeKind, ts: Date.now()})`.
+5. **Server — orphan hint in response** (`api-extension.ts`, `write_document` handler only)
    - Compute `findHubCandidates`, attach `hints` array when orphan + candidate exists.
-4. **Client — nav subscriber** (`packages/app/src/components/SystemDocSubscriber.tsx`)
-   - Subscribe to awareness change; `pickPrimary`; debounce; nav with all guards.
-5. **Client — pin state** (`DocumentContext.tsx` + new chrome component)
+6. **Client — nav subscriber** (`packages/app/src/components/SystemDocSubscriber.tsx`)
+   - Subscribe to awareness change; `pickPrimary` reads `agentFocus` map; debounce; nav with all guards.
+7. **Client — pin state** (`DocumentContext.tsx` + new chrome component)
    - `pinnedDoc` state, localStorage, pin icon UI.
-6. **Client — typing guard** (editor root event listener)
+8. **Client — typing guard** (editor root event listener)
    - `lastUserKeystroke` ref, updated on keydown; read by subscriber.
-7. **Instructions updates** (`packages/cli/src/mcp/server.ts`, `packages/cli/src/content/init.ts`)
+9. **Instructions updates** (`packages/cli/src/mcp/server.ts`, `packages/cli/src/content/init.ts`)
    - Cadence section in `buildInstructions`; matching section in `CLAUDE_MD_SECTION`.
-8. **Tests**
+10. **Tests**
    - Unit: `pickPrimary` latest-wins, stale filter, empty-case.
    - Integration: multi-client scenario — two clients + server, agent writes, assert hash updates on the right client, not during typing.
    - Manual: dogfood with two tabs + real Claude session.
@@ -462,7 +501,7 @@ Estimated LOC: ~200 app, ~100 server, ~30 instructions, ~50 tests. One focused P
 
 ## 16. Open questions
 
-None at spec finalization. A2 (awareness isSystemDoc interaction) is an assumption with a 5-minute verification during implementation; flag if it doesn't hold.
+None at spec finalization. A2 (shared `__system__` DC carries awareness safely) is HIGH-confidence but worth a 5-minute sanity check during implementation; flag if it doesn't hold.
 
 ## 17. References
 

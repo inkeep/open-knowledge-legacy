@@ -30,9 +30,9 @@ Yjs awareness is a per-Y.Doc side-channel where each peer publishes an ephemeral
 
 Key properties:
 
-- **Auto-expiry:** the Yjs awareness protocol times out stale entries when a peer disconnects. No cleanup code needed for crashed agent sessions.
-- **Per-peer isolation:** each agent session opens its own `DirectConnection` to `__system__` with a unique `clientID`. Concurrent agents get separate awareness entries; `pickPrimary()` just picks the latest-ts across all agent-classified entries.
-- **Native primitive:** awareness is already the mechanism Open Knowledge uses for human cursors and editor mode (editing/idle). Agent focus is semantically the same — a per-peer ephemeral state property.
+- **Auto-expiry at the connection layer:** if the server disconnects, the Yjs awareness protocol times out stale entries. For in-session agent cleanup (the common case), the server removes the entry explicitly via `AgentFocusBroadcaster.clearFocus(agentId)`.
+- **Per-agent isolation via map key:** `AgentSessionManager.getSession()` throws on `__system__` docnames (reserved-doc guard at `agent-sessions.ts:101-103`), so per-agent `DirectConnection`s aren't viable. Instead, the single CC1-owned `__system__` DC carries a map-valued `agentFocus` awareness field keyed by `agentId`. Concurrent agents get separate map entries; `pickPrimary()` walks the map, picks the latest-ts.
+- **Native primitive:** awareness is already the mechanism Open Knowledge uses for human cursors and editor mode (editing/idle). Agent focus is semantically the same — transient per-agent state. Added as a parallel top-level `agentFocus?` field on `AwarenessState`, preserving the existing identity-vs-transient separation (`user` is single-peer identity; `agentFocus` is multi-agent transient).
 
 ## `SystemDocSubscriber` already has what we need
 
@@ -44,8 +44,8 @@ Key properties:
 |------|---------------|----------------|---------------------------|
 | Global reach (all clients see it) | Yes | No (per-doc only) | Yes |
 | Forks existing contract | Yes (v1 → v2) | No | No |
-| Per-agent isolation | Manual | Manual | Native (clientID) |
-| Stale-entry cleanup | Manual | Manual | Auto (protocol timeout) |
+| Per-agent isolation | Manual | Manual | Map-valued `agentFocus` field keyed by agentId (single shared DC; map-entry upsert/remove) |
+| Stale-entry cleanup | Manual | Manual | Explicit `clearFocus(agentId)` on session close; connection-level timeout for server-crash case |
 | New wire code | Payload schema + parser | Cross-doc subscribe logic | None |
 
 Awareness wins on every axis.
