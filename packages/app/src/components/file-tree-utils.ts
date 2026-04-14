@@ -19,6 +19,30 @@ export interface TreeNode {
   targetPath?: string | null;
 }
 
+export function computeAncestors(docName: string | null): string[] {
+  if (!docName) return [];
+  const segments = docName.split('/').filter(Boolean);
+  const ancestors: string[] = [];
+  for (let i = 1; i < segments.length; i++) {
+    ancestors.push(segments.slice(0, i).join('/'));
+  }
+  return ancestors;
+}
+
+export function collectFolderPaths(tree: TreeNode[]): Set<string> {
+  const paths = new Set<string>();
+  function walk(nodes: TreeNode[]) {
+    for (const node of nodes) {
+      if (node.kind === 'folder') {
+        paths.add(node.path);
+        walk(node.children);
+      }
+    }
+  }
+  walk(tree);
+  return paths;
+}
+
 /**
  * Build a hierarchical tree from a flat list of documents.
  * Each docName is split on '/' to create folder structure.

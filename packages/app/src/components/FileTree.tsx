@@ -10,7 +10,13 @@ import {
   type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
-import { buildTree, type DocEntry, type TreeNode } from '@/components/file-tree-utils';
+import {
+  buildTree,
+  collectFolderPaths,
+  computeAncestors,
+  type DocEntry,
+  type TreeNode,
+} from '@/components/file-tree-utils';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -48,6 +54,9 @@ interface DeletePathResponse {
 const FileTreeNode: FC<{
   node: TreeNode;
   selectedPath: string | null;
+  expandedPaths: Set<string>;
+  onToggle: (path: string) => void;
+  activeRowRef: (node: HTMLDivElement | null) => void;
   editingPath: string | null;
   editingValue: string;
   busyPath: string | null;
@@ -62,6 +71,9 @@ const FileTreeNode: FC<{
   node,
   nested = false,
   selectedPath,
+  expandedPaths,
+  onToggle,
+  activeRowRef,
   editingPath,
   editingValue,
   busyPath,
@@ -73,16 +85,13 @@ const FileTreeNode: FC<{
   onDelete,
 }) => {
   const isFile = node.kind === 'file';
-  const [collapsed, setCollapsed] = useState(() => {
-    if (!selectedPath || isFile) return true;
-    return !selectedPath.startsWith(`${node.path}/`) && selectedPath !== node.path;
-  });
+  const expanded = !isFile && expandedPaths.has(node.path);
 
   const isActive = isFile && node.path === selectedPath;
   const isEditing = editingPath === node.path;
   const isBusy = busyPath === node.path;
   const anyActionBusy = busyPath !== null;
-  const IconToUse = isFile ? File : collapsed ? Folder : FolderOpen;
+  const IconToUse = isFile ? File : !expanded ? Folder : FolderOpen;
   const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
   const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
   const target: FileTreeTarget = { kind: node.kind, path: node.path, name: node.name };
@@ -149,20 +158,25 @@ const FileTreeNode: FC<{
   const triggerContent = isEditing ? (
     editingContent
   ) : isFile ? (
-    <ButtonToUse isActive={isActive} onClick={() => onSelect(node.path)} className="cursor-pointer">
+    <ButtonToUse
+      isActive={isActive}
+      onClick={() => onSelect(node.path)}
+      className="cursor-pointer"
+      aria-current={isActive ? 'page' : undefined}
+    >
       {displayContent}
     </ButtonToUse>
   ) : (
     <div>
       <ButtonToUse
         className="w-full cursor-pointer pr-8"
-        aria-expanded={!collapsed}
-        onClick={() => setCollapsed((value) => !value)}
+        aria-expanded={expanded}
+        onClick={() => onToggle(node.path)}
       >
         {displayContent}
       </ButtonToUse>
       <SidebarMenuAction
-        className={cn('top-1 pointer-events-none', !collapsed && 'rotate-90')}
+        className={cn('top-1 pointer-events-none', expanded && 'rotate-90')}
         aria-hidden
         tabIndex={-1}
       >
@@ -175,7 +189,7 @@ const FileTreeNode: FC<{
     <ComponentToUse>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div>{triggerContent}</div>
+          <div ref={isActive ? activeRowRef : undefined}>{triggerContent}</div>
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuItem
@@ -200,13 +214,16 @@ const FileTreeNode: FC<{
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      {node.children.length > 0 && !collapsed && (
+      {node.children.length > 0 && expanded && (
         <SidebarMenuSub className="mr-0 pr-0">
           {node.children.map((child) => (
             <FileTreeNode
               key={child.path}
               node={child}
               selectedPath={selectedPath}
+              expandedPaths={expandedPaths}
+              onToggle={onToggle}
+              activeRowRef={activeRowRef}
               editingPath={editingPath}
               editingValue={editingValue}
               busyPath={busyPath}
@@ -233,6 +250,23 @@ export function FileTree() {
   const [editingPath, setEditingPath] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState('');
   const [busyPath, setBusyPath] = useState<string | null>(null);
+  const [userExpanded, setUserExpanded] = useState<Set<string>>(() => new Set());
+  const [userCollapsed, setUserCollapsed] = useState<Set<string>>(() => new Set());
+  const [prevActiveDocName, setPrevActiveDocName] = useState(activeDocName);
+  if (activeDocName !== prevActiveDocName) {
+    // Clear user-collapsed overrides on navigation so ancestors of the new
+    // active file are guaranteed to expand. userExpanded is preserved — a user
+    // who hand-opened unrelated folders keeps them open.
+    setPrevActiveDocName(activeDocName);
+    setUserCollapsed(new Set());
+  }
+
+  // Ref callback: fires when the active row DOM node attaches. Handles initial
+  // page load (tree mounts after /api/documents resolves), hash navigation, and
+  // rename — in every case the scroll runs once the target row exists in the DOM.
+  const activeRowRef = (node: HTMLDivElement | null) => {
+    if (node) node.scrollIntoView({ block: 'nearest' });
+  };
 
   useEffect(() => {
     let active = true;
@@ -382,6 +416,40 @@ export function FileTree() {
   }
 
   const treeNodes = buildTree(documents);
+  const folderPaths = collectFolderPaths(treeNodes);
+  const ancestors = computeAncestors(activeDocName);
+
+  // Derive expansion on every render (D4 derive-don't-store):
+  //   expandedPaths = (ancestors(activeDocName) ∪ userExpanded) \ userCollapsed
+  // intersected with current folder paths to filter stale entries.
+  const expandedPaths = new Set<string>();
+  for (const a of ancestors) {
+    if (folderPaths.has(a)) expandedPaths.add(a);
+  }
+  for (const p of userExpanded) {
+    if (folderPaths.has(p)) expandedPaths.add(p);
+  }
+  for (const p of userCollapsed) {
+    expandedPaths.delete(p);
+  }
+
+  function handleToggle(path: string) {
+    if (expandedPaths.has(path)) {
+      setUserCollapsed((prev) => new Set(prev).add(path));
+      setUserExpanded((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+    } else {
+      setUserExpanded((prev) => new Set(prev).add(path));
+      setUserCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(path);
+        return next;
+      });
+    }
+  }
 
   return (
     <>
@@ -396,6 +464,9 @@ export function FileTree() {
             key={node.path}
             node={node}
             selectedPath={activeDocName}
+            expandedPaths={expandedPaths}
+            onToggle={handleToggle}
+            activeRowRef={activeRowRef}
             editingPath={editingPath}
             editingValue={editingValue}
             busyPath={busyPath}

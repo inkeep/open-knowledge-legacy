@@ -3,17 +3,9 @@ import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
+import { docNameFromHash } from '@/lib/doc-hash';
 
-function docNameFromHash(): string | null {
-  const hash = window.location.hash;
-  if (hash.startsWith('#/')) {
-    const rest = hash.slice(2);
-    const qmark = rest.indexOf('?');
-    const docName = qmark >= 0 ? rest.slice(0, qmark) : rest;
-    return docName || null;
-  }
-  return null;
-}
+export { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 
 /** Syncs window.location.hash ↔ DocumentContext.openDocument, unidirectionally:
  *  hash is the source of truth; all navigation sets the hash; this handler
@@ -25,7 +17,7 @@ function NavigationHandler() {
     onHashChange();
 
     function onHashChange() {
-      const docName = docNameFromHash();
+      const docName = docNameFromHash(window.location.hash);
       if (docName) openDocument(docName);
     }
     window.addEventListener('hashchange', onHashChange);
