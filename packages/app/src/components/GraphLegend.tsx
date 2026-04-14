@@ -9,15 +9,12 @@ interface GraphLegendProps {
 export function GraphLegend({ nodes, depth, theme }: GraphLegendProps) {
   if (depth === 0) return null;
 
-  const seen = new Set<string>();
-  const buckets: string[] = [];
+  const bucketSet = new Set<string>();
   for (const node of nodes) {
     const key = bucketKeyForDocName(node.id, depth);
-    if (key !== null && !seen.has(key)) {
-      seen.add(key);
-      buckets.push(key);
-    }
+    if (key !== null) bucketSet.add(key);
   }
+  const buckets = [...bucketSet];
 
   if (buckets.length === 0) return null;
 
@@ -29,6 +26,7 @@ export function GraphLegend({ nodes, depth, theme }: GraphLegendProps) {
       {buckets.map((bucket) => (
         <div key={bucket} className="flex items-center gap-1.5">
           <span
+            aria-hidden="true"
             className="inline-block size-2.5 shrink-0 rounded-sm"
             style={{ backgroundColor: colorForFolderPath(bucket, { depth, theme }) }}
           />

@@ -78,4 +78,9 @@ describe('safeLocalStorageSet', () => {
     });
     expect(() => safeLocalStorageSet('key', 'value')).not.toThrow();
   });
+
+  test('silently no-ops when localStorage is undefined', () => {
+    (globalThis as Record<string, unknown>).localStorage = undefined;
+    expect(() => safeLocalStorageSet('key', 'value')).not.toThrow();
+  });
 });
