@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import './globals.css';
 import { App } from './App';
+import { DirectoryColorProvider } from './state/directory-color';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,9 +27,11 @@ createRoot(root).render(
         disableTransitionOnChange
         storageKey="ok-theme-v1"
       >
-        <TooltipProvider>
-          <App />
-        </TooltipProvider>
+        <DirectoryColorProvider>
+          <TooltipProvider>
+            <App />
+          </TooltipProvider>
+        </DirectoryColorProvider>
         <Toaster />
       </ThemeProvider>
     </QueryClientProvider>
