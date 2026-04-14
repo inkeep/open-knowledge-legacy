@@ -23,9 +23,11 @@ export function FileSidebar() {
   const { activeDocName } = useDocumentContext();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKind, setDialogKind] = useState<'file' | 'folder'>('file');
+  const [dialogInitialDir, setDialogInitialDir] = useState('');
 
-  function openNewItemDialog(kind: 'file' | 'folder') {
+  function openNewItemDialog(kind: 'file' | 'folder', initialDir?: string) {
     setDialogKind(kind);
+    setDialogInitialDir(initialDir ?? defaultInitialDir(activeDocName));
     setDialogOpen(true);
   }
 
@@ -56,14 +58,14 @@ export function FileSidebar() {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <FileTree />
+        <FileTree onNewItem={openNewItemDialog} />
       </SidebarContent>
 
       <NewItemDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         kind={dialogKind}
-        initialDir={defaultInitialDir(activeDocName)}
+        initialDir={dialogInitialDir}
         onCreated={() => {}}
       />
     </Sidebar>
