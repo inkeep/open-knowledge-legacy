@@ -14,9 +14,11 @@ import { DragHandle } from '@tiptap/extension-drag-handle';
 
 // Height of the handle element (matches .ok-drag-handle { height: 20px } in globals.css).
 const HANDLE_HEIGHT = 20;
-// Approximate max height of a single line at the largest heading size (h1, 1.5em × line-height 1.7).
-// Used to cap crossAxis so the handle aligns with the first line on multi-line blocks.
-const MAX_FIRST_LINE_HEIGHT = 44;
+// Approximate height of a single line at the largest heading size (h1: 1.5em × line-height 1.7 ≈ 41px).
+// Blocks taller than this are multiline — use BODY_LINE_HEIGHT instead to stay on the first line.
+const MAX_SINGLE_LINE_HEIGHT = 44;
+// Body text line height: 16px base × line-height: 1.7 ≈ 27px. Used for multiline blocks.
+const BODY_LINE_HEIGHT = 28;
 
 function createHandleElement(): HTMLElement {
   const el = document.createElement('div');
@@ -33,10 +35,16 @@ export const BlockDragHandle = DragHandle.configure({
   render: createHandleElement,
   computePositionConfig: {
     middleware: [
-      offset(({ rects }) => ({
-        mainAxis: 10,
-        crossAxis: (Math.min(rects.reference.height, MAX_FIRST_LINE_HEIGHT) - HANDLE_HEIGHT) / 2,
-      })),
+      offset(({ rects }) => {
+        const firstLineHeight =
+          rects.reference.height <= MAX_SINGLE_LINE_HEIGHT
+            ? rects.reference.height
+            : BODY_LINE_HEIGHT;
+        return {
+          mainAxis: 10,
+          crossAxis: (firstLineHeight - HANDLE_HEIGHT) / 2,
+        };
+      }),
     ],
   },
 });
