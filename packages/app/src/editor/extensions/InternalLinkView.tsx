@@ -1,6 +1,11 @@
 /**
  * Mark view for Link marks pointing to internal KB pages.
  *
+ * Unlike WikiLinkView, this mark view is intentionally read-only: editing link
+ * targets and creating pages from unresolved markdown links stay out of scope
+ * for this feature. Markdown links keep their existing authoring UX; this view
+ * only upgrades rendering and navigation.
+ *
  * External links render as plain <a> elements (unchanged behavior).
  * Internal links (relative hrefs that resolve within the content directory)
  * render with resolved/unresolved chip styling matching WikiLinkView, and
@@ -11,59 +16,17 @@ import { MarkViewContent } from '@tiptap/react';
 import { ExternalLink } from 'lucide-react';
 import { usePageList } from '../../components/PageListContext';
 import { cn } from '../../lib/utils';
-
-// ── Path resolution ───────────────────────────────────────────────────────────
-
-/**
- * Resolve a relative href to a KB docName, using the current document's
- * location (from window.location.hash) as the base.
- *
- * Returns null for external links or hrefs that escape the content root.
- */
-function resolveInternalHref(href: string): { docName: string; anchor: string | null } | null {
-  const trimmed = href.trim();
-  if (!trimmed) return null;
-
-  // External: URI scheme, protocol-relative, absolute path, or anchor-only
-  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) return null;
-  if (trimmed.startsWith('//') || trimmed.startsWith('/') || trimmed.startsWith('#')) return null;
-
-  // Split off fragment
-  const hashIdx = trimmed.indexOf('#');
-  const pathPart = hashIdx >= 0 ? trimmed.slice(0, hashIdx) : trimmed;
-  const anchor = hashIdx >= 0 ? trimmed.slice(hashIdx + 1) : null;
-
-  // Strip query string, then .md extension
-  const cleanPath = (pathPart.split('?')[0] ?? '').trim();
-  if (!cleanPath) return null;
-  const withoutExt = cleanPath.endsWith('.md') ? cleanPath.slice(0, -3) : cleanPath;
-
-  // Derive current docName from the hash — handles nested paths like folder/page
-  const hashMatch = window.location.hash.match(/^#\/([^?#]+)/);
-  const currentDocName = hashMatch ? decodeURIComponent(hashMatch[1]) : '';
-
-  // Build resolved path: start from dirname(currentDocName), apply segments
-  const dirParts = currentDocName.includes('/')
-    ? currentDocName.slice(0, currentDocName.lastIndexOf('/')).split('/')
-    : [];
-  for (const seg of withoutExt.split('/')) {
-    if (seg === '..') {
-      if (dirParts.length === 0) return null; // escapes content root
-      dirParts.pop();
-    } else if (seg !== '.' && seg !== '') {
-      dirParts.push(seg);
-    }
-  }
-  if (dirParts.length === 0) return null;
-
-  return { docName: dirParts.join('/'), anchor: anchor || null };
-}
+import {
+  navigateToInternalHashHref,
+  resolveCurrentInternalHref,
+  toInternalHashHref,
+} from '../internal-link-helpers';
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
   const href = (mark.attrs.href as string | null) ?? '';
-  const internal = resolveInternalHref(href);
+  const internal = resolveCurrentInternalHref(href);
   const { pages, loading } = usePageList();
 
   if (!internal) {
@@ -77,7 +40,10 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
         className="inline-flex items-baseline gap-0.5"
       >
         <MarkViewContent />
-        <ExternalLink className="inline size-3 shrink-0 translate-y-px opacity-60" />
+        <ExternalLink
+          className="inline size-3 shrink-0 translate-y-px opacity-60"
+          aria-hidden="true"
+        />
       </a>
     );
   }
@@ -85,14 +51,13 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
   const isResolved = !loading && pages.has(internal.docName);
   const isUnresolved = !loading && !pages.has(internal.docName);
 
-  const hashHref = internal.anchor
-    ? `#/${internal.docName}?anchor=${encodeURIComponent(internal.anchor)}`
-    : `#/${internal.docName}`;
+  const resolvedInternal = internal;
+  const hashHref = toInternalHashHref(resolvedInternal);
 
   function handleClick(e: React.MouseEvent) {
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
-      window.location.hash = hashHref.slice(1);
+      navigateToInternalHashHref(resolvedInternal);
     }
     // Plain click: ProseMirror handles cursor positioning via mousedown.
   }
@@ -113,8 +78,8 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
       )}
       data-internal-link=""
       data-resolution-state={resolutionState}
-      data-doc-name={internal.docName}
-      data-anchor={internal.anchor ?? ''}
+      data-doc-name={resolvedInternal.docName}
+      data-anchor={resolvedInternal.anchor ?? ''}
       title={`${href} — Cmd/Ctrl+click to navigate`}
     >
       <a

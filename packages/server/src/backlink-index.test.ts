@@ -378,6 +378,14 @@ describe('extractMarkdownLinksFromMarkdown', () => {
     ]);
   });
 
+  test('extracts multiple markdown links from the same line', () => {
+    const md = 'See [page A](./a.md) and [page B](./b.md) for more.';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual<ExtractedWikiLink[]>([
+      { target: 'a', snippet: 'See page A and page B for more.' },
+      { target: 'b', snippet: 'See page A and page B for more.' },
+    ]);
+  });
+
   test('resolves links relative to the source doc directory', () => {
     const md = 'See [overview](../overview.md).';
     expect(extractMarkdownLinksFromMarkdown(md, 'folder/page')).toEqual([
@@ -385,10 +393,24 @@ describe('extractMarkdownLinksFromMarkdown', () => {
     ]);
   });
 
+  test('extracts internal links with optional titles', () => {
+    const md = 'See [overview](./overview.md "Project overview") for details.';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
+      { target: 'overview', snippet: 'See overview for details.' },
+    ]);
+  });
+
   test('ignores external links', () => {
     const md = 'Visit [example](https://example.com) and [local](./local.md).';
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
       { target: 'local', snippet: 'Visit example and local.' },
+    ]);
+  });
+
+  test('ignores image syntax while still extracting sibling links', () => {
+    const md = 'See ![diagram](./assets/diagram.png) and [docs](./docs.md).';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
+      { target: 'docs', snippet: expect.any(String) as string },
     ]);
   });
 

@@ -1,7 +1,11 @@
 import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
-import { getWikiLinkText, stripFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  getWikiLinkText,
+  resolveInternalHref,
+  stripFrontmatter,
+} from '@inkeep/open-knowledge-core';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 
@@ -10,9 +14,10 @@ import type { ContentFilter } from './content-filter.ts';
 // Sticky flag ('y') enables position-based matching via lastIndex.
 const WIKI_LINK_RE = /\[\[([^\n#[\]|]+)(?:#([^\n[\]|]+))?(?:\|([^\n[\]]+))?\]\]/y;
 
-// Inline link form: [text](href) — excludes newlines in both text and href.
+// Inline link form: [text](href) with an optional CommonMark title.
 // Sticky flag for position-based matching. Does NOT match reference-style [text][ref].
-const MD_LINK_RE = /\[([^\]\n]*)\]\(([^)\n]+)\)/y;
+const MD_LINK_RE =
+  /\[([^\]\n]*)\]\((<[^>\n]+>|[^)\s\n]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/y;
 
 interface InlineWikiLinkOccurrence {
   target: string;
@@ -219,34 +224,11 @@ function extractWikiLinksFromLine(line: string): {
  * Resolution is pure string arithmetic — no filesystem access.
  */
 export function resolveMarkdownHref(href: string, sourceDocName: string): string | null {
-  const trimmed = href.trim();
-  if (!trimmed) return null;
+  return resolveInternalHref(href, sourceDocName)?.docName ?? null;
+}
 
-  // External: URI scheme (http:, mailto:, etc.), protocol-relative, absolute, or anchor-only
-  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) return null;
-  if (trimmed.startsWith('//') || trimmed.startsWith('/') || trimmed.startsWith('#')) return null;
-
-  // Strip fragment and query before resolving the path
-  const withoutFragment = trimmed.split('#')[0] ?? '';
-  const pathPart = (withoutFragment.split('?')[0] ?? '').trim();
-  if (!pathPart) return null;
-
-  // Strip .md extension
-  const withoutExt = pathPart.endsWith('.md') ? pathPart.slice(0, -3) : pathPart;
-
-  // Build a path stack from dirname(sourceDocName), then apply href segments
-  const dirParts = dirname(sourceDocName) === '.' ? [] : dirname(sourceDocName).split('/');
-  for (const seg of withoutExt.split('/')) {
-    if (seg === '..') {
-      if (dirParts.length === 0) return null; // would escape content root
-      dirParts.pop();
-    } else if (seg !== '.' && seg !== '') {
-      dirParts.push(seg);
-    }
-  }
-
-  if (dirParts.length === 0) return null;
-  return dirParts.join('/');
+function normalizeMarkdownHref(rawHref: string): string {
+  return rawHref.startsWith('<') && rawHref.endsWith('>') ? rawHref.slice(1, -1) : rawHref;
 }
 
 function readMarkdownLink(
@@ -258,7 +240,7 @@ function readMarkdownLink(
   if (!match) return null;
   return {
     text: match[1] ?? '',
-    href: match[2] ?? '',
+    href: normalizeMarkdownHref(match[2] ?? ''),
     nextIndex: start + match[0].length,
   };
 }
@@ -297,7 +279,7 @@ function extractMarkdownLinksFromLine(
       }
     }
 
-    if (line[idx] === '[') {
+    if (line[idx] === '[' && line[idx - 1] !== '!') {
       const mdLink = readMarkdownLink(line, idx);
       if (mdLink) {
         const resolvedDocName = resolveMarkdownHref(mdLink.href, sourceDocName);

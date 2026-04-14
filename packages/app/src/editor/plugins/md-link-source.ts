@@ -18,59 +18,24 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-
-// ── Href resolution ───────────────────────────────────────────────────────────
-
-/**
- * Resolve href relative to the current document (read from window.location.hash).
- * Returns the resolved docName or null for external/escaping hrefs.
- * Pure string arithmetic — no FS access.
- */
-function resolveHref(href: string): { docName: string; anchor: string | null } | null {
-  const trimmed = href.trim();
-  if (!trimmed) return null;
-  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) return null;
-  if (trimmed.startsWith('//') || trimmed.startsWith('/') || trimmed.startsWith('#')) return null;
-
-  const hashIdx = trimmed.indexOf('#');
-  const pathPart = hashIdx >= 0 ? trimmed.slice(0, hashIdx) : trimmed;
-  const anchor = hashIdx >= 0 ? trimmed.slice(hashIdx + 1) : null;
-  const cleanPath = (pathPart.split('?')[0] ?? '').trim();
-  if (!cleanPath) return null;
-  const withoutExt = cleanPath.endsWith('.md') ? cleanPath.slice(0, -3) : cleanPath;
-
-  const hashMatch = window.location.hash.match(/^#\/([^?#]+)/);
-  const currentDocName = hashMatch ? decodeURIComponent(hashMatch[1]) : '';
-  const dirParts = currentDocName.includes('/')
-    ? currentDocName.slice(0, currentDocName.lastIndexOf('/')).split('/')
-    : [];
-
-  for (const seg of withoutExt.split('/')) {
-    if (seg === '..') {
-      if (dirParts.length === 0) return null;
-      dirParts.pop();
-    } else if (seg !== '.' && seg !== '') {
-      dirParts.push(seg);
-    }
-  }
-  if (dirParts.length === 0) return null;
-  return { docName: dirParts.join('/'), anchor: anchor || null };
-}
+import { navigateToInternalHashHref, resolveCurrentInternalHref } from '../internal-link-helpers';
 
 // ── Decoration ────────────────────────────────────────────────────────────────
 
-// Matches [text](href) — inline link form. Global flag for repeated exec.
-// Captures: [1] text, [2] href.
-const MD_LINK_RE = /\[([^\]\n]*)\]\(([^)\n]+)\)/g;
+// Matches [text](href) with an optional CommonMark title. Captures [1] text and
+// [2] href only so downstream resolution doesn't need to strip the title.
+const MD_LINK_RE =
+  /\[([^\]\n]*)\]\((<[^>\n]+>|[^)\s\n]+)(?:\s+(?:"[^"\n]*"|'[^'\n]*'|\([^)\n]*\)))?\)/g;
 
 const internalLinkMark = Decoration.mark({ class: 'cm-md-internal-link' });
 
-function isInternalHref(href: string): boolean {
-  const trimmed = href.trim();
-  if (!trimmed) return false;
-  if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(trimmed)) return false;
-  if (trimmed.startsWith('//') || trimmed.startsWith('/') || trimmed.startsWith('#')) return false;
-  return true;
+function isImageMatch(text: string, matchIndex: number): boolean {
+  return matchIndex > 0 && text[matchIndex - 1] === '!';
+}
+
+function getMatchHref(match: RegExpExecArray): string {
+  const href = match[2] ?? '';
+  return href.startsWith('<') && href.endsWith('>') ? href.slice(1, -1) : href;
 }
 
 function buildDecorations(view: EditorView): DecorationSet {
@@ -80,7 +45,7 @@ function buildDecorations(view: EditorView): DecorationSet {
     MD_LINK_RE.lastIndex = 0;
     let m = MD_LINK_RE.exec(text);
     while (m !== null) {
-      if (isInternalHref(m[2] ?? '')) {
+      if (!isImageMatch(text, m.index) && resolveCurrentInternalHref(getMatchHref(m)) !== null) {
         builder.add(from + m.index, from + m.index + m[0].length, internalLinkMark);
       }
       m = MD_LINK_RE.exec(text);
@@ -106,9 +71,6 @@ const mdLinkDecorations = ViewPlugin.fromClass(
 
 // ── Ctrl/Cmd+click navigation ─────────────────────────────────────────────────
 
-// Captures [text](href) for per-line position matching
-const MD_LINK_NAV_RE = /\[([^\]\n]*)\]\(([^)\n]+)\)/g;
-
 const mdLinkClickHandler = EditorView.domEventHandlers({
   mousedown(event: MouseEvent, view: EditorView) {
     if (!event.ctrlKey && !event.metaKey) return false;
@@ -116,23 +78,22 @@ const mdLinkClickHandler = EditorView.domEventHandlers({
     if (pos === null) return false;
 
     const line = view.state.doc.lineAt(pos);
-    MD_LINK_NAV_RE.lastIndex = 0;
-    let m = MD_LINK_NAV_RE.exec(line.text);
+    MD_LINK_RE.lastIndex = 0;
+    let m = MD_LINK_RE.exec(line.text);
     while (m !== null) {
       const start = line.from + m.index;
       const end = start + m[0].length;
       if (pos >= start && pos <= end) {
-        const href = m[2]?.trim() ?? '';
-        const resolved = resolveHref(href);
-        if (resolved) {
+        const resolved = isImageMatch(line.text, m.index)
+          ? null
+          : resolveCurrentInternalHref(getMatchHref(m));
+        if (resolved !== null) {
           event.preventDefault();
-          window.location.hash = resolved.anchor
-            ? `#/${resolved.docName}?anchor=${encodeURIComponent(resolved.anchor)}`
-            : `#/${resolved.docName}`;
+          navigateToInternalHashHref(resolved);
           return true;
         }
       }
-      m = MD_LINK_NAV_RE.exec(line.text);
+      m = MD_LINK_RE.exec(line.text);
     }
     return false;
   },

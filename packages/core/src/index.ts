@@ -54,4 +54,5 @@ export {
   getIdentity,
   HUMAN_COLORS,
 } from './utils/identity.ts';
+export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export { type HeadingEntry, toWikiLinkSlug } from './utils/slug.ts';
