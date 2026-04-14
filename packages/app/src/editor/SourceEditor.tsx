@@ -26,6 +26,7 @@ import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
 import { markUserTyping } from './observers';
 import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
+import { createMdLinkSourceExtension } from './plugins/md-link-source';
 import { createWikiLinkSourceExtension } from './plugins/wiki-link-source';
 
 interface SourceEditorProps {
@@ -62,6 +63,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         yCollab(ytext, provider.awareness),
         createAgentFlashSourceExtension(provider.document),
         createWikiLinkSourceExtension(),
+        createMdLinkSourceExtension(),
         themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
         EditorView.lineWrapping,
         EditorView.theme({
