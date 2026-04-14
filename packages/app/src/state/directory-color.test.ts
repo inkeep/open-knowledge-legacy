@@ -34,32 +34,39 @@ describe('directory-color constants', () => {
   });
 });
 
-describe('persisted depth reading', () => {
+describe('readPersistedDepth', () => {
   test('returns DEFAULT_DEPTH when localStorage is empty', async () => {
-    const { DEFAULT_DEPTH } = await import('./directory-color');
-    expect(localStorage.getItem('ok-graph-depth-v1')).toBeNull();
-    expect(DEFAULT_DEPTH).toBe(1);
+    const { readPersistedDepth, DEFAULT_DEPTH } = await import('./directory-color');
+    expect(readPersistedDepth()).toBe(DEFAULT_DEPTH);
   });
 
-  test('reads valid integer from localStorage', () => {
+  test('reads valid integer from localStorage', async () => {
     localStorage.setItem('ok-graph-depth-v1', '3');
-    const raw = localStorage.getItem('ok-graph-depth-v1');
-    expect(raw).toBe('3');
-    const parsed = Number.parseInt(raw ?? '', 10);
-    expect(parsed).toBe(3);
+    const { readPersistedDepth } = await import('./directory-color');
+    expect(readPersistedDepth()).toBe(3);
   });
 
-  test('clamps out-of-range values', () => {
-    const clamp = (v: number) => Math.max(0, Math.min(5, v));
-    expect(clamp(-1)).toBe(0);
-    expect(clamp(10)).toBe(5);
-    expect(clamp(3)).toBe(3);
+  test('clamps values above MAX_DEPTH', async () => {
+    localStorage.setItem('ok-graph-depth-v1', '99');
+    const { readPersistedDepth, MAX_DEPTH } = await import('./directory-color');
+    expect(readPersistedDepth()).toBe(MAX_DEPTH);
   });
 
-  test('falls back to default for non-integer strings', () => {
+  test('clamps values below MIN_DEPTH', async () => {
+    localStorage.setItem('ok-graph-depth-v1', '-5');
+    const { readPersistedDepth, MIN_DEPTH } = await import('./directory-color');
+    expect(readPersistedDepth()).toBe(MIN_DEPTH);
+  });
+
+  test('returns DEFAULT_DEPTH for non-integer strings', async () => {
     localStorage.setItem('ok-graph-depth-v1', 'garbage');
-    const raw = localStorage.getItem('ok-graph-depth-v1');
-    const parsed = Number.parseInt(raw ?? '', 10);
-    expect(Number.isFinite(parsed)).toBe(false);
+    const { readPersistedDepth, DEFAULT_DEPTH } = await import('./directory-color');
+    expect(readPersistedDepth()).toBe(DEFAULT_DEPTH);
+  });
+
+  test('returns DEFAULT_DEPTH for empty string', async () => {
+    localStorage.setItem('ok-graph-depth-v1', '');
+    const { readPersistedDepth, DEFAULT_DEPTH } = await import('./directory-color');
+    expect(readPersistedDepth()).toBe(DEFAULT_DEPTH);
   });
 });

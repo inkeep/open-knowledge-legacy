@@ -7,7 +7,7 @@ export const MAX_DEPTH = 5;
 
 const LS_KEY = 'ok-graph-depth-v1';
 
-function readPersistedDepth(): number {
+export function readPersistedDepth(): number {
   const raw = safeLocalStorageGet(LS_KEY);
   if (raw === null) return DEFAULT_DEPTH;
   const parsed = Number.parseInt(raw, 10);
@@ -15,8 +15,8 @@ function readPersistedDepth(): number {
   return Math.max(MIN_DEPTH, Math.min(MAX_DEPTH, parsed));
 }
 
-const DepthContext = createContext<number>(DEFAULT_DEPTH);
-const SetDepthContext = createContext<(value: number) => void>(() => {});
+const DepthContext = createContext<number | null>(null);
+const SetDepthContext = createContext<((value: number) => void) | null>(null);
 
 export function DirectoryColorProvider({ children }: { children: ReactNode }) {
   const [depth, setDepthRaw] = useState(readPersistedDepth);
@@ -35,9 +35,15 @@ export function DirectoryColorProvider({ children }: { children: ReactNode }) {
 }
 
 export function useDirectoryColorDepth(): number {
-  return use(DepthContext);
+  const ctx = use(DepthContext);
+  if (ctx === null)
+    throw new Error('useDirectoryColorDepth must be used within <DirectoryColorProvider />');
+  return ctx;
 }
 
 export function useSetDirectoryColorDepth(): (value: number) => void {
-  return use(SetDepthContext);
+  const ctx = use(SetDepthContext);
+  if (ctx === null)
+    throw new Error('useSetDirectoryColorDepth must be used within <DirectoryColorProvider />');
+  return ctx;
 }

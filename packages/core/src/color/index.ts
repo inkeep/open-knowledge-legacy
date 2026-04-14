@@ -1,4 +1,5 @@
 export {
+  bucketKeyForDocName,
   bucketKeyForPath,
   colorForDocName,
   colorForFolderPath,

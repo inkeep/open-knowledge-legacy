@@ -6,6 +6,7 @@ export { VFileMessage } from 'vfile-message';
 
 // Color
 export {
+  bucketKeyForDocName,
   bucketKeyForPath,
   colorForDocName,
   colorForFolderPath,

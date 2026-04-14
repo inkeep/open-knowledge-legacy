@@ -109,14 +109,15 @@ const FileTreeNode: FC<{
   const isBusy = busyPath === node.path;
   const anyActionBusy = busyPath !== null;
   const IconToUse = isFile ? File : !expanded ? Folder : FolderOpen;
-  const iconStroke = isFile
-    ? 'var(--color-muted-foreground)'
-    : deriveIconColor(
-        colorForFolderPath(node.path, {
-          depth,
-          theme: resolvedTheme === 'dark' ? 'dark' : 'light',
-        }),
-      );
+  const iconStroke =
+    isFile || depth === 0
+      ? 'var(--color-muted-foreground)'
+      : deriveIconColor(
+          colorForFolderPath(node.path, {
+            depth,
+            theme: resolvedTheme === 'dark' ? 'dark' : 'light',
+          }),
+        );
   const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
   const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
   const target: FileTreeTarget = { kind: node.kind, path: node.path, name: node.name };

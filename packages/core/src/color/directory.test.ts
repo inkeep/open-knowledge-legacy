@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { bucketKeyForPath, colorForDocName, colorForFolderPath } from './directory';
+import {
+  bucketKeyForDocName,
+  bucketKeyForPath,
+  colorForDocName,
+  colorForFolderPath,
+} from './directory';
 import {
   DIRECTORY_FALLBACK_DARK,
   DIRECTORY_FALLBACK_LIGHT,
@@ -49,6 +54,24 @@ describe('bucketKeyForPath', () => {
     expect(bucketKeyForPath(path, 3)).toBe('a/b/c');
     expect(bucketKeyForPath(path, 4)).toBe('a/b/c/d');
     expect(bucketKeyForPath(path, 5)).toBe('a/b/c/d/e');
+  });
+});
+
+describe('bucketKeyForDocName', () => {
+  test('strips filename before bucketing', () => {
+    expect(bucketKeyForDocName('projects/alpha/foo', 2)).toBe('projects/alpha');
+  });
+
+  test('returns null for flat-root doc', () => {
+    expect(bucketKeyForDocName('readme', 1)).toBeNull();
+  });
+
+  test('returns null at depth 0', () => {
+    expect(bucketKeyForDocName('projects/alpha/foo', 0)).toBeNull();
+  });
+
+  test('path shorter than depth uses full prefix', () => {
+    expect(bucketKeyForDocName('projects/readme', 2)).toBe('projects');
   });
 });
 

@@ -26,11 +26,16 @@ export function bucketKeyForPath(path: string, depth: number): string | null {
   return segments.slice(0, Math.min(depth, segments.length)).join('/');
 }
 
+/** Bucket key for a docName — strips the terminal filename segment before bucketing. */
+export function bucketKeyForDocName(docName: string, depth: number): string | null {
+  const parts = docName.split('/');
+  const dirPath = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
+  return bucketKeyForPath(dirPath, depth);
+}
+
 /** Color for a document node — strips the terminal filename segment before bucketing. */
 export function colorForDocName(docName: string, options: DirectoryColorOptions): string {
-  const parts = docName.split('/');
-  const dirSegments = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
-  const bucket = bucketKeyForPath(dirSegments, options.depth);
+  const bucket = bucketKeyForDocName(docName, options.depth);
   if (bucket === null) {
     return options.theme === 'dark' ? DIRECTORY_FALLBACK_DARK : DIRECTORY_FALLBACK_LIGHT;
   }

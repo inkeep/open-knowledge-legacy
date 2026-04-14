@@ -1,4 +1,4 @@
-import { bucketKeyForPath, colorForFolderPath } from '@inkeep/open-knowledge-core';
+import { bucketKeyForDocName, colorForFolderPath } from '@inkeep/open-knowledge-core';
 
 interface GraphLegendProps {
   nodes: Array<{ id: string }>;
@@ -12,9 +12,7 @@ export function GraphLegend({ nodes, depth, theme }: GraphLegendProps) {
   const seen = new Set<string>();
   const buckets: string[] = [];
   for (const node of nodes) {
-    const parts = node.id.split('/');
-    const dirPath = parts.length > 1 ? parts.slice(0, -1).join('/') : '';
-    const key = bucketKeyForPath(dirPath, depth);
+    const key = bucketKeyForDocName(node.id, depth);
     if (key !== null && !seen.has(key)) {
       seen.add(key);
       buckets.push(key);
@@ -24,7 +22,10 @@ export function GraphLegend({ nodes, depth, theme }: GraphLegendProps) {
   if (buckets.length === 0) return null;
 
   return (
-    <div className="absolute top-10 right-2 z-10 flex max-h-[60vh] flex-col gap-0.5 overflow-y-auto rounded-md bg-background/80 p-2 text-xs backdrop-blur-sm">
+    <section
+      aria-label="Directory color legend"
+      className="absolute top-10 right-2 z-10 flex max-h-[60vh] flex-col gap-0.5 overflow-y-auto rounded-md bg-background/80 p-2 text-xs backdrop-blur-sm"
+    >
       {buckets.map((bucket) => (
         <div key={bucket} className="flex items-center gap-1.5">
           <span
@@ -34,6 +35,6 @@ export function GraphLegend({ nodes, depth, theme }: GraphLegendProps) {
           <span className="text-muted-foreground">{bucket}</span>
         </div>
       ))}
-    </div>
+    </section>
   );
 }

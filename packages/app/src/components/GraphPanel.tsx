@@ -73,7 +73,14 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
           )}
         </div>
         <div className="flex items-center gap-0.5">
-          <span className="text-xs text-muted-foreground select-none">Depth</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-xs text-muted-foreground select-none cursor-default">
+                Depth
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Directory levels used to group node colors</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
