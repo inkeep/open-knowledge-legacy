@@ -1,11 +1,12 @@
 /**
  * Bidirectional observers between Y.XmlFragment('default') and Y.Text('source').
  *
- * Observer A (tree→text): Computes an incremental DELTA between the last-synced
- *   XmlFragment state and the current state, and applies ONLY that delta to Y.Text.
- *   This is non-destructive: if Y.Text has content the XmlFragment doesn't have
- *   (e.g., an agent write that hasn't been propagated via Observer B yet), that
- *   content is preserved.
+ * Observer A (tree→text): Two-path sync algorithm.
+ *   Path A (Y.Text in sync with baseline): uses diffLines with a content-comparison
+ *     gate to skip no-op replacements, preserving CRDT Items and their origins.
+ *   Path B (Y.Text diverged, e.g., concurrent agent write): uses DMP patch_make/
+ *     patch_apply three-way merge to apply only the user's delta while preserving
+ *     divergent content. Both paths minimize CRDT Item replacement (precedent #9).
  *
  * Observer B (text→tree): Parses Y.Text markdown, applies to XmlFragment via
  *   updateYFragment. Defers while the user is actively typing in WYSIWYG (the tree

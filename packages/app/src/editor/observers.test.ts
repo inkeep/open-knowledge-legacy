@@ -1444,8 +1444,9 @@ describe('applyUserDelta: divergence preservation', () => {
     //   old = "Alpha original text.\n\nBeta unchanged.\n"
     //   new = "Alpha MODIFIED text.\n\nBeta unchanged.\n"
     //   currentText = "Alpha original text.\n\nBeta unchanged.\n\nAgent tail line.\n"
-    // The delta is {remove: "Alpha original text", add: "Alpha MODIFIED text"},
-    // which applies to currentLines preserving "Agent tail line" at the end.
+    // DMP patch_make(old, new) produces a deletion patch for 'Alpha original text'
+    // and an insertion patch for 'Alpha MODIFIED text'. patch_apply against currentText
+    // preserves 'Agent tail line' because DMP only patches the regions the user changed.
     applyMarkdown(doc, fragment, 'Alpha MODIFIED text.\n\nBeta unchanged.\n');
 
     await wait(200);
