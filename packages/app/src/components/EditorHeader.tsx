@@ -48,9 +48,10 @@ export function EditorHeader({ isSourceMode, onSourceModeChange }: EditorHeaderP
         </ToggleGroupItem>
       </ToggleGroup>
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        <ThemeToggle />
         <PresenceBar />
         <AgentUndoButton />
+        <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
+        <ThemeToggle />
       </div>
     </header>
   );

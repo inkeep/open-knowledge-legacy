@@ -13,7 +13,9 @@ export function FileSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <span className="text-sm text-sidebar-foreground/50">Files</span>
+            <span className="text-sm text-sidebar-foreground/50 uppercase font-mono tracking-wider">
+              Files
+            </span>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>
