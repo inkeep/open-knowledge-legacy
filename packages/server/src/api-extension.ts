@@ -53,6 +53,7 @@ const ROLLBACK_ORIGIN = {
   context: { origin: 'rollback-apply' },
 };
 
+import { getParseHealth } from '@inkeep/open-knowledge-core';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
@@ -1453,7 +1454,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
-      const parsedJson = mdManager.parse(mdBody);
+      const parsedJson = mdManager.parseWithFallback(mdBody);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
 
@@ -1507,6 +1508,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     json(res, 200, getMetrics());
+  }
+
+  async function handleMetricsParseHealth(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    json(res, 200, getParseHealth());
   }
 
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
@@ -2062,6 +2075,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/diff': handleDiff,
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
+    '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/rescue': handleRescueList,
   };
 

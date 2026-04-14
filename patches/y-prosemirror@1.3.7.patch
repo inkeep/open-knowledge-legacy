@@ -1,0 +1,100 @@
+diff --git a/node_modules/y-prosemirror/.bun-tag-d9525f80a1b2e20a b/.bun-tag-d9525f80a1b2e20a
+new file mode 100644
+index 0000000000000000000000000000000000000000..e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+diff --git a/dist/y-prosemirror.cjs b/dist/y-prosemirror.cjs
+index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..3cfd69804a774c945c4e74c9d771741861f184eb 100644
+--- a/dist/y-prosemirror.cjs
++++ b/dist/y-prosemirror.cjs
+@@ -876,10 +876,22 @@ const createNodeFromYElement = (
+     meta.mapping.set(el, node);
+     return node
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (el.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (el._item).delete(transaction);
+-    }, ySyncPluginKey);
++    // R13 patch: substitute rawMdxFallback instead of destructive delete.
++    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', String(e && e.message || e));
++    const __okYps = (globalThis.__okYpsCounters = globalThis.__okYpsCounters || { block: 0, inline: 0 });
++    const isInline = schema.nodes[el.nodeName] && schema.nodes[el.nodeName].spec && schema.nodes[el.nodeName].spec.inline;
++    if (isInline) {
++      __okYps.inline++;
++    } else {
++      __okYps.block++;
++      if (schema.nodes.rawMdxFallback) {
++        try {
++          const fallback = schema.node('rawMdxFallback', { reason: String(e && e.message || e) }, [schema.text(el.nodeName)]);
++          meta.mapping.set(el, fallback);
++          return fallback
++        } catch (_fallbackErr) { console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', String(_fallbackErr && _fallbackErr.message || _fallbackErr)); }
++      }
++    }
+     meta.mapping.delete(el);
+     return null
+   }
+@@ -911,10 +923,10 @@ const createTextNodesFromYText = (
+       nodes.push(schema.text(delta.insert, attributesToMarks(delta.attributes, schema)));
+     }
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (text.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (text._item).delete(transaction);
+-    }, ySyncPluginKey);
++    // R13 patch: log + skip instead of destructive delete for text nodes.
++    console.warn('[y-prosemirror] schema.text() threw:', String(e && e.message || e));
++    const __okYps = (globalThis.__okYpsCounters = globalThis.__okYpsCounters || { block: 0, inline: 0 });
++    __okYps.inline++;
+     return null
+   }
+   // @ts-ignore
+diff --git a/src/plugins/sync-plugin.js b/src/plugins/sync-plugin.js
+index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..cdab2201d744aef62b74477f4766d5895b4eb852 100644
+--- a/src/plugins/sync-plugin.js
++++ b/src/plugins/sync-plugin.js
+@@ -802,10 +802,27 @@ export const createNodeFromYElement = (
+     meta.mapping.set(el, node)
+     return node
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (el.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (el._item).delete(transaction)
+-    }, ySyncPluginKey)
++    // R13 patch: substitute rawMdxFallback instead of destructive delete.
++    // The original code deleted the Y.Item, which is CRDT-permanent and
++    // multi-peer broadcast. This patch preserves Y.Doc integrity.
++    console.warn('[y-prosemirror] schema.node(' + el.nodeName + ') threw:', String(e && e.message || e))
++    const __okYps = (globalThis.__okYpsCounters = globalThis.__okYpsCounters || { block: 0, inline: 0 })
++    const isInline = schema.nodes[el.nodeName] && schema.nodes[el.nodeName].spec && schema.nodes[el.nodeName].spec.inline
++    if (isInline) {
++      __okYps.inline++
++    } else {
++      __okYps.block++
++      if (schema.nodes.rawMdxFallback) {
++        try {
++          const fallback = schema.node('rawMdxFallback', { reason: String(e && e.message || e) }, [schema.text(el.nodeName)])
++          meta.mapping.set(el, fallback)
++          return fallback
++        } catch (_fallbackErr) {
++          console.warn('[y-prosemirror] rawMdxFallback substitution also failed:', String(_fallbackErr && _fallbackErr.message || _fallbackErr))
++        }
++      }
++    }
++    // Inline context or fallback substitution failed: skip without destructive delete
+     meta.mapping.delete(el)
+     return null
+   }
+@@ -837,10 +854,10 @@ const createTextNodesFromYText = (
+       nodes.push(schema.text(delta.insert, attributesToMarks(delta.attributes, schema)))
+     }
+   } catch (e) {
+-    // an error occured while creating the node. This is probably a result of a concurrent action.
+-    /** @type {Y.Doc} */ (text.doc).transact((transaction) => {
+-      /** @type {Y.Item} */ (text._item).delete(transaction)
+-    }, ySyncPluginKey)
++    // R13 patch: log + skip instead of destructive delete for text nodes.
++    console.warn('[y-prosemirror] schema.text() threw:', String(e && e.message || e))
++    const __okYps = (globalThis.__okYpsCounters = globalThis.__okYpsCounters || { block: 0, inline: 0 })
++    __okYps.inline++
+     return null
+   }
+   // @ts-ignore
