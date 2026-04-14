@@ -36,7 +36,7 @@
 
 **Persona B — New note in a subfolder.** Right-clicks a folder row → "New file here" → dialog opens with `{folder-path}/` prefilled → types name → Enter.
 
-**Persona C — Fresh workspace.** Sees "No files yet. [Create your first page]" CTA → click → dialog opens at root.
+**Persona C — Fresh workspace.** Sees "No files yet. [Create your first file]" CTA → click → dialog opens at root.
 
 **Persona D — Power user.** `Cmd/Ctrl+Alt+N` opens the dialog with active-dir default.
 
@@ -48,7 +48,7 @@
 | ----------------------- | -------------------------------------------- | ---------------------------------------------------------------------------- |
 | UI — Sidebar header     | `FileSidebar.tsx`                            | Add `<SidebarMenuAction>` "+" button → dropdown menu ("New file"/"New folder") |
 | UI — File tree row      | `FileTreeNode` in `FileTree.tsx`             | Prepend "New file here" and "New folder here" entries to the context menu    |
-| UI — Empty state        | `FileTree.tsx` empty-state branch            | Add `<Button>Create your first page</Button>`                                |
+| UI — Empty state        | `FileTree.tsx` empty-state branch            | Add `<Button>Create your first file</Button>`                                |
 | UI — Global keybind     | `App.tsx` (new `NewItemShortcut` handler)    | `Cmd/Ctrl+Alt+N` opens dialog with active-dir default                        |
 | UI — Dialog             | `CreatePageDialog.tsx` → `NewItemDialog.tsx` | Refactor: add `kind: 'file' \| 'folder'`, `initialDir`, `suggestedName` props |
 | UI — Wiki-link caller   | `WikiLinkView.tsx`                           | Pass `kind='file'`, derive `initialDir` from active doc, `suggestedName` from slug |
@@ -68,7 +68,7 @@ FileSidebar
   │
   └── FileTree
        ├── empty-state (no files, no error)
-       │    └── "No files yet. [Create your first page]"  ← CTA opens NewItemDialog(kind='file', initialDir='')
+       │    └── "No files yet. [Create your first file]"  ← CTA opens NewItemDialog(kind='file', initialDir='')
        │
        └── FileTreeNode (per row; both kinds)
             └── ContextMenu
@@ -173,7 +173,7 @@ function defaultInitialDir(activeDocName: string | null): string {
 - [ ] Shortcut is `Cmd+Alt+N` (macOS) / `Ctrl+Alt+N` (other) — a deliberate trade-off to avoid the most common collisions (`Cmd/Ctrl+N` = new window; `Cmd/Ctrl+Shift+N` = incognito). May still collide with OS-level shortcuts (e.g., macOS Finder's Cmd+Opt+N for Smart Folders if Finder is foreground); accepted as v1 trade-off.
 
 **G6 — Empty-state CTA.**
-- [ ] When `/api/documents` returns `[]` and there is no error, the empty-state renders "No files yet." + a `Button` labelled "Create your first page".
+- [ ] When `/api/documents` returns `[]` and there is no error, the empty-state renders "No files yet." + a `Button` labelled "Create your first file".
 - [ ] Clicking opens `NewItemDialog(kind='file', initialDir='')`.
 - [ ] Error state (e.g., "Could not reach server") does **not** show the CTA (keeps current behavior).
 
