@@ -515,6 +515,15 @@ No environment variables must be set by hand for any of these scenarios.
 - **WARN:** Layer A tests use `transaction.local=true`. This does NOT exercise the same code path as production where WebSocket updates arrive with `transaction.local=false`.
 - **WARN:** `hocuspocus.configure({ extensions: [...] })` REPLACES the extensions array (object spread). Use `hocuspocus.configuration.extensions.push()` to add extensions without losing existing ones.
 
+### Logging conventions
+
+Two `console.warn` styles coexist by design — pick the one that matches your use case:
+
+1. **Bracket-prefixed strings** (most subsystems): `console.warn('[file-watcher] dropped event', ...)`, `console.warn('[CC1] broadcaster error', ...)`. Use for ad-hoc operational warnings where the consumer is a human reading dev-server output.
+2. **Structured JSON** (parse-health, R6 block-level fallback, R13 y-prosemirror schema-throw): `console.warn(JSON.stringify({ event: 'mdx-block-fallback', offset, reason }))`. Use for events that are (a) counted in aggregate (`packages/core/src/metrics/parse-health.ts`), (b) machine-consumable by log aggregators, or (c) referenced in test assertions via `packages/app/tests/fidelity/expect-parse-event.ts`. Shape follows the Outline / Biome / esbuild stderr-JSON pattern (`specs/2026-04-13-mdx-tolerant-parsing/evidence/observability-pattern.md`).
+
+A structured event that only exists to help a human debug should use the bracket style; an event that's counted or tested programmatically should use the JSON style. Don't convert one to the other without understanding which consumers depend on the shape.
+
 ## Debug Tooling
 
 ### Observer instrumentation
@@ -1134,6 +1143,15 @@ No environment variables must be set by hand for any of these scenarios.
 - **WARN:** Observer A's `lastSyncedXmlMd` must be refreshed on ALL XmlFragment changes, not just user edits. A stale baseline produces incorrect diffs that destroy content.
 - **WARN:** Layer A tests use `transaction.local=true`. This does NOT exercise the same code path as production where WebSocket updates arrive with `transaction.local=false`.
 - **WARN:** `hocuspocus.configure({ extensions: [...] })` REPLACES the extensions array (object spread). Use `hocuspocus.configuration.extensions.push()` to add extensions without losing existing ones.
+
+### Logging conventions
+
+Two `console.warn` styles coexist by design — pick the one that matches your use case:
+
+1. **Bracket-prefixed strings** (most subsystems): `console.warn('[file-watcher] dropped event', ...)`, `console.warn('[CC1] broadcaster error', ...)`. Use for ad-hoc operational warnings where the consumer is a human reading dev-server output.
+2. **Structured JSON** (parse-health, R6 block-level fallback, R13 y-prosemirror schema-throw): `console.warn(JSON.stringify({ event: 'mdx-block-fallback', offset, reason }))`. Use for events that are (a) counted in aggregate (`packages/core/src/metrics/parse-health.ts`), (b) machine-consumable by log aggregators, or (c) referenced in test assertions via `packages/app/tests/fidelity/expect-parse-event.ts`. Shape follows the Outline / Biome / esbuild stderr-JSON pattern (`specs/2026-04-13-mdx-tolerant-parsing/evidence/observability-pattern.md`).
+
+A structured event that only exists to help a human debug should use the bracket style; an event that's counted or tested programmatically should use the JSON style. Don't convert one to the other without understanding which consumers depend on the shape.
 
 ## Debug Tooling
 

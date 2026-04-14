@@ -55,9 +55,35 @@ import type { VFile } from 'vfile';
 /**
  * Types produced by our pipeline (or silently ignored by remark-prosemirror's
  * built-in ignore list). Everything else is routed to the catch-all.
+ *
+ * ## How to update this list
+ *
+ * When adding a new remark plugin to the pipeline (`pipeline.ts`), check its
+ * mdast-util output and add the new types here (grouped by plugin). Omitting
+ * a type is NOT silently dropped — unknown types get substituted with
+ * `rawMdxFallbackMdast` (the safe default), which produces a visible
+ * fallback node instead of structured output. Graceful degradation, but
+ * still a UX regression for users of the new plugin.
+ *
+ * Plugin → types mapping (keep synced with `pipeline.ts`):
+ *   - `remark-parse` (mdast core) → root, paragraph, heading, text, emphasis,
+ *     strong, blockquote, list, listItem, code, inlineCode, link, image,
+ *     linkReference, imageReference, definition, html, thematicBreak, break
+ *   - `remark-frontmatter` (`yaml` profile) → yaml, toml — silently ignored
+ *     by `@handlewithcare/remark-prosemirror`'s built-in ignore list
+ *   - `remark-gfm` (via `mdast-util-gfm`) → table, tableRow, tableCell,
+ *     delete (strikethrough), footnoteDefinition, footnoteReference
+ *   - `remark-mdx-agnostic` (via `mdast-util-mdx` under agnostic micromark) →
+ *     mdxFlowExpression, mdxJsxFlowElement, mdxJsxTextElement, mdxTextExpression
+ *     (NOT mdxjsEsm — agnostic mode drops acorn, so ESM re-parses as prose)
+ *   - `wiki-link-micromark.ts` (our extension) → wikiLink
+ *   - Handler-registered catch-all types in `index.ts:buildMdastToPmHandlers`:
+ *     math, inlineMath (registered preemptively so a future remark-math
+ *     addition degrades gracefully)
+ *   - Our internal fallback marker: rawMdxFallbackMdast
  */
 const KNOWN_TYPES: ReadonlySet<string> = new Set([
-  // Core mdast
+  // remark-parse (mdast core)
   'root',
   'paragraph',
   'heading',
@@ -77,24 +103,24 @@ const KNOWN_TYPES: ReadonlySet<string> = new Set([
   'html',
   'thematicBreak',
   'break',
-  // Frontmatter (remark-prosemirror ignores silently)
+  // remark-frontmatter (remark-prosemirror ignores silently)
   'yaml',
   'toml',
-  // GFM
+  // remark-gfm (mdast-util-gfm)
   'table',
   'tableRow',
   'tableCell',
   'delete',
   'footnoteDefinition',
   'footnoteReference',
-  // MDX agnostic mode
+  // remark-mdx-agnostic (mdast-util-mdx under agnostic micromark)
   'mdxFlowExpression',
   'mdxJsxFlowElement',
   'mdxJsxTextElement',
   'mdxTextExpression',
-  // Our wiki-link micromark extension
+  // Our wiki-link-micromark.ts extension
   'wikiLink',
-  // Known-possible types registered with catch-all handlers in index.ts
+  // Handler-registered catch-all types in index.ts (future remark-math compat)
   'math',
   'inlineMath',
   // Our internal fallback marker

@@ -148,9 +148,18 @@ interface Region {
 }
 
 /**
- * Find the enclosing paired tag (e.g., <Callout>...</Callout>) around the
- * error offset. Only matches UpperCase tag names (JSX convention).
- * Fence-aware: skips fenced code regions.
+ * Find the enclosing paired tag (e.g., `<Callout>...</Callout>`) around the
+ * error offset. Only matches UpperCase tag names (JSX / MDX component
+ * convention); lowercase `<div>` or `<span>` are treated as HTML and skipped.
+ * Fence-aware: tags inside ``` fences are not considered.
+ *
+ * When no matching close tag exists, returns a span from the opening tag to
+ * the nearest blank line (or EOF) — the "dangling open tag" case.
+ *
+ * Known edge case: `<DIV>...</DIV>` (uppercase HTML) matches the JSX regex
+ * and gets treated as an MDX paired region. This is technically incorrect
+ * (uppercase HTML is still HTML), but extremely rare in practice and
+ * produces correct rawMdxFallback behavior (the region degrades safely).
  */
 function findEnclosingPairedTag(src: string, offset: number): Region | null {
   const fences = findFencedRegions(src);

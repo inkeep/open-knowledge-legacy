@@ -89,4 +89,93 @@ describe('parseWithFallback (R6)', () => {
     const result = mdManager.parseWithFallback('');
     expect(result.type).toBe('doc');
   });
+
+  // ─── Regression tests added from PR #136 review feedback ─────────────────
+
+  test('(m2) recovery-failure path: split succeeds but recursive parse throws → whole-doc fallback', () => {
+    // Reviewer's concern: the inner try/catch in parseRecursive (lines 65-106)
+    // handles recovery-phase failures (e.g., a bug in findFallbackRegion or a
+    // pathological recursive-parse throw). Without this test, a regression
+    // could silently degrade to whole-doc fallback on content that should
+    // have had block-level fallback.
+    let callCount = 0;
+    const result = parseWithFallbackFn('a\n\nb\n\nc', {
+      parse: () => {
+        callCount++;
+        if (callCount === 1) {
+          // First (outer) parse throws with position → triggers split-then-rejoin
+          const err = new Error('first call fails with position') as Error & {
+            place: { offset: number };
+          };
+          err.place = { offset: 4 };
+          throw err;
+        }
+        // Every subsequent parse throws — recovery fails; final wholeDocRawText
+        throw new Error('recovery parse fail');
+      },
+    });
+    expect(result.type).toBe('doc');
+    // Recovery failure produces a single paragraph carrying the whole source as text
+    const children = result.content as { type: string }[];
+    expect(children.length).toBeGreaterThanOrEqual(1);
+    // Metric fired for the whole-doc fallback that terminates recovery
+    expect(getParseHealth().parseFallback.wholeDoc).toBeGreaterThanOrEqual(1);
+  });
+
+  test('(m3) findEnclosingPairedTag: surrounding headings preserved when mid-doc fallback fires', () => {
+    // Reviewer's concern: findFallbackRegion correctly bounds the failing
+    // region so headings before + after remain structured. Under agnostic
+    // mode the error-producing construct is tag-mismatch (not unclosed tag,
+    // which agnostic-mode tokenizer tolerates as prose). This exercises the
+    // same findEnclosingPairedTag path — it locates the open tag to set
+    // region.start and walks forward for the close.
+    const src = '# Before\n\nsome text\n\n<Foo>content</Bar>\n\n# After\n\nmore\n';
+    const result = mdManager.parseWithFallback(src);
+    const types = (result.content as { type: string }[]).map((n) => n.type);
+    const headings = (result.content as { type: string }[]).filter((n) => n.type === 'heading');
+    expect(headings.length).toBe(2); // both "Before" and "After" preserved
+    expect(types).toContain('rawMdxFallback');
+  });
+
+  test('(m3) findEnclosingPairedTag: nested broken — innermost paired region captured', () => {
+    // Reviewer's concern: multiple candidate opening tags before the error
+    // offset. Our regex walks the BEST (last-before-offset) open tag — verify
+    // that picks the innermost when nested.
+    const src = '# Heading\n\n<Outer><Inner>broken</Bar></Outer>\n\n# Footer\n';
+    const result = mdManager.parseWithFallback(src);
+    const types = (result.content as { type: string }[]).map((n) => n.type);
+    expect(types).toContain('rawMdxFallback');
+    const headings = (result.content as { type: string }[]).filter((n) => n.type === 'heading');
+    expect(headings.length).toBe(2);
+  });
+
+  test('(c1) tryPerBlockFallback single-block early-return: position-less error on one-block doc → whole-doc', () => {
+    // Reviewer's concern: the `if (blocks.length < 2) return null` guard is
+    // untested. A single-block document with a position-less error should
+    // fall to whole-doc raw text, NOT attempt per-block splitting (which
+    // would wrap the whole doc in a rawMdxFallback).
+    const singleBlock = 'just one paragraph here no blank lines';
+    const result = parseWithFallbackFn(singleBlock, {
+      parse: () => {
+        // Position-less error ALWAYS — forces position-less fallback path,
+        // then per-block split encounters single block, returns null,
+        // caller falls to wholeDocRawText.
+        throw new Error('always fails, no position');
+      },
+    });
+    expect(result.type).toBe('doc');
+    // Whole-doc fallback produces ONE paragraph containing the source
+    const children = result.content as {
+      type: string;
+      content?: { type: string; text?: string }[];
+    }[];
+    expect(children.length).toBe(1);
+    expect(children[0].type).toBe('paragraph');
+    const text = children[0].content?.[0]?.text ?? '';
+    expect(text).toContain('just one paragraph here');
+    // No rawMdxFallback node — single-block path intentionally avoids wrapping
+    const types = children.map((c) => c.type);
+    expect(types).not.toContain('rawMdxFallback');
+    expect(getParseHealth().parseFallback.wholeDoc).toBeGreaterThanOrEqual(1);
+  });
 });

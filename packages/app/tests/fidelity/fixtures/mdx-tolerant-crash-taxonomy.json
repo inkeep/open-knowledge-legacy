@@ -24,6 +24,14 @@
     "note": "Multi-line JSX tag in flow"
   },
   {
+    "id": "C04",
+    "input": "# Heading\n\n<?xml version=\"1.0\"?> content\n\n# Footer\n",
+    "class": "Bad first-name char (processing instruction)",
+    "r23Covers": false,
+    "expectedOutcome": "clean-or-fallback",
+    "note": "PI-style <?xml?> triggers tokenizer at factory-tag.js:132 (bad-first-name-char). R23 HTML-comment regex doesn't cover PI syntax; agnostic mode + R6 either parses as HTML or block-fallback."
+  },
+  {
     "id": "C05",
     "input": "# Heading\n\n< 1>\n\n# Footer\n",
     "class": "Bad after-< char",
@@ -38,6 +46,30 @@
     "r23Covers": false,
     "expectedOutcome": "clean-or-fallback",
     "note": "@ in tag name"
+  },
+  {
+    "id": "C07",
+    "input": "# Heading\n\n<Foo.bar@baz>content</Foo.bar@baz>\n\n# Footer\n",
+    "class": "Bad in-member-name char (@)",
+    "r23Covers": false,
+    "expectedOutcome": "clean-or-fallback",
+    "note": "Invalid character inside member name (factory-tag.js:276). R23 doesn't touch this pattern; block-level fallback expected."
+  },
+  {
+    "id": "C08",
+    "input": "# Heading\n\n<svg: />\n\n# Footer\n",
+    "class": "Bad before-local-name (empty after colon)",
+    "r23Covers": false,
+    "expectedOutcome": "clean-or-fallback",
+    "note": "Namespace colon with no local name (factory-tag.js:326). R23 doesn't cover; block-level fallback expected."
+  },
+  {
+    "id": "C09",
+    "input": "# Heading\n\n<svg:path%/>\n\n# Footer\n",
+    "class": "Bad after-local-name",
+    "r23Covers": false,
+    "expectedOutcome": "clean-or-fallback",
+    "note": "Invalid character after namespaced local name (factory-tag.js:378). R23 doesn't cover; block-level fallback expected."
   },
   {
     "id": "C10",
@@ -64,12 +96,36 @@
     "note": "Unclosed attribute quote"
   },
   {
+    "id": "C13",
+    "input": "# Heading\n\n<Foo /x>\n\n# Footer\n",
+    "class": "Bad after-self-closing slash",
+    "r23Covers": false,
+    "expectedOutcome": "clean-or-fallback",
+    "note": "Garbage after self-closing slash (factory-tag.js:711). R23 partial coverage; block-level fallback expected."
+  },
+  {
     "id": "C14",
     "input": "# Heading\n\n<Foo!>\n\n# Footer\n",
     "class": "After-name junk",
     "r23Covers": false,
     "expectedOutcome": "clean-or-fallback",
     "note": "! after tag name"
+  },
+  {
+    "id": "C15",
+    "input": "# Heading\n\n<Foo.bar!>content</Foo.bar>\n\n# Footer\n",
+    "class": "After-member-name junk",
+    "r23Covers": false,
+    "expectedOutcome": "clean-or-fallback",
+    "note": "Trailing junk after member name (factory-tag.js:306). R23 doesn't cover; block-level fallback expected."
+  },
+  {
+    "id": "C16",
+    "input": "# Heading\n\n<Foo a:b!>content</Foo>\n\n# Footer\n",
+    "class": "After-local-attr-name junk",
+    "r23Covers": false,
+    "expectedOutcome": "clean-or-fallback",
+    "note": "Trailing junk after namespaced attr name (factory-tag.js:597). R23 doesn't cover; block-level fallback expected."
   },
   {
     "id": "C17",

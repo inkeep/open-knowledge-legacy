@@ -22,9 +22,44 @@
  *
  * End-to-end verification of the patch actually firing on a live Y.Doc
  * requires a DOM (TipTap editor), which is out of scope for Node unit
- * tests — covered by Playwright E2E in a future iteration. The patch's
- * internal logic (counter bridge, fallback substitution) IS unit-tested
- * via globalThis in `metrics/parse-health.test.ts`.
+ * tests. The patch's internal logic (counter bridge, fallback substitution)
+ * IS unit-tested via globalThis in `metrics/parse-health.test.ts`.
+ *
+ * ## Upgrade procedure (y-prosemirror past 1.3.7)
+ *
+ * The patch is verified against 1.3.7 source only. Upstream may refactor
+ * the sync-plugin internals. When bumping to version N.N.N, do this work
+ * in a DEDICATED PR (do not bundle with unrelated changes):
+ *
+ *   1. **Diff upstream** — compare the patched `dist/y-prosemirror.cjs@1.3.7`
+ *      against the new `@N.N.N` version. Focus on the two `catch (e) {`
+ *      blocks formerly at ~801 (`schema.node` catch) and ~834 (`schema.text`
+ *      catch). If upstream moved or replaced the destructive
+ *      `el._item.delete(transaction)` call, re-port to the new call sites.
+ *      Patch invariants to preserve:
+ *        - NO `_item.delete(transaction)` in either catch block
+ *        - `rawMdxFallback` substitution in block-context `schema.node()` catch
+ *        - `globalThis.__okYpsCounters.{block,inline}++` at every catch site
+ *        - Structured `console.warn('[y-prosemirror] ...')` retained
+ *
+ *   2. **Regenerate via `bun patch`**:
+ *        `bun patch y-prosemirror@N.N.N`
+ *      edit the workspace copy, then
+ *        `bun patch --commit node_modules/y-prosemirror`.
+ *      The new `patches/y-prosemirror@N.N.N.patch` replaces the 1.3.7 file.
+ *
+ *   3. **Update `package.json`** `patchedDependencies` entry from
+ *      `"y-prosemirror@1.3.7"` → `"y-prosemirror@N.N.N"` with the new path.
+ *
+ *   4. **Update this file** — change the version literal in the
+ *      `patchedDependencies` test below and the path in the file-exists test.
+ *
+ *   5. **Run the full gate**: `bun run check` PLUS any DOM-level Q6 E2E tests
+ *      (see `specs/2026-04-13-mdx-tolerant-parsing/SPEC.md §6 Q6`).
+ *
+ * If upstream ever adds a non-destructive hook (e.g., `onSchemaError`
+ * callback), retire this patch in favor of the official API. Track upstream
+ * at https://github.com/yjs/y-prosemirror.
  */
 
 import { describe, expect, test } from 'bun:test';
