@@ -1,11 +1,12 @@
 'use client';
 
-import { BrainCircuitIcon, GitBranchIcon, type LucideIcon, PenToolIcon } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { BrainCircuitIcon, PenToolIcon, TerminalIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 interface ShowcaseItem {
+  step: string;
   icon: LucideIcon;
-  badge: string;
   title: string;
   description: string;
   visual: React.ReactNode;
@@ -13,28 +14,28 @@ interface ShowcaseItem {
 
 const items: ShowcaseItem[] = [
   {
-    icon: PenToolIcon,
-    badge: 'Rich Editing',
-    title: 'Write with a rich editor\nthat feels like home',
+    step: '01',
+    icon: TerminalIcon,
+    title: 'Run one command\nto start the server',
     description:
-      'A polished WYSIWYG editor with source mode toggle. Headings, tables, code blocks, callouts — everything you expect, powered by TipTap and CodeMirror.',
+      'No config files, no setup wizard. A single npx command starts the server, editor, and MCP endpoint. Your current directory becomes the content root.',
+    visual: <InstallVisual />,
+  },
+  {
+    step: '02',
+    icon: PenToolIcon,
+    title: 'Open the editor\nand start writing',
+    description:
+      'A rich WYSIWYG editor opens in your browser. Toggle to source mode anytime. Your content is saved as plain markdown files — no database, just files in a folder.',
     visual: <EditorVisual />,
   },
   {
+    step: '03',
     icon: BrainCircuitIcon,
-    badge: 'AI Co-authoring',
-    title: 'Watch AI write\nalongside you in real time',
+    title: 'Connect an AI agent\nand collaborate in real time',
     description:
-      'Any AI agent connects via MCP and writes into the same document. You see their cursor, their edits, and can undo them — just like a human collaborator.',
+      'Point any MCP-compatible agent — Claude, Cursor, Codex — at the server. The agent reads, writes, and searches your knowledge base alongside you, live.',
     visual: <CollabVisual />,
-  },
-  {
-    icon: GitBranchIcon,
-    badge: 'Git-Native',
-    title: 'Plain markdown files,\nversioned in git',
-    description:
-      'No proprietary database. Every page is a .md file in your repo. Branch, diff, merge, and review knowledge changes like code.',
-    visual: <GitVisual />,
   },
 ];
 
@@ -70,24 +71,36 @@ export function StickyShowcase() {
   return (
     <section className="border-t border-[var(--slide-border)] bg-[var(--slide-bg)] px-6">
       <div ref={containerRef} className="mx-auto max-w-6xl">
+        <div className="pt-24 md:pt-32">
+          <p className="mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
+            Get started
+          </p>
+          <h2 className="text-3xl font-light tracking-tight text-[var(--slide-text)] sm:text-4xl">
+            Up and running in under a minute
+          </h2>
+          <p className="mt-4 max-w-2xl text-[var(--slide-muted)]">
+            Three steps from zero to a live, AI-collaborative knowledge base.
+          </p>
+        </div>
         <div className="relative md:grid md:grid-cols-2 md:gap-12 lg:gap-20">
           {/* Left: scrolling text */}
-          <div className="py-24 md:py-32">
+          <div className="py-16 md:py-20">
             {items.map((item, i) => {
               const Icon = item.icon;
               return (
                 <div
-                  key={item.badge}
+                  key={item.step}
                   ref={(el) => {
                     sectionRefs.current[i] = el;
                   }}
                   className="flex min-h-[70vh] flex-col justify-center py-12 first:pt-0 last:pb-0"
                 >
-                  <div className="flex items-center gap-2.5">
-                    <Icon className="size-4 text-[var(--slide-accent)]" strokeWidth={2} />
-                    <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[var(--slide-accent)]">
-                      {item.badge}
+                  <div className="flex items-center gap-3">
+                    <span className="font-mono text-xs font-semibold text-[var(--slide-accent)]">
+                      {item.step}
                     </span>
+                    <div className="h-px flex-1 max-w-8 bg-[var(--slide-accent)]/30" />
+                    <Icon className="size-4 text-[var(--slide-accent)]" strokeWidth={2} />
                   </div>
 
                   <h3 className="mt-5 whitespace-pre-line text-2xl font-light leading-snug tracking-tight text-[var(--slide-text)] sm:text-3xl">
@@ -104,11 +117,11 @@ export function StickyShowcase() {
 
           {/* Right: sticky visual */}
           <div className="hidden md:block">
-            <div className="sticky top-28 py-32">
+            <div className="sticky top-28 py-20">
               <div className="relative aspect-[4/3] w-full overflow-hidden">
                 {items.map((item, i) => (
                   <div
-                    key={item.badge}
+                    key={item.step}
                     className="absolute inset-0 transition-all duration-500 ease-out"
                     style={{
                       opacity: activeIndex === i ? 1 : 0,
@@ -130,7 +143,7 @@ export function StickyShowcase() {
           {/* Mobile: inline visuals */}
           <div className="md:hidden">
             {items.map((item) => (
-              <div key={`mobile-${item.badge}`} className="mb-16 aspect-[4/3]">
+              <div key={`mobile-${item.step}`} className="mb-16 aspect-[4/3]">
                 {item.visual}
               </div>
             ))}
@@ -378,83 +391,48 @@ function CollabVisual() {
   );
 }
 
-function GitVisual() {
+function InstallVisual() {
   return (
-    <MockBrowserChrome title="terminal — git log">
-      <div className="space-y-2.5 font-mono text-[11px] leading-relaxed">
-        <div className="flex items-center gap-2 border-b border-[var(--slide-border)] pb-2">
-          <span className="text-[var(--slide-muted)]">$</span>
-          <span className="text-[var(--slide-text)]">git log --oneline content/</span>
+    <MockBrowserChrome title="terminal">
+      <div className="space-y-3 font-mono text-[11px] leading-relaxed">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-[var(--slide-muted)]">$</span>
+            <span className="text-[var(--slide-text)]">npx @inkeep/open-knowledge</span>
+          </div>
         </div>
-        <div className="space-y-2">
-          {[
-            {
-              hash: 'a3f8c2d',
-              msg: 'agent: expand API reference section',
-              color: '#10b981',
-            },
-            {
-              hash: 'e1b4a09',
-              msg: 'docs: fix typo in getting started',
-              color: 'var(--slide-accent)',
-            },
-            {
-              hash: '7d2f1c5',
-              msg: 'agent: add troubleshooting guide',
-              color: '#10b981',
-            },
-            {
-              hash: 'b9e3d47',
-              msg: 'docs: restructure navigation',
-              color: 'var(--slide-accent)',
-            },
-            {
-              hash: 'f6a0c81',
-              msg: 'agent: cross-link related pages',
-              color: '#10b981',
-            },
-          ].map((commit) => (
-            <div key={commit.hash} className="flex items-start gap-2">
-              <span className="shrink-0 font-bold" style={{ color: commit.color }}>
-                {commit.hash}
-              </span>
-              <span className="text-[var(--slide-text)]">{commit.msg}</span>
-            </div>
-          ))}
+        <div className="space-y-1">
+          <div className="text-[var(--slide-muted)]">Scaffolding .open-knowledge/ ...</div>
+          <div className="text-[var(--slide-muted)]">Registering MCP server in .mcp.json ...</div>
         </div>
         <div
-          className="mt-3 rounded-md p-2.5"
+          className="rounded-md p-3"
           style={{
-            backgroundColor: 'color-mix(in srgb, var(--slide-text) 4%, transparent)',
-            border: '1px solid var(--slide-border)',
+            backgroundColor: 'color-mix(in srgb, var(--slide-accent) 5%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--slide-accent) 15%, transparent)',
           }}
         >
-          <div className="mb-1.5 text-[10px] text-[var(--slide-muted)]">
-            content/getting-started.md
-          </div>
-          <div className="space-y-0.5">
-            <div className="text-[var(--slide-muted)]">{'  '}## Quick Start</div>
+          <div className="space-y-1.5">
             <div className="text-emerald-600 dark:text-emerald-400">
-              + Run `npx @inkeep/open-knowledge`
+              Server running at http://localhost:5173
             </div>
             <div className="text-emerald-600 dark:text-emerald-400">
-              + to start the server and editor.
+              MCP server ready for agent connections
             </div>
-            <div className="text-red-500">- Run the CLI to get started.</div>
+            <div className="text-[var(--slide-muted)]">Watching ./content for changes...</div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <div className="size-2 rounded-full bg-emerald-500" />
-            <span className="text-[10px] text-[var(--slide-muted)]">3 agent</span>
+        <div className="space-y-1 text-[var(--slide-muted)]">
+          <div>
+            Found <span className="text-[var(--slide-text)]">12 markdown files</span> in content/
           </div>
-          <div className="flex items-center gap-1">
-            <div
-              className="size-2 rounded-full"
-              style={{ backgroundColor: 'var(--slide-accent)' }}
-            />
-            <span className="text-[10px] text-[var(--slide-muted)]">2 human</span>
-          </div>
+          <div>Shadow repo initialized at .git/openknowledge/</div>
+        </div>
+        <div className="flex items-center gap-2 pt-1">
+          <div className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+          <span className="text-[10px] text-emerald-600 dark:text-emerald-400">
+            Ready — open http://localhost:5173 in your browser
+          </span>
         </div>
       </div>
     </MockBrowserChrome>
