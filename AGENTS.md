@@ -66,6 +66,11 @@ These are patterns that ALL work in the repo should follow. Established during t
 6. **Mode state as enums.** Editor state machines use enums (`'wysiwyg' | 'source' | 'diff'`), not boolean flags that implicitly encode state. Booleans don't scale past 2 states.
 7. **Remove broken capabilities rather than shipping them.** A confidently-broken UI is worse than the absence of capability. If a feature scaffold is known to malfunction, remove it; don't ship it alongside the product.
 8. **Separate long-lived identity from short-lived session concerns.** Agent identity (who is this?) is long-lived — stable across conversations, derived from MCP connection primitives. Pass boundaries (what did they do in this burst?) are short-lived — derived from the product's own edit-history model (user-action-bounded grouping). Don't conflate them. See `stories/collaboration-capabilities-audit/ §14`.
+9. **Minimize CRDT mutation in sync bridges.** Bridges between CRDT representations (e.g., Y.XmlFragment ↔ Y.Text) must avoid replacing Items unnecessarily. Three concrete patterns enforce this:
+   (a) **Content-comparison gate before delete+insert** — if a sync would replace content with content that's already present at the same offset, skip both operations to preserve existing CRDT Items.
+   (b) **Character-level diff over line-level for divergent paths** — finer-grained diff hunks shrink the "blast radius" of Items replaced; matching prefix/suffix regions preserve more agent attribution.
+   (c) **Origin-aware reconciliation at the bridge layer** — three-way merge (e.g., DMP `patch_apply`) lets bridge-side reconciliation preserve content from both writers without a custom diff-walk.
+   Why this exists as a precedent: research (`reports/crdt-origin-laundering-prior-art/REPORT.md`) confirms these three patterns are unclaimed in academic + engineering literature as of 2026-04-13. They're how Open Knowledge solves "origin-laundering" (sync bridges replacing tracked Items with untracked replacements) without per-character attribution. Applies wherever a CRDT bridge converts one Y type to another. See `specs/2026-04-13-observer-a-origin-aware-diff/SPEC.md` and precedent #1 (typed transaction origins) for related discipline.
 
 ### Resolving `bun.lock` merge conflicts
 
