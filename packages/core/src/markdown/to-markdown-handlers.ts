@@ -12,6 +12,7 @@
  */
 
 import type { Nodes, Parents } from 'mdast';
+import type { MdxJsxAttribute, MdxJsxExpressionAttribute, MdxJsxFlowElement } from 'mdast-util-mdx';
 import type { Info, State } from 'mdast-util-to-markdown';
 
 type MdastToMarkdownHandlerFor<N extends Nodes['type']> = (
@@ -21,7 +22,13 @@ type MdastToMarkdownHandlerFor<N extends Nodes['type']> = (
   info: Info,
 ) => string;
 
-type MdastToMarkdownHandlers = { [K in Nodes['type']]: MdastToMarkdownHandlerFor<K> };
+type MdastToMarkdownHandlers = {
+  [K in Nodes['type']]: MdastToMarkdownHandlerFor<K>;
+} & {
+  // MDX extension types (mdast-util-mdx augments Nodes but the augmentation
+  // may not be visible in all type-resolution contexts)
+  mdxJsxFlowElement: (node: Nodes, parent: Parents | undefined, state: State, info: Info) => string;
+};
 
 export const toMarkdownHandlers = {
   /**
@@ -253,7 +260,74 @@ export const toMarkdownHandlers = {
     const sep = node.spread ? '\n\n' : '\n';
     return out.join(sep);
   },
+  /**
+   * mdxJsxFlowElement: flush-left to-markdown handler (FR-6).
+   *
+   * When the γ serialize pattern reconstructs a dirty jsxComponent as an
+   * mdxJsxFlowElement mdast node, the library's default `containerFlow()`
+   * indents children by 2-space-per-depth — at nesting depth 2+, children
+   * reach 4+ spaces which triggers CommonMark's indented-code-block rule.
+   *
+   * This handler serializes children flush-left (zero indentation) and
+   * preserves blank-line separation between tag and first child. Matches
+   * the fumadocs/Obsidian authoring convention.
+   */
+  mdxJsxFlowElement(node, _parent, state, info) {
+    const mdxNode = node as unknown as MdxJsxFlowElement;
+    const name = mdxNode.name ?? '';
+    const attrs = serializeMdxJsxAttrs(mdxNode.attributes ?? []);
+
+    // Self-closing
+    if (!mdxNode.children || mdxNode.children.length === 0) {
+      return attrs ? `<${name} ${attrs} />` : `<${name} />`;
+    }
+
+    // Container: open tag, blank line, children flush-left, blank line, close tag
+    const openTag = attrs ? `<${name} ${attrs}>` : `<${name}>`;
+    const closeTag = `</${name}>`;
+
+    // Serialize children flush-left via containerFlow.
+    // Cast needed: containerFlow expects FlowParents which is a union of
+    // specific mdast parent types; our synthetic root satisfies the structural
+    // requirement ({type, children}) but not the nominal type.
+    const childContent = state.containerFlow(
+      // biome-ignore lint/suspicious/noExplicitAny: safe cast for synthetic root
+      { type: 'root', children: mdxNode.children } as any,
+      info,
+    );
+
+    return `${openTag}\n\n${childContent}\n\n${closeTag}`;
+  },
 } satisfies Partial<MdastToMarkdownHandlers>;
+
+/**
+ * Serialize an MdxJsxAttribute[] to the string that appears inside the JSX
+ * open tag. E.g., `type="warning" disabled data={[1,2,3]}`.
+ */
+function serializeMdxJsxAttrs(attrs: Array<MdxJsxAttribute | MdxJsxExpressionAttribute>): string {
+  const parts: string[] = [];
+  for (const attr of attrs) {
+    if (attr.type === 'mdxJsxExpressionAttribute') {
+      // Spread: {...rest}
+      parts.push(`{${attr.value}}`);
+      continue;
+    }
+    const name = attr.name;
+    if (attr.value === null || attr.value === undefined) {
+      // Boolean shorthand: <Comp disabled />
+      parts.push(name);
+      continue;
+    }
+    if (typeof attr.value === 'string') {
+      // String literal: type="warning"
+      parts.push(`${name}="${attr.value}"`);
+      continue;
+    }
+    // Expression: data={[1,2,3]}
+    parts.push(`${name}={${attr.value.value}}`);
+  }
+  return parts.join(' ');
+}
 
 /**
  * Emit text through state.safe with NG5-specific strips applied to the

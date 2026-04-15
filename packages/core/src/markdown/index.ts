@@ -227,6 +227,104 @@ function destructureAttrs(
   return result;
 }
 
+// ──────────────────────────── γ serialize helpers ──────────────────────────────
+//
+// effectiveDirty + hasDirtyDescendant: FR-5 rule — a pristine parent whose
+// descendant is dirty must NOT emit its own stale sourceRaw. The effectiveDirty
+// walk short-circuits on the first dirty find. jsxInline is skipped (no
+// sourceDirty attr; trivially pristine-equivalent).
+//
+// reconstructAttrs: FR-21 merge semantics — starts from the preserved mdast
+// attributes array, overlays descriptor-mapped structured attrs for PropDef-
+// declared keys. Unknown attrs pass through verbatim.
+
+function hasDirtyDescendant(node: PmNode): boolean {
+  let found = false;
+  node.descendants((child) => {
+    if (found) return false; // short-circuit
+    if (child.type.name === 'jsxInline') return false; // skip jsxInline subtrees
+    if (child.type.name === 'jsxComponent' && child.attrs.sourceDirty) {
+      found = true;
+      return false;
+    }
+    return true;
+  });
+  return found;
+}
+
+function effectiveDirty(node: PmNode): boolean {
+  return node.attrs.sourceDirty || hasDirtyDescendant(node);
+}
+
+/**
+ * Reconstruct MdxJsxAttribute[] from a jsxComponent PM node's attrs.
+ *
+ * Merge semantics (FR-21): starts from the preserved mdast `attributes` array,
+ * overlays structured props from attrs.props for descriptor-declared keys.
+ * All other keys pass through verbatim. Prevents the γ-dirty path from
+ * silently dropping user-supplied attrs not known to the descriptor.
+ */
+function reconstructAttrs(pmNode: PmNode): Array<MdxJsxAttribute | MdxJsxExpressionAttribute> {
+  const preserved: Array<MdxJsxAttribute | MdxJsxExpressionAttribute> = Array.isArray(
+    pmNode.attrs.attributes,
+  )
+    ? [...pmNode.attrs.attributes]
+    : [];
+  const structuredProps: Record<string, unknown> = pmNode.attrs.props ?? {};
+
+  // Overlay structured props onto the preserved array
+  for (const [key, value] of Object.entries(structuredProps)) {
+    const existingIdx = preserved.findIndex((a) => a.type === 'mdxJsxAttribute' && a.name === key);
+
+    const newAttr = propToMdxJsxAttribute(key, value);
+
+    if (existingIdx >= 0) {
+      // Replace existing attr with the updated value
+      preserved[existingIdx] = newAttr;
+    } else {
+      // Add new attr that wasn't in the original source
+      preserved.push(newAttr);
+    }
+  }
+
+  return preserved;
+}
+
+/**
+ * Convert a (key, value) pair to an MdxJsxAttribute mdast node.
+ */
+function propToMdxJsxAttribute(name: string, value: unknown): MdxJsxAttribute {
+  // Boolean shorthand: bool → <Comp bool /> (value: null in mdast)
+  if (value === true) {
+    return { type: 'mdxJsxAttribute', name, value: null };
+  }
+  // Boolean false: serialize as bool={false} expression
+  if (value === false) {
+    return {
+      type: 'mdxJsxAttribute',
+      name,
+      value: { type: 'mdxJsxAttributeValueExpression', value: 'false' },
+    };
+  }
+  // String: string literal
+  if (typeof value === 'string') {
+    return { type: 'mdxJsxAttribute', name, value };
+  }
+  // Number, array, object: expression
+  if (typeof value === 'number' || Array.isArray(value) || typeof value === 'object') {
+    return {
+      type: 'mdxJsxAttribute',
+      name,
+      value: {
+        type: 'mdxJsxAttributeValueExpression',
+        value: JSON.stringify(value),
+      },
+    };
+  }
+  // Fallback: stringify
+  return { type: 'mdxJsxAttribute', name, value: String(value) };
+}
+
 // ──────────────────────────── mdast → PM handlers ────────────────────────────
 //
 // Tier A passthrough + basic Tier B (enough for plain markdown).
@@ -762,12 +860,32 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // JSX component → emit raw source as HTML for byte-identical MDX round-trip
+  // JSX component → γ serialize pattern (FR-5):
+  //   expression → html pass-through
+  //   !effectiveDirty && sourceRaw → html pass-through (byte-identical)
+  //   dirty OR dirty descendant → reconstruct as mdxJsxFlowElement
   if (n.jsxComponent) {
-    nodeHandlers.jsxComponent = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.attrs.content ?? '',
-    });
+    nodeHandlers.jsxComponent = (pmNode: PmNode, _parent: PmNode | undefined, state) => {
+      // Expression passthrough (block-level {expression})
+      if (pmNode.attrs.kind === 'expression') {
+        return {
+          type: 'html' as const,
+          value: pmNode.attrs.content || pmNode.attrs.sourceRaw,
+        };
+      }
+      // γ: pristine → sourceRaw (byte-identical round-trip)
+      if (!effectiveDirty(pmNode) && pmNode.attrs.sourceRaw) {
+        return { type: 'html' as const, value: pmNode.attrs.sourceRaw };
+      }
+      // γ: dirty → reconstruct as mdxJsxFlowElement
+      return {
+        type: 'mdxJsxFlowElement' as const,
+        name: pmNode.attrs.componentName || null,
+        attributes: reconstructAttrs(pmNode),
+        children: state.all(pmNode),
+        data: {},
+      } as MdxJsxFlowElement;
+    };
   }
 
   // rawMdxFallback → emit inner text as html mdast node (preserves raw bytes)
