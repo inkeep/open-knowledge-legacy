@@ -117,6 +117,14 @@ export function clearManagedRenameJournal(contentDir: string): void {
   rmSync(managedRenameJournalPath(contentDir), { force: true });
 }
 
+/**
+ * Persist the pre-rename recovery journal, run the managed rename operation,
+ * then clear the journal only if the operation completes successfully.
+ *
+ * If the operation throws, the journal remains on disk so the next server
+ * startup can restore the pre-rename state. Do not wrap this in `try/finally`
+ * or the crash-recovery guarantee is lost.
+ */
 export async function withManagedRenameRecovery<T>(
   contentDir: string,
   journal: ManagedRenameRecoveryJournal,
@@ -135,15 +143,40 @@ export function recoverPendingManagedRename(contentDir: string): ManagedRenameRe
   }
 
   const restoredDocNames = new Set<string>();
+  const failedDocNames: string[] = [];
   for (const snapshot of journal.snapshots) {
-    const filePath = safeContentPath(snapshot.docName, contentDir);
-    mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, snapshot.content, 'utf-8');
-    restoredDocNames.add(snapshot.docName);
+    try {
+      const filePath = safeContentPath(snapshot.docName, contentDir);
+      mkdirSync(dirname(filePath), { recursive: true });
+      writeFileSync(filePath, snapshot.content, 'utf-8');
+      restoredDocNames.add(snapshot.docName);
+    } catch (err) {
+      failedDocNames.push(snapshot.docName);
+      console.warn(`[managed-rename] Failed to restore ${snapshot.docName}:`, err);
+    }
+  }
+
+  if (failedDocNames.length > 0) {
+    console.warn(
+      `[managed-rename] Recovery incomplete; keeping journal for retry (${failedDocNames.join(', ')})`,
+    );
+    throw new Error(
+      `Managed rename recovery incomplete; failed to restore: ${failedDocNames.join(', ')}`,
+    );
   }
 
   if (!restoredDocNames.has(journal.destinationDocName)) {
-    rmSync(safeContentPath(journal.destinationDocName, contentDir), { force: true });
+    try {
+      rmSync(safeContentPath(journal.destinationDocName, contentDir), { force: true });
+    } catch (err) {
+      console.warn(
+        `[managed-rename] Recovery incomplete; failed to clean destination ${journal.destinationDocName}:`,
+        err,
+      );
+      throw new Error(
+        `Managed rename recovery incomplete; failed to clean destination: ${journal.destinationDocName}`,
+      );
+    }
   }
 
   clearManagedRenameJournal(contentDir);

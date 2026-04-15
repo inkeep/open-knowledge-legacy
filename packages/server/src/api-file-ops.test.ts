@@ -250,6 +250,103 @@ describe('file operation API routes', () => {
     expect(body.error).toBe('Destination already exists');
   });
 
+  test('managed rename returns no-op success when source and destination match', async () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const result = await callApi(
+      dir,
+      '/api/rename',
+      'POST',
+      {
+        docName: 'notes',
+        newDocName: 'notes',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(200);
+    expect(readFileSync(join(dir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
+    expect(JSON.parse(result.body)).toEqual({
+      ok: true,
+      renamed: [],
+      rewrittenDocs: [],
+    });
+  });
+
+  test('managed rename rejects reserved document names', async () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
+
+    const result = await callApi(
+      dir,
+      '/api/rename',
+      'POST',
+      {
+        docName: 'notes',
+        newDocName: '__system__',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(400);
+    expect(JSON.parse(result.body)).toEqual({
+      ok: false,
+      error: 'Reserved document names cannot be renamed',
+    });
+  });
+
+  test('managed rename returns 404 when the source document is missing', async () => {
+    const dir = setupTmpDir();
+
+    const result = await callApi(
+      dir,
+      '/api/rename',
+      'POST',
+      {
+        docName: 'notes',
+        newDocName: 'renamed-notes',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(404);
+    expect(JSON.parse(result.body)).toEqual({
+      ok: false,
+      error: 'Document does not exist',
+    });
+  });
+
+  test.skipIf(process.platform === 'win32')(
+    'managed rename surfaces actionable symlink escape errors',
+    async () => {
+      const root = setupTmpDir();
+      const contentDir = join(root, 'content');
+      const outside = join(root, 'outside');
+      mkdirSync(contentDir);
+      mkdirSync(outside);
+      symlinkSync(join('..', 'outside'), join(contentDir, 'evil'), 'dir');
+      writeFileSync(join(contentDir, 'safe.md'), '# Safe\n', 'utf-8');
+
+      const result = await callApi(
+        contentDir,
+        '/api/rename',
+        'POST',
+        {
+          docName: 'safe',
+          newDocName: 'evil/captured',
+        },
+        { backlinkIndex: buildBacklinkIndex(contentDir) },
+      );
+
+      expect(result.status).toBe(500);
+      expect(JSON.parse(result.body)).toEqual({
+        ok: false,
+        error: 'symlink-escape: path resolves outside content directory',
+      });
+    },
+  );
+
   test('renames a file and returns the old-to-new mapping', async () => {
     const dir = setupTmpDir();
     writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');

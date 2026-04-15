@@ -73,4 +73,48 @@ describe('managed rename recovery journal', () => {
     expect(existsSync(join(dir, 'beta.md'))).toBe(false);
     expect(existsSync(managedRenameJournalPath(dir))).toBe(false);
   });
+
+  test('keeps the journal on disk when the managed rename operation throws', async () => {
+    const dir = setupTmpDir();
+
+    await expect(
+      withManagedRenameRecovery(
+        dir,
+        createManagedRenameRecoveryJournal({
+          sourceDocName: 'alpha',
+          destinationDocName: 'beta',
+          snapshots: [{ docName: 'alpha', content: '# Alpha\n' }],
+        }),
+        () => {
+          throw new Error('boom');
+        },
+      ),
+    ).rejects.toThrow('boom');
+
+    expect(existsSync(managedRenameJournalPath(dir))).toBe(true);
+  });
+
+  test('keeps the journal when recovery cannot restore every snapshot', () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'beta.md'), '# Alpha\n', 'utf-8');
+
+    writeManagedRenameJournal(
+      dir,
+      createManagedRenameRecoveryJournal({
+        sourceDocName: 'alpha',
+        destinationDocName: 'beta',
+        snapshots: [
+          { docName: 'alpha', content: '# Alpha\n' },
+          { docName: '../escape', content: 'bad\n' },
+        ],
+      }),
+    );
+
+    expect(() => recoverPendingManagedRename(dir)).toThrow(
+      'Managed rename recovery incomplete; failed to restore: ../escape',
+    );
+    expect(readFileSync(join(dir, 'alpha.md'), 'utf-8')).toBe('# Alpha\n');
+    expect(existsSync(join(dir, 'beta.md'))).toBe(true);
+    expect(existsSync(managedRenameJournalPath(dir))).toBe(true);
+  });
 });

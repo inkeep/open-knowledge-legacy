@@ -9,6 +9,7 @@ import type { ServerInstance } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
+  normalizeDocName,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -79,10 +80,14 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     },
     async (args: { docName: string; newDocName: string }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const normalizedDoc = normalizeDocName(args.docName);
+      if (!normalizedDoc.ok) return textResult(normalizedDoc.error, true);
+      const normalizedNewDoc = normalizeDocName(args.newDocName);
+      if (!normalizedNewDoc.ok) return textResult(normalizedNewDoc.error, true);
 
       const result = await httpPost(serverUrl, '/api/rename', {
-        docName: args.docName,
-        newDocName: args.newDocName,
+        docName: normalizedDoc.docName,
+        newDocName: normalizedNewDoc.docName,
       });
 
       if (!result.ok) {
@@ -95,7 +100,7 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       const rewrittenDocs = parseRewrittenDocs(result.rewrittenDocs);
       const renamedSummary =
         renamed.map(({ fromDocName, toDocName }) => `${fromDocName} -> ${toDocName}`).join(', ') ||
-        `${args.docName} -> ${args.newDocName}`;
+        `${normalizedDoc.docName} -> ${normalizedNewDoc.docName}`;
       const rewrittenSummary =
         rewrittenDocs.length === 0
           ? 'No inbound links required updates.'

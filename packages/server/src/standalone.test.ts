@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -557,6 +557,22 @@ describe('createServer() managed rename recovery', () => {
     expect(readFileSync(join(tmpDir, 'referrer.md'), 'utf-8')).toBe('See [[alpha]].\n');
     expect(existsSync(join(tmpDir, 'beta.md'))).toBe(false);
     expect(existsSync(managedRenameJournalPath(tmpDir))).toBe(false);
+
+    await server.destroy();
+  });
+
+  test('marks the server degraded when the managed rename journal is corrupt', async () => {
+    mkdirSync(join(tmpDir, '.open-knowledge'), { recursive: true });
+    writeFileSync(managedRenameJournalPath(tmpDir), '{not valid json', 'utf-8');
+
+    const server = createServer({
+      contentDir: tmpDir,
+      projectDir: tmpDir,
+      quiet: true,
+    });
+    await server.ready;
+
+    expect(server.degraded).toContain('managed-rename-recovery');
 
     await server.destroy();
   });

@@ -17,6 +17,21 @@ describe('rewriteWikiLinksForDocumentRename', () => {
       rewrites: 1,
     });
   });
+
+  test('preserves escaped wiki-link brackets', () => {
+    expect(rewriteWikiLinksForDocumentRename('See \\[[old]] here.\n', 'old', 'new')).toEqual({
+      markdown: 'See \\[[old]] here.\n',
+      rewrites: 0,
+    });
+  });
+
+  test('ignores wiki-links inside tilde fences', () => {
+    const markdown = ['~~~md', '[[old]]', '~~~', ''].join('\n');
+    expect(rewriteWikiLinksForDocumentRename(markdown, 'old', 'new')).toEqual({
+      markdown,
+      rewrites: 0,
+    });
+  });
 });
 
 describe('rewriteMarkdownLinksForDocumentRename', () => {

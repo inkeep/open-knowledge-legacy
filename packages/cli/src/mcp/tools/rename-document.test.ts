@@ -39,6 +39,55 @@ afterEach(() => {
 });
 
 describe('rename_document MCP tool', () => {
+  test('normalizes trailing markdown extensions before calling the API', async () => {
+    const { server, registrations } = createCapturingServer();
+    const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+
+    globalThis.fetch = (async (input, init) => {
+      fetchCalls.push({ input, init });
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          renamed: [{ fromDocName: 'old-page', toDocName: 'new-page' }],
+          rewrittenDocs: [],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      );
+    }) as typeof fetch;
+
+    register(server, 'http://localhost:4321');
+    const tool = getRegisteredTool(registrations, 'rename_document');
+
+    const result = await tool.handler({ docName: 'old-page.md', newDocName: 'new-page.mdx' });
+
+    expect(fetchCalls).toHaveLength(1);
+    expect(JSON.parse(String(fetchCalls[0]?.init?.body))).toEqual({
+      docName: 'old-page',
+      newDocName: 'new-page',
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0]?.text).toContain('old-page');
+    expect(result.content[0]?.text).toContain('new-page');
+  });
+
+  test('rejects unsupported markdown extensions before calling the API', async () => {
+    const { server, registrations } = createCapturingServer();
+
+    register(server, 'http://localhost:4321');
+    const tool = getRegisteredTool(registrations, 'rename_document');
+
+    const result = await tool.handler({
+      docName: 'old-page.markdown',
+      newDocName: 'new-page',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain('.markdown');
+  });
+
   test('returns renamed mapping and rewritten docs on success', async () => {
     const { server, registrations } = createCapturingServer();
     const fetchCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
