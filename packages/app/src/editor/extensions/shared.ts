@@ -10,6 +10,8 @@ import {
 import FileHandler from '@tiptap/extension-file-handler';
 import Placeholder from '@tiptap/extension-placeholder';
 import { uploadAndInsert } from '../image-upload/index.ts';
+import { getComponentItems } from '../slash-command/component-items';
+import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
 import { BridgeIdPlugin } from './bridge-id-plugin';
 import { BlockDragHandle } from './drag-handle';
@@ -30,7 +32,15 @@ export const sharedExtensions = [
     if (ext.name === 'link') return InternalLink;
     return ext;
   }),
-  SlashCommand,
+  SlashCommand.configure({
+    itemsSources: [() => slashCommandItems, () => getComponentItems()],
+    categoryLabels: {
+      content: 'Components',
+      layout: 'Layout',
+      media: 'Media',
+      data: 'Data',
+    },
+  }),
   FileHandler.configure({
     allowedMimeTypes: [...ALLOWED_IMAGE_MIME_TYPES],
     onDrop(editor, files, pos) {

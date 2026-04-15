@@ -60,18 +60,22 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
   const { resolvedTheme } = useTheme();
   const reason = (node.attrs.reason as string) || 'Parse failed';
 
-  // Stable ref for forwardUpdate so the CM listener closure always has
-  // the latest getPos/node values without re-creating the CM instance.
-  const forwardUpdateRef = useRef<(newText: string) => void>(() => {});
-  forwardUpdateRef.current = (newText: string) => {
+  // CM→PM sync: forward CM changes as PM transactions.
+  // Uses getPos() and editor.view.state directly (both stable across renders)
+  // instead of refs (React Compiler prohibits ref writes during render).
+  const forwardUpdate = (newText: string) => {
     const pos = typeof getPos === 'function' ? getPos() : undefined;
     if (pos === undefined) return;
 
     const pmView = editor.view;
     if (!pmView) return;
 
+    // Look up the current node at this position to get its size
+    const currentNode = pmView.state.doc.nodeAt(pos);
+    if (!currentNode) return;
+
     const start = pos + 1;
-    const end = pos + node.nodeSize - 1;
+    const end = pos + currentNode.nodeSize - 1;
 
     updatingRef.current = true;
     const tr = pmView.state.tr;
@@ -128,7 +132,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     extensions.push(
       CMEditorView.updateListener.of((update) => {
         if (updatingRef.current || !update.docChanged) return;
-        forwardUpdateRef.current(update.state.doc.toString());
+        forwardUpdate(update.state.doc.toString());
       }),
     );
 
