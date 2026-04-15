@@ -5,6 +5,11 @@
 @import "@fontsource-variable/jetbrains-mono";
 @plugin "tailwind-scrollbar";
 
+/* Tell Tailwind v4 to scan fumadocs-ui dist for utility class generation.
+   Required for bg-fd-card, text-fd-card-foreground, divide-fd-border, etc.
+   used internally by fumadocs components. */
+@source "../../../node_modules/fumadocs-ui/dist/**/*.js";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme {
@@ -813,6 +818,138 @@ button:active:not(:disabled) {
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   fumadocs-ui CSS variable bridge (FR-25)
+   Maps fumadocs's --color-fd-* namespace to our existing shadcn
+   design tokens. No new visual design; pure aliasing. Dark mode
+   inherits via our existing .dark class overrides on shadcn tokens.
+   Explicitly NOT importing fumadocs-ui/style.css or preset.css
+   (base-layer conflicts with our @custom-variant dark).
+   ───────────────────────────────────────────────────────────── */
+
+/* 1. Token bridge — alias fd variables to shadcn tokens */
+:root {
+  --color-fd-background: var(--background);
+  --color-fd-foreground: var(--foreground);
+  --color-fd-card: var(--card);
+  --color-fd-card-foreground: var(--card-foreground);
+  --color-fd-popover: var(--popover);
+  --color-fd-popover-foreground: var(--popover-foreground);
+  --color-fd-muted: var(--muted);
+  --color-fd-muted-foreground: var(--muted-foreground);
+  --color-fd-border: var(--border);
+  --color-fd-primary: var(--primary);
+  --color-fd-primary-foreground: var(--primary-foreground);
+  --color-fd-secondary: var(--secondary);
+  --color-fd-secondary-foreground: var(--secondary-foreground);
+  --color-fd-accent: var(--accent);
+  --color-fd-accent-foreground: var(--accent-foreground);
+  --color-fd-ring: var(--ring);
+}
+
+/* 2. Static semantic callout colors — verbatim from fumadocs-ui/css/default.css */
+:root {
+  --color-fd-info: oklch(62.3% 0.214 259.815);
+  --color-fd-warning: oklch(76.9% 0.188 70.08);
+  --color-fd-error: oklch(63.7% 0.237 25.331);
+  --color-fd-success: oklch(72.3% 0.219 149.579);
+  --color-fd-idea: oklch(70.5% 0.209 60.849);
+}
+
+/* 3. Steps utility classes — cherry-picked from fumadocs-ui/css/preset.css.
+   fumadocs components reference these as Tailwind utilities (fd-steps, fd-step). */
+.fd-steps {
+  counter-reset: step;
+  position: relative;
+  padding-left: 1.5rem;
+  margin-left: 0.5rem;
+  border-left: 1px solid var(--color-fd-border);
+}
+@media (min-width: 640px) {
+  .fd-steps {
+    margin-left: 1rem;
+    padding-left: 1.75rem;
+  }
+}
+.fd-step::before {
+  background-color: var(--color-fd-secondary);
+  color: var(--color-fd-secondary-foreground);
+  content: counter(step);
+  counter-increment: step;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  width: 2rem;
+  height: 2rem;
+  position: absolute;
+  left: -1rem;
+  border-radius: 9999px;
+}
+
+/* 4. Accordion + Collapsible animation keyframes — required for fumadocs
+   Accordion (AccordionContent) and Files/Folder (Collapsible) expand/collapse. */
+@keyframes fd-accordion-down {
+  from {
+    height: 0;
+    opacity: 0.5;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+@keyframes fd-accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+    opacity: 0.5;
+  }
+}
+@keyframes fd-collapsible-down {
+  from {
+    height: 0;
+    opacity: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+  }
+}
+@keyframes fd-collapsible-up {
+  from {
+    height: var(--radix-collapsible-content-height);
+  }
+  to {
+    height: 0;
+    opacity: 0;
+  }
+}
+
+/* Animation variables consumed by fumadocs accordion/collapsible components */
+:root {
+  --animate-fd-accordion-down: fd-accordion-down 200ms ease-out;
+  --animate-fd-accordion-up: fd-accordion-up 200ms ease-out;
+  --animate-fd-collapsible-down: fd-collapsible-down 150ms cubic-bezier(0.45, 0, 0.55, 1);
+  --animate-fd-collapsible-up: fd-collapsible-up 150ms cubic-bezier(0.45, 0, 0.55, 1);
+}
+
+/* Radix collapsible content height property (needed for animation targets) */
+@property --radix-collapsible-content-height {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+/* 5. prose-no-margin — margin reset for first/last children inside wrappers */
+.prose-no-margin > :first-child {
+  margin-top: 0;
+}
+.prose-no-margin > :last-child {
+  margin-bottom: 0;
 }
 
 /* Dark overrides — ProseMirror content surfaces */
