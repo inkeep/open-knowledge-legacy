@@ -34,7 +34,12 @@
  */
 
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import { prependFrontmatter, stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
+import {
+  applyByPrefixSuffix,
+  prependFrontmatter,
+  stripFrontmatter,
+  VFileMessage,
+} from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import DiffMatchPatch from 'diff-match-patch';
@@ -180,34 +185,6 @@ function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: strin
       offset += change.value.length;
     }
   }
-}
-
-/**
- * Apply a text change to Y.Text using prefix/suffix comparison — O(n) string
- * scan, zero diff algorithm overhead. Produces at most one delete + one insert
- * CRDT operation. Used by applyUserDelta to minimize CRDT mutations — Items in
- * the matching prefix and suffix regions are preserved, maintaining origin
- * attribution through bridge cycles.
- */
-function applyByPrefixSuffix(ytext: Y.Text, currentText: string, newText: string): void {
-  if (currentText === newText) return;
-
-  let prefixLen = 0;
-  const minLen = Math.min(currentText.length, newText.length);
-  while (prefixLen < minLen && currentText[prefixLen] === newText[prefixLen]) prefixLen++;
-
-  let suffixLen = 0;
-  while (
-    suffixLen < minLen - prefixLen &&
-    currentText[currentText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
-  ) {
-    suffixLen++;
-  }
-
-  const deleteLen = currentText.length - prefixLen - suffixLen;
-  const insertStr = newText.slice(prefixLen, newText.length - suffixLen);
-  if (deleteLen > 0) ytext.delete(prefixLen, deleteLen);
-  if (insertStr.length > 0) ytext.insert(prefixLen, insertStr);
 }
 
 /**
