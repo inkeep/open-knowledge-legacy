@@ -4,6 +4,7 @@ export default {
   tags: ['-lintignore'],
   ignoreDependencies: [
     'lint-staged', // not sure if it's false positive
+    'bun-types',
   ],
   ignore: ['tech-probes/**', 'reports/**', 'specs/**'],
   ignoreIssues: {
