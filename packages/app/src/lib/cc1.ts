@@ -5,7 +5,7 @@ export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME };
 
 export type DerivedViewChannel = 'files' | 'backlinks' | 'graph';
 
-export interface CC1Signal extends ServerCC1Signal {
+interface CC1Signal extends ServerCC1Signal {
   ch: DerivedViewChannel;
 }
 

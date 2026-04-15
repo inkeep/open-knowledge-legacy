@@ -9,8 +9,6 @@ import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
 import { docNameFromHash } from '@/lib/doc-hash';
 
-export { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
-
 /** Hash is the source of truth for navigation; all navigation sets the hash;
  *  this handler is the single place that calls openDocument(). */
 function NavigationHandler() {

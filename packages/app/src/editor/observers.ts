@@ -128,7 +128,7 @@ const REMOTE_TREE_SYNC_GRACE_MS = DEBOUNCE_MS * 3;
  * (real) with scheduler `dueAt` (virtual) produces unbounded skew and
  * breaks the deterministic timing model.
  */
-export interface Scheduler {
+interface Scheduler {
   setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
   /** Current clock reading in milliseconds. Production: `Date.now()`.

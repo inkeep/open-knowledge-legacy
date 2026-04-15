@@ -181,4 +181,4 @@ function toRawMdxFallbackMdast(node: WalkableNode, source: string): RawMdxFallba
  * Type-safe access for the handler table — imported by `buildMdastToPmHandlers`
  * in index.ts.
  */
-export type RawMdxFallbackMdastNode = RawMdxFallbackMdast;
+type RawMdxFallbackMdastNode = RawMdxFallbackMdast;

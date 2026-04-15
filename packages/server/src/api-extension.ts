@@ -265,7 +265,7 @@ interface ManagedRenameRewrittenDoc {
   rewrites: number;
 }
 
-export function isValidRelativeContentPath(path: string): boolean {
+function isValidRelativeContentPath(path: string): boolean {
   if (!path || path.startsWith('/') || path.includes('\\') || path.includes('\x00')) {
     return false;
   }

@@ -44,7 +44,7 @@ export interface BacklinkEntry {
   snippet: string | null;
 }
 
-export interface ForwardLinkEntry {
+interface ForwardLinkEntry {
   target: string;
   snippet: string | null;
 }
@@ -54,7 +54,7 @@ export interface HubEntry {
   count: number;
 }
 
-export interface DeadLinkEntry {
+interface DeadLinkEntry {
   target: string;
   sources: BacklinkEntry[];
 }

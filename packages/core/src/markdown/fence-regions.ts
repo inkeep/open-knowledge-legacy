@@ -6,7 +6,7 @@
  * content inside fenced code blocks during source scanning.
  */
 
-export const FENCE_RE = /^(`{3,}|~{3,})/gm;
+const FENCE_RE = /^(`{3,}|~{3,})/gm;
 
 /**
  * Identify fenced-code regions in source text.

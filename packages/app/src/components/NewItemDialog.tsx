@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 
-export interface NewItemDialogProps {
+interface NewItemDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   kind: 'file' | 'folder';
@@ -58,7 +58,7 @@ export function composeNewItemPath(args: {
  * and is it coming from a target that is NOT an input/textarea/contenteditable?
  * Used by the global NewItemShortcutHandler; exported for unit testing.
  */
-export interface ShortcutEventLike {
+interface ShortcutEventLike {
   // Use a duck-typed target shape so the predicate is trivially unit-testable
   // without constructing real DOM events. Production callers pass
   // KeyboardEvent which widens to this via a cast at the call site.

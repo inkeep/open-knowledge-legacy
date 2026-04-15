@@ -15,7 +15,7 @@ export interface GraphLabelLayoutLink {
   target: string | GraphLabelLayoutLinkRef;
 }
 
-export interface GraphViewport {
+interface GraphViewport {
   width: number;
   height: number;
 }
@@ -38,7 +38,7 @@ export interface GraphLabelPlacement {
   textY: number;
 }
 
-export interface PlanGraphLabelsInput {
+interface PlanGraphLabelsInput {
   nodes: GraphLabelLayoutNode[];
   links: GraphLabelLayoutLink[];
   activeDocName: string;
