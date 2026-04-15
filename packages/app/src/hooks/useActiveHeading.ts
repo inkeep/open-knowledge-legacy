@@ -26,24 +26,23 @@ export function useActiveHeading(slugs: string[], isSourceMode = false): string 
     }
 
     function compute() {
-      let result: string | undefined;
+      const midY = window.innerHeight / 2;
+      let scrolledPast: string | undefined; // last heading above the viewport
+      let topHalf: string | undefined; // first heading visible in the top half
 
       for (const slug of slugs) {
         const el = document.getElementById(slug);
         if (!el) continue;
-        // Active = last heading whose top has scrolled past the viewport top.
-        // 1px tolerance handles sub-pixel rounding.
-        if (el.getBoundingClientRect().top <= 1) {
-          result = slug;
+        const top = el.getBoundingClientRect().top;
+        if (top < 0) {
+          scrolledPast = slug;
+        } else if (topHalf === undefined && top < midY) {
+          topHalf = slug;
         }
       }
 
-      // Nothing scrolled past yet (top of page) — default to the first heading.
-      if (result === undefined) {
-        result = slugs[0];
-      }
-
-      setActiveSlug(result);
+      // Priority: visible-in-top-half > scrolled-past > first heading (top of page)
+      setActiveSlug(topHalf ?? scrolledPast ?? slugs[0]);
     }
 
     function handleScroll() {
