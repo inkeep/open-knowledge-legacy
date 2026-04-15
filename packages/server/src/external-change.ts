@@ -23,11 +23,11 @@ import { mdManager, schema } from './md-manager.ts';
  * skipStoreHooks: true — prevents persistence from re-saving a file we just
  * loaded from disk (feedback loop prevention).
  */
-export const FILE_WATCHER_ORIGIN: LocalTransactionOrigin = {
-  source: 'local',
+export const FILE_WATCHER_ORIGIN = {
+  source: 'local' as const,
   skipStoreHooks: true,
   context: { origin: 'file-watcher' },
-};
+} satisfies LocalTransactionOrigin;
 
 /**
  * Apply external file content to a live Y.Doc — the throwing core of the

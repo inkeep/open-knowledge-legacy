@@ -100,7 +100,7 @@ const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'managed-rename' },
-};
+} satisfies LocalTransactionOrigin;
 
 const log = getLogger('api');
 
