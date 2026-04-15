@@ -466,7 +466,7 @@
   color: var(--color-azure-blue);
   cursor: pointer;
   @apply font-medium dark:text-sky-blue dark:hover:text-azure-300 hover:underline hover:underline-offset-2;
-  }
+}
 
 /* Wiki-link chips contain an <a> for status-bar URL display — reset link styles
    so the chip's own color/decoration styling isn't overridden by .ProseMirror a */
