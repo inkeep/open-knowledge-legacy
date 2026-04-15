@@ -812,13 +812,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     rawAgentId: string | undefined;
     agentId: string;
     agentName: string;
+    colorSeed: string;
     clientName: string | undefined;
   } {
     const rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
     const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
     const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
     const clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
-    return { rawAgentId, agentId, agentName, clientName };
+    // colorSeed must match what getSession() uses for presence bar color consistency
+    const colorSeed = rawAgentId ?? agentId;
+    return { rawAgentId, agentId, agentName, colorSeed, clientName };
   }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -855,10 +858,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const { rawAgentId, agentId, agentName, clientName } = extractAgentIdentity(body);
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(body);
       const dc = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
-        colorSeed: rawAgentId ?? agentId,
+        colorSeed,
         clientName,
       });
       const timestamp = new Date().toISOString();
@@ -878,7 +881,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
-        recordContributor(docName, agentId, agentName);
+        recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -938,12 +941,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
-      const { rawAgentId, agentId, agentName, clientName } = extractAgentIdentity(
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
         body as Record<string, unknown>,
       );
       const dc = await sessionManager.getSession(resolvedDocName, agentId, {
         displayName: agentName,
-        colorSeed: rawAgentId ?? agentId,
+        colorSeed,
         clientName,
       });
       const timestamp = new Date().toISOString();
@@ -1340,12 +1343,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const { rawAgentId, agentId, agentName, clientName } = extractAgentIdentity(
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
         body as Record<string, unknown>,
       );
       const dc = await sessionManager.getSession(docName, agentId, {
         displayName: agentName,
-        colorSeed: rawAgentId ?? agentId,
+        colorSeed,
         clientName,
       });
       const timestamp = new Date().toISOString();
@@ -1384,7 +1387,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
-        if (!notFound) recordContributor(docName, agentId, agentName);
+        if (!notFound) recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }

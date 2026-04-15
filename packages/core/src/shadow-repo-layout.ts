@@ -112,6 +112,8 @@ export interface ShadowContributor {
   v?: number;
   id: string;
   name: string;
+  /** Color seed for deterministic color assignment — matches presence bar color. */
+  colorSeed?: string;
   docs: string[];
 }
 

@@ -41,6 +41,8 @@ export interface PersistenceOptions {
   /** Content root relative to project dir (e.g., 'content/docs'). Used for shadow repo staging. */
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
+  /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
+  getCurrentBranch?: () => string | null;
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -161,6 +163,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   const gitEnabled = options?.gitEnabled ?? true;
   const commitDebounceMs = options?.commitDebounceMs ?? 30_000;
   const wipRef = options?.wipRef ?? 'refs/wip/main';
+  const getCurrentBranch = options?.getCurrentBranch;
 
   // Default writer identity for L2 commits
   const defaultWriter: WriterIdentity = {
@@ -183,8 +186,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
       const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
       const contributors = formatContributorsFrom(snapshot);
       const message = `WIP auto-save ${new Date().toISOString()}${contributors}`;
+      const branch = getCurrentBranch?.() ?? 'main';
       try {
-        const sha = await commitWip(shadow, defaultWriter, contentRoot, message);
+        const sha = await commitWip(shadow, defaultWriter, contentRoot, message, branch);
         // snapshot discarded on success — new map already accumulating
         consecutiveGitFailures = 0;
         log.info(

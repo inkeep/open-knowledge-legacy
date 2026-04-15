@@ -140,7 +140,7 @@ export async function getDocumentHistory(
     // Uses for-each-ref to list checkpoint SHAs, then resolves commit details
     // via git log --no-walk (avoids walking ancestry — reads only specified commits).
     if (typeFilter.length === 1 && typeFilter[0] === 'checkpoint') {
-      const refShas = (
+      const branchCpShas = (
         await sg.raw(
           'for-each-ref',
           '--sort=-creatordate',
@@ -152,7 +152,28 @@ export async function getDocumentHistory(
         .split('\n')
         .filter((s) => s.length === 40);
 
-      if (refShas.length === 0) return EMPTY;
+      // On feature branches, fall back to main's checkpoints
+      let mainCpShas: string[] = [];
+      if (branch !== 'main') {
+        try {
+          mainCpShas = (
+            await sg.raw(
+              'for-each-ref',
+              '--sort=-creatordate',
+              '--format=%(objectname)',
+              'refs/checkpoints/main/',
+            )
+          )
+            .trim()
+            .split('\n')
+            .filter((s) => s.length === 40);
+        } catch {
+          // no main checkpoints
+        }
+      }
+
+      const allShas = [...branchCpShas, ...mainCpShas];
+      if (allShas.length === 0) return EMPTY;
 
       // Bulk-resolve commit details without walking ancestry
       const raw = await sg.raw(
@@ -160,11 +181,26 @@ export async function getDocumentHistory(
         '--no-walk',
         '--author-date-order',
         `--format=${GIT_LOG_FORMAT}`,
-        ...refShas,
+        ...allShas,
         ...(docPath ? ['--', docPath] : []),
       );
 
-      const allEntries = parseGitLogOutput(raw).map((e) => ({ ...e, type: 'checkpoint' as const }));
+      let allEntries = parseGitLogOutput(raw).map((e) => ({ ...e, type: 'checkpoint' as const }));
+
+      // Apply branch-takes-over-main cutoff
+      if (branch !== 'main' && branchCpShas.length > 0 && mainCpShas.length > 0) {
+        const branchSet = new Set(branchCpShas);
+        const branchCps = allEntries.filter((e) => branchSet.has(e.sha));
+        const mainCps = allEntries.filter((e) => !branchSet.has(e.sha));
+        const earliestBranchCp = branchCps.reduce(
+          (min, e) => Math.min(min, new Date(e.timestamp).getTime()),
+          Number.POSITIVE_INFINITY,
+        );
+        allEntries = [
+          ...branchCps,
+          ...mainCps.filter((e) => new Date(e.timestamp).getTime() < earliestBranchCp),
+        ];
+      }
 
       const filtered = allEntries.filter(
         (e) =>
@@ -183,6 +219,7 @@ export async function getDocumentHistory(
     // included as user-triggered landmarks), WIP/upstream walk the full DAG.
     const checkpointShas: string[] = [];
     const startRefs: string[] = [];
+    const isFeatureBranch = branch !== 'main';
 
     try {
       const cpRefs = (
@@ -196,6 +233,23 @@ export async function getDocumentHistory(
       // no checkpoints
     }
 
+    // On feature branches, also collect main's checkpoints as fallback history.
+    // Main's checkpoints older than the branch's first checkpoint are shown;
+    // main's checkpoints newer than that are hidden (branch has its own timeline).
+    let mainCheckpointShas: string[] = [];
+    if (isFeatureBranch) {
+      try {
+        mainCheckpointShas = (
+          await sg.raw('for-each-ref', '--format=%(objectname)', 'refs/checkpoints/main/')
+        )
+          .trim()
+          .split('\n')
+          .filter((s) => s.length === 40);
+      } catch {
+        // no main checkpoints
+      }
+    }
+
     try {
       const wipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', `refs/wip/${branch}/`))
         .trim()
@@ -206,29 +260,70 @@ export async function getDocumentHistory(
       // no WIP refs
     }
 
-    if (startRefs.length === 0 && checkpointShas.length === 0) return EMPTY;
+    // On feature branches with no branch-specific refs, also walk main's WIP
+    // so pre-divergence auto-saves are visible.
+    if (isFeatureBranch && startRefs.length === 0) {
+      try {
+        const mainWipRefs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/wip/main/'))
+          .trim()
+          .split('\n')
+          .filter(Boolean);
+        startRefs.push(...mainWipRefs);
+      } catch {
+        // no main WIP refs
+      }
+    }
 
-    // 1) Checkpoints: always included regardless of file changes.
-    //    Use --no-walk to resolve commit details without ancestry traversal.
+    if (startRefs.length === 0 && checkpointShas.length === 0 && mainCheckpointShas.length === 0) {
+      return EMPTY;
+    }
+
+    // 1) Resolve checkpoint entries.
+    //    Branch checkpoints are always included. Main checkpoints are included
+    //    only up to the branch's first checkpoint (branch takes over its own history).
+    const allCpShas = [...checkpointShas, ...mainCheckpointShas];
     let checkpointEntries: TimelineEntry[] = [];
-    if (checkpointShas.length > 0) {
+    if (allCpShas.length > 0) {
       const cpRaw = await sg.raw(
         'log',
         '--no-walk',
         '--author-date-order',
         `--format=${GIT_LOG_FORMAT}`,
-        ...checkpointShas,
+        ...allCpShas,
       );
-      checkpointEntries = parseGitLogOutput(cpRaw).map((e) => ({
+      const allCpEntries = parseGitLogOutput(cpRaw).map((e) => ({
         ...e,
         type: 'checkpoint' as const,
       }));
+
+      if (isFeatureBranch && checkpointShas.length > 0 && mainCheckpointShas.length > 0) {
+        // Find the earliest branch checkpoint timestamp — main's checkpoints
+        // older than this are pre-divergence history (show them).
+        // Main's checkpoints at or newer than this are post-divergence (hide them).
+        const branchCpShaSet = new Set(checkpointShas);
+        const branchCps = allCpEntries.filter((e) => branchCpShaSet.has(e.sha));
+        const mainCps = allCpEntries.filter((e) => !branchCpShaSet.has(e.sha));
+
+        const earliestBranchCp = branchCps.reduce((min, e) => {
+          const t = new Date(e.timestamp).getTime();
+          return t < min ? t : min;
+        }, Number.POSITIVE_INFINITY);
+
+        // Keep all branch checkpoints + main checkpoints older than the branch's first
+        checkpointEntries = [
+          ...branchCps,
+          ...mainCps.filter((e) => new Date(e.timestamp).getTime() < earliestBranchCp),
+        ];
+      } else {
+        // No branch checkpoints exist, or we're on main — show all
+        checkpointEntries = allCpEntries;
+      }
     }
 
     // 2) WIP + upstream: walk ancestry from all refs (including checkpoints
     //    so their WIP ancestry is reachable).
     const allStartRefs = [...startRefs];
-    for (const sha of checkpointShas) allStartRefs.push(sha);
+    for (const sha of allCpShas) allStartRefs.push(sha);
 
     let wipEntries: TimelineEntry[] = [];
     if (allStartRefs.length > 0) {

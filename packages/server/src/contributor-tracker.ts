@@ -12,6 +12,7 @@
 interface ContributorEntry {
   agentId: string;
   displayName: string;
+  colorSeed: string;
   docs: Set<string>;
 }
 
@@ -22,10 +23,15 @@ let pendingContributors = new Map<string, ContributorEntry>();
  * Record that an agent contributed to a document.
  * Accumulates into the module-level Map keyed by agentId.
  */
-export function recordContributor(docName: string, agentId: string, displayName: string): void {
+export function recordContributor(
+  docName: string,
+  agentId: string,
+  displayName: string,
+  colorSeed?: string,
+): void {
   let entry = pendingContributors.get(agentId);
   if (!entry) {
-    entry = { agentId, displayName, docs: new Set() };
+    entry = { agentId, displayName, colorSeed: colorSeed ?? displayName, docs: new Set() };
     pendingContributors.set(agentId, entry);
   }
   entry.docs.add(docName);
@@ -52,7 +58,12 @@ export function restoreContributors(snapshot: Map<string, ContributorEntry>): vo
   for (const [agentId, entry] of snapshot) {
     let live = pendingContributors.get(agentId);
     if (!live) {
-      live = { agentId, displayName: entry.displayName, docs: new Set() };
+      live = {
+        agentId,
+        displayName: entry.displayName,
+        colorSeed: entry.colorSeed,
+        docs: new Set(),
+      };
       pendingContributors.set(agentId, live);
     }
     for (const doc of entry.docs) live.docs.add(doc);
@@ -74,6 +85,7 @@ export function formatContributorsFrom(snapshot: Map<string, ContributorEntry>):
         v: 1,
         id: entry.agentId,
         name: entry.displayName,
+        colorSeed: entry.colorSeed,
         docs: [...entry.docs],
       })}`,
     );

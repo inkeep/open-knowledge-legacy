@@ -62,7 +62,8 @@ function getAuthorColor(
   entry: TimelineEntry,
 ): { className: string; hex?: undefined } | { hex: string; className?: undefined } {
   if (entry.contributors.length > 0) {
-    return { hex: colorFromSeed(entry.contributors[0].name) };
+    const c = entry.contributors[0];
+    return { hex: colorFromSeed(c.colorSeed ?? c.name) };
   }
   if (entry.type === 'upstream') return { className: 'bg-muted-foreground/50' };
   if (entry.authorEmail.includes('openknowledge.local') || entry.type === 'wip') {
