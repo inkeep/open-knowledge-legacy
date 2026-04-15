@@ -3,7 +3,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import * as Y from 'yjs';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { AGENT_FOCUS_DEBOUNCE_MS, type AgentFocusAwareness, pickPrimary } from '@/lib/agent-focus';
+import { getLastUserKeystroke } from '@/editor/observers';
+import {
+  AGENT_FOCUS_DEBOUNCE_MS,
+  AGENT_FOCUS_TYPING_GUARD_MS,
+  type AgentFocusAwareness,
+  pickPrimary,
+} from '@/lib/agent-focus';
 import { defaultCollabWsUrl, parseCC1Signal, SYSTEM_DOC_NAME } from '@/lib/cc1';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
@@ -28,6 +34,9 @@ export function SystemDocSubscriber() {
     pinnedDocRef.current = pinnedDoc;
     const becameUnpinned = wasPinned && pinnedDoc === null;
     if (!becameUnpinned) return;
+    // Respect the typing guard on unpin-nav too — don't yank focus if the
+    // user just typed and then unpinned (unlikely but consistent).
+    if (Date.now() - getLastUserKeystroke() < AGENT_FOCUS_TYPING_GUARD_MS) return;
     const provider = providerRef.current;
     const awareness = provider?.awareness as unknown as AgentFocusAwareness | null;
     if (!awareness) return;
@@ -81,6 +90,11 @@ export function SystemDocSubscriber() {
       debounceTimer = null;
       // Pin: user has chosen to stay put. Honor unconditionally.
       if (pinnedDocRef.current !== null) return;
+      // Typing guard: suppress nav silently while the user is actively editing.
+      // Reads the module-level keystroke timestamp that TiptapEditor/SourceEditor
+      // update via `markUserTyping` on every keydown/paste/drop/cut.
+      const sinceLastKeystroke = Date.now() - getLastUserKeystroke();
+      if (sinceLastKeystroke < AGENT_FOCUS_TYPING_GUARD_MS) return;
       const awareness = provider.awareness as unknown as AgentFocusAwareness | null;
       if (!awareness) return;
       const primary = pickPrimary(awareness, Date.now());

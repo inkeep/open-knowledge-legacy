@@ -20,6 +20,13 @@ export const AGENT_FOCUS_STALE_MS = 5_000;
 export const AGENT_FOCUS_DEBOUNCE_MS = 300;
 
 /**
+ * Window during which nav is suppressed after a user keystroke. Conservative
+ * default — don't yank focus while the user is mid-edit. Tune down if users
+ * report "it's too slow to follow."
+ */
+export const AGENT_FOCUS_TYPING_GUARD_MS = 3_000;
+
+/**
  * Minimal Yjs awareness shape needed by `pickPrimary` — keeps the helper
  * testable without importing the full `y-protocols/awareness` module.
  */
