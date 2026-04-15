@@ -106,7 +106,9 @@ function InlineCreateRow({
           aria-describedby={error ? 'inline-create-error' : undefined}
           placeholder={kind === 'folder' ? 'folder-name' : 'file-name'}
           className={cn('h-7 min-w-0 flex-1 bg-background text-sm', error && 'border-destructive')}
-          onBlur={onCancel}
+          onBlur={() => {
+            if (!busy && !error) onCancel();
+          }}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -381,7 +383,6 @@ export function FileTree({
   const [creatingBusy, setCreatingBusy] = useState(false);
   const [creatingError, setCreatingError] = useState<string | null>(null);
   const prevCreateSeqRef = useRef(0);
-  const creatingBusyRef = useRef(false);
 
   if (activeDocName !== prevActiveDocName) {
     // Clear user-collapsed overrides on navigation so ancestors of the new
@@ -476,7 +477,7 @@ export function FileTree({
   }
 
   function handleCancelCreating() {
-    if (!creatingBusy && !creatingBusyRef.current) {
+    if (!creatingBusy) {
       setCreatingItem(null);
       setCreatingValue('');
       setCreatingError(null);
@@ -484,7 +485,7 @@ export function FileTree({
   }
 
   async function handleInlineCreate() {
-    if (!creatingItem || creatingBusyRef.current) return;
+    if (!creatingItem) return;
     const trimmed = creatingValue.trim();
     if (!trimmed) {
       setCreatingError('Name is required');
@@ -506,7 +507,6 @@ export function FileTree({
         ? composeInlineFilePath(creatingItem.parentDir, trimmed)
         : composeInlineFolderPath(creatingItem.parentDir, trimmed);
 
-    creatingBusyRef.current = true;
     setCreatingBusy(true);
     setCreatingError(null);
 
@@ -533,6 +533,7 @@ export function FileTree({
         const msg = data?.error ?? `Failed to create ${creatingItem.kind}`;
         toast.error(msg);
         setCreatingError(msg);
+        setCreatingBusy(false);
         return;
       }
 
@@ -540,6 +541,7 @@ export function FileTree({
       setCreatingItem(null);
       setCreatingValue('');
       setCreatingError(null);
+      setCreatingBusy(false);
       if (docName) navigateTo(docName);
       addPage(docName);
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
@@ -548,8 +550,6 @@ export function FileTree({
       const msg = 'Network error — please try again';
       toast.error(msg);
       setCreatingError(msg);
-    } finally {
-      creatingBusyRef.current = false;
       setCreatingBusy(false);
     }
   }
