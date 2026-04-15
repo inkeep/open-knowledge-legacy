@@ -4,11 +4,11 @@ Every built-in component + edge cases, rendered in the WYSIWYG editor.
 
 ## 1. Callouts (5 variants)
 
-<Callout type="info">
+<Call type="info">
 
 This is an **info** callout. It uses the blue accent.
 
-</Callout>
+
 
 <Callout type="warning">
 
@@ -21,8 +21,6 @@ This is a **warning** callout — for cautions and soft errors.
 This is an **error** callout — for destructive or critical messaging.
 
 </Callout>
-
-
 
 <Callout type="success">
 
@@ -44,11 +42,7 @@ This is an **idea** callout — for tips, tricks, and inspirations.
 
 <Cards>
 
-<Card title="Guides" description="Step-by-step tutorials" href="/guides">
-
-
-
-</Card>
+<Card title="Guides" description="Step-by-step tutorials" href="/guides" />
 
 <Card title="Reference" description="API reference" href="/reference" />
 
@@ -57,8 +51,6 @@ This is an **idea** callout — for tips, tricks, and inspirations.
 <Card title="Showcase" description="Community projects" href="/showcase" />
 
 </Cards>
-
-
 
 ## 4. Steps + Step — numbered vertical sequence
 
@@ -89,10 +81,6 @@ bun run dev
 ```
 
 Open `http://localhost:5173` in your browser.
-
-
-
-
 
 </Step>
 
@@ -159,8 +147,6 @@ Compound components (Tabs, Accordion) that rely on React Context don't cross Tip
 </Accordion>
 
 </Accordions>
-
-
 
 ## 7. Files + Folder + File — file tree visualization
 
