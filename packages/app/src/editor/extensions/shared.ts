@@ -17,6 +17,7 @@ import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';
 import { RawMdxFallback } from './raw-mdx-fallback';
 import { SlashCommand } from './slash-command';
+import { SourceDirtyObserver } from './source-dirty-observer';
 import { WikiLink } from './wiki-link';
 
 // Replace core extensions that have app-side NodeViews or mark views.
@@ -45,6 +46,7 @@ export const sharedExtensions = [
   HeadingAnchors,
   BlockDragHandle,
   BlockMover,
+  SourceDirtyObserver,
   Placeholder.configure({
     placeholder: "Type '/' for commands",
     showOnlyCurrent: true,
