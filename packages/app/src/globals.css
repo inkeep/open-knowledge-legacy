@@ -952,6 +952,17 @@ button:active:not(:disabled) {
   margin-bottom: 0;
 }
 
+/* 7. JSX component block hover/selection outlines (FR-20) */
+.ProseMirror
+.jsx-component-wrapper:hover:not(.is-selected):not(.jsx-component-wrapper--unregistered) {
+  outline: 1px dashed var(--border);
+  outline-offset: 2px;
+}
+.ProseMirror .jsx-component-wrapper.is-selected {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
 /* Dark overrides — ProseMirror content surfaces */
 .dark .ProseMirror blockquote {
   border-color: var(--color-gray-600);
