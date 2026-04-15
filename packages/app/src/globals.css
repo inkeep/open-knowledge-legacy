@@ -626,8 +626,17 @@
   @apply border-none!;
 }
 
+/* WCAG AA: shadcn's --muted-foreground at 80% alpha composites to ~3.2:1
+   against the light background (fails 4.5:1). Dark theme was already ~7.8:1.
+   Explicit opaque values per theme so axe-core color-contrast passes in both.
+     - light: oklch(0.4 0 0) on oklch(1 0 0)    → ~6.5:1 (comfortably passes)
+     - dark:  oklch(0.708 0 0) on oklch(0.145)  → ~7.8:1 (unchanged vs. alpha path) */
 .cm-gutters {
-  @apply text-muted-foreground/80!;
+  color: oklch(0.4 0 0);
+}
+
+.dark .cm-gutters {
+  color: oklch(0.708 0 0);
 }
 
 .cm-lineNumbers .cm-gutterElement {
