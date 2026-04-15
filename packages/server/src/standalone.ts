@@ -85,6 +85,12 @@ export interface ServerOptions {
    * could take more than 10s.
    */
   destroyTimeoutMs?: number;
+  /**
+   * Optional. Called after every successful agent write (write_document /
+   * edit_document) via the MCP API. The CLI uses this to open the browser
+   * on the first agent edit per session; consumers that don't care can omit.
+   */
+  onAgentWrite?: () => void;
 }
 
 export interface ServerInstance {
@@ -209,6 +215,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       backlinkIndex,
       signalChannel,
       agentFocusBroadcaster,
+      onAgentWrite: options.onAgentWrite,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
   } catch (err) {

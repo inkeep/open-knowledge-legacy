@@ -60,7 +60,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'cat content/auth.md' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -86,7 +86,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'ls articles/' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     const s = structured(result);
@@ -110,7 +110,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn oauth articles/ | head -5' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -134,7 +134,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'ls specs/' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -161,7 +161,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'awk BEGIN{}' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -174,7 +174,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'grep x . > out.txt' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -185,7 +185,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'cat `ls`' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -202,7 +202,7 @@ describe('exec — binary file NG8 warning', () => {
 
     const result = (await buildExecResult(
       { command: 'cat assets/diagram.png' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.content[0].text).toContain('appears to be binary');
@@ -227,7 +227,7 @@ describe('exec — CC9 parity with read_document', () => {
     // exec("cat articles/parity.md") → pulls rich enrichment
     const execResult = (await buildExecResult(
       { command: 'cat articles/parity.md' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
     const execMeta = fileEntries(structured(execResult))[0];
 
@@ -235,7 +235,7 @@ describe('exec — CC9 parity with read_document', () => {
     const readOutput = await buildReadResult(
       { path: 'articles/parity.md' },
       {
-        projectDir: project,
+        resolveCwd: async () => project,
         serverUrl: undefined,
         // biome-ignore lint/suspicious/noExplicitAny: test-only config stub
         config: { mcp: { tools: { read_document: { historyDepth: 5 } } } } as any,
@@ -275,7 +275,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | head -10' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -290,7 +290,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | head' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -303,7 +303,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -316,7 +316,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | tail -5' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -329,7 +329,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | head -n 8' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -355,7 +355,7 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const result = (await buildExecResult(
       { command: 'cat content/a.md' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     const s = structured(result);
@@ -370,7 +370,7 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | head -10' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     const s = structured(result);
@@ -386,7 +386,7 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const result = (await buildExecResult(
       { command: 'cat content/tiny.md' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     const s = structured(result);
@@ -402,7 +402,7 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const result = (await buildExecResult(
       { command: 'cat content/big.md' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     const s = structured(result);

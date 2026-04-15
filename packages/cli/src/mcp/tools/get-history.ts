@@ -6,8 +6,14 @@
  * that can be passed to `rollback_to_version`.
  */
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, normalizeDocName, textResult } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpGet,
+  normalizeDocName,
+  resolveServerUrl,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] List version history for a document.',
@@ -24,7 +30,7 @@ export const DESCRIPTION = [
   '- `excludeAuthor` (optional) — Exclude entries by this author name or email',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
   server.tool(
     'get_history',
     DESCRIPTION,
@@ -57,7 +63,8 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       author?: string;
       excludeAuthor?: string;
     }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -71,7 +78,7 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       if (args.author) params.set('author', args.author);
       if (args.excludeAuthor) params.set('excludeAuthor', args.excludeAuthor);
 
-      const result = await httpGet(serverUrl, `/api/history?${params.toString()}`);
+      const result = await httpGet(url, `/api/history?${params.toString()}`);
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
       const { ok: _ok, ...data } = result;

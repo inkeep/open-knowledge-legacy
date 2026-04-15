@@ -15,9 +15,12 @@
  * Does NOT require Hocuspocus running. All diagnostic logging goes to stderr
  * (stdout is the MCP wire).
  */
+import { fileURLToPath } from 'node:url';
+import { readServerLock } from '@inkeep/open-knowledge-server';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { setProjectDir } from '../bash/index.ts';
+import { RootsListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { MCP_SERVER_NAME, PACKAGE_VERSION } from '../constants.ts';
 import { dim } from '../ui/colors.ts';
@@ -141,19 +144,20 @@ async function detectHocuspocus(serverUrl: string): Promise<boolean> {
 // ── Server entrypoint ──────────────────────────────────────────────────
 
 export async function startMcpServer(options: McpServerOptions): Promise<void> {
-  const { projectDir, serverUrl, config } = options;
+  const { projectDir: startupCwd, serverUrl, config } = options;
 
-  // Detect Hocuspocus (non-blocking)
-  let hocuspocusAvailable = false;
+  // Detect Hocuspocus (non-blocking, informational). An explicit `serverUrl`
+  // is probed immediately; when discovery is lazy the log is deferred until
+  // after the client advertises its roots (see below).
   if (serverUrl) {
-    hocuspocusAvailable = await detectHocuspocus(serverUrl);
+    const hocuspocusAvailable = await detectHocuspocus(serverUrl);
     log(
       hocuspocusAvailable
         ? `Hocuspocus detected at ${serverUrl}`
         : `Hocuspocus not available at ${serverUrl} — using disk-only mode`,
     );
   } else {
-    log('No server URL configured — using disk-only mode');
+    log('No explicit server URL — will discover lazily from server.lock per call');
   }
 
   const server = new McpServer(
@@ -166,17 +170,88 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     },
   );
 
+  // ── Cwd resolution via MCP roots ────────────────────────────────────
+  //
+  // The client advertises one or more roots (file:// URIs of directories
+  // it's working in). We fetch those roots and use the first one as the
+  // default cwd for every tool call; agents can override per-call via an
+  // explicit `cwd` arg. Falls back to startup cwd if the client doesn't
+  // advertise roots (non-MCP-roots clients, or clients that leave it empty).
+  //
+  // This replaces the previous spawn-time singleton (`setProjectDir`),
+  // which broke whenever the spawner didn't set cwd the way the server
+  // expected (e.g., Claude Desktop not honoring the `cwd` field in
+  // `claude_desktop_config.json`).
+  let cachedRoots: string[] = [];
+  let rootsLoaded = false;
+
+  async function refreshRoots(): Promise<void> {
+    try {
+      const result = await server.server.listRoots();
+      cachedRoots = result.roots
+        .map((r) => r.uri)
+        .filter((u) => u.startsWith('file://'))
+        .map((u) => fileURLToPath(u));
+      log(
+        cachedRoots.length > 0
+          ? `roots: ${cachedRoots.join(', ')}`
+          : 'client advertised no roots — falling back to startup cwd',
+      );
+    } catch (err) {
+      log(
+        `listRoots unsupported by client (using startup cwd): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      rootsLoaded = true;
+    }
+  }
+
+  async function resolveCwd(explicit?: string): Promise<string> {
+    if (explicit) return explicit;
+    if (!rootsLoaded) await refreshRoots();
+    return cachedRoots[0] ?? startupCwd;
+  }
+
+  server.server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
+    rootsLoaded = false;
+    await refreshRoots();
+  });
+
   // MCP tools — workflow + document + enriched + exec (V0-24)
-  const httpUrl = serverUrl
+  //
+  // Hocuspocus URL resolution is **lazy** when no explicit override is given.
+  // Discovery reads `<contentDir>/.open-knowledge/server.lock` relative to the
+  // client-advertised root, re-resolved on every tool invocation. This is the
+  // difference between "MCP started before `open-knowledge start`" returning
+  // stale `undefined` forever vs. picking the server up as soon as it appears.
+  // An explicit `serverUrl` (e.g. from `--port`) short-circuits discovery.
+  const explicitHttpUrl = serverUrl
     ? serverUrl.replace('ws://', 'http://').replace('wss://', 'https://')
     : undefined;
-  // Bash wrapper scopes all shell ops to projectDir (see bash/index.ts).
-  setProjectDir(projectDir);
-  registerAllTools(server, { serverUrl: httpUrl, projectDir, config });
+  const resolveServerUrlForTools = async (): Promise<string | undefined> => {
+    if (explicitHttpUrl) return explicitHttpUrl;
+    const cwd = await resolveCwd();
+    const lock = readServerLock(resolveLockDir(resolveContentDir(config, cwd)));
+    return lock && lock.port > 0 ? `http://localhost:${lock.port}` : undefined;
+  };
+
+  registerAllTools(server, {
+    serverUrl: resolveServerUrlForTools,
+    resolveCwd,
+    startupCwd,
+    config,
+  });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log('MCP server running (stdio)');
+
+  // Fetch roots opportunistically after the client finishes handshake.
+  // If it fires before the client is ready, `resolveCwd` will retry on
+  // first use (rootsLoaded is reset on failure paths via fallback).
+  refreshRoots().catch(() => {
+    /* logged inside refreshRoots */
+  });
 
   // Cleanup on exit
   const shutdown = (): void => {

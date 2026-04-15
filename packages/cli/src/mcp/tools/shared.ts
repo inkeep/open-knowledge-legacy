@@ -39,6 +39,25 @@ export const HOCUSPOCUS_NOT_RUNNING_ERROR =
   'Error: Hocuspocus server is not running. Start it with `open-knowledge start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';
 
 /**
+ * Either an eagerly-known server URL, an absent URL, or a lazy resolver that
+ * computes the URL per-call. Tools accept this union so they can be registered
+ * before the MCP client advertises its project root: the resolver variant
+ * re-reads `server.lock` from the live project dir at invocation time.
+ *
+ * See `packages/cli/src/mcp/server.ts` for the resolver wired in at startup.
+ */
+export type ServerUrlOrResolver = string | undefined | (() => Promise<string | undefined>);
+
+/**
+ * Normalize a `ServerUrlOrResolver` to a concrete URL (or `undefined` when the
+ * server is not reachable). Call this at the top of every tool handler that
+ * hits the Hocuspocus HTTP API.
+ */
+export async function resolveServerUrl(x: ServerUrlOrResolver): Promise<string | undefined> {
+  return typeof x === 'function' ? await x() : x;
+}
+
+/**
  * Normalize a user-supplied `docName`. The server keys documents by the
  * extension-less docName, so a caller that passes `"notes/meeting.md"` would
  * otherwise produce `meeting.md.md`. The server auto-detects the extension

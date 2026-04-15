@@ -19,8 +19,9 @@ export const ConfigSchema = z.object({
         .string()
         .regex(/^[\w.\-:]+$/, 'Invalid hostname')
         .default('localhost'),
+      openOnAgentEdit: z.boolean().default(false),
     })
-    .default({ port: 3000, host: 'localhost' }),
+    .default({ port: 3000, host: 'localhost', openOnAgentEdit: false }),
   persistence: z
     .object({
       debounceMs: z.number().int().min(0).default(2000),

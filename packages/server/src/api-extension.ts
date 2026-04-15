@@ -406,6 +406,12 @@ export interface ApiExtensionOptions {
    * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
    */
   agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. Called after every successful agent write (write_document /
+   * edit_document). The handler is expected to be cheap and idempotent —
+   * the CLI uses it to open the browser on the first agent edit per session.
+   */
+  onAgentWrite?: () => void;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -480,6 +486,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     backlinkIndex,
     signalChannel,
     agentFocusBroadcaster,
+    onAgentWrite,
   } = options;
 
   function resolveDocPath(docName: string): string | null {
@@ -984,6 +991,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         writeKind: 'write',
         ts: Date.now(),
       });
+      onAgentWrite?.();
 
       // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
       // backlinks and a plausible hub exists in its folder tree, suggest the
@@ -1425,6 +1433,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         writeKind: 'edit',
         ts: Date.now(),
       });
+      onAgentWrite?.();
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {

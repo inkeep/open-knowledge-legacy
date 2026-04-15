@@ -28,7 +28,8 @@ describe('registerAllTools', () => {
     (server as unknown as { tool: typeof server.tool }).tool = toolSpy;
 
     registerAllTools(server, {
-      projectDir: process.cwd(),
+      resolveCwd: async () => process.cwd(),
+      startupCwd: process.cwd(),
       config,
     });
 

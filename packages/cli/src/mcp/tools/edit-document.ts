@@ -5,8 +5,14 @@
  * in the Y.Text and replaces it, propagating to all connected editors.
  */
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, normalizeDocName, textResult } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpPost,
+  normalizeDocName,
+  resolveServerUrl,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find-and-replace on a live document via the CRDT layer.',
@@ -22,7 +28,7 @@ export const DESCRIPTION = [
   '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
   server.tool(
     'edit_document',
     DESCRIPTION,
@@ -40,10 +46,11 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
         ),
     },
     async (args: { docName: string; find: string; replace: string; offset?: number }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
-      const result = await httpPost(serverUrl, '/api/agent-patch', {
+      const result = await httpPost(url, '/api/agent-patch', {
         docName: normalized.docName,
         find: args.find,
         replace: args.replace,

@@ -55,6 +55,24 @@ export function startCommand(getConfig: () => Config): Command {
         log.info({ contentDir }, 'Created content directory');
       }
 
+      // First-agent-edit auto-open. `localUrl` is only known after listen(),
+      // so we capture a setter here and let the onAgentWrite callback fire
+      // once the URL has been assigned. The `once` flag debounces to a single
+      // browser open per server session.
+      let agentEditUrl: string | null = null;
+      let agentEditOpened = false;
+      const onAgentWrite = config.server.openOnAgentEdit
+        ? () => {
+            if (agentEditOpened || !agentEditUrl) return;
+            agentEditOpened = true;
+            import('../utils/open-browser.ts')
+              .then(({ openBrowser }) => openBrowser(agentEditUrl as string))
+              .catch(() => {
+                // openBrowser already logs a hint on failure; URL is in the banner.
+              });
+          }
+        : undefined;
+
       const { hocuspocus, contentFilter, destroy, ready, degraded, lockDir } = createServer({
         contentDir,
         projectDir: cwd,
@@ -66,6 +84,7 @@ export function startCommand(getConfig: () => Config): Command {
         maxDebounce: config.persistence.maxDebounceMs,
         includePatterns: config.content.include,
         excludePatterns: config.content.exclude,
+        onAgentWrite,
       });
 
       // Graceful shutdown — idempotent, fires `destroy()` exactly once even
@@ -194,6 +213,7 @@ export function startCommand(getConfig: () => Config): Command {
         updateServerLockPort(lockDir, realPort);
 
         const localUrl = `http://${config.server.host}:${realPort}`;
+        agentEditUrl = localUrl;
         const networkUrl =
           config.server.host === '0.0.0.0' || config.server.host === '::'
             ? `http://0.0.0.0:${realPort}`

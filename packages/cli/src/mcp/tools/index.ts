@@ -75,7 +75,7 @@ import {
   DESCRIPTION as SAVE_VERSION_DESCRIPTION,
 } from './save-version.ts';
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
-import type { ServerInstance } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   register as registerSuggestLinks,
   DESCRIPTION as SUGGEST_LINKS_DESCRIPTION,
@@ -112,16 +112,35 @@ export const TOOL_DESCRIPTIONS = {
   get_dead_links: GET_DEAD_LINKS_DESCRIPTION,
 } as const;
 
+/**
+ * Per-call cwd resolver. Returns the absolute host directory that the
+ * current tool call should operate against. Priority:
+ *   1. explicit `cwd` arg from the tool call
+ *   2. first MCP root advertised by the client
+ *   3. server startup cwd (fallback)
+ */
+export type ResolveCwd = (explicit?: string) => Promise<string>;
+
 export interface RegisterAllToolsOptions {
-  serverUrl?: string;
-  projectDir: string;
+  /**
+   * Hocuspocus URL. Accept a string (explicit override, e.g. `--port`), or a
+   * lazy resolver that re-discovers per-call from the live project root. The
+   * resolver variant is what makes writes work when the MCP process is spawned
+   * before the user starts the Hocuspocus server, or when `cwd` at spawn time
+   * doesn't match the project root (e.g. Claude Desktop launches with `cwd=/`).
+   */
+  serverUrl?: ServerUrlOrResolver;
+  /** Resolves the cwd for a given tool call (see `ResolveCwd` docs). */
+  resolveCwd: ResolveCwd;
+  /** Server startup cwd — used only as a test/fallback identity anchor. */
+  startupCwd: string;
   config: Config;
 }
 
 export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsOptions): void {
   // exec — the primary surface (V0-24 / L2-aggressive per D2).
   registerExec(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     serverUrl: opts.serverUrl,
   });
 
@@ -133,12 +152,12 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
 
   // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
   registerSearch(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     config: opts.config,
     serverUrl: opts.serverUrl,
   });

@@ -120,6 +120,20 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #   exclude: []
 
 
+# --- Server ----------------------------------------------------------------
+# HTTP/WebSocket listener for the Hocuspocus server + static React app.
+#
+# openOnAgentEdit: when true, the browser opens automatically the first time
+# an agent writes to the knowledge base in this server session. Debounced to
+# one open per boot. Useful for pairing with Claude Code — you see the edit
+# land live. Leave false for headless/CI.
+#
+# server:
+#   port: 3000
+#   host: localhost
+#   openOnAgentEdit: false
+
+
 # --- Persistence -----------------------------------------------------------
 # How aggressively CRDT updates are flushed to disk.
 # persistence:
