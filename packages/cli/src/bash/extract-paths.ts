@@ -18,7 +18,7 @@
  *
  * Returns deduped project-relative paths. Each is stripped of `./` prefix
  * and trailing `/`. Extension filter is `.md` or `.mdx` only — other file
- * types aren't wiki content and aren't enriched.
+ * types aren't Open Knowledge markdown and aren't enriched.
  *
  * Spec: SPEC.md D8 (R2-revised: `(md|mdx)` regex), FR14.
  */
@@ -27,7 +27,7 @@ import type { Stage } from './parse-command.ts';
 /** Producer stages — their stdout shape determines how we extract paths. */
 const PRODUCER_COMMANDS: ReadonlySet<string> = new Set(['cat', 'ls', 'grep', 'find']);
 
-/** Fallback regex scanning stdout for wiki-shaped paths. */
+/** Fallback regex scanning stdout for `.md` / `.mdx` paths. */
 const PATH_FALLBACK_RE = /\b[\w./-]+\.(md|mdx)\b/g;
 
 function isWikiPath(p: string): boolean {
@@ -67,7 +67,7 @@ function extractFromLs(stdout: string, stage: Stage): string[] {
   for (const line of stdout.split('\n')) {
     const name = line.trim();
     if (!name) continue;
-    // Skip entries that are clearly non-wiki files (have a non-md extension).
+    // Skip entries that are clearly not markdown (have a non-md extension).
     // Entries without an extension are candidate directories — exec.ts stats
     // them to classify.
     if (/\.[a-z0-9]+$/i.test(name) && !isWikiPath(name)) continue;

@@ -123,15 +123,32 @@ function getTypingState(doc: Y.Doc): TypingState {
 }
 
 /**
+ * Module-level keystroke timestamp — shared across all docs so nav suppression
+ * in `SystemDocSubscriber` can react to typing anywhere in the editor. This
+ * is intentionally global (not per-doc) because the nav decision is global.
+ */
+let lastGlobalUserKeystrokeMs = 0;
+
+/** Read the most-recent global user-keystroke timestamp (0 if never typed). */
+export function getLastUserKeystroke(): number {
+  return lastGlobalUserKeystrokeMs;
+}
+
+/**
  * Mark that the local user just typed. Call this from the editor's DOM event handlers
- * (keydown, paste, drop, etc.). Observer B uses this to defer its tree replacement.
+ * (keydown, paste, drop, etc.). Observer B uses the per-doc value to defer its tree
+ * replacement. `SystemDocSubscriber` reads the global value to suppress agent-driven
+ * nav during active user input.
  *
- * Uses the scheduler's `now()` so virtual-clock tests observe consistent
- * timestamps with scheduler `setTimeout` dueAt calculations.
+ * Uses the scheduler's `now()` for the per-doc timestamp so virtual-clock tests
+ * observe consistent timestamps with scheduler `setTimeout` dueAt calculations.
+ * The global `lastGlobalUserKeystrokeMs` always tracks the real clock because its
+ * consumer (SystemDocSubscriber) compares against `Date.now()`.
  */
 export function markUserTyping(doc: Y.Doc): void {
   const state = getTypingState(doc);
   state.lastUserTypedAt = state.scheduler.now();
+  lastGlobalUserKeystrokeMs = Date.now();
 }
 
 // ─────────────────────────────────────────────────────────────

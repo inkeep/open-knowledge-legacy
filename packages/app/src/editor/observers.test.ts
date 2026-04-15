@@ -27,6 +27,7 @@ import * as Y from 'yjs';
 import { createManualScheduler } from '../../tests/integration/test-harness';
 import { sharedExtensions } from './extensions/shared';
 import {
+  getLastUserKeystroke,
   markUserTyping,
   ORIGIN_TEXT_TO_TREE,
   ORIGIN_TREE_TO_TEXT,
@@ -865,5 +866,31 @@ describe('FR-15: Scheduler DI — deterministic observer debounce control', () =
       cleanup();
       doc.destroy();
     }
+  });
+});
+
+describe('markUserTyping — global keystroke timestamp (US-006)', () => {
+  test('getLastUserKeystroke advances on markUserTyping', () => {
+    const doc = new Y.Doc();
+    const before = getLastUserKeystroke();
+    markUserTyping(doc);
+    const after = getLastUserKeystroke();
+    expect(after).toBeGreaterThanOrEqual(before);
+    expect(after).toBeGreaterThan(0);
+  });
+
+  test('global timestamp is shared across multiple docs', () => {
+    const doc1 = new Y.Doc();
+    const doc2 = new Y.Doc();
+    markUserTyping(doc1);
+    const ts1 = getLastUserKeystroke();
+    // Small advance so the next call is observably later even on fast systems
+    const wait = Date.now() + 1;
+    while (Date.now() < wait) {
+      /* spin */
+    }
+    markUserTyping(doc2);
+    const ts2 = getLastUserKeystroke();
+    expect(ts2).toBeGreaterThan(ts1);
   });
 });

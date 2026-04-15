@@ -1,5 +1,5 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { Clock, Columns2, Rows2, Save } from 'lucide-react';
+import { Clock, Columns2, Pin, PinOff, Rows2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -45,12 +45,19 @@ export function EditorHeader({
   diffLayout,
   onDiffLayoutChange,
 }: EditorHeaderProps) {
-  const { activeDocName, activeProvider } = useDocumentContext();
+  const { activeDocName, activeProvider, pinnedDoc, pin, unpin } = useDocumentContext();
   const syncStatus = useSyncStatus(activeProvider);
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
 
   const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
+  const isPinned = pinnedDoc !== null;
+
+  function togglePin() {
+    if (!activeDocName) return;
+    if (isPinned) unpin();
+    else pin(activeDocName);
+  }
   const isDiffMode = editorMode === 'diff';
   const [confirmingRestore, setConfirmingRestore] = useState(false);
 
@@ -70,6 +77,36 @@ export function EditorHeader({
         <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
         <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
+        {activeDocName && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 shrink-0 text-muted-foreground"
+                onClick={togglePin}
+                aria-label={
+                  isPinned
+                    ? 'Unpin — resume following agent'
+                    : 'Pin this doc — stop following agent'
+                }
+                aria-pressed={isPinned}
+                data-pinned={isPinned ? 'true' : 'false'}
+              >
+                {isPinned ? (
+                  <Pin className="size-4 text-foreground" fill="currentColor" />
+                ) : (
+                  <PinOff className="size-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {isPinned
+                ? 'Pinned — click to resume following agent navigation'
+                : 'Pin to stay on this doc — browser won’t auto-navigate to the agent’s current focus'}
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {/* Normal editing mode: Visual/Markdown toggle */}

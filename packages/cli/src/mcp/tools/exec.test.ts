@@ -60,7 +60,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'cat content/auth.md' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -86,7 +86,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'ls articles/' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     const s = structured(result);
@@ -110,7 +110,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn oauth articles/ | head -5' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -134,7 +134,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'ls specs/' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -161,7 +161,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'awk BEGIN{}' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -174,7 +174,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'grep x . > out.txt' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -185,7 +185,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'cat `ls`' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -202,7 +202,7 @@ describe('exec — binary file NG8 warning', () => {
 
     const result = (await buildExecResult(
       { command: 'cat assets/diagram.png' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
 
     expect(result.content[0].text).toContain('appears to be binary');
@@ -227,7 +227,7 @@ describe('exec — CC9 parity with read_document', () => {
     // exec("cat articles/parity.md") → pulls rich enrichment
     const execResult = (await buildExecResult(
       { command: 'cat articles/parity.md' },
-      { projectDir: project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined },
     )) as ExecResult;
     const execMeta = fileEntries(structured(execResult))[0];
 
@@ -235,7 +235,7 @@ describe('exec — CC9 parity with read_document', () => {
     const readOutput = await buildReadResult(
       { path: 'articles/parity.md' },
       {
-        projectDir: project,
+        resolveCwd: async () => project,
         serverUrl: undefined,
         // biome-ignore lint/suspicious/noExplicitAny: test-only config stub
         config: { mcp: { tools: { read_document: { historyDepth: 5 } } } } as any,
@@ -256,5 +256,156 @@ describe('exec — CC9 parity with read_document', () => {
     expect(readOutput).toContain('### Recent activity');
     expect(readOutput).toContain('[agent: X]');
     expect(readOutput).toContain('wrote parity');
+  });
+});
+
+describe('exec — head/tail truncation banner', () => {
+  async function seed(project: string, nFiles: number, linesPerFile: number): Promise<void> {
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    for (let i = 0; i < nFiles; i++) {
+      const body = Array.from({ length: linesPerFile }, (_, j) => `line ${j} needle`).join('\n');
+      writeFileSync(resolve(content, `doc${String(i).padStart(3, '0')}.md`), `${body}\n`);
+    }
+  }
+
+  test('warns when `grep | head -N` hits its cap', async () => {
+    const project = await bootstrap();
+    await seed(project, 5, 20); // 5 files × 20 lines = 100 matching lines, capped to 10
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | head -10' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0].text;
+    expect(text).toMatch(/Output hit `head -10` cap/);
+    expect(text).toMatch(/grep -rl PATTERN <dir>/);
+  });
+
+  test('does NOT warn when output is below the head cap', async () => {
+    const project = await bootstrap();
+    await seed(project, 1, 3); // only 3 matches, below head -10 default
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | head' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).not.toMatch(/Output hit/);
+  });
+
+  test('does NOT warn on single-stage commands (no head/tail at end)', async () => {
+    const project = await bootstrap();
+    await seed(project, 3, 5);
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).not.toMatch(/Output hit/);
+  });
+
+  test('warns on `tail -N` truncation too', async () => {
+    const project = await bootstrap();
+    await seed(project, 5, 10);
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | tail -5' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toMatch(/Output hit `tail -5` cap/);
+  });
+
+  test('recognizes `-n N` flag form', async () => {
+    const project = await bootstrap();
+    await seed(project, 5, 10);
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | head -n 8' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toMatch(/Output hit `head -8` cap/);
+  });
+});
+
+describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', () => {
+  async function seed(project: string, nFiles: number, linesPerFile: number): Promise<void> {
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    for (let i = 0; i < nFiles; i++) {
+      const body = Array.from({ length: linesPerFile }, (_, j) => `line ${j} needle`).join('\n');
+      writeFileSync(resolve(content, `doc${String(i).padStart(3, '0')}.md`), `${body}\n`);
+    }
+  }
+
+  test('structuredContent.stdout contains the raw output', async () => {
+    const project = await bootstrap();
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    writeFileSync(resolve(content, 'a.md'), '---\ntitle: A\n---\n\nalpha body\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat content/a.md' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(typeof s.stdout).toBe('string');
+    expect(s.stdout).toContain('alpha body');
+    expect(s.stdoutTruncated).toBe(false);
+  });
+
+  test('structuredContent.warnings includes head-cap truncation banner', async () => {
+    const project = await bootstrap();
+    await seed(project, 5, 20);
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | head -10' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.warnings).toBeDefined();
+    expect(s.warnings?.some((w) => /Output hit `head -10` cap/.test(w))).toBe(true);
+  });
+
+  test('structuredContent.warnings absent when no banner fires', async () => {
+    const project = await bootstrap();
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    writeFileSync(resolve(content, 'tiny.md'), 'only a few lines\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat content/tiny.md' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.warnings).toBeUndefined();
+  });
+
+  test('stdoutTruncated true when soft-cap applies', async () => {
+    const project = await bootstrap();
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    const body = Array.from({ length: 600 }, (_, i) => `line ${i}`).join('\n');
+    writeFileSync(resolve(content, 'big.md'), `${body}\n`);
+
+    const result = (await buildExecResult(
+      { command: 'cat content/big.md' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdoutTruncated).toBe(true);
   });
 });

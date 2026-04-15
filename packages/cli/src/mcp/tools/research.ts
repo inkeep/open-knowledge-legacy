@@ -56,8 +56,8 @@ If a fetch fails for a source you specifically need, stop and ask the user to pa
 Read each ingested source carefully. Also read:
 
 - **Existing canonical articles** on the topic — use \`exec("cat <path>")\` (rich enrichment: frontmatter + shadow-repo activity + project git history + backlinks in one call)
-- **Prior research** on adjacent topics — same: \`exec("cat <path>")\` for wiki files
-- **Relevant source code** for projects where research is grounded in the codebase (read entry points, core modules, and any specs that touch the topic) — native \`Read\` is fine for non-wiki code files
+- **Prior research** on adjacent topics — same: \`exec("cat <path>")\` for Open Knowledge markdown
+- **Relevant source code** for projects where research is grounded in the codebase (read entry points, core modules, and any specs that touch the topic) — native \`Read\` is fine for \`.ts\` / \`.js\` / etc.; use \`exec\` for \`.md\` / \`.mdx\` under \`content.include\`
 - **Project context** — project-root docs, \`specs/\`, \`reports/\`, or wherever the project organizes design material
 
 Take notes on:
