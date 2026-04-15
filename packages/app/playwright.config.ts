@@ -17,11 +17,20 @@ const port = process.env.VITE_PORT || '5173';
 const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
-  testDir: './tests/stress',
   testMatch: /.*\.e2e\.ts$/,
   timeout: 120_000,
   retries: 0,
   globalTeardown: './tests/stress/global-teardown.ts',
+  projects: [
+    {
+      name: 'stress',
+      testDir: './tests/stress',
+    },
+    {
+      name: 'polish-engine',
+      testDir: './tests/e2e/polish-engine',
+    },
+  ],
   use: {
     baseURL,
     headless: true,
