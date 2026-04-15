@@ -542,6 +542,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return getAliasMap?.().get(docName) ?? docName;
   }
 
+  /**
+   * Return the number of live browser/editor connections currently subscribed
+   * to the given Hocuspocus document. Zero means the agent is writing to a
+   * room nobody is watching — the MCP tool surfaces that as a warning so the
+   * user can open the preview.
+   *
+   * Never throws: a Hocuspocus introspection failure is silent (returns 0).
+   * `hocuspocus.documents.get(docName)` returns undefined when the room has
+   * never been loaded — treated as 0, same as "loaded but no subscribers."
+   */
+  function getSubscriberCount(docName: string): number {
+    try {
+      const doc = hocuspocus.documents.get(docName);
+      return doc?.connections.size ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
   function collectAdmittedDocNames(): Set<string> {
     const admitted = new Set<string>();
     for (const [docName, entry] of getFileIndex()) {
@@ -998,7 +1017,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
       const hints = computeOrphanHints(resolvedDocName);
 
-      json(res, 200, { ok: true, timestamp, ...(hints ? { hints } : {}) });
+      const subscriberCount = getSubscriberCount(resolvedDocName);
+
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        subscriberCount,
+        ...(hints ? { hints } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1435,7 +1461,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       });
       onAgentWrite?.();
 
-      json(res, 200, { ok: true, timestamp });
+      const subscriberCount = getSubscriberCount(docName);
+
+      json(res, 200, { ok: true, timestamp, subscriberCount });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });

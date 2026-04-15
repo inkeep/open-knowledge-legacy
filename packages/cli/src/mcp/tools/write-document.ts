@@ -60,13 +60,37 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       const cwd = await deps.resolveCwd();
       const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
       const preview = resolvePreviewUrl(normalized.docName, { config: deps.config, lockDir });
-      if (!preview) {
-        return textResult(`Written successfully (${args.position})`);
+      const subscriberCount =
+        typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
+      const noPreviewAttached = subscriberCount === 0;
+
+      const lines: string[] = [`Written successfully (${args.position}).`];
+      if (preview) lines.push(`Preview: ${preview.url}`);
+      if (noPreviewAttached) {
+        lines.push(
+          preview
+            ? `Warning: no preview is currently attached to "${normalized.docName}". Open ${preview.url} to watch future edits live.`
+            : `Warning: no preview is currently attached to "${normalized.docName}".`,
+        );
       }
-      return textPlusStructured(
-        `Written successfully (${args.position}).\nPreview: ${preview.url}`,
-        { previewUrl: preview.url, previewUrlSource: preview.source },
-      );
+      const text = lines.join('\n');
+
+      if (!preview && !noPreviewAttached) {
+        return textResult(text);
+      }
+
+      const structured: Record<string, unknown> = {};
+      if (preview) {
+        structured.previewUrl = preview.url;
+        structured.previewUrlSource = preview.source;
+      }
+      if (noPreviewAttached) {
+        structured.warning = {
+          message: `No preview attached to ${normalized.docName}.`,
+          previewUrl: preview?.url ?? null,
+        };
+      }
+      return textPlusStructured(text, structured);
     },
   );
 }

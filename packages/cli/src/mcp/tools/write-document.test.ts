@@ -56,6 +56,7 @@ function createFakeServer() {
 
 let testServer: ReturnType<typeof Bun.serve>;
 let baseUrl: string;
+let mockSubscriberCount: number | undefined = 1;
 
 beforeAll(() => {
   testServer = Bun.serve({
@@ -64,7 +65,11 @@ beforeAll(() => {
       const url = new URL(req.url);
       if (url.pathname === '/api/agent-write-md') {
         await req.json();
-        return Response.json({ ok: true, timestamp: '2026-04-15T00:00:00.000Z' });
+        return Response.json({
+          ok: true,
+          timestamp: '2026-04-15T00:00:00.000Z',
+          ...(mockSubscriberCount !== undefined ? { subscriberCount: mockSubscriberCount } : {}),
+        });
       }
       return new Response('Not found', { status: 404 });
     },
@@ -83,6 +88,7 @@ beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-write-doc-'));
   originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
   delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  mockSubscriberCount = 1;
 });
 
 afterEach(async () => {
@@ -122,7 +128,7 @@ describe('write_document — previewUrl emission', () => {
     expect(result.content[0]?.text).toContain('Preview: https://env.example/#/docs/test');
   });
 
-  test('omits structuredContent when nothing resolves', async () => {
+  test('omits structuredContent when nothing resolves AND subscribers>0', async () => {
     const { server, getTool } = createFakeServer();
     register(server, makeDeps());
 
@@ -133,7 +139,45 @@ describe('write_document — previewUrl emission', () => {
     });
 
     expect(result.structuredContent).toBeUndefined();
-    expect(result.content[0]?.text).toBe('Written successfully (replace)');
+    expect(result.content[0]?.text).toBe('Written successfully (replace).');
+  });
+
+  test('emits warning with previewUrl when subscriberCount=0', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    mockSubscriberCount = 0;
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'docs/test',
+      markdown: 'hello',
+      position: 'append',
+    });
+
+    expect(result.structuredContent).toMatchObject({
+      previewUrl: 'https://env.example/#/docs/test',
+      previewUrlSource: 'env',
+      warning: {
+        message: 'No preview attached to docs/test.',
+        previewUrl: 'https://env.example/#/docs/test',
+      },
+    });
+    expect(result.content[0]?.text).toContain('Warning: no preview is currently attached');
+  });
+
+  test('no warning when server omits subscriberCount (legacy server)', async () => {
+    mockSubscriberCount = undefined;
+    const { server, getTool } = createFakeServer();
+    register(server, makeDeps());
+
+    const result = await getTool().handler({
+      docName: 'docs/test',
+      markdown: 'hello',
+      position: 'append',
+    });
+
+    expect(result.structuredContent).toBeUndefined();
+    expect(result.content[0]?.text).toBe('Written successfully (append).');
   });
 
   test('strips .md extension before building preview URL', async () => {
