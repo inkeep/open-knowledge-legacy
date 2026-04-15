@@ -375,7 +375,11 @@ describe('BacklinkIndex', () => {
 
       const { nodes, links } = index.getLinkGraph();
 
-      expect(nodes).toEqual(['alpha', 'beta', 'gamma']);
+      expect(nodes).toEqual([
+        { kind: 'doc', id: 'alpha', docName: 'alpha' },
+        { kind: 'doc', id: 'beta', docName: 'beta' },
+        { kind: 'doc', id: 'gamma', docName: 'gamma' },
+      ]);
       expect(links).toContainEqual({ source: 'alpha', target: 'beta' });
       expect(links).toContainEqual({ source: 'alpha', target: 'gamma' });
       expect(links).toContainEqual({ source: 'beta', target: 'gamma' });
@@ -398,14 +402,25 @@ describe('BacklinkIndex', () => {
       index.updateDocumentFromMarkdown('epsilon', '');
 
       const oneHop = index.getLinkGraphNeighborhood('beta', 1);
-      expect(oneHop.nodes).toEqual(['alpha', 'beta', 'delta', 'gamma']);
+      expect(oneHop.nodes).toEqual([
+        { kind: 'doc', id: 'alpha', docName: 'alpha' },
+        { kind: 'doc', id: 'beta', docName: 'beta' },
+        { kind: 'doc', id: 'delta', docName: 'delta' },
+        { kind: 'doc', id: 'gamma', docName: 'gamma' },
+      ]);
       expect(oneHop.links).toContainEqual({ source: 'alpha', target: 'beta' });
       expect(oneHop.links).toContainEqual({ source: 'beta', target: 'gamma' });
       expect(oneHop.links).toContainEqual({ source: 'beta', target: 'delta' });
       expect(oneHop.links).toHaveLength(3);
 
       const twoHop = index.getLinkGraphNeighborhood('beta', 2);
-      expect(twoHop.nodes).toEqual(['alpha', 'beta', 'delta', 'epsilon', 'gamma']);
+      expect(twoHop.nodes).toEqual([
+        { kind: 'doc', id: 'alpha', docName: 'alpha' },
+        { kind: 'doc', id: 'beta', docName: 'beta' },
+        { kind: 'doc', id: 'delta', docName: 'delta' },
+        { kind: 'doc', id: 'epsilon', docName: 'epsilon' },
+        { kind: 'doc', id: 'gamma', docName: 'gamma' },
+      ]);
       expect(twoHop.links).toContainEqual({ source: 'gamma', target: 'epsilon' });
       expect(twoHop.links).toHaveLength(4);
     } finally {
@@ -583,6 +598,47 @@ describe('BacklinkIndex with markdown links', () => {
       const backlinks = index.getBacklinks('target');
       // Only one backlink entry for "source" (no duplicate)
       expect(backlinks.filter((b) => b.source === 'source')).toHaveLength(1);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test('indexes external markdown and wiki links for forward links and graph', () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), 'backlinks-external-'));
+    try {
+      const index = new BacklinkIndex({ projectDir: tmpDir, contentDir: tmpDir });
+      index.updateDocumentFromMarkdown(
+        'source',
+        'See [Docs](https://example.com/docs) and [[https://inkeep.com|Inkeep]].',
+      );
+
+      expect(index.getForwardLinkEntries('source')).toEqual([
+        {
+          kind: 'external',
+          url: 'https://example.com/docs',
+          label: 'Docs',
+          snippet: 'See Docs and Inkeep.',
+        },
+        {
+          kind: 'external',
+          url: 'https://inkeep.com',
+          label: 'Inkeep',
+          snippet: '…com/docs) and Inkeep.',
+        },
+      ]);
+
+      const graph = index.getLinkGraph();
+      expect(graph.nodes).toContainEqual({ kind: 'doc', id: 'source', docName: 'source' });
+      expect(graph.nodes).toContainEqual({
+        kind: 'external',
+        id: 'external:https://example.com/docs',
+        url: 'https://example.com/docs',
+        label: 'Docs',
+      });
+      expect(graph.links).toContainEqual({
+        source: 'source',
+        target: 'external:https://example.com/docs',
+      });
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

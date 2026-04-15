@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { FilePlus2 } from 'lucide-react';
+import { ArrowUpRight, FilePlus2 } from 'lucide-react';
 import { useState } from 'react';
-import { defaultInitialDir } from '@/components/file-tree-utils';
 import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
@@ -14,11 +13,9 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
-import {
-  isResolvedWikiLinkTarget,
-  wikiLinkSuggestedFilename,
-} from '@/editor/extensions/wiki-link-helpers';
-import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
+import { isResolvedWikiLinkTarget } from '@/editor/extensions/wiki-link-helpers';
+import { hashFromDocName } from '@/lib/doc-hash';
+import { docNameToDialogSeed } from '@/lib/doc-paths';
 import { cn } from '@/lib/utils';
 
 interface ForwardLinksResponse {
@@ -27,11 +24,21 @@ interface ForwardLinksResponse {
   error?: string;
 }
 
-interface ForwardLinkItem {
+interface DocumentForwardLinkItem {
+  kind: 'doc';
   docName: string;
   title: string;
   snippet: string | null;
 }
+
+interface ExternalForwardLinkItem {
+  kind: 'external';
+  url: string;
+  title: string;
+  snippet: string | null;
+}
+
+type ForwardLinkItem = DocumentForwardLinkItem | ExternalForwardLinkItem;
 
 function compactForwardLinkPath(docName: string): string {
   const segments = docName.split('/');
@@ -63,14 +70,18 @@ export function ForwardLinksPanel({
     queryKey: ['forward-links', docName],
     queryFn: () => fetchForwardLinks(docName),
   });
-  const [createTarget, setCreateTarget] = useState<string | null>(null);
+  const [createTarget, setCreateTarget] = useState<DocumentForwardLinkItem | null>(null);
 
-  function handleRowClick(target: string) {
-    if (!pagesLoading && !isResolvedWikiLinkTarget(target, pages)) {
-      setCreateTarget(target);
+  function handleRowClick(link: ForwardLinkItem) {
+    if (link.kind === 'external') {
+      window.open(link.url, '_blank', 'noopener,noreferrer');
       return;
     }
-    window.location.assign(hashFromDocName(target));
+    if (!pagesLoading && !isResolvedWikiLinkTarget(link.docName, pages)) {
+      setCreateTarget(link);
+      return;
+    }
+    window.location.assign(hashFromDocName(link.docName));
   }
 
   return (
@@ -90,9 +101,14 @@ export function ForwardLinksPanel({
           ) : (
             <div className="flex flex-col gap-2">
               {links.map((link, index) => {
-                const unresolved = !pagesLoading && !isResolvedWikiLinkTarget(link.docName, pages);
-                const compactPath = compactForwardLinkPath(link.docName);
-                const displayTitle = link.title === link.docName ? compactPath : link.title;
+                const unresolved =
+                  link.kind === 'doc' &&
+                  !pagesLoading &&
+                  !isResolvedWikiLinkTarget(link.docName, pages);
+                const compactPath =
+                  link.kind === 'doc' ? compactForwardLinkPath(link.docName) : link.url;
+                const displayTitle =
+                  link.kind === 'doc' && link.title === link.docName ? compactPath : link.title;
 
                 return (
                   <Button
@@ -104,21 +120,37 @@ export function ForwardLinksPanel({
                       unresolved &&
                         'border-amber-300 bg-amber-50/70 text-amber-950 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200 dark:hover:bg-amber-950/35',
                     )}
-                    onClick={() => handleRowClick(link.docName)}
+                    onClick={() => handleRowClick(link)}
                   >
                     <div className="min-w-0 flex-1">
                       <div
                         className="truncate text-sm font-medium"
-                        title={link.title === link.docName ? link.docName : undefined}
+                        title={
+                          link.kind === 'doc' && link.title === link.docName
+                            ? link.docName
+                            : link.kind === 'external'
+                              ? link.url
+                              : undefined
+                        }
                       >
-                        {displayTitle}
+                        <span className="inline-flex items-center gap-1">
+                          <span>{displayTitle}</span>
+                          {link.kind === 'external' ? (
+                            <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                          ) : null}
+                        </span>
                       </div>
-                      {link.title !== link.docName ? (
+                      {link.kind === 'doc' && link.title !== link.docName ? (
                         <div
                           className="truncate font-mono text-xs text-muted-foreground"
                           title={link.docName}
                         >
                           {compactPath}
+                        </div>
+                      ) : null}
+                      {link.kind === 'external' ? (
+                        <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                          {link.url}
                         </div>
                       ) : null}
                       {unresolved ? (
@@ -144,8 +176,10 @@ export function ForwardLinksPanel({
       <NewItemDialog
         open={createTarget !== null}
         kind="file"
-        initialDir={defaultInitialDir(docNameFromHash(window.location.hash) ?? '')}
-        suggestedName={createTarget ? wikiLinkSuggestedFilename(createTarget) : undefined}
+        initialDir={createTarget ? docNameToDialogSeed(createTarget.docName).initialDir : ''}
+        suggestedName={
+          createTarget ? docNameToDialogSeed(createTarget.docName).suggestedName : undefined
+        }
         onOpenChange={(open: boolean) => {
           if (!open) setCreateTarget(null);
         }}

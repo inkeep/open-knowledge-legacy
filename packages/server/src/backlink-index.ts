@@ -2,6 +2,8 @@ import { type Dirent, existsSync, mkdirSync, readdirSync, readFileSync } from 'n
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
+  classifyMarkdownHref,
+  classifyWikiLinkTarget,
   getWikiLinkText,
   isOrphanMode,
   ORPHAN_MODES,
@@ -39,15 +41,31 @@ export interface ExtractedWikiLink {
   snippet: string | null;
 }
 
+interface ExtractedExternalLink {
+  url: string;
+  label: string | null;
+  snippet: string | null;
+}
+
 export interface BacklinkEntry {
   source: string;
   snippet: string | null;
 }
 
-export interface ForwardLinkEntry {
+export interface DocumentForwardLinkEntry {
+  kind: 'doc';
   target: string;
   snippet: string | null;
 }
+
+export interface ExternalForwardLinkEntry {
+  kind: 'external';
+  url: string;
+  label: string | null;
+  snippet: string | null;
+}
+
+export type ForwardLinkEntry = DocumentForwardLinkEntry | ExternalForwardLinkEntry;
 
 export interface HubEntry {
   docName: string;
@@ -59,16 +77,37 @@ export interface DeadLinkEntry {
   sources: BacklinkEntry[];
 }
 
+export interface DocGraphNode {
+  kind: 'doc';
+  id: string;
+  docName: string;
+}
+
+export interface ExternalGraphNode {
+  kind: 'external';
+  id: string;
+  url: string;
+  label: string | null;
+}
+
+export type GraphNode = DocGraphNode | ExternalGraphNode;
+
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode };
 
 interface BranchGraphState {
   backward: Map<string, Map<string, string | null>>;
   forward: Map<string, Set<string>>;
+  externalForward: Map<string, Map<string, { label: string | null; snippet: string | null }>>;
+  externalBackward: Map<string, Map<string, { label: string | null; snippet: string | null }>>;
 }
 
 interface SerializedBranchGraphState {
   backward: Record<string, Array<BacklinkEntry>>;
   forward: Record<string, string[]>;
+  externalForward: Record<
+    string,
+    Array<{ url: string; label: string | null; snippet: string | null }>
+  >;
 }
 
 export interface BacklinkIndexOptions {
@@ -81,7 +120,17 @@ function createEmptyState(): BranchGraphState {
   return {
     backward: new Map(),
     forward: new Map(),
+    externalForward: new Map(),
+    externalBackward: new Map(),
   };
+}
+
+function externalNodeId(url: string): string {
+  return `external:${url}`;
+}
+
+function externalUrlFromNodeId(id: string): string | null {
+  return id.startsWith('external:') ? id.slice('external:'.length) : null;
 }
 
 function normalizeSnippet(snippet: string): string {
@@ -215,11 +264,65 @@ function extractWikiLinksFromLine(line: string): {
         const label = getWikiLinkText(wikiLink);
         const start = flatText.length;
         flatText += label;
-        occurrences.push({
-          target: wikiLink.target,
-          start,
-          end: start + label.length,
-        });
+        const classified = classifyWikiLinkTarget(wikiLink.target, wikiLink.anchor);
+        if (classified?.kind === 'doc') {
+          occurrences.push({
+            target: classified.docName,
+            start,
+            end: start + label.length,
+          });
+        }
+        idx = wikiLink.nextIndex;
+        continue;
+      }
+    }
+
+    flatText += line[idx];
+    idx++;
+  }
+
+  return { text: flatText, occurrences };
+}
+
+function extractExternalWikiLinksFromLine(line: string): {
+  text: string;
+  occurrences: Array<{ url: string; label: string | null; start: number; end: number }>;
+} {
+  let flatText = '';
+  const occurrences: Array<{ url: string; label: string | null; start: number; end: number }> = [];
+  let idx = leadingMarkdownPrefixLength(line);
+
+  while (idx < line.length) {
+    if (line[idx] === '\\' && idx + 1 < line.length) {
+      flatText += line[idx + 1];
+      idx += 2;
+      continue;
+    }
+
+    if (line[idx] === '`') {
+      const inlineCode = readInlineCode(line, idx);
+      if (inlineCode) {
+        flatText += inlineCode.text;
+        idx = inlineCode.nextIndex;
+        continue;
+      }
+    }
+
+    if (line[idx] === '[' && line[idx + 1] === '[') {
+      const wikiLink = readWikiLink(line, idx);
+      if (wikiLink) {
+        const label = getWikiLinkText(wikiLink);
+        const start = flatText.length;
+        flatText += label;
+        const classified = classifyWikiLinkTarget(wikiLink.target, wikiLink.anchor);
+        if (classified?.kind === 'external') {
+          occurrences.push({
+            url: classified.url,
+            label,
+            start,
+            end: start + label.length,
+          });
+        }
         idx = wikiLink.nextIndex;
         continue;
       }
@@ -298,18 +401,80 @@ function extractMarkdownLinksFromLine(
     if (line[idx] === '[' && line[idx - 1] !== '!') {
       const mdLink = readMarkdownLink(line, idx);
       if (mdLink) {
-        const resolvedDocName = resolveMarkdownHref(mdLink.href, sourceDocName);
-        if (resolvedDocName) {
+        const classified = classifyMarkdownHref(mdLink.href, sourceDocName);
+        if (classified?.kind === 'doc') {
           const start = flatText.length;
           flatText += mdLink.text;
           occurrences.push({
-            target: resolvedDocName,
+            target: classified.docName,
             start,
             end: start + mdLink.text.length,
           });
         } else {
           // External link — add text to flat buffer without recording
           flatText += mdLink.text;
+        }
+        idx = mdLink.nextIndex;
+        continue;
+      }
+    }
+
+    flatText += line[idx];
+    idx++;
+  }
+
+  return { text: flatText, occurrences };
+}
+
+function extractExternalMarkdownLinksFromLine(
+  line: string,
+  sourceDocName: string,
+): {
+  text: string;
+  occurrences: Array<{ url: string; label: string | null; start: number; end: number }>;
+} {
+  let flatText = '';
+  const occurrences: Array<{ url: string; label: string | null; start: number; end: number }> = [];
+  let idx = leadingMarkdownPrefixLength(line);
+
+  while (idx < line.length) {
+    if (line[idx] === '\\' && idx + 1 < line.length) {
+      flatText += line[idx + 1];
+      idx += 2;
+      continue;
+    }
+
+    if (line[idx] === '`') {
+      const inlineCode = readInlineCode(line, idx);
+      if (inlineCode) {
+        flatText += inlineCode.text;
+        idx = inlineCode.nextIndex;
+        continue;
+      }
+    }
+
+    if (line[idx] === '[' && line[idx + 1] === '[') {
+      const wikiLink = readWikiLink(line, idx);
+      if (wikiLink) {
+        flatText += getWikiLinkText(wikiLink);
+        idx = wikiLink.nextIndex;
+        continue;
+      }
+    }
+
+    if (line[idx] === '[' && line[idx - 1] !== '!') {
+      const mdLink = readMarkdownLink(line, idx);
+      if (mdLink) {
+        const classified = classifyMarkdownHref(mdLink.href, sourceDocName);
+        flatText += mdLink.text;
+        if (classified?.kind === 'external') {
+          const start = flatText.length - mdLink.text.length;
+          occurrences.push({
+            url: classified.url,
+            label: mdLink.text || null,
+            start,
+            end: start + mdLink.text.length,
+          });
         }
         idx = mdLink.nextIndex;
         continue;
@@ -384,6 +549,67 @@ export function extractWikiLinksFromMarkdown(markdown: string): ExtractedWikiLin
   return links;
 }
 
+function extractExternalWikiLinksFromMarkdown(markdown: string): ExtractedExternalLink[] {
+  const source = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  const lines = source.split('\n');
+  const links: ExtractedExternalLink[] = [];
+  let fence: FenceState | null = null;
+
+  for (const line of lines) {
+    if (fence) {
+      if (isFenceClose(line, fence)) fence = null;
+    } else {
+      const nextFence = matchFence(line);
+      if (nextFence) {
+        fence = nextFence;
+      } else {
+        const extracted = extractExternalWikiLinksFromLine(line);
+        links.push(
+          ...extracted.occurrences.map(({ url, label, start, end }) => ({
+            url,
+            label,
+            snippet: snippetAround(extracted.text, start, end),
+          })),
+        );
+      }
+    }
+  }
+
+  return links;
+}
+
+function extractExternalMarkdownLinksFromMarkdown(
+  markdown: string,
+  sourceDocName: string,
+): ExtractedExternalLink[] {
+  const source = markdown.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  const lines = source.split('\n');
+  const links: ExtractedExternalLink[] = [];
+  let fence: FenceState | null = null;
+
+  for (const line of lines) {
+    if (fence) {
+      if (isFenceClose(line, fence)) fence = null;
+    } else {
+      const nextFence = matchFence(line);
+      if (nextFence) {
+        fence = nextFence;
+      } else {
+        const extracted = extractExternalMarkdownLinksFromLine(line, sourceDocName);
+        links.push(
+          ...extracted.occurrences.map(({ url, label, start, end }) => ({
+            url,
+            label,
+            snippet: snippetAround(extracted.text, start, end),
+          })),
+        );
+      }
+    }
+  }
+
+  return links;
+}
+
 function serializeState(state: BranchGraphState): SerializedBranchGraphState {
   return {
     backward: Object.fromEntries(
@@ -395,10 +621,59 @@ function serializeState(state: BranchGraphState): SerializedBranchGraphState {
     forward: Object.fromEntries(
       [...state.forward.entries()].map(([source, targets]) => [source, [...targets].sort()]),
     ),
+    externalForward: Object.fromEntries(
+      [...state.externalForward.entries()].map(([source, targets]) => [
+        source,
+        [...targets.entries()]
+          .map(([url, meta]) => ({
+            url,
+            label: meta.label,
+            snippet: meta.snippet,
+          }))
+          .sort((a, b) => a.url.localeCompare(b.url)),
+      ]),
+    ),
   };
 }
 
+function buildExternalBackward(
+  externalForward: BranchGraphState['externalForward'],
+): BranchGraphState['externalBackward'] {
+  const externalBackward = new Map<
+    string,
+    Map<string, { label: string | null; snippet: string | null }>
+  >();
+
+  for (const [source, targets] of externalForward) {
+    for (const [url, meta] of targets) {
+      let sources = externalBackward.get(url);
+      if (!sources) {
+        sources = new Map();
+        externalBackward.set(url, sources);
+      }
+      sources.set(source, meta);
+    }
+  }
+
+  return externalBackward;
+}
+
 function deserializeState(data: SerializedBranchGraphState): BranchGraphState {
+  const externalForward = new Map(
+    Object.entries(data.externalForward ?? {}).map(([source, targets]) => [
+      source,
+      new Map(
+        targets.map((target) => [
+          target.url,
+          {
+            label: target.label ?? null,
+            snippet: target.snippet ?? null,
+          },
+        ]),
+      ),
+    ]),
+  );
+
   return {
     backward: new Map(
       Object.entries(data.backward ?? {}).map(([target, entries]) => [
@@ -409,6 +684,8 @@ function deserializeState(data: SerializedBranchGraphState): BranchGraphState {
     forward: new Map(
       Object.entries(data.forward ?? {}).map(([source, targets]) => [source, new Set(targets)]),
     ),
+    externalForward,
+    externalBackward: buildExternalBackward(externalForward),
   };
 }
 
@@ -448,10 +725,16 @@ export class BacklinkIndex {
     return resolve(this.projectDir, '.open-knowledge', 'cache', branch, 'backlinks.json');
   }
 
-  updateDocument(docName: string, links: ExtractedWikiLink[], branch = this.activeBranch): void {
+  updateDocument(
+    docName: string,
+    links: ExtractedWikiLink[],
+    externalLinks: ExtractedExternalLink[] = [],
+    branch = this.activeBranch,
+  ): void {
     if (isSystemDoc(docName)) return;
     const state = this.getState(branch);
     const priorTargets = state.forward.get(docName) ?? new Set<string>();
+    const priorExternalTargets = state.externalForward.get(docName) ?? new Map();
 
     for (const target of priorTargets) {
       const sources = state.backward.get(target);
@@ -460,8 +743,17 @@ export class BacklinkIndex {
       if (sources.size === 0) state.backward.delete(target);
     }
 
+    for (const url of priorExternalTargets.keys()) {
+      const sources = state.externalBackward.get(url);
+      if (!sources) continue;
+      sources.delete(docName);
+      if (sources.size === 0) state.externalBackward.delete(url);
+    }
+
     const nextTargets = new Set<string>();
+    const nextExternalTargets = new Map<string, { label: string | null; snippet: string | null }>();
     state.forward.set(docName, nextTargets);
+    state.externalForward.set(docName, nextExternalTargets);
 
     for (const link of links) {
       if (!link.target) continue;
@@ -475,6 +767,25 @@ export class BacklinkIndex {
         sources.set(docName, link.snippet ?? null);
       }
     }
+
+    for (const link of externalLinks) {
+      if (!link.url) continue;
+      nextExternalTargets.set(link.url, {
+        label: link.label,
+        snippet: link.snippet,
+      });
+      let sources = state.externalBackward.get(link.url);
+      if (!sources) {
+        sources = new Map();
+        state.externalBackward.set(link.url, sources);
+      }
+      if (!sources.has(docName) || (!sources.get(docName)?.snippet && link.snippet)) {
+        sources.set(docName, {
+          label: link.label,
+          snippet: link.snippet,
+        });
+      }
+    }
   }
 
   updateDocumentFromMarkdown(docName: string, markdown: string, branch = this.activeBranch): void {
@@ -482,10 +793,17 @@ export class BacklinkIndex {
       const { body } = stripFrontmatter(markdown);
       const wikiLinks = extractWikiLinksFromMarkdown(body);
       const mdLinks = extractMarkdownLinksFromMarkdown(body, docName);
+      const wikiExternalLinks = extractExternalWikiLinksFromMarkdown(body);
+      const mdExternalLinks = extractExternalMarkdownLinksFromMarkdown(body, docName);
       // Merge: wiki links take precedence for duplicate targets (they have richer snippet context)
       const seen = new Set(wikiLinks.map((l) => l.target));
       const merged = [...wikiLinks, ...mdLinks.filter((l) => !seen.has(l.target))];
-      this.updateDocument(docName, merged, branch);
+      const externalSeen = new Set(wikiExternalLinks.map((l) => l.url));
+      const mergedExternal = [
+        ...wikiExternalLinks,
+        ...mdExternalLinks.filter((link) => !externalSeen.has(link.url)),
+      ];
+      this.updateDocument(docName, merged, mergedExternal, branch);
     } catch (err) {
       console.warn(`[backlinks] Failed to scan ${docName} for link extraction:`, err);
       this.deleteDocument(docName, branch);
@@ -496,13 +814,21 @@ export class BacklinkIndex {
     if (isSystemDoc(docName)) return;
     const state = this.getState(branch);
     const targets = state.forward.get(docName) ?? new Set<string>();
+    const externalTargets = state.externalForward.get(docName) ?? new Map();
     for (const target of targets) {
       const sources = state.backward.get(target);
       if (!sources) continue;
       sources.delete(docName);
       if (sources.size === 0) state.backward.delete(target);
     }
+    for (const url of externalTargets.keys()) {
+      const sources = state.externalBackward.get(url);
+      if (!sources) continue;
+      sources.delete(docName);
+      if (sources.size === 0) state.externalBackward.delete(url);
+    }
     state.forward.delete(docName);
+    state.externalForward.delete(docName);
   }
 
   renameDocument(
@@ -531,10 +857,24 @@ export class BacklinkIndex {
 
   getForwardLinkEntries(source: string, branch = this.activeBranch): ForwardLinkEntry[] {
     const state = this.getState(branch);
-    return this.getForwardLinks(source, branch).map((target) => ({
-      target,
-      snippet: state.backward.get(target)?.get(source) ?? null,
-    }));
+    const internalEntries: ForwardLinkEntry[] = this.getForwardLinks(source, branch).map(
+      (target) => ({
+        kind: 'doc',
+        target,
+        snippet: state.backward.get(target)?.get(source) ?? null,
+      }),
+    );
+    const externalEntries: ForwardLinkEntry[] = [
+      ...(state.externalForward.get(source) ?? new Map()).entries(),
+    ]
+      .map(([url, meta]) => ({
+        kind: 'external' as const,
+        url,
+        label: meta.label,
+        snippet: meta.snippet,
+      }))
+      .sort((a, b) => a.url.localeCompare(b.url));
+    return [...internalEntries, ...externalEntries];
   }
 
   getOrphans(allDocs: string[], mode: OrphanMode = 'both', branch = this.activeBranch): string[] {
@@ -595,22 +935,34 @@ export class BacklinkIndex {
   }
 
   getLinkGraph(branch = this.activeBranch): {
-    nodes: string[];
+    nodes: GraphNode[];
     links: Array<{ source: string; target: string }>;
   } {
     const state = this.getState(branch);
-    const nodeSet = new Set<string>();
+    const nodes = new Map<string, GraphNode>();
     const links: Array<{ source: string; target: string }> = [];
 
     for (const [source, targets] of state.forward) {
-      nodeSet.add(source);
+      nodes.set(source, { kind: 'doc', id: source, docName: source });
       for (const target of targets) {
-        nodeSet.add(target);
+        nodes.set(target, { kind: 'doc', id: target, docName: target });
         links.push({ source, target });
       }
     }
 
-    return { nodes: [...nodeSet].sort(), links };
+    for (const [source, targets] of state.externalForward) {
+      nodes.set(source, { kind: 'doc', id: source, docName: source });
+      for (const [url, meta] of targets) {
+        const id = externalNodeId(url);
+        nodes.set(id, { kind: 'external', id, url, label: meta.label });
+        links.push({ source, target: id });
+      }
+    }
+
+    return {
+      nodes: [...nodes.values()].sort((a, b) => a.id.localeCompare(b.id)),
+      links,
+    };
   }
 
   getLinkGraphNeighborhood(
@@ -618,29 +970,41 @@ export class BacklinkIndex {
     maxDegrees: number,
     branch = this.activeBranch,
   ): {
-    nodes: string[];
+    nodes: GraphNode[];
     links: Array<{ source: string; target: string }>;
   } {
     const state = this.getState(branch);
     const visited = new Set<string>([centerDocName]);
-    const queue: Array<{ docName: string; degree: number }> = [
-      { docName: centerDocName, degree: 0 },
-    ];
+    const queue: Array<{ nodeId: string; degree: number }> = [{ nodeId: centerDocName, degree: 0 }];
     let queueIndex = 0;
 
     while (queueIndex < queue.length) {
       const current = queue[queueIndex++];
       if (current.degree >= maxDegrees) continue;
 
-      const neighbors = new Set<string>([
-        ...(state.forward.get(current.docName) ?? new Set<string>()),
-        ...(state.backward.get(current.docName)?.keys() ?? []),
-      ]);
+      const currentExternalUrl = externalUrlFromNodeId(current.nodeId);
+      const neighbors = new Set<string>();
+
+      if (currentExternalUrl) {
+        for (const source of state.externalBackward.get(currentExternalUrl)?.keys() ?? []) {
+          neighbors.add(source);
+        }
+      } else {
+        for (const target of state.forward.get(current.nodeId) ?? new Set<string>()) {
+          neighbors.add(target);
+        }
+        for (const url of state.externalForward.get(current.nodeId)?.keys() ?? []) {
+          neighbors.add(externalNodeId(url));
+        }
+        for (const source of state.backward.get(current.nodeId)?.keys() ?? []) {
+          neighbors.add(source);
+        }
+      }
 
       for (const neighbor of neighbors) {
         if (visited.has(neighbor)) continue;
         visited.add(neighbor);
-        queue.push({ docName: neighbor, degree: current.degree + 1 });
+        queue.push({ nodeId: neighbor, degree: current.degree + 1 });
       }
     }
 
@@ -653,7 +1017,33 @@ export class BacklinkIndex {
       }
     }
 
-    return { nodes: [...visited].sort(), links };
+    for (const [source, targets] of state.externalForward) {
+      if (!visited.has(source)) continue;
+      for (const url of targets.keys()) {
+        const id = externalNodeId(url);
+        if (!visited.has(id)) continue;
+        links.push({ source, target: id });
+      }
+    }
+
+    const nodes = [...visited].sort().map<GraphNode>((nodeId) => {
+      const url = externalUrlFromNodeId(nodeId);
+      if (!url) {
+        return { kind: 'doc', id: nodeId, docName: nodeId };
+      }
+      const meta =
+        [...state.externalForward.values()]
+          .map((targets) => targets.get(url))
+          .find((entry) => entry !== undefined) ?? null;
+      return {
+        kind: 'external',
+        id: nodeId,
+        url,
+        label: meta?.label ?? null,
+      };
+    });
+
+    return { nodes, links };
   }
 
   async saveToDisk(branch = this.activeBranch): Promise<void> {
@@ -725,11 +1115,20 @@ export class BacklinkIndex {
         const { body } = stripFrontmatter(markdown);
         const wikiLinks = extractWikiLinksFromMarkdown(body);
         const mdLinks = extractMarkdownLinksFromMarkdown(body, docName);
+        const wikiExternalLinks = extractExternalWikiLinksFromMarkdown(body);
+        const mdExternalLinks = extractExternalMarkdownLinksFromMarkdown(body, docName);
         const seen = new Set(wikiLinks.map((l) => l.target));
         const links = [...wikiLinks, ...mdLinks.filter((l) => !seen.has(l.target))];
+        const externalSeen = new Set(wikiExternalLinks.map((l) => l.url));
+        const externalLinks = [
+          ...wikiExternalLinks,
+          ...mdExternalLinks.filter((link) => !externalSeen.has(link.url)),
+        ];
 
         const targets = new Set<string>();
+        const externalTargets = new Map<string, { label: string | null; snippet: string | null }>();
         state.forward.set(docName, targets);
+        state.externalForward.set(docName, externalTargets);
         for (const link of links) {
           if (!link.target) continue;
           targets.add(link.target);
@@ -741,6 +1140,22 @@ export class BacklinkIndex {
           if (!sources.has(docName) || (!sources.get(docName) && link.snippet)) {
             sources.set(docName, link.snippet ?? null);
           }
+        }
+        for (const link of externalLinks) {
+          if (!link.url) continue;
+          externalTargets.set(link.url, {
+            label: link.label,
+            snippet: link.snippet,
+          });
+          let sources = state.externalBackward.get(link.url);
+          if (!sources) {
+            sources = new Map();
+            state.externalBackward.set(link.url, sources);
+          }
+          sources.set(docName, {
+            label: link.label,
+            snippet: link.snippet,
+          });
         }
       } catch (err) {
         console.warn(`[backlinks] Failed to rebuild entry for ${docName}:`, err);

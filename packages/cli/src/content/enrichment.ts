@@ -52,6 +52,22 @@ export interface BacklinkEntry {
   snippet?: string | null;
 }
 
+export interface DocumentForwardLinkEntry {
+  kind: 'doc';
+  docName: string;
+  title?: string;
+  snippet?: string | null;
+}
+
+export interface ExternalForwardLinkEntry {
+  kind: 'external';
+  url: string;
+  title?: string;
+  snippet?: string | null;
+}
+
+export type ForwardLinkEntry = DocumentForwardLinkEntry | ExternalForwardLinkEntry;
+
 /**
  * Directory-level enrichment — what a folder contains. Returned for
  * directory entries in `ls` output so agents get a real folder summary
@@ -103,6 +119,16 @@ export interface EnrichedMeta {
    * or when Hocuspocus is unreachable. Populated on single-path rich.
    */
   backlinks: BacklinkEntry[] | null;
+  /**
+   * Forward-link count. Null on multi-path output or when Hocuspocus is
+   * unreachable. Populated on single-path rich enrichment.
+   */
+  forwardLinkCount: number | null;
+  /**
+   * Full forward-link list. Null on multi-path output or when Hocuspocus is
+   * unreachable. Populated on single-path rich enrichment.
+   */
+  forwardLinks: ForwardLinkEntry[] | null;
   /**
    * Recent OK-edit activity on this path, merged across shadow-repo's
    * per-writer refs. Null on multi-path output. `[]` when shadow repo is
@@ -205,6 +231,43 @@ async function fetchBacklinks(
   return entries;
 }
 
+async function fetchForwardLinks(
+  serverUrl: string | undefined,
+  docName: string,
+): Promise<ForwardLinkEntry[] | null> {
+  if (!serverUrl) return null;
+  const result = await httpGet(
+    serverUrl,
+    `/api/forward-links?docName=${encodeURIComponent(docName)}`,
+  );
+  if (!result.ok) return null;
+  const raw = (result.forwardLinks ?? result.links ?? result.results) as unknown;
+  if (!Array.isArray(raw)) return [];
+  const entries: ForwardLinkEntry[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    if (rec.kind === 'external' && typeof rec.url === 'string') {
+      entries.push({
+        kind: 'external',
+        url: rec.url,
+        title: typeof rec.title === 'string' ? rec.title : undefined,
+        snippet: typeof rec.snippet === 'string' ? rec.snippet : null,
+      });
+      continue;
+    }
+    const docNameValue = typeof rec.docName === 'string' ? rec.docName : undefined;
+    if (!docNameValue) continue;
+    entries.push({
+      kind: 'doc',
+      docName: docNameValue,
+      title: typeof rec.title === 'string' ? rec.title : undefined,
+      snippet: typeof rec.snippet === 'string' ? rec.snippet : null,
+    });
+  }
+  return entries;
+}
+
 /**
  * Assemble enrichment for a single wiki path. See `EnrichedMeta` for the
  * unified shape and the convention for nullable fields on multi-path output.
@@ -237,6 +300,8 @@ export async function enrichPath(
       tags: fm?.tags ?? [],
       backlinkCount: null,
       backlinks: null,
+      forwardLinkCount: null,
+      forwardLinks: null,
       history: null,
       historySource: null,
       projectHistory: null,
@@ -244,10 +309,11 @@ export async function enrichPath(
     };
   }
 
-  // Rich mode — fan out all four data sources in parallel.
-  const [fm, backlinks, shadow, project] = await Promise.all([
+  // Rich mode — fan out all five data sources in parallel.
+  const [fm, backlinks, forwardLinks, shadow, project] = await Promise.all([
     fmPromise,
     fetchBacklinks(deps.serverUrl, pathToDocName(relPath)).catch(() => null),
+    fetchForwardLinks(deps.serverUrl, pathToDocName(relPath)).catch(() => null),
     readShadowLog(deps.projectDir, relPath, historyDepth).catch(() => ({
       commits: [] as ShadowCommit[],
       source: 'shadow-repo' as HistorySource,
@@ -265,6 +331,8 @@ export async function enrichPath(
     tags: fm?.tags ?? [],
     backlinkCount: backlinks?.length ?? null,
     backlinks,
+    forwardLinkCount: forwardLinks?.length ?? null,
+    forwardLinks,
     history: shadow.commits,
     historySource: shadow.source,
     projectHistory: project.commits,

@@ -1,4 +1,12 @@
-import { type ResolvedInternalHref, resolveInternalHref } from '@inkeep/open-knowledge-core';
+import {
+  buildRelativeMarkdownHref,
+  type ClassifiedLinkTarget,
+  classifyMarkdownHref,
+  type DocLinkTarget,
+  type ResolvedInternalHref,
+  resolveInternalHref,
+} from '@inkeep/open-knowledge-core';
+import { hashFromDocName } from '../lib/doc-hash';
 
 export function getCurrentDocNameFromHash(locationHash = window.location.hash): string {
   const hashMatch = locationHash.match(/^#\/([^?#]+)/);
@@ -12,10 +20,60 @@ export function resolveCurrentInternalHref(
   return resolveInternalHref(href, getCurrentDocNameFromHash(locationHash));
 }
 
-export function toInternalHashHref({ docName, anchor }: ResolvedInternalHref): string {
+export function classifyCurrentMarkdownHref(
+  href: string,
+  locationHash = window.location.hash,
+): ClassifiedLinkTarget | null {
+  return classifyMarkdownHref(href, getCurrentDocNameFromHash(locationHash));
+}
+
+export function toInternalHashHref({
+  docName,
+  anchor,
+}: Pick<DocLinkTarget, 'docName' | 'anchor'>): string {
   return anchor ? `#/${docName}?anchor=${encodeURIComponent(anchor)}` : `#/${docName}`;
 }
 
-export function navigateToInternalHashHref(resolved: ResolvedInternalHref): void {
+export function navigateToInternalHashHref(
+  resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>,
+): void {
   window.location.assign(toInternalHashHref(resolved));
+}
+
+export function navigateToAnchorHref(anchor: string, locationHash = window.location.hash): void {
+  const currentDocName = getCurrentDocNameFromHash(locationHash);
+  if (!currentDocName) return;
+
+  const element = document.getElementById(anchor);
+  if (element) {
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  window.location.assign(hashFromDocName(currentDocName, anchor));
+}
+
+export function navigateToMarkdownTarget(
+  target: ClassifiedLinkTarget,
+  locationHash = window.location.hash,
+): void {
+  if (target.kind === 'doc') {
+    navigateToInternalHashHref(target);
+    return;
+  }
+
+  if (target.kind === 'anchor') {
+    navigateToAnchorHref(target.anchor, locationHash);
+    return;
+  }
+
+  window.open(target.url, '_blank', 'noopener,noreferrer');
+}
+
+export function buildCurrentRelativeMarkdownHref(
+  targetDocName: string,
+  anchor: string | null,
+  locationHash = window.location.hash,
+): string {
+  const sourceDocName = getCurrentDocNameFromHash(locationHash);
+  return buildRelativeMarkdownHref(sourceDocName, targetDocName, anchor);
 }

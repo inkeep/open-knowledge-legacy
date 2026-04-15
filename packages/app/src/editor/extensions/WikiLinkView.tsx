@@ -1,6 +1,6 @@
 import {
+  classifyWikiLinkTarget,
   getWikiLinkText,
-  type HeadingEntry,
   normalizeNullableString,
   renderWikiLink,
 } from '@inkeep/open-knowledge-core';
@@ -25,37 +25,9 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/too
 import { docNameFromHash } from '../../lib/doc-hash';
 import { cn } from '../../lib/utils';
 import { LinkTooltipHint } from '../link-tooltip';
+import { ExternalLinkChip } from './ExternalLinkChip';
+import { useHeadings } from './useHeadings';
 import { isResolvedWikiLinkTarget, wikiLinkSuggestedFilename } from './wiki-link-helpers';
-
-// ── Heading picker ────────────────────────────────────────────────────────────
-
-/** Fetch headings for a resolved page. Returns null while loading, [] when none. */
-function useHeadings(docName: string, enabled: boolean): HeadingEntry[] | null {
-  const [headings, setHeadings] = useState<HeadingEntry[] | null>(null);
-
-  useEffect(() => {
-    if (!enabled || !docName) {
-      setHeadings(null);
-      return;
-    }
-    setHeadings(null);
-    const controller = new AbortController();
-    fetch(`/api/page-headings?docName=${encodeURIComponent(docName)}`, {
-      signal: controller.signal,
-    })
-      .then((r) => r.json() as Promise<{ ok: boolean; headings?: HeadingEntry[] }>)
-      .then((data) => {
-        if (data.ok && Array.isArray(data.headings)) setHeadings(data.headings);
-        else setHeadings([]);
-      })
-      .catch(() => {
-        setHeadings([]);
-      });
-    return () => controller.abort();
-  }, [docName, enabled]);
-
-  return headings;
-}
 
 // ── Edit dialog ───────────────────────────────────────────────────────────────
 
@@ -226,9 +198,12 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
   const label = getWikiLinkText({ target, alias, anchor });
   const source = renderWikiLink({ target, alias, anchor });
   const { pages, loading } = usePageList();
+  const classifiedTarget = classifyWikiLinkTarget(target, anchor);
+  const externalTarget = classifiedTarget?.kind === 'external' ? classifiedTarget : null;
 
-  const resolutionState =
-    loading && pages.size === 0
+  const resolutionState = externalTarget
+    ? 'external'
+    : loading && pages.size === 0
       ? 'loading'
       : isResolvedWikiLinkTarget(target, pages)
         ? 'resolved'
@@ -241,6 +216,10 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
 
   /** Primary click: navigate (resolved/loading) or open create dialog (unresolved). */
   function handlePrimaryClick() {
+    if (externalTarget) {
+      window.open(externalTarget.url, '_blank', 'noopener,noreferrer');
+      return;
+    }
     if (unresolved) {
       setCreateDialogOpen(true);
       return;
@@ -273,6 +252,43 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
     updateAttributes({ target: newTarget, alias: newAlias, anchor: newAnchor });
   }
 
+  if (externalTarget) {
+    return (
+      <>
+        <NodeViewWrapper as="span" contentEditable={false}>
+          <ExternalLinkChip
+            editor={editor}
+            href={externalTarget.url}
+            tooltipHref={externalTarget.url}
+            label={label}
+            onNavigate={handlePrimaryClick}
+            onEdit={() => setEditDialogOpen(true)}
+            onRemove={deleteNode}
+            wrapperProps={{
+              'data-target': target,
+              'data-alias': alias ?? '',
+              'data-anchor': anchor ?? '',
+              'data-resolved': 'false',
+              'data-resolution-state': resolutionState,
+              'data-external-link': '',
+              'data-link-kind': 'wiki',
+            }}
+          />
+        </NodeViewWrapper>
+
+        <EditWikiLinkDialog
+          open={editDialogOpen}
+          target={target}
+          alias={alias}
+          anchor={anchor}
+          pages={pages}
+          onOpenChange={setEditDialogOpen}
+          onSave={handleSaveEdit}
+        />
+      </>
+    );
+  }
+
   return (
     <>
       <NodeViewWrapper as="span" contentEditable={false}>
@@ -282,7 +298,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
            * and the ⋯ trigger as siblings. Nesting <button> inside <button> is
            * invalid HTML and causes React hydration warnings.
            *
-           * Tooltip surfaces the Cmd/Ctrl+click affordance (shared with
+           * Tooltip surfaces the underlying link target (shared with
            * InternalLinkView via LinkTooltipHint). 400 ms delay so hover over
            * dense wiki-linked text doesn't spam tooltips.
            */}

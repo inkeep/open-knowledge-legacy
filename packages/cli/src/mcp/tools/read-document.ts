@@ -20,19 +20,19 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
-import type { BacklinkEntry, GitCommit } from '../../content/enrichment.ts';
+import type { BacklinkEntry, ForwardLinkEntry, GitCommit } from '../../content/enrichment.ts';
 import { enrichPath } from '../../content/enrichment.ts';
 import type { ShadowCommit } from '../../content/shadow-log.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import { resolveServerUrl, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Read a wiki file with enriched context: contents + frontmatter metadata + recent shadow-repo activity (agent vs human attribution) + backlink count.',
+  'Read a wiki file with enriched context: contents + frontmatter metadata + recent shadow-repo activity (agent vs human attribution) + backlink/forward-link context.',
   '',
   '**Use when:**',
   '- Loading an article for context',
   '- Understanding who changed a file recently and whether it was an agent or human',
-  '- Seeing how many other pages link to this one',
+  '- Seeing how this page links out and what links back to it',
   '',
   'Prefer this over your native `Read` for wiki files — one call returns what otherwise takes 3-4.',
   '',
@@ -89,6 +89,23 @@ function formatBacklinks(backlinks: BacklinkEntry[] | null): string {
   return lines.join('\n');
 }
 
+function formatForwardLinks(forwardLinks: ForwardLinkEntry[] | null): string {
+  if (!forwardLinks || forwardLinks.length === 0) return '';
+  const lines: string[] = ['', `### Forward links (${forwardLinks.length})`, ''];
+  for (const link of forwardLinks) {
+    if (link.kind === 'external') {
+      const title = link.title ? ` — "${link.title}"` : '';
+      const snippet = link.snippet ? ` — "${link.snippet}"` : '';
+      lines.push(`- ${link.url}${title}${snippet}`);
+      continue;
+    }
+    const title = link.title ? ` — "${link.title}"` : '';
+    const snippet = link.snippet ? ` — "${link.snippet}"` : '';
+    lines.push(`- ${link.docName}${title}${snippet}`);
+  }
+  return lines.join('\n');
+}
+
 function relativePath(input: string): string {
   return input.replace(/^\.\//, '').replace(/^\/+/, '');
 }
@@ -136,6 +153,9 @@ export async function buildReadResult(
 
   const backlinksSection = formatBacklinks(meta.backlinks);
   if (backlinksSection) lines.push(backlinksSection);
+
+  const forwardLinksSection = formatForwardLinks(meta.forwardLinks);
+  if (forwardLinksSection) lines.push(forwardLinksSection);
 
   lines.push('', '### Content', '', content);
   return lines.join('\n');

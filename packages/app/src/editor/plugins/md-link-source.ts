@@ -5,8 +5,7 @@
  *    sky colour used for wiki links, so internal links are visually distinct.
  *
  * 2. Ctrl/Cmd+click navigation — resolves the href relative to the current
- *    document (from window.location.hash) and navigates within the app using
- *    the same hash-routing scheme as WikiLinkView / wiki-link-source.ts.
+ *    document (from window.location.hash) and follows in-app doc + anchor links.
  *
  * External links (http://, https://, etc.) are left untouched.
  */
@@ -18,7 +17,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import { navigateToInternalHashHref, resolveCurrentInternalHref } from '../internal-link-helpers';
+import { classifyCurrentMarkdownHref, navigateToMarkdownTarget } from '../internal-link-helpers';
 
 // ── Decoration ────────────────────────────────────────────────────────────────
 
@@ -45,7 +44,10 @@ function buildDecorations(view: EditorView): DecorationSet {
     MD_LINK_RE.lastIndex = 0;
     let m = MD_LINK_RE.exec(text);
     while (m !== null) {
-      if (!isImageMatch(text, m.index) && resolveCurrentInternalHref(getMatchHref(m)) !== null) {
+      const target = isImageMatch(text, m.index)
+        ? null
+        : classifyCurrentMarkdownHref(getMatchHref(m));
+      if (target && target.kind !== 'external') {
         builder.add(from + m.index, from + m.index + m[0].length, internalLinkMark);
       }
       m = MD_LINK_RE.exec(text);
@@ -84,12 +86,12 @@ const mdLinkClickHandler = EditorView.domEventHandlers({
       const start = line.from + m.index;
       const end = start + m[0].length;
       if (pos >= start && pos <= end) {
-        const resolved = isImageMatch(line.text, m.index)
+        const target = isImageMatch(line.text, m.index)
           ? null
-          : resolveCurrentInternalHref(getMatchHref(m));
-        if (resolved !== null) {
+          : classifyCurrentMarkdownHref(getMatchHref(m));
+        if (target && target.kind !== 'external') {
           event.preventDefault();
-          navigateToInternalHashHref(resolved);
+          navigateToMarkdownTarget(target);
           return true;
         }
       }

@@ -23,7 +23,7 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import type { HeadingEntry } from '@inkeep/open-knowledge-core';
+import { classifyWikiLinkTarget, type HeadingEntry } from '@inkeep/open-knowledge-core';
 import {
   fetchHeadings,
   fetchPages,
@@ -126,10 +126,16 @@ const wikiLinkClickHandler = EditorView.domEventHandlers({
         const target = m[1]?.trim();
         const anchor = m[2]?.trim() || null;
         if (target) {
+          const classified = classifyWikiLinkTarget(target, anchor);
+          if (!classified) return false;
           event.preventDefault();
-          window.location.hash = anchor
-            ? `#/${target}?anchor=${encodeURIComponent(anchor)}`
-            : `#/${target}`;
+          if (classified.kind === 'external') {
+            window.open(classified.url, '_blank', 'noopener,noreferrer');
+          } else {
+            window.location.hash = classified.anchor
+              ? `#/${classified.docName}?anchor=${encodeURIComponent(classified.anchor)}`
+              : `#/${classified.docName}`;
+          }
         }
         return true;
       }

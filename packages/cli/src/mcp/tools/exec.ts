@@ -50,7 +50,7 @@ const SOFT_CAP_BYTES = 50 * 1024;
 const BINARY_EXT_RE = /\.(png|jpe?g|gif|webp|svg|pdf|zip|tar|gz|tgz|mp4|mov|mp3|wav|ico|bmp)$/i;
 
 export const DESCRIPTION = [
-  'Run a read-only bash-like command against the project content directory. Returns raw stdout plus enriched metadata for every wiki file referenced (frontmatter, backlink count, shadow-repo activity with agent/human attribution).',
+  'Run a read-only bash-like command against the project content directory. Returns raw stdout plus enriched metadata for every wiki file referenced (frontmatter, backlink/forward-link counts, shadow-repo activity with agent/human attribution).',
   '',
   'Allowlist: cat, ls, grep, find, head, tail, wc, sort, uniq, cut. Pipes (|) work between stages. Redirections, subshells, and writes are rejected.',
   '',
@@ -240,6 +240,7 @@ function formatFileEntry(m: EnrichedMeta): string {
   if (m.description) parts.push(m.description);
   if (m.tags.length > 0) parts.push(`tags: ${m.tags.join(', ')}`);
   if (m.backlinkCount !== null) parts.push(`backlinks: ${m.backlinkCount}`);
+  if (m.forwardLinkCount !== null) parts.push(`forward links: ${m.forwardLinkCount}`);
   if (m.history && m.history.length > 0) {
     const entries = m.history.map((h) => {
       const who =
@@ -380,6 +381,8 @@ export async function buildExecResult(
           tags: [],
           backlinkCount: null,
           backlinks: null,
+          forwardLinkCount: null,
+          forwardLinks: null,
           history: null,
           historySource: null,
           projectHistory: null,
