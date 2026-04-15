@@ -8,6 +8,37 @@ export interface DocumentContextValue {
   syncState: SyncState;
   openDocument: (docName: string) => void;
   closeDocument: (docName: string) => void;
+  /**
+   * Pinned doc — when non-null, agent-driven navigation (SystemDocSubscriber)
+   * does not change the URL even when agent focus moves elsewhere. Persisted
+   * per-tab via localStorage `ok-pin-v1`. Null = not pinned = follow agent.
+   */
+  pinnedDoc: string | null;
+  /** Pin the given doc — subsequent agent focus changes are suppressed. */
+  pin: (docName: string) => void;
+  /** Unpin — resume agent nav on the next focus change. */
+  unpin: () => void;
+}
+
+const PIN_STORAGE_KEY = 'ok-pin-v1';
+
+function loadPinFromStorage(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(PIN_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistPinToStorage(value: string | null): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (value === null) window.localStorage.removeItem(PIN_STORAGE_KEY);
+    else window.localStorage.setItem(PIN_STORAGE_KEY, value);
+  } catch {
+    // quota exceeded / private mode — ignore silently, pin stays in-memory
+  }
 }
 
 const DocumentContext = createContext<DocumentContextValue | null>(null);
@@ -46,6 +77,7 @@ function takeSnapshot(p: ProviderPool): Snapshot {
 
 export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
+  const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
 
   useEffect(() => {
     const p = getPool();
@@ -55,6 +87,10 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
 
     // Subscribe to pool changes
     p.setOnChange(() => setSnapshot(takeSnapshot(p)));
+
+    // Hydrate pin state from localStorage (client-only; safe no-op on SSR).
+    const persisted = loadPinFromStorage();
+    if (persisted !== null) setPinnedDoc(persisted);
 
     // Expose pool on window for E2E test access
     window.__providerPool = p;
@@ -81,6 +117,15 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     closeDocument: (docName: string) => {
       const p = getPool();
       p.close(docName);
+    },
+    pinnedDoc,
+    pin: (docName: string) => {
+      setPinnedDoc(docName);
+      persistPinToStorage(docName);
+    },
+    unpin: () => {
+      setPinnedDoc(null);
+      persistPinToStorage(null);
     },
   };
 

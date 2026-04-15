@@ -10,14 +10,32 @@ import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documen
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
-  const { activeDocName } = useDocumentContext();
-  // Hold activeDocName in a ref so the awareness handler always reads the
-  // latest without needing to recreate the provider on every nav. Writing
-  // the ref in an effect (not during render) keeps React Compiler happy.
+  const { activeDocName, pinnedDoc } = useDocumentContext();
+  // Hold activeDocName + pinnedDoc in refs so the awareness handler reads the
+  // latest without needing to recreate the provider on every change. Writing
+  // refs in effects (not during render) keeps React Compiler happy.
   const activeDocRef = useRef<string | null>(activeDocName);
+  const pinnedDocRef = useRef<string | null>(pinnedDoc);
   useEffect(() => {
     activeDocRef.current = activeDocName;
   }, [activeDocName]);
+  // Track the just-unpinned moment so we can immediately nav to the current
+  // primary without waiting for the next awareness change. Runs after the
+  // main effect has wired the provider/listener.
+  const providerRef = useRef<HocuspocusProvider | null>(null);
+  useEffect(() => {
+    const wasPinned = pinnedDocRef.current !== null;
+    pinnedDocRef.current = pinnedDoc;
+    const becameUnpinned = wasPinned && pinnedDoc === null;
+    if (!becameUnpinned) return;
+    const provider = providerRef.current;
+    const awareness = provider?.awareness as unknown as AgentFocusAwareness | null;
+    if (!awareness) return;
+    const primary = pickPrimary(awareness, Date.now());
+    if (!primary) return;
+    if (primary === activeDocRef.current) return;
+    window.location.hash = hashFromDocName(primary);
+  }, [pinnedDoc]);
 
   useEffect(() => {
     const doc = new Y.Doc();
@@ -61,6 +79,8 @@ export function SystemDocSubscriber() {
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const runNavCheck = (): void => {
       debounceTimer = null;
+      // Pin: user has chosen to stay put. Honor unconditionally.
+      if (pinnedDocRef.current !== null) return;
       const awareness = provider.awareness as unknown as AgentFocusAwareness | null;
       if (!awareness) return;
       const primary = pickPrimary(awareness, Date.now());
@@ -73,6 +93,7 @@ export function SystemDocSubscriber() {
       debounceTimer = setTimeout(runNavCheck, AGENT_FOCUS_DEBOUNCE_MS);
     };
     provider.awareness?.on('change', handleAwarenessChange);
+    providerRef.current = provider;
 
     return () => {
       unsubscribe();
@@ -80,6 +101,7 @@ export function SystemDocSubscriber() {
       provider.awareness?.off('change', handleAwarenessChange);
       provider.destroy();
       doc.destroy();
+      providerRef.current = null;
     };
   }, [queryClient]);
 
