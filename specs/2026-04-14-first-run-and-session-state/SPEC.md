@@ -111,6 +111,21 @@ The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the 
 - **User closes the tab mid-onboarding.** `welcome.state` remains unset (or `pending` if we decide to write intermediate state — see open questions). Next load re-shows welcome. No state corruption.
 - **V0-1 lock not acquired (e.g., another process already holds it).** `state.json` reads are fine; writes from non-lock-holding processes are refused. UI sees a "read-only" indicator; welcome screen still functional but dismiss button warns "another instance of Open Knowledge is running for this project."
 
+## 5.5) Invariants (lifted from `stories/init-and-project-switching/STORY.md` Part A)
+
+- **I-A1: Welcome triggers only on first meaningful interaction.** Welcome appears when EITHER (a) `state.json` does not exist OR (b) `state.json.welcome.state !== 'dismissed'` OR (c) welcome was dismissed at a lower `schemaVersion` than current OR (d) `fileCount === 0` — even if previously dismissed. Once dismissed AND ≥1 document exists AND current schemaVersion, welcome does not reappear. Observable: dismiss with content present → reload 5x → no welcome. Delete all docs → reload → welcome reappears.
+- **I-A2: Existing content is never modified by onboarding.** Onboarding detects and surfaces. It never moves, renames, reformats, or edits user markdown files. Starter `README.md` is only written when `fileCount === 0` (see R4 acceptance criteria). Observable: checksum any existing `.md` file before and after onboarding — identical.
+- **I-A3: CLI and UI initialization produce identical outcomes.** `open-knowledge init` + web-editor onboarding produce a byte-identical `.open-knowledge/` directory and starter `README.md` (if applicable). Observable: diff `.open-knowledge/` + `README.md` after CLI init vs after UI init — no difference except timestamps.
+- **I-A4: Onboarding is skippable without consequence.** A user who clicks "Start anyway" (or dismisses via any CTA) can create, read, and edit files with the default content directory. Nothing is gated behind completing the welcome flow. Observable: dismiss welcome, create a file manually, it appears in the sidebar.
+- **I-A5: Content detection is accurate.** Counts + paths reported by `/api/init-status` match what the file sidebar shows. No false positives (non-markdown files counted); no false negatives (markdown files missed). Observable: `/api/init-status.fileCount` equals `/api/documents` list length.
+
+## 5.6) Constraints (lifted from story Part A)
+
+- **C-A1: Server must be running before onboarding.** The web editor is served by the Hocuspocus server and runs inside the same process. The welcome screen runs post-boot, inside the SPA. No server-start affordance from within the SPA.
+- **C-A2: Content detection uses the existing `ContentFilter` pipeline.** `/api/init-status` reads from the file watcher's in-memory index populated at startup. No separate file-walking logic. Count + filter semantics must match what the file sidebar shows.
+- **C-A3: Configuration changes made during onboarding persist to `.open-knowledge/config.yml`.** Not runtime-only. When the user adds an exclusion via the suspicious variant's one-click action, the change is written to disk and survives restart. (See R9a — narrow add-exclude endpoint.)
+- **C-A4: Detection completes in under 5 seconds for 10k files.** The existing file watcher already satisfies this — `/api/init-status` is a read from the in-memory index, bounded by serialization cost alone.
+
 ## 6) Requirements
 
 ### Functional
@@ -120,18 +135,19 @@ The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the 
 | Must | R2 | `state.json` schema (v1) | Schema: `{version: 1, lastOpenedDoc?: string, lastOpenedAt?: ISO8601, welcome: {state: "not-shown"\|"pending"\|"dismissed", seenAt?: ISO8601, variant?: "empty"\|"existing"\|"suspicious", schemaVersion: number, needsAttention?: boolean}, recentDocs?: string[]}`. `version` gates future migrations. Unknown fields preserved on round-trip (forward-compat). |
 | Must | R3 | `GET /api/init-status` endpoint | `packages/server/src/api-extension.ts` adds this route. Returns: `{fileCount: number, contentDir: string, include: string[], exclude: string[], sampleFiles: string[] (max 5), topDirs: string[] (max 3), variant: "empty"\|"existing"\|"suspicious", suspiciousPatterns: string[]}`. Variant logic defined in §9. Reads from existing `ContentFilter` + `fileWatcher` in-memory index — no separate walk. Response time < 200ms for 10k files. |
 | Must | R4 | `initContent()` starter-README writer | `packages/server/src/init-content.ts` (new) exports `initContent({contentDir, contentFilter, templatePath})`. Writes `<contentDir>/README.md` with a 5–10 line starter template (markdown + JSX component example). Only writes if: (a) the file does not exist, AND (b) no files currently match `content.include`. Idempotent on re-run: does nothing if either condition fails. Exposed to CLI via `open-knowledge init-content`, to API via `POST /api/init-content` (lock-owner-only). |
-| Must | R5 | Starter template | Content of `README.md` decided in `meta/starter-template.md` during implementation. Must include: heading, one paragraph of welcome text, one wiki-link `[[Open Knowledge]]` (shows wiki-link feature), one JSX component example (shows component authoring), and one external link (shows plain markdown). 5–10 lines total. |
+| Must | R5 | Starter template | Content drafted in `meta/starter-template.md`. 6 lines showing heading, paragraph, wiki-link (deliberately red-link as a teaching moment), `<Callout>` JSX component, external link. Must round-trip through the serializer without normalization; verified at impl time. Sarah sign-off before ship. |
 | Must | R6 | Welcome screen React component | `packages/app/src/onboarding/WelcomePage.tsx` (new). Renders three variants driven by `/api/init-status` response + `state.json.welcome` state. Owner: **Sarah (primary)**. Uses shadcn primitives. Responsive layout. Dismissal button calls `POST /api/state-json/welcome-dismiss` (lock-owner writes through). |
 | Must | R7 | Welcome branch: empty | When variant=`empty`: heading "Your knowledge base is empty", body explaining starter doc, single CTA "Create starter document" → POSTs `/api/init-content` → on success, dismisses welcome + opens `README.md`. |
-| Must | R8 | Welcome branch: existing | When variant=`existing`: heading "Open Knowledge found N markdown files", body listing top dirs + sample paths, CTAs "Start exploring" (dismiss + open first file) and "Edit scope" (opens `.open-knowledge/config.yml` in the editor as a document). N is shown faithfully whether it's 5 or 5,000 — no threshold-based warning text. |
-| Must | R9 | Welcome branch: suspicious | When variant=`suspicious` (detected patterns: `node_modules`, `.git`, `vendor`, `dist`, `build`, `target`, `.next`, `.nuxt`, `.output` present in top 100 indexed paths): heading "Open Knowledge may be indexing files you don't want", highlights the suspicious paths in the sample, three CTAs: "Add exclusions" (primary, opens `.open-knowledge/config.yml` with `exclude:` cursor positioned), "Start anyway" (dismiss + accept the scope), "Decide later" (dismiss + mark `welcome.needsAttention:true`). |
-| Must | R10 | Session-restore on app load | SPA on initial load reads `state.json` (via existing API or new `GET /api/state-json`). If `welcome.state === "dismissed"` and `lastOpenedDoc` exists in the current file index, open it. If `lastOpenedDoc` missing from index (deleted), fall back to first file and update `lastOpenedDoc`. If no `lastOpenedDoc` at all, fall back to first file without updating until the user navigates. |
+| Must | R8 | Welcome branch: existing | When variant=`existing`: heading "Open Knowledge found N markdown files", body listing top dirs + sample paths, CTAs "Start exploring" (dismiss + open first file) and "Edit scope" (shows the absolute path to `.open-knowledge/config.yml` with a one-line instruction to open it in the user's editor of choice — narrow config edits via API are out of scope for v1, see D13). N is shown faithfully whether it's 5 or 5,000. |
+| Must | R9 | Welcome branch: suspicious | When variant=`suspicious` (detected patterns: `node_modules`, `.git`, `vendor`, `dist`, `build`, `target`, `.next`, `.nuxt`, `.output`, `out` present in top 100 indexed paths): heading "Open Knowledge may be indexing files you don't want", highlights the suspicious paths in the sample, three CTAs: **"Add exclusions"** (primary — POSTs to `/api/config/add-exclude` with one exclude pattern per detected suspicious directory, e.g. `["node_modules/**", "vendor/**"]`; on success the file watcher re-indexes and the welcome screen re-queries `/api/init-status` → variant likely transitions to `existing` → user continues); **"Start anyway"** (dismiss + accept the scope); **"Decide later"** (dismiss + mark `welcome.needsAttention:true`). |
+| Must | R9a | `POST /api/config/add-exclude` endpoint | Narrow config-mutation endpoint: accepts `{patterns: string[]}`, appends each pattern to `content.exclude` in `.open-knowledge/config.yml` (idempotent — does not add duplicates), triggers content-filter rebuild + file watcher re-index, returns updated `{exclude: string[], fileCount: number}`. Lock-owner-only (423 otherwise). YAML round-trip must preserve comments and ordering — use a YAML library that supports this (not a JSON re-serialize). **This is the only config-writing endpoint in this spec.** General-purpose config editing stays out of scope per D13. Implements C-A3. |
+| Must | R10 | Session-restore on app load | SPA on initial load reads `state.json` via `GET /api/state-json` AND `GET /api/init-status`. Welcome is shown unless ALL of: (a) `state.json.welcome.state === "dismissed"`, (b) `state.json.welcome.schemaVersion === WELCOME_SCHEMA_VERSION`, (c) `initStatus.fileCount > 0`. When welcome is NOT shown: if `lastOpenedDoc` exists in the current file index → open it; if missing → fall back to first file in index, update `lastOpenedDoc`. If no `lastOpenedDoc` at all → open first file without writing until the user navigates. Implements I-A1. |
 | Must | R11 | Dismissal write-through | Welcome dismiss calls `POST /api/state-json/welcome-dismiss` with `{variant}`. Server (lock-owner) updates `state.json.welcome` to `{state:"dismissed", seenAt:<now>, variant, schemaVersion: WELCOME_SCHEMA_VERSION}`. 200 on success, 423 Locked if the server doesn't hold the lock. |
 | Must | R12 | `lastOpenedDoc` write-through | On document navigation in the editor, debounced (500ms) write through `POST /api/state-json/last-opened` with `{docName}`. Coalesces rapid navigation. No write if welcome is still pending. |
 | Must | R13 | `.gitignore` state.json | `open-knowledge init` appends `.open-knowledge/state.json` to project `.gitignore` (state.json is per-machine, per-user, must not be committed). Idempotent append. |
 | Should | R14 | `open-knowledge welcome --reset` CLI | New subcommand deletes the `welcome` block from `state.json` for the current project. Direct file write (not via API — this runs when server may not be running). Warns if server is running and instructs to run it through the server instead. Low-effort; ship if time permits. |
 | Should | R15 | `WELCOME_SCHEMA_VERSION` constant | Exported from `packages/core/src/constants/welcome.ts`. Starts at `1`. On load, SPA compares `state.json.welcome.schemaVersion` to current constant; if older, re-shows welcome with a one-line "We've updated the onboarding flow" banner. Future version bumps must document the change in the banner. |
-| Should | R16 | Welcome never-reappear guarantee | After dismissal with current `schemaVersion`, welcome MUST NOT re-render unless (a) user explicitly resets via R14, (b) `state.json` is deleted, or (c) `WELCOME_SCHEMA_VERSION` is bumped. Tested by: dismiss → reload 5x → assert no welcome. |
+| Should | R16 | Welcome re-appearance rules | Welcome re-appears only when I-A1 conditions hold. After dismissal with current `schemaVersion` AND `fileCount > 0`, welcome MUST NOT re-render on reload. It MUST re-render if any of: (a) user explicitly resets via R14, (b) `state.json` is deleted, (c) `WELCOME_SCHEMA_VERSION` is bumped, (d) `fileCount` drops to 0 after dismissal (all docs deleted). Tested by: (1) dismiss → reload 5x with docs present → no welcome; (2) dismiss → delete all .md files → reload → welcome reappears. |
 | Could | R17 | Manual "Re-run welcome" editor menu item | In-editor menu entry that clears `welcome.state`, reloads. Convenience over R14 CLI. Ship if trivial. |
 | Could | R18 | "Needs attention" post-dismiss nudge | When welcome was dismissed with `needsAttention: true` (from R9 "Decide later"), editor shows a small banner linking back to scope review. Dismissible. One-time. |
 
@@ -287,6 +303,45 @@ No file-count thresholds — `existing` covers any non-zero count without noise 
 
 Suspicious patterns (hardcoded in server, overridable via `config.onboarding.suspiciousPatterns` later — out of scope for v1): `node_modules`, `.git`, `vendor`, `dist`, `build`, `target`, `.next`, `.nuxt`, `.output`, `out`.
 
+Verified 2026-04-14 against the `open-knowledge` repo itself: `node_modules`, `.git`, `dist`, `build`, `.next`, `vendor`, `out` all match real directories under the repo root. `.nuxt`, `.output`, `target` do not (no Rust/Nuxt tooling in the repo). `node_modules`/`.git`/`dist`/`build`/`.next` are also in spec 1's default `content.exclude`, so those patterns only surface in the suspicious variant when a user has explicitly un-excluded them or a directory matches that slipped through F3 defaults — defense-in-depth.
+
+### API request/response shapes
+
+Concrete shapes for the state-json and config endpoints. YAML round-trip for `/api/config/add-exclude` must preserve comments + ordering (use a structured YAML editor, not a naive parse→mutate→stringify that loses comments).
+
+```ts
+// GET /api/state-json → 200
+{ version: 1, lastOpenedDoc?: string, lastOpenedAt?: ISO8601,
+  welcome: { state, seenAt?, variant?, schemaVersion, needsAttention? },
+  recentDocs?: string[] }
+
+// POST /api/state-json/welcome-dismiss  body: { variant, needsAttention?: boolean }
+// → 200 { welcome: { state:"dismissed", seenAt, variant, schemaVersion, needsAttention? } }
+// → 423 { error: "not-lock-owner" }
+
+// POST /api/state-json/last-opened  body: { docName: string }
+// → 200 { lastOpenedDoc, lastOpenedAt }
+// → 423 { error: "not-lock-owner" }
+// → 404 { error: "doc-not-in-index" }  (docName doesn't match the file watcher's current index)
+
+// GET /api/init-status → 200
+{ fileCount, contentDir, include, exclude,
+  sampleFiles: string[],    // max 5, relative to contentDir
+  topDirs: string[],        // max 3, by file count
+  variant: 'empty' | 'existing' | 'suspicious',
+  suspiciousPatterns: string[] }  // empty if variant !== 'suspicious'
+
+// POST /api/config/add-exclude  body: { patterns: string[] }
+// → 200 { exclude: string[], fileCount: number }  (post-rebuild)
+// → 400 { error: "invalid-glob", pattern: string }
+// → 423 { error: "not-lock-owner" }
+
+// POST /api/init-content  (no body)
+// → 200 { path: "README.md", bytesWritten: number }
+// → 409 { error: "content-exists", fileCount: number }  (refuses if any .md already matches include)
+// → 423 { error: "not-lock-owner" }
+```
+
 ## 10) Decision log
 
 | ID | Decision | Alternatives | Rationale |
@@ -303,13 +358,15 @@ Suspicious patterns (hardcoded in server, overridable via `config.onboarding.sus
 | D10 | `schemaVersion` bumps re-surface welcome (not forcefully — with a small banner) | Silent re-surface; no re-surface ever | Quiet re-surface respects user intent (they dismissed before) while opening a channel to meaningfully update the first-run UX later. |
 | D11 | Welcome never shows for returning users (dismissed + same schemaVersion) | Show if `lastOpenedDoc` is null | Don't interrupt users who've already onboarded. If they cleared `state.json` deliberately, they get welcome; otherwise no. |
 | D12 | Three-variant logic computed server-side in `/api/init-status`, not client-side | Client computes variant from file counts | Server already has the `ContentFilter` + file index; one place of truth. Client just renders the variant the server tells it. |
+| D13 | Config editing during onboarding is **narrow** — one endpoint (`POST /api/config/add-exclude`), used only by the suspicious-variant one-click action | (a) Full scope-editor UI writing general config via `POST /api/config/update`; (b) punt entirely — tell users to edit `config.yml` externally | The story's C-A3 requires config persists. The web editor can't open YAML (SourceEditor is markdown-only) so "open config.yml as a document" doesn't work. A full config-editor UI is significant scope (form validation, YAML round-trip preserving comments, conflict resolution with concurrent edits). The 95% case is "suspicious variant → add one exclude pattern," which a narrow endpoint handles. For other config edits, the "Edit scope" CTA shows the path to `config.yml` and tells the user to open it in their system editor. Covers I-A4 (skippable) and C-A3 (persistent) for the critical case. |
+| D14 | Welcome reappears when `fileCount === 0` even after prior dismissal | Once dismissed, permanently hidden until `schemaVersion` bump | Story's I-A1. Handles the "deleted everything and came back" edge case. The alternative would silently drop users into an empty editor with no affordances — the same dead-end the story was written to fix. Cost: one extra `/api/init-status` call on every SPA load; negligible. |
 
 ## 11) Open questions
 
 | ID | Question | Blocker? | Next step |
 |---|---|---|---|
 | Q1 | Exact copy for each variant's welcome screen | No — Sarah's domain | Sarah drafts during UI implementation; review with Andrew before ship |
-| Q2 | Does the "Edit scope" CTA in branches R8/R9 open `.open-knowledge/config.yml` as a regular document in the editor, or open an OS-level editor? | No | Open as a regular document — the editor already round-trips YAML-fronted docs and this is the most consistent UX. Confirm with Sarah. |
+| Q2 | ~~Does the "Edit scope" CTA open config.yml in the editor or OS editor?~~ **Resolved by D13.** | N/A | Neither — R8's "Edit scope" shows the path and instructs the user to open it in their own editor. R9 has one-click add-exclude for the suspicious case. |
 | Q3 | Does `welcome.state === "pending"` need to be a real state, or is "not-shown" → "dismissed" sufficient? | No | Defer; use only not-shown / dismissed in v1; add `pending` if a multi-step flow needs it later |
 | Q4 | How is the `WELCOME_SCHEMA_VERSION` bump communicated on re-surface — banner text, modal, nothing? | No — Sarah's call | One-line banner at top of welcome screen, dismissible; no modal |
 | Q5 | Does R14 (`open-knowledge welcome --reset`) belong in this spec or the `cli-init-clarity` line of specs? | No | Keep here; it's the escape hatch for the state this spec owns |
@@ -324,7 +381,7 @@ Suspicious patterns (hardcoded in server, overridable via `config.onboarding.sus
 - **A3:** `file-watcher` in-memory index is consistent with what `ContentFilter.isIncluded()` would report — they're the same source of truth. Verification: grep.
 - **A4:** Sarah's UI can consume JSON from `/api/init-status` via `fetch()` in the SPA without CORS issues (same origin today). Verification: dev-mode smoke test.
 - **A5:** `state.json` mode 0600 works on all target filesystems (APFS, ext4). Verification: test on both.
-- **A6:** The suspicious-pattern list catches the common real-world cases without false-positives for users who have legitimate `vendor/` directories (e.g., Go projects). False-positives are acceptable in v1 because the user can dismiss with "Start anyway." Verification: try on a Go project, confirm the UX is not insulting.
+- **A6:** ✅ **Verified 2026-04-14** against the `open-knowledge` repo itself. All ten suspicious patterns except `target`, `.nuxt`, `.output` match real directories in a typical monorepo. `node_modules`/`.git`/`dist`/`build`/`.next` are already caught by spec 1's default `content.exclude`, so they only surface in the suspicious variant if a user explicitly un-excluded them. `vendor`/`out` are the practical cases. `Start anyway` is equal-weight, so false-positives (e.g., a Rust project with a legitimate `target/` directory containing authored docs) are dismissible without consequence.
 - **A7:** Schema-version-based re-surface is low enough friction that we will actually bump it for meaningful UX changes rather than avoiding the churn. Verification: cultural, not technical.
 
 ## 13) In scope
