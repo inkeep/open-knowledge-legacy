@@ -54,6 +54,7 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { getLogger } from './logger.ts';
 import {
   createManagedRenameRecoveryJournal,
   type ManagedRenameSnapshot,
@@ -99,6 +100,9 @@ const MANAGED_RENAME_ORIGIN = {
   skipStoreHooks: false,
   context: { origin: 'managed-rename' },
 };
+
+const log = getLogger('api');
+
 
 /** Validates a docName and builds a shadow-repo-safe path.
  * Uses the same traversal check as safeContentPath (reject `..` and null bytes)
@@ -851,7 +855,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
-      console.error('[agent-write]', e);
+      log.error({ err: e }, '[agent-write] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -926,7 +930,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
-      console.error('[agent-write-md]', e);
+      log.error({ err: e }, '[agent-write-md] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -1352,7 +1356,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
-      console.error('[agent-patch]', e);
+      log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }

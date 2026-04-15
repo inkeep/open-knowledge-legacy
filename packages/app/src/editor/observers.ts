@@ -403,11 +403,6 @@ export function setupObservers(deps: ObserverDeps): () => void {
         ).changedParentTypes;
         state.lastRemoteTreeOnlyAt = changedParentTypes?.has(ytext) ? 0 : Date.now();
 
-        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
-        const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
-        const remoteMd = prependFrontmatter(frontmatter, body);
-
         // Bug-B fix: only refresh baseline when no local debounce is pending.
         // If debounceA is active, a local edit is waiting to sync — refreshing
         // the baseline to the post-remote state would cause the debounce's
@@ -415,7 +410,10 @@ export function setupObservers(deps: ObserverDeps): () => void {
         // edit. By keeping the old baseline, the debounce fires Path A/B with
         // the correct delta (old baseline → current XmlFragment).
         if (!debounceA) {
-          lastSyncedXmlMd = remoteMd;
+          const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+          const body = mdManager.serialize(json);
+          const frontmatter = getFrontmatter(doc);
+          lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
         }
       } catch (err) {
         // Non-critical — baseline will catch up on next local sync
