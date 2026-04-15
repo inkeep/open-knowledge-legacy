@@ -35,7 +35,7 @@ import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
-import { setupObservers } from '../../src/editor/observers';
+import { type Scheduler, setupObservers } from '../../src/editor/observers';
 
 // ─── Shared instances (created once, reused across all tests) ───
 
@@ -407,5 +407,52 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
     metaMap,
     activityMap,
     connectionCount,
+  };
+}
+
+// ─── Manual scheduler for deterministic observer testing (FR-15) ───
+
+export interface ManualScheduler extends Scheduler {
+  /** Fire all pending callbacks synchronously, regardless of due-time. */
+  flush(): void;
+  /** Fire callbacks whose due-time is ≤ (current virtual time + ms). */
+  advanceTime(ms: number): void;
+  /** Inspect the pending callback queue (read-only). */
+  pending(): ReadonlyArray<{ id: number; dueAt: number }>;
+}
+
+export function createManualScheduler(): ManualScheduler {
+  type Entry = { id: number; cb: () => void; dueAt: number };
+  const queue: Entry[] = [];
+  let now = 0;
+  let nextId = 1;
+
+  return {
+    setTimeout: (cb, ms) => {
+      const id = nextId++;
+      queue.push({ id, cb, dueAt: now + ms });
+      return id as unknown as ReturnType<typeof globalThis.setTimeout>;
+    },
+    clearTimeout: (handle) => {
+      const id = handle as unknown as number;
+      const idx = queue.findIndex((e) => e.id === id);
+      if (idx >= 0) queue.splice(idx, 1);
+    },
+    advanceTime(ms) {
+      now += ms;
+      const due = queue.filter((e) => e.dueAt <= now);
+      for (const e of due) {
+        queue.splice(queue.indexOf(e), 1);
+        e.cb();
+      }
+    },
+    flush() {
+      let e = queue.shift();
+      while (e) {
+        e.cb();
+        e = queue.shift();
+      }
+    },
+    pending: () => queue.map(({ id, dueAt }) => ({ id, dueAt })),
   };
 }

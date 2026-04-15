@@ -110,6 +110,21 @@ export function markUserTyping(doc: Y.Doc): void {
   getTypingState(doc).lastUserTypedAt = Date.now();
 }
 
+/**
+ * Scheduler interface for observer debounces and typing-defer timers (FR-15).
+ * Production: arrow-wrapped passthrough to globalThis.setTimeout/clearTimeout.
+ * Tests: inject createManualScheduler() for synchronous deterministic flush.
+ */
+export interface Scheduler {
+  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
+}
+
+const defaultScheduler: Scheduler = {
+  setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
+  clearTimeout: (handle) => globalThis.clearTimeout(handle),
+};
+
 // ─────────────────────────────────────────────────────────────
 // Observer internals
 // ─────────────────────────────────────────────────────────────
@@ -133,6 +148,10 @@ interface ObserverDeps {
     agentLen: number;
     mergedLen: number;
   }) => void;
+  /** Optional scheduler injection for deterministic testing (FR-15).
+   *  Default: arrow-wrapped passthrough to globalThis.setTimeout/clearTimeout.
+   *  Tests: inject createManualScheduler() for synchronous flush. */
+  scheduler?: Scheduler;
 }
 
 /**
@@ -262,6 +281,7 @@ function getFrontmatter(doc: Y.Doc): string {
  */
 export function setupObservers(deps: ObserverDeps): () => void {
   const { doc, xmlFragment, ytext, mdManager, schema } = deps;
+  const sched: Scheduler = deps.scheduler ?? defaultScheduler;
 
   // Track the last XmlFragment state we successfully synced to Y.Text. On each sync,
   // Observer A computes the incremental delta between this snapshot and the current
@@ -367,8 +387,8 @@ export function setupObservers(deps: ObserverDeps): () => void {
       }
       return;
     }
-    if (debounceA) clearTimeout(debounceA);
-    debounceA = setTimeout(runObserverASync, DEBOUNCE_MS);
+    if (debounceA) sched.clearTimeout(debounceA);
+    debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -391,13 +411,13 @@ export function setupObservers(deps: ObserverDeps): () => void {
     if (elapsedSinceTyping < TYPING_DEFER_MS) {
       // User is still typing. Defer.
       const waitMs = TYPING_DEFER_MS - elapsedSinceTyping;
-      debounceB = setTimeout(runObserverBSync, waitMs);
+      debounceB = sched.setTimeout(runObserverBSync, waitMs);
       return;
     }
     if (lastRemoteTreeOnlyAt > 0) {
       const elapsedSinceRemoteTree = Date.now() - lastRemoteTreeOnlyAt;
       if (elapsedSinceRemoteTree < REMOTE_TREE_SYNC_GRACE_MS) {
-        debounceB = setTimeout(
+        debounceB = sched.setTimeout(
           runObserverBSync,
           REMOTE_TREE_SYNC_GRACE_MS - elapsedSinceRemoteTree,
         );
@@ -521,8 +541,8 @@ export function setupObservers(deps: ObserverDeps): () => void {
       getTypingState(doc).lastRemoteTreeOnlyAt = 0;
       return;
     }
-    if (debounceB) clearTimeout(debounceB);
-    debounceB = setTimeout(runObserverBSync, DEBOUNCE_MS);
+    if (debounceB) sched.clearTimeout(debounceB);
+    debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
   };
 
   xmlFragment.observeDeep(observerA);
@@ -564,8 +584,8 @@ export function setupObservers(deps: ObserverDeps): () => void {
   }
 
   return () => {
-    if (debounceA) clearTimeout(debounceA);
-    if (debounceB) clearTimeout(debounceB);
+    if (debounceA) sched.clearTimeout(debounceA);
+    if (debounceB) sched.clearTimeout(debounceB);
     xmlFragment.unobserveDeep(observerA);
     ytext.unobserve(observerB);
   };
