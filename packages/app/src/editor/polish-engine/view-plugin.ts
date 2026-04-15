@@ -68,8 +68,9 @@ function buildDecorations(view: EditorView, registry: Registry): DecorationSet {
   const markerIndex = buildMarkerIndex(registry);
   const pending: PendingDecoration[] = [];
 
-  // Track which line positions we've already decorated (avoid duplicates)
-  const decoratedLines = new Set<number>();
+  // Track which config+line pairs we've already decorated (avoid duplicates
+  // from the same config, but allow different configs to stack on the same line)
+  const decoratedLines = new Set<string>();
 
   const tree = syntaxTree(view.state);
 
@@ -103,7 +104,8 @@ function buildDecorations(view: EditorView, registry: Registry): DecorationSet {
 
             for (let lineNo = lineStart.number; lineNo <= lineEnd.number; lineNo++) {
               const line = view.state.doc.line(lineNo);
-              if (decoratedLines.has(line.from)) continue;
+              const lineKey = `${config.id}:${line.from}`;
+              if (decoratedLines.has(lineKey)) continue;
 
               const cls =
                 typeof config.class === 'function' ? config.class(node, view.state) : config.class;
@@ -124,7 +126,7 @@ function buildDecorations(view: EditorView, registry: Registry): DecorationSet {
                     ...(attrs ? { attributes: { style: inlineStyle(attrs) } } : {}),
                   }),
                 });
-                decoratedLines.add(line.from);
+                decoratedLines.add(lineKey);
               }
             }
           } else if (config.kind === 'mark') {

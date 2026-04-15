@@ -665,6 +665,54 @@
   opacity: 0.6;
 }
 
+/* Table (Tier 1 + Tier 2 + Tier 3)
+   Row tint + left accent + hanging indent (Tier 1), per-cell alternating
+   color bands with box-decoration-break for wrap (Tier 2), compact sizing (Tier 3). */
+.cm-table-row {
+  background: color-mix(in oklab, var(--color-accent) 3%, transparent);
+  border-left: 3px solid color-mix(in oklab, var(--color-accent) 25%, transparent);
+  padding-inline-start: calc(8px + 2ch);
+  text-indent: -2ch;
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
+.cm-table-header {
+  background: color-mix(in oklab, var(--color-accent) 5%, transparent);
+  border-left: 3px solid color-mix(in oklab, var(--color-accent) 30%, transparent);
+  border-top: 1px solid var(--color-border);
+  padding-inline-start: calc(8px + 2ch);
+  text-indent: -2ch;
+  font-size: 0.9em;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* Tier 2 — per-cell color bands (4-color cycle, ≤4% alpha each) */
+.cm-table-cell-band-0 {
+  background-color: color-mix(in oklab, oklch(70% 0.08 250) 4%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.cm-table-cell-band-1 {
+  background-color: color-mix(in oklab, oklch(70% 0.08 170) 3%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.cm-table-cell-band-2 {
+  background-color: color-mix(in oklab, oklch(70% 0.08 60) 3%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.cm-table-cell-band-3 {
+  background-color: color-mix(in oklab, oklch(70% 0.08 330) 3%, transparent);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
 /* ─────────────────────────────────────────────────────────────
    Presence polish — agent badge, undo button, presence bar
    ───────────────────────────────────────────────────────────── */

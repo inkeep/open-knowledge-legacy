@@ -11,6 +11,12 @@
 import { Compartment, type Extension } from '@codemirror/state';
 import { createAutoBailPlugin } from './auto-bail';
 import { blockquoteConstruct } from './constructs/blockquote';
+import {
+  tableCellConstruct,
+  tableContainerConstruct,
+  tableHeaderConstruct,
+  tableRowConstruct,
+} from './constructs/table';
 import type { Registry } from './registry';
 import { createCrossScanField } from './state-field';
 import { createPolishViewPlugin } from './view-plugin';
@@ -19,7 +25,13 @@ import { createPolishViewPlugin } from './view-plugin';
 export const polishCompartment = new Compartment();
 
 /** Default registry of all supported constructs. */
-export const defaultRegistry: Registry = [blockquoteConstruct];
+export const defaultRegistry: Registry = [
+  blockquoteConstruct,
+  tableContainerConstruct,
+  tableHeaderConstruct,
+  tableRowConstruct,
+  tableCellConstruct,
+];
 
 /**
  * Build the polish engine Extension[] from a registry.
