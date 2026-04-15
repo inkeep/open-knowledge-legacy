@@ -6,7 +6,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
-import { Ellipsis, Pencil, Trash2 } from 'lucide-react';
+import { CircleAlert, Ellipsis, File, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
 import { defaultInitialDir } from '../../components/file-tree-utils';
@@ -130,7 +130,7 @@ function EditWikiLinkDialog({
             Modify the link target, anchor, and display label.
           </Dialog.Description>
 
-          <div className="mb-4 space-y-3">
+          <div className="mb-4 space-y-6">
             <div>
               <label className="mb-1.5 block text-sm font-medium" htmlFor={targetId}>
                 Page <span className="text-red-500">*</span>
@@ -163,7 +163,7 @@ function EditWikiLinkDialog({
                   role="listbox"
                   id={headingListId}
                   aria-label="Heading anchors"
-                  className="mt-1.5 max-h-36 overflow-y-auto rounded-md border border-border bg-muted/30"
+                  className="mt-1.5 max-h-36 overflow-y-auto subtle-scrollbar rounded-md border border-border bg-muted/30"
                 >
                   {headingsWithKeys.map((h) => (
                     <button
@@ -290,12 +290,12 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
             <TooltipTrigger asChild>
               <span
                 className={cn(
-                  'group mx-0.5 inline-flex max-w-full select-none items-center gap-0.5 rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
+                  'group mx-0.5 inline-flex max-w-full select-none items-center gap-0.5 rounded-sm px-1.5 py-0.5 align-baseline text-sm font-medium',
                   resolved
-                    ? 'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200'
+                    ? 'bg-azure-900/5 text-azure-500 hover:bg-azure-50 dark:bg-azure-100/10 dark:text-azure-200'
                     : unresolved
-                      ? 'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60'
-                      : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted',
+                      ? 'bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-100/10 dark:text-red-300 dark:hover:bg-red-100/10 dark:hover:text-red-200'
+                      : 'bg-muted/60 text-muted-foreground hover:bg-muted',
                 )}
                 data-target={target}
                 data-alias={alias ?? ''}
@@ -309,7 +309,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
                 <a
                   href={anchor ? `#/${target}?anchor=${encodeURIComponent(anchor)}` : `#/${target}`}
                   className={cn(
-                    'cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+                    'flex cursor-pointer items-center gap-1 truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
                     resolved
                       ? 'focus-visible:ring-sky-300'
                       : unresolved
@@ -322,6 +322,11 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
                     handlePrimaryClick();
                   }}
                 >
+                  {resolutionState === 'loading' && (
+                    <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                  )}
+                  {resolved && <File className="size-3.5 shrink-0" />}
+                  {unresolved && <CircleAlert className="size-3.5 shrink-0" />}
                   {label}
                 </a>
 
@@ -351,7 +356,11 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
               </span>
             </TooltipTrigger>
             <TooltipContent side="top" sideOffset={4}>
-              <LinkTooltipHint href={source} />
+              {unresolved ? (
+                <div>This page cannot be found.</div>
+              ) : (
+                <LinkTooltipHint href={source} />
+              )}
             </TooltipContent>
           </Tooltip>
 
