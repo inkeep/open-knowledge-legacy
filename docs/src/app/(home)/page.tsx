@@ -175,9 +175,9 @@ function Features() {
     },
     {
       icon: BrainCircuitIcon,
-      title: 'Agent-agnostic',
+      title: 'Bring Your Own Agent',
       description:
-        'No LLM baked in. Any AI agent — Claude, Cursor, Codex — connects via MCP tools to read, write, and search.',
+        'Any AI agent — Claude, Cursor, Codex — connects via MCP tools to read, write, and search.',
     },
     {
       icon: ZapIcon,
