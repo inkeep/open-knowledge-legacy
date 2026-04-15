@@ -315,6 +315,8 @@ Declarative CM6 decoration engine that applies per-line tinting, hanging indent,
 
 **Adding a construct:** create `constructs/<name>.ts` exporting a `ConstructConfig`, import and add it to `defaultRegistry` in `index.ts`, add matching `.cm-*` CSS class(es) to `globals.css`.
 
+**Footgun: do NOT gate syntax-tree reads on `syntaxTreeAvailable()` from `@codemirror/language`.** It reflects the *deepest* pending sublanguage, not the outer markdown tree. When a fenced-code block declares a language (e.g. ` ```typescript `), CM6 lazy-loads `@codemirror/lang-javascript`; during that load, `syntaxTreeAvailable()` returns `false` — but the outer markdown tree (which has the `FencedCode`, `Blockquote`, `Table`, ... nodes the engine iterates) is already complete. Early-returning `Decoration.none` on that gate silently disables every decoration the moment any known-language code block enters the viewport, and the disable sticks for the doc's lifetime. Instead, skip the gate and rebuild on tree mutation — `syntaxTree(update.startState) !== syntaxTree(update.state)` in `ViewPlugin.update` — so decorations reattach when a later parse advance lands. This pattern is implemented in `view-plugin.ts` and `state-field.ts`; copy it for any future CM6 plugin that walks `syntaxTree()`.
+
 ### Key files
 
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
