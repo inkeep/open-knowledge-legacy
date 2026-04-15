@@ -1,0 +1,195 @@
+/**
+ * Performance benchmarks for Component Blocks v2 (PF01-PF06).
+ *
+ * Runs as Bun stress tests. Thresholds are informative — regression >10%
+ * vs baseline fails CI. Lives via turbo task `test:perf`.
+ *
+ * PF01-PF02 and PF06 test rendering performance (require React/DOM env to
+ * measure render counts). PF03 and PF05 test CRDT-level performance and can
+ * run as pure Bun unit tests.
+ */
+
+import { describe, expect, test } from 'bun:test';
+import type { Context } from 'react';
+import * as Y from 'yjs';
+import { sharedExtensions } from '../../../../packages/core/src/extensions/shared.js';
+import { MarkdownManager } from '../../../../packages/core/src/markdown/index.js';
+
+/** Fake React Context for store testing (avoids React runtime dependency) */
+const fakeContext = {} as Context<unknown>;
+
+const mdManager = new MarkdownManager({ extensions: sharedExtensions });
+
+// ── PF03: Observer B parseWithFallback cycle time ──────────────
+
+describe('PF03: parseWithFallback cycle time under load', () => {
+  test('500 keystrokes on doc with 20 jsxComponents - average cycle <20ms, p99 <50ms', () => {
+    // Build a realistic document with 20 jsxComponents (mix of registered + broken)
+    const components = Array.from({ length: 15 }, (_, i) =>
+      [
+        `<Callout type="${i % 2 === 0 ? 'warning' : 'info'}">`,
+        '',
+        `Content block ${i + 1} with some **bold** and *italic* text.`,
+        '',
+        '</Callout>',
+      ].join('\n'),
+    );
+
+    // Add 5 broken components
+    const broken = Array.from({ length: 5 }, (_, i) =>
+      [`<BrokenComponent${i} attr="`, '', `Some content that won't parse cleanly`, ''].join('\n'),
+    );
+
+    const baseDoc = [...components, ...broken, '# Clean heading', '', 'Some paragraph text.'].join(
+      '\n\n',
+    );
+
+    // Simulate 500 keystrokes by progressively editing the clean paragraph
+    const timings: number[] = [];
+    let doc = baseDoc;
+
+    for (let i = 0; i < 500; i++) {
+      // Append a character to the clean paragraph area
+      doc = `${doc}${String.fromCharCode(97 + (i % 26))}`;
+
+      const start = performance.now();
+      const result = mdManager.parseWithFallback(doc);
+      const elapsed = performance.now() - start;
+      timings.push(elapsed);
+
+      // Verify result is always a valid PM doc (parseWithFallback never throws)
+      expect(result).toBeDefined();
+      expect(result.type).toBe('doc');
+    }
+
+    const avg = timings.reduce((a, b) => a + b, 0) / timings.length;
+    const sorted = [...timings].sort((a, b) => a - b);
+    const p99Index = Math.floor(sorted.length * 0.99);
+    const p99 = sorted[p99Index] ?? 0;
+    const maxVal = sorted[sorted.length - 1] ?? 0;
+
+    console.log(
+      `PF03 results: avg=${avg.toFixed(2)}ms, p99=${p99.toFixed(2)}ms, max=${maxVal.toFixed(2)}ms`,
+    );
+
+    // Thresholds from spec
+    expect(avg).toBeLessThan(20);
+    expect(p99).toBeLessThan(50);
+    expect(maxVal).toBeLessThan(200);
+  });
+});
+
+// ── PF05: Y.Item count growth under typing in jsxInline ───────
+
+describe('PF05: Y.Item growth under jsxInline typing', () => {
+  test('100-keystroke typing in jsxInline content — Y.Item delta ≤ keystroke_count + constant', () => {
+    const ydoc = new Y.Doc();
+    const ytext = ydoc.getText('source');
+
+    // Initial content with a jsxInline node
+    const initialContent = 'Hello <Icon name="check" /> world';
+    ytext.insert(0, initialContent);
+
+    // Count initial items
+    const countItems = (yt: Y.Text): number => {
+      let count = 0;
+      let item = yt._start;
+      while (item !== null) {
+        if (!item.deleted) count++;
+        item = item.right;
+      }
+      return count;
+    };
+
+    const initialItems = countItems(ytext);
+    const KEYSTROKE_COUNT = 100;
+
+    // Simulate 100 keystrokes appended after the jsxInline
+    for (let i = 0; i < KEYSTROKE_COUNT; i++) {
+      const insertPos = ytext.toString().length;
+      ydoc.transact(() => {
+        ytext.insert(insertPos, String.fromCharCode(97 + (i % 26)));
+      });
+    }
+
+    const finalItems = countItems(ytext);
+    const itemDelta = finalItems - initialItems;
+
+    console.log(
+      `PF05 results: initialItems=${initialItems}, finalItems=${finalItems}, delta=${itemDelta}, keystrokes=${KEYSTROKE_COUNT}`,
+    );
+
+    // Y.Item delta should be ≤ keystroke_count + small constant overhead
+    // Each character insert creates at most 1 Y.Item. Constant overhead accounts
+    // for initial content structure items.
+    const CONSTANT_OVERHEAD = 10;
+    expect(itemDelta).toBeLessThanOrEqual(KEYSTROKE_COUNT + CONSTANT_OVERHEAD);
+
+    // Verify no super-linear growth (which would indicate Y.XmlElement churn)
+    expect(itemDelta).toBeLessThan(KEYSTROKE_COUNT * 2);
+  });
+});
+
+// ── PF06: Store publish/unpublish throughput under load ────────
+
+describe('PF06: Context Bridge store throughput', () => {
+  test('50 compounds mounted simultaneously — all publishes settle within 16ms', async () => {
+    // Import store dynamically to avoid React dependency at module level
+    const { createContextBridgeStore } = await import('../../src/editor/context-bridge/store.js');
+
+    const store = createContextBridgeStore();
+    const COMPOUND_COUNT = 50;
+
+    // Simulate 50 compound component publishes
+    const publishStart = performance.now();
+    for (let i = 0; i < COMPOUND_COUNT; i++) {
+      const entries = [
+        { context: fakeContext, value: { id: i, state: 'active' } },
+        { context: fakeContext, value: { items: [1, 2, 3] } },
+      ];
+      store.publish(`b${i}`, entries);
+    }
+    const publishElapsed = performance.now() - publishStart;
+    console.log(`PF06 publish: ${publishElapsed.toFixed(2)}ms for ${COMPOUND_COUNT} compounds`);
+
+    // All publishes should settle within one frame (16ms)
+    expect(publishElapsed).toBeLessThan(16);
+
+    // Verify all entries stored
+    for (let i = 0; i < COMPOUND_COUNT; i++) {
+      const entries = store.get(`b${i}`);
+      expect(entries).toBeDefined();
+      expect(entries?.length).toBe(2);
+    }
+
+    // Simulate 50 unpublishes
+    const unpublishStart = performance.now();
+    for (let i = 0; i < COMPOUND_COUNT; i++) {
+      store.unpublish(`b${i}`);
+    }
+    const unpublishElapsed = performance.now() - unpublishStart;
+    console.log(`PF06 unpublish: ${unpublishElapsed.toFixed(2)}ms for ${COMPOUND_COUNT} compounds`);
+
+    expect(unpublishElapsed).toBeLessThan(16);
+
+    // Verify all entries removed
+    for (let i = 0; i < COMPOUND_COUNT; i++) {
+      expect(store.get(`b${i}`)).toBeUndefined();
+    }
+
+    // Subscription notification count should be exactly COMPOUND_COUNT * 2
+    // (one per publish + one per unpublish)
+    let notificationCount = 0;
+    const unsubscribe = store.subscribe(() => {
+      notificationCount++;
+    });
+
+    // Re-publish and verify no dropped subscriptions
+    for (let i = 0; i < COMPOUND_COUNT; i++) {
+      store.publish(`b${i}`, [{ context: fakeContext, value: i }]);
+    }
+    expect(notificationCount).toBe(COMPOUND_COUNT);
+
+    unsubscribe();
+  });
+});

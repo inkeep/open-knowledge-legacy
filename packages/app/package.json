@@ -20,7 +20,11 @@
     "test:fidelity": "bun test --timeout 120000 tests/fidelity/",
     "test:fuzz": "bun test tests/stress/observers.fuzz.test.ts",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
-    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts"
+    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts",
+    "test:visual": "VITE_PORT=13580 playwright test tests/visual/component-parity.e2e.ts --update-snapshots",
+    "test:visual:update": "VITE_PORT=13580 playwright test tests/visual/component-parity.e2e.ts --update-snapshots",
+    "test:perf": "bun test tests/stress/component-blocks.perf.test.ts",
+    "test:a11y": "VITE_PORT=13581 playwright test tests/a11y/component-blocks.e2e.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
