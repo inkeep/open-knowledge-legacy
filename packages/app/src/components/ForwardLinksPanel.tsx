@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { FilePlus2 } from 'lucide-react';
 import { useState } from 'react';
-import { CreatePageDialog } from '@/components/CreatePageDialog';
+import { defaultInitialDir } from '@/components/file-tree-utils';
+import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,8 +14,11 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
-import { isResolvedWikiLinkTarget } from '@/editor/extensions/wiki-link-helpers';
-import { hashFromDocName } from '@/lib/doc-hash';
+import {
+  isResolvedWikiLinkTarget,
+  wikiLinkSuggestedFilename,
+} from '@/editor/extensions/wiki-link-helpers';
+import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 import { cn } from '@/lib/utils';
 
 interface ForwardLinksResponse {
@@ -55,10 +59,6 @@ export function ForwardLinksPanel({
       return;
     }
     window.location.assign(hashFromDocName(target));
-  }
-
-  function handleCreated(docName: string) {
-    window.location.assign(hashFromDocName(docName));
   }
 
   return (
@@ -109,13 +109,14 @@ export function ForwardLinksPanel({
         </PanelBody>
       </Panel>
 
-      <CreatePageDialog
+      <NewItemDialog
         open={createTarget !== null}
-        target={createTarget ?? ''}
-        onOpenChange={(open) => {
+        kind="file"
+        initialDir={defaultInitialDir(docNameFromHash(window.location.hash) ?? '')}
+        suggestedName={createTarget ? wikiLinkSuggestedFilename(createTarget) : undefined}
+        onOpenChange={(open: boolean) => {
           if (!open) setCreateTarget(null);
         }}
-        onCreated={handleCreated}
       />
     </>
   );

@@ -8,6 +8,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
+import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
 // Line-oriented variant: excludes \n since lines are pre-split.
 // cf. packages/core/src/extensions/wiki-link.ts WIKI_LINK_PATTERN (no \n exclusion).
@@ -552,6 +553,49 @@ export class BacklinkIndex {
     return { nodes: [...nodeSet].sort(), links };
   }
 
+  getLinkGraphNeighborhood(
+    centerDocName: string,
+    maxDegrees: number,
+    branch = this.activeBranch,
+  ): {
+    nodes: string[];
+    links: Array<{ source: string; target: string }>;
+  } {
+    const state = this.getState(branch);
+    const visited = new Set<string>([centerDocName]);
+    const queue: Array<{ docName: string; degree: number }> = [
+      { docName: centerDocName, degree: 0 },
+    ];
+    let queueIndex = 0;
+
+    while (queueIndex < queue.length) {
+      const current = queue[queueIndex++];
+      if (current.degree >= maxDegrees) continue;
+
+      const neighbors = new Set<string>([
+        ...(state.forward.get(current.docName) ?? new Set<string>()),
+        ...(state.backward.get(current.docName)?.keys() ?? []),
+      ]);
+
+      for (const neighbor of neighbors) {
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        queue.push({ docName: neighbor, degree: current.degree + 1 });
+      }
+    }
+
+    const links: Array<{ source: string; target: string }> = [];
+    for (const [source, targets] of state.forward) {
+      if (!visited.has(source)) continue;
+      for (const target of targets) {
+        if (!visited.has(target)) continue;
+        links.push({ source, target });
+      }
+    }
+
+    return { nodes: [...visited].sort(), links };
+  }
+
   async saveToDisk(branch = this.activeBranch): Promise<void> {
     const filePath = this.cachePath(branch);
     mkdirSync(dirname(filePath), { recursive: true });
@@ -593,11 +637,11 @@ export class BacklinkIndex {
         this.rebuildFileList(fullPath, docs);
         continue;
       }
-      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      if (!entry.isFile() || !isSupportedDocFile(entry.name)) continue;
 
       const relPath = relative(this.contentDir, fullPath);
       if (this.contentFilter?.isExcluded(relPath)) continue;
-      docs.push(relPath.slice(0, -3));
+      docs.push(stripDocExtension(relPath));
     }
   }
 
@@ -605,13 +649,17 @@ export class BacklinkIndex {
     if (!existsSync(this.contentDir)) return [];
     const docs: string[] = [];
     this.rebuildFileList(this.contentDir, docs);
-    return docs.sort((a, b) => a.localeCompare(b));
+    // Deduplicate: when both foo.md and foo.mdx exist, stripDocExtension maps
+    // both to "foo". The extension-precedence winner is resolved later via
+    // getDocExtension() when building the on-disk path.
+    const unique = Array.from(new Set(docs));
+    return unique.sort((a, b) => a.localeCompare(b));
   }
 
   rebuildFromDisk(branch = this.activeBranch): void {
     const state = createEmptyState();
     for (const docName of this.listDocsOnDisk()) {
-      const filePath = resolve(this.contentDir, `${docName}.md`);
+      const filePath = resolve(this.contentDir, `${docName}${getDocExtension(docName)}`);
       try {
         const markdown = readFileSync(filePath, 'utf-8');
         const { body } = stripFrontmatter(markdown);

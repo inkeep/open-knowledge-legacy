@@ -6,7 +6,7 @@
  */
 import { z } from 'zod';
 import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, textResult } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, normalizeDocName, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find-and-replace on a live document via the CRDT layer.',
@@ -15,7 +15,7 @@ export const DESCRIPTION = [
   '**When rewriting prose, add `[[wiki-links]]` aggressively.** If the replacement mentions other documents or entities that should have their own page, link them as `[[Page Name]]`. Over-linking is the goal; underlinked documents lose their value in backlink-driven navigation.',
   '',
   '**Parameters:**',
-  '- `docName` — Document name to edit',
+  '- `docName` — Document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `find` — Text to find (exact match)',
   '- `replace` — Replacement text',
 ].join('\n');
@@ -31,8 +31,10 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     },
     async (args: { docName: string; find: string; replace: string }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const normalized = normalizeDocName(args.docName);
+      if (!normalized.ok) return textResult(normalized.error, true);
       const result = await httpPost(serverUrl, '/api/agent-patch', {
-        docName: args.docName,
+        docName: normalized.docName,
         find: args.find,
         replace: args.replace,
       });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { OK_DIR } from '../constants.ts';
 import { previewContent } from './preview.ts';
 
 describe('previewContent', () => {
@@ -120,7 +121,7 @@ describe('previewContent', () => {
   });
 
   it('respects nested .gitignore (D8: .open-knowledge/cache/ excluded)', () => {
-    const okDir = join(testDir, '.open-knowledge');
+    const okDir = join(testDir, OK_DIR);
     mkdirSync(okDir, { recursive: true });
     writeFileSync(join(okDir, '.gitignore'), 'cache/\n');
     writeFileSync(join(okDir, 'AGENTS.md'), '# Agents');
@@ -135,7 +136,7 @@ describe('previewContent', () => {
     });
 
     expect(result.totalCount).toBe(1);
-    expect(result.sample).toEqual(['.open-knowledge/AGENTS.md']);
+    expect(result.sample).toEqual([`${OK_DIR}/AGENTS.md`]);
   });
 
   it('returns zero count for empty directory (no .md files)', () => {

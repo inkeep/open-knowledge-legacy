@@ -17,6 +17,7 @@ import type { Dirent } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
 import { z } from 'zod';
+import { OK_DIR } from '../constants.ts';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { parseFrontmatter } from '../utils/frontmatter.ts';
 import { type GitCommit, type ProjectHistorySource, readProjectGitLog } from './project-log.ts';
@@ -30,7 +31,7 @@ const DIRECTORY_SCAN_CAP = 1000;
 /** Dirs skipped when computing DirectoryMeta (same policy as mtime-scan). */
 const DIR_SKIP: ReadonlySet<string> = new Set([
   '.git',
-  '.open-knowledge',
+  OK_DIR,
   '.openknowledge',
   'node_modules',
   '.changeset',

@@ -182,6 +182,39 @@ const mutators: Array<{ name: string; fn: Mutator }> = [
       markUserTyping(ctx.doc);
     },
   },
+  {
+    name: 'agentRewriteParagraph',
+    fn: (ctx) => {
+      // Pick a random paragraph from the current Y.Text content and rewrite
+      // ~50% of its characters. This forces Path B (DMP three-way merge) when
+      // Observer A fires next, exercising Match_Threshold=0.5 under randomized
+      // divergence levels.
+      const currentText = ctx.ytext.toString();
+      const lines = currentText.split('\n');
+      // Find non-empty lines that look like paragraph content (not headings, etc.)
+      const paraLines = lines
+        .map((line, idx) => ({ line, idx }))
+        .filter(({ line }) => line.length > 0 && !line.startsWith('#') && !line.startsWith('---'));
+      if (paraLines.length === 0) return; // null-safe
+
+      const target = paraLines[ctx.prng.nextInt(paraLines.length)];
+      // Mutate ~50% of the characters
+      const chars = target.line.split('');
+      for (let c = 0; c < chars.length; c++) {
+        if (ctx.prng.next() < 0.5) {
+          chars[c] = WORDS[ctx.prng.nextInt(WORDS.length)][0]; // replace with a random letter
+        }
+      }
+      const newLine = chars.join('');
+      lines[target.idx] = newLine;
+      const newContent = lines.join('\n');
+
+      ctx.doc.transact(() => {
+        ctx.ytext.delete(0, ctx.ytext.length);
+        ctx.ytext.insert(0, newContent);
+      }, 'agent-write');
+    },
+  },
 ];
 
 // ---------- fuzz runner ----------

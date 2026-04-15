@@ -8,31 +8,32 @@
  * the instructions.
  */
 import type { Config } from '../../config/schema.ts';
+import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
 function buildBody(contentDir: string): string {
   return `Initialize a project knowledge base at \`${contentDir}\` for this repository.
 
-The content directory for this project is **\`${contentDir}\`** (from \`.open-knowledge/config.yml\`).
+The content directory for this project is **\`${contentDir}\`** (from \`${OK_DIR}/config.yml\`).
 
 ## When to use
 
-- First time setting up a knowledge base in a repo where \`.open-knowledge/\` does not exist, or where the content directory has no articles yet
+- First time setting up a knowledge base in a repo where \`${OK_DIR}/\` does not exist, or where the content directory has no articles yet
 - When onboarding to a new codebase and you want to capture initial understanding for future agent sessions
 
 ## Steps
 
 ### 1. Verify the structure exists
 
-If \`.open-knowledge/\` does not already exist, scaffold it from a terminal (not from within this MCP session — scaffolding is a CLI operation, not a tool call):
+If \`${OK_DIR}/\` does not already exist, scaffold it from a terminal (not from within this MCP session — scaffolding is a CLI operation, not a tool call):
 
 \`\`\`bash
 open-knowledge init
 # or:  npx @inkeep/open-knowledge init
 \`\`\`
 
-That creates \`.open-knowledge/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client (\`/mcp\` in Claude Code) so the server picks up the new config.
+That creates \`${OK_DIR}/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client (\`/mcp\` in Claude Code) so the server picks up the new config.
 
 If you have \`Bash\` tool access, you can shell out: \`bash\` → \`npx @inkeep/open-knowledge init\`, then prompt the user to reconnect.
 
@@ -107,7 +108,7 @@ Depending on the project, consider articles covering:
 - **Don't write articles for things that change often** (dependency versions, file counts); focus on stable understanding
 - **Don't create scaffolded subfolders you won't fill** — empty \`articles/\`/\`research/\`/\`external-sources/\` folders are clutter; organize as you actually need
 
-Full convention: read \`.open-knowledge/AGENTS.md\`.`;
+Full convention: read \`${OK_DIR}/AGENTS.md\`.`;
 }
 
 export const DESCRIPTION = [

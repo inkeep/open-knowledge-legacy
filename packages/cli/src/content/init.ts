@@ -1,8 +1,12 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { AGENTS_FILENAME, CACHE_DIR, CONFIG_FILENAME, OK_DIR } from '../constants.ts';
 
-export const AGENTS_MD_CONTENT = `# .open-knowledge/ — Open Knowledge config
+export const OK_MARKER_BEGIN = '<!-- open-knowledge:begin -->';
+export const OK_MARKER_END = '<!-- open-knowledge:end -->';
+const OK_MARKER_RE = /<!-- open-knowledge:begin -->[\s\S]*?<!-- open-knowledge:end -->/;
+
+export const AGENTS_MD_CONTENT = `# ${OK_DIR}/ — Open Knowledge config
 
 This directory holds Open Knowledge's configuration for this project. It's **not** where content lives — content lives wherever \`content.dir\` + \`content.include\` in \`config.yml\` point. The default is the repo root with \`**/*.md\`, so any markdown file in the project is fair game. Inspect \`config.yml\` for the actual setting.
 
@@ -69,11 +73,11 @@ Per-file frontmatter is the **only** authored metadata surface. Folder-level fro
 
 This directory was scaffolded by running \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That command:
 
-1. Creates \`.open-knowledge/\` (config-only — no content subdirs)
+1. Creates \`${OK_DIR}/\` (config-only — no content subdirs)
 2. Writes \`AGENTS.md\`, \`.gitignore\`, and \`config.yml\`
 3. Registers the Open Knowledge MCP server in \`.mcp.json\` at the repo root
 
-If you're onboarding a new project and \`.open-knowledge/\` doesn't exist yet, run \`open-knowledge init\` from a terminal.
+If you're onboarding a new project and \`${OK_DIR}/\` doesn't exist yet, run \`open-knowledge init\` from a terminal.
 
 ## Tools
 
@@ -96,15 +100,15 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #
 # Precedence (lowest -> highest):
 #   Built-in defaults
-#     -> ~/.open-knowledge/config.yml         (user defaults)
-#     -> ./.open-knowledge/config.yml         (this file)
+#     -> ~/${OK_DIR}/config.yml         (user defaults)
+#     -> ./${OK_DIR}/config.yml         (this file)
 #
 # Schema reference: packages/cli/src/config/schema.ts
 
 
 # --- Content ---------------------------------------------------------------
 # dir: where the CRDT editor reads/writes documents. Relative to the project
-# root (the directory containing .open-knowledge/), NOT to this file.
+# root (the directory containing ${OK_DIR}/), NOT to this file.
 #
 # include/exclude: glob patterns for tracked content files. Relative to the
 # content directory (content.dir).
@@ -123,14 +127,94 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #   maxDebounceMs: 10000
 `;
 
-export const CLAUDE_MD_SECTION = `## Open Knowledge
+export const CLAUDE_MD_SECTION = `${OK_MARKER_BEGIN}
+## Open Knowledge
 
-This repo is wired up with Open Knowledge — agent-collaborative wiki tooling.
+This repo uses Open Knowledge — agent-collaborative wiki tooling exposed via MCP. The scope of tracked content is \`${OK_DIR}/config.yml\` (default: every \`**/*.md\` under the repo root).
 
-- Use the \`exec\` MCP tool for reading / listing / grepping any markdown in the project. Output includes per-file metadata (title, description, tags) plus recent shadow-repo activity with agent-vs-human attribution and project git history. Example: \`exec("grep -rn oauth .")\`, \`exec("cat <path>.md")\`.
-- Wiki content location is configured in \`.open-knowledge/config.yml\` (defaults to the project root with \`**/*.md\`). Read the config to see what's tracked.
-- When writing to markdown files that are part of the knowledge base, use the \`write_document\` / \`edit_document\` MCP tools so the edit is attributed to your agent identity in the shadow-repo log. Native \`Edit\` / \`sed\` writes land as anonymous \`upstream\` imports.
-`;
+**Reading (wiki markdown).** Prefer the \`exec\` MCP tool over native \`Read\` / \`Grep\` / \`Glob\`. \`exec\` runs \`cat\` / \`ls\` / \`grep\` / \`find\` / \`head\` / \`tail\` / \`wc\` / \`sort\` / \`uniq\` / \`cut\` with pipes, and every returned path is enriched with frontmatter (title, description, tags), backlink count, and recent shadow-repo activity with agent-vs-human attribution. One tool covers read/list/search with attribution that native tools don't see. Examples: \`exec("cat docs/auth.md")\`, \`exec("ls articles/")\`, \`exec("grep -rn oauth . | head -5")\`.
+
+**Writing (wiki markdown).** Route all edits through \`write_document\` / \`edit_document\`. Native \`Edit\` / \`sed\` land as anonymous \`upstream\` imports — you lose agent attribution in the shadow-repo log.
+
+**Linking.** When authoring, link liberally with \`[[Page Title]]\` wiki-links. Redlinks are fine — they signal "this should exist." Every noun-phrase naming another document should be a link. Backlink density is how this knowledge base stays navigable for the next agent.
+
+**Non-wiki code (\`.ts\`, \`.py\`, configs, etc.).** Keep using native \`Read\` / \`Edit\` / \`Grep\` / \`Bash\`. The MCP tools are for markdown in \`content.include\`.
+${OK_MARKER_END}`;
+
+export type RootInstructionAction =
+  | 'created'
+  | 'appended'
+  | 'replaced'
+  | 'skipped-existing'
+  | 'skipped-symlink';
+
+export interface RootInstructionResult {
+  file: string;
+  path: string;
+  action: RootInstructionAction;
+}
+
+/**
+ * Append (or replace, with --force) the Open Knowledge section in the agent
+ * instruction files at the project root. Handles CLAUDE.md + AGENTS.md,
+ * deduping by realpath so a symlink (e.g. CLAUDE.md -> AGENTS.md) isn't
+ * written twice.
+ *
+ * Behavior per file:
+ *   - file missing            -> create it containing just the section
+ *   - file exists, no marker  -> append the section
+ *   - file exists, has marker -> skip unless `force`, else replace between markers
+ */
+export function upsertRootInstructions(
+  projectDir: string,
+  force: boolean,
+): RootInstructionResult[] {
+  const files = ['CLAUDE.md', AGENTS_FILENAME];
+  const seenCanonical = new Set<string>();
+  const results: RootInstructionResult[] = [];
+
+  for (const name of files) {
+    const path = join(projectDir, name);
+    const exists = existsSync(path);
+    const canonical = exists ? realpathSync(path) : path;
+
+    if (seenCanonical.has(canonical)) {
+      results.push({ file: name, path, action: 'skipped-symlink' });
+      continue;
+    }
+    seenCanonical.add(canonical);
+
+    if (!exists) {
+      writeFileSync(path, `${CLAUDE_MD_SECTION}\n`, 'utf-8');
+      results.push({ file: name, path, action: 'created' });
+      continue;
+    }
+
+    const existing = readFileSync(path, 'utf-8');
+    const hasMarker = OK_MARKER_RE.test(existing);
+
+    if (hasMarker && !force) {
+      results.push({ file: name, path, action: 'skipped-existing' });
+      continue;
+    }
+
+    if (hasMarker) {
+      const replaced = existing.replace(OK_MARKER_RE, CLAUDE_MD_SECTION);
+      writeFileSync(path, replaced, 'utf-8');
+      results.push({ file: name, path, action: 'replaced' });
+      continue;
+    }
+
+    // Normalize trailing newlines so the inserted section always has one
+    // blank line between it and prior content, regardless of how the host
+    // file was terminated on disk.
+    const trimmed = existing.replace(/\n*$/, '');
+    writeFileSync(path, `${trimmed}\n\n${CLAUDE_MD_SECTION}\n`, 'utf-8');
+    results.push({ file: name, path, action: 'appended' });
+  }
+
+  return results;
+}
 
 function writeIfMissing(filePath: string, content: string): boolean {
   if (existsSync(filePath)) return false;

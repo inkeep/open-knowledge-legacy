@@ -4,7 +4,7 @@ import { ConfigSchema } from './schema';
 describe('ConfigSchema', () => {
   test('empty object returns all defaults', () => {
     const config = ConfigSchema.parse({});
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.content.exclude).toEqual([]);
     expect(config.server.port).toBe(3000);
     expect(config.server.host).toBe('localhost');
@@ -18,7 +18,7 @@ describe('ConfigSchema', () => {
     });
     expect(config.server.port).toBe(4000);
     expect(config.server.host).toBe('localhost'); // default preserved
-    expect(config.content.include).toEqual(['**/*.md']); // other section default preserved
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']); // other section default preserved
   });
 
   test('invalid port type produces error', () => {
@@ -61,7 +61,7 @@ describe('ConfigSchema', () => {
         exclude: ['node_modules/**', '.claude/**'],
       },
     });
-    expect(config.content.include).toEqual(['**/*.md']); // default preserved
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']); // default preserved
     expect(config.content.exclude).toEqual(['node_modules/**', '.claude/**']);
   });
 });

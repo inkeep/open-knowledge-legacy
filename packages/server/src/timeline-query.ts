@@ -10,6 +10,7 @@
 
 import { existsSync } from 'node:fs';
 import type { EntryType, TimelineEntry } from '@inkeep/open-knowledge-core';
+import { getDocExtension } from './doc-extensions.ts';
 import type { ShadowHandle } from './shadow-repo.ts';
 import { shadowGit } from './shadow-repo.ts';
 
@@ -114,8 +115,8 @@ export async function getDocumentHistory(
   const normalizedRoot = contentRoot.replace(/^\.\//, '');
   const docPath = query.docName
     ? normalizedRoot
-      ? `${normalizedRoot}/${query.docName}.md`
-      : `${query.docName}.md`
+      ? `${normalizedRoot}/${query.docName}${getDocExtension(query.docName)}`
+      : `${query.docName}${getDocExtension(query.docName)}`
     : undefined;
 
   try {

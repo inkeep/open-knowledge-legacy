@@ -1,4 +1,4 @@
-import { ChevronRight, File, Folder, FolderOpen, Link2, Pencil, Trash2 } from 'lucide-react';
+import { ChevronRight, File, Folder, FolderOpen, Link2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { type FC, useEffect, useState } from 'react';
 import {
   applyDeleteToDocuments,
@@ -17,6 +17,7 @@ import {
   type DocEntry,
   type TreeNode,
 } from '@/components/file-tree-utils';
+import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -67,6 +68,7 @@ const FileTreeNode: FC<{
   onCommitRename: (target: FileTreeTarget) => void;
   onCancelRename: () => void;
   onDelete: (target: FileTreeTarget) => void;
+  onNewItem: (kind: 'file' | 'folder', initialDir: string) => void;
   nested?: boolean;
 }> = ({
   node,
@@ -84,6 +86,7 @@ const FileTreeNode: FC<{
   onCommitRename,
   onCancelRename,
   onDelete,
+  onNewItem,
 }) => {
   const isFile = node.kind === 'file';
   const expanded = !isFile && expandedPaths.has(node.path);
@@ -193,6 +196,29 @@ const FileTreeNode: FC<{
           <div ref={isActive ? activeRowRef : undefined}>{triggerContent}</div>
         </ContextMenuTrigger>
         <ContextMenuContent>
+          {!isFile && (
+            <>
+              <ContextMenuItem
+                disabled={anyActionBusy}
+                onSelect={() => {
+                  if (!anyActionBusy) onNewItem('file', node.path);
+                }}
+              >
+                <Plus aria-hidden="true" />
+                New file here
+              </ContextMenuItem>
+              <ContextMenuItem
+                disabled={anyActionBusy}
+                onSelect={() => {
+                  if (!anyActionBusy) onNewItem('folder', node.path);
+                }}
+              >
+                <Plus aria-hidden="true" />
+                New folder here
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+            </>
+          )}
           <ContextMenuItem
             disabled={anyActionBusy}
             onSelect={() => {
@@ -234,6 +260,7 @@ const FileTreeNode: FC<{
               onCommitRename={onCommitRename}
               onCancelRename={onCancelRename}
               onDelete={onDelete}
+              onNewItem={onNewItem}
               nested
             />
           ))}
@@ -243,7 +270,11 @@ const FileTreeNode: FC<{
   );
 };
 
-export function FileTree() {
+export function FileTree({
+  onNewItem,
+}: {
+  onNewItem?: (kind: 'file' | 'folder', initialDir: string) => void;
+}) {
   const { activeDocName, closeDocument } = useDocumentContext();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -429,8 +460,13 @@ export function FileTree() {
 
   if (documents.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center py-8">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
         <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
+        {onNewItem && (
+          <Button variant="outline" size="sm" onClick={() => onNewItem('file', '')}>
+            Create your first file
+          </Button>
+        )}
       </div>
     );
   }
@@ -507,6 +543,7 @@ export function FileTree() {
               }
             }}
             onDelete={(target) => void handleDelete(target)}
+            onNewItem={onNewItem ?? (() => {})}
           />
         ))}
       </SidebarMenu>
