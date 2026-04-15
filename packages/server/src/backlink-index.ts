@@ -27,6 +27,7 @@ const MD_LINK_RE =
 
 interface InlineWikiLinkOccurrence {
   target: string;
+  anchor: string | null;
   start: number;
   end: number;
 }
@@ -38,6 +39,7 @@ interface FenceState {
 
 export interface ExtractedWikiLink {
   target: string;
+  anchor: string | null;
   snippet: string | null;
 }
 
@@ -49,12 +51,14 @@ interface ExtractedExternalLink {
 
 export interface BacklinkEntry {
   source: string;
+  anchor: string | null;
   snippet: string | null;
 }
 
 export interface DocumentForwardLinkEntry {
   kind: 'doc';
   target: string;
+  anchor: string | null;
   snippet: string | null;
 }
 
@@ -81,6 +85,7 @@ export interface DocGraphNode {
   kind: 'doc';
   id: string;
   docName: string;
+  anchor?: string | null;
 }
 
 export interface ExternalGraphNode {
@@ -95,7 +100,7 @@ export type GraphNode = DocGraphNode | ExternalGraphNode;
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode };
 
 interface BranchGraphState {
-  backward: Map<string, Map<string, string | null>>;
+  backward: Map<string, Map<string, { anchor: string | null; snippet: string | null }>>;
   forward: Map<string, Set<string>>;
   externalForward: Map<string, Map<string, { label: string | null; snippet: string | null }>>;
   externalBackward: Map<string, Map<string, { label: string | null; snippet: string | null }>>;
@@ -123,6 +128,27 @@ function createEmptyState(): BranchGraphState {
     externalForward: new Map(),
     externalBackward: new Map(),
   };
+}
+
+function mergeLinkMeta(
+  existing: { anchor: string | null; snippet: string | null } | undefined,
+  next: { anchor: string | null; snippet: string | null },
+): { anchor: string | null; snippet: string | null } {
+  if (!existing) return next;
+  return {
+    anchor: existing.anchor ?? next.anchor,
+    snippet: existing.snippet ?? next.snippet,
+  };
+}
+
+function getRepresentativeAnchor(
+  sources: Map<string, { anchor: string | null; snippet: string | null }> | undefined,
+): string | null {
+  if (!sources) return null;
+  for (const [, meta] of [...sources.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (meta.anchor) return meta.anchor;
+  }
+  return null;
 }
 
 function externalNodeId(url: string): string {
@@ -268,6 +294,7 @@ function extractWikiLinksFromLine(line: string): {
         if (classified?.kind === 'doc') {
           occurrences.push({
             target: classified.docName,
+            anchor: classified.anchor,
             start,
             end: start + label.length,
           });
@@ -407,6 +434,7 @@ function extractMarkdownLinksFromLine(
           flatText += mdLink.text;
           occurrences.push({
             target: classified.docName,
+            anchor: classified.anchor,
             start,
             end: start + mdLink.text.length,
           });
@@ -507,8 +535,9 @@ export function extractMarkdownLinksFromMarkdown(
       } else {
         const extracted = extractMarkdownLinksFromLine(line, sourceDocName);
         links.push(
-          ...extracted.occurrences.map(({ target, start, end }) => ({
+          ...extracted.occurrences.map(({ target, anchor, start, end }) => ({
             target,
+            anchor,
             snippet: snippetAround(extracted.text, start, end),
           })),
         );
@@ -537,8 +566,9 @@ export function extractWikiLinksFromMarkdown(markdown: string): ExtractedWikiLin
       } else {
         const extracted = extractWikiLinksFromLine(line);
         links.push(
-          ...extracted.occurrences.map(({ target, start, end }) => ({
+          ...extracted.occurrences.map(({ target, anchor, start, end }) => ({
             target,
+            anchor,
             snippet: snippetAround(extracted.text, start, end),
           })),
         );
@@ -615,7 +645,11 @@ function serializeState(state: BranchGraphState): SerializedBranchGraphState {
     backward: Object.fromEntries(
       [...state.backward.entries()].map(([target, sources]) => [
         target,
-        [...sources.entries()].map(([source, snippet]) => ({ source, snippet })),
+        [...sources.entries()].map(([source, meta]) => ({
+          source,
+          anchor: meta.anchor,
+          snippet: meta.snippet,
+        })),
       ]),
     ),
     forward: Object.fromEntries(
@@ -678,7 +712,15 @@ function deserializeState(data: SerializedBranchGraphState): BranchGraphState {
     backward: new Map(
       Object.entries(data.backward ?? {}).map(([target, entries]) => [
         target,
-        new Map(entries.map((entry) => [entry.source, entry.snippet ?? null])),
+        new Map(
+          entries.map((entry) => [
+            entry.source,
+            {
+              anchor: entry.anchor ?? null,
+              snippet: entry.snippet ?? null,
+            },
+          ]),
+        ),
       ]),
     ),
     forward: new Map(
@@ -763,9 +805,10 @@ export class BacklinkIndex {
         sources = new Map();
         state.backward.set(link.target, sources);
       }
-      if (!sources.has(docName) || (!sources.get(docName) && link.snippet)) {
-        sources.set(docName, link.snippet ?? null);
-      }
+      sources.set(
+        docName,
+        mergeLinkMeta(sources.get(docName), { anchor: link.anchor, snippet: link.snippet }),
+      );
     }
 
     for (const link of externalLinks) {
@@ -846,7 +889,7 @@ export class BacklinkIndex {
     const sources = state.backward.get(target);
     if (!sources) return [];
     return [...sources.entries()]
-      .map(([source, snippet]) => ({ source, snippet }))
+      .map(([source, meta]) => ({ source, anchor: meta.anchor, snippet: meta.snippet }))
       .sort((a, b) => a.source.localeCompare(b.source));
   }
 
@@ -861,7 +904,8 @@ export class BacklinkIndex {
       (target) => ({
         kind: 'doc',
         target,
-        snippet: state.backward.get(target)?.get(source) ?? null,
+        anchor: state.backward.get(target)?.get(source)?.anchor ?? null,
+        snippet: state.backward.get(target)?.get(source)?.snippet ?? null,
       }),
     );
     const externalEntries: ForwardLinkEntry[] = [
@@ -923,7 +967,7 @@ export class BacklinkIndex {
         target,
         sources: [...sources.entries()]
           .filter(([source]) => !sourceDocSet || sourceDocSet.has(source))
-          .map(([source, snippet]) => ({ source, snippet }))
+          .map(([source, meta]) => ({ source, anchor: meta.anchor, snippet: meta.snippet }))
           .sort((a, b) => a.source.localeCompare(b.source)),
       }))
       .filter((entry) => entry.sources.length > 0)
@@ -943,15 +987,30 @@ export class BacklinkIndex {
     const links: Array<{ source: string; target: string }> = [];
 
     for (const [source, targets] of state.forward) {
-      nodes.set(source, { kind: 'doc', id: source, docName: source });
+      nodes.set(source, {
+        kind: 'doc',
+        id: source,
+        docName: source,
+        anchor: getRepresentativeAnchor(state.backward.get(source)),
+      });
       for (const target of targets) {
-        nodes.set(target, { kind: 'doc', id: target, docName: target });
+        nodes.set(target, {
+          kind: 'doc',
+          id: target,
+          docName: target,
+          anchor: getRepresentativeAnchor(state.backward.get(target)),
+        });
         links.push({ source, target });
       }
     }
 
     for (const [source, targets] of state.externalForward) {
-      nodes.set(source, { kind: 'doc', id: source, docName: source });
+      nodes.set(source, {
+        kind: 'doc',
+        id: source,
+        docName: source,
+        anchor: getRepresentativeAnchor(state.backward.get(source)),
+      });
       for (const [url, meta] of targets) {
         const id = externalNodeId(url);
         nodes.set(id, { kind: 'external', id, url, label: meta.label });
@@ -1029,7 +1088,12 @@ export class BacklinkIndex {
     const nodes = [...visited].sort().map<GraphNode>((nodeId) => {
       const url = externalUrlFromNodeId(nodeId);
       if (!url) {
-        return { kind: 'doc', id: nodeId, docName: nodeId };
+        return {
+          kind: 'doc',
+          id: nodeId,
+          docName: nodeId,
+          anchor: getRepresentativeAnchor(state.backward.get(nodeId)),
+        };
       }
       const meta =
         [...state.externalForward.values()]
@@ -1137,9 +1201,10 @@ export class BacklinkIndex {
             sources = new Map();
             state.backward.set(link.target, sources);
           }
-          if (!sources.has(docName) || (!sources.get(docName) && link.snippet)) {
-            sources.set(docName, link.snippet ?? null);
-          }
+          sources.set(
+            docName,
+            mergeLinkMeta(sources.get(docName), { anchor: link.anchor, snippet: link.snippet }),
+          );
         }
         for (const link of externalLinks) {
           if (!link.url) continue;

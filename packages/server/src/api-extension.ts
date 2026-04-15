@@ -1222,6 +1222,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
         source: entry.source,
+        anchor: entry.anchor,
         title: readPageTitleForDocName(entry.source),
         snippet: entry.snippet,
       }));
@@ -1260,6 +1261,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             ? {
                 kind: 'doc' as const,
                 docName: entry.target,
+                anchor: entry.anchor,
                 title: readPageTitleForDocName(entry.target),
                 snippet: entry.snippet,
               }
@@ -1321,6 +1323,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
               id: node.id,
               kind: 'doc' as const,
               docName: node.docName,
+              anchor: node.anchor ?? null,
               label: readPageTitleForDocName(node.docName),
             }
           : {

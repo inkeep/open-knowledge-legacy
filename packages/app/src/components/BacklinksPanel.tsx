@@ -8,9 +8,11 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
+import { hashFromDocName } from '@/lib/doc-hash';
 
 interface BacklinkItem {
   source: string;
+  anchor: string | null;
   title: string;
   snippet: string | null;
 }
@@ -67,7 +69,7 @@ export function BacklinksPanel({
                 type="button"
                 className="block w-full rounded-lg border border-border bg-background/80 px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
                 onClick={() => {
-                  window.location.hash = `#/${backlink.source}`;
+                  window.location.assign(hashFromDocName(backlink.source, backlink.anchor));
                 }}
               >
                 <div className="truncate text-sm font-medium">{backlink.title}</div>

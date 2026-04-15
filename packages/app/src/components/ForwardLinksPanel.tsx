@@ -27,6 +27,7 @@ interface ForwardLinksResponse {
 interface DocumentForwardLinkItem {
   kind: 'doc';
   docName: string;
+  anchor: string | null;
   title: string;
   snippet: string | null;
 }
@@ -81,7 +82,7 @@ export function ForwardLinksPanel({
       setCreateTarget(link);
       return;
     }
-    window.location.assign(hashFromDocName(link.docName));
+    window.location.assign(hashFromDocName(link.docName, link.anchor));
   }
 
   return (

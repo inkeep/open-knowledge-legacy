@@ -17,6 +17,7 @@ describe('extractWikiLinksFromMarkdown', () => {
     >([
       {
         target: 'beta',
+        anchor: null,
         snippet: 'Alpha links to beta for deployment notes.',
       },
     ]);
@@ -36,6 +37,7 @@ describe('extractWikiLinksFromMarkdown', () => {
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
       {
         target: 'alpha',
+        anchor: null,
         snippet: 'See alpha.',
       },
     ]);
@@ -47,6 +49,7 @@ describe('extractWikiLinksFromMarkdown', () => {
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
       {
         target: 'beta',
+        anchor: null,
         snippet: 'See beta.',
       },
     ]);
@@ -64,8 +67,8 @@ describe('extractWikiLinksFromMarkdown', () => {
     ].join('\n');
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
-      { target: 'alpha', snippet: 'See alpha.' },
-      { target: 'gamma', snippet: 'And gamma.' },
+      { target: 'alpha', anchor: null, snippet: 'See alpha.' },
+      { target: 'gamma', anchor: null, snippet: 'And gamma.' },
     ]);
   });
 
@@ -83,8 +86,8 @@ describe('extractWikiLinksFromMarkdown', () => {
     ].join('\n');
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
-      { target: 'alpha', snippet: 'Before alpha.' },
-      { target: 'beta', snippet: 'After beta.' },
+      { target: 'alpha', anchor: null, snippet: 'Before alpha.' },
+      { target: 'beta', anchor: null, snippet: 'After beta.' },
     ]);
   });
 
@@ -92,8 +95,8 @@ describe('extractWikiLinksFromMarkdown', () => {
     const markdown = 'See [[alpha]] and [[beta]] for more.\n';
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
-      { target: 'alpha', snippet: 'See alpha and beta for more.' },
-      { target: 'beta', snippet: 'See alpha and beta for more.' },
+      { target: 'alpha', anchor: null, snippet: 'See alpha and beta for more.' },
+      { target: 'beta', anchor: null, snippet: 'See alpha and beta for more.' },
     ]);
   });
 
@@ -101,7 +104,7 @@ describe('extractWikiLinksFromMarkdown', () => {
     const markdown = 'See [[guide#installation]] for setup.\n';
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
-      { target: 'guide', snippet: 'See guide#installation for setup.' },
+      { target: 'guide', anchor: 'installation', snippet: 'See guide#installation for setup.' },
     ]);
   });
 
@@ -109,7 +112,7 @@ describe('extractWikiLinksFromMarkdown', () => {
     const markdown = 'See [[guide|the guide]] for setup.\n';
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
-      { target: 'guide', snippet: 'See the guide for setup.' },
+      { target: 'guide', anchor: null, snippet: 'See the guide for setup.' },
     ]);
   });
 
@@ -117,7 +120,7 @@ describe('extractWikiLinksFromMarkdown', () => {
     const markdown = 'See [[API#auth|Auth Docs]] for setup.\n';
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
-      { target: 'API', snippet: 'See Auth Docs for setup.' },
+      { target: 'API', anchor: 'auth', snippet: 'See Auth Docs for setup.' },
     ]);
   });
 
@@ -127,7 +130,7 @@ describe('extractWikiLinksFromMarkdown', () => {
     const markdown = 'Not a link: \\[[page]] but [[real]] is.\n';
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
-      { target: 'real', snippet: 'Not a link: [[page]] but real is.' },
+      { target: 'real', anchor: null, snippet: 'Not a link: [[page]] but real is.' },
     ]);
   });
 
@@ -137,7 +140,7 @@ describe('extractWikiLinksFromMarkdown', () => {
     const markdown = 'See `foo``bar` and [[target]].\n';
 
     expect(extractWikiLinksFromMarkdown(markdown)).toEqual([
-      { target: 'target', snippet: 'See foo``bar and target.' },
+      { target: 'target', anchor: null, snippet: 'See foo``bar and target.' },
     ]);
   });
 });
@@ -150,7 +153,9 @@ describe('BacklinkIndex', () => {
     try {
       const index = new BacklinkIndex({ projectDir, contentDir });
       index.updateDocumentFromMarkdown('alpha', 'See [[beta]].\n');
-      expect(index.getBacklinks('beta')).toEqual([{ source: 'alpha', snippet: 'See beta.' }]);
+      expect(index.getBacklinks('beta')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'See beta.' },
+      ]);
       index.deleteDocument('alpha');
       expect(index.getBacklinks('beta')).toEqual([]);
       expect(index.getForwardLinks('alpha')).toEqual([]);
@@ -166,9 +171,13 @@ describe('BacklinkIndex', () => {
     try {
       const index = new BacklinkIndex({ projectDir, contentDir });
       index.updateDocumentFromMarkdown('alpha', 'See [[beta]].\n');
-      expect(index.getBacklinks('beta')).toEqual([{ source: 'alpha', snippet: 'See beta.' }]);
+      expect(index.getBacklinks('beta')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'See beta.' },
+      ]);
       index.renameDocument('alpha', 'gamma', '# Gamma\n\nSee [[beta]].\n');
-      expect(index.getBacklinks('beta')).toEqual([{ source: 'gamma', snippet: 'See beta.' }]);
+      expect(index.getBacklinks('beta')).toEqual([
+        { source: 'gamma', anchor: null, snippet: 'See beta.' },
+      ]);
       expect(index.getForwardLinks('alpha')).toEqual([]);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
@@ -182,16 +191,22 @@ describe('BacklinkIndex', () => {
     try {
       const index = new BacklinkIndex({ projectDir, contentDir });
       index.updateDocumentFromMarkdown('alpha', '[[beta]]\n', 'main');
-      expect(index.getBacklinks('beta', 'main')).toEqual([{ source: 'alpha', snippet: 'beta' }]);
+      expect(index.getBacklinks('beta', 'main')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'beta' },
+      ]);
 
       index.switchBranch('feature');
       expect(index.getBacklinks('beta')).toEqual([]);
 
       index.updateDocumentFromMarkdown('gamma', '[[beta]]\n', 'feature');
-      expect(index.getBacklinks('beta', 'feature')).toEqual([{ source: 'gamma', snippet: 'beta' }]);
+      expect(index.getBacklinks('beta', 'feature')).toEqual([
+        { source: 'gamma', anchor: null, snippet: 'beta' },
+      ]);
 
       index.switchBranch('main');
-      expect(index.getBacklinks('beta')).toEqual([{ source: 'alpha', snippet: 'beta' }]);
+      expect(index.getBacklinks('beta')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'beta' },
+      ]);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -203,14 +218,18 @@ describe('BacklinkIndex', () => {
     mkdirSync(contentDir, { recursive: true });
     try {
       const index = new BacklinkIndex({ projectDir, contentDir });
-      const links1: ExtractedWikiLink[] = [{ target: 'beta', snippet: 'one' }];
+      const links1: ExtractedWikiLink[] = [{ target: 'beta', anchor: null, snippet: 'one' }];
       index.updateDocument('alpha', links1);
-      expect(index.getBacklinks('beta')).toEqual([{ source: 'alpha', snippet: 'one' }]);
+      expect(index.getBacklinks('beta')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'one' },
+      ]);
 
-      const links2: ExtractedWikiLink[] = [{ target: 'gamma', snippet: 'two' }];
+      const links2: ExtractedWikiLink[] = [{ target: 'gamma', anchor: null, snippet: 'two' }];
       index.updateDocument('alpha', links2);
       expect(index.getBacklinks('beta')).toEqual([]);
-      expect(index.getBacklinks('gamma')).toEqual([{ source: 'alpha', snippet: 'two' }]);
+      expect(index.getBacklinks('gamma')).toEqual([
+        { source: 'alpha', anchor: null, snippet: 'two' },
+      ]);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
@@ -286,6 +305,7 @@ describe('BacklinkIndex', () => {
       expect(index.getBacklinks('beta')).toEqual([
         {
           source: 'alpha',
+          anchor: null,
           snippet: 'See beta.',
         },
       ]);
@@ -308,6 +328,7 @@ describe('BacklinkIndex', () => {
       expect(reloaded.getBacklinks('beta')).toEqual([
         {
           source: 'alpha',
+          anchor: null,
           snippet: 'See beta.',
         },
       ]);
@@ -335,6 +356,7 @@ describe('BacklinkIndex', () => {
       expect(index.getBacklinks('beta')).toEqual([
         {
           source: 'alpha',
+          anchor: null,
           snippet: 'See beta.',
         },
       ]);
@@ -376,9 +398,9 @@ describe('BacklinkIndex', () => {
       const { nodes, links } = index.getLinkGraph();
 
       expect(nodes).toEqual([
-        { kind: 'doc', id: 'alpha', docName: 'alpha' },
-        { kind: 'doc', id: 'beta', docName: 'beta' },
-        { kind: 'doc', id: 'gamma', docName: 'gamma' },
+        { kind: 'doc', id: 'alpha', docName: 'alpha', anchor: null },
+        { kind: 'doc', id: 'beta', docName: 'beta', anchor: null },
+        { kind: 'doc', id: 'gamma', docName: 'gamma', anchor: null },
       ]);
       expect(links).toContainEqual({ source: 'alpha', target: 'beta' });
       expect(links).toContainEqual({ source: 'alpha', target: 'gamma' });
@@ -403,10 +425,10 @@ describe('BacklinkIndex', () => {
 
       const oneHop = index.getLinkGraphNeighborhood('beta', 1);
       expect(oneHop.nodes).toEqual([
-        { kind: 'doc', id: 'alpha', docName: 'alpha' },
-        { kind: 'doc', id: 'beta', docName: 'beta' },
-        { kind: 'doc', id: 'delta', docName: 'delta' },
-        { kind: 'doc', id: 'gamma', docName: 'gamma' },
+        { kind: 'doc', id: 'alpha', docName: 'alpha', anchor: null },
+        { kind: 'doc', id: 'beta', docName: 'beta', anchor: null },
+        { kind: 'doc', id: 'delta', docName: 'delta', anchor: null },
+        { kind: 'doc', id: 'gamma', docName: 'gamma', anchor: null },
       ]);
       expect(oneHop.links).toContainEqual({ source: 'alpha', target: 'beta' });
       expect(oneHop.links).toContainEqual({ source: 'beta', target: 'gamma' });
@@ -415,11 +437,11 @@ describe('BacklinkIndex', () => {
 
       const twoHop = index.getLinkGraphNeighborhood('beta', 2);
       expect(twoHop.nodes).toEqual([
-        { kind: 'doc', id: 'alpha', docName: 'alpha' },
-        { kind: 'doc', id: 'beta', docName: 'beta' },
-        { kind: 'doc', id: 'delta', docName: 'delta' },
-        { kind: 'doc', id: 'epsilon', docName: 'epsilon' },
-        { kind: 'doc', id: 'gamma', docName: 'gamma' },
+        { kind: 'doc', id: 'alpha', docName: 'alpha', anchor: null },
+        { kind: 'doc', id: 'beta', docName: 'beta', anchor: null },
+        { kind: 'doc', id: 'delta', docName: 'delta', anchor: null },
+        { kind: 'doc', id: 'epsilon', docName: 'epsilon', anchor: null },
+        { kind: 'doc', id: 'gamma', docName: 'gamma', anchor: null },
       ]);
       expect(twoHop.links).toContainEqual({ source: 'gamma', target: 'epsilon' });
       expect(twoHop.links).toHaveLength(4);
@@ -489,57 +511,57 @@ describe('extractMarkdownLinksFromMarkdown', () => {
   test('extracts relative inline markdown links', () => {
     const md = 'See [related](./other.md) for details.';
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual<ExtractedWikiLink[]>([
-      { target: 'other', snippet: 'See related for details.' },
+      { target: 'other', anchor: null, snippet: 'See related for details.' },
     ]);
   });
 
   test('extracts multiple markdown links from the same line', () => {
     const md = 'See [page A](./a.md) and [page B](./b.md) for more.';
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual<ExtractedWikiLink[]>([
-      { target: 'a', snippet: 'See page A and page B for more.' },
-      { target: 'b', snippet: 'See page A and page B for more.' },
+      { target: 'a', anchor: null, snippet: 'See page A and page B for more.' },
+      { target: 'b', anchor: null, snippet: 'See page A and page B for more.' },
     ]);
   });
 
   test('resolves links relative to the source doc directory', () => {
     const md = 'See [overview](../overview.md).';
     expect(extractMarkdownLinksFromMarkdown(md, 'folder/page')).toEqual([
-      { target: 'overview', snippet: 'See overview.' },
+      { target: 'overview', anchor: null, snippet: 'See overview.' },
     ]);
   });
 
   test('extracts internal links with optional titles', () => {
     const md = 'See [overview](./overview.md "Project overview") for details.';
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
-      { target: 'overview', snippet: 'See overview for details.' },
+      { target: 'overview', anchor: null, snippet: 'See overview for details.' },
     ]);
   });
 
   test('ignores external links', () => {
     const md = 'Visit [example](https://example.com) and [local](./local.md).';
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
-      { target: 'local', snippet: 'Visit example and local.' },
+      { target: 'local', anchor: null, snippet: 'Visit example and local.' },
     ]);
   });
 
   test('ignores image syntax while still extracting sibling links', () => {
     const md = 'See ![diagram](./assets/diagram.png) and [docs](./docs.md).';
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
-      { target: 'docs', snippet: expect.any(String) as string },
+      { target: 'docs', anchor: null, snippet: expect.any(String) as string },
     ]);
   });
 
   test('ignores links inside fenced code blocks', () => {
     const md = ['See [page](./page.md).', '', '```', '[ignore](./ignore.md)', '```'].join('\n');
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
-      { target: 'page', snippet: 'See page.' },
+      { target: 'page', anchor: null, snippet: 'See page.' },
     ]);
   });
 
   test('ignores links inside inline code spans', () => {
     const md = 'Use `[skip](./skip.md)` then [real](./real.md).';
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
-      { target: 'real', snippet: expect.any(String) as string },
+      { target: 'real', anchor: null, snippet: expect.any(String) as string },
     ]);
   });
 
@@ -628,7 +650,12 @@ describe('BacklinkIndex with markdown links', () => {
       ]);
 
       const graph = index.getLinkGraph();
-      expect(graph.nodes).toContainEqual({ kind: 'doc', id: 'source', docName: 'source' });
+      expect(graph.nodes).toContainEqual({
+        kind: 'doc',
+        id: 'source',
+        docName: 'source',
+        anchor: null,
+      });
       expect(graph.nodes).toContainEqual({
         kind: 'external',
         id: 'external:https://example.com/docs',

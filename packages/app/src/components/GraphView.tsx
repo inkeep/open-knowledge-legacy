@@ -1,7 +1,7 @@
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-force-graph-2d';
-
+import { hashFromDocName } from '@/lib/doc-hash';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 import {
@@ -448,7 +448,7 @@ export function GraphView({
                 return;
               }
               if (node.docName) {
-                window.location.hash = `#/${node.docName}`;
+                window.location.assign(hashFromDocName(node.docName, node.anchor ?? null));
               }
             }}
           />
