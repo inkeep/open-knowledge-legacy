@@ -23,22 +23,33 @@ function getDoc(conn: Conn): Y.Doc {
 
 /**
  * Replicate the handleAgentPatch transaction logic exactly.
- * Returns true if the text was found and patched, false if not found.
+ * Returns whether the patch was applied, not found, or stale at the requested offset.
  */
-function applyPatch(doc: Y.Doc, find: string, replace: string): boolean {
-  let notFound = false;
+function applyPatch(
+  doc: Y.Doc,
+  find: string,
+  replace: string,
+  offset?: number,
+): 'patched' | 'not-found' | 'stale-target' {
+  let result: 'patched' | 'not-found' | 'stale-target' = 'not-found';
   doc.transact(() => {
     const ytext = doc.getText('source');
     const currentText = ytext.toString();
-    const pos = currentText.indexOf(find);
+    const pos =
+      offset == null
+        ? currentText.indexOf(find)
+        : currentText.slice(offset, offset + find.length) === find
+          ? offset
+          : -1;
     if (pos === -1) {
-      notFound = true;
+      result = offset == null ? 'not-found' : 'stale-target';
       return;
     }
     ytext.delete(pos, find.length);
     ytext.insert(pos, replace);
+    result = 'patched';
   }, AGENT_WRITE_ORIGIN);
-  return !notFound;
+  return result;
 }
 
 describe('agent-patch: targeted Y.Text mutation', () => {
@@ -55,7 +66,7 @@ describe('agent-patch: targeted Y.Text mutation', () => {
 
     const found = applyPatch(doc, target, 'New paragraph text.');
 
-    expect(found).toBe(true);
+    expect(found).toBe('patched');
     expect(ytext.toString()).toBe(`${before}New paragraph text.${after}`);
 
     await conn.disconnect();
@@ -72,7 +83,7 @@ describe('agent-patch: targeted Y.Text mutation', () => {
 
     const found = applyPatch(doc, 'text that does not exist', 'replacement');
 
-    expect(found).toBe(false);
+    expect(found).toBe('not-found');
     expect(ytext.toString()).toBe(initial);
 
     await conn.disconnect();
@@ -123,10 +134,48 @@ describe('agent-patch: targeted Y.Text mutation', () => {
     const newFm = '---\ntitle: New Title\nauthor: Alice\n---\n';
     const found = applyPatch(doc, oldFm, newFm);
 
-    expect(found).toBe(true);
+    expect(found).toBe('patched');
     expect(ytext.toString()).toBe(newFm + body);
     // Explicit byte-level check: nothing after the frontmatter changed
     expect(ytext.toString().slice(newFm.length)).toBe(body);
+
+    await conn.disconnect();
+  });
+
+  test('offset patch updates the requested later occurrence', async () => {
+    const hp = new Hocuspocus({ quiet: true });
+    const conn = await hp.openDirectConnection('test-patch-offset');
+    const doc = getDoc(conn);
+    const ytext = doc.getText('source');
+
+    const initial = '# Notes\n\nProject Alpha first. Later Project Alpha second.\n';
+    doc.transact(() => ytext.insert(0, initial));
+
+    const secondOffset = initial.indexOf('Project Alpha', initial.indexOf('Project Alpha') + 1);
+    const result = applyPatch(doc, 'Project Alpha', '[[Project Alpha]]', secondOffset);
+
+    expect(result).toBe('patched');
+    expect(ytext.toString()).toBe(
+      '# Notes\n\nProject Alpha first. Later [[Project Alpha]] second.\n',
+    );
+
+    await conn.disconnect();
+  });
+
+  test('stale offset leaves the document unchanged', async () => {
+    const hp = new Hocuspocus({ quiet: true });
+    const conn = await hp.openDirectConnection('test-patch-stale-offset');
+    const doc = getDoc(conn);
+    const ytext = doc.getText('source');
+
+    const initial = '# Notes\n\nProject Alpha first. Later Project Alpha second.\n';
+    doc.transact(() => ytext.insert(0, initial));
+
+    const secondOffset = initial.indexOf('Project Alpha', initial.indexOf('Project Alpha') + 1);
+    const result = applyPatch(doc, 'Project Alpha', '[[Project Alpha]]', secondOffset + 1);
+
+    expect(result).toBe('stale-target');
+    expect(ytext.toString()).toBe(initial);
 
     await conn.disconnect();
   });

@@ -1231,7 +1231,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
-      const { find, replace, docName: bodyDocName } = body as Record<string, unknown>;
+      const {
+        find,
+        replace,
+        docName: bodyDocName,
+        offset: rawOffset,
+      } = body as Record<string, unknown>;
       if (typeof find !== 'string' || find.length === 0) {
         json(res, 400, { ok: false, error: 'find field required' });
         return;
@@ -1239,6 +1244,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (typeof replace !== 'string') {
         json(res, 400, { ok: false, error: 'replace field required' });
         return;
+      }
+      const hasOffset = Object.hasOwn(body, 'offset');
+      let offset: number | undefined;
+      if (hasOffset) {
+        if (typeof rawOffset !== 'number' || !Number.isInteger(rawOffset) || rawOffset < 0) {
+          json(res, 400, { ok: false, error: 'offset must be a non-negative integer' });
+          return;
+        }
+        offset = rawOffset;
       }
       const effectivePatchDocName =
         typeof bodyDocName === 'string' && bodyDocName.length > 0 ? bodyDocName : 'test-doc';
@@ -1255,14 +1269,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const timestamp = new Date().toISOString();
 
       let notFound = false;
+      let staleTarget = false;
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
           const ytext = dc.document.getText('source');
           const currentText = ytext.toString();
-          const pos = currentText.indexOf(find);
+          const pos =
+            offset == null
+              ? currentText.indexOf(find)
+              : currentText.slice(offset, offset + find.length) === find
+                ? offset
+                : -1;
           if (pos === -1) {
-            notFound = true;
+            if (offset == null) {
+              notFound = true;
+            } else {
+              staleTarget = true;
+            }
             return;
           }
           ytext.delete(pos, find.length);
@@ -1280,6 +1304,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
+      if (staleTarget) {
+        json(res, 409, {
+          ok: false,
+          error: 'Target text no longer matches at the requested offset',
+        });
+        return;
+      }
       if (notFound) {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
