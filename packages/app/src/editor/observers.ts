@@ -247,7 +247,8 @@ function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: strin
  * Known merge semantics (LOCKED decisions):
  *   - D8: exact-character overlap (`base="hello", user="hello!", agent="hello!"`)
  *     produces `"hello!!"` — inherent to three-way merge, both sides independently
- *     made the same change. Mitigation paths NG6/NG7 deferred.
+ *     made the same change. Mitigation deferred (see SPEC §3 NG6/NG7 — distinct
+ *     from CLAUDE.md's fidelity NG-IDs which cover different concerns).
  *   - D9: user-wins on collision — when user deletes a line that agent modified,
  *     the deletion wins (DMP default behavior).
  */

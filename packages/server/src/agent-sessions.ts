@@ -8,7 +8,12 @@
  * The broken scaffold (UndoManager, undo/redo endpoints, AgentUndoButton)
  * was removed in V0-16 per TQ13.
  */
-import type { DirectConnection, Document, Hocuspocus } from '@hocuspocus/server';
+import type {
+  DirectConnection,
+  Document,
+  Hocuspocus,
+  LocalTransactionOrigin,
+} from '@hocuspocus/server';
 import { applyByPrefixSuffix, prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
@@ -40,7 +45,7 @@ export const AGENT_WRITE_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'agent-write' },
-};
+} satisfies LocalTransactionOrigin;
 
 /** Default agent identity. Key used in Y.Map('activity'). */
 export const DEFAULT_AGENT_ID = 'claude-1';
@@ -65,43 +70,51 @@ export function applyAgentMarkdownWrite(
   markdown: string,
   position: 'append' | 'prepend' | 'replace',
 ): void {
-  const xmlFragment = document.getXmlFragment('default');
-  const ytext = document.getText('source');
-  const metaMap = document.getMap('metadata');
+  try {
+    const xmlFragment = document.getXmlFragment('default');
+    const ytext = document.getText('source');
+    const metaMap = document.getMap('metadata');
 
-  // 1. Read current authoritative state from XmlFragment.
-  const currentJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
-  const currentBody = mdManager.serialize(currentJson);
-  const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
+    // 1. Read current authoritative state from XmlFragment.
+    const currentJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const currentBody = mdManager.serialize(currentJson);
+    const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
 
-  // 2. Compose the agent's delta at the markdown-body level.
-  let newBody: string;
-  switch (position) {
-    case 'replace':
-      newBody = markdown.trim();
-      break;
-    case 'prepend':
-      newBody = `${markdown.trim()}\n\n${currentBody}`;
-      break;
-    case 'append':
-      newBody = currentBody.trim()
-        ? `${currentBody}\n\n${markdown.trim()}\n`
-        : `${markdown.trim()}\n`;
-      break;
+    // 2. Compose the agent's delta at the markdown-body level.
+    let newBody: string;
+    switch (position) {
+      case 'replace':
+        newBody = markdown.trim();
+        break;
+      case 'prepend':
+        newBody = `${markdown.trim()}\n\n${currentBody}`;
+        break;
+      case 'append':
+        newBody = currentBody.trim()
+          ? `${currentBody}\n\n${markdown.trim()}\n`
+          : `${markdown.trim()}\n`;
+        break;
+    }
+
+    // 3. Apply composed state to XmlFragment via structural diff
+    //    (preserves user-content Items at matching positions).
+    const parsedJson = mdManager.parseWithFallback(newBody);
+    const pmNode = schema.nodeFromJSON(parsedJson);
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(document, xmlFragment, pmNode, meta);
+
+    // 4. Mirror Y.Text with minimal mutation. Only the changed region is touched,
+    //    so user-content Items in Y.Text retain their origin.
+    const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
+    applyByPrefixSuffix(ytext, ytext.toString(), canonicalFull);
+  } catch (err) {
+    log.error(
+      { err, docName: document.name, position, markdownLen: markdown.length },
+      `[applyAgentMarkdownWrite] failed for '${document.name}'`,
+    );
+    throw err;
   }
-
-  // 3. Apply composed state to XmlFragment via structural diff
-  //    (preserves user-content Items at matching positions).
-  const parsedJson = mdManager.parseWithFallback(newBody);
-  const pmNode = schema.nodeFromJSON(parsedJson);
-  const meta = { mapping: new Map(), isOMark: new Map() };
-  updateYFragment(document, xmlFragment, pmNode, meta);
-
-  // 4. Mirror Y.Text with minimal mutation. Only the changed region is touched,
-  //    so user-content Items in Y.Text retain their origin.
-  const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
-  const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
-  applyByPrefixSuffix(ytext, ytext.toString(), canonicalFull);
 }
 
 export class AgentSessionManager {

@@ -516,7 +516,10 @@ export class BridgeInvariantViolationError extends Error {
  * Attach a per-transaction bridge invariant watcher to a Y.Doc.
  *
  * After every transaction whose origin is in the enforcing set, asserts:
- *   stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))
+ *   normalizeBridge(ytext) === normalizeBridge(prependFrontmatter(fm, serialize(fragment)))
+ *
+ * where normalizeBridge strips trailing whitespace per line and collapses
+ * 3+ consecutive newlines to 2 (NG1: blank-line count normalization).
  *
  * Returns a detach function that removes the observer.
  */

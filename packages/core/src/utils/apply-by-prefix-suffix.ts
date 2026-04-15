@@ -5,8 +5,8 @@ import type * as Y from 'yjs';
  * and suffix, delete + insert only the differing middle region. Preserves
  * Y.Text Items in the prefix/suffix (and thus their transaction origins).
  *
- * Shared between client-side Observer A (Path B result application, drift-catcher
- * per FR-3) and server-side agent-write path (applyAgentMarkdownWrite per FR-1).
+ * Shared between client-side Observer A (Path B three-way merge result application)
+ * and server-side agent-write path (applyAgentMarkdownWrite per FR-1).
  * Same semantics, one implementation.
  *
  * @see AGENTS.md precedent #9 (minimize CRDT mutation in sync bridges)

@@ -1,5 +1,5 @@
 /**
- * HTTP API extension for Hocuspocus — agent write, undo/redo, and test reset endpoints.
+ * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
  *
  * Implemented as a Hocuspocus onRequest extension so it works with both
  * the standalone Server and the Vite dev plugin.
@@ -22,7 +22,7 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
-import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
   getHeadingSlug,
@@ -93,7 +93,7 @@ export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply' },
-};
+} satisfies LocalTransactionOrigin;
 
 const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
