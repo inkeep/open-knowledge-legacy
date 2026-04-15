@@ -23,6 +23,7 @@ if (process.argv.includes('--no-color')) {
 import { Command } from 'commander';
 import { authCommand } from './commands/auth/index.ts';
 import { cleanCommand } from './commands/clean.ts';
+import { cloneCommand } from './commands/clone.ts';
 import { initCommand } from './commands/init.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
@@ -103,6 +104,9 @@ program.addCommand(cleanCommand(() => resolvedConfig));
 program.addCommand(statusCommand(() => resolvedConfig));
 
 // auth command group — login, status, repos, signout, pat, git-credential
-program.addCommand(authCommand());
+program.addCommand(authCommand(() => resolvedConfig));
+
+// clone command — git clone + auto-start
+program.addCommand(cloneCommand(() => resolvedConfig));
 
 await program.parseAsync();
