@@ -52,6 +52,18 @@ export type ConstructConfig = {
   /** Hanging indent behavior. */
   hangingIndent?: 'none' | 'content' | 'preserve-source-indent';
 
+  /** Widget constructor for non-hiding hints (e.g., language badge). */
+  widget?: { new (): import('@codemirror/view').WidgetType };
+
+  /** Widget insertion side: -1 = before, 1 = after. */
+  widgetSide?: -1 | 1;
+
+  /** Wrap policy override. Currently all constructs use 'inherit' (no override). */
+  wrapBehavior?: 'inherit' | 'pre' | 'pre-wrap';
+
+  /** Feature-key for future per-construct granularity. No consumer in v1 (engine is always-on per D2). */
+  featureKey?: string;
+
   /** Inline styles to apply to line decorations (e.g., CSS custom properties). */
   lineAttributes?: (node: SyntaxNode, state: EditorState) => Record<string, string> | null;
 
