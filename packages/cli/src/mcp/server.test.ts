@@ -19,17 +19,20 @@ describe('registerAllTools', () => {
   it('registers all workflow, enriched, exec, and document tools', () => {
     const server = new McpServer({ name: 'test', version: '0.0.0' });
     const config = ConfigSchema.parse({});
+    const toolNames: string[] = [];
+    const originalTool = server.tool.bind(server);
+    const toolSpy = ((...args: unknown[]) => {
+      toolNames.push(String(args[0]));
+      return originalTool(...args);
+    }) as unknown as typeof server.tool;
+    (server as unknown as { tool: typeof server.tool }).tool = toolSpy;
 
-    // registerAllTools should not throw
     registerAllTools(server, {
       projectDir: process.cwd(),
       config,
     });
 
-    // Verify tools were registered by checking the server's internal state
-    // The McpServer doesn't expose a public list, but registration succeeding
-    // without error is the key assertion. We also verify the function completes.
-    expect(true).toBe(true);
+    expect(toolNames).toContain('find_dead_links');
   });
 
   it('each tool returns instructional text content', () => {

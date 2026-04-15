@@ -45,6 +45,11 @@ export interface HubEntry {
   count: number;
 }
 
+export interface DeadLinkEntry {
+  target: string;
+  sources: BacklinkEntry[];
+}
+
 interface BranchGraphState {
   backward: Map<string, Map<string, string | null>>;
   forward: Map<string, Set<string>>;
@@ -531,6 +536,39 @@ export class BacklinkIndex {
         b.count === a.count ? a.docName.localeCompare(b.docName) : b.count - a.count,
       )
       .slice(0, limit);
+  }
+
+  getDeadLinks(
+    admittedDocs: Iterable<string>,
+    sourceDocNames?: readonly string[],
+    branch = this.activeBranch,
+  ): DeadLinkEntry[] {
+    const state = this.getState(branch);
+    const admittedDocSet = new Set(admittedDocs);
+    const sourceDocSet = sourceDocNames?.length ? new Set(sourceDocNames) : null;
+
+    return [...state.backward.entries()]
+      .filter(([target, sources]) => {
+        if (admittedDocSet.has(target)) return false;
+        if (!sourceDocSet) return sources.size > 0;
+        for (const source of sources.keys()) {
+          if (sourceDocSet.has(source)) return true;
+        }
+        return false;
+      })
+      .map(([target, sources]) => ({
+        target,
+        sources: [...sources.entries()]
+          .filter(([source]) => !sourceDocSet || sourceDocSet.has(source))
+          .map(([source, snippet]) => ({ source, snippet }))
+          .sort((a, b) => a.source.localeCompare(b.source)),
+      }))
+      .filter((entry) => entry.sources.length > 0)
+      .sort((a, b) =>
+        b.sources.length === a.sources.length
+          ? a.target.localeCompare(b.target)
+          : b.sources.length - a.sources.length,
+      );
   }
 
   getLinkGraph(branch = this.activeBranch): {
