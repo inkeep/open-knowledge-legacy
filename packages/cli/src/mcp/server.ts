@@ -23,6 +23,7 @@ import { RootsListChangedNotificationSchema } from '@modelcontextprotocol/sdk/ty
 import { resolveContentDir, resolveLockDir } from '../config/paths.ts';
 import type { Config } from '../config/schema.ts';
 import { MCP_SERVER_NAME, PACKAGE_VERSION } from '../constants.ts';
+import { PREVIEW_GUIDANCE } from '../content/init.ts';
 import { dim } from '../ui/colors.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
@@ -37,7 +38,7 @@ function log(msg: string): void {
   process.stderr.write(`${dim('[mcp]')} ${msg}\n`);
 }
 
-function buildInstructions(config: Config): string {
+export function buildInstructions(config: Config): string {
   const { dir, include, exclude } = config.content;
   const excludeLine = exclude.length > 0 ? exclude.map((p) => `\`${p}\``).join(', ') : '(none)';
 
@@ -81,6 +82,8 @@ Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real
 ## Writing
 
 Agent writes to wiki markdown **must** go through the \`write_document\` / \`edit_document\` MCP tools — never \`exec\` (which is read-only) and never native \`Edit\` / \`sed\`. Routing writes through the server is what captures agent-vs-human attribution in the shadow repo. Writes via other paths land as anonymous \`upstream\` imports and lose attribution.
+
+${PREVIEW_GUIDANCE}
 
 ## Linking — lean on \`[[wiki-links]]\` aggressively
 

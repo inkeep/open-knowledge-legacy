@@ -8,6 +8,7 @@ import {
   initContent,
   OK_MARKER_BEGIN,
   OK_MARKER_END,
+  PREVIEW_GUIDANCE,
   upsertRootInstructions,
 } from './init.ts';
 
@@ -191,5 +192,15 @@ describe('upsertRootInstructions', () => {
     // The section should appear exactly once (symlink reads through to same file).
     const count = agentsContent.split(OK_MARKER_BEGIN).length - 1;
     expect(count).toBe(1);
+  });
+
+  it('CLAUDE_MD_SECTION embeds PREVIEW_GUIDANCE', () => {
+    expect(CLAUDE_MD_SECTION).toContain(PREVIEW_GUIDANCE);
+  });
+
+  it('PREVIEW_GUIDANCE mentions the key call-sequence terms', () => {
+    expect(PREVIEW_GUIDANCE).toContain('get_preview_url');
+    expect(PREVIEW_GUIDANCE).toContain('write_document');
+    expect(PREVIEW_GUIDANCE).toContain('edit_document');
   });
 });

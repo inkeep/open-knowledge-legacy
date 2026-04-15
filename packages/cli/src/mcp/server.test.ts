@@ -13,6 +13,14 @@ describe('MCP server module', () => {
     const mod = await import('./server.ts');
     expect(mod.startMcpServer.constructor.name).toBe('AsyncFunction');
   });
+
+  it('buildInstructions embeds shared PREVIEW_GUIDANCE constant', async () => {
+    const { buildInstructions } = await import('./server.ts');
+    const { PREVIEW_GUIDANCE } = await import('../content/init.ts');
+    const config = ConfigSchema.parse({});
+    const instructions = buildInstructions(config);
+    expect(instructions).toContain(PREVIEW_GUIDANCE);
+  });
 });
 
 describe('registerAllTools', () => {

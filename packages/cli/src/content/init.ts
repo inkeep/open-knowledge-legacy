@@ -141,6 +141,16 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #   maxDebounceMs: 10000
 `;
 
+/**
+ * Shared pre-edit-navigation guidance consumed by both CLAUDE_MD_SECTION
+ * (this file) and `buildInstructions` in packages/cli/src/mcp/server.ts.
+ *
+ * Single source of truth — editing this string updates both consumer
+ * surfaces simultaneously, avoiding drift between the CLAUDE.md / AGENTS.md
+ * injection and the MCP server's live `instructions` string.
+ */
+export const PREVIEW_GUIDANCE = `**Preview before edit.** Before calling \`write_document\` / \`edit_document\`, call \`get_preview_url\` to get the browser URL for the target doc, then navigate the Claude Code preview to that URL. The CRDT edit will stream live into the already-open editor — the user can watch your changes land and intervene if needed. Write-tool responses also include \`previewUrl\` (when resolvable) and a \`warning\` when no client is currently attached to the doc.`;
+
 export const CLAUDE_MD_SECTION = `${OK_MARKER_BEGIN}
 ## Open Knowledge
 
@@ -149,6 +159,8 @@ This repo uses Open Knowledge — agent-collaborative wiki tooling exposed via M
 **Reading (wiki markdown).** Prefer the \`exec\` MCP tool over native \`Read\` / \`Grep\` / \`Glob\`. \`exec\` runs \`cat\` / \`ls\` / \`grep\` / \`find\` / \`head\` / \`tail\` / \`wc\` / \`sort\` / \`uniq\` / \`cut\` with pipes, and every returned path is enriched with frontmatter (title, description, tags), backlink count, and recent shadow-repo activity with agent-vs-human attribution. One tool covers read/list/search with attribution that native tools don't see. Examples: \`exec("cat docs/auth.md")\`, \`exec("ls articles/")\`, \`exec("grep -rn oauth . | head -5")\`.
 
 **Writing (wiki markdown).** Route all edits through \`write_document\` / \`edit_document\`. Native \`Edit\` / \`sed\` land as anonymous \`upstream\` imports — you lose agent attribution in the shadow-repo log.
+
+${PREVIEW_GUIDANCE}
 
 **Linking.** When authoring, link liberally with \`[[Page Title]]\` wiki-links. Redlinks are fine — they signal "this should exist." Every noun-phrase naming another document should be a link. Backlink density is how this knowledge base stays navigable for the next agent.
 
