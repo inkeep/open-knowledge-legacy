@@ -18,9 +18,14 @@
 
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import { applyByPrefixSuffix, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  applyByPrefixSuffix,
+  prependFrontmatter,
+  stripFrontmatter,
+  VFileMessage,
+} from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
-import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import DiffMatchPatch from 'diff-match-patch';
 import type * as Y from 'yjs';
 
@@ -204,7 +209,8 @@ export interface SetupServerObserversOpts {
  * logic — Path A (diffLines + content-comparison gate when Y.Text in sync
  * with baseline) and Path B (DMP three-way merge when Y.Text diverged).
  *
- * Observer B (Y.Text → XmlFragment): added in US-003.
+ * Observer B (Y.Text → XmlFragment): parses Y.Text markdown, applies to
+ * XmlFragment via updateYFragment. Handles frontmatter sync (Y.Text ↔ Y.Map).
  *
  * Returns a cleanup function that detaches observers and clears debounces.
  */
@@ -316,12 +322,102 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     }
   }
 
+  // ─── Observer B: Y.Text → XmlFragment ─────────────────────
+  let debounceB: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Observer B sync work. Parses Y.Text markdown and applies to XmlFragment
+   * via updateYFragment. Handles frontmatter sync: strips frontmatter from
+   * Y.Text, caches in Y.Map('metadata'), parses body only.
+   */
+  const runObserverBSync = (): void => {
+    debounceB = null;
+    try {
+      const md = ytext.toString();
+      const { frontmatter, body } = stripFrontmatter(md);
+
+      // Early-exit: if XmlFragment already serializes to the same body, no work.
+      const currentJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+      const currentBody = mdManager.serialize(currentJson);
+      if (currentBody === body) {
+        // Tree and text are already in sync — just update frontmatter if changed.
+        const metaMap = doc.getMap('metadata');
+        if (metaMap.get('frontmatter') !== frontmatter) {
+          doc.transact(() => {
+            metaMap.set('frontmatter', frontmatter);
+          }, OBSERVER_SYNC_ORIGIN);
+        }
+        // Refresh Observer A's baseline so it doesn't see a stale delta.
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, currentBody);
+        return;
+      }
+
+      let parsedJson: ReturnType<typeof mdManager.parse>;
+      try {
+        parsedJson = mdManager.parse(body);
+      } catch (parseErr) {
+        // Transient parse errors from remark-mdx/acorn while user is mid-edit.
+        // XmlFragment keeps its last valid state; next keystroke retriggers.
+        if (
+          parseErr instanceof SyntaxError ||
+          parseErr instanceof VFileMessage ||
+          (parseErr instanceof RangeError &&
+            (parseErr as RangeError).message.includes('Invalid content for node'))
+        ) {
+          console.debug('[Server Observer B] Parse skipped (partial/invalid markdown):', parseErr);
+          return;
+        }
+        throw parseErr;
+      }
+
+      const pmNode = opts.schema.nodeFromJSON(parsedJson);
+
+      doc.transact(() => {
+        const meta = { mapping: new Map(), isOMark: new Map() };
+        updateYFragment(doc, xmlFragment, pmNode, meta);
+        const metaMap = doc.getMap('metadata');
+        metaMap.set('frontmatter', frontmatter);
+      }, OBSERVER_SYNC_ORIGIN);
+
+      // Re-serialize XmlFragment post-update for Observer A's baseline
+      // (updateYFragment may normalize differently from input).
+      try {
+        const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const postBody = mdManager.serialize(postJson);
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, postBody);
+      } catch (_err) {
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+      }
+    } catch (err) {
+      console.error('[Server Observer B] Failed to sync text→tree:', err);
+    }
+  };
+
+  /**
+   * Observer B callback — fires on every Y.Text change.
+   * Origin guards prevent infinite loops and skip already-paired writes.
+   */
+  const observerB = (_event: Y.YTextEvent, transaction: Y.Transaction) => {
+    // Self-skip: our own cross-CRDT write
+    if (transaction.origin === OBSERVER_SYNC_ORIGIN) return;
+
+    // Already-paired writes: agent-write and file-watcher both write both
+    // sides atomically. runObserverBSync will early-exit at the already-in-sync
+    // gate, but we skip scheduling entirely to avoid unnecessary work.
+
+    if (debounceB) sched.clearTimeout(debounceB);
+    debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
+  };
+
   // ─── Subscribe ─────────────────────────────────────────────
   xmlFragment.observeDeep(observerA);
+  ytext.observe(observerB);
 
   // ─── Cleanup ───────────────────────────────────────────────
   return () => {
     if (debounceA) sched.clearTimeout(debounceA);
+    if (debounceB) sched.clearTimeout(debounceB);
     xmlFragment.unobserveDeep(observerA);
+    ytext.unobserve(observerB);
   };
 }
