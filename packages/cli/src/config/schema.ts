@@ -28,6 +28,11 @@ export const ConfigSchema = z.object({
       maxDebounceMs: z.number().int().min(0).default(10000),
     })
     .default({ debounceMs: 2000, maxDebounceMs: 10000 }),
+  preview: z
+    .object({
+      baseUrl: z.url().optional(),
+    })
+    .optional(),
   mcp: z
     .object({
       tools: z

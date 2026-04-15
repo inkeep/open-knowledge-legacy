@@ -64,4 +64,31 @@ describe('ConfigSchema', () => {
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']); // default preserved
     expect(config.content.exclude).toEqual(['node_modules/**', '.claude/**']);
   });
+
+  test('preview block absent parses successfully', () => {
+    const config = ConfigSchema.parse({});
+    expect(config.preview).toBeUndefined();
+  });
+
+  test('preview.baseUrl with valid URL is accepted', () => {
+    const config = ConfigSchema.parse({
+      preview: { baseUrl: 'https://wiki.acme.com' },
+    });
+    expect(config.preview?.baseUrl).toBe('https://wiki.acme.com');
+  });
+
+  test('preview.baseUrl with invalid URL fails parsing', () => {
+    const result = ConfigSchema.safeParse({
+      preview: { baseUrl: 'not a url' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toContain('baseUrl');
+    }
+  });
+
+  test('preview object without baseUrl is accepted', () => {
+    const config = ConfigSchema.parse({ preview: {} });
+    expect(config.preview?.baseUrl).toBeUndefined();
+  });
 });
