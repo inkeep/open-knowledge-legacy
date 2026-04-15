@@ -1,23 +1,18 @@
-import { Plus } from 'lucide-react';
+import { FolderPlus, SquarePen } from 'lucide-react';
 import { useState } from 'react';
 import { FileTree } from '@/components/FileTree';
 import { defaultInitialDir } from '@/components/file-tree-utils';
 import { NewItemDialog } from '@/components/NewItemDialog';
-import {
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuRoot,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { Button } from '@/components/ui/button';
 import {
   Sidebar,
   SidebarContent,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 export function FileSidebar() {
   const { activeDocName } = useDocumentContext();
@@ -36,24 +31,37 @@ export function FileSidebar() {
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
-            <span className="text-sm text-sidebar-foreground/50 uppercase font-mono tracking-wider">
-              Files
-            </span>
-            <DropdownMenuRoot>
-              <DropdownMenuTrigger asChild>
-                <SidebarMenuAction aria-label="New file or folder">
-                  <Plus />
-                </SidebarMenuAction>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent side="right" align="start">
-                <DropdownMenuItem onSelect={() => openNewItemDialog('file')}>
-                  New file
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => openNewItemDialog('folder')}>
-                  New folder
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenuRoot>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-mono text-sm uppercase tracking-wider text-sidebar-foreground/50">
+                Files
+              </span>
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => openNewItemDialog('file', '')}
+                    >
+                      <SquarePen aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>New file</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => openNewItemDialog('folder', '')}
+                    >
+                      <FolderPlus aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>New folder</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarHeader>

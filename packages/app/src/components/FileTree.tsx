@@ -1,4 +1,14 @@
-import { ChevronRight, File, Folder, FolderOpen, Link2, Pencil, Plus, Trash2 } from 'lucide-react';
+import {
+  ChevronRight,
+  File,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Link2,
+  Pencil,
+  SquarePen,
+  Trash2,
+} from 'lucide-react';
 import { type FC, useEffect, useState } from 'react';
 import {
   applyDeleteToDocuments,
@@ -203,8 +213,8 @@ const FileTreeNode: FC<{
                   if (!anyActionBusy) onNewItem('file', node.path);
                 }}
               >
-                <Plus aria-hidden="true" />
-                New file here
+                <SquarePen aria-hidden="true" />
+                New file
               </ContextMenuItem>
               <ContextMenuItem
                 disabled={anyActionBusy}
@@ -212,8 +222,8 @@ const FileTreeNode: FC<{
                   if (!anyActionBusy) onNewItem('folder', node.path);
                 }}
               >
-                <Plus aria-hidden="true" />
-                New folder here
+                <FolderPlus aria-hidden="true" />
+                New folder
               </ContextMenuItem>
               <ContextMenuSeparator />
             </>
