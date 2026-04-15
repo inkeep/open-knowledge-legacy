@@ -750,10 +750,24 @@ bun run release          # Publish to npm
 - Prefer existing shadcn components before building custom UI primitives. If the needed shadcn component is not installed yet, suggest installing it rather than reimplementing it from scratch
 
 
+<!-- open-knowledge:begin -->
+## Open Knowledge
 
-**Reading (wiki markdown) — ALWAYS use `exec`.** For ANY read, search, or listing of wiki markdown files, you MUST use the `exec` MCP tool instead of native `Read` / `Grep` / `Glob`. This is not optional. `exec` runs `cat` / `ls` / `grep` / `find` / `head` / `tail` / `wc` / `sort` / `uniq` / `cut` with pipes, and every returned path is enriched with frontmatter (title, description, tags), backlink count, and recent shadow-repo activity with agent-vs-human attribution. Native tools miss all of this context. Examples: `exec("cat docs/auth.md")`, `exec("ls articles/")`, `exec("grep -rn oauth . | head -5")`. Also use `read_document` and `search` MCP tools — they provide the same enrichment. Reserve native `Read` / `Grep` / `Glob` for non-wiki files only (`.ts`, `.py`, configs, etc.).
+This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowledge/config.yml`** (with optional `~/.open-knowledge/config.yml`; CLI/env may override) is the **path contract**: `content.dir` is the root for relative paths; `content.include` lists globs that **add** markdown; `content.exclude` lists globs that **remove** paths. Nothing else defines scope — not folder names, not "docs vs code." `.gitignore` still applies. When MCP is connected, the server's instructions echo the **resolved** `dir` / `include` / `exclude` for this session — treat that table and the YAML as two views of the same rules.
 
-**Writing (wiki markdown).** Route all edits through `write_document` / `edit_document`. Native `Edit` / `sed` land as anonymous `upstream` imports — you lose agent attribution in the shadow-repo log.
+**Default mental model (no jargon):** unless this project narrowed `content.include`, **every `.md` and `.mdx` under `content.dir`** is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. If `content.include` is non-default, read `config.yml` once per turn so you do not mis-classify paths.
+
+**STOP — native `Read` / `Grep` / `Glob` on those markdown files.** When this workspace has Open Knowledge MCP configured (for example via root `.mcp.json`), you **must not** use the host's built-in file tools on in-scope `.md` / `.mdx` — same failure mode as native `Edit` on them (no frontmatter, backlinks, or shadow history).
+
+**MCP wiring varies by client:** Claude Code, Codex, Cursor, Windsurf, VS Code–class clients, and others surface MCP differently — server labels are user-defined; tools may not appear as a top-level symbol named `exec`. **If Open Knowledge is registered**, route markdown reads through its `exec` / `search` / `read_document` tools using **your client's documented MCP invocation** (including any generic "call MCP tool" flow). **That counts as available.** Not seeing `exec` in a flat tool list is **not** the escape hatch.
+
+**Escape hatch (narrow).** Native `Read` / `Grep` / `Glob` on `.md` / `.mdx` is allowed **only** when no Open Knowledge MCP server is registered for this project, **or** immediately after you **tried** an MCP call and it failed — then start a user-visible sentence with `Open Knowledge MCP unavailable:`. Never use the hatch because you skipped your client's MCP path.
+
+**Reads and searches on markdown:** Open Knowledge `exec` (or `read_document` / `search`) — same payloads whether your client invokes them directly or through MCP. Examples: `exec("cat docs/auth.md")`, `exec("ls reports/")`, `exec("grep -rn karpathy specs/ | head -10")`.
+
+**Source code and everything else** (`.ts`, `.py`, `package.json`, …): native `Read` / `Grep` / `Glob`.
+
+**Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `upstream` imports — you lose agent attribution in the shadow repo.
 
 **Preview before edit (REQUIRED).** You MUST follow this sequence every time you call `write_document` or `edit_document`:
 1. Call `get_preview_url` to obtain the browser URL for the target doc.
@@ -770,7 +784,7 @@ NEVER call `write_document` or `edit_document` without first navigating the prev
 
 **Cadence — maintain hubs as you go.** When you create or edit a child doc in a folder that has a hub doc (`INDEX.md`, `README.md`, `REPORT.md`, `SPEC.md`, or a file whose name matches the folder name — e.g. `reports/r1/r1.md`), update the hub to reflect the change before the next child. Interleaved child → hub → child → hub makes the hub the live progress bar and the browser-based editor follows your focus cleanly. Orphan writes get a soft hint in the `write_document` response pointing to the likely hub.
 
-**Server must be running.** If `write_document` or `edit_document` returns a "Hocuspocus server is not running" error, start it with `open-knowledge start` (via Bash) and retry. NEVER fall back to native `Edit` / `Write` for wiki markdown — always use the MCP write tools so edits go through the CRDT layer with proper attribution.
+**Server must be running.** If `write_document` or `edit_document` returns a "Hocuspocus server is not running" error, start it with `open-knowledge start` (via Bash) and retry. NEVER fall back to native `Edit` / `Write` for in-scope markdown — always use the MCP write tools so edits go through the CRDT layer with proper attribution.
 
-**Non-wiki code (`.ts`, `.py`, configs, etc.).** Keep using native `Read` / `Edit` / `Grep` / `Bash`. The MCP tools are for markdown in `content.include`.
+**Non-markdown files.** Use native `Read` / `Edit` / `Grep` / `Bash` for source code, configs, and anything outside the path contract in `config.yml`: under `content.dir`, matching `content.include`, not removed by `content.exclude` or `.gitignore`.
 <!-- open-knowledge:end -->
