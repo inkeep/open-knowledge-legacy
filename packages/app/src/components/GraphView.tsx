@@ -4,7 +4,13 @@ import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-for
 
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
-import { buildGraphLabelDescriptors, pickGraphLabelText } from './graph-label-utils';
+import {
+  type GraphLabelLayoutLink,
+  type GraphLabelLayoutNode,
+  type GraphLabelPlacement,
+  planGraphLabels,
+} from './graph-label-layout';
+import { buildGraphLabelDescriptors } from './graph-label-utils';
 import type { GraphData, GraphLink, GraphNode } from './graph-view-utils';
 
 interface LinkGraphResponse {
@@ -123,6 +129,37 @@ function maybeFocusActiveGraphNode({
   };
 }
 
+function drawGraphLabelPlacements({
+  ctx,
+  placements,
+  labelColor,
+  chipColor,
+  chipBorderColor,
+}: {
+  ctx: CanvasRenderingContext2D;
+  placements: GraphLabelPlacement[];
+  labelColor: string;
+  chipColor: string;
+  chipBorderColor: string;
+}): void {
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+
+  for (const placement of placements) {
+    const width = placement.rect.right - placement.rect.left;
+    const height = placement.rect.bottom - placement.rect.top;
+
+    ctx.fillStyle = chipColor;
+    ctx.fillRect(placement.rect.left, placement.rect.top, width, height);
+
+    ctx.strokeStyle = chipBorderColor;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(placement.rect.left, placement.rect.top, width, height);
+
+    ctx.fillStyle = labelColor;
+    ctx.fillText(placement.text, placement.textX, placement.textY);
+  }
+}
 export function GraphView({
   activeDocName,
   isFullscreen = false,
@@ -235,8 +272,15 @@ export function GraphView({
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
   const activeNodeRingColor = isDark ? 'rgba(105,163,255,0.45)' : 'rgba(55,132,255,0.3)';
+  const labelChipColor = isDark ? 'rgba(3,7,18,0.92)' : 'rgba(255,255,255,0.94)';
+  const labelChipBorderColor = isDark ? 'rgba(243,244,246,0.08)' : 'rgba(17,24,39,0.08)';
   const focusZoom = isFullscreen ? 1.6 : 2.35;
   const maxLabelWidthPx = isFullscreen ? 220 : 150;
+  // Fullscreen shows the whole project graph, so it intentionally uses a tighter
+  // label budget than the docked 2-hop neighborhood view to avoid flooding.
+  const maxVisibleLabels = isFullscreen ? 10 : 18;
+  const layoutNodes = graphData.nodes as GraphLabelLayoutNode[];
+  const layoutLinks = graphData.links as GraphLabelLayoutLink[];
   const labelDescriptors = buildGraphLabelDescriptors(graphData.nodes);
   const focusKey = `${activeDocName}|${focusZoom}|${graphSig.nodes}|${graphSig.links}`;
 
@@ -315,7 +359,6 @@ export function GraphView({
                   force: true,
                 });
               }
-              fgRef.current?.pauseAnimation();
             }}
             width={dimensions.width}
             height={dimensions.height}
@@ -346,20 +389,41 @@ export function GraphView({
                 ctx.lineWidth = 2 / globalScale;
                 ctx.stroke();
               }
-
+            }}
+            onRenderFramePost={(ctx: CanvasRenderingContext2D, globalScale: number) => {
               if (globalScale < 1.8) return;
-              const fontSize = 10 / globalScale;
-              ctx.font = `${fontSize}px system-ui, sans-serif`;
-              const label = pickGraphLabelText(
-                typeof node.id === 'string' ? labelDescriptors.get(node.id) : undefined,
+
+              const fg = fgRef.current;
+              if (!fg) return;
+
+              ctx.save();
+              // force-graph keeps the graph transform active during frame hooks; reset to
+              // CSS-pixel space so placement math and text rendering share one coordinate system.
+              const pxRatio = window.devicePixelRatio || 1;
+              ctx.setTransform(pxRatio, 0, 0, pxRatio, 0, 0);
+              ctx.font = '10px system-ui, sans-serif';
+
+              const placements = planGraphLabels({
+                nodes: layoutNodes,
+                links: layoutLinks,
+                activeDocName,
+                viewport: dimensions,
+                maxLabels: maxVisibleLabels,
                 maxLabelWidthPx,
-                (text) => ctx.measureText(text).width * globalScale,
-              );
-              if (!label) return;
-              ctx.fillStyle = labelColor;
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'top';
-              ctx.fillText(label, node.x, node.y + nodeRadius + 2);
+                labelDescriptors,
+                measureTextWidthPx: (text) => ctx.measureText(text).width,
+                projectToScreen: (x, y) => fg.graph2ScreenCoords(x, y),
+                getNodeRadiusPx: (node) => (node.id === activeDocName ? 8 : 5) * globalScale + 4,
+              });
+
+              drawGraphLabelPlacements({
+                ctx,
+                placements,
+                labelColor,
+                chipColor: labelChipColor,
+                chipBorderColor: labelChipBorderColor,
+              });
+              ctx.restore();
             }}
             linkColor={() => edgeColor}
             linkDirectionalArrowLength={3}
