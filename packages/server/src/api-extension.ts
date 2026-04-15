@@ -964,7 +964,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
-        recordContributor(resolvedDocName, agentId, agentName);
+        recordContributor(resolvedDocName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
