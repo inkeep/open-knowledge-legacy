@@ -1,3 +1,4 @@
+import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { useQuery } from '@tanstack/react-query';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -18,7 +19,6 @@ import { hashFromDocName } from '@/lib/doc-hash';
 const FULLSCREEN_HUB_LIMIT = 50;
 
 type FullscreenGraphMode = 'explore' | 'orphans' | 'hubs';
-type OrphanMode = 'incoming' | 'outgoing' | 'both';
 
 interface OrphanEntry {
   docName: string;
@@ -126,14 +126,14 @@ function FullscreenOrphansView({
             value={mode}
             aria-label="Orphan mode"
             onValueChange={(value) => {
-              if (value === 'incoming' || value === 'outgoing' || value === 'both') {
+              if (value && isOrphanMode(value)) {
                 onModeChange(value);
               }
             }}
           >
-            {Object.entries(ORPHAN_MODE_LABELS).map(([value, label]) => (
-              <ToggleGroupItem key={value} value={value} aria-label={label}>
-                {label}
+            {ORPHAN_MODES.map((value) => (
+              <ToggleGroupItem key={value} value={value}>
+                {ORPHAN_MODE_LABELS[value]}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
@@ -152,7 +152,7 @@ function FullscreenOrphansView({
               <button
                 key={entry.docName}
                 type="button"
-                className="block w-full rounded-lg border border-border bg-background/80 px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="block w-full rounded-lg border border-border bg-background/80 px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => navigateToDoc(entry.docName)}
               >
                 <div className="truncate text-sm font-medium">{entry.title}</div>
@@ -201,7 +201,7 @@ function FullscreenHubsView() {
               <button
                 key={hub.docName}
                 type="button"
-                className="block w-full rounded-lg border border-border bg-background/80 px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
+                className="block w-full rounded-lg border border-border bg-background/80 px-3 py-2 text-left transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => navigateToDoc(hub.docName)}
               >
                 <div className="flex items-start justify-between gap-3">
@@ -295,7 +295,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               }}
             >
               {Object.entries(FULLSCREEN_MODE_LABELS).map(([value, label]) => (
-                <ToggleGroupItem key={value} value={value} aria-label={label}>
+                <ToggleGroupItem key={value} value={value}>
                   {label}
                 </ToggleGroupItem>
               ))}

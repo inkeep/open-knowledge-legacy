@@ -1,3 +1,4 @@
+import { ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
 import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
@@ -16,11 +17,11 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     DESCRIPTION,
     {
       mode: z
-        .enum(['incoming', 'outgoing', 'both'])
+        .enum(ORPHAN_MODES)
         .optional()
-        .describe('Orphan lens: incoming, outgoing, or both'),
+        .describe('Filter which type of graph disconnection to surface'),
     },
-    async (args: { mode?: 'incoming' | 'outgoing' | 'both' }) => {
+    async (args: { mode?: OrphanMode }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const query = args.mode ? `?mode=${encodeURIComponent(args.mode)}` : '';
       const result = await httpGet(serverUrl, `/api/orphans${query}`);

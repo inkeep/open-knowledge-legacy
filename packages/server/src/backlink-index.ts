@@ -3,6 +3,9 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   getWikiLinkText,
+  isOrphanMode,
+  ORPHAN_MODES,
+  type OrphanMode,
   resolveInternalHref,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
@@ -46,13 +49,7 @@ export interface HubEntry {
   count: number;
 }
 
-export const ORPHAN_MODES = ['incoming', 'outgoing', 'both'] as const;
-
-export type OrphanMode = (typeof ORPHAN_MODES)[number];
-
-export function isOrphanMode(value: string): value is OrphanMode {
-  return ORPHAN_MODES.includes(value as OrphanMode);
-}
+export { isOrphanMode, ORPHAN_MODES, type OrphanMode };
 
 interface BranchGraphState {
   backward: Map<string, Map<string, string | null>>;
