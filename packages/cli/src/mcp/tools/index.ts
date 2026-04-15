@@ -49,6 +49,10 @@ import {
   DESCRIPTION as GET_ORPHANS_DESCRIPTION,
   register as registerGetOrphans,
 } from './get-orphans.ts';
+import {
+  DESCRIPTION as GET_PREVIEW_URL_DESCRIPTION,
+  register as registerGetPreviewUrl,
+} from './get-preview-url.ts';
 import { DESCRIPTION as INGEST_DESCRIPTION, register as registerIngest } from './ingest.ts';
 import {
   DESCRIPTION as INIT_CONTENT_DESCRIPTION,
@@ -76,7 +80,7 @@ import {
   DESCRIPTION as SAVE_VERSION_DESCRIPTION,
 } from './save-version.ts';
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
-import type { ServerInstance } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   register as registerSuggestLinks,
   DESCRIPTION as SUGGEST_LINKS_DESCRIPTION,
@@ -111,11 +115,31 @@ export const TOOL_DESCRIPTIONS = {
   get_orphans: GET_ORPHANS_DESCRIPTION,
   get_hubs: GET_HUBS_DESCRIPTION,
   get_dead_links: GET_DEAD_LINKS_DESCRIPTION,
+  get_preview_url: GET_PREVIEW_URL_DESCRIPTION,
 } as const;
 
+/**
+ * Per-call cwd resolver. Returns the absolute host directory that the
+ * current tool call should operate against. Priority:
+ *   1. explicit `cwd` arg from the tool call
+ *   2. first MCP root advertised by the client
+ *   3. server startup cwd (fallback)
+ */
+export type ResolveCwd = (explicit?: string) => Promise<string>;
+
 export interface RegisterAllToolsOptions {
-  serverUrl?: string;
-  projectDir: string;
+  /**
+   * Hocuspocus URL. Accept a string (explicit override, e.g. `--port`), or a
+   * lazy resolver that re-discovers per-call from the live project root. The
+   * resolver variant is what makes writes work when the MCP process is spawned
+   * before the user starts the Hocuspocus server, or when `cwd` at spawn time
+   * doesn't match the project root (e.g. Claude Desktop launches with `cwd=/`).
+   */
+  serverUrl?: ServerUrlOrResolver;
+  /** Resolves the cwd for a given tool call (see `ResolveCwd` docs). */
+  resolveCwd: ResolveCwd;
+  /** Server startup cwd — used only as a test/fallback identity anchor. */
+  startupCwd: string;
   config: Config;
   identityRef?: { current: AgentIdentity };
 }
@@ -123,7 +147,7 @@ export interface RegisterAllToolsOptions {
 export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsOptions): void {
   // exec — the primary surface (V0-24 / L2-aggressive per D2).
   registerExec(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     serverUrl: opts.serverUrl,
   });
 
@@ -135,20 +159,30 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
 
   // Enriched read/search — kept as typed call sites (advanced); exec is primary.
   registerReadDocument(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
   registerSearch(server, {
-    projectDir: opts.projectDir,
+    resolveCwd: opts.resolveCwd,
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
   registerSuggestLinks(server, opts.serverUrl);
 
   // Document tools — make HTTP calls to Hocuspocus
-  registerWriteDocument(server, opts.serverUrl, opts.identityRef);
-  registerEditDocument(server, opts.serverUrl, opts.identityRef);
+  registerWriteDocument(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+    identityRef: opts.identityRef,
+  });
+  registerEditDocument(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+    identityRef: opts.identityRef,
+  });
   registerRenameDocument(server, opts.serverUrl);
   registerGetHistory(server, opts.serverUrl);
   registerSaveVersion(server, opts.serverUrl, opts.identityRef);
@@ -159,4 +193,10 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   registerGetOrphans(server, opts.serverUrl);
   registerGetHubs(server, opts.serverUrl);
   registerGetDeadLinks(server, opts.serverUrl);
+
+  // Preview URL — no Hocuspocus dependency; reads config + server.lock directly.
+  registerGetPreviewUrl(server, {
+    resolveCwd: opts.resolveCwd,
+    config: opts.config,
+  });
 }

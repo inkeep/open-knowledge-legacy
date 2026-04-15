@@ -36,12 +36,14 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
+import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
   applyAgentMarkdownWrite,
 } from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
+import { findHubCandidates } from './hub-candidates.ts';
 import { extractPageTitle } from './page-identity.ts';
 
 export { extractPageTitle } from './page-identity.ts';
@@ -398,6 +400,18 @@ export interface ApiExtensionOptions {
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
+  /**
+   * Optional. When present, agent write handlers publish the active doc on
+   * `__system__` awareness so clients can push-navigate to follow the agent.
+   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. Called after every successful agent write (write_document /
+   * edit_document). The handler is expected to be cheap and idempotent —
+   * the CLI uses it to open the browser on the first agent edit per session.
+   */
+  onAgentWrite?: () => void;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -471,6 +485,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     contentRoot,
     backlinkIndex,
     signalChannel,
+    agentFocusBroadcaster,
+    onAgentWrite,
   } = options;
 
   function resolveDocPath(docName: string): string | null {
@@ -493,8 +509,54 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * Soft orphan-hint (D7 / N1): when a written doc has zero backlinks AND a
+   * hub candidate exists in its folder tree, attach a hint suggesting the
+   * hub. Returns `undefined` when any prerequisite is unavailable (no
+   * backlinkIndex wired, target not in index, has backlinks, or no candidate).
+   * Non-throwing — a hint-computation failure must not fail the write.
+   */
+  function computeOrphanHints(
+    docName: string,
+  ): Array<{ type: 'orphan'; parentCandidates: string[]; message: string }> | undefined {
+    if (!backlinkIndex) return undefined;
+    try {
+      const backlinks = backlinkIndex.getBacklinks(docName);
+      if (backlinks.length > 0) return undefined;
+      const candidates = findHubCandidates(docName, getFileIndex());
+      if (candidates.length === 0) return undefined;
+      const wikiLinks = candidates.map((c) => `[[${c}]]`).join(', ');
+      return [
+        {
+          type: 'orphan',
+          parentCandidates: candidates,
+          message: `This doc is orphaned. Consider linking from a hub: ${wikiLinks}`,
+        },
+      ];
+    } catch {
+      return undefined;
+    }
+  }
+
   function resolveAlias(docName: string): string {
     return getAliasMap?.().get(docName) ?? docName;
+  }
+
+  /**
+   * Return the number of live browser/editor connections currently subscribed
+   * to the given Hocuspocus document. Zero means the agent is writing to a
+   * room nobody is watching — the MCP tool surfaces that as a warning so the
+   * user can open the preview.
+   *
+   * Never throws: a Hocuspocus introspection failure is silent (returns 0).
+   */
+  function getSubscriberCount(docName: string): number {
+    try {
+      const doc = hocuspocus.documents.get(docName);
+      return doc?.connections.size ?? 0;
+    } catch {
+      return 0;
+    }
   }
 
   /**
@@ -999,7 +1061,30 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(resolvedDocName, 'agent-write-md');
 
-      json(res, 200, { ok: true, timestamp });
+      // Publish agent focus on __system__ awareness so browser clients can
+      // push-navigate to the doc just written. Uses per-write agentId from
+      // attribution (PR #134).
+      agentFocusBroadcaster?.setFocus(agentId, {
+        agentName,
+        currentDoc: resolvedDocName,
+        writeKind: 'write',
+        ts: Date.now(),
+      });
+      onAgentWrite?.();
+
+      // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
+      // backlinks and a plausible hub exists in its folder tree, suggest the
+      // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
+      const hints = computeOrphanHints(resolvedDocName);
+
+      const subscriberCount = getSubscriberCount(resolvedDocName);
+
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        subscriberCount,
+        ...(hints ? { hints } : {}),
+      });
     } catch (e) {
       log.error({ err: e }, '[agent-write-md] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
@@ -1436,7 +1521,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       flushDocToGit(docName, 'agent-patch');
 
-      json(res, 200, { ok: true, timestamp });
+      agentFocusBroadcaster?.setFocus(agentId, {
+        agentName,
+        currentDoc: docName,
+        writeKind: 'edit',
+        ts: Date.now(),
+      });
+      onAgentWrite?.();
+
+      const subscriberCount = getSubscriberCount(docName);
+
+      json(res, 200, { ok: true, timestamp, subscriberCount });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });

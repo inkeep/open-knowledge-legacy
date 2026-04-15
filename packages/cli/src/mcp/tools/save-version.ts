@@ -6,8 +6,8 @@
  * The resulting checkpoint ref can later be found via `get_history`.
  */
 import type { AgentIdentity } from '../agent-identity.ts';
-import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, textResult } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, resolveServerUrl, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Save a version checkpoint of all documents.',
@@ -18,14 +18,15 @@ export const DESCRIPTION = [
 
 export function register(
   server: ServerInstance,
-  serverUrl: string | undefined,
+  serverUrl: ServerUrlOrResolver,
   identityRef?: { current: AgentIdentity },
 ): void {
   server.tool('save_version', DESCRIPTION, {}, async () => {
-    if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+    const url = await resolveServerUrl(serverUrl);
+    if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
     const identity = identityRef?.current;
-    const result = await httpPost(serverUrl, '/api/save-version', {
+    const result = await httpPost(url, '/api/save-version', {
       ...(identity
         ? {
             writers: [

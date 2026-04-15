@@ -87,7 +87,7 @@ export interface InitCommandOptions {
   mcp?: boolean;
   force?: boolean;
   editors?: EditorId[];
-  /** Append/replace the Open Knowledge section in root CLAUDE.md + AGENTS.md (default: true). */
+  /** Append/replace the Open Knowledge section in root AGENTS.md (default: true). */
   rootInstructions?: boolean;
   /** Override home directory (test-only, for Windsurf global path). */
   home?: string;
@@ -98,15 +98,95 @@ export interface InitCommandResult {
   contentSkipped: string[];
   /** Per-editor MCP config results. Empty when `--no-mcp`. */
   editors: EditorMcpResult[];
-  /** Per-file root-instructions (CLAUDE.md / AGENTS.md) results. Empty when `--no-root-instructions`. */
+  /** Per-file root-instructions (AGENTS.md) results. Empty when `--no-root-instructions`. */
   rootInstructions: RootInstructionResult[];
   /** Content preview result (undefined if preview failed or was not run). */
   preview?: PreviewResult;
+  /** Claude Code launch.json result (undefined when Claude is not a selected editor). */
+  launchJson?: LaunchJsonResult;
   // Backward-compat fields (derived from the Claude entry or first editor):
   mcpAction: 'written' | 'skipped-existing' | 'overwritten' | 'skipped-flag' | 'failed';
   mcpPath: string;
   mcpError?: string;
   previewWarning?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Claude Code launch.json scaffolding
+// ---------------------------------------------------------------------------
+
+const LAUNCH_JSON_VERSION = '0.0.1';
+const LAUNCH_CONFIG_NAME = 'open-knowledge';
+
+export type LaunchJsonAction = 'created' | 'merged' | 'skipped-existing' | 'failed';
+
+export interface LaunchJsonResult {
+  action: LaunchJsonAction;
+  configPath: string;
+  error?: string;
+}
+
+/**
+ * Scaffold or merge a `.claude/launch.json` entry so that Claude Code's
+ * built-in preview browser can start the Open Knowledge dev server via
+ * `preview_start("open-knowledge")`.
+ *
+ * - File missing        → create with the OK entry
+ * - File exists, no OK  → merge the entry into configurations
+ * - File exists, has OK → skip (unless force)
+ */
+function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
+  const configPath = join(cwd, '.claude', 'launch.json');
+  const entry = {
+    name: LAUNCH_CONFIG_NAME,
+    runtimeExecutable: 'npx',
+    runtimeArgs: ['open-knowledge', 'start'],
+    port: 3000,
+  };
+
+  try {
+    if (!existsSync(configPath)) {
+      mkdirSync(dirname(configPath), { recursive: true });
+      const content = { version: LAUNCH_JSON_VERSION, configurations: [entry] };
+      writeFileSync(configPath, `${JSON.stringify(content, null, 2)}\n`, 'utf-8');
+      return { action: 'created', configPath };
+    }
+
+    const raw = readFileSync(configPath, 'utf-8').trim();
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (!isObject(parsed)) {
+      return { action: 'failed', configPath, error: 'launch.json root is not an object' };
+    }
+
+    const configs: unknown[] = Array.isArray(parsed.configurations) ? parsed.configurations : [];
+    const existingIdx = configs.findIndex(
+      (c) => isObject(c) && (c as Record<string, unknown>).name === LAUNCH_CONFIG_NAME,
+    );
+
+    if (existingIdx >= 0 && !force) {
+      return { action: 'skipped-existing', configPath };
+    }
+
+    if (existingIdx >= 0) {
+      configs[existingIdx] = entry;
+    } else {
+      configs.push(entry);
+    }
+
+    const updated = {
+      ...parsed,
+      version: parsed.version ?? LAUNCH_JSON_VERSION,
+      configurations: configs,
+    };
+    writeFileSync(configPath, `${JSON.stringify(updated, null, 2)}\n`, 'utf-8');
+    return { action: existingIdx >= 0 ? 'merged' : 'merged', configPath };
+  } catch (err) {
+    return {
+      action: 'failed',
+      configPath,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +296,14 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     editorResults.push(writeEditorMcpConfig(target, cwd, options.force ?? false, options.home));
   }
 
-  // 3. Append/replace the Open Knowledge section in root CLAUDE.md + AGENTS.md
+  // 3. Scaffold .claude/launch.json when Claude Code is a selected editor
+  const hasClaude = editorIds.includes('claude');
+  const launchJson =
+    hasClaude && options.mcp !== false
+      ? scaffoldLaunchJson(cwd, options.force ?? false)
+      : undefined;
+
+  // 4. Append/replace the Open Knowledge section in root AGENTS.md
   const rootInstructions =
     options.rootInstructions === false ? [] : upsertRootInstructions(cwd, options.force ?? false);
 
@@ -232,6 +319,7 @@ export function runInit(options: InitCommandOptions = {}): InitCommandResult {
     contentSkipped: contentResult.skipped,
     editors: editorResults,
     rootInstructions,
+    launchJson,
     mcpAction: primary.action,
     mcpPath: primary.configPath,
     mcpError: 'error' in primary ? (primary as EditorMcpResult).error : undefined,
@@ -310,7 +398,31 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
       lines.push('  https://github.com/inkeep/open-knowledge#mcp-setup');
     }
 
-    // Root instructions (CLAUDE.md / AGENTS.md) summary
+    // Claude Code launch.json summary
+    if (result.launchJson) {
+      const lj = result.launchJson;
+      const displayPath = lj.configPath.startsWith(cwd)
+        ? relative(cwd, lj.configPath)
+        : lj.configPath;
+      switch (lj.action) {
+        case 'created':
+          lines.push(
+            `  launch.json   ${displayPath}  created (preview_start("open-knowledge") ready)`,
+          );
+          break;
+        case 'merged':
+          lines.push(`  launch.json   ${displayPath}  merged open-knowledge entry`);
+          break;
+        case 'skipped-existing':
+          lines.push(`  launch.json   ${displayPath}  already has open-knowledge entry`);
+          break;
+        case 'failed':
+          lines.push(`  launch.json   ${displayPath}  FAILED: ${lj.error}`);
+          break;
+      }
+    }
+
+    // Root instructions (AGENTS.md) summary
     if (result.rootInstructions.length > 0) {
       const visible = result.rootInstructions.filter((r) => r.action !== 'skipped-symlink');
       if (visible.length > 0) {

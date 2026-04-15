@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { OK_DIR } from '../constants.ts';
@@ -8,6 +8,7 @@ import {
   initContent,
   OK_MARKER_BEGIN,
   OK_MARKER_END,
+  PREVIEW_GUIDANCE,
   upsertRootInstructions,
 } from './init.ts';
 
@@ -109,87 +110,73 @@ describe('upsertRootInstructions', () => {
     rmSync(testDir, { recursive: true, force: true });
   });
 
-  it('creates CLAUDE.md and AGENTS.md when neither exists', () => {
+  it('creates AGENTS.md when it does not exist', () => {
     const results = upsertRootInstructions(testDir, false);
 
-    const claudePath = join(testDir, 'CLAUDE.md');
     const agentsPath = join(testDir, 'AGENTS.md');
-    expect(existsSync(claudePath)).toBe(true);
     expect(existsSync(agentsPath)).toBe(true);
-    expect(readFileSync(claudePath, 'utf-8')).toContain(OK_MARKER_BEGIN);
-    expect(readFileSync(agentsPath, 'utf-8')).toContain(OK_MARKER_END);
-    expect(results.map((r) => r.action)).toEqual(['created', 'created']);
+    expect(readFileSync(agentsPath, 'utf-8')).toContain(OK_MARKER_BEGIN);
+    expect(results.map((r) => r.action)).toEqual(['created']);
   });
 
-  it('appends to existing CLAUDE.md without markers', () => {
-    const claudePath = join(testDir, 'CLAUDE.md');
-    writeFileSync(claudePath, '# My Project\n\nExisting content.\n');
+  it('appends to existing AGENTS.md without markers', () => {
+    const agentsPath = join(testDir, 'AGENTS.md');
+    writeFileSync(agentsPath, '# My Project\n\nExisting content.\n');
 
     const results = upsertRootInstructions(testDir, false);
 
-    const written = readFileSync(claudePath, 'utf-8');
+    const written = readFileSync(agentsPath, 'utf-8');
     expect(written).toContain('# My Project');
     expect(written).toContain('Existing content.');
     expect(written).toContain(CLAUDE_MD_SECTION);
     // Exactly one blank line between prior content and the section.
     expect(written).toMatch(/Existing content\.\n\n<!-- open-knowledge:begin -->/);
-    expect(results.find((r) => r.file === 'CLAUDE.md')?.action).toBe('appended');
+    expect(results.find((r) => r.file === 'AGENTS.md')?.action).toBe('appended');
   });
 
   it('normalizes spacing when existing file lacks trailing newline', () => {
-    const claudePath = join(testDir, 'CLAUDE.md');
-    writeFileSync(claudePath, '# My Project\n\nExisting content.');
+    const agentsPath = join(testDir, 'AGENTS.md');
+    writeFileSync(agentsPath, '# My Project\n\nExisting content.');
 
     upsertRootInstructions(testDir, false);
 
-    const written = readFileSync(claudePath, 'utf-8');
+    const written = readFileSync(agentsPath, 'utf-8');
     expect(written).toMatch(/Existing content\.\n\n<!-- open-knowledge:begin -->/);
   });
 
   it('is idempotent — skips when marker is already present', () => {
-    const claudePath = join(testDir, 'CLAUDE.md');
+    const agentsPath = join(testDir, 'AGENTS.md');
     const preamble = '# My Project\n\n';
-    writeFileSync(claudePath, `${preamble}${CLAUDE_MD_SECTION}\n`);
-    const before = readFileSync(claudePath, 'utf-8');
+    writeFileSync(agentsPath, `${preamble}${CLAUDE_MD_SECTION}\n`);
+    const before = readFileSync(agentsPath, 'utf-8');
 
     const results = upsertRootInstructions(testDir, false);
 
-    expect(readFileSync(claudePath, 'utf-8')).toBe(before);
-    expect(results.find((r) => r.file === 'CLAUDE.md')?.action).toBe('skipped-existing');
+    expect(readFileSync(agentsPath, 'utf-8')).toBe(before);
+    expect(results.find((r) => r.file === 'AGENTS.md')?.action).toBe('skipped-existing');
   });
 
   it('replaces the marker block when force=true', () => {
-    const claudePath = join(testDir, 'CLAUDE.md');
+    const agentsPath = join(testDir, 'AGENTS.md');
     const staleSection = `${OK_MARKER_BEGIN}\nOLD CONTENT\n${OK_MARKER_END}`;
-    writeFileSync(claudePath, `# My Project\n\n${staleSection}\n\nAfter section.\n`);
+    writeFileSync(agentsPath, `# My Project\n\n${staleSection}\n\nAfter section.\n`);
 
     const results = upsertRootInstructions(testDir, true);
 
-    const written = readFileSync(claudePath, 'utf-8');
+    const written = readFileSync(agentsPath, 'utf-8');
     expect(written).not.toContain('OLD CONTENT');
     expect(written).toContain('Open Knowledge');
     expect(written).toContain('After section.');
-    expect(results.find((r) => r.file === 'CLAUDE.md')?.action).toBe('replaced');
+    expect(results.find((r) => r.file === 'AGENTS.md')?.action).toBe('replaced');
   });
 
-  it('deduplicates when CLAUDE.md is a symlink to AGENTS.md', () => {
-    const agentsPath = join(testDir, 'AGENTS.md');
-    const claudePath = join(testDir, 'CLAUDE.md');
-    writeFileSync(agentsPath, '# Agents\n');
-    symlinkSync(agentsPath, claudePath);
+  it('CLAUDE_MD_SECTION embeds PREVIEW_GUIDANCE', () => {
+    expect(CLAUDE_MD_SECTION).toContain(PREVIEW_GUIDANCE);
+  });
 
-    const results = upsertRootInstructions(testDir, false);
-
-    // One file actually mutated, the other recorded as skipped-symlink.
-    const actions = results.map((r) => r.action).sort();
-    expect(actions).toContain('skipped-symlink');
-    expect(actions).toContain('appended');
-
-    // Only one physical file contains the section.
-    const agentsContent = readFileSync(agentsPath, 'utf-8');
-    expect(agentsContent).toContain(OK_MARKER_BEGIN);
-    // The section should appear exactly once (symlink reads through to same file).
-    const count = agentsContent.split(OK_MARKER_BEGIN).length - 1;
-    expect(count).toBe(1);
+  it('PREVIEW_GUIDANCE mentions the key call-sequence terms', () => {
+    expect(PREVIEW_GUIDANCE).toContain('get_preview_url');
+    expect(PREVIEW_GUIDANCE).toContain('write_document');
+    expect(PREVIEW_GUIDANCE).toContain('edit_document');
   });
 });

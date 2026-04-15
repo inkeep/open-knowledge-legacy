@@ -120,6 +120,20 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #   exclude: []
 
 
+# --- Server ----------------------------------------------------------------
+# HTTP/WebSocket listener for the Hocuspocus server + static React app.
+#
+# openOnAgentEdit: when true, the browser opens automatically the first time
+# an agent writes to the knowledge base in this server session. Debounced to
+# one open per boot. Useful for pairing with Claude Code — you see the edit
+# land live. Leave false for headless/CI.
+#
+# server:
+#   port: 3000
+#   host: localhost
+#   openOnAgentEdit: false
+
+
 # --- Persistence -----------------------------------------------------------
 # How aggressively CRDT updates are flushed to disk.
 # persistence:
@@ -127,16 +141,41 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #   maxDebounceMs: 10000
 `;
 
+/**
+ * Shared pre-edit-navigation guidance consumed by both CLAUDE_MD_SECTION
+ * (this file) and `buildInstructions` in packages/cli/src/mcp/server.ts.
+ *
+ * Single source of truth — editing this string updates both consumer
+ * surfaces simultaneously, avoiding drift between the CLAUDE.md / AGENTS.md
+ * injection and the MCP server's live `instructions` string.
+ */
+export const PREVIEW_GUIDANCE = `**Preview before edit (REQUIRED).** You MUST follow this sequence every time you call \`write_document\` or \`edit_document\`:
+1. Call \`get_preview_url\` to obtain the browser URL for the target doc.
+   - If it returns \`null\`, the server is not running. Start it with \`open-knowledge start\` (or \`preview_start\`), then call \`get_preview_url\` again — the server writes a lock file that this tool reads.
+   - NEVER guess or manually construct the preview URL — always use the URL returned by \`get_preview_url\`.
+2. Open that URL in your preview browser so the user can see the document.
+3. Only then call \`write_document\` / \`edit_document\` — the CRDT edit will stream live into the already-open editor.
+
+NEVER call \`write_document\` or \`edit_document\` without first navigating the preview browser to the doc. The user expects to watch every edit land in real time. Write-tool responses include \`previewUrl\` (when resolvable) and a \`warning\` when no client is currently attached to the doc.`;
+
 export const CLAUDE_MD_SECTION = `${OK_MARKER_BEGIN}
 ## Open Knowledge
 
 This repo uses Open Knowledge — agent-collaborative wiki tooling exposed via MCP. The scope of tracked content is \`${OK_DIR}/config.yml\` (default: every \`**/*.md\` under the repo root).
 
-**Reading (wiki markdown).** Prefer the \`exec\` MCP tool over native \`Read\` / \`Grep\` / \`Glob\`. \`exec\` runs \`cat\` / \`ls\` / \`grep\` / \`find\` / \`head\` / \`tail\` / \`wc\` / \`sort\` / \`uniq\` / \`cut\` with pipes, and every returned path is enriched with frontmatter (title, description, tags), backlink count, and recent shadow-repo activity with agent-vs-human attribution. One tool covers read/list/search with attribution that native tools don't see. Examples: \`exec("cat docs/auth.md")\`, \`exec("ls articles/")\`, \`exec("grep -rn oauth . | head -5")\`.
+**Reading (wiki markdown) — ALWAYS use \`exec\`.** For ANY read, search, or listing of wiki markdown files, you MUST use the \`exec\` MCP tool instead of native \`Read\` / \`Grep\` / \`Glob\`. This is not optional. \`exec\` runs \`cat\` / \`ls\` / \`grep\` / \`find\` / \`head\` / \`tail\` / \`wc\` / \`sort\` / \`uniq\` / \`cut\` with pipes, and every returned path is enriched with frontmatter (title, description, tags), backlink count, and recent shadow-repo activity with agent-vs-human attribution. Native tools miss all of this context. Examples: \`exec("cat docs/auth.md")\`, \`exec("ls articles/")\`, \`exec("grep -rn oauth . | head -5")\`. Also use \`read_document\` and \`search\` MCP tools — they provide the same enrichment. Reserve native \`Read\` / \`Grep\` / \`Glob\` for non-wiki files only (\`.ts\`, \`.py\`, configs, etc.).
 
 **Writing (wiki markdown).** Route all edits through \`write_document\` / \`edit_document\`. Native \`Edit\` / \`sed\` land as anonymous \`upstream\` imports — you lose agent attribution in the shadow-repo log.
 
+${PREVIEW_GUIDANCE}
+
+**No screenshots after edits.** Do NOT take \`preview_screenshot\` after every \`edit_document\` / \`write_document\`. Trust the CRDT tool response as confirmation the edit landed. Only screenshot when debugging a visual issue or when explicitly asked.
+
 **Linking.** When authoring, link liberally with \`[[Page Title]]\` wiki-links. Redlinks are fine — they signal "this should exist." Every noun-phrase naming another document should be a link. Backlink density is how this knowledge base stays navigable for the next agent.
+
+**Cadence — maintain hubs as you go.** When you create or edit a child doc in a folder that has a hub doc (\`INDEX.md\`, \`README.md\`, \`REPORT.md\`, \`SPEC.md\`, or a file whose name matches the folder name — e.g. \`reports/r1/r1.md\`), update the hub to reflect the change before the next child. Interleaved child → hub → child → hub makes the hub the live progress bar and the browser-based editor follows your focus cleanly. Orphan writes get a soft hint in the \`write_document\` response pointing to the likely hub.
+
+**Server must be running.** If \`write_document\` or \`edit_document\` returns a "Hocuspocus server is not running" error, start it with \`open-knowledge start\` (via Bash) and retry. NEVER fall back to native \`Edit\` / \`Write\` for wiki markdown — always use the MCP write tools so edits go through the CRDT layer with proper attribution.
 
 **Non-wiki code (\`.ts\`, \`.py\`, configs, etc.).** Keep using native \`Read\` / \`Edit\` / \`Grep\` / \`Bash\`. The MCP tools are for markdown in \`content.include\`.
 ${OK_MARKER_END}`;
@@ -155,10 +194,8 @@ export interface RootInstructionResult {
 }
 
 /**
- * Append (or replace, with --force) the Open Knowledge section in the agent
- * instruction files at the project root. Handles CLAUDE.md + AGENTS.md,
- * deduping by realpath so a symlink (e.g. CLAUDE.md -> AGENTS.md) isn't
- * written twice.
+ * Append (or replace, with --force) the Open Knowledge section in the
+ * root AGENTS.md — the tool-agnostic agent instruction file.
  *
  * Behavior per file:
  *   - file missing            -> create it containing just the section
@@ -169,7 +206,7 @@ export function upsertRootInstructions(
   projectDir: string,
   force: boolean,
 ): RootInstructionResult[] {
-  const files = ['CLAUDE.md', AGENTS_FILENAME];
+  const files = [AGENTS_FILENAME];
   const seenCanonical = new Set<string>();
   const results: RootInstructionResult[] = [];
 

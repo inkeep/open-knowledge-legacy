@@ -1,6 +1,12 @@
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, normalizeDocName, textResult } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpGet,
+  normalizeDocName,
+  resolveServerUrl,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find all pages that a given page links to.',
@@ -10,7 +16,7 @@ export const DESCRIPTION = [
   '- `docName` — Source page docName, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
   server.tool(
     'get_forward_links',
     DESCRIPTION,
@@ -18,11 +24,12 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       docName: z.string().describe('Source page docName'),
     },
     async (args: { docName: string }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
       const result = await httpGet(
-        serverUrl,
+        url,
         `/api/forward-links?docName=${encodeURIComponent(normalized.docName)}`,
       );
       if (!result.ok) return textResult(`Error: ${result.error}`, true);

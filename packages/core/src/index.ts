@@ -68,7 +68,12 @@ export {
   type Scheduler,
 } from './bridge/index.ts';
 // Types
-export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';
+export type {
+  ActivityEntry,
+  AgentFocusEntry,
+  AwarenessState,
+  AwarenessUser,
+} from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
 export type {
   DiffLine,
