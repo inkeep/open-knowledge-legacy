@@ -15,6 +15,8 @@
 import { offset } from '@floating-ui/dom';
 import { DragHandle } from '@tiptap/extension-drag-handle-react';
 import type { Editor } from '@tiptap/react';
+import { getDescriptor } from '../registry/index.ts';
+import { createChildNode } from '../slash-command/component-items.ts';
 
 // Match existing drag-handle.ts positioning constants
 const HANDLE_HEIGHT = 20;
@@ -55,6 +57,8 @@ export function SideMenu({ editor }: SideMenuProps) {
           if (el) {
             el.setAttribute('data-hovered-pos', String(pos));
             el.setAttribute('data-hovered-size', String(node.nodeSize));
+            el.setAttribute('data-hovered-component', (node.attrs?.componentName as string) || '');
+            el.setAttribute('data-hovered-content-size', String(node.content.size));
           }
         }
       }}
@@ -95,8 +99,29 @@ export function SideMenu({ editor }: SideMenuProps) {
           if (!posStr || !sizeStr) return;
           const pos = Number.parseInt(posStr, 10);
           const size = Number.parseInt(sizeStr, 10);
-          const insertPos = pos + size;
 
+          // Context-aware insertion: if hovered block is a container
+          // (descriptor has emptyChildName), insert a child INSIDE rather
+          // than a paragraph after. Derived from descriptor metadata —
+          // no component-specific logic.
+          const componentName = menuEl.getAttribute('data-hovered-component');
+          const contentSizeStr = menuEl.getAttribute('data-hovered-content-size');
+          if (componentName) {
+            const descriptor = getDescriptor(componentName);
+            if (descriptor.emptyChildName) {
+              const contentSize = Number.parseInt(contentSizeStr || '0', 10);
+              const insertPos = pos + 1 + contentSize;
+              editor
+                .chain()
+                .focus()
+                .insertContentAt(insertPos, createChildNode(descriptor.emptyChildName))
+                .run();
+              return;
+            }
+          }
+
+          // Default: insert paragraph + "/" after the block (non-container)
+          const insertPos = pos + size;
           editor
             .chain()
             .focus()

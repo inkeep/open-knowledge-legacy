@@ -17,6 +17,7 @@ import React, { type ErrorInfo, type ReactNode, useState } from 'react';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { markUserTyping } from '../observers.ts';
 import { getDescriptor } from '../registry/index.ts';
+import { createChildNode } from '../slash-command/component-items.ts';
 import { getYDoc } from '../utils/get-ydoc.ts';
 
 /**
@@ -188,6 +189,27 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           />
         </Comp>
       </ComponentErrorBoundary>
+
+      {/* "Add child" button for containers (FR-16a). Derived from descriptor.emptyChildName —
+          no component-specific logic. Empty containers show a prominent placeholder;
+          non-empty containers show a subtle "+" that appears on hover. */}
+      {descriptor.emptyChildName && (
+        <button
+          type="button"
+          contentEditable={false}
+          className={node.childCount === 0 ? 'jsx-empty-child-placeholder' : 'jsx-add-child-button'}
+          onClick={() => {
+            const childJSON = createChildNode(descriptor.emptyChildName as string);
+            const p = typeof getPos === 'function' ? (getPos() ?? 0) : 0;
+            const insertPos = p + 1 + node.content.size;
+            editor.chain().focus().insertContentAt(insertPos, childJSON).run();
+          }}
+        >
+          {node.childCount === 0
+            ? `Click to add a ${(descriptor.emptyChildName as string).toLowerCase()}`
+            : `+ Add ${descriptor.emptyChildName}`}
+        </button>
+      )}
 
       {/* PropPanel: auto-generated controls. Suppressed when no editable props (FR-11/ES01).
           FR-13a: onMouseDown stopPropagation prevents node deselect on input click. */}

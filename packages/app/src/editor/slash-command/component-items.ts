@@ -10,7 +10,7 @@
 
 import type { Editor } from '@tiptap/react';
 import { Box, type LucideIcon } from 'lucide-react';
-import { getRegisteredDescriptors } from '../registry/index.ts';
+import { getDescriptor, getRegisteredDescriptors } from '../registry/index.ts';
 import type { JsxComponentDescriptor } from '../registry/types.ts';
 import type { SlashCommandItem } from './items';
 
@@ -19,7 +19,7 @@ import type { SlashCommandItem } from './items';
  * Users expect "insert Callout → see a Callout" — without defaults,
  * newly-inserted components render empty or broken.
  */
-function getDefaultProps(descriptor: JsxComponentDescriptor): Record<string, unknown> {
+export function getDefaultProps(descriptor: JsxComponentDescriptor): Record<string, unknown> {
   const defaults: Record<string, unknown> = {};
   for (const prop of descriptor.props) {
     if (prop.type === 'reactnode') continue;
@@ -39,30 +39,35 @@ function getDefaultProps(descriptor: JsxComponentDescriptor): Record<string, unk
 }
 
 /**
+ * Build the PM content JSON for a component node with default props.
+ * Used by: slash-command insertion, SideMenu "+" container child insertion,
+ * empty-container placeholder, and "add child" button — single source of truth.
+ * Derives everything from the descriptor; zero component-specific logic.
+ */
+export function createChildNode(childName: string): Record<string, unknown> {
+  const childDesc = getDescriptor(childName);
+  const defaultProps = getDefaultProps(childDesc);
+  return {
+    type: 'jsxComponent',
+    attrs: {
+      componentName: childDesc.name,
+      kind: 'element',
+      attributes: [],
+      sourceRaw: '',
+      sourceDirty: true,
+      props: defaultProps,
+    },
+    content: childDesc.hasChildren ? [{ type: 'paragraph' }] : undefined,
+  };
+}
+
+/**
  * Create the slash-command insertion command for a component.
  * Inserts a jsxComponent PM node with structured attrs + default props.
  */
 function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Editor) => void {
   return (editor: Editor) => {
-    const defaultProps = getDefaultProps(descriptor);
-    const content = descriptor.hasChildren ? [{ type: 'paragraph' }] : undefined;
-
-    editor
-      .chain()
-      .focus()
-      .insertContent({
-        type: 'jsxComponent',
-        attrs: {
-          componentName: descriptor.name,
-          kind: 'element',
-          attributes: [],
-          sourceRaw: '',
-          sourceDirty: true,
-          props: defaultProps,
-        },
-        content,
-      })
-      .run();
+    editor.chain().focus().insertContent(createChildNode(descriptor.name)).run();
   };
 }
 
