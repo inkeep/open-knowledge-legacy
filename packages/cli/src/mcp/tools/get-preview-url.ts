@@ -76,7 +76,7 @@ export async function buildGetPreviewUrlResult(
   if (!included) {
     return {
       ok: false,
-      error: `Error: docName "${docName}" is not inside content.include globs (${deps.config.content.include.join(', ')}). This tool only returns URLs for wiki-tracked docs.`,
+      error: `Error: docName "${docName}" is not inside content.include globs (${deps.config.content.include.join(', ')}). This tool only returns URLs for docs that match those globs.`,
     };
   }
 

@@ -52,11 +52,21 @@ export function buildInstructions(config: Config): string {
 - **Include globs:** ${include.map((p) => `\`${p}\``).join(', ')}
 - **Exclude globs:** ${excludeLine}
 
+**Path contract (\`config.yml\`):** \`.open-knowledge/config.yml\` (plus optional \`~/.open-knowledge/config.yml\`, with CLI/env overrides) owns the \`content\` keys. The table above is **this MCP session's resolved view** of that contract — same rules, no guessing from folder names. A file is an Open Knowledge document iff it lives under **Content directory**, matches at least one **Include glob**, and is not removed by **Exclude globs** or \`.gitignore\`.
+
 Paths in \`exec\` commands are resolved relative to the content directory. The sandbox prevents paths escaping it.
 
-## Navigation — prefer \`exec\` for all wiki reads
+**Default rule:** with the usual \`**/*.md\` + \`**/*.mdx\` globs from repo root, **every** such file under the content directory is an Open Knowledge document unless \`.gitignore\` or \`content.exclude\` drops it. Folder names (\`specs/\`, \`reports/\`, …) do not matter. If \`content.include\` was narrowed, only matching paths use \`exec\`.
 
-**Prefer \`exec\` over native \`Read\`/\`Grep\`/\`Glob\` and over \`read_document\`/\`search\` for all wiki operations.** \`exec\` provides the same enrichment as the typed tools (frontmatter, backlink count, shadow-repo activity with agent-vs-human attribution, project git history) plus bash composability (pipes, \`head\`, \`find\`). One tool covers reading, listing, grepping, and combining them — no per-operation tool switch.
+## Navigation — \`exec\` is **mandatory** for Open Knowledge \`.md\` / \`.mdx\` (this server is registered)
+
+**STOP:** Do not use the host IDE's \`Read\`, \`Grep\`, or \`Glob\` on in-scope \`.md\` / \`.mdx\` — use \`exec\` (or typed \`read_document\` / \`search\` when you need fixed \`structuredContent\`). Native file tools skip frontmatter, backlinks, shadow-repo activity, and project git history; reserve them for **source code and non-markdown** paths.
+
+**MCP clients differ:** Your agent host may expose these tools directly or only through its MCP integration (server name from \`tools/list\`, user-chosen label). **That still counts as this server being available.** Invoke \`exec\` / \`search\` / \`read_document\` the way **your product's docs** describe — not native \`Grep\` on in-scope markdown. Missing a top-level symbol named \`exec\` is not an excuse.
+
+\`exec\` provides the same enrichment as the typed tools plus bash composability (pipes, \`head\`, \`find\`). One tool covers reading, listing, grepping, and combining them. **Escape hatch:** only if this MCP server is **not** registered for the workspace, or after an MCP **call** failed — say \`Open Knowledge MCP unavailable:\`. Never use the hatch to skip trying MCP first.
+
+For paths **outside** the include globs above, use native tools.
 
 Examples:
 
@@ -69,12 +79,12 @@ Allowlist (read-only): \`cat\`, \`ls\`, \`grep\`, \`find\`, \`head\`, \`tail\`, 
 
 ### Scope searches — \`grep\` and \`find\` can be slow if unscoped
 
-Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real repo includes source code, build output, and dependencies. For wiki reads, scope deliberately:
+Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real repo includes source code, build output, and dependencies. For reads inside the content tree, scope deliberately:
 
 - **Filter to markdown:** \`grep -rn TERM --include="*.md" <dir>\` — skips every non-md file.
 - **Scope to a known knowledge dir:** \`grep -rn TERM reports/ specs/\` (or whatever folders the project uses) beats \`grep -rn TERM .\`.
 - **Bail early:** pipe through \`| head -20\` for bounded output. The server waits for the pipeline to finish before returning, so unscoped commands block on the slowest stage.
-- **Existence vs. enumeration:** "does X exist in any wiki doc?" is \`grep -rl PATTERN <dir>\` (list matching files, unbounded) — NOT \`grep -rn PATTERN <dir> | head -N\`. When \`head\` truncates, alphabetically-earlier files dominate the output and later files silently go missing. The server surfaces a banner when \`head\` / \`tail\` hits its cap, but the fix is to pick the right command up front.
+- **Existence vs. enumeration:** "does X exist in any tracked doc?" is \`grep -rl PATTERN <dir>\` (list matching files, unbounded) — NOT \`grep -rn PATTERN <dir> | head -N\`. When \`head\` truncates, alphabetically-earlier files dominate the output and later files silently go missing. The server surfaces a banner when \`head\` / \`tail\` hits its cap, but the fix is to pick the right command up front.
 - **Auto-prune (built in):** the server transparently adds \`--exclude-dir=\` for \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`.next\`, \`.turbo\`, \`coverage\`, \`.claude\`, etc. on recursive \`grep\`, and \`-not -path\` equivalents on \`find\`. This saves you from remembering them — but explicit scoping via \`--include\` or a narrower path is still dramatically faster on monorepos.
 
 ### Why \`exec\` over typed tools
@@ -83,7 +93,7 @@ Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real
 
 ## Writing
 
-Agent writes to wiki markdown **must** go through the \`write_document\` / \`edit_document\` MCP tools — never \`exec\` (which is read-only) and never native \`Edit\` / \`sed\`. Routing writes through the server is what captures agent-vs-human attribution in the shadow repo. Writes via other paths land as anonymous \`upstream\` imports and lose attribution.
+Agent writes to in-scope \`.md\` / \`.mdx\` (paths under \`content.include\`) **must** go through the \`write_document\` / \`edit_document\` MCP tools — never \`exec\` (which is read-only) and never native \`Edit\` / \`sed\`. Routing writes through the server is what captures agent-vs-human attribution in the shadow repo. Writes via other paths land as anonymous \`upstream\` imports and lose attribution.
 
 ${PREVIEW_GUIDANCE}
 
@@ -111,7 +121,7 @@ When \`write_document\` creates a doc with zero incoming backlinks and a hub can
 
 ## Frontmatter conventions
 
-Every \`.md\` file in the knowledge base should have YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended). Folder-level frontmatter was deprecated — per-file frontmatter is the only authored metadata surface.
+Every in-scope \`.md\` / \`.mdx\` file (per the include globs above) should have YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended). Folder-level frontmatter was deprecated — per-file frontmatter is the only authored metadata surface.
 
 ## Tools
 
