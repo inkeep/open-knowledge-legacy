@@ -578,8 +578,15 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
         assertBridgeInvariant(c.ytext, c.fragment);
       }
 
-      // Oracle (c): agent-origin Items preserved
+      // Oracle (c): agent-origin Items preserved + no origin laundering (FR-6).
       for (const probe of agentProbes) {
+        // FR-6 rigor: assert every captured origin is AGENT_WRITE_ORIGIN —
+        // no user-origin Items (ORIGIN_TREE_TO_TEXT, undefined) leaked into
+        // the agent UM. Uses the 'stack-item-added' event-based tracking
+        // from createItemOriginProbe (Y.UndoManager StackItem has no public
+        // .origin field; the event is the only public API that exposes it).
+        probe.assertOnlyTrackedOrigins();
+
         if (probe.undoStackLength() > 0) {
           probe.recordCapture();
           probe.assertCaptureIntact();

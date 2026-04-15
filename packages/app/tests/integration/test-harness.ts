@@ -653,6 +653,19 @@ export interface ItemOriginProbe {
   assertCaptureIntact(label?: string): void;
   capturedContent(): string;
   undoStackLength(): number;
+  /** Origins observed at capture time via `'stack-item-added'` events.
+   *  Returns the set of distinct tx.origin values the UM has tracked.
+   *  Empty if no items have been captured yet. */
+  getCapturedOrigins(): ReadonlySet<unknown>;
+  /** Assert that every captured origin is in the `trackedOrigins` set
+   *  provided at construction. Throws if a stray origin appears — which
+   *  would indicate origin-laundering (a non-tracked origin's Items ended
+   *  up in the UM stack, e.g., user content under AGENT_WRITE_ORIGIN).
+   *
+   *  Safe to call when no items have been captured (silently returns).
+   *  Call AFTER convergence, not mid-sequence — the UM may legitimately
+   *  capture items from a tracked origin that hasn't fully settled yet. */
+  assertOnlyTrackedOrigins(): void;
   cleanup(): void;
 }
 
@@ -671,11 +684,23 @@ export function createItemOriginProbe(
   ytext: Y.Text,
   opts: { trackedOrigins: Array<LocalTransactionOrigin>; captureTimeout?: number },
 ): ItemOriginProbe {
+  const trackedSet = new Set(opts.trackedOrigins);
   const um = new Y.UndoManager(ytext, {
-    trackedOrigins: new Set(opts.trackedOrigins),
+    trackedOrigins: trackedSet,
     captureTimeout: opts.captureTimeout ?? 0,
   });
   const captures = new Map<string, { stackLength: number; content: string }>();
+
+  // FR-6 origin-laundering detection: accumulate distinct tx.origin values
+  // observed at capture time. Y.UndoManager's StackItem has no public
+  // `.origin` field (verified from UndoManager.d.ts); the only public API
+  // that exposes origin is the `'stack-item-added'` event at capture time.
+  const capturedOrigins = new Set<unknown>();
+  const onStackItemAdded = (event: { origin: unknown }) => {
+    capturedOrigins.add(event.origin);
+  };
+  um.on('stack-item-added', onStackItemAdded);
+
   return {
     recordCapture(label = 'default') {
       captures.set(label, {
@@ -695,7 +720,26 @@ export function createItemOriginProbe(
     },
     capturedContent: () => ytext.toString(),
     undoStackLength: () => um.undoStack.length,
-    cleanup: () => um.destroy(),
+    getCapturedOrigins: () => capturedOrigins,
+    assertOnlyTrackedOrigins() {
+      for (const origin of capturedOrigins) {
+        if (!trackedSet.has(origin as LocalTransactionOrigin)) {
+          const originLabel =
+            typeof origin === 'object' && origin !== null && 'context' in origin
+              ? ((origin as { context?: { origin?: string } }).context?.origin ?? 'unknown-object')
+              : String(origin);
+          throw new Error(
+            `Origin probe: captured a stray origin '${originLabel}' not in trackedOrigins set. ` +
+              `This indicates origin-laundering — Items under an untracked origin ended up ` +
+              `in the UM stack. trackedOrigins: [${opts.trackedOrigins.map((o) => (o as { context?: { origin?: string } }).context?.origin ?? '?').join(', ')}]`,
+          );
+        }
+      }
+    },
+    cleanup() {
+      um.off('stack-item-added', onStackItemAdded);
+      um.destroy();
+    },
   };
 }
 
