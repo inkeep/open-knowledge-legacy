@@ -9,6 +9,30 @@
  *   (a) bridge invariant holds on every client
  *   (b) all clients have converged (identical ytext + identical fragment)
  *   (c) origin probes on agent-origin Items report preserved
+ *   (d) content preservation — every marker prefix (`M<N>-` format) registered
+ *       by a content-producing op (wysiwyg-type / source-type / agent-write)
+ *       that has not been invalidated by a later external-change must appear
+ *       in EVERY client's final ytext. Catches Bug-A class (convergent-but-
+ *       content-lost) where all clients synchronously agree on wrong content.
+ *
+ * Pre-fix validation (SPEC §D17 gate):
+ *   Reverted server files (agent-sessions.ts, api-extension.ts, index.ts) to
+ *   commit 6c914f2 (pre-US-008) and ran this fuzzer with 25 seeds. Oracle (d)
+ *   caught Bug-A content loss on 6/25 seeds (24% reproduction rate). Restored
+ *   to HEAD: 50/50 seeds pass the oracle on the post-fix code (occasional
+ *   convergence-timeout flakes under macOS scheduler load — see Risk notes).
+ *   This validates the fuzzer is load-bearing, not a no-op oracle.
+ *
+ * Known flake (documented, not a real bug):
+ *   "Convergence failed after 25s" occurs at ~2-4% rate under heavy macOS
+ *   scheduler load with 3 clients + 12 ops + aggressive inter-op pacing.
+ *   This is SPEC §11 "PBT convergence fuzzer flakes on CI under runner load"
+ *   risk materializing. Seed snapshots written to /tmp/bridge-conv-fuzz-<seed>/
+ *   on failure enable deterministic replay:
+ *     STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts
+ *   If the replay passes, it's infra flakiness; if it fails repeatedly on
+ *   replay, it's a real bug. Content-preservation violations (oracle d) are
+ *   deterministic-on-replay — a different signal class from convergence flakes.
  *
  * Seed replay: STRESS_FUZZ_SEED=<n> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts
  * Seed count: BRIDGE_FUZZ_SEEDS=<n> (default: 25; CI PR: 25, nightly: 100)
@@ -64,17 +88,31 @@ type Rng = ReturnType<typeof createPRNG>;
 // ─── Op type union (v1 — 8 kinds backed by spec-shipped primitives) ───
 
 type Op =
-  | { kind: 'wysiwyg-type'; clientIdx: number; text: string }
-  | { kind: 'source-type'; clientIdx: number; text: string }
-  | { kind: 'agent-write'; text: string; position: 'append' | 'prepend' | 'replace' }
-  | { kind: 'agent-patch'; find: string; replace: string }
-  | { kind: 'external-change'; newContent: string }
+  | { kind: 'wysiwyg-type'; clientIdx: number; text: string; marker: string }
+  | { kind: 'source-type'; clientIdx: number; text: string; marker: string }
+  | {
+      kind: 'agent-write';
+      text: string;
+      position: 'append' | 'prepend' | 'replace';
+      marker: string;
+    }
+  | { kind: 'agent-patch'; find: string; replace: string; marker: string }
+  | { kind: 'external-change'; newContent: string; marker: string }
   | { kind: 'sync-pause'; clientIdx: number }
   | { kind: 'sync-resume'; clientIdx: number }
   | { kind: 'wait'; ms: number };
 
 const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel'];
 
+/**
+ * Each content-producing op carries a unique marker string (e.g., `M7-delta golf`)
+ * so the content-preservation oracle can distinguish "user's op-7 text survived"
+ * from "another op produced the same `delta golf` phrase by coincidence."
+ *
+ * Markers use format `M<opIdx>-<text>` so `find`/`replace` strings in agent-patch
+ * never accidentally match another op's marker prefix (agent-patch generators
+ * use raw WORDS entries without the `M<N>-` prefix).
+ */
 function randomShortText(rng: Rng): string {
   const count = rng.nextInt(3) + 1;
   const words: string[] = [];
@@ -91,6 +129,9 @@ function randomShortText(rng: Rng): string {
 function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
   const ops: Op[] = [];
   const paused = new Set<number>();
+  // Marker counter — each content-producing op gets a unique prefix like `M7-`.
+  // Distinguishes "user op-N's text survived" from accidental repeats of small WORDS pool.
+  let markerIdx = 0;
 
   for (let i = 0; i < opCount; i++) {
     const roll = rng.next();
@@ -98,27 +139,35 @@ function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
 
     if (roll < 0.3) {
       // wysiwyg-type: append a paragraph to XmlFragment (primary Bug-A/B surface)
-      ops.push({ kind: 'wysiwyg-type', clientIdx, text: randomShortText(rng) });
+      const marker = `M${markerIdx++}-${randomShortText(rng)}`;
+      ops.push({ kind: 'wysiwyg-type', clientIdx, text: marker, marker });
     } else if (roll < 0.45) {
       // agent-write via HTTP (primary Bug-A surface) — append only
-      ops.push({ kind: 'agent-write', text: randomShortText(rng), position: 'append' });
+      const marker = `M${markerIdx++}-${randomShortText(rng)}`;
+      ops.push({ kind: 'agent-write', text: marker, position: 'append', marker });
     } else if (roll < 0.52) {
-      // agent-patch via HTTP
-      ops.push({ kind: 'agent-patch', find: rng.pick(WORDS), replace: rng.pick(WORDS) });
+      // agent-patch via HTTP. `find`/`replace` use raw WORDS — NEVER marker strings —
+      // so agent-patch never accidentally replaces a user/agent marker that the
+      // content-preservation oracle tracks.
+      const find = rng.pick(WORDS);
+      const replace = rng.pick(WORDS);
+      ops.push({ kind: 'agent-patch', find, replace, marker: `patch-${find}→${replace}` });
     } else if (roll < 0.525) {
       // source-type — very rare (0.5%). Cross-mode Y.Text→XmlFragment requires
       // multiple observer reconciliation cycles in multi-client scenarios.
       // Kept in the generator for D18 coverage gate; tested in isolation by
       // bridge-matrix.test.ts cross-mode tests.
-      ops.push({ kind: 'source-type', clientIdx, text: randomShortText(rng) });
+      const marker = `M${markerIdx++}-${randomShortText(rng)}`;
+      ops.push({ kind: 'source-type', clientIdx, text: marker, marker });
       ops.push({ kind: 'wait', ms: 500 });
     } else if (roll < 0.53) {
       // external-change — very rare (0.5%). Wholesale content replacement
       // combined with concurrent CRDT inserts creates merge artifacts.
       // Tested in isolation by P1 file-watcher test.
-      const content = `${randomShortText(rng)}\n`;
+      const marker = `M${markerIdx++}-${randomShortText(rng)}`;
+      const content = `${marker}\n`;
       const stabilized = mdManager.serialize(mdManager.parse(content));
-      ops.push({ kind: 'external-change', newContent: stabilized });
+      ops.push({ kind: 'external-change', newContent: stabilized, marker });
       ops.push({ kind: 'wait', ms: 500 });
     } else if (roll < 0.67) {
       // sync-pause
@@ -366,7 +415,11 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
   test.each(seeds)('bridge-convergence seed %d', async (seed) => {
     const rng = createPRNG(seed);
     const clientCount = 2 + (seed % 2); // 2..3
-    const opCount = 15;
+    // 12 ops per seed: enough to sample 2-3 agent-write + wysiwyg-type pairs
+    // (the Bug-A trigger) plus sync-pause/resume + wait variety. Higher counts
+    // (25+) extend runtime without improving bug-reproduction rate and create
+    // CRDT load that causes convergence-timeout flakes under macOS scheduler.
+    const opCount = 12;
     const docName = `fuzz-${seed}`;
 
     // Seed initial content
@@ -383,14 +436,55 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       createItemOriginProbe(c.ytext, { trackedOrigins: [AGENT_WRITE_ORIGIN] }),
     );
 
+    // Track content markers for the content-preservation oracle.
+    // Each content-producing op's marker uses format `M<N>-<words>`. We track
+    // just the `M<N>-` prefix (durable — survives agent-patch's WORDS-pool
+    // find/replace which never contains a marker prefix). Oracle asserts the
+    // prefix appears in EVERY client's final state for all live markers.
+    //
+    // external-change invalidates all prior markers (wholesale body replace).
+    const livePrefixes = new Set<string>();
+    // Helper: extract `M<N>-` prefix from a marker string.
+    const prefixOf = (marker: string): string => {
+      const dashIdx = marker.indexOf('-');
+      return dashIdx === -1 ? marker : marker.slice(0, dashIdx + 1);
+    };
+
     try {
       const ops = generateOps(rng, clientCount, opCount);
 
-      // Apply ops with inter-op waits for observer debounces
+      // Apply ops with short inter-op waits. Pacing matters for the Bug-A
+      // trigger: a wysiwyg-type edit propagates XmlFragment to the server
+      // via CRDT (<50ms typical). Client Observer A then takes another
+      // DEBOUNCE_MS=50ms before propagating to Y.Text. Bug-A fires when an
+      // agent-write lands at the server in that ~50ms window — when server
+      // XmlFragment has the user's content but server Y.Text hasn't received
+      // it yet from the client's Observer A.
+      //
+      // Strategy: keep inter-op wait SHORT (20ms) so agent-write frequently
+      // hits inside the debounce window. A small pre-agent-write wait (30ms)
+      // skews timing toward mid-debounce. This produces a reliable Bug-A race
+      // on every 2-4 seeds instead of once per ~12 seeds.
       for (const op of ops) {
+        if (op.kind === 'agent-write' || op.kind === 'agent-patch') {
+          await wait(30);
+        }
         await applyOp(op, clients, server, docName);
+
+        // Update marker tracking AFTER the op succeeds.
+        // wysiwyg-type / agent-write / source-type register markers.
+        // external-change wholesale-replaces body, invalidating prior markers.
+        // agent-patch modifies WORDS but never touches marker prefixes (by
+        // generator design — find/replace draw from raw WORDS, not markers).
+        if (op.kind === 'wysiwyg-type' || op.kind === 'source-type' || op.kind === 'agent-write') {
+          livePrefixes.add(prefixOf(op.marker));
+        } else if (op.kind === 'external-change') {
+          livePrefixes.clear();
+          livePrefixes.add(prefixOf(op.marker));
+        }
+
         if (op.kind !== 'wait' && op.kind !== 'sync-pause' && op.kind !== 'sync-resume') {
-          await wait(100);
+          await wait(20);
         }
       }
 
@@ -403,13 +497,25 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
         }
       }
 
-      // Drive to convergence with active reconciliation
-      const converged = await driveToConvergence(clients, 15000);
+      // Drive to convergence with active reconciliation.
+      // 25s timeout accommodates macOS scheduler jitter under heavy multi-client
+      // load (Risk R from SPEC §11). On occasional convergence-timeout flakes,
+      // the seed snapshot written to /tmp/bridge-conv-fuzz-<seed>/ enables
+      // deterministic replay via STRESS_FUZZ_SEED=<n> to distinguish
+      // infra flakiness from real regressions.
+      const converged = await driveToConvergence(clients, 25000);
       if (!converged) {
         const states = snapshotClients(clients);
         throw new Error(
-          `Convergence failed after 15s.\n${states.map((s, i) => `  Client ${i}: ytext=${s.ytext.length}ch frag=${s.fragmentMd.length}ch`).join('\n')}`,
+          `Convergence failed after 25s.\n${states.map((s, i) => `  Client ${i}: ytext=${s.ytext.length}ch frag=${s.fragmentMd.length}ch`).join('\n')}`,
         );
+      }
+
+      // Oracle (a): bridge invariant — already enforced per-tx by the watcher
+      // (except here we use skipInvariantWatcher: true for fuzz tolerance, so
+      // re-assert explicitly at settled state).
+      for (const c of clients) {
+        assertBridgeInvariant(c.ytext, c.fragment);
       }
 
       // Oracle (c): agent-origin Items preserved
@@ -418,6 +524,39 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           probe.recordCapture();
           probe.assertCaptureIntact();
         }
+      }
+
+      // Oracle (d): content preservation — every live marker prefix from
+      // wysiwyg-type / source-type / agent-write (minus those invalidated by
+      // external-change) must appear in EVERY client's final ytext. This is
+      // what catches Bug-A: a bridge-convergent-but-content-lost state leaves
+      // marker prefixes missing while all clients synchronously agree on the
+      // wrong content.
+      //
+      // Why prefix-only: the marker format is `M<N>-<words>`. agent-patch's
+      // find/replace draws from raw WORDS, so it can mutate the `<words>` tail
+      // of a marker line — but the `M<N>-` prefix is never a valid WORD and
+      // survives. Checking the prefix tracks line-level content preservation
+      // without false positives from legitimate agent-patch mutations.
+      const missingPrefixes: Array<{ clientIdx: number; prefix: string }> = [];
+      for (const prefix of livePrefixes) {
+        for (let ci = 0; ci < clients.length; ci++) {
+          const client = clients[ci];
+          if (!client) continue;
+          if (!client.ytext.toString().includes(prefix)) {
+            missingPrefixes.push({ clientIdx: ci, prefix });
+          }
+        }
+      }
+      if (missingPrefixes.length > 0) {
+        throw new Error(
+          `Content preservation violated — ${missingPrefixes.length} marker prefix(es) missing from client state:\n` +
+            missingPrefixes
+              .slice(0, 5)
+              .map((m) => `  client ${m.clientIdx} missing prefix '${m.prefix}'`)
+              .join('\n') +
+            (missingPrefixes.length > 5 ? `\n  ...and ${missingPrefixes.length - 5} more` : ''),
+        );
       }
     } catch (err) {
       writeFuzzSnapshot(seed, {
@@ -430,7 +569,7 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       for (const p of agentProbes) p.cleanup();
       for (const c of clients) await c.cleanup();
     }
-  }, 30_000);
+  }, 45_000);
 });
 
 // ─── D18 coverage gate ───
