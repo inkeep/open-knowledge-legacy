@@ -9,6 +9,7 @@ import {
   ZapIcon,
 } from 'lucide-react';
 import Link from 'next/link';
+import { EditorDemo } from './editor-demo';
 import { StickyShowcase } from './sticky-showcase';
 
 export default function HomePage() {
@@ -16,6 +17,7 @@ export default function HomePage() {
     <main className="font-[family-name:var(--font-dm-sans)] selection:bg-[var(--slide-accent)]/20">
       <Hero />
       <StickyShowcase />
+      <EditorDemo />
       <HowItWorks />
       <Features />
       <Inspiration />
