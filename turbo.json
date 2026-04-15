@@ -39,62 +39,14 @@
         "../server/src/**/*.ts"
       ]
     },
-    "test:stress:s1-s8-s9": {
+    "test:stress:server-authoritative": {
       "dependsOn": [],
       "cache": true,
       "inputs": [
         "src/editor/**/*.ts",
         "src/editor/**/*.tsx",
-        "tests/stress/observers.stress.s1-s8-s9.test.ts",
-        "tests/stress/synthetic.ts",
-        "../core/src/**/*.ts",
-        "../server/src/**/*.ts"
-      ]
-    },
-    "test:stress:s2": {
-      "dependsOn": [],
-      "cache": true,
-      "inputs": [
-        "src/editor/**/*.ts",
-        "src/editor/**/*.tsx",
-        "tests/stress/observers.stress.s2.test.ts",
-        "tests/stress/synthetic.ts",
-        "../core/src/**/*.ts",
-        "../server/src/**/*.ts"
-      ]
-    },
-    "test:stress:s4": {
-      "dependsOn": [],
-      "cache": true,
-      "inputs": [
-        "src/editor/**/*.ts",
-        "src/editor/**/*.tsx",
-        "tests/stress/observers.stress.s4.test.ts",
-        "tests/stress/synthetic.ts",
-        "../core/src/**/*.ts",
-        "../server/src/**/*.ts"
-      ]
-    },
-    "test:stress:s5-s6": {
-      "dependsOn": [],
-      "cache": true,
-      "inputs": [
-        "src/editor/**/*.ts",
-        "src/editor/**/*.tsx",
-        "tests/stress/observers.stress.s5-s6.test.ts",
-        "tests/stress/synthetic.ts",
-        "../core/src/**/*.ts",
-        "../server/src/**/*.ts"
-      ]
-    },
-    "test:fuzz": {
-      "dependsOn": [],
-      "cache": true,
-      "inputs": [
-        "src/editor/**/*.ts",
-        "src/editor/**/*.tsx",
-        "tests/stress/observers.fuzz.test.ts",
-        "tests/stress/synthetic.ts",
+        "tests/stress/server-authoritative-stress.test.ts",
+        "tests/integration/test-harness.ts",
         "../core/src/**/*.ts",
         "../server/src/**/*.ts"
       ]

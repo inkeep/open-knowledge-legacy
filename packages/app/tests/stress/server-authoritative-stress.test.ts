@@ -207,11 +207,20 @@ describe('server-authoritative stress (US-013)', () => {
       }
 
       // ── Convergence phase: wait for all edits to propagate ──
-      // 25s timeout: 5 clients with ~90 accumulated edits need the full
+      // 60s timeout: 5 clients with ~90 accumulated edits need the full
       // Observer A debounce (50ms) + Observer B typing-defer (300ms) +
       // CRDT WebSocket propagation chain to settle across all peers.
       // The tickle loop forces Observer A on lagging clients.
-      const converged = await driveToConvergence(clients, 25_000);
+      //
+      // Timeout is 60s (not 25s) because this test runs under
+      // `turbo --concurrency=100%` in `check:full:parallel`, competing with
+      // 14 other turbo tasks for CPU. Under contention, convergence time
+      // can easily 2-3× the isolated-run time. In isolated runs this
+      // converges in ~1.5s; under full parallel load it may take 30-50s —
+      // still a bounded wall-clock, but we need headroom. A test that's
+      // genuinely non-converging would hang indefinitely (livelock),
+      // which 60s still catches.
+      const converged = await driveToConvergence(clients, 60_000);
 
       if (converged === null) {
         // Diagnostic: log per-client state for debugging
@@ -247,5 +256,5 @@ describe('server-authoritative stress (US-013)', () => {
     } finally {
       for (const c of clients) await c.cleanup();
     }
-  }, 90_000);
+  }, 120_000);
 });
