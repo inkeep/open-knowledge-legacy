@@ -34,6 +34,7 @@
     "@clack/prompts": "^1.2.0",
     "@hocuspocus/provider": "4.0.0-rc.1",
     "@modelcontextprotocol/sdk": "^1.28.0",
+    "@napi-rs/keyring": "^1.2.0",
     "chokidar": "^5.0.0",
     "cli-boxes": "^4.0.1",
     "commander": "^14.0.0",
