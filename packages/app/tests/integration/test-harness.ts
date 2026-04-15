@@ -26,7 +26,10 @@ import { join } from 'node:path';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager, prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
 import {
+  AGENT_WRITE_ORIGIN,
   createServer,
+  FILE_WATCHER_ORIGIN,
+  ROLLBACK_ORIGIN,
   type ServerInstance,
   type ServerOptions,
 } from '@inkeep/open-knowledge-server';
@@ -35,7 +38,12 @@ import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
-import { type Scheduler, setupObservers } from '../../src/editor/observers';
+import {
+  ORIGIN_TEXT_TO_TREE,
+  ORIGIN_TREE_TO_TEXT,
+  type Scheduler,
+  setupObservers,
+} from '../../src/editor/observers';
 
 // ─── Shared instances (created once, reused across all tests) ───
 
@@ -158,7 +166,17 @@ export interface TestClient {
   docName: string;
 }
 
-export async function createTestClient(port: number, docName?: string): Promise<TestClient> {
+export interface CreateTestClientOptions {
+  /** Skip attaching the bridge invariant watcher. Use for tests that
+   *  deliberately drive divergence (e.g., Bug-D skip-guarded test). */
+  skipInvariantWatcher?: boolean;
+}
+
+export async function createTestClient(
+  port: number,
+  docName?: string,
+  options?: CreateTestClientOptions,
+): Promise<TestClient> {
   const resolvedDocName = docName ?? `test-${crypto.randomUUID()}`;
 
   const doc = new Y.Doc();
@@ -182,6 +200,11 @@ export async function createTestClient(port: number, docName?: string): Promise<
     schema,
   });
 
+  // FR-11: attach bridge invariant watcher by default
+  const watcherDetach = options?.skipInvariantWatcher
+    ? undefined
+    : attachBridgeInvariantWatcher(doc);
+
   return {
     doc,
     ytext,
@@ -189,6 +212,7 @@ export async function createTestClient(port: number, docName?: string): Promise<
     provider,
     docName: resolvedDocName,
     cleanup: async () => {
+      watcherDetach?.();
       observerCleanup();
       // R9: unload the per-test doc on the server to prevent memory growth.
       // Best-effort — if the server is already shutting down or the network
@@ -407,6 +431,102 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
     metaMap,
     activityMap,
     connectionCount,
+  };
+}
+
+// ─── Bridge invariant watcher (FR-11) ───
+
+/**
+ * Enforcing origins for the bridge invariant watcher. Includes both string
+ * origins (ORIGIN_TREE_TO_TEXT, ORIGIN_TEXT_TO_TREE) and LocalTransactionOrigin
+ * objects (AGENT_WRITE_ORIGIN, FILE_WATCHER_ORIGIN, ROLLBACK_ORIGIN).
+ *
+ * Set.has uses value equality for strings and identity for objects — both
+ * work correctly with their respective origin types.
+ *
+ * Deliberately excludes `undefined` (local WYSIWYG typing) — its invariant
+ * satisfaction comes via a subsequent ORIGIN_TREE_TO_TEXT tx from Observer A.
+ */
+const BRIDGE_ENFORCING_ORIGINS: Set<unknown> = new Set([
+  ORIGIN_TREE_TO_TEXT,
+  ORIGIN_TEXT_TO_TREE,
+  AGENT_WRITE_ORIGIN,
+  FILE_WATCHER_ORIGIN,
+  ROLLBACK_ORIGIN,
+]);
+
+export interface InvariantViolation {
+  origin: unknown;
+  ytextSnapshot: string;
+  fragmentMdSnapshot: string;
+  unifiedDiff: string;
+  stack: string | undefined;
+}
+
+export class BridgeInvariantViolationError extends Error {
+  readonly violation: InvariantViolation;
+  constructor(info: InvariantViolation) {
+    const originLabel =
+      typeof info.origin === 'string'
+        ? info.origin
+        : ((info.origin as { context?: { origin?: string } })?.context?.origin ?? 'unknown-object');
+    super(
+      `Bridge invariant violated after tx with origin '${originLabel}'.\n` +
+        `  Y.Text (${info.ytextSnapshot.length} chars): ${info.ytextSnapshot.slice(0, 200)}...\n` +
+        `  Fragment (${info.fragmentMdSnapshot.length} chars): ${info.fragmentMdSnapshot.slice(0, 200)}...\n` +
+        `  Diff:\n${info.unifiedDiff}`,
+    );
+    this.name = 'BridgeInvariantViolationError';
+    this.violation = info;
+  }
+}
+
+/**
+ * Attach a per-transaction bridge invariant watcher to a Y.Doc.
+ *
+ * After every transaction whose origin is in the enforcing set, asserts:
+ *   stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))
+ *
+ * Returns a detach function that removes the observer.
+ */
+export function attachBridgeInvariantWatcher(
+  doc: Y.Doc,
+  opts: {
+    onViolation?: (info: InvariantViolation) => void;
+    enforcingOrigins?: Set<unknown>;
+  } = {},
+): () => void {
+  const fragment = doc.getXmlFragment('default');
+  const ytext = doc.getText('source');
+  const enforcing = opts.enforcingOrigins ?? BRIDGE_ENFORCING_ORIGINS;
+
+  const afterTx = (tx: Y.Transaction): void => {
+    if (!enforcing.has(tx.origin)) return;
+
+    const ytextStr = ytext.toString();
+    const fm = (doc.getMap('metadata').get('frontmatter') as string | undefined) ?? '';
+    const fragBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    const fragMd = prependFrontmatter(fm, fragBody);
+
+    const ytextNorm = normalizeBridge(ytextStr);
+    const fragNorm = normalizeBridge(fragMd);
+
+    if (ytextNorm === fragNorm) return;
+
+    const info: InvariantViolation = {
+      origin: tx.origin,
+      ytextSnapshot: ytextStr,
+      fragmentMdSnapshot: fragMd,
+      unifiedDiff: `  ytext: ${ytextNorm.slice(0, 300)}\n  frag:  ${fragNorm.slice(0, 300)}`,
+      stack: new Error().stack,
+    };
+    opts.onViolation?.(info);
+    throw new BridgeInvariantViolationError(info);
+  };
+
+  doc.on('afterTransaction', afterTx);
+  return () => {
+    doc.off('afterTransaction', afterTx);
   };
 }
 
