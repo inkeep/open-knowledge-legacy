@@ -1033,6 +1033,14 @@ export class BacklinkIndex {
     links: Array<{ source: string; target: string }>;
   } {
     const state = this.getState(branch);
+    const externalLabelsByUrl = new Map<string, string | null>();
+    for (const targets of state.externalForward.values()) {
+      for (const [url, meta] of targets) {
+        if (!externalLabelsByUrl.has(url)) {
+          externalLabelsByUrl.set(url, meta.label);
+        }
+      }
+    }
     const visited = new Set<string>([centerDocName]);
     const queue: Array<{ nodeId: string; degree: number }> = [{ nodeId: centerDocName, degree: 0 }];
     let queueIndex = 0;
@@ -1095,15 +1103,11 @@ export class BacklinkIndex {
           anchor: getRepresentativeAnchor(state.backward.get(nodeId)),
         };
       }
-      const meta =
-        [...state.externalForward.values()]
-          .map((targets) => targets.get(url))
-          .find((entry) => entry !== undefined) ?? null;
       return {
         kind: 'external',
         id: nodeId,
         url,
-        label: meta?.label ?? null,
+        label: externalLabelsByUrl.get(url) ?? null,
       };
     });
 

@@ -72,6 +72,7 @@ export function ForwardLinksPanel({
     queryFn: () => fetchForwardLinks(docName),
   });
   const [createTarget, setCreateTarget] = useState<DocumentForwardLinkItem | null>(null);
+  const createDialogSeed = createTarget ? docNameToDialogSeed(createTarget.docName) : null;
 
   function handleRowClick(link: ForwardLinkItem) {
     if (link.kind === 'external') {
@@ -101,7 +102,7 @@ export function ForwardLinksPanel({
             <PanelEmpty>This page doesn't link to anything yet.</PanelEmpty>
           ) : (
             <div className="flex flex-col gap-2">
-              {links.map((link, index) => {
+              {links.map((link) => {
                 const unresolved =
                   link.kind === 'doc' &&
                   !pagesLoading &&
@@ -110,11 +111,13 @@ export function ForwardLinksPanel({
                   link.kind === 'doc' ? compactForwardLinkPath(link.docName) : link.url;
                 const displayTitle =
                   link.kind === 'doc' && link.title === link.docName ? compactPath : link.title;
-
+                const key =
+                  link.kind === 'doc'
+                    ? `doc:${link.docName}:${link.anchor ?? ''}`
+                    : `ext:${link.url}`;
                 return (
                   <Button
-                    // biome-ignore lint/suspicious/noArrayIndexKey: forward link targets are stable per fetch
-                    key={index}
+                    key={key}
                     variant="outline"
                     className={cn(
                       'h-auto w-full items-start justify-start whitespace-normal px-3 py-2 text-left',
@@ -177,10 +180,8 @@ export function ForwardLinksPanel({
       <NewItemDialog
         open={createTarget !== null}
         kind="file"
-        initialDir={createTarget ? docNameToDialogSeed(createTarget.docName).initialDir : ''}
-        suggestedName={
-          createTarget ? docNameToDialogSeed(createTarget.docName).suggestedName : undefined
-        }
+        initialDir={createDialogSeed?.initialDir ?? ''}
+        suggestedName={createDialogSeed?.suggestedName}
         onOpenChange={(open: boolean) => {
           if (!open) setCreateTarget(null);
         }}

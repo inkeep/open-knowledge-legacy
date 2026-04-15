@@ -6,6 +6,10 @@ import {
 } from './link-targets.ts';
 
 describe('classifyMarkdownHref', () => {
+  test('returns null for empty hrefs', () => {
+    expect(classifyMarkdownHref('', 'docs/index')).toBeNull();
+  });
+
   test('classifies internal document hrefs', () => {
     expect(classifyMarkdownHref('./guide.md#install', 'docs/index')).toEqual({
       kind: 'doc',
@@ -21,10 +25,21 @@ describe('classifyMarkdownHref', () => {
     });
   });
 
+  test('returns null for empty anchor-only hrefs', () => {
+    expect(classifyMarkdownHref('#', 'docs/index')).toBeNull();
+  });
+
   test('classifies external hrefs', () => {
     expect(classifyMarkdownHref('https://example.com/docs', 'docs/index')).toEqual({
       kind: 'external',
       url: 'https://example.com/docs',
+    });
+  });
+
+  test('classifies protocol-relative hrefs as external', () => {
+    expect(classifyMarkdownHref('//cdn.example.com/lib.js', 'docs/index')).toEqual({
+      kind: 'external',
+      url: '//cdn.example.com/lib.js',
     });
   });
 });
