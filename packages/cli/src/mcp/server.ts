@@ -105,7 +105,7 @@ Every \`.md\` file in the knowledge base should have YAML frontmatter: \`title\`
 - \`init-content\`, \`ingest\`, \`research\`, \`consolidate\` — each returns structured instructions you follow. Output text includes the live \`content.dir\` value (${dir}) so you don't need to re-read the config.
 
 **Writes:**
-- \`write_document\`, \`edit_document\`, \`undo_agent_edit\`, \`redo_agent_edit\` — mutate the CRDT through the server; attribution captured.
+- \`write_document\`, \`edit_document\`, \`rename_document\`, \`undo_agent_edit\`, \`redo_agent_edit\` — mutate the CRDT through the server; attribution captured.
 
 **Typed call sites (advanced) — prefer \`exec\` for common reads:**
 - \`read_document\`, \`search\`, \`list_documents\`, \`get_backlinks\`, \`get_forward_links\`, \`get_orphans\`, \`get_hubs\`.
