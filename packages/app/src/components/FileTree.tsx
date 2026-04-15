@@ -90,32 +90,41 @@ function InlineCreateRow({
   onCancel,
 }: InlineCreateProps) {
   return (
-    <div className={cn('flex h-8 items-center gap-2 rounded-md px-2')}>
-      {kind === 'folder' ? (
-        <Folder className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
-      ) : (
-        <File className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+    <div className="flex flex-col">
+      <div className={cn('flex h-8 items-center gap-2 rounded-md px-2')}>
+        {kind === 'folder' ? (
+          <Folder className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+        ) : (
+          <File className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+        )}
+        <Input
+          value={value}
+          autoFocus
+          disabled={busy}
+          aria-label={`Create new ${kind}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? 'inline-create-error' : undefined}
+          placeholder={kind === 'folder' ? 'folder-name' : 'file-name'}
+          className={cn('h-7 min-w-0 flex-1 bg-background text-sm', error && 'border-destructive')}
+          onBlur={onCancel}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onCommit();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              onCancel();
+            }
+          }}
+        />
+        {kind === 'file' && <span className="text-xs text-sidebar-foreground/40">.md</span>}
+      </div>
+      {error && (
+        <span id="inline-create-error" role="alert" className="px-2 text-xs text-destructive">
+          {error}
+        </span>
       )}
-      <Input
-        value={value}
-        autoFocus
-        disabled={busy}
-        aria-label={`Create new ${kind}`}
-        placeholder={kind === 'folder' ? 'folder-name' : 'file-name'}
-        className={cn('h-7 min-w-0 flex-1 bg-background text-sm', error && 'border-destructive')}
-        onBlur={onCancel}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            onCommit();
-          } else if (e.key === 'Escape') {
-            e.preventDefault();
-            onCancel();
-          }
-        }}
-      />
-      {kind === 'file' && <span className="text-xs text-sidebar-foreground/40">.md</span>}
     </div>
   );
 }
@@ -372,6 +381,7 @@ export function FileTree({
   const [creatingBusy, setCreatingBusy] = useState(false);
   const [creatingError, setCreatingError] = useState<string | null>(null);
   const prevCreateSeqRef = useRef(0);
+  const creatingBusyRef = useRef(false);
 
   if (activeDocName !== prevActiveDocName) {
     // Clear user-collapsed overrides on navigation so ancestors of the new
@@ -466,7 +476,7 @@ export function FileTree({
   }
 
   function handleCancelCreating() {
-    if (!creatingBusy) {
+    if (!creatingBusy && !creatingBusyRef.current) {
       setCreatingItem(null);
       setCreatingValue('');
       setCreatingError(null);
@@ -474,7 +484,7 @@ export function FileTree({
   }
 
   async function handleInlineCreate() {
-    if (!creatingItem) return;
+    if (!creatingItem || creatingBusyRef.current) return;
     const trimmed = creatingValue.trim();
     if (!trimmed) {
       setCreatingError('Name is required');
@@ -496,6 +506,7 @@ export function FileTree({
         ? composeInlineFilePath(creatingItem.parentDir, trimmed)
         : composeInlineFolderPath(creatingItem.parentDir, trimmed);
 
+    creatingBusyRef.current = true;
     setCreatingBusy(true);
     setCreatingError(null);
 
@@ -509,15 +520,19 @@ export function FileTree({
       let data: CreatePageResponse | null = null;
       try {
         data = (await res.json()) as CreatePageResponse;
-      } catch {
-        /* ignore JSON parse errors */
+      } catch (parseErr) {
+        console.warn(
+          '[FileTree] create response JSON parse failed:',
+          parseErr,
+          'status:',
+          res.status,
+        );
       }
 
       if (!res.ok || !data?.ok) {
         const msg = data?.error ?? `Failed to create ${creatingItem.kind}`;
         toast.error(msg);
         setCreatingError(msg);
-        setCreatingBusy(false);
         return;
       }
 
@@ -525,7 +540,6 @@ export function FileTree({
       setCreatingItem(null);
       setCreatingValue('');
       setCreatingError(null);
-      setCreatingBusy(false);
       if (docName) navigateTo(docName);
       addPage(docName);
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
@@ -534,6 +548,8 @@ export function FileTree({
       const msg = 'Network error — please try again';
       toast.error(msg);
       setCreatingError(msg);
+    } finally {
+      creatingBusyRef.current = false;
       setCreatingBusy(false);
     }
   }
