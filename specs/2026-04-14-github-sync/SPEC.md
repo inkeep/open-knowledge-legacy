@@ -1,9 +1,10 @@
 # GitHub Sync: Clone, Auto-Sync, and Collaboration — Spec
 
-**Status:** Drafting (clone-path decisions LOCKED from approved precursor; sync-path decisions LOCKED with two MEDIUM-confidence items pending OSS research)
+**Status:** Ready for handoff to Miles. Direction LOCKED (35 decisions); implementation-level timing + UX details are open questions for implementer.
+**Handoff to:** Miles Kaming-Thanassi (server/UI/MCP)
 **Owner(s):** Nick Gomez (CPO/CTO), Miles Kaming-Thanassi (server/UI/MCP)
 **Last updated:** 2026-04-15
-**Baseline commit:** e59f87a
+**Baseline commit:** 6d8c9ed
 **Merged from:**
 - `specs/2026-04-14-clone-from-github/SPEC.md` (approved 2026-04-14, 19 locked decisions)
 - `specs/2026-04-14-post-clone-git-sync/SPEC.md` (drafting, 9 locked decisions)
@@ -96,7 +97,7 @@ All surfaces ship in one iteration (greenfield directive). Terminology stays hum
   - **Setup precondition.** P1 does not install the CLI or run `open-knowledge start` themselves. A colleague (developer teammate, IT admin, onboarding buddy) installs the CLI once and either (a) creates a launcher/shortcut, (b) gives P1 a bookmark to `http://localhost:<port>` with an autostart mechanism, or (c) the CLI will later ship a platform-native desktop launcher (future work). P1's entry point is the **editor UI in the browser**.
 - **P2: Developer (SECONDARY).** Comfortable with git. Has `gh` installed and logged in. Uses Open Knowledge for content-editing UX but can drop to CLI for advanced ops (interactive rebase, stash, complex merges). Wants auto-sync to be invisible for normal flow, transparent enough to trust (visible CLI commands, git log inspectable), and the server to NEVER silently force-push or rewrite history. CLI is P2's primary surface for clone and advanced operations.
 - **P3: Team member joining a shared KB.** Teammate sends a GitHub URL. May be dev-fluent or not. If dev-fluent, follows P2's path. If not, follows P1's path (colleague sets them up).
-- **P4: AI agent author.** Agents write content via MCP/agent-write endpoints. Agent-authored commits reach origin like human commits. The trust gate (FR10) blocks agent writes on untrusted repos; once trusted, agent writes flow through the same auto-sync pipeline as human writes.
+- **P4: AI agent author.** Agents write content via MCP/agent-write endpoints. Agent-authored commits reach origin alongside user-authored content via the same auto-sync pipeline.
 
 ---
 
@@ -135,6 +136,8 @@ All surfaces ship in one iteration (greenfield directive). Terminology stays hum
 6. Clone retries automatically. Proceeds as J1 steps 5–8.
 
 **Aha moment:** "I didn't have to figure out tokens or SSH keys."
+
+### J4 — WITHDRAWN (trust-pending journey removed with D9)
 
 ### J5 — P1: Non-dev happy-path collaboration (no conflicts)
 
@@ -189,7 +192,7 @@ All surfaces ship in one iteration (greenfield directive). Terminology stays hum
 1. User is on `main` of a team repo with GitHub branch protection (requires PR).
 2. Auto-push tries to push to `origin/main` → 403 / non-fast-forward rejected with protection reason.
 3. Sync pauses. Badge: "Sync disabled for this project."
-4. Toast: "Can't sync to `main` — it's a protected branch. To contribute, use git CLI to create a branch and open a pull request. [Learn more]"
+4. Toast (P1-appropriate copy): "Can't sync to `main` — it's a protected branch. Ask a teammate to set up a branch for you, or adjust this project's branch protection settings. [Share this with a teammate →]" (copy action generates a shareable message with repo + branch + error context for a developer to act on). Developers see the same toast with an additional "Use git CLI" action.
 5. `sync.enabled=false` persisted to workspace config. User can manually re-enable from config if they set up a non-protected workflow, or work via CLI.
 
 ### Interaction state matrix
@@ -281,7 +284,7 @@ All surfaces ship in one iteration (greenfield directive). Terminology stays hum
 - **Performance:** Clone of a 10MB repo completes in <30 seconds on broadband. Sync fetch cycle (idle) completes in <2 seconds on typical repo. DiffView in `conflictMode` loads <500ms for files <50KB. Dual-write L2 overhead <10ms vs. shadow-only.
 - **Reliability:** Clone/push/pull failure leaves no partial state. Dual-write drift bounded to 1 interval (shadow-first, parent-retry). Force-push never happens automatically (NG2).
 - **Security/privacy:** No `client_secret` on user disk. OAuth App `clientId` is public (committed to source; configurable via env/config). Tokens in OS keychain or `0600`-permission file. `GIT_TERMINAL_PROMPT=0` prevents credential prompt hangs. Local-op endpoints follow FR18 security contract. Auto-sync never force-pushes. Parent-git index isolation (`GIT_INDEX_FILE`) preserves user's staging area. **OAuth scope trade-off (known):** GitHub's classic OAuth scope has no `repo:read`; `repo` grants read+write. Tier C (PAT) path mitigates via fine-grained PAT `Contents: Read` scope for read-only users. **Workspace-trust style gate:** Considered, rejected for v1 — see §13 Risks "Trust gate consideration (rejected)".
-- **Operability:** `[clone]`, `[auth]`, `[trust]`, `[head-drift]`, `[sync]`, `[sync-error]` structured logs. Sync state machine transitions logged at INFO. Error classification logs at WARN. Failed retries log at ERROR after exhaustion.
+- **Operability:** `[clone]`, `[auth]`, `[head-drift]`, `[sync]`, `[sync-error]`, `[dual-write]` structured logs. Sync state machine transitions logged at INFO. Error classification logs at WARN. Failed retries log at ERROR after exhaustion.
 
 ---
 
@@ -289,7 +292,7 @@ All surfaces ship in one iteration (greenfield directive). Terminology stays hum
 
 - **M1: Time-to-first-edit.** Clone start → first keystroke in editor. Target: <60s for <50MB repos on broadband.
 - **M2: Auth success rate.** Clone attempts succeeding on first auth attempt (any tier).
-- **M3: Trust prompt completion rate.** Trust / Keep read-only / Review config / dismiss distribution.
+- **M3: Auto-sync activation rate.** Percentage of projects with detected remote that activate sync successfully on first startup (vs. no remote detected, sync disabled by config, protected-branch disable).
 - **M4: Clone error rate.** Failure classification (auth / network / disk / parse).
 - **M5: Sync round-trip latency.** L1 save → appeared on origin (for the user's own commits). Target: <3 minutes p50 at default 120s interval.
 - **M6: Sync failure rate.** Per error class (network / auth / semantic / structural / local). Exposes which class dominates in practice.
@@ -324,7 +327,7 @@ All surfaces ship in one iteration (greenfield directive). Terminology stays hum
 - Sonner toast initialized at `main.tsx`.
 - No config keys for git behavior today.
 
-**Editor modes:** `'wysiwyg' | 'source' | 'diff'` state machine (PR #39, `EditorPane.tsx:16`). Trust-pending and conflict-pending are new project-level states orthogonal to these document-level modes.
+**Editor modes:** `'wysiwyg' | 'source' | 'diff'` state machine (PR #39, `EditorPane.tsx:16`). Conflict-pending is a new project-level state orthogonal to these document-level modes.
 
 **No persisted state across restarts for reconciledBase, lastKnownHash, oldHead** (all in-memory today). Shadow WIP refs persist in git but never compared vs. disk at startup (FR11 fixes this).
 
@@ -630,25 +633,29 @@ sync:
 | D17 | Clone-D17 | Auth surface: CLI-canonical via subprocess relays | T | LOCKED | Yes (API surface shape) | Two parallel auth surfaces (CLI + HTTP) duplicate logic. Single impl in CLI, relayed via `/api/local-op/auth/*`. | Design challenge M2 | New CLI subcommands; removes 5 stateful `/api/auth/*` endpoints |
 | D18 | Clone-D18 | Local-op endpoint security: 127.0.0.1 + Origin + path + protocol + concurrency=1 | T/X | LOCKED | Yes (security contract) | Subprocess spawner needs explicit security boundary | Design challenge M3 | See FR18 |
 | D19 | Clone-D19 | Post-clone handoff: mode-dependent (Terminal auto-starts; JSONL does not) | T | LOCKED | No | JSONL mode prevents orphan servers when editor tab closes mid-clone | Design challenge L6 | Extends FR8 |
-| D20 | Sync-D1 | Auto-sync aggressiveness = aggressive but batched | P | LOCKED | No | Auto-commit on L2 flush (30s idle, same as shadow). Auto-push on fetch-interval (120s). Auto-pull on interval when behind + no conflicts. Mirrors shadow cadence so parent + shadow advance together on one trigger. | Nick direction | `sync.intervalSeconds` configurable |
+| D20 | Sync-D1 | **Auto-sync is OPT-IN, not default-on.** When a remote is detected, sync stays dormant until user explicitly enables it. Opt-in surfaces: (a) `open-knowledge init` prompt ("Enable auto-sync with remote?"), (b) post-auth flow after signing in ("Enable sync for this project?"), (c) settings/config.yaml `sync.enabled: true`. Once enabled: aggressive but batched — shadow commits at L2 (30s idle), parent commits at push-time only (squash-before-push, see D33), auto-pull on interval. **Timing (push + pull intervals) is an OPEN QUESTION for implementation** — research validated 30s/60s/120s are all safe against GitHub rate limits; SiYuan uses 30s, Logseq 60s, Obsidian-Git 10min. | P | LOCKED (direction); **OPEN** (timing) | No | Nick direction (2026-04-15): "they opt in to auto-commit." Research finding: NO production tool defaults to full-auto bidirectional git sync. Opt-in addresses industry concern #4 ("push is a public action — requires explicit intent"). CRDT layer structurally mitigates concerns #1 (merge conflicts) and #3 (no mobile merge). | `evidence/why-full-auto-git-sync-rare.md` — comprehensive survey; 0/6 tools default to full-auto | `sync.enabled` starts as `false` (or absent) in config. User action flips to `true`. |
 | D21 | Sync-D2 | Save Version demoted to overflow menu; auto-sync is primary UX | P | LOCKED | No | Auto-sync handles continuous flow; Save Version for intentional milestones only. Primary UI real estate to sync status. | Nick direction | UI placement change; coordinate with any in-flight Save Version UI work |
 | D22 | Sync-D3 | Protected branches: sync disabled for that repo. Happy path only. | P | LOCKED | No | Nick scope: "auto sync with origin main on or off. Nothing in between." Tightly scoped. No auto-branch, no auto-PR. | Nick direction | Revisit if significant customer demand |
 | D23 | Sync-D4 | Conflict resolver form factor = side sheet | P | LOCKED | No | Consistent with Timeline panel pattern; non-blocking; scales to many conflicts. | Research (D8 non-dev abstraction) | Same component slot as TimelinePanel |
 | ~~D24~~ | Sync-D5 | ~~Auto-sync NOT gated on trust in v1~~ | P/T | **WITHDRAWN 2026-04-15** | No | Moot: trust gate itself removed (D9). No gating anywhere. | N/A | Preserved here with WITHDRAWN status for audit trail. |
-| D25 | Sync-D6 | Auto-commit message matches shadow verbatim: `"WIP auto-save ${ISO timestamp}"` | T | LOCKED | No | Investigation: shadow L2 uses this at `persistence.ts:183`. Least minimum divergence. Obsidian-Git makes same trade-off. Save Version uses separate meaningful message. | Shadow source verified | Reversible (pure function) |
-| D26 | Sync-D7 | Dual-write at L2: shadow-first, parent-second, parent-retry on failure | T | LOCKED | No | Write-only-to-parent breaks shadow per-writer attribution (HEAD watcher → `commitUpstreamImport` → UPSTREAM_WRITER). Dual-write is minimum-divergence — same plumbing, two targets, one tree hash, two update-refs. | Shadow source verified | Bounded drift: parent at most 1 interval behind shadow |
-| D27 | Sync-D8 | Conflict resolver: side sheet + per-file [Keep mine]/[Keep theirs]/[Resolve manually] + DiffView extension with `@codemirror/merge mergeControls: true` | P/T | LOCKED (approach) | No | Miles confirmed not building interactive merge UI (DiffView PR #39 is read-only). Extending existing component reuses infrastructure. Contrasts with Obsidian-Git's "edit raw markers" approach which fails for non-devs. | Source verified + research | **MEDIUM ⚠ on `mergeControls` fitness** — pending OSS research verification (Q-M1 open) |
-| D28 | Sync-D9 | Credential flow: `open-knowledge auth git-credential` subcommand implementing git credential-helper protocol | T | LOCKED (approach) | No | Matches clone-precursor Tier A pattern (`!gh auth git-credential`). Resolves Tier B/C silent gap in clone spec. No GIT_ASKPASS helper binary. No global git config modification. One CLI subcommand extends `auth` group. | Source + research verified; clone spec FR2 | **MEDIUM ⚠ on token refresh** — pending OSS research on GCM's `password_expiry_utc` + `oauth_refresh_token` patterns (Q-M2 open) |
+| D25 | Sync-D6 | **Parent commit message: descriptive file-list** (different from shadow). Shadow keeps `"WIP auto-save <ISO>"` at L2 (unchanged). Parent commit at push-time uses squash message: `"Auto-save: Updated X.md, Y.md"` (≤3 files) or `"Auto-save: N files changed"` (>3). Save Version: user-provided message. Different messages for different audiences (internal journal vs. team-visible). | T | LOCKED | No | Squash-before-push (D33) creates one parent commit per cycle. Message should reflect what changed in the cycle, not mirror shadow's per-L2-flush timestamp. | Spec-challenger H1 analysis | Reversible |
+| D26 | Sync-D7 | **Shadow commits at L2 (unchanged). Parent commits at push-time only.** L2 persistence calls `commitWip(shadow)` only — no parent write at L2. Parent commit happens in sync engine's push cycle: `writeTree` of content-filtered files → diff vs `lastPushedSha` → skip if unchanged → `commitTree` → `updateRef` → push. Same `commitWip` plumbing, different timing. | T | LOCKED | No | Dual-write at L2 would produce N commits per push cycle (history noise — challenger H1). Decoupling: shadow's purpose (attribution journal) at journal cadence; parent's purpose (team-visible history) at publish cadence. Simpler: removes parent op from hot L2 path. | Spec-challenger H1, squash analysis | Parent only touched by sync engine (not L2) — simplifies parentGitMutex (D32) |
+| D27 | Sync-D8 | **Conflict resolver v0: per-file AND per-hunk Accept/Reject (Keep mine / Keep theirs) — NO manual inline editing.** Unified-mode DiffView + custom `mergeControls` render function for styled buttons per hunk. Users pick Accept/Reject per hunk; never hand-edit conflict markers or merged text. Abort option ("Exit merge") undoes merge attempt + points to docs. `collapseUnchanged: true`. Miles finalizes exact UX. | P/T | **LOCKED** (direction) | No | Source-level `@codemirror/merge` v6.12.1: custom render, per-hunk granularity, unified-mode. Only production per-hunk accept/reject in surveyed libraries. No manual editing means non-devs can't accidentally corrupt merge state. | `reports/git-lifecycle-push-pull-merge-patterns/evidence/codemirror-merge-controls-fitness.md` | Abort = `git merge --abort` + toast with docs link. |
+| D28 | Sync-D9 | Credential flow: `open-knowledge auth git-credential` subcommand implementing git credential-helper protocol. **v1 without token refresh.** GitHub OAuth `gho_` tokens don't expire — refresh adds zero value for primary host. Non-GitHub forges (GitLab 2h, Bitbucket 1h, Gitea 1h) hit token cliff → FR31 Class 2 re-auth toast (functional, not silent). Refresh deferred to Future Work (~150 LOC port of `hickford/git-credential-oauth` pattern; blocked by Git 2.45+ adoption for macOS `osxkeychain` refresh-token persistence). Users who need refresh NOW can chain our helper with GCM or git-credential-oauth (interop preserved). | T | **LOCKED** | No | Source-level on git credential protocol (`credential.c`), GCM (`GitLabHostProvider.cs`, `BitbucketHostProvider.cs`), hickford/git-credential-oauth (`main.go` — ~600 LOC Go CLI), per-forge OAuth docs. Git 2.40 added `password_expiry_utc`, 2.41 added `oauth_refresh_token`, but macOS osxkeychain needs 2.45+ to persist. Ubuntu 22.04 LTS ships 2.34 (below threshold). GCM's refresh PR #1464 open since Nov 2023, unmerged. | `reports/git-lifecycle-push-pull-merge-patterns/evidence/credential-helper-token-refresh.md` (source-level on git protocol + GCM + hickford + per-forge token behavior) | Future Work: add refresh when Git 2.45+ adoption is broader or demand surfaces. |
 | D29 | new 2026-04-15 | **Parent commit author identity = user's git config.** Shadow keeps its hardcoded `openknowledge-server <noreply@openknowledge.local>` (internal journal, existing behavior). Parent git uses user's `user.name` / `user.email` from git config — team-visible on origin. Resolution chain (repo → global → derive-from-GitHub-auth → AuthModal prompt) per FR20a. | P/T | LOCKED | No | Claude Code precedent: user's git config by default + `Co-Authored-By` trailer. Applied here to the new public-facing surface (parent git); shadow stays internal. Two surfaces, two appropriate identities. | Claude Code docs ([deployhq](https://www.deployhq.com/blog/how-to-use-git-with-claude-code-understanding-the-co-authored-by-attribution), [settings docs](https://code.claude.com/docs/en/settings)); shadow code verification at `shadow-repo.ts:180-183, 345-348, 486-489` (hardcoded identity always used). | Fallback chain is FR20a. |
 | D30 | new 2026-04-15 | **Rollback creates a parent-git commit** (in addition to the existing shadow safetyCheckpoint). Commit message: `"Restored to v<N>: <original message>"`. Auto-pushed on next sync cycle. | P | LOCKED | No | Google Drive precedent: restoration is a versioned event visible to all collaborators. Restoring a version makes it the current version for the team; the restore itself is in history. | [Google Drive version history docs](https://support.google.com/drive/answer/2409045) | Rollback becomes a team-visible event in parent git log. |
 | D31 | new 2026-04-15 | **Sync follows HEAD's current branch** (no restriction to `main`/default). If user is on `feature/foo`, sync pushes to `origin/feature/foo`. On detached HEAD: sync paused with `disabled` badge. On first push for a branch that has no origin counterpart: auto-sets upstream. | P/T | LOCKED | No | Mirrors shadow's existing branch-scoped behavior (`reconciledBase` per-branch, `switchReconciledBaseScope()`). No branch-changing UI exists today (investigation confirmed); user switches branches externally via git CLI, HEAD watcher handles it. No restriction to add. D22's "main only" wording was product intent about scope (no branch-picker UI in v1), not a code-level restriction. | Shadow source: branch-scoped `reconciledBase` per-branch map; `switchReconciledBaseScope()` exists; no branch UI in `packages/app/src/components/`. | If branch-picker UI is added later, this FR becomes the default; UI surfaces per-branch choice on top. |
 
-### Decision uncertainty flags (INVESTIGATE)
+| D32 | new 2026-04-15 | **parentGitMutex: all parent-git mutations serialize through a single async queue.** L2 dual-write commit (now push-time-only per D26), sync fetch+merge, sync push, Save Version parent commit, rollback parent commit — all must hold exclusive access to avoid race conditions (spec-challenger H2 identified: sync merge can advance branch ref while push-time commit has stale parent → merge content lost). Pattern: same as shadow's `commitInFlight` + `pendingAfterCommit` in `persistence.ts:275-292`. ~30 LOC mutex wrapper. | T | **LOCKED** | No | Challenger H2 identified genuine race between L2 dual-write and sync-engine ops. Since D26 now puts parent commits in sync engine only (not L2), the mutex simplifies: only sync-engine-internal operations need serialization. But Save Version and rollback also touch parent — they must acquire the mutex too. | Spec-challenger H2 analysis + `persistence.ts:275-292` shadow pattern | All parent-git write operations go through this queue. |
+| D33 | new 2026-04-15 | **Squash-before-push: one parent commit per push cycle, not N.** At push time: `writeTree` of current content-filtered files → diff tree vs `lastPushedSha` tree → if same, skip → else `commitTree(tree, parent=lastPushedSha, msg)` → `updateRef` → push. Shadow retains per-edit granularity. Remote gets one clean "Auto-save: Updated X, Y" commit per cycle. No force-push needed (each commit builds on previous). | T | **LOCKED** | No | Spec-challenger H1 analysis: Obsidian-Git precedent is for personal vaults, not shared team branches. Auto-commit noise poisons `git log`, `git blame`, CI/CD triggers on shared branches. Squash eliminates this. ~50-100 LOC using existing `commitWip` plumbing (tree computation shared). | Spec-challenger H1, squash-before-push analysis | `lastPushedSha` persisted in `sync-state.json` (FR21c). Save Version creates separate named commit directly on branch (not squashed). |
+| D34 | new 2026-04-15 | **Auto-sync is opt-in, not default-on.** `sync.enabled` defaults to `false` (or absent) in config. User explicitly enables via: (a) `open-knowledge init` prompt when remote detected, (b) post-auth flow after Device Flow sign-in, (c) settings/config.yaml. Once enabled, full auto-sync activates (auto-commit of watched files + auto-pull + squash-push). | P | **LOCKED** | No | Research finding: NO production tool defaults to full-auto bidirectional git sync (0/6 surveyed). Developer tools actively reject auto-push (GitHub Desktop #2191 closed, VS Code #14885 closed). Opt-in addresses concern #4 ("push is a public action — requires explicit intent"). Nick: "they opt in to auto-commit." | `evidence/why-full-auto-git-sync-rare.md` | Aligns with industry posture while offering the capability. Once opted in, UX is Figma-like invisible sync. |
+| D35 | new 2026-04-15 | **Content-scope-only parent commits.** Auto-sync only commits files matching `content.include` / `content.exclude` patterns from `config.yaml` (same patterns the file watcher + content filter already use). Does NOT `git add .` or `git add -A`. Non-content files (README.md outside content dir, CI configs, images not in include pattern) are untouched by our auto-commits. User manages non-content files via git CLI. | T | **LOCKED** | No | Nick direction: "we'd only auto-commit if our 'watched' files change, not for any other files in that git project." Reuses existing `ContentFilter` primitive from file-watcher. Shadow already uses `contentRoot` pathspec in `commitWip` — parent does the same. | Shared primitive: `ContentFilter` from `packages/server/src/content-filter.ts` | If user wants all files synced, they can set `content.include: ['**/*']` — but default is markdown content only. |
 
-| Decision | Dimension uncertain | Research trigger |
-|----------|--------------------|------------------|
-| **D27 (Sync-D8)** | `@codemirror/merge mergeControls: true` fitness (out-of-box UX, accept/reject styling, staged-file integration) | OSS git-sync research pass (Direction 2) |
-| **D28 (Sync-D9)** | Token refresh strategy (GitHub tokens don't expire but GitLab/Bitbucket do; GCM + `hickford/git-credential-oauth` patterns) | OSS git-sync research pass (Direction 1) |
+### Decision uncertainty flags — ALL RESOLVED
+
+All previously MEDIUM ⚠ items resolved via targeted research (2026-04-15):
+- **D27:** `@codemirror/merge mergeControls` fitness confirmed via source-level analysis of v6.12.1 — custom render function, unified mode, per-hunk granularity all viable → upgraded to **LOCKED HIGH**
+- **D28:** Token refresh strategy resolved: v1 without refresh (GitHub `gho_` tokens don't expire; non-GitHub gets FR31 Class 2 re-auth toast; refresh is ~150 LOC Future Work; chaining with GCM/git-credential-oauth available today) → upgraded to **LOCKED HIGH**
 
 ---
 
@@ -662,12 +669,15 @@ sync:
 | ~~Q4~~ | ~~How does trust-pending compose with PR #39's preview mode?~~ | T | P0 | No | **Resolved historically (clone precursor); now moot** as trust-pending is withdrawn. Preserved for audit trail. | **Moot** |
 | Q5 | Bun smoke tests: pre-merge matrix? | T | P0 | No | Three `*.smoke.test.ts` files: (1) simple-git clone + progress, (2) @napi-rs/keyring cycle, (3) @octokit/auth-oauth-device mock. | **Resolved** (from clone precursor) |
 | Q6 | Where does "Clone from GitHub..." live in the header? | P | P0 | No | **DELEGATED** to implementer. D21 demotes Save Version to overflow menu — putting Clone from GitHub there is natural. | **Resolved** (from clone precursor, updated by D21) |
-| Q-M1 | Does `@codemirror/merge mergeControls: true` provide adequate out-of-box UX for non-dev conflict resolution? | T | P0 | No (D27 locked approach; this sharpens implementation) | Upcoming OSS git-sync research pass, Direction 2. Read `@codemirror/merge` source + docs. Possible fallback: custom hunk controls. | **Open** (INVESTIGATE) |
-| Q-M2 | Should `open-knowledge auth git-credential` implement token refresh for non-GitHub hosts (GitLab/Bitbucket)? What's GCM's `password_expiry_utc` + `oauth_refresh_token` pattern? | T | P0 | No (D28 locked approach; this sharpens implementation) | Upcoming OSS git-sync research, Direction 1. Source-read GCM + `hickford/git-credential-oauth`. | **Open** (INVESTIGATE) |
+| ~~Q-M1~~ | ~~mergeControls fitness~~ | T | P0 | No | **RESOLVED 2026-04-15:** source-level analysis of @codemirror/merge v6.12.1 confirmed custom render function + unified mode + per-hunk = viable. D27 → LOCKED HIGH. See `reports/git-lifecycle-push-pull-merge-patterns/evidence/codemirror-merge-controls-fitness.md`. | **Resolved** |
+| ~~Q-M2~~ | ~~Token refresh strategy~~ | T | P0 | No | **RESOLVED 2026-04-15:** v1 without refresh. GitHub `gho_` doesn't expire; non-GitHub → re-auth toast; refresh ~150 LOC Future Work. D28 → LOCKED HIGH. See `reports/git-lifecycle-push-pull-merge-patterns/evidence/credential-helper-token-refresh.md`. | **Resolved** |
 | ~~Q-M3~~ | ~~Trust gate rationale refinement~~ | P | P0 | No | **RESOLVED 2026-04-15:** trust gate withdrawn entirely (D9). Rationale question moot. | **Resolved** |
 | ~~Q-M4~~ | ~~Trust scope wording~~ | P | P0 | No | **RESOLVED 2026-04-15:** no gate, no wording. | **Resolved** |
-| Q-M5 | **Merge-driven incoherence:** Clone spec's Save Version references imply existing primary-header placement; Sync D21 demotes to overflow menu. Coordinate with any in-flight Save Version UI to avoid double-edit. | P | P2 | No | Check for any in-flight work by Andrew or Miles on Save Version UI before implementation. | **Open** — coordination |
-| Q-M6 | **Merge-driven open question:** Should sync-CLI subcommands (`sync`, `push`, `pull`) support a `--dry-run` flag showing what would be committed/pushed/pulled without acting? | P | P2 | No | Defer to implementation; add if user feedback requests it. | **Open** — Future Work candidate |
+| Q-M5 | Save Version UI coordination — D21 demotes to overflow. Check for in-flight work. | P | P2 | No | Coordinate with Andrew/Miles. | **Open** — coordination |
+| Q-M6 | Should sync-CLI support `--dry-run`? | P | P2 | No | Add if user feedback requests. | **Open** — Future Work |
+| **Q-TIMING** | **Sync interval: push + pull cadences.** Research validated 30s/60s/120s are all safe against GitHub rate limits (15 ops/sec per repo soft limit; single user at 30s = 0.033 ops/sec, 1000x under). Prior art: SiYuan 30s (bundled), Logseq 60s (push-only), Obsidian-Git 10min (both disabled by default), GitHub Desktop 1hr fetch-only. **Options:** (a) single `sync.intervalSeconds` at 60s (both push+pull), (b) decouple: `sync.pushIntervalSeconds: 60`, `sync.pullIntervalSeconds: 30` (pulls are cheap; faster pull = more real-time incoming changes). Nick leans B with push=60s, pull=30s but left open. **Miles decides.** | T | **P0 — OPEN** | No | Research basis: `evidence/c1-git-editor-sync-dynamics.md`, `evidence/why-full-auto-git-sync-rare.md`. GitHub rate limits: no concern at these cadences ([community#44515](https://github.com/orgs/community/discussions/44515)). | **Open — Miles decides** |
+| **Q-OPTINUX** | **Opt-in flow UX.** Three surfaces proposed: (a) `open-knowledge init` prompt when remote detected, (b) post-auth flow after Device Flow, (c) settings/config.yaml. Exact dialog copy + interaction flow left to implementer. | P | **P0 — OPEN** | No | D34 locks the principle (opt-in); UX is implementation detail. | **Open — Miles designs** |
+| **Q-ABORTUX** | **Conflict abort UX.** When user exits merge without resolving: (a) run `git merge --abort`, (b) show toast with link to docs/help. Exact copy + flow for Miles. | P | P2 | No | D27 locks per-hunk accept/reject + abort option. | **Open — Miles designs** |
 
 ---
 
@@ -680,7 +690,7 @@ sync:
 | A3 | `@octokit/auth-oauth-device` works under Bun | HIGH (pure HTTP) | Smoke test against test OAuth App | Pre-merge | Active |
 | A4 | Privacy policy at `https://inkeep.com/policies/privacy` suits OAuth App registration | HIGH (verified) | Already verified | N/A | Verified |
 | A5 | `simple-git`'s `-c credential.helper=...` per-invocation flag overrides git config helpers | HIGH (documented pattern, used by Tier A clone) | Existing clone-precursor verification | Pre-merge | Active |
-| A6 | `@codemirror/merge` `mergeControls: true` provides usable Accept/Reject controls | MEDIUM | OSS research pass Direction 2 | Pre-implementation of FR27 | Active (Q-M1) |
+| A6 | `@codemirror/merge` `mergeControls` with custom render function provides usable per-hunk controls | **HIGH** (source-verified v6.12.1) | Verified via source-level analysis | N/A | **Verified** |
 | A7 | Dual-write overhead (one extra `commit-tree` + `update-ref` per L2 flush) is <10ms | MEDIUM | Perf benchmark against existing shadow-only L2 | Pre-merge | Active |
 | A8 | Parent-git branch protection rejection is detectable via stderr string patterns (GitHub-specific) | MEDIUM | Source-trace dugite's 59 codes; test against real GitHub protected branch | Pre-merge | Active |
 
@@ -720,6 +730,8 @@ VSCode's Workspace Trust protects `.vscode/tasks.json` + `launch.json` + `settin
 - `.open-knowledge/config.yml` schema grows to include `tasks:`, `hooks:`, `webhooks:`, or similar execution surfaces (config becomes code-equivalent)
 - A concrete threat model emerges where cloned repo content amplifies risk through agent-write endpoints in a way that file-content-already-on-disk doesn't
 - Users explicitly request a review-before-editing posture
+- MCP tool surface grows to include operations with side effects beyond the local content directory (e.g., network requests, file system access outside contentDir)
+- Content rendering gains code execution capability (plugins, custom components, embedded scripts) — the cloned content itself becomes an execution vector independent of config
 
 If revisited, re-introduce the `didAutoInit` signal + `trust.yml` schema from the withdrawn D9 as the foundation.
 
@@ -727,15 +739,17 @@ If revisited, re-introduce the `didAutoInit` signal + `trust.yml` schema from th
 
 ## 14) Future work
 
-### Shadow-parallel architectural principle (new precedent)
+### Shared-primitive reuse principle (new precedent, reframed from "shadow-parallel" per audit challenge)
 
-**Added 2026-04-15 per Nick directive:** before introducing any new persistent state, scheduler mechanic, error handling, or UI primitive for parent-git, first ask:
+**Added 2026-04-15 per Nick directive; reframed per spec-challenger finding M5:** before introducing any new persistent state, scheduler mechanic, error handling, or UI primitive, first ask:
 
-1. **Does shadow already do this?** → reuse its primitive directly.
-2. **Could shadow gain it at trivial cost?** → add to shadow at the same time (single code path serves both).
-3. **Is it legitimately parent-only?** (credentials, remotes, protected branches, external push/pull) → accept the divergence, document it.
+1. **Does a shared primitive already serve this need?** (e.g., `GitHandle`, `commitWip`, `CC1 broadcast`) → use the shared primitive; don't build a parallel one.
+2. **Can both shadow and parent benefit from the same new primitive?** → build one primitive that serves both via parameterization (e.g., `conflicts.json` with `source: 'parent-merge' | 'reconcile'` discriminator).
+3. **Is this legitimately target-specific?** (credentials, remotes, protected branches for parent; per-writer attribution refs for shadow) → accept the divergence, document it explicitly.
 
-This complements CLAUDE.md's Architectural Precedent #1 (typed transaction origins) and #2 (generic primitives over specific ones). Apply this lens during implementation decomposition.
+The framing is "shared primitives serve both targets" — not "shadow is the template and parent conforms." Shadow and parent have fundamentally different purposes (internal journal vs. team-visible collaboration surface), different failure modes, and different identity models. Primitives are shared where they naturally overlap; concerns diverge where requirements differ.
+
+This complements CLAUDE.md's Architectural Precedent #1 (typed transaction origins) and #2 (generic primitives over specific ones). Apply during implementation decomposition.
 
 ### Shadow gaps surfaced by this spec (shadow-parallel Future Work)
 
@@ -824,7 +838,7 @@ These are PRE-EXISTING shadow gaps that the sync-engine design illuminates. Not 
   - Requires writing credentials to disk outside `auth.yml` fallback
   - Requires force-pushing to origin (NG2)
   - `@napi-rs/keyring` Bun smoke test fails
-  - `@codemirror/merge mergeControls` proves unworkable and custom controls are needed beyond a simple wrapper (Q-M1)
+  - `@codemirror/merge mergeControls` proves unworkable beyond what custom render function can address (D27 — verified viable via source-level analysis; STOP_IF retained as implementation safety net)
 
 - **ASK_FIRST:**
   - New npm dependencies beyond `@octokit/auth-oauth-device`, `@octokit/rest`, `@napi-rs/keyring`
