@@ -10,25 +10,39 @@
  * concrete test motivates them.
  */
 
-type MessageHandler = ((event: MessageEvent) => void) | null;
+type MessageCallback = (event: MessageEvent) => void;
 
 export class ControllableWebSocket {
   private inner: WebSocket;
   private paused = false;
   private inboundQueue: MessageEvent[] = [];
-  private realOnMessage: MessageHandler = null;
+  private onMessageHandler: MessageCallback | null = null;
+  private addedMessageListeners: MessageCallback[] = [];
 
   constructor(url: string | URL, protocols?: string | string[]) {
     this.inner = new WebSocket(url, protocols);
 
-    // Intercept inbound messages
+    // Intercept all inbound messages from the real WebSocket
     this.inner.onmessage = (event: MessageEvent) => {
-      if (this.paused) {
-        this.inboundQueue.push(event);
-      } else {
-        this.realOnMessage?.(event);
-      }
+      this.handleInbound(event);
     };
+  }
+
+  private handleInbound(event: MessageEvent): void {
+    if (this.paused) {
+      this.inboundQueue.push(event);
+    } else {
+      this.deliverMessage(event);
+    }
+  }
+
+  private deliverMessage(event: MessageEvent): void {
+    // Deliver to onmessage handler
+    this.onMessageHandler?.(event);
+    // Deliver to all addEventListener('message', ...) handlers
+    for (const listener of this.addedMessageListeners) {
+      listener(event);
+    }
   }
 
   pauseInbound(): void {
@@ -39,7 +53,7 @@ export class ControllableWebSocket {
     this.paused = false;
     while (this.inboundQueue.length > 0) {
       const msg = this.inboundQueue.shift();
-      if (msg) this.realOnMessage?.(msg);
+      if (msg) this.deliverMessage(msg);
     }
   }
 
@@ -88,11 +102,11 @@ export class ControllableWebSocket {
     this.inner.onerror = handler;
   }
 
-  get onmessage(): MessageHandler {
-    return this.realOnMessage;
+  get onmessage(): ((this: WebSocket, ev: MessageEvent) => unknown) | null {
+    return this.onMessageHandler as ((this: WebSocket, ev: MessageEvent) => unknown) | null;
   }
-  set onmessage(handler: MessageHandler) {
-    this.realOnMessage = handler;
+  set onmessage(handler: ((this: WebSocket, ev: MessageEvent) => unknown) | null) {
+    this.onMessageHandler = handler as MessageCallback | null;
   }
 
   send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
@@ -109,17 +123,12 @@ export class ControllableWebSocket {
     options?: boolean | AddEventListenerOptions,
   ): void {
     if (type === 'message') {
-      // Route message listeners through our interception
-      const wrappedListener = (event: Event) => {
-        if (this.paused) {
-          this.inboundQueue.push(event as MessageEvent);
-        } else if (typeof listener === 'function') {
-          listener(event);
-        } else {
-          listener.handleEvent(event);
-        }
-      };
-      this.inner.addEventListener(type, wrappedListener, options);
+      // Track message listeners so we can replay queued messages through them
+      const cb: MessageCallback =
+        typeof listener === 'function'
+          ? (listener as MessageCallback)
+          : (event: MessageEvent) => (listener as EventListenerObject).handleEvent(event);
+      this.addedMessageListeners.push(cb);
     } else {
       this.inner.addEventListener(type, listener, options);
     }
@@ -130,7 +139,15 @@ export class ControllableWebSocket {
     listener: EventListenerOrEventListenerObject,
     options?: boolean | EventListenerOptions,
   ): void {
-    this.inner.removeEventListener(type, listener, options);
+    if (type === 'message') {
+      const cb = typeof listener === 'function' ? (listener as MessageCallback) : null;
+      if (cb) {
+        const idx = this.addedMessageListeners.indexOf(cb);
+        if (idx >= 0) this.addedMessageListeners.splice(idx, 1);
+      }
+    } else {
+      this.inner.removeEventListener(type, listener, options);
+    }
   }
 
   dispatchEvent(event: Event): boolean {
