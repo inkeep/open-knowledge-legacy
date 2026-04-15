@@ -1,10 +1,13 @@
-import { markdown } from '@codemirror/lang-markdown';
+import { html } from '@codemirror/lang-html';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
+import { GFM } from '@lezer/markdown';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
+import { codeLanguages } from './markdown-code-languages';
 
 // Customize the dark editor surface colors here.
 const darkTheme = basicDarkInit({
@@ -61,7 +64,12 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
       doc: ytext.toString(),
       extensions: [
         basicSetup,
-        markdown(),
+        markdown({
+          base: markdownLanguage,
+          extensions: [GFM],
+          codeLanguages,
+          htmlTagLanguage: html({ matchClosingTags: false }),
+        }),
         yCollab(ytext, provider.awareness),
         createAgentFlashSourceExtension(provider.document),
         createWikiLinkSourceExtension(),
