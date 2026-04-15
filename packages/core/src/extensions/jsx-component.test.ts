@@ -19,8 +19,11 @@ describe('jsxComponent schema', () => {
     expect(schema.nodes.jsxComponent).toBeDefined();
   });
 
-  test('jsxComponent is an atom node', () => {
-    expect(schema.nodes.jsxComponent.spec.atom).toBe(true);
+  test('jsxComponent is a non-atom block node with block* content', () => {
+    expect(schema.nodes.jsxComponent.spec.atom).toBeFalsy();
+    expect(schema.nodes.jsxComponent.spec.content).toBe('block*');
+    expect(schema.nodes.jsxComponent.spec.isolating).toBe(true);
+    expect(schema.nodes.jsxComponent.spec.defining).toBe(true);
   });
 
   test('jsxComponent has content attribute', () => {

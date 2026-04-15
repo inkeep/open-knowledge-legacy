@@ -424,27 +424,13 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       n.jsxComponent.createAndFill({
         content: rawFromData(node.data) ?? '',
       });
-    // Inline JSX → jsxInline (R3) if available; block-lift fallback otherwise
+    // Inline JSX → jsxInline thin shape (NG14 / FR-2 / FR-4):
+    // Zero attrs. Single text child = raw source. Mdast children discarded.
+    // The text content IS the source for serialization. No descriptor dispatch.
     if (n.jsxInline) {
-      handlers.mdxJsxTextElement = (
-        node: MdxJsxTextElement,
-        _: MdastParent,
-        state: MdastToPmState,
-      ) => {
-        const children = state.all(node as unknown as MdastNodes).flat();
-        const attrs = {
-          sourceRaw: rawFromData(node.data) ?? '',
-          attributes: (node.attributes ?? []).map((a) =>
-            'type' in a && a.type === 'mdxJsxExpressionAttribute'
-              ? { type: 'spread', value: a.value }
-              : {
-                  type: 'attr',
-                  name: (a as { name: string }).name,
-                  value: (a as { value: unknown }).value,
-                },
-          ),
-        };
-        return n.jsxInline.createAndFill(attrs, children.length > 0 ? children : null);
+      handlers.mdxJsxTextElement = (node: MdxJsxTextElement) => {
+        const raw = rawFromData(node.data) ?? '';
+        return n.jsxInline.createAndFill({}, raw ? [schema.text(raw)] : null);
       };
     } else {
       // Fallback: map to block jsxComponent if jsxInline not in schema
@@ -699,12 +685,13 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // jsxInline → prefer sourceRaw for byte-identical round-trip; fallback to
-  // reconstructing from structured attributes
+  // jsxInline (FR-5b) — thin shape: text content IS the source.
+  // Emit as 'html' mdast to bypass text-context escape safe list
+  // (prevents mdast-util-to-markdown from escaping '<' → '\<').
   if (n.jsxInline) {
     nodeHandlers.jsxInline = (pmNode: PmNode) => ({
       type: 'html' as const,
-      value: pmNode.attrs.sourceRaw || pmNode.textContent || '',
+      value: pmNode.textContent ?? '',
     });
   }
 
