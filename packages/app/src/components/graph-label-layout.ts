@@ -2,8 +2,8 @@ import { type GraphLabelDescriptor, pickGraphLabelText } from './graph-label-uti
 import type { GraphNode } from './graph-view-utils';
 
 export interface GraphLabelLayoutNode extends GraphNode {
-  x: number;
-  y: number;
+  x?: number;
+  y?: number;
 }
 
 export interface GraphLabelLayoutLinkRef {
@@ -80,6 +80,7 @@ const LABEL_PADDING_X_PX = 6;
 const LABEL_PADDING_Y_PX = 4;
 const LABEL_HEIGHT_PX = LABEL_FONT_SIZE_PX + LABEL_PADDING_Y_PX * 2;
 const NODE_COLLISION_PADDING_PX = 2;
+const DISTANCE_EPSILON_PX = 0.001;
 
 export function planGraphLabels(input: PlanGraphLabelsInput): GraphLabelPlacement[] {
   const {
@@ -103,14 +104,19 @@ export function planGraphLabels(input: PlanGraphLabelsInput): GraphLabelPlacemen
   const viewportCenterX = viewport.width / 2;
   const viewportCenterY = viewport.height / 2;
 
-  const positionedNodes = nodes.map<PositionedNode>((node) => {
+  const positionedNodes = nodes.flatMap<PositionedNode>((node) => {
+    if (typeof node.x !== 'number' || typeof node.y !== 'number') {
+      return [];
+    }
     const screen = projectToScreen(node.x, node.y);
-    return {
-      node,
-      screenX: screen.x,
-      screenY: screen.y,
-      radiusPx: getNodeRadiusPx(node),
-    };
+    return [
+      {
+        node,
+        screenX: screen.x,
+        screenY: screen.y,
+        radiusPx: getNodeRadiusPx(node),
+      },
+    ];
   });
 
   const candidates = positionedNodes
@@ -198,7 +204,7 @@ function compareCandidates(a: LabelCandidate, b: LabelCandidate): number {
   if (a.isActive !== b.isActive) {
     return a.isActive ? -1 : 1;
   }
-  if (a.distanceToCenterPx !== b.distanceToCenterPx) {
+  if (Math.abs(a.distanceToCenterPx - b.distanceToCenterPx) > DISTANCE_EPSILON_PX) {
     return a.distanceToCenterPx - b.distanceToCenterPx;
   }
   if (a.degree !== b.degree) {

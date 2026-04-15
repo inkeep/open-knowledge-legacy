@@ -276,7 +276,11 @@ export function GraphView({
   const labelChipBorderColor = isDark ? 'rgba(243,244,246,0.08)' : 'rgba(17,24,39,0.08)';
   const focusZoom = isFullscreen ? 1.6 : 2.35;
   const maxLabelWidthPx = isFullscreen ? 220 : 150;
+  // Fullscreen shows the whole project graph, so it intentionally uses a tighter
+  // label budget than the docked 2-hop neighborhood view to avoid flooding.
   const maxVisibleLabels = isFullscreen ? 10 : 18;
+  const layoutNodes = graphData.nodes as GraphLabelLayoutNode[];
+  const layoutLinks = graphData.links as GraphLabelLayoutLink[];
   const labelDescriptors = buildGraphLabelDescriptors(graphData.nodes);
   const focusKey = `${activeDocName}|${focusZoom}|${graphSig.nodes}|${graphSig.links}`;
 
@@ -392,22 +396,6 @@ export function GraphView({
               const fg = fgRef.current;
               if (!fg) return;
 
-              const layoutNodes = graphData.nodes.flatMap((node) => {
-                const positionedNode = node as NodeObject<GraphNode>;
-                if (typeof positionedNode.x !== 'number' || typeof positionedNode.y !== 'number') {
-                  return [];
-                }
-                return [
-                  {
-                    id: node.id,
-                    label: node.label,
-                    x: positionedNode.x,
-                    y: positionedNode.y,
-                  } satisfies GraphLabelLayoutNode,
-                ];
-              });
-              if (layoutNodes.length === 0) return;
-
               ctx.save();
               // force-graph keeps the graph transform active during frame hooks; reset to
               // CSS-pixel space so placement math and text rendering share one coordinate system.
@@ -417,7 +405,7 @@ export function GraphView({
 
               const placements = planGraphLabels({
                 nodes: layoutNodes,
-                links: graphData.links as unknown as GraphLabelLayoutLink[],
+                links: layoutLinks,
                 activeDocName,
                 viewport: dimensions,
                 maxLabels: maxVisibleLabels,

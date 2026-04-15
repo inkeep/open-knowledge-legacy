@@ -36,6 +36,22 @@ function plan({
 }
 
 describe('planGraphLabels', () => {
+  test('returns empty array for degenerate inputs', () => {
+    expect(plan({ nodes: [] })).toEqual([]);
+    expect(
+      plan({
+        nodes: [{ id: 'alpha', label: 'Alpha', x: 50, y: 50 }],
+        maxLabels: 0,
+      }),
+    ).toEqual([]);
+    expect(
+      plan({
+        nodes: [{ id: 'alpha', label: 'Alpha', x: 50, y: 50 }],
+        viewport: { width: 0, height: 120 },
+      }),
+    ).toEqual([]);
+  });
+
   test('active node wins when two labels would collide', () => {
     const nodes: GraphLabelLayoutNode[] = [
       { id: 'active', label: 'Alpha', x: 92, y: 40 },
@@ -65,6 +81,25 @@ describe('planGraphLabels', () => {
 
     expect(placements).toHaveLength(1);
     expect(placements[0]?.nodeId).toBe('hub');
+  });
+
+  test('degree ranking handles numeric object ref ids by stringifying them', () => {
+    const nodes: GraphLabelLayoutNode[] = [
+      { id: '42', label: 'Hub Node', x: 92, y: 40 },
+      { id: 'leaf', label: 'Leaf Node', x: 108, y: 40 },
+    ];
+
+    const placements = plan({
+      nodes,
+      links: [
+        { source: { id: 42 }, target: { id: 'doc-a' } },
+        { source: { id: 42 }, target: { id: 'doc-b' } },
+      ],
+      maxLabels: 1,
+    });
+
+    expect(placements).toHaveLength(1);
+    expect(placements[0]?.nodeId).toBe('42');
   });
 
   test('degree ranking still works when links contain force-graph object refs', () => {
@@ -119,6 +154,22 @@ describe('planGraphLabels', () => {
     });
 
     expect(placements.some((placement) => placement.nodeId === 'active')).toBeFalse();
+  });
+
+  test('closer-to-center node wins when active state and degree are equal', () => {
+    const nodes: GraphLabelLayoutNode[] = [
+      { id: 'far', label: 'Near', x: 20, y: 20 },
+      { id: 'near', label: 'Near', x: 100, y: 60 },
+    ];
+
+    const placements = plan({
+      nodes,
+      viewport: { width: 200, height: 120 },
+      maxLabels: 1,
+    });
+
+    expect(placements).toHaveLength(1);
+    expect(placements[0]?.nodeId).toBe('near');
   });
 
   test('planner honors maxLabels deterministically', () => {
