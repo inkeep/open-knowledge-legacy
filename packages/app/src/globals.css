@@ -648,6 +648,40 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Source-view plugin classes — wikilinks, internal md links
+   (agent-flash classes are defined above with their @keyframes)
+
+   Migrated from inline EditorView.theme in plugins/wiki-link-source.ts
+   and plugins/md-link-source.ts so every CodeMirror class the app
+   emits has its styling in one place. The polish engine mandates
+   globals.css; these plugins now follow the same convention.
+   ───────────────────────────────────────────────────────────── */
+.cm-wiki-link {
+  color: oklch(52.7% 0.154 228.4); /* sky-700 */
+  font-weight: 500;
+}
+
+.cm-wiki-link:hover {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.cm-wiki-link-broken {
+  text-decoration: underline wavy;
+  text-decoration-color: oklch(55% 0.15 25);
+}
+
+.cm-md-internal-link {
+  color: oklch(52.7% 0.154 228.4); /* sky-700 — same as cm-wiki-link */
+  font-weight: 500;
+}
+
+.cm-md-internal-link:hover {
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* ─────────────────────────────────────────────────────────────
    Polish Engine — per-construct source-view decorations
    ───────────────────────────────────────────────────────────── */
 

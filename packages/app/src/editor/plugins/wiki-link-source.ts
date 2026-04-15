@@ -262,35 +262,21 @@ async function wikiLinkCompletionSource(
   };
 }
 
-// ── Theme ─────────────────────────────────────────────────────────────────────
-
-const wikiLinkTheme = EditorView.theme({
-  '.cm-wiki-link': {
-    color: 'oklch(52.7% 0.154 228.4)', // sky-700
-    fontWeight: '500',
-  },
-  '.cm-wiki-link:hover': {
-    textDecoration: 'underline',
-    cursor: 'pointer',
-  },
-  '.cm-wiki-link-broken': {
-    textDecoration: 'underline wavy',
-    textDecorationColor: 'oklch(55% 0.15 25)',
-  },
-});
-
 // ── Export ────────────────────────────────────────────────────────────────────
 
 /**
  * Returns the set of CodeMirror extensions for wiki link support.
  * Safe to add alongside basicSetup — uses markdownLanguage.data for
  * completions so there's no second autocompletion state field.
+ *
+ * Styling lives in `packages/app/src/globals.css` (`.cm-wiki-link`,
+ * `.cm-wiki-link-broken`) — matching the convention the polish engine
+ * mandates. No inline `EditorView.theme` here.
  */
 export function createWikiLinkSourceExtension(): Extension {
   return [
     wikiLinkDecorations,
     wikiLinkClickHandler,
-    wikiLinkTheme,
     // Additive: contributes our source to markdown's language data,
     // which basicSetup's autocompletion() already consults.
     markdownLanguage.data.of({ autocomplete: wikiLinkCompletionSource }),

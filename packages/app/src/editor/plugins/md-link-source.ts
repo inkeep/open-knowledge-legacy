@@ -99,25 +99,16 @@ const mdLinkClickHandler = EditorView.domEventHandlers({
   },
 });
 
-// ── Theme ─────────────────────────────────────────────────────────────────────
-
-const mdLinkTheme = EditorView.theme({
-  '.cm-md-internal-link': {
-    color: 'oklch(52.7% 0.154 228.4)', // sky-700 — same as cm-wiki-link
-    fontWeight: '500',
-  },
-  '.cm-md-internal-link:hover': {
-    textDecoration: 'underline',
-    cursor: 'pointer',
-  },
-});
-
 // ── Export ────────────────────────────────────────────────────────────────────
 
 /**
  * CodeMirror extensions for internal markdown link support in source mode.
  * Highlights relative [text](href) links and enables Cmd/Ctrl+click navigation.
+ *
+ * Styling lives in `packages/app/src/globals.css` (`.cm-md-internal-link`) —
+ * matching the convention the polish engine mandates. No inline
+ * `EditorView.theme` here.
  */
 export function createMdLinkSourceExtension(): Extension {
-  return [mdLinkDecorations, mdLinkClickHandler, mdLinkTheme];
+  return [mdLinkDecorations, mdLinkClickHandler];
 }

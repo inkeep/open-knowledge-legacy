@@ -37,11 +37,20 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
 
   if (!internal) {
     // External link — preserve original behavior, add tooltip hint.
+    //
+    // HTMLAttributes comes from TipTap's mergeAttributes pipeline and uses
+    // HTML attribute names (e.g. `class`, not `className`). Spreading it
+    // directly into JSX triggers React 19's "Invalid DOM property `class`.
+    // Did you mean `className`?" warning on every external link render.
+    // Strip the HTML-shape `class` key; the component sets `className`
+    // below, so losing `class` from HTMLAttributes changes no behavior.
+    const { class: _class, ...safeAttrs } = HTMLAttributes as Record<string, unknown>;
+    void _class;
     return (
       <Tooltip delayDuration={400}>
         <TooltipTrigger asChild>
           <a
-            {...HTMLAttributes}
+            {...safeAttrs}
             href={href}
             target="_blank"
             rel="noopener noreferrer"
