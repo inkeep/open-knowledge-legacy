@@ -62,8 +62,8 @@ function Hero() {
         </h1>
 
         <p className="mt-8 max-w-xl text-lg leading-relaxed text-[var(--slide-muted)]">
-          An agent-native knowledge platform where humans and AI co-create. Rich editing, markdown
-          in git, real-time collaboration — connected to any AI agent via MCP.
+          An agent-native knowledge platform where humans and AI co-create. VS Code meets Notion —
+          connected to any AI agent via MCP.
         </p>
 
         <div className="mt-10 flex flex-wrap items-center gap-4">
