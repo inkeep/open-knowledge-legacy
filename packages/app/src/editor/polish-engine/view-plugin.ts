@@ -83,6 +83,40 @@ function buildDecorations(view: EditorView, registry: Registry): DecorationSet {
   // from the same config, but allow different configs to stack on the same line)
   const decoratedLines = new Set<string>();
 
+  // Pre-pass: handle customDetect configs (frontmatter, etc.)
+  for (const config of registry) {
+    if (!config.customDetect || config.kind !== 'line') continue;
+    const ranges = config.customDetect(view.state);
+    for (const range of ranges) {
+      const lineStart = view.state.doc.lineAt(range.from);
+      const lineEnd = view.state.doc.lineAt(range.to);
+      for (let lineNo = lineStart.number; lineNo <= lineEnd.number; lineNo++) {
+        const line = view.state.doc.line(lineNo);
+        const lineKey = `${config.id}:${line.from}`;
+        if (decoratedLines.has(lineKey)) continue;
+
+        const cls = typeof config.class === 'string' ? config.class : '';
+        // Position classes for first/last fence lines
+        const positionCls =
+          lineNo === lineStart.number
+            ? `${cls}-fence-open`
+            : lineNo === lineEnd.number
+              ? `${cls}-fence-close`
+              : '';
+
+        const fullClass = [cls, positionCls].filter(Boolean).join(' ');
+        if (fullClass) {
+          pending.push({
+            from: line.from,
+            to: line.from,
+            decoration: Decoration.line({ class: fullClass }),
+          });
+          decoratedLines.add(lineKey);
+        }
+      }
+    }
+  }
+
   const tree = syntaxTree(view.state);
 
   for (const { from, to } of view.visibleRanges) {

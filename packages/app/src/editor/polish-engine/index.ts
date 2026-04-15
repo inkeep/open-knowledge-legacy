@@ -16,12 +16,32 @@ import {
   codeMarkConstruct,
   fencedCodeConstruct,
 } from './constructs/fenced-code';
+import { frontmatterConstruct } from './constructs/frontmatter';
+import { headerMarkConstruct, headingConstruct } from './constructs/heading';
+import { htmlBlockConstruct } from './constructs/html-block';
+import {
+  emphasisConstruct,
+  emphasisMarkConstruct,
+  inlineCodeConstruct,
+  strikethroughConstruct,
+  strikethroughMarkConstruct,
+  strongConstruct,
+} from './constructs/inline-style';
+import {
+  imageConstruct,
+  linkConstruct,
+  linkMarkConstruct,
+  linkReferenceConstruct,
+  urlConstruct,
+} from './constructs/link';
+import { listItemConstruct, listMarkerConstruct, taskMarkerConstruct } from './constructs/list';
 import {
   tableCellConstruct,
   tableContainerConstruct,
   tableHeaderConstruct,
   tableRowConstruct,
 } from './constructs/table';
+import { thematicBreakConstruct } from './constructs/thematic-break';
 import type { Registry } from './registry';
 import { createCrossScanField } from './state-field';
 import { createPolishViewPlugin } from './view-plugin';
@@ -31,6 +51,7 @@ export const polishCompartment = new Compartment();
 
 /** Default registry of all supported constructs. */
 export const defaultRegistry: Registry = [
+  // Phase 1 — block pilots
   blockquoteConstruct,
   tableContainerConstruct,
   tableHeaderConstruct,
@@ -39,6 +60,27 @@ export const defaultRegistry: Registry = [
   fencedCodeConstruct,
   codeMarkConstruct,
   codeInfoConstruct,
+  // Phase 2 — block completeness
+  listItemConstruct,
+  listMarkerConstruct,
+  taskMarkerConstruct,
+  headingConstruct,
+  headerMarkConstruct,
+  frontmatterConstruct,
+  // Phase 3 — inline polish
+  emphasisConstruct,
+  strongConstruct,
+  strikethroughConstruct,
+  emphasisMarkConstruct,
+  strikethroughMarkConstruct,
+  inlineCodeConstruct,
+  linkConstruct,
+  imageConstruct,
+  linkMarkConstruct,
+  urlConstruct,
+  linkReferenceConstruct,
+  thematicBreakConstruct,
+  htmlBlockConstruct,
 ];
 
 /**

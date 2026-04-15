@@ -748,6 +748,159 @@
   border-radius: 2px;
 }
 
+/* List + listItem (Phase 2) — hanging indent via --list-depth custom property */
+.cm-list-item-line {
+  padding-inline-start: calc(2ch * var(--list-depth, 1));
+  text-indent: -2ch;
+}
+
+.cm-list-marker {
+  color: var(--color-muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.cm-task-marker {
+  border: 1px solid var(--color-muted-foreground);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.cm-task-marker-checked {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+/* Heading (Phase 2) — tuned size hierarchy, H1 capped at 1.25× per D25 */
+.cm-heading-1 {
+  font-size: 1.25em;
+  font-weight: 700;
+  margin-block: 0.3em;
+}
+.cm-heading-2 {
+  font-size: 1.15em;
+  font-weight: 700;
+}
+.cm-heading-3 {
+  font-size: 1.1em;
+  font-weight: 600;
+}
+.cm-heading-4 {
+  font-size: 1em;
+  font-weight: 600;
+}
+.cm-heading-5 {
+  font-size: 1em;
+  font-weight: 500;
+}
+.cm-heading-6 {
+  font-size: 1em;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+}
+
+.cm-header-mark {
+  color: var(--color-muted-foreground);
+  font-weight: 400;
+}
+
+/* YAML frontmatter (Phase 2) — line-tint + fence borders */
+.cm-frontmatter-line {
+  background: color-mix(in oklab, var(--color-accent) 5%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+  line-height: 1.4;
+}
+
+.cm-frontmatter-line-fence-open {
+  border-top: 1px solid var(--color-border);
+}
+
+.cm-frontmatter-line-fence-close {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Emphasis / strong / delete (Phase 3) — content styled, markers muted */
+.cm-em {
+  font-style: italic;
+}
+.cm-strong {
+  font-weight: 700;
+}
+.cm-del {
+  text-decoration: line-through;
+  color: var(--color-muted-foreground);
+}
+
+.cm-em-marker,
+.cm-del-marker {
+  color: var(--color-muted-foreground);
+  opacity: 0.65;
+}
+
+/* Inline code (Phase 3) */
+.cm-inline-code {
+  font-family: var(--font-mono);
+  background: color-mix(in oklab, var(--color-muted) 30%, transparent);
+  padding: 0 0.25em;
+  border-radius: 3px;
+  word-break: break-all;
+}
+
+/* Link / image (Phase 3) */
+.cm-link-text {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+
+.cm-link-url {
+  color: var(--color-muted-foreground);
+  word-break: break-all;
+}
+
+.cm-link-mark {
+  color: var(--color-muted-foreground);
+  opacity: 0.6;
+}
+
+.cm-image-mark {
+  color: oklch(55% 0.15 60);
+}
+
+/* Reference definition block (Phase 3) */
+.cm-link-ref-def {
+  background: color-mix(in oklab, var(--color-muted) 15%, transparent);
+  border-left: 2px solid var(--color-muted-foreground);
+  padding-inline-start: 6px;
+  font-size: 0.95em;
+}
+
+.cm-link-ref-def-label {
+  color: var(--color-accent);
+}
+
+.cm-link-ref-def-url {
+  color: var(--color-muted-foreground);
+  word-break: break-all;
+}
+
+/* Thematic break (Phase 3) — rule dominates, text fades per D9 */
+.cm-thematic-break {
+  border-bottom: 1px solid var(--color-border);
+  margin-block: 0.4em;
+  color: transparent;
+  line-height: 0;
+}
+
+/* HTML block (Phase 3) — purple-tinted zone */
+.cm-html-block {
+  background: color-mix(in oklab, oklch(55% 0.06 300) 4%, transparent);
+  border-left: 2px solid color-mix(in oklab, oklch(55% 0.06 300) 30%, transparent);
+  padding-inline-start: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.95em;
+}
+
 /* ─────────────────────────────────────────────────────────────
    Presence polish — agent badge, undo button, presence bar
    ───────────────────────────────────────────────────────────── */
