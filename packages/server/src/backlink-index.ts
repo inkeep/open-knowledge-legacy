@@ -44,6 +44,11 @@ export interface BacklinkEntry {
   snippet: string | null;
 }
 
+export interface ForwardLinkEntry {
+  target: string;
+  snippet: string | null;
+}
+
 export interface HubEntry {
   docName: string;
   count: number;
@@ -517,6 +522,14 @@ export class BacklinkIndex {
   getForwardLinks(source: string, branch = this.activeBranch): string[] {
     const state = this.getState(branch);
     return [...(state.forward.get(source) ?? new Set<string>())].sort((a, b) => a.localeCompare(b));
+  }
+
+  getForwardLinkEntries(source: string, branch = this.activeBranch): ForwardLinkEntry[] {
+    const state = this.getState(branch);
+    return this.getForwardLinks(source, branch).map((target) => ({
+      target,
+      snippet: state.backward.get(target)?.get(source) ?? null,
+    }));
   }
 
   getOrphans(allDocs: string[], mode: OrphanMode = 'both', branch = this.activeBranch): string[] {

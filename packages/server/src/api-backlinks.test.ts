@@ -92,8 +92,14 @@ describe('graph endpoints', () => {
       const forward = JSON.parse(
         (await callRoute(contentDir, '/api/forward-links?docName=alpha', fileIndex, backlinkIndex))
           .body,
-      ) as { forwardLinks: string[] };
-      expect(forward.forwardLinks).toEqual(['beta']);
+      ) as { forwardLinks: Array<{ docName: string; title: string; snippet: string | null }> };
+      expect(forward.forwardLinks).toEqual([
+        {
+          docName: 'beta',
+          title: 'Beta',
+          snippet: 'Links to beta.',
+        },
+      ]);
 
       const orphans = JSON.parse(
         (await callRoute(contentDir, '/api/orphans', fileIndex, backlinkIndex)).body,

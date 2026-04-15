@@ -837,7 +837,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, {
         ok: true,
         docName,
-        forwardLinks: backlinkIndex.getForwardLinks(docName),
+        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) => ({
+          docName: entry.target,
+          title: readPageTitleForDocName(entry.target),
+          snippet: entry.snippet,
+        })),
       });
     } catch (e) {
       console.error('[forward-links]', e);
