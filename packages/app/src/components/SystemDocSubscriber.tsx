@@ -35,6 +35,10 @@ export function SystemDocSubscriber() {
         void queryClient.invalidateQueries({ queryKey: ['backlinks'] });
         void queryClient.invalidateQueries({ queryKey: ['forward-links'] });
       }
+      if (channels.includes('files') || channels.includes('graph')) {
+        void queryClient.invalidateQueries({ queryKey: ['orphans'] });
+        void queryClient.invalidateQueries({ queryKey: ['hubs'] });
+      }
     });
 
     provider.on('synced', () => {

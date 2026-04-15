@@ -53,7 +53,7 @@ const ROLLBACK_ORIGIN = {
   context: { origin: 'rollback-apply' },
 };
 
-import type { BacklinkIndex } from './backlink-index.ts';
+import { type BacklinkIndex, isOrphanMode } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import {
   contentHash,
@@ -874,7 +874,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      const orphans = backlinkIndex.getOrphans([...getFileIndex().keys()]).map((docName) => ({
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const mode = url.searchParams.get('mode') ?? 'both';
+      if (!isOrphanMode(mode)) {
+        json(res, 400, {
+          ok: false,
+          error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
+        });
+        return;
+      }
+
+      const orphans = backlinkIndex.getOrphans([...getFileIndex().keys()], mode).map((docName) => ({
         docName,
         title: readPageTitleForDocName(docName),
       }));

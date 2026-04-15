@@ -45,6 +45,14 @@ export interface HubEntry {
   count: number;
 }
 
+export const ORPHAN_MODES = ['incoming', 'outgoing', 'both'] as const;
+
+export type OrphanMode = (typeof ORPHAN_MODES)[number];
+
+export function isOrphanMode(value: string): value is OrphanMode {
+  return ORPHAN_MODES.includes(value as OrphanMode);
+}
+
 interface BranchGraphState {
   backward: Map<string, Map<string, string | null>>;
   forward: Map<string, Set<string>>;
@@ -513,12 +521,16 @@ export class BacklinkIndex {
     return [...(state.forward.get(source) ?? new Set<string>())].sort((a, b) => a.localeCompare(b));
   }
 
-  getOrphans(allDocs: string[], branch = this.activeBranch): string[] {
+  getOrphans(allDocs: string[], mode: OrphanMode = 'both', branch = this.activeBranch): string[] {
     const state = this.getState(branch);
     return [...allDocs]
       .filter((docName) => {
-        const backlinks = state.backward.get(docName);
-        return !backlinks || backlinks.size === 0;
+        const hasInboundEdges = (state.backward.get(docName)?.size ?? 0) > 0;
+        const hasOutboundEdges = (state.forward.get(docName)?.size ?? 0) > 0;
+
+        if (mode === 'incoming') return !hasInboundEdges;
+        if (mode === 'outgoing') return !hasOutboundEdges;
+        return !hasInboundEdges && !hasOutboundEdges;
       })
       .sort((a, b) => a.localeCompare(b));
   }
