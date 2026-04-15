@@ -890,6 +890,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
+      // Force L1 flush (CRDT → disk) for THIS document only, then L2 flush
+      // (disk → git) so the agent write appears in the shadow-repo timeline
+      // immediately rather than waiting for the 15s debounce.  Per-document
+      // flush avoids disrupting concurrent human edits on other documents.
+      const debounceId = `onStoreDocument-${docName}`;
+      if (hocuspocus.debouncer.isDebounced(debounceId)) {
+        hocuspocus.debouncer.executeNow(debounceId).catch((err: unknown) => {
+          log.warn({ err }, '[agent-write] L1 flush failed');
+        });
+      }
+      if (flushGitCommit) {
+        flushGitCommit().catch((e) => {
+          log.warn({ err: e }, '[agent-write] post-write git flush failed');
+        });
+      }
+
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       log.error({ err: e }, '[agent-write] handler failed');
@@ -971,6 +987,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         recordContributor(resolvedDocName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
+      }
+
+      // Force L1 flush (CRDT → disk) for THIS document only, then L2 flush
+      // (disk → git) so the agent write appears in the shadow-repo timeline
+      // immediately rather than waiting for the 15s debounce.  Per-document
+      // flush avoids disrupting concurrent human edits on other documents.
+      const debounceId = `onStoreDocument-${resolvedDocName}`;
+      if (hocuspocus.debouncer.isDebounced(debounceId)) {
+        hocuspocus.debouncer.executeNow(debounceId).catch((err: unknown) => {
+          log.warn({ err }, '[agent-write-md] L1 flush failed');
+        });
+      }
+      if (flushGitCommit) {
+        flushGitCommit().catch((e) => {
+          log.warn({ err: e }, '[agent-write-md] post-write git flush failed');
+        });
       }
 
       json(res, 200, { ok: true, timestamp });
@@ -1407,6 +1439,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
       }
+
+      // Force L1 flush (CRDT → disk) for THIS document only, then L2 flush
+      // (disk → git) so the agent patch appears in the shadow-repo timeline
+      // immediately rather than waiting for the 15s debounce.  Per-document
+      // flush avoids disrupting concurrent human edits on other documents.
+      const debounceId = `onStoreDocument-${docName}`;
+      if (hocuspocus.debouncer.isDebounced(debounceId)) {
+        hocuspocus.debouncer.executeNow(debounceId).catch((err: unknown) => {
+          log.warn({ err }, '[agent-patch] L1 flush failed');
+        });
+      }
+      if (flushGitCommit) {
+        flushGitCommit().catch((e) => {
+          log.warn({ err: e }, '[agent-patch] post-write git flush failed');
+        });
+      }
+
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
