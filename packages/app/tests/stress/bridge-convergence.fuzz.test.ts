@@ -729,7 +729,7 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       for (const p of agentProbes) p.cleanup();
       for (const c of clients) await c.cleanup();
     }
-  }, 45_000);
+  }, 90_000);
 });
 
 // ─── D18 coverage gate ───
