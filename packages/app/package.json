@@ -17,7 +17,7 @@
     "test:fidelity": "bun test --timeout 120000 tests/fidelity/",
     "test:fuzz:bridge": "bun test tests/stress/bridge-convergence.fuzz.test.ts",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
-    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts"
+    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts && VITE_PORT=13579 playwright test tests/stress/fr-7a-disconnect-source-mode.e2e.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
