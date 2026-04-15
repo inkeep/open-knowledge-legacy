@@ -221,10 +221,26 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     }
   }
 
+  let warnedNoRoots = false;
   async function resolveCwd(explicit?: string): Promise<string> {
     if (explicit) return explicit;
     if (!rootsLoaded) await refreshRoots();
-    return cachedRoots[0] ?? startupCwd;
+    if (cachedRoots.length === 0) {
+      // Observability: the client didn't advertise any file:// roots. Falling
+      // back to the spawn cwd — which is `/` for Claude Desktop and rarely
+      // what the user wants. Log once so operators debugging "wrong project"
+      // issues can see this.
+      if (!warnedNoRoots) {
+        log(`no client roots — falling back to startup cwd: ${startupCwd}`);
+        warnedNoRoots = true;
+      }
+      return startupCwd;
+    }
+    if (warnedNoRoots) {
+      log(`client roots now available — using ${cachedRoots[0]}`);
+      warnedNoRoots = false;
+    }
+    return cachedRoots[0];
   }
 
   server.server.setNotificationHandler(RootsListChangedNotificationSchema, async () => {
@@ -243,11 +259,23 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
   const explicitHttpUrl = serverUrl
     ? serverUrl.replace('ws://', 'http://').replace('wss://', 'https://')
     : undefined;
+  // 1-second TTL cache on the lock-file read: agent burst writes (e.g. 5 files
+  // in 600ms) otherwise re-stat the same lock file N times with no new info.
+  // Lock contents change once per `open-knowledge start` lifetime, so this
+  // window is generously short. Keyed by cwd since different projects have
+  // different locks.
+  const SERVER_URL_CACHE_MS = 1000;
+  const serverUrlCache = new Map<string, { url: string | undefined; expiresAt: number }>();
   const resolveServerUrlForTools = async (): Promise<string | undefined> => {
     if (explicitHttpUrl) return explicitHttpUrl;
     const cwd = await resolveCwd();
+    const now = Date.now();
+    const cached = serverUrlCache.get(cwd);
+    if (cached && cached.expiresAt > now) return cached.url;
     const lock = readServerLock(resolveLockDir(resolveContentDir(config, cwd)));
-    return lock && lock.port > 0 ? `http://localhost:${lock.port}` : undefined;
+    const url = lock && lock.port > 0 ? `http://localhost:${lock.port}` : undefined;
+    serverUrlCache.set(cwd, { url, expiresAt: now + SERVER_URL_CACHE_MS });
+    return url;
   };
 
   // --- Agent identity (Ref pattern — tool handlers read .current at call time).

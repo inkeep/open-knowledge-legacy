@@ -71,8 +71,13 @@ export function resolvePreviewUrl(
         source: 'lock',
       };
     }
-  } catch {
-    // malformed / missing lock → fall through
+  } catch (err) {
+    // Lock file exists but is corrupt or unreadable. Fall through to config,
+    // but surface the error for operators debugging "why won't the preview
+    // URL resolve?" — otherwise this path is invisible.
+    process.stderr.write(
+      `[preview-url] readServerLock failed at ${ctx.lockDir}, falling through to config: ${err instanceof Error ? err.message : String(err)}\n`,
+    );
   }
 
   // 3. config

@@ -88,6 +88,12 @@ export class AgentFocusBroadcaster {
       }
       return null;
     }
+    // Recovery signal: log once when __system__ becomes available after a miss
+    // so operators can confirm the broadcaster resumed.
+    if (this.warnedMissing) {
+      this.log.info({}, '[agent-focus] __system__ document now available — resuming focus updates');
+      this.warnedMissing = false;
+    }
     return getAwareness(doc);
   }
 }

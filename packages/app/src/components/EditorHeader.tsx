@@ -102,8 +102,8 @@ export function EditorHeader({
             </TooltipTrigger>
             <TooltipContent>
               {isPinned
-                ? 'Pinned — click to resume following agent nav'
-                : 'Pin to stay here while agent works elsewhere'}
+                ? 'Pinned — click to resume following agent navigation'
+                : 'Pin to stay on this doc — browser won’t auto-navigate to the agent’s current focus'}
             </TooltipContent>
           </Tooltip>
         )}

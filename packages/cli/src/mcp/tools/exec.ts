@@ -185,11 +185,17 @@ function detectHeadTailTruncation(stages: Stage[], stdout: string): { banner: st
   const last = stages[stages.length - 1];
   if (last.command !== 'head' && last.command !== 'tail') return null;
   const limit = extractHeadTailLimit(last.args);
-  // Count non-empty lines; trailing newline shouldn't count as content.
-  const lines = stdout.split('\n').filter((l) => l.length > 0);
-  if (lines.length < limit) return null;
+  // Mirror applySoftCap's line counting: count all lines and only ignore the
+  // trailing empty line from a final newline. Filtering ALL empty lines (the
+  // previous impl) under-counted legitimate blank lines in grep output and
+  // made the warning miss real truncations.
+  const rawLines = stdout.split('\n');
+  const contentLineCount =
+    rawLines[rawLines.length - 1] === '' ? rawLines.length - 1 : rawLines.length;
+  if (contentLineCount < limit) return null;
+  const countedLines = rawLines.slice(0, contentLineCount);
   const uniqueFiles = new Set(
-    lines.map((l) => {
+    countedLines.map((l) => {
       const colon = l.indexOf(':');
       return colon > 0 ? l.slice(0, colon) : l;
     }),
@@ -200,7 +206,7 @@ function detectHeadTailTruncation(stages: Stage[], stdout: string): { banner: st
     .join(' | ');
   return {
     banner:
-      `Output hit \`${last.command} -${limit}\` cap (${lines.length} lines, ${uniqueFiles} unique file${uniqueFiles === 1 ? '' : 's'}). ` +
+      `Output hit \`${last.command} -${limit}\` cap (${contentLineCount} lines, ${uniqueFiles} unique file${uniqueFiles === 1 ? '' : 's'}). ` +
       `The \`${upstream}\` stage may have had more matches that never reached stdout. ` +
       `For existence checks across many files, prefer \`grep -rl PATTERN <dir>\` (list files only, no head). ` +
       `For enumeration, drop the \`| ${last.command}\` or widen the cap.`,

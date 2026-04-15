@@ -523,14 +523,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     try {
       const backlinks = backlinkIndex.getBacklinks(docName);
       if (backlinks.length > 0) return undefined;
+      // This runs on every write — if hub-candidate walking becomes pathological
+      // on very large file indexes, we want an observable signal. 5ms is well
+      // above the typical <1ms cost for a small-to-medium repo.
+      const start = performance.now();
       const candidates = findHubCandidates(docName, getFileIndex());
+      const elapsed = performance.now() - start;
+      if (elapsed > 5) {
+        log.debug(
+          { docName, elapsedMs: elapsed, candidateCount: candidates.length },
+          '[orphan-hint] findHubCandidates slow',
+        );
+      }
       if (candidates.length === 0) return undefined;
       const wikiLinks = candidates.map((c) => `[[${c}]]`).join(', ');
       return [
         {
           type: 'orphan',
           parentCandidates: candidates,
-          message: `This doc is orphaned. Consider linking from a hub: ${wikiLinks}`,
+          message: `This doc has no backlinks yet. To make it discoverable, consider linking from a parent hub doc (index/overview files in the folder tree): ${wikiLinks}.`,
         },
       ];
     } catch {
