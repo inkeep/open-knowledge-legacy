@@ -40,8 +40,8 @@ export const DESCRIPTION = [
   'Renames the target document and rewrites inbound wiki-links plus supported internal inline Markdown links in affected docs.',
   '',
   '**Parameters:**',
-  '- `docName` — Current document name',
-  '- `newDocName` — New document name',
+  '- `docName` — Current document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
+  '- `newDocName` — New document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
 ].join('\n');
 
 function parseRenameMappings(value: unknown): RenameDocumentMapping[] {

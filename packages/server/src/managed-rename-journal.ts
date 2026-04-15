@@ -99,7 +99,13 @@ export function readManagedRenameJournal(contentDir: string): ManagedRenameRecov
   const path = managedRenameJournalPath(contentDir);
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, 'utf-8');
-  return parseManagedRenameRecoveryJournal(JSON.parse(raw) as unknown);
+  try {
+    return parseManagedRenameRecoveryJournal(JSON.parse(raw) as unknown);
+  } catch (err) {
+    throw new Error(
+      `Managed rename journal at ${path} is corrupt: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }
 
 export function writeManagedRenameJournal(
@@ -166,9 +172,15 @@ export function recoverPendingManagedRename(contentDir: string): ManagedRenameRe
   }
 
   if (!restoredDocNames.has(journal.destinationDocName)) {
+    const destinationPath = safeContentPath(journal.destinationDocName, contentDir);
     try {
-      rmSync(safeContentPath(journal.destinationDocName, contentDir), { force: true });
+      rmSync(destinationPath, { force: true });
     } catch (err) {
+      if (existsSync(destinationPath)) {
+        console.warn(
+          `[managed-rename] Both source and destination files exist after partial recovery for ${journal.destinationDocName}`,
+        );
+      }
       console.warn(
         `[managed-rename] Recovery incomplete; failed to clean destination ${journal.destinationDocName}:`,
         err,

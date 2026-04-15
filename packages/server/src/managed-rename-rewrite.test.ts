@@ -32,6 +32,30 @@ describe('rewriteWikiLinksForDocumentRename', () => {
       rewrites: 0,
     });
   });
+
+  test('ignores wiki-links inside inline code spans', () => {
+    expect(rewriteWikiLinksForDocumentRename('Check `[[old]]` inline.\n', 'old', 'new')).toEqual({
+      markdown: 'Check `[[old]]` inline.\n',
+      rewrites: 0,
+    });
+  });
+
+  test('rewrites multiple wiki-links on the same line', () => {
+    expect(
+      rewriteWikiLinksForDocumentRename('[[old]] and [[old#s]] and [[old|alias]]\n', 'old', 'new'),
+    ).toEqual({
+      markdown: '[[new]] and [[new#s]] and [[new|alias]]\n',
+      rewrites: 3,
+    });
+  });
+
+  test('rewrites wiki-links after markdown prefixes', () => {
+    const markdown = ['- [[old]]', '> [[old]]', '## [[old]]', ''].join('\n');
+    expect(rewriteWikiLinksForDocumentRename(markdown, 'old', 'new')).toEqual({
+      markdown: ['- [[new]]', '> [[new]]', '## [[new]]', ''].join('\n'),
+      rewrites: 3,
+    });
+  });
 });
 
 describe('rewriteMarkdownLinksForDocumentRename', () => {
@@ -84,6 +108,29 @@ describe('rewriteMarkdownLinksForDocumentRename', () => {
         '',
         'Inline `[Skip](../old.md)` stays literal.',
       ].join('\n'),
+      rewrites: 1,
+    });
+  });
+
+  test('preserves query strings in markdown links', () => {
+    expect(
+      rewriteMarkdownLinksForDocumentRename(
+        'See [API](./old.md?tab=api#section).\n',
+        'notes',
+        'old',
+        'new',
+      ),
+    ).toEqual({
+      markdown: 'See [API](./new.md?tab=api#section).\n',
+      rewrites: 1,
+    });
+  });
+
+  test('preserves angle brackets around hrefs', () => {
+    expect(
+      rewriteMarkdownLinksForDocumentRename('See [Spaced](<./old.md>).\n', 'notes', 'old', 'new'),
+    ).toEqual({
+      markdown: 'See [Spaced](<./new.md>).\n',
       rewrites: 1,
     });
   });
