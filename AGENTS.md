@@ -73,6 +73,13 @@ These are patterns that ALL work in the repo should follow. Established during t
     (b) **Finer-grained merge via DMP `patch_make`/`patch_apply` over line-level for divergent paths** — DMP's character-level matching shrinks the "blast radius" of Items replaced; `applyByPrefixSuffix` preserves matching prefix/suffix regions.
     (c) **Origin-aware reconciliation at the bridge layer** — three-way merge (e.g., DMP `patch_apply`) lets bridge-side reconciliation preserve content from both writers without a custom diff-walk.
     Why this exists as a precedent: research (`reports/crdt-origin-laundering-prior-art/REPORT.md`) confirms these three patterns are unclaimed in academic + engineering literature as of 2026-04-13. They're how Open Knowledge solves "origin-laundering" (sync bridges replacing tracked Items with untracked replacements) without per-character attribution. Applies wherever a CRDT bridge converts one Y type to another. See `specs/2026-04-13-observer-a-origin-aware-diff/SPEC.md` and precedent #1 (typed transaction origins) for related discipline.
+12. **XmlFragment is authoritative for markdown state; Y.Text mirrors it under minimal mutation.** Server-side agent writes (and any future server-side mutation path) read the current XmlFragment, compose the delta at the markdown level, apply via `updateYFragment` (structural diff preserves user-content Items), then mirror Y.Text via `applyByPrefixSuffix` (preserves non-agent Y.Text Items and their origins). The template is `applyAgentMarkdownWrite` in `agent-sessions.ts`. A naive rebuild-from-Y.Text pattern (`syncTextToFragment`) destroys concurrent user XmlFragment content — Bug-A in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`. Applies to all server-side CRDT bridge mutations including V0-14's future `applyAgentUndo` handler. Cross-references precedent #11 (minimize CRDT mutation) and PR #128's D14 (no Y.Map for diagnostics).
+13. **Bridge invariants are auto-enforced and property-verified.** Four sub-principles:
+    (a) **Named invariants are enforced by watchers, not by convention.** If an invariant is in CLAUDE.md (bridge, baseline, item-preservation), a per-transaction watcher asserts it on every enforcing-origin transaction in tests. Manual `assertBridgeInvariant` calls are reinforcement, not the primary guarantee.
+    (b) **Implicit time-coupling is a test smell.** Observer debounces go through an injected `Scheduler` so tests are deterministic; production gets `setTimeout` passthrough. `wait(ms)` in new bridge tests requires justification.
+    (c) **CRDT races are tested by message ordering, not wall-clock timing.** WebSocket-layer `pauseSync`/`resumeSync` reproduces races structurally. Ad-hoc observer disabling or `wait(N)` timing races are the old pattern.
+    (d) **Example-based coverage is a floor, not a ceiling.** A multi-client convergence fuzzer (`bridge-convergence.fuzz.test.ts`) samples the continuous race space that hand-written scenarios cannot enumerate. D18 coverage gate ensures new bridge surfaces extend the fuzzer's op set. Replay via `STRESS_FUZZ_SEED=<n>`.
+    Applies to all future bridge work. When a new bridge write surface is added (e.g., V0-14 agent-undo), the D18 coverage gate fails CI until a corresponding fuzzer op kind is added. Cross-references precedent #11 (minimize CRDT mutation), #12 (XmlFragment-authoritative).
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -336,9 +343,9 @@ Y.Doc
 | ------------------------- | -------------------------------- | ---------------------------- | -------------------- |
 | W1: WYSIWYG (XmlFragment) | Observer A                       | (direct)                     | Persistence debounce |
 | W2: Source (Y.Text)       | (direct)                         | Observer B                   | Persistence debounce |
-| W3: Agent API             | CRDT sync (WebSocket)            | syncTextToFragment on server | Persistence debounce |
+| W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket) | applyAgentMarkdownWrite on server | Persistence debounce |
 | W4: Disk (file watcher)   | applyExternalChange              | applyExternalChange          | (direct)             |
-| Undo/Redo                 | UndoManager + syncTextToFragment | syncTextToFragment           | Persistence debounce |
+| Undo/Redo (V0-14 pending) | applyAgentUndo (V0-14 template — see §7e of bridge-convergence SPEC) | applyAgentUndo (V0-14) | Persistence debounce |
 
 ### transaction.local semantics
 
@@ -348,38 +355,41 @@ Y.Doc
 
 ### Observer A (XmlFragment → Y.Text)
 
-- File: `packages/app/src/editor/observers.ts:301`
-- Origin: `'sync-from-tree'`
+- File: `packages/app/src/editor/observers.ts`
+- Origin: `ORIGIN_TREE_TO_TEXT` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'sync-from-tree'`)
 - **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
-- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` to minimize CRDT mutations
-- Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes
-- Skips entirely for remote (non-local) transactions; refreshes `lastSyncedXmlMd` baseline only
+- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` (imported from `@inkeep/open-knowledge-core` — shared with server-side `applyAgentMarkdownWrite` per FR-2 of the bridge-convergence SPEC) to minimize CRDT mutations
+- Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes. Debounce timer uses the injected `ObserverDeps.scheduler` (FR-15) — production default is `globalThis.setTimeout` passthrough; tests use `createManualScheduler()` from `test-harness.ts` for deterministic flush
+- **Bug-B fix (US-009):** conditional baseline refresh on remote transactions — if a local debounce is pending (`debounceA !== null`), `lastSyncedXmlMd` is NOT refreshed to the post-remote state. This preserves the old baseline so the pending debounce fires with the correct delta (`old baseline → current XmlFragment including both local + remote edits`) instead of early-exiting on `lastSyncedXmlMd === md`. Fixes the "Observer A absorbs local changes on remote baseline refresh" bug reproduced in `bridge-convergence-regression.test.ts`.
 - Updates `lastSyncedXmlMd` after every successful sync
 
 ### Observer B (Y.Text → XmlFragment)
 
-- File: `packages/app/src/editor/observers.ts:396`
-- Origin: `'sync-from-text'`
+- File: `packages/app/src/editor/observers.ts`
+- Origin: `ORIGIN_TEXT_TO_TREE` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'sync-from-text'`)
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
 - Early-exits if XmlFragment already serializes to the same markdown as Y.Text
 
-### syncTextToFragment
+### applyAgentMarkdownWrite (XmlFragment-authoritative — precedent #10)
 
 - File: `packages/server/src/agent-sessions.ts`
-- Called after every `um.undo()`, `um.redo()`, and agent write
-- Parses Y.Text → ProseMirror JSON → `updateYFragment()` on the server doc
-- **STOP:** Never write to Y.Text without calling `syncTextToFragment` afterward
+- **Replaces the deleted `syncTextToFragment`** (FR-9 in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Called by all three agent-write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) in `api-extension.ts`.
+- Flow: (1) read current server XmlFragment (reflects all CRDT-synced content including concurrent client WYSIWYG typing); (2) serialize to markdown; (3) compose agent's delta at the markdown level per `'append'` / `'prepend'` / `'replace'` position; (4) parse composed markdown and apply to XmlFragment via `updateYFragment` (structural diff preserves user-content Items); (5) mirror the canonical post-fragment markdown to Y.Text via `applyByPrefixSuffix` (minimal mutation, preserves non-agent Y.Text Items and their origins)
+- **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyByPrefixSuffix`. V0-14's future `applyAgentUndo` handler must follow this same template (see §7e of the bridge-convergence SPEC + `evidence/bug-d-mechanism.md`).
 
 ### Origin-guard truth table
 
-| Transaction Origin      | Observer A (tree→text)          | Observer B (text→tree) |
-| ----------------------- | ------------------------------- | ---------------------- |
-| `'sync-from-tree'`      | — (self)                        | SKIP                   |
-| `'sync-from-text'`      | SKIP                            | — (self)               |
-| `'agent-write'`         | Skip (remote; refresh baseline) | Sync normally          |
-| `'file-watcher'`        | Sync normally                   | Sync normally          |
-| `undefined` (WebSocket) | Sync normally                   | Sync normally          |
+All transaction origins are `LocalTransactionOrigin` **object references** (precedent #1) exported from their owning module. Identity-based matching in `Set.has` / `Y.UndoManager.trackedOrigins` / `attachBridgeInvariantWatcher` enforcing sets requires the exact object ref — a string literal or a reconstructed object with the same shape will NOT match.
+
+| Transaction Origin                                      | Observer A (tree→text)                            | Observer B (text→tree) |
+| ------------------------------------------------------- | ------------------------------------------------- | ---------------------- |
+| `ORIGIN_TREE_TO_TEXT` (observers.ts)                    | — (self)                                          | SKIP                   |
+| `ORIGIN_TEXT_TO_TREE` (observers.ts)                    | SKIP                                              | — (self)               |
+| `AGENT_WRITE_ORIGIN` (agent-sessions.ts)                | Skip local; conditional baseline refresh on remote (Bug-B fix) | Sync normally          |
+| `FILE_WATCHER_ORIGIN` (external-change.ts)              | Sync normally                                     | Sync normally          |
+| `ROLLBACK_ORIGIN` (api-extension.ts)                    | Sync normally                                     | Sync normally          |
+| `undefined` (WebSocket remote / local WYSIWYG typing)   | Sync normally                                     | Sync normally          |
 
 ## Testing
 
@@ -402,12 +412,35 @@ Y.Doc
 
 ### Tier 1 integration harness
 
-File: `packages/app/tests/integration/test-harness.ts`
+Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/integration/network-control.ts`
 
+**Core primitives:**
 - `createTestServer()` → spins up real Hocuspocus with HTTP/WebSocket on OS-assigned random port
-- `createTestClient(port)` → connects HocuspocusProvider + wires `setupObservers()`
+- `createTestClient(port, docName?, { skipInvariantWatcher?, syncControl? })` → connects HocuspocusProvider + wires `setupObservers()`. Default attaches FR-11 watcher; opt out for tests that deliberately drive divergence. `syncControl: true` wraps the WebSocket with `ControllableWebSocket` exposing `pauseSync()` / `resumeSync()`.
+- `createTestClients(port, { count, docName?, perClientOptions? })` → first-class multi-client factory (FR-14). All clients join the same docName (auto-generated if not given).
+- `assertAllConverged(clients, { timeout?, pollIntervalMs? })` → polls until every client has identical ytext + identical fragment + bridge invariant holds on each; throws `ClientConvergenceError` on timeout.
 - `getFreePort()` → kernel-allocated port (Hocuspocus `Server.listen(0)` fails due to falsy guard)
 - Server uses `debounce: 200` (not production 2s) for fast disk tests
+
+**Bridge invariant watcher (FR-11 / US-005):**
+- `attachBridgeInvariantWatcher(doc, opts?)` → attached by default in `createTestClient`. Fires on every `afterTransaction` whose origin is a `LocalTransactionOrigin` object-ref in the enforcing set: `ORIGIN_TREE_TO_TEXT`, `ORIGIN_TEXT_TO_TREE`, `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN` (every entry is the actual object ref, not a string). On violation throws `BridgeInvariantViolationError` with origin + unified diff. Settled-state assertion is `assertAllConverged`'s job (FR-14), not the watcher's — no quiescence timer, no magic numbers.
+
+**Origin-preservation probe (FR-12 / US-006):**
+- `createItemOriginProbe(ytext, { trackedOrigins: Array<LocalTransactionOrigin>, captureTimeout? })` → wraps `Y.UndoManager`. API: `recordCapture(label?)`, `assertCaptureIntact(label?)`, `capturedContent()`, `undoStackLength()`, `cleanup()`. Use to verify Items survive bridge cycles without origin laundering. `trackedOrigins` must contain object refs — strings fail identity match.
+
+**Server-side state inspector (FR-13 / US-002):**
+- `getServerState(server, docName): ServerDocState | null` → returns `{ ytext, fragment, md, fullMd, frontmatter, metaMap, activityMap, connectionCount }` or `null` if doc not loaded. Encapsulates the `(server.instance as any).hocuspocus.documents.get(...)` access — tests should use this helper instead of reaching into hocuspocus internals.
+
+**Observer scheduler DI (FR-15 / US-004):**
+- `createManualScheduler(): ManualScheduler` → test helper with `flush()` (fire all pending synchronously), `advanceTime(ms)`, `pending()`. Pass as `ObserverDeps.scheduler` in `setupObservers` for deterministic debounce control. Production default: arrow-wrapped passthrough to `globalThis.setTimeout`/`clearTimeout`.
+
+**Network control (FR-16 / US-010, `network-control.ts`):**
+- `ControllableWebSocket` — WebSocket proxy with minimal `pauseInbound()` / `resumeInbound()`. Use via `createTestClient(port, docName, { syncControl: true })` then `client.pauseSync()` / `client.resumeSync()`. Default is passthrough — zero change in default test coverage. Deliberately no `delaySync` / `dropInbound` / `inspectSyncQueue` in v1 (FR-16 minimal surface — add when a concrete reproducer motivates them).
+
+**Regression gates committed by US-011 / US-012:**
+- `bridge-convergence-regression.test.ts` — primary 4-test regression harness for Bug-A + Bug-B (renamed from `observer-a-baseline-absorption-repro.test.ts`).
+- `bug-a-mechanism-isolation.test.ts`, `bug-c-real-reachability.test.ts` — empirical reachability reproducers.
+- `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — skip-guarded (FR-10); V0-14 unskips when wiring per-agent UM + agent-undo handler.
 
 ### Writing a new integration test
 
@@ -506,8 +539,8 @@ No environment variables must be set by hand for any of these scenarios.
 
 ### STOP rules
 
-- **STOP:** Never write raw markdown to Y.Text without calling `syncTextToFragment()` afterward. The XmlFragment will be stale, breaking the bridge invariant.
-- **STOP:** Always call `syncTextToFragment()` after `um.undo()` / `um.redo()`. Without it, Y.Text reverts but XmlFragment stays stale.
+- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
+- **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
 - **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
 
@@ -966,9 +999,9 @@ Y.Doc
 | ------------------------- | -------------------------------- | ---------------------------- | -------------------- |
 | W1: WYSIWYG (XmlFragment) | Observer A                       | (direct)                     | Persistence debounce |
 | W2: Source (Y.Text)       | (direct)                         | Observer B                   | Persistence debounce |
-| W3: Agent API             | CRDT sync (WebSocket)            | syncTextToFragment on server | Persistence debounce |
+| W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket) | applyAgentMarkdownWrite on server | Persistence debounce |
 | W4: Disk (file watcher)   | applyExternalChange              | applyExternalChange          | (direct)             |
-| Undo/Redo                 | UndoManager + syncTextToFragment | syncTextToFragment           | Persistence debounce |
+| Undo/Redo (V0-14 pending) | applyAgentUndo (V0-14 template — see §7e of bridge-convergence SPEC) | applyAgentUndo (V0-14) | Persistence debounce |
 
 ### transaction.local semantics
 
@@ -978,38 +1011,41 @@ Y.Doc
 
 ### Observer A (XmlFragment → Y.Text)
 
-- File: `packages/app/src/editor/observers.ts:301`
-- Origin: `'sync-from-tree'`
+- File: `packages/app/src/editor/observers.ts`
+- Origin: `ORIGIN_TREE_TO_TEXT` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'sync-from-tree'`)
 - **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
-- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` to minimize CRDT mutations
-- Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes
-- Skips entirely for remote (non-local) transactions; refreshes `lastSyncedXmlMd` baseline only
+- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` (imported from `@inkeep/open-knowledge-core` — shared with server-side `applyAgentMarkdownWrite` per FR-2 of the bridge-convergence SPEC) to minimize CRDT mutations
+- Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes. Debounce timer uses the injected `ObserverDeps.scheduler` (FR-15) — production default is `globalThis.setTimeout` passthrough; tests use `createManualScheduler()` from `test-harness.ts` for deterministic flush
+- **Bug-B fix (US-009):** conditional baseline refresh on remote transactions — if a local debounce is pending (`debounceA !== null`), `lastSyncedXmlMd` is NOT refreshed to the post-remote state. This preserves the old baseline so the pending debounce fires with the correct delta (`old baseline → current XmlFragment including both local + remote edits`) instead of early-exiting on `lastSyncedXmlMd === md`. Fixes the "Observer A absorbs local changes on remote baseline refresh" bug reproduced in `bridge-convergence-regression.test.ts`.
 - Updates `lastSyncedXmlMd` after every successful sync
 
 ### Observer B (Y.Text → XmlFragment)
 
-- File: `packages/app/src/editor/observers.ts:396`
-- Origin: `'sync-from-text'`
+- File: `packages/app/src/editor/observers.ts`
+- Origin: `ORIGIN_TEXT_TO_TREE` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'sync-from-text'`)
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
 - Early-exits if XmlFragment already serializes to the same markdown as Y.Text
 
-### syncTextToFragment
+### applyAgentMarkdownWrite (XmlFragment-authoritative — precedent #10)
 
 - File: `packages/server/src/agent-sessions.ts`
-- Called after every `um.undo()`, `um.redo()`, and agent write
-- Parses Y.Text → ProseMirror JSON → `updateYFragment()` on the server doc
-- **STOP:** Never write to Y.Text without calling `syncTextToFragment` afterward
+- **Replaces the deleted `syncTextToFragment`** (FR-9 in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Called by all three agent-write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) in `api-extension.ts`.
+- Flow: (1) read current server XmlFragment (reflects all CRDT-synced content including concurrent client WYSIWYG typing); (2) serialize to markdown; (3) compose agent's delta at the markdown level per `'append'` / `'prepend'` / `'replace'` position; (4) parse composed markdown and apply to XmlFragment via `updateYFragment` (structural diff preserves user-content Items); (5) mirror the canonical post-fragment markdown to Y.Text via `applyByPrefixSuffix` (minimal mutation, preserves non-agent Y.Text Items and their origins)
+- **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyByPrefixSuffix`. V0-14's future `applyAgentUndo` handler must follow this same template (see §7e of the bridge-convergence SPEC + `evidence/bug-d-mechanism.md`).
 
 ### Origin-guard truth table
 
-| Transaction Origin      | Observer A (tree→text)          | Observer B (text→tree) |
-| ----------------------- | ------------------------------- | ---------------------- |
-| `'sync-from-tree'`      | — (self)                        | SKIP                   |
-| `'sync-from-text'`      | SKIP                            | — (self)               |
-| `'agent-write'`         | Skip (remote; refresh baseline) | Sync normally          |
-| `'file-watcher'`        | Sync normally                   | Sync normally          |
-| `undefined` (WebSocket) | Sync normally                   | Sync normally          |
+All transaction origins are `LocalTransactionOrigin` **object references** (precedent #1) exported from their owning module. Identity-based matching in `Set.has` / `Y.UndoManager.trackedOrigins` / `attachBridgeInvariantWatcher` enforcing sets requires the exact object ref — a string literal or a reconstructed object with the same shape will NOT match.
+
+| Transaction Origin                                      | Observer A (tree→text)                            | Observer B (text→tree) |
+| ------------------------------------------------------- | ------------------------------------------------- | ---------------------- |
+| `ORIGIN_TREE_TO_TEXT` (observers.ts)                    | — (self)                                          | SKIP                   |
+| `ORIGIN_TEXT_TO_TREE` (observers.ts)                    | SKIP                                              | — (self)               |
+| `AGENT_WRITE_ORIGIN` (agent-sessions.ts)                | Skip local; conditional baseline refresh on remote (Bug-B fix) | Sync normally          |
+| `FILE_WATCHER_ORIGIN` (external-change.ts)              | Sync normally                                     | Sync normally          |
+| `ROLLBACK_ORIGIN` (api-extension.ts)                    | Sync normally                                     | Sync normally          |
+| `undefined` (WebSocket remote / local WYSIWYG typing)   | Sync normally                                     | Sync normally          |
 
 ## Testing
 
@@ -1032,12 +1068,35 @@ Y.Doc
 
 ### Tier 1 integration harness
 
-File: `packages/app/tests/integration/test-harness.ts`
+Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/integration/network-control.ts`
 
+**Core primitives:**
 - `createTestServer()` → spins up real Hocuspocus with HTTP/WebSocket on OS-assigned random port
-- `createTestClient(port)` → connects HocuspocusProvider + wires `setupObservers()`
+- `createTestClient(port, docName?, { skipInvariantWatcher?, syncControl? })` → connects HocuspocusProvider + wires `setupObservers()`. Default attaches FR-11 watcher; opt out for tests that deliberately drive divergence. `syncControl: true` wraps the WebSocket with `ControllableWebSocket` exposing `pauseSync()` / `resumeSync()`.
+- `createTestClients(port, { count, docName?, perClientOptions? })` → first-class multi-client factory (FR-14). All clients join the same docName (auto-generated if not given).
+- `assertAllConverged(clients, { timeout?, pollIntervalMs? })` → polls until every client has identical ytext + identical fragment + bridge invariant holds on each; throws `ClientConvergenceError` on timeout.
 - `getFreePort()` → kernel-allocated port (Hocuspocus `Server.listen(0)` fails due to falsy guard)
 - Server uses `debounce: 200` (not production 2s) for fast disk tests
+
+**Bridge invariant watcher (FR-11 / US-005):**
+- `attachBridgeInvariantWatcher(doc, opts?)` → attached by default in `createTestClient`. Fires on every `afterTransaction` whose origin is a `LocalTransactionOrigin` object-ref in the enforcing set: `ORIGIN_TREE_TO_TEXT`, `ORIGIN_TEXT_TO_TREE`, `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN` (every entry is the actual object ref, not a string). On violation throws `BridgeInvariantViolationError` with origin + unified diff. Settled-state assertion is `assertAllConverged`'s job (FR-14), not the watcher's — no quiescence timer, no magic numbers.
+
+**Origin-preservation probe (FR-12 / US-006):**
+- `createItemOriginProbe(ytext, { trackedOrigins: Array<LocalTransactionOrigin>, captureTimeout? })` → wraps `Y.UndoManager`. API: `recordCapture(label?)`, `assertCaptureIntact(label?)`, `capturedContent()`, `undoStackLength()`, `cleanup()`. Use to verify Items survive bridge cycles without origin laundering. `trackedOrigins` must contain object refs — strings fail identity match.
+
+**Server-side state inspector (FR-13 / US-002):**
+- `getServerState(server, docName): ServerDocState | null` → returns `{ ytext, fragment, md, fullMd, frontmatter, metaMap, activityMap, connectionCount }` or `null` if doc not loaded. Encapsulates the `(server.instance as any).hocuspocus.documents.get(...)` access — tests should use this helper instead of reaching into hocuspocus internals.
+
+**Observer scheduler DI (FR-15 / US-004):**
+- `createManualScheduler(): ManualScheduler` → test helper with `flush()` (fire all pending synchronously), `advanceTime(ms)`, `pending()`. Pass as `ObserverDeps.scheduler` in `setupObservers` for deterministic debounce control. Production default: arrow-wrapped passthrough to `globalThis.setTimeout`/`clearTimeout`.
+
+**Network control (FR-16 / US-010, `network-control.ts`):**
+- `ControllableWebSocket` — WebSocket proxy with minimal `pauseInbound()` / `resumeInbound()`. Use via `createTestClient(port, docName, { syncControl: true })` then `client.pauseSync()` / `client.resumeSync()`. Default is passthrough — zero change in default test coverage. Deliberately no `delaySync` / `dropInbound` / `inspectSyncQueue` in v1 (FR-16 minimal surface — add when a concrete reproducer motivates them).
+
+**Regression gates committed by US-011 / US-012:**
+- `bridge-convergence-regression.test.ts` — primary 4-test regression harness for Bug-A + Bug-B (renamed from `observer-a-baseline-absorption-repro.test.ts`).
+- `bug-a-mechanism-isolation.test.ts`, `bug-c-real-reachability.test.ts` — empirical reachability reproducers.
+- `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — skip-guarded (FR-10); V0-14 unskips when wiring per-agent UM + agent-undo handler.
 
 ### Writing a new integration test
 
@@ -1136,8 +1195,8 @@ No environment variables must be set by hand for any of these scenarios.
 
 ### STOP rules
 
-- **STOP:** Never write raw markdown to Y.Text without calling `syncTextToFragment()` afterward. The XmlFragment will be stale, breaking the bridge invariant.
-- **STOP:** Always call `syncTextToFragment()` after `um.undo()` / `um.redo()`. Without it, Y.Text reverts but XmlFragment stays stale.
+- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
+- **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
 
 ### WARN rules

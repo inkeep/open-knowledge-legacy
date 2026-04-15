@@ -13,8 +13,12 @@
  *   replacement would otherwise obliterate in-flight user mutations).
  *
  * Transaction origin guards prevent infinite loops:
- *   - Observer A writes with origin 'sync-from-tree', Observer B skips those.
- *   - Observer B writes with origin 'sync-from-text', Observer A skips those.
+ *   - Observer A writes under ORIGIN_TREE_TO_TEXT (LocalTransactionOrigin object,
+ *     `context.origin === 'sync-from-tree'`); Observer B skips those.
+ *   - Observer B writes under ORIGIN_TEXT_TO_TREE (LocalTransactionOrigin object,
+ *     `context.origin === 'sync-from-text'`); Observer A skips those.
+ *   Both constants are exported object refs — identity match is required for
+ *   Set-based enforcement (precedent #1). See AGENTS.md.
  *
  * Observer B early-exit: If the current XmlFragment already serializes to the same
  * markdown as Y.Text, skip updateYFragment entirely — nothing to do, avoid the tree
@@ -33,8 +37,14 @@
  *   transaction can merge before updateYFragment rebuilds the tree.
  */
 
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import { prependFrontmatter, stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
+import {
+  applyByPrefixSuffix,
+  prependFrontmatter,
+  stripFrontmatter,
+  VFileMessage,
+} from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import DiffMatchPatch from 'diff-match-patch';
@@ -48,8 +58,29 @@ import { diffLinesFast as diffLines } from './diff-lines-fast';
 const dmp = new DiffMatchPatch();
 dmp.Match_Threshold = 0.5;
 
-export const ORIGIN_TREE_TO_TEXT = 'sync-from-tree';
-export const ORIGIN_TEXT_TO_TREE = 'sync-from-text';
+/**
+ * Transaction origin for Observer A (tree → text).
+ *
+ * Precedent #1 (AGENTS.md): all Y.Doc transaction origins are `LocalTransactionOrigin`
+ * OBJECT references, never raw strings. `Set.has()` matching in `trackedOrigins` or
+ * the bridge-invariant watcher's enforcing set is identity-based for objects — a
+ * string literal would silently fail to match the production tx.origin object.
+ */
+export const ORIGIN_TREE_TO_TEXT = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'sync-from-tree' },
+} satisfies LocalTransactionOrigin;
+
+/**
+ * Transaction origin for Observer B (text → tree). See `ORIGIN_TREE_TO_TEXT` JSDoc
+ * for why this is an object, not a string.
+ */
+export const ORIGIN_TEXT_TO_TREE = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'sync-from-text' },
+} satisfies LocalTransactionOrigin;
 
 const DEBOUNCE_MS = 50;
 
@@ -81,9 +112,45 @@ const REMOTE_TREE_SYNC_GRACE_MS = DEBOUNCE_MS * 3;
 // Per-document coordination state
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Scheduler interface for observer debounces, typing-defer timers, and the
+ * clock reference used by elapsed-time comparisons (FR-15).
+ *
+ * Production: arrow-wrapped passthrough to `globalThis.setTimeout` /
+ * `clearTimeout` / `Date.now()`. Tests inject `createManualScheduler()` for
+ * synchronous deterministic flush AND a virtual clock so that `now()`
+ * advances in lockstep with `setTimeout` dueAt calculations.
+ *
+ * The `now()` method is essential: observer callbacks use elapsed-time
+ * comparisons (typing defer, remote-tree grace window) to decide whether
+ * to reschedule their debounce. Under ManualScheduler, those comparisons
+ * must use the same virtual clock as `setTimeout` — mixing `Date.now()`
+ * (real) with scheduler `dueAt` (virtual) produces unbounded skew and
+ * breaks the deterministic timing model.
+ */
+export interface Scheduler {
+  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
+  /** Current clock reading in milliseconds. Production: `Date.now()`.
+   *  Tests with ManualScheduler: virtual time advanced by `advanceTime`. */
+  now: () => number;
+}
+
+const defaultScheduler: Scheduler = {
+  setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
+  clearTimeout: (handle) => globalThis.clearTimeout(handle),
+  now: () => Date.now(),
+};
+
 interface TypingState {
   lastUserTypedAt: number;
   lastRemoteTreeOnlyAt: number;
+  /** Scheduler used to read `now()` for timestamp recording. Defaults to
+   *  `defaultScheduler` (real clock) when `markUserTyping` is called before
+   *  `setupObservers` runs for this doc. `setupObservers` overrides with its
+   *  injected scheduler so all elapsed-time comparisons use a consistent
+   *  clock. */
+  scheduler: Scheduler;
 }
 
 const typingStateByDoc = new WeakMap<Y.Doc, TypingState>();
@@ -91,7 +158,7 @@ const typingStateByDoc = new WeakMap<Y.Doc, TypingState>();
 function getTypingState(doc: Y.Doc): TypingState {
   let state = typingStateByDoc.get(doc);
   if (!state) {
-    state = { lastUserTypedAt: 0, lastRemoteTreeOnlyAt: 0 };
+    state = { lastUserTypedAt: 0, lastRemoteTreeOnlyAt: 0, scheduler: defaultScheduler };
     typingStateByDoc.set(doc, state);
   }
   return state;
@@ -100,9 +167,13 @@ function getTypingState(doc: Y.Doc): TypingState {
 /**
  * Mark that the local user just typed. Call this from the editor's DOM event handlers
  * (keydown, paste, drop, etc.). Observer B uses this to defer its tree replacement.
+ *
+ * Uses the scheduler's `now()` so virtual-clock tests observe consistent
+ * timestamps with scheduler `setTimeout` dueAt calculations.
  */
 export function markUserTyping(doc: Y.Doc): void {
-  getTypingState(doc).lastUserTypedAt = Date.now();
+  const state = getTypingState(doc);
+  state.lastUserTypedAt = state.scheduler.now();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -128,6 +199,10 @@ interface ObserverDeps {
     agentLen: number;
     mergedLen: number;
   }) => void;
+  /** Optional scheduler injection for deterministic testing (FR-15).
+   *  Default: arrow-wrapped passthrough to globalThis.setTimeout/clearTimeout.
+   *  Tests: inject createManualScheduler() for synchronous flush. */
+  scheduler?: Scheduler;
 }
 
 /**
@@ -183,34 +258,6 @@ function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: strin
 }
 
 /**
- * Apply a text change to Y.Text using prefix/suffix comparison — O(n) string
- * scan, zero diff algorithm overhead. Produces at most one delete + one insert
- * CRDT operation. Used by applyUserDelta to minimize CRDT mutations — Items in
- * the matching prefix and suffix regions are preserved, maintaining origin
- * attribution through bridge cycles.
- */
-function applyByPrefixSuffix(ytext: Y.Text, currentText: string, newText: string): void {
-  if (currentText === newText) return;
-
-  let prefixLen = 0;
-  const minLen = Math.min(currentText.length, newText.length);
-  while (prefixLen < minLen && currentText[prefixLen] === newText[prefixLen]) prefixLen++;
-
-  let suffixLen = 0;
-  while (
-    suffixLen < minLen - prefixLen &&
-    currentText[currentText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
-  ) {
-    suffixLen++;
-  }
-
-  const deleteLen = currentText.length - prefixLen - suffixLen;
-  const insertStr = newText.slice(prefixLen, newText.length - suffixLen);
-  if (deleteLen > 0) ytext.delete(prefixLen, deleteLen);
-  if (insertStr.length > 0) ytext.insert(prefixLen, insertStr);
-}
-
-/**
  * Apply ONLY the user's delta to Y.Text, when Y.Text has diverged from the last
  * synced XmlFragment state (Path B). Uses DMP's canonical three-way merge:
  *
@@ -225,7 +272,8 @@ function applyByPrefixSuffix(ytext: Y.Text, currentText: string, newText: string
  * Known merge semantics (LOCKED decisions):
  *   - D8: exact-character overlap (`base="hello", user="hello!", agent="hello!"`)
  *     produces `"hello!!"` — inherent to three-way merge, both sides independently
- *     made the same change. Mitigation paths NG6/NG7 deferred.
+ *     made the same change. Mitigation deferred (see SPEC §3 NG6/NG7 — distinct
+ *     from CLAUDE.md's fidelity NG-IDs which cover different concerns).
  *   - D9: user-wins on collision — when user deletes a line that agent modified,
  *     the deletion wins (DMP default behavior).
  */
@@ -285,6 +333,15 @@ function getFrontmatter(doc: Y.Doc): string {
  */
 export function setupObservers(deps: ObserverDeps): () => void {
   const { doc, xmlFragment, ytext, mdManager, schema } = deps;
+  const sched: Scheduler = deps.scheduler ?? defaultScheduler;
+
+  // Register the scheduler into the doc's TypingState so `markUserTyping`
+  // (called from editor DOM event handlers, external to setupObservers)
+  // reads the same clock as the observer timers. Without this, an injected
+  // ManualScheduler would have `setTimeout` on virtual time but
+  // `markUserTyping` would record real-clock timestamps, producing unbounded
+  // skew in `elapsedSinceTyping` comparisons.
+  getTypingState(doc).scheduler = sched;
 
   // Track the last XmlFragment state we successfully synced to Y.Text. On each sync,
   // Observer A computes the incremental delta between this snapshot and the current
@@ -378,20 +435,28 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const changedParentTypes = (
           transaction as Y.Transaction & { changedParentTypes?: Map<unknown, unknown> }
         ).changedParentTypes;
-        state.lastRemoteTreeOnlyAt = changedParentTypes?.has(ytext) ? 0 : Date.now();
+        state.lastRemoteTreeOnlyAt = changedParentTypes?.has(ytext) ? 0 : sched.now();
 
-        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
-        const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        // Bug-B fix: only refresh baseline when no local debounce is pending.
+        // If debounceA is active, a local edit is waiting to sync — refreshing
+        // the baseline to the post-remote state would cause the debounce's
+        // early-exit (lastSyncedXmlMd === md) to fire, absorbing the local
+        // edit. By keeping the old baseline, the debounce fires Path A/B with
+        // the correct delta (old baseline → current XmlFragment).
+        if (!debounceA) {
+          const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+          const body = mdManager.serialize(json);
+          const frontmatter = getFrontmatter(doc);
+          lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        }
       } catch (err) {
         // Non-critical — baseline will catch up on next local sync
         console.debug('[Observer A] Baseline refresh failed on remote change:', err);
       }
       return;
     }
-    if (debounceA) clearTimeout(debounceA);
-    debounceA = setTimeout(runObserverASync, DEBOUNCE_MS);
+    if (debounceA) sched.clearTimeout(debounceA);
+    debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -410,17 +475,17 @@ export function setupObservers(deps: ObserverDeps): () => void {
   const runObserverBSync = (): void => {
     debounceB = null;
     const { lastRemoteTreeOnlyAt, lastUserTypedAt } = getTypingState(doc);
-    const elapsedSinceTyping = Date.now() - lastUserTypedAt;
+    const elapsedSinceTyping = sched.now() - lastUserTypedAt;
     if (elapsedSinceTyping < TYPING_DEFER_MS) {
       // User is still typing. Defer.
       const waitMs = TYPING_DEFER_MS - elapsedSinceTyping;
-      debounceB = setTimeout(runObserverBSync, waitMs);
+      debounceB = sched.setTimeout(runObserverBSync, waitMs);
       return;
     }
     if (lastRemoteTreeOnlyAt > 0) {
-      const elapsedSinceRemoteTree = Date.now() - lastRemoteTreeOnlyAt;
+      const elapsedSinceRemoteTree = sched.now() - lastRemoteTreeOnlyAt;
       if (elapsedSinceRemoteTree < REMOTE_TREE_SYNC_GRACE_MS) {
-        debounceB = setTimeout(
+        debounceB = sched.setTimeout(
           runObserverBSync,
           REMOTE_TREE_SYNC_GRACE_MS - elapsedSinceRemoteTree,
         );
@@ -544,8 +609,8 @@ export function setupObservers(deps: ObserverDeps): () => void {
       getTypingState(doc).lastRemoteTreeOnlyAt = 0;
       return;
     }
-    if (debounceB) clearTimeout(debounceB);
-    debounceB = setTimeout(runObserverBSync, DEBOUNCE_MS);
+    if (debounceB) sched.clearTimeout(debounceB);
+    debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
   };
 
   xmlFragment.observeDeep(observerA);
@@ -587,8 +652,8 @@ export function setupObservers(deps: ObserverDeps): () => void {
   }
 
   return () => {
-    if (debounceA) clearTimeout(debounceA);
-    if (debounceB) clearTimeout(debounceB);
+    if (debounceA) sched.clearTimeout(debounceA);
+    if (debounceB) sched.clearTimeout(debounceB);
     xmlFragment.unobserveDeep(observerA);
     ytext.unobserve(observerB);
   };
