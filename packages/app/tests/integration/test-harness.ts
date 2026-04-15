@@ -77,14 +77,31 @@ export interface TestServer {
 export interface CreateTestServerOptions {
   debounce?: ServerOptions['debounce'];
   maxDebounce?: ServerOptions['maxDebounce'];
+  /** Reuse an existing content directory (for server-restart tests that need
+   *  persistence to load canonical state written by a prior test-server instance).
+   *  When provided, the caller owns directory lifecycle — cleanup() will not
+   *  rm the directory. Pair with `keepContentDir: true` across all servers
+   *  sharing this directory. */
+  contentDir?: string;
+  /** When true, `cleanup()` skips the `rmSync(contentDir)` so the directory
+   *  survives for a subsequent test-server instance. Defaults to false
+   *  (random-tmpdir behavior preserved). */
+  keepContentDir?: boolean;
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
   // realpathSync resolves macOS /var → /private/var symlink so that
   // @parcel/watcher event paths match the contentDir used by pathToDocName.
-  const contentDir = realpathSync(mkdtempSync(join(tmpdir(), 'ok-test-')));
-  // Ensure test-doc.md exists (persistence expects it for initial load)
-  writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
+  const contentDir =
+    options.contentDir !== undefined
+      ? realpathSync(options.contentDir)
+      : realpathSync(mkdtempSync(join(tmpdir(), 'ok-test-')));
+  // Ensure test-doc.md exists (persistence expects it for initial load).
+  // On restart with pre-existing contentDir, the file is already present and
+  // overwriting with '' would wipe the canonical state we're trying to reload.
+  if (options.contentDir === undefined) {
+    writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
+  }
 
   const port = await getFreePort();
   const srv = createServer({
@@ -152,7 +169,9 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
       await srv.destroy();
       wss.close();
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
-      rmSync(contentDir, { recursive: true, force: true });
+      if (!options.keepContentDir) {
+        rmSync(contentDir, { recursive: true, force: true });
+      }
     },
   };
 }
