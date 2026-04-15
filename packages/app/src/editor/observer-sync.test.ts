@@ -6,6 +6,13 @@
  * and disk bridge integration.
  *
  * Uses Y.Doc directly (no WebSocket) — same CRDT layer as the browser.
+ *
+ * NOTE (server-authoritative architecture, precedent #14):
+ * Cross-CRDT sync (Observer A writing Y.Text, Observer B writing XmlFragment)
+ * is now performed exclusively by the server observer (server-observers.ts).
+ * Client observer no longer writes the derived CRDT. Tests that assert
+ * cross-CRDT propagation via client observer are skipped — replaced by
+ * server-observers.test.ts and C1-C9 integration tests.
  */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
@@ -42,7 +49,8 @@ function createObservedDoc() {
 
 // --- Observer A: XmlFragment → Y.Text ---
 
-describe('Observer A: XmlFragment → Y.Text (cross-mode sync)', () => {
+// Superseded by server-authoritative observer (server-observers.test.ts)
+describe.skip('Observer A: XmlFragment → Y.Text (cross-mode sync)', () => {
   test('XmlFragment mutation produces correct markdown in Y.Text', async () => {
     const { ytext, fragment, doc, cleanup } = createObservedDoc();
 
@@ -71,7 +79,8 @@ describe('Observer A: XmlFragment → Y.Text (cross-mode sync)', () => {
 
 // --- Observer B: Y.Text → XmlFragment ---
 
-describe('Observer B: Y.Text → XmlFragment (cross-mode sync)', () => {
+// Superseded by server-authoritative observer (server-observers.test.ts)
+describe.skip('Observer B: Y.Text → XmlFragment (cross-mode sync)', () => {
   test('Y.Text mutation produces correct ProseMirror structure', async () => {
     const { ytext, fragment, doc, cleanup } = createObservedDoc();
 
@@ -165,7 +174,8 @@ describe('Shimmer prevention', () => {
 
 // --- Content Fidelity (T60-T65) ---
 
-describe('Content fidelity through observer cycle', () => {
+// Superseded by server-authoritative observer (server-observers.test.ts)
+describe.skip('Content fidelity through observer cycle', () => {
   test('T60: frontmatter survives XmlFragment→Text→XmlFragment cycle', async () => {
     const { doc, fragment, ytext, cleanup } = createObservedDoc();
     const metaMap = doc.getMap('metadata');
@@ -280,7 +290,8 @@ describe('Content fidelity through observer cycle', () => {
 
 // --- Toggle Simplification (TS01-TS04) ---
 
-describe('Toggle simplification', () => {
+// Superseded by server-authoritative observer (server-observers.test.ts)
+describe.skip('Toggle simplification', () => {
   test('TS01: Y.Text has current content — toggle-to-source needs no serialization', async () => {
     const { doc, fragment, ytext, cleanup } = createObservedDoc();
 
@@ -331,7 +342,8 @@ describe('Toggle simplification', () => {
 
 // --- Undo Isolation ---
 
-describe('Undo isolation', () => {
+// Superseded by server-authoritative observer (server-observers.test.ts)
+describe.skip('Undo isolation', () => {
   test('observer-originated Y.Text writes are not undoable by user UndoManager', async () => {
     const doc = new Y.Doc();
     const fragment = doc.getXmlFragment('default');
@@ -386,7 +398,8 @@ describe('Undo isolation', () => {
 
 // --- Persistence Flow ---
 
-describe('Persistence flow', () => {
+// Superseded by server-authoritative observer (server-observers.test.ts)
+describe.skip('Persistence flow', () => {
   test('PR05: source edit → Observer B → XmlFragment → serialization produces correct .md', async () => {
     const { doc, fragment, ytext, cleanup } = createObservedDoc();
 
@@ -415,7 +428,8 @@ describe('Persistence flow', () => {
 
 // --- Agent Writes Through Observers ---
 
-describe('Agent writes through observers', () => {
+// Superseded by server-authoritative observer (server-observers.test.ts)
+describe.skip('Agent writes through observers', () => {
   test('raw agent write to XmlFragment → Observer A → Y.Text has content', async () => {
     const { fragment, ytext, cleanup } = createObservedDoc();
 
@@ -450,7 +464,8 @@ describe('Agent writes through observers', () => {
 
 // --- Disk Bridge Integration ---
 
-describe('Disk bridge integration', () => {
+// Superseded by server-authoritative observer (server-observers.test.ts)
+describe.skip('Disk bridge integration', () => {
   test('external change via updateYFragment → Observer A → Y.Text updated', async () => {
     const { doc, fragment, ytext, cleanup } = createObservedDoc();
 

@@ -2,6 +2,17 @@ import type { Identity } from '../types/identity';
 
 // --- Constants ---
 
+export const AGENT_COLORS = [
+  '#D97757',
+  '#5B8DEF',
+  '#43A047',
+  '#E53935',
+  '#8E24AA',
+  '#F4511E',
+  '#00897B',
+  '#3949AB',
+] as const;
+
 export const HUMAN_COLORS = [
   '#f0ece3', // warm gray
   '#fff5e1', // cream
@@ -11,6 +22,16 @@ export const HUMAN_COLORS = [
   '#dce8fa', // azure
   '#DBF3FB', // sky
 ] as const;
+
+/**
+ * Deterministic hex color from a stable palette for a given seed string.
+ * Shared between server (agent awareness) and app (TimelinePanel).
+ */
+export function colorFromSeed(seed: string): string {
+  let hash = 0;
+  for (const ch of seed) hash = ((hash << 5) - hash + ch.charCodeAt(0)) | 0;
+  return AGENT_COLORS[Math.abs(hash) % AGENT_COLORS.length];
+}
 
 // --- Color derivation ---
 

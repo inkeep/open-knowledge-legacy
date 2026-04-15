@@ -40,8 +40,8 @@ import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
   applyAgentMarkdownWrite,
-  DEFAULT_AGENT_ID,
 } from './agent-sessions.ts';
+import { recordContributor } from './contributor-tracker.ts';
 import { extractPageTitle } from './page-identity.ts';
 
 export { extractPageTitle } from './page-identity.ts';
@@ -497,6 +497,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return getAliasMap?.().get(docName) ?? docName;
   }
 
+  /**
+   * Fire-and-forget L1 → L2 flush for a single document.
+   *
+   * L1 (CRDT → disk): per-document debounce flush so concurrent human edits on
+   * other documents are undisturbed.
+   * L2 (disk → git): chained after L1 resolves to guarantee disk content is
+   * up-to-date before the shadow-repo commit.
+   *
+   * The returned promise is intentionally not awaited by callers — the HTTP
+   * response fires immediately after the CRDT transaction; persistence is
+   * best-effort background work.
+   */
+  function flushDocToGit(docName: string, label: string): void {
+    const debounceId = `onStoreDocument-${docName}`;
+    const l1 = hocuspocus.debouncer.isDebounced(debounceId)
+      ? hocuspocus.debouncer.executeNow(debounceId)
+      : Promise.resolve();
+    l1.then(() => flushGitCommit?.()).catch((err: unknown) => {
+      log.warn({ err }, `[${label}] post-write flush failed`);
+    });
+  }
+
   function collectAdmittedDocNames(): Set<string> {
     const admitted = new Set<string>();
     for (const [docName, entry] of getFileIndex()) {
@@ -555,7 +577,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     for (const docName of docNames) {
-      await sessionManager.closeSession(docName).catch((err) => {
+      await sessionManager.closeAllForDoc(docName).catch((err) => {
         console.warn(`[file-ops] Failed to close agent session for ${docName}:`, err);
       });
     }
@@ -682,7 +704,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return result;
   }
 
-  async function performManagedRename(
+  async function _performManagedRename(
     sourceDocName: string,
     destinationDocName: string,
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
@@ -807,6 +829,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
+  /** Extract agent identity fields shared across the three write endpoints. */
+  function extractAgentIdentity(body: Record<string, unknown>): {
+    rawAgentId: string | undefined;
+    agentId: string;
+    agentName: string;
+    colorSeed: string;
+    clientName: string | undefined;
+  } {
+    const rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
+    const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+    const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
+    const clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
+    // colorSeed must match what getSession() uses for presence bar color consistency.
+    // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
+    const colorSeed =
+      typeof body.colorSeed === 'string' && body.colorSeed.length > 0
+        ? body.colorSeed
+        : (rawAgentId ?? agentId);
+    return { rawAgentId, agentId, agentName, colorSeed, clientName };
+  }
+
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -841,7 +884,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(docName);
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(body);
+      const dc = await sessionManager.getSession(docName, agentId, {
+        displayName: agentName,
+        colorSeed,
+        clientName,
+      });
       const timestamp = new Date().toISOString();
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
@@ -852,16 +900,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
 
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Added: ${content.slice(0, 50)}`,
+            description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
+
+      flushDocToGit(docName, 'agent-write');
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -918,7 +969,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(resolvedDocName);
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
+        body as Record<string, unknown>,
+      );
+      const dc = await sessionManager.getSession(resolvedDocName, agentId, {
+        displayName: agentName,
+        colorSeed,
+        clientName,
+      });
       const timestamp = new Date().toISOString();
 
       dc.document.awareness.setLocalStateField('mode', 'editing');
@@ -927,16 +985,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           applyAgentMarkdownWrite(dc.document, markdown, position);
 
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Added: ${markdown.trim().slice(0, 50)}`,
+            description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        recordContributor(resolvedDocName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
+
+      flushDocToGit(resolvedDocName, 'agent-write-md');
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -1312,7 +1373,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(docName);
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
+        body as Record<string, unknown>,
+      );
+      const dc = await sessionManager.getSession(docName, agentId, {
+        displayName: agentName,
+        colorSeed,
+        clientName,
+      });
       const timestamp = new Date().toISOString();
 
       let notFound = false;
@@ -1342,13 +1410,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           applyAgentMarkdownWrite(dc.document, newBody, 'replace');
 
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Patched: ${find.slice(0, 50)}`,
+            description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        if (!notFound) recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -1364,6 +1433,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
       }
+
+      flushDocToGit(docName, 'agent-patch');
+
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
@@ -1689,7 +1761,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         fromContent = doc.getText('source').toString();
       }
 
-      const changes = diffLines(fromContent, toContent);
+      // Strip frontmatter from both sides so the diff shows only body changes.
+      // Git content includes frontmatter; Y.Text may or may not depending on
+      // sync state. Stripping both sides normalizes the comparison.
+      const fromBody = stripFrontmatter(fromContent).body;
+      const toBody = stripFrontmatter(toContent).body;
+      const changes = diffLines(fromBody, toBody);
 
       // Build full-file line array: every line annotated as added/removed/unchanged
       const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
@@ -2153,7 +2230,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const result = await performManagedRename(docName, newDocName);
+      const result = await _performManagedRename(docName, newDocName);
       json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
     } catch (e) {
       console.error('[rename]', e);

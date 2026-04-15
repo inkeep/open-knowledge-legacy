@@ -5,6 +5,11 @@
  * ({ value, added?, removed? }[]) but significantly faster on large inputs.
  * jsdiff's Myers has documented 20,000x worse performance on pathological
  * cases (github.com/kpdecker/jsdiff/issues/239).
+ *
+ * Extracted to core to live alongside the bridge utilities that consume
+ * it (applyIncrementalDiff in ./apply-diff.ts). The module-local DMP
+ * instance stays here — tuning it from outside would silently affect
+ * unrelated callers.
  */
 import DiffMatchPatch from 'diff-match-patch';
 

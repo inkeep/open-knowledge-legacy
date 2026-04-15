@@ -90,6 +90,17 @@ function InlineCreateRow({
   onCommit,
   onCancel,
 }: InlineCreateProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // autoFocus is unreliable here: React fires node.focus() during the commit
+    // phase while the ContextMenu portal is mid-teardown, so the browser drops
+    // the focus call as focus moves off the removed portal elements. setTimeout
+    // fires after that cleanup has fully settled.
+    const id = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(id);
+  }, []);
+
   return (
     <div className="flex flex-col">
       <div className={cn('flex h-8 items-center gap-2 rounded-md px-2')}>
@@ -99,8 +110,8 @@ function InlineCreateRow({
           <File className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
         )}
         <Input
+          ref={inputRef}
           value={value}
-          autoFocus
           disabled={busy}
           aria-label={`Create new ${kind}`}
           aria-invalid={!!error}
@@ -171,11 +182,30 @@ const FileTreeNode: FC<{
   inlineCreate,
   getInlineCreate,
 }) => {
+  // Prevent Radix ContextMenu from returning focus to its trigger when an
+  // inline-create input is about to mount. Without this, Radix's
+  // onCloseAutoFocus fires (after the onSelect handler) and steals focus back
+  // from the autoFocus input, which blurs it → triggers onCancel → unmounts.
+  const preventFocusReturnRef = useRef(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
   const isFile = node.kind === 'file';
   const expanded = !isFile && expandedPaths.has(node.path);
 
   const isActive = isFile && node.path === selectedPath;
   const isEditing = editingPath === node.path;
+
+  useEffect(() => {
+    if (!isEditing) return;
+    const id = setTimeout(() => {
+      const el = renameInputRef.current;
+      if (el) {
+        el.focus();
+        el.select();
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [isEditing]);
   const isBusy = busyPath === node.path;
   const anyActionBusy = busyPath !== null;
   const IconToUse = isFile ? File : !expanded ? Folder : FolderOpen;
@@ -220,11 +250,10 @@ const FileTreeNode: FC<{
     >
       <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
       <Input
+        ref={renameInputRef}
         value={editingValue}
-        autoFocus
         disabled={isBusy}
         aria-label={`Rename ${node.kind}`}
-        onFocus={(event) => event.currentTarget.select()}
         onBlur={onCancelRename}
         onChange={(event) => onEditingValueChange(event.target.value)}
         onKeyDown={(event) => {
@@ -278,13 +307,23 @@ const FileTreeNode: FC<{
         <ContextMenuTrigger asChild>
           <div ref={isActive ? activeRowRef : undefined}>{triggerContent}</div>
         </ContextMenuTrigger>
-        <ContextMenuContent>
+        <ContextMenuContent
+          onCloseAutoFocus={(e) => {
+            if (preventFocusReturnRef.current) {
+              preventFocusReturnRef.current = false;
+              e.preventDefault();
+            }
+          }}
+        >
           {!isFile && (
             <>
               <ContextMenuItem
                 disabled={anyActionBusy}
                 onSelect={() => {
-                  if (!anyActionBusy) onStartCreating('file', node.path);
+                  if (!anyActionBusy) {
+                    preventFocusReturnRef.current = true;
+                    onStartCreating('file', node.path);
+                  }
                 }}
               >
                 <SquarePen aria-hidden="true" />
@@ -293,7 +332,10 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={anyActionBusy}
                 onSelect={() => {
-                  if (!anyActionBusy) onStartCreating('folder', node.path);
+                  if (!anyActionBusy) {
+                    preventFocusReturnRef.current = true;
+                    onStartCreating('folder', node.path);
+                  }
                 }}
               >
                 <FolderPlus aria-hidden="true" />
@@ -305,7 +347,10 @@ const FileTreeNode: FC<{
           <ContextMenuItem
             disabled={anyActionBusy}
             onSelect={() => {
-              if (!anyActionBusy) onStartRename(target);
+              if (!anyActionBusy) {
+                preventFocusReturnRef.current = true;
+                onStartRename(target);
+              }
             }}
           >
             <Pencil />

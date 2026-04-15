@@ -50,19 +50,39 @@ export {
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
+
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
 // subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.
 // (D22/FR20 — CLI read path and server write path are the only consumers.)
 
+// Bridge — observer/CRDT-bridge shared utilities (precedent #14)
+export {
+  applyIncrementalDiff,
+  applyUserDelta,
+  type DiffChange,
+  defaultScheduler,
+  diffLinesFast,
+  getFrontmatter,
+  normalizeBridge,
+  type Scheduler,
+} from './bridge/index.ts';
 // Types
 export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
-export type { DiffLine, DiffLineType, EntryType, TimelineEntry } from './types/timeline.ts';
+export type {
+  DiffLine,
+  DiffLineType,
+  EntryType,
+  ShadowContributor,
+  TimelineEntry,
+} from './types/timeline.ts';
 
 // Utils
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export {
+  AGENT_COLORS,
+  colorFromSeed,
   deriveIconColor,
   generateRandomColor,
   generateRandomName,
