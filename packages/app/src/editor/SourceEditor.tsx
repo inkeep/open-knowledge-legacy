@@ -1,6 +1,6 @@
 import { markdown } from '@codemirror/lang-markdown';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import { placeholder as cmPlaceholder, EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
@@ -34,11 +34,13 @@ import { createWikiLinkSourceExtension } from './plugins/wiki-link-source';
 interface SourceEditorProps {
   ytext: Y.Text;
   provider: HocuspocusProvider;
+  placeholder?: string;
 }
 
 const themeCompartment = new Compartment();
+const placeholderCompartment = new Compartment();
 
-export function SourceEditor({ ytext, provider }: SourceEditorProps) {
+export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const { resolvedTheme } = useTheme();
@@ -67,6 +69,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         createWikiLinkSourceExtension(),
         createMdLinkSourceExtension(),
         themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
+        placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
         EditorView.lineWrapping,
         EditorView.theme({
           '&': {
@@ -107,6 +110,13 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
       effects: themeCompartment.reconfigure(resolvedTheme === 'dark' ? darkTheme : lightTheme),
     });
   }, [resolvedTheme]);
+
+  useEffect(() => {
+    if (!viewRef.current) return;
+    viewRef.current.dispatch({
+      effects: placeholderCompartment.reconfigure(cmPlaceholder(placeholder ?? '')),
+    });
+  }, [placeholder]);
 
   // Outline panel click → jump to the Nth heading line in the CodeMirror doc.
   useEffect(() => {

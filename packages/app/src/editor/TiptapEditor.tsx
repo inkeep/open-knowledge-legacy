@@ -10,6 +10,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Extension } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
+import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef } from 'react';
@@ -73,16 +74,24 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
 
 interface TiptapEditorProps {
   provider: HocuspocusProvider;
+  isNewDoc?: boolean;
 }
 
-export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
+export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, isNewDoc }) => {
   const frontmatterRef = useRef('');
+  const isNewDocRef = useRef(isNewDoc ?? false);
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
   // re-reconcile the view, which can jump the cursor position or drop in-flight keystrokes.
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const flashStateRef = useRef(INITIAL_FLASH_STATE);
   const identity = useIdentity();
+
+  // Keep ref in sync so the Placeholder function reads the latest value without
+  // triggering a full editor remount when the doc transitions from new → existing.
+  useEffect(() => {
+    isNewDocRef.current = isNewDoc ?? false;
+  }, [isNewDoc]);
 
   // Always-parse text/plain paste as markdown (R18, Archetype D).
   // All text/plain clipboard data is parsed as markdown — no detection heuristic.
@@ -103,6 +112,10 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     },
     extensions: [
       ...sharedExtensions,
+      Placeholder.configure({
+        placeholder: () =>
+          isNewDocRef.current ? 'Start writing to create this page\u2026' : 'Start writing\u2026',
+      }),
       Collaboration.configure({
         document: provider.document,
       }),
