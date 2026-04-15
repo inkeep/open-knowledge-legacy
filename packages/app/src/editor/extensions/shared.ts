@@ -11,6 +11,7 @@ import FileHandler from '@tiptap/extension-file-handler';
 import Placeholder from '@tiptap/extension-placeholder';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { BlockMover } from './block-mover';
+import { BridgeIdPlugin } from './bridge-id-plugin';
 import { BlockDragHandle } from './drag-handle';
 import { HeadingAnchors } from './heading-anchors';
 import { InternalLink } from './internal-link';
@@ -47,6 +48,7 @@ export const sharedExtensions = [
   BlockDragHandle,
   BlockMover,
   SourceDirtyObserver,
+  BridgeIdPlugin,
   Placeholder.configure({
     placeholder: "Type '/' for commands",
     showOnlyCurrent: true,
