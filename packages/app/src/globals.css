@@ -863,25 +863,8 @@
   opacity: 0.6;
 }
 
-.cm-image-mark {
-  color: oklch(55% 0.15 60);
-}
-
-/* Reference definition block (Phase 3) */
-.cm-link-ref-def {
-  background: color-mix(in oklab, var(--color-muted) 15%, transparent);
-  border-left: 2px solid var(--color-muted-foreground);
-  padding-inline-start: 6px;
-  font-size: 0.95em;
-}
-
 .cm-link-ref-def-label {
   color: var(--color-accent);
-}
-
-.cm-link-ref-def-url {
-  color: var(--color-muted-foreground);
-  word-break: break-all;
 }
 
 /* Thematic break (Phase 3) — rule dominates, text fades per D9 */

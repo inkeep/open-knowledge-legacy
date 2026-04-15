@@ -302,7 +302,7 @@ Declarative CM6 decoration engine that applies per-line tinting, hanging indent,
 
 **Architecture:**
 - `createPolishEngineExtension()` (the integration point) wraps the engine in `polishCompartment` + auto-bail; call it directly from `SourceEditor.tsx`
-- **ViewPlugin** (`view-plugin.ts`) — single lezer syntax-tree walk per viewport update; dispatches `Decoration.line` and `Decoration.mark` for all registered constructs; gates on `syntaxTreeAvailable` to avoid partial-tree reads
+- **ViewPlugin** (`view-plugin.ts`) — single lezer syntax-tree walk per viewport update; dispatches `Decoration.line` and `Decoration.mark` for all registered constructs; rebuilds on tree mutation to handle async nested-language parsing
 - **StateField** (`state-field.ts`) — document-wide cross-scan for broken-reference detection; early-returns on `!tr.docChanged` to skip cursor-move and scroll updates
 - **Auto-bail** (`auto-bail.ts`) — silent safety net: if `doc.lines > 5000` OR first-paint exceeds 200 ms, reconfigures `polishCompartment` to `[]`; stays off for that document until reload; no user UI
 - **Construct registry** — `Registry` is `ConstructConfig[]`; each entry maps `@lezer/markdown` node names to decoration instructions via fields: `kind`, `class`, `markerClass`, `depthClass`, `hangingIndent`, `lineAttributes`, `crossScan`, etc.

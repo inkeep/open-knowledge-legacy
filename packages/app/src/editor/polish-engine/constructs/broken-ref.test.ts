@@ -49,4 +49,58 @@ describe('brokenLinkRefConstruct', () => {
     const collected = brokenLinkRefConstruct.crossScan?.collect(state);
     expect(collected.size).toBe(0);
   });
+
+  describe('check', () => {
+    function findLinkNodes(state: EditorState) {
+      const nodes: import('@lezer/common').SyntaxNode[] = [];
+      syntaxTree(state).iterate({
+        enter(nodeRef) {
+          if (nodeRef.name === 'Link') {
+            nodes.push(nodeRef.node);
+          }
+        },
+      });
+      return nodes;
+    }
+
+    test('returns ok for reference-style link with matching definition', () => {
+      const state = ensureTree(
+        createState('[example]: https://example.com\n\n[click here][example]'),
+      );
+      const collected = brokenLinkRefConstruct.crossScan?.collect(state);
+      const links = findLinkNodes(state);
+      expect(links.length).toBeGreaterThan(0);
+      const result = brokenLinkRefConstruct.crossScan?.check(links[0], collected, state);
+      expect(result).toBe('ok');
+    });
+
+    test('returns broken for reference-style link with no matching definition', () => {
+      const state = ensureTree(createState('[click here][missing]\n\nSome text'));
+      const collected = brokenLinkRefConstruct.crossScan?.collect(state);
+      const links = findLinkNodes(state);
+      expect(links.length).toBeGreaterThan(0);
+      const result = brokenLinkRefConstruct.crossScan?.check(links[0], collected, state);
+      expect(result).toBe('broken');
+    });
+
+    test('returns ok for inline link (no LinkLabel child)', () => {
+      const state = ensureTree(createState('[click](https://example.com)\n\nSome text'));
+      const collected = brokenLinkRefConstruct.crossScan?.collect(state);
+      const links = findLinkNodes(state);
+      expect(links.length).toBeGreaterThan(0);
+      const result = brokenLinkRefConstruct.crossScan?.check(links[0], collected, state);
+      expect(result).toBe('ok');
+    });
+
+    test('case-insensitive matching between reference and definition', () => {
+      const state = ensureTree(
+        createState('[Example]: https://example.com\n\n[click here][EXAMPLE]'),
+      );
+      const collected = brokenLinkRefConstruct.crossScan?.collect(state);
+      const links = findLinkNodes(state);
+      expect(links.length).toBeGreaterThan(0);
+      const result = brokenLinkRefConstruct.crossScan?.check(links[0], collected, state);
+      expect(result).toBe('ok');
+    });
+  });
 });

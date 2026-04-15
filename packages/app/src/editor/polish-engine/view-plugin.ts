@@ -246,7 +246,9 @@ function inlineStyle(attrs: Record<string, string>): string {
 /**
  * Module-level first-paint duration (ms) from the ViewPlugin constructor.
  * Read by auto-bail to decide whether decoration computation is too expensive.
- * Only written once (first ViewPlugin instantiation); subsequent updates don't overwrite.
+ * Only written once (first ViewPlugin instantiation); subsequent documents
+ * don't overwrite. This is session-first-document-only by design —
+ * LINE_CEILING is the primary per-document safety gate.
  */
 let firstPaintMs = -1;
 

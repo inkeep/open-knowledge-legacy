@@ -148,8 +148,8 @@ const wikiLinkDecorations = ViewPlugin.fromClass(
             view.dispatch({});
           }
         })
-        .catch(() => {
-          // If fetch fails, mark as populated to avoid retry
+        .catch((err) => {
+          console.warn('[wiki-link-source] initial page cache population failed:', err);
           this.cachePopulated = true;
         });
     }

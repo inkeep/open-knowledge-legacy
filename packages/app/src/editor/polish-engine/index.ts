@@ -97,7 +97,7 @@ export function constructPolishEngine(registry: Registry): Extension[] {
 
   const extensions: Extension[] = [];
 
-  // ViewPlugin: shared syntaxTree walk for line/mark/widget-side constructs
+  // ViewPlugin: shared syntaxTree walk for line/mark constructs
   extensions.push(createPolishViewPlugin(registry, nodeIndex, markerIndex));
 
   // StateField: cross-scan for broken-reference detection

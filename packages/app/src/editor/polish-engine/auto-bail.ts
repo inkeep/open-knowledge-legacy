@@ -32,6 +32,9 @@ export function createAutoBailPlugin(compartment: Compartment) {
         // Check line-count ceiling (O(1) — safe to run on every update)
         if (doc.lines > LINE_CEILING) {
           this.bailed = true;
+          console.warn(
+            `[polish-engine] auto-bail: ${doc.lines} lines exceeds ceiling of ${LINE_CEILING}`,
+          );
           queueMicrotask(() => {
             update.view.dispatch({
               effects: compartment.reconfigure([]),
@@ -44,6 +47,9 @@ export function createAutoBailPlugin(compartment: Compartment) {
         const paintMs = getFirstPaintMs();
         if (paintMs >= 0 && paintMs > FIRST_PAINT_CEILING_MS) {
           this.bailed = true;
+          console.warn(
+            `[polish-engine] auto-bail: first-paint ${paintMs.toFixed(1)}ms exceeds ceiling of ${FIRST_PAINT_CEILING_MS}ms`,
+          );
           queueMicrotask(() => {
             update.view.dispatch({
               effects: compartment.reconfigure([]),
