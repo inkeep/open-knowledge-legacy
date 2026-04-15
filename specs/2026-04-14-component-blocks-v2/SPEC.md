@@ -946,18 +946,16 @@ handlers.mdxJsxFlowElement = (node: MdxJsxFlowElement) => {
   );
 };
 
-// REPLACE handlers.mdxJsxTextElement at line 433 (NG14 / FR-2 / FR-4 — thin jsxInline):
-handlers.mdxJsxTextElement = (node: MdxJsxTextElement, state, context) => {
-  // Slice raw source verbatim — discard mdast children. Round-trip byte-identical.
-  // No descriptor lookup, no attr destructuring, no sourceDirty.
-  const start = node.position?.start.offset ?? 0;
-  const end = node.position?.end.offset ?? start;
-  const raw = context.originalSource.slice(start, end);
-  return n.jsxInline.createAndFill(
+// REPLACE handlers.mdxJsxTextElement at line 429 (NG14 / FR-2 / FR-4 — thin jsxInline):
+// NOTE (2026-04-15 spec correction): raw source is recovered via rawFromData(node.data),
+// which the position-slice walker (packages/core/src/markdown/position-slice.ts:187-192)
+// attaches to mdast nodes before handlers run. Handlers do NOT receive an
+// `originalSource` parameter — the walker is the source-of-truth mechanism.
+handlers.mdxJsxTextElement = (node: MdxJsxTextElement) =>
+  n.jsxInline.createAndFill(
     {},                                            // zero attrs per FR-4
-    [n.text.create({}, raw)],                       // single text child = raw source
+    [schema.text(rawFromData(node.data) ?? '')],   // single text child = raw source
   );
-};
 ```
 
 **Why single-line JSX lands in jsxInline (micromark-extension-mdx tokenization rule):** balanced JSX that fits on one line tokenizes as `mdxJsxTextElement` (inline) regardless of whether it stands alone on the line. Flow-context `mdxJsxFlowElement` only triggers when open/close tags are on different lines or the inner content is block-like. This means:
@@ -1768,12 +1766,23 @@ try {
 }
 applyJsonToFragment(parsedJson, fragment);
 
-// AFTER (FR-22):
-const parsedJson: JSONContent = mdManager.parseWithFallback(body);
-applyJsonToFragment(parsedJson, fragment);
+// AFTER (FR-22) — NOTE (2026-04-15 spec correction): `applyJsonToFragment` does
+// not exist in the codebase. The real post-parse pattern uses
+// `schema.nodeFromJSON(parsedJson)` to construct the PM node, then calls
+// `updateYFragment(doc, xmlFragment, pmNode, meta)` inside a `doc.transact(fn,
+// ORIGIN_TEXT_TO_TREE)` block. Replace ONLY the inner try/catch lines 459-489
+// (the `try { parsedJson = mdManager.parse(body) } catch (parseErr) { ... }`
+// block that filters transient SyntaxError/VFileMessage/RangeError errors and
+// returns). The surrounding code (convergence guard at line 442, nodeFromJSON
+// at line 494, updateYFragment at line 498, post-sync baseline refresh at
+// lines 508-528, outer catch at line 529) is preserved unchanged.
+const parsedJson = mdManager.parseWithFallback(body);
+// ... remaining flow at observers.ts:494+ is unchanged:
+//   const pmNode = schema.nodeFromJSON(parsedJson);
+//   doc.transact(() => { updateYFragment(doc, xmlFragment, pmNode, meta); ... }, ORIGIN_TEXT_TO_TREE);
 ```
 
-No try/catch — `parseWithFallback` is total over the input domain. No `onSyncError` callback on parse failure (that callback was a transitional error sink for the freeze path; genuinely catastrophic errors surface as errors inside `parseWithFallback`'s metrics instrumentation). `MarkdownManager.parseWithFallback` is the existing method on the manager (already used by persistence / external-change / rollback / agent-sessions) — no new API surface.
+No try/catch around the parse call — `parseWithFallback` is total over the input domain. No `onSyncError` callback on parse failure (that callback was a transitional error sink for the freeze path; genuinely catastrophic errors surface as errors inside `parseWithFallback`'s metrics instrumentation). `MarkdownManager.parseWithFallback` is the existing method on the manager (already used by persistence / external-change / rollback / agent-sessions) — no new API surface. The outer catch at observers.ts:529 (which routes genuinely unexpected errors to `onSyncError`) remains.
 
 Everything else in `observers.ts` is untouched: Observer A, `applyUserDelta` (DMP three-way merge, PR #128), typing-defer state, origin guards, the bidirectional-sync setup.
 

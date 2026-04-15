@@ -21,10 +21,10 @@
     "test:fuzz": "bun test tests/stress/observers.fuzz.test.ts",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
     "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts",
-    "test:visual": "VITE_PORT=13580 playwright test tests/visual/component-parity.e2e.ts --update-snapshots",
-    "test:visual:update": "VITE_PORT=13580 playwright test tests/visual/component-parity.e2e.ts --update-snapshots",
+    "test:visual": "playwright test --config playwright.visual.config.ts",
+    "test:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots",
     "test:perf": "bun test tests/stress/component-blocks.perf.test.ts",
-    "test:a11y": "VITE_PORT=13581 playwright test tests/a11y/component-blocks.e2e.ts"
+    "test:a11y": "playwright test --config playwright.a11y.config.ts"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
@@ -81,6 +81,7 @@
     "yjs": "^13.6.30"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.11.1",
     "@biomejs/biome": "^2.4.10",
     "@hocuspocus/server": "4.0.0-rc.1",
     "@playwright/test": "^1.59.1",
