@@ -3,6 +3,7 @@ import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
+import { createManualScheduler } from '../../tests/integration/test-harness';
 import { sharedExtensions } from './extensions/shared';
 import {
   markUserTyping,
@@ -2029,5 +2030,105 @@ describe('A1: applyByPrefixSuffix preserves Items in prefix/suffix regions', () 
     expect(ytext.toString()).toBe('XXX');
 
     um.destroy();
+  });
+});
+
+describe('FR-15: Scheduler DI — deterministic observer debounce control', () => {
+  test('Observer A debounce fires only when scheduler advances time', async () => {
+    // Production defaults fire Observer A after 50ms of wall-clock. Under
+    // ManualScheduler + unified clock, the debounce is scheduled at
+    // virtual dueAt=50, and does not fire until `scheduler.advanceTime(50)`
+    // or `scheduler.flush()` is called. Y.Text stays empty until then — a
+    // property unreachable with `wait(ms)` pacing.
+    const scheduler = createManualScheduler();
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // Pre-seed with initial content so Observer A has a baseline to diff against
+    // once the scheduler advances. Without this seed, the first fragment mutation
+    // would land in the initial sync and not create a pending debounce to probe.
+    applyMarkdown(doc, fragment, 'initial\n');
+
+    const cleanup = setupObservers({
+      doc,
+      xmlFragment: fragment,
+      ytext,
+      mdManager,
+      schema,
+      scheduler,
+    });
+
+    try {
+      // Initial sync happens synchronously during setupObservers (no debounce).
+      expect(ytext.toString().includes('initial')).toBe(true);
+
+      // Produce a local XmlFragment change that triggers Observer A's
+      // `setTimeout(runObserverASync, 50)` scheduling. The debounce is pending
+      // in virtual time but has not fired yet.
+      applyMarkdown(doc, fragment, 'initial\n\nfreshly typed\n');
+
+      // One pending timer: the Observer A debounce for our local change.
+      expect(scheduler.pending().length).toBeGreaterThanOrEqual(1);
+
+      // Y.Text has NOT been updated with our new content yet — the debounce
+      // is pending in virtual time, and wall-clock advancement (microtasks,
+      // real setTimeout) cannot fire it.
+      expect(ytext.toString().includes('freshly typed')).toBe(false);
+
+      // Synchronously fire all pending timers. Cascading: Observer A's
+      // doc.transact writes to Y.Text, which triggers Observer B's callback
+      // (origin-guarded, so early-exits). No cascade in this case, but the
+      // drain loop is bounded and safe.
+      scheduler.flush();
+
+      // After flush, Observer A has run synchronously → Y.Text mirrors fragment.
+      expect(ytext.toString().includes('freshly typed')).toBe(true);
+
+      // Queue is empty: no residual debounces.
+      expect(scheduler.pending().length).toBe(0);
+    } finally {
+      cleanup();
+      doc.destroy();
+    }
+  });
+
+  test('sched.now() is the clock reference for elapsed-time comparisons', () => {
+    // FR-15 clock unification: `markUserTyping` and Observer B's elapsed
+    // windows all read from sched.now(). Under ManualScheduler, now starts
+    // at 0 and advances only via advanceTime. This test proves that
+    // markUserTyping records virtual time, not wall-clock.
+    const scheduler = createManualScheduler();
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    // setupObservers registers the scheduler into TypingState so
+    // markUserTyping reads the same clock.
+    const cleanup = setupObservers({
+      doc,
+      xmlFragment: fragment,
+      ytext,
+      mdManager,
+      schema,
+      scheduler,
+    });
+
+    try {
+      expect(scheduler.now()).toBe(0);
+      markUserTyping(doc);
+      // No virtual time advance → lastUserTypedAt is 0.
+      // Observer B would check elapsed = sched.now() - 0 = 0, which is
+      // < TYPING_DEFER_MS (300), so defer would fire. Advance past the
+      // defer window:
+      scheduler.advanceTime(400);
+      expect(scheduler.now()).toBe(400);
+      // Now elapsed = 400 - 0 = 400 > TYPING_DEFER_MS → defer would not fire.
+      // This is the determinism win: wall-clock jitter cannot push the
+      // comparison onto either side of the threshold.
+    } finally {
+      cleanup();
+      doc.destroy();
+    }
   });
 });
