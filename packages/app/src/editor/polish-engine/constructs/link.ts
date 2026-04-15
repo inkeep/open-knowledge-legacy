@@ -36,10 +36,9 @@ export const urlConstruct: ConstructConfig = {
 };
 
 /**
- * LinkReference is used for both inline [text][ref] and block [label]: url.
- * The view-plugin applies this mark to all LinkReference nodes.
- * Block-level definition styling is handled via a separate line construct
- * (see linkRefDefLineConstruct below).
+ * LinkReference mark decoration. For block-level definitions
+ * (parent is Document), applies `cm-link-ref-def-label`; for
+ * inline reference-style links, applies `cm-link-text`.
  */
 export const linkReferenceConstruct: ConstructConfig = {
   id: 'link-reference',

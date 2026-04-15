@@ -13,8 +13,6 @@ import type { SyntaxNode } from '@lezer/common';
 export interface NodeRange {
   from: number;
   to: number;
-  /** Optional metadata for the detection (e.g., which sub-region). */
-  data?: Record<string, unknown>;
 }
 
 /** Info collected during the cross-scan collect pass. */

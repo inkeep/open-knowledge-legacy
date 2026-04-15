@@ -24,13 +24,7 @@ function detectFrontmatter(state: EditorState): NodeRange[] {
   for (let i = 2; i <= doc.lines; i++) {
     const line = doc.line(i);
     if (FRONTMATTER_CLOSE.test(line.text)) {
-      return [
-        {
-          from: firstLine.from,
-          to: line.to,
-          data: { openLine: 1, closeLine: i },
-        },
-      ];
+      return [{ from: firstLine.from, to: line.to }];
     }
   }
 

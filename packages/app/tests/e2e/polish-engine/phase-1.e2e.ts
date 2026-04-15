@@ -1,9 +1,9 @@
 /**
  * Polish Engine Phase 1 — Playwright E2E tests
  *
- * Covers §10.7 rows: R1 (CRDT convergence), R4 (auto-bail boundaries),
- * R5 (zero console errors), R9 (performance), R12 (agent-write sync),
- * plus R3/R6/R10 for Phase 1 constructs (table, blockquote, code).
+ * Covers §10.7 rows: R3 (Cmd+A copy byte-identical), R5 (zero console
+ * errors), R9 (performance targets), R10 (decoration class correctness)
+ * for Phase 1 constructs (table, blockquote, code).
  *
  * §10.9 zero-tolerance error filter applied to every test.
  */
