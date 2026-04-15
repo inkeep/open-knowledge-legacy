@@ -2,7 +2,7 @@
  * `get_preview_url` MCP tool.
  *
  * Agents call this right before editing a doc so they can navigate the
- * Claude Code preview browser to the target URL first — the edit then
+ * preview browser to the target URL first — the edit then
  * streams live into the already-open editor. Primary pre-edit surface
  * per D3.
  *
@@ -22,7 +22,7 @@ import type { ServerInstance } from './shared.ts';
 import { normalizeDocName, textPlusStructured, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Return a browser URL for the given wiki docName. Agents should call this IMMEDIATELY BEFORE `write_document` / `edit_document` so they can navigate the Claude Code preview to the doc first and watch the CRDT edit land live.',
+  'Return a browser URL for the given wiki docName. Agents should call this IMMEDIATELY BEFORE `write_document` / `edit_document` so they can navigate the preview browser to the doc first and watch the CRDT edit land live.',
   '',
   '**Parameters:**',
   '- `docName` — Wiki doc name, typically without extension.',
@@ -89,7 +89,7 @@ export async function buildGetPreviewUrlResult(
     return {
       ok: true,
       result: { previewUrl: null },
-      text: `No preview URL resolvable for "${docName}". Set \`OPEN_KNOWLEDGE_PREVIEW_BASE_URL\`, start \`open-knowledge start\` locally, or add \`preview.baseUrl\` to .open-knowledge/config.yml.`,
+      text: `No preview URL resolvable for "${docName}". The server is likely not running yet. Start it with \`open-knowledge start\` (or \`preview_start\`), then **call \`get_preview_url\` again** — the server writes a lock file that this tool reads to resolve the URL. NEVER guess or manually construct the preview URL. Alternatively, set \`OPEN_KNOWLEDGE_PREVIEW_BASE_URL\` or add \`preview.baseUrl\` to .open-knowledge/config.yml.`,
     };
   }
   return {

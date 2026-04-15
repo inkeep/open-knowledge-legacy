@@ -19,6 +19,8 @@ import {
 } from './shared.ts';
 
 export const DESCRIPTION = [
+  '**IMPORTANT: Before calling this tool, you MUST first call `get_preview_url` and navigate to the returned URL in your preview browser. If `get_preview_url` returns null, start the server first (`open-knowledge start` or `preview_start`), then call `get_preview_url` again. Do NOT call this tool without the preview open. NEVER manually construct the URL.**',
+  '',
   '[Requires: Hocuspocus server] Find-and-replace on a live document via the CRDT layer.',
   'The patch is applied through Hocuspocus and propagated to all connected editors in real-time.',
   'Use `offset` when you need to patch an exact occurrence; omit it to preserve first-match behavior.',
