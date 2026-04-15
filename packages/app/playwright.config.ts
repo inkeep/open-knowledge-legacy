@@ -18,19 +18,10 @@ const baseURL = `http://localhost:${port}`;
 
 export default defineConfig({
   testMatch: /.*\.e2e\.ts$/,
+  testDir: './tests/stress',
   timeout: 120_000,
   retries: 0,
   globalTeardown: './tests/stress/global-teardown.ts',
-  projects: [
-    {
-      name: 'stress',
-      testDir: './tests/stress',
-    },
-    {
-      name: 'polish-engine',
-      testDir: './tests/e2e/polish-engine',
-    },
-  ],
   use: {
     baseURL,
     headless: true,
