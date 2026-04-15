@@ -21,6 +21,7 @@ if (process.argv.includes('--no-color')) {
  * Config loaded via preAction hook: CLI > ENV > workspace > user > Zod defaults.
  */
 import { Command } from 'commander';
+import { authCommand } from './commands/auth/index.ts';
 import { cleanCommand } from './commands/clean.ts';
 import { initCommand } from './commands/init.ts';
 import { mcpCommand } from './commands/mcp.ts';
@@ -100,5 +101,8 @@ program.addCommand(ui);
 program.addCommand(stopCommand(() => resolvedConfig));
 program.addCommand(cleanCommand(() => resolvedConfig));
 program.addCommand(statusCommand(() => resolvedConfig));
+
+// auth command group — login, status, repos, signout, pat, git-credential
+program.addCommand(authCommand());
 
 await program.parseAsync();
