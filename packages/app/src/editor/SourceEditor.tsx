@@ -8,6 +8,7 @@ import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
 import { codeLanguages } from './markdown-code-languages';
+import { createPolishEngineExtension } from './polish-engine';
 
 // Customize the dark editor surface colors here.
 const darkTheme = basicDarkInit({
@@ -74,6 +75,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         createAgentFlashSourceExtension(provider.document),
         createWikiLinkSourceExtension(),
         createMdLinkSourceExtension(),
+        ...createPolishEngineExtension(),
         themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
         EditorView.lineWrapping,
         EditorView.theme({

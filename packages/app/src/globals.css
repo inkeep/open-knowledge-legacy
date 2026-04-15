@@ -639,6 +639,33 @@
 }
 
 /* ─────────────────────────────────────────────────────────────
+   Polish Engine — per-construct source-view decorations
+   ───────────────────────────────────────────────────────────── */
+
+/* Blockquote (Family A — prefix/marker block)
+   Depth-aware border + tinted background. Wrapped continuation
+   aligns under content via text-indent + padding. */
+.cm-blockquote-line {
+  border-left: 3px solid color-mix(in oklab, var(--color-muted-foreground) 50%, transparent);
+  background: color-mix(in oklab, var(--color-muted) 4%, transparent);
+  padding-inline-start: calc(8px + 2ch);
+  text-indent: -2ch;
+}
+
+.cm-blockquote-depth-2 {
+  border-left-color: color-mix(in oklab, var(--color-muted-foreground) 65%, transparent);
+}
+
+.cm-blockquote-depth-3 {
+  border-left-color: color-mix(in oklab, var(--color-muted-foreground) 80%, transparent);
+}
+
+.cm-quote-mark {
+  color: var(--color-muted-foreground);
+  opacity: 0.6;
+}
+
+/* ─────────────────────────────────────────────────────────────
    Presence polish — agent badge, undo button, presence bar
    ───────────────────────────────────────────────────────────── */
 
