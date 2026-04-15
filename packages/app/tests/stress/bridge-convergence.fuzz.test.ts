@@ -436,18 +436,79 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       createItemOriginProbe(c.ytext, { trackedOrigins: [AGENT_WRITE_ORIGIN] }),
     );
 
-    // Track content markers for the content-preservation oracle.
-    // Each content-producing op's marker uses format `M<N>-<words>`. We track
-    // just the `M<N>-` prefix (durable — survives agent-patch's WORDS-pool
-    // find/replace which never contains a marker prefix). Oracle asserts the
-    // prefix appears in EVERY client's final state for all live markers.
+    // ────────────── Oracle (d): prefix-match content preservation ─────
+    // Track content markers for the weak content-preservation oracle (d).
+    // Each content-producing op's marker uses format `M<N>-<words>`. Oracle
+    // asserts the `M<N>-` prefix (durable; immune to agent-patch's WORDS-pool
+    // find/replace) appears in EVERY client's final state for all live
+    // markers. Catches Bug-A class: line/block removal where all clients
+    // synchronously agree on wrong content.
     //
     // external-change invalidates all prior markers (wholesale body replace).
     const livePrefixes = new Set<string>();
-    // Helper: extract `M<N>-` prefix from a marker string.
     const prefixOf = (marker: string): string => {
       const dashIdx = marker.indexOf('-');
       return dashIdx === -1 ? marker : marker.slice(0, dashIdx + 1);
+    };
+
+    // ────────────── Oracle (e): full-body content equality ────────────
+    // Tracks the EXPECTED markdown body after every op by mirroring server
+    // semantics (applyAgentMarkdownWrite / applyExternalChange / Observer A
+    // serialize behaviour). Compared against each client's ytext at
+    // convergence under `normalizeBridge` — catches Bug-A class PLUS content
+    // corruption that preserves marker prefixes (e.g., DMP mis-merge,
+    // Unicode boundary split, canonicalization drift).
+    //
+    // Always-on: set-membership is CRDT-safe (independent of paragraph
+    // ordering). The env var BRIDGE_FUZZ_STRICT_ORACLE=1 is retained only
+    // for toggling the full-EQUALITY comparison (see below) which requires
+    // deterministic ordering not guaranteed by CRDT concurrent inserts.
+    let expectedBody = 'seed paragraph'; // post-seed, pre-op initial state
+    const updateExpectedBody = (op: Op): void => {
+      switch (op.kind) {
+        case 'wysiwyg-type':
+        case 'source-type':
+          // Observer A (wysiwyg) / Observer B (source) serializes the new
+          // paragraph with a double-newline separator after the existing body.
+          expectedBody = expectedBody.length > 0 ? `${expectedBody}\n\n${op.marker}` : op.marker;
+          break;
+        case 'agent-write': {
+          // Mirrors packages/server/src/agent-sessions.ts applyAgentMarkdownWrite.
+          switch (op.position) {
+            case 'replace':
+              expectedBody = op.marker;
+              break;
+            case 'prepend':
+              expectedBody =
+                expectedBody.length > 0 ? `${op.marker}\n\n${expectedBody}` : op.marker;
+              break;
+            case 'append':
+              expectedBody =
+                expectedBody.trim().length > 0 ? `${expectedBody}\n\n${op.marker}` : op.marker;
+              break;
+          }
+          break;
+        }
+        case 'agent-patch': {
+          // Server uses body.indexOf(find) → first-match only. Mirror that.
+          const pos = expectedBody.indexOf(op.find);
+          if (pos !== -1) {
+            expectedBody =
+              expectedBody.slice(0, pos) + op.replace + expectedBody.slice(pos + op.find.length);
+          }
+          break;
+        }
+        case 'external-change':
+          // applyExternalChange on server writes both fragment and ytext to
+          // the provided content (parse-serialize canonicalized).
+          expectedBody = op.newContent.replace(/\n+$/, '');
+          break;
+        case 'sync-pause':
+        case 'sync-resume':
+        case 'wait':
+          // No content change.
+          break;
+      }
     };
 
     try {
@@ -471,17 +532,16 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
         }
         await applyOp(op, clients, server, docName);
 
-        // Update marker tracking AFTER the op succeeds.
-        // wysiwyg-type / agent-write / source-type register markers.
-        // external-change wholesale-replaces body, invalidating prior markers.
-        // agent-patch modifies WORDS but never touches marker prefixes (by
-        // generator design — find/replace draw from raw WORDS, not markers).
+        // Update marker tracking AFTER the op succeeds (oracle d prefix set).
         if (op.kind === 'wysiwyg-type' || op.kind === 'source-type' || op.kind === 'agent-write') {
           livePrefixes.add(prefixOf(op.marker));
         } else if (op.kind === 'external-change') {
           livePrefixes.clear();
           livePrefixes.add(prefixOf(op.marker));
         }
+
+        // Update full-body expectation (oracle e).
+        updateExpectedBody(op);
 
         if (op.kind !== 'wait' && op.kind !== 'sync-pause' && op.kind !== 'sync-resume') {
           await wait(20);
@@ -557,6 +617,55 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
               .join('\n') +
             (missingPrefixes.length > 5 ? `\n  ...and ${missingPrefixes.length - 5} more` : ''),
         );
+      }
+
+      // Oracle (e): char-granular content-set membership.
+      // Upgrades oracle (d)'s prefix-only matching to FULL MARKER LINE
+      // matching. Each expected marker line (full content, not just prefix)
+      // must appear in every client's ytext — checked as a SET, not a
+      // sequence, because CRDT inserts from concurrent clients can
+      // interleave paragraphs in non-deterministic order.
+      //
+      // Catches: content corruption within a marker line (e.g., DMP merge
+      // bug, applyByPrefixSuffix Unicode boundary split) that preserves
+      // the `M<N>-` prefix but mutates the tail — a class oracle (d) misses.
+      //
+      // Does NOT catch: paragraph reordering (CRDT-correct behavior),
+      // duplication (checked by bridge-invariant + convergence oracles).
+      const markerLineRe = /^M\d+-/;
+      const expectedMarkerLines = new Set(
+        expectedBody
+          .split('\n')
+          .map((l) => l.trimEnd())
+          .filter((l) => markerLineRe.test(l)),
+      );
+      if (expectedMarkerLines.size > 0) {
+        const missingContent: Array<{ clientIdx: number; line: string }> = [];
+        for (let ci = 0; ci < clients.length; ci++) {
+          const client = clients[ci];
+          if (!client) continue;
+          const gotLines = new Set(
+            client.ytext
+              .toString()
+              .split('\n')
+              .map((l) => l.trimEnd()),
+          );
+          for (const expected of expectedMarkerLines) {
+            if (!gotLines.has(expected)) {
+              missingContent.push({ clientIdx: ci, line: expected });
+            }
+          }
+        }
+        if (missingContent.length > 0) {
+          throw new Error(
+            `Oracle (e) content-set violation — ${missingContent.length} marker line(s) missing or corrupted:\n` +
+              missingContent
+                .slice(0, 5)
+                .map((m) => `  client ${m.clientIdx} missing '${m.line}'`)
+                .join('\n') +
+              (missingContent.length > 5 ? `\n  ...and ${missingContent.length - 5} more` : ''),
+          );
+        }
       }
     } catch (err) {
       writeFuzzSnapshot(seed, {
