@@ -143,17 +143,37 @@ export interface GrepOptions {
  * Paths passed in `opts.paths` are interpreted relative to the sandbox
  * root — i.e., `.` (default) resolves to projectDir.
  */
+/**
+ * Strip the leading `**\/` from a picomatch-style include/exclude glob so
+ * just-bash's grep (which only matches basenames) can apply it. `**\/*.md` ->
+ * `*.md`; `docs/**\/*.md` stays unchanged (loses the directory constraint —
+ * a known limitation; use `opts.paths` to scope instead).
+ */
+function normalizeGrepGlob(pat: string): string {
+  return pat.startsWith('**/') ? pat.slice(3) : pat;
+}
+
 export async function grep(pattern: string, opts: GrepOptions = {}): Promise<GrepMatch[]> {
   const bash = createBashInstance(projectDir);
 
   const flags: string[] = ['-rn', '-F']; // recursive, line numbers, fixed-string
   if (opts.caseInsensitive ?? true) flags.push('-i');
+  // just-bash's grep has two quirks the space-separated form doesn't survive:
+  // (1) `--include PATTERN` (space) is silently ignored — the equals form
+  //     `--include=PATTERN` is required.
+  // (2) `--include` matches the file basename only, with glob patterns that
+  //     DON'T support `**`. A config value like `**/*.md` never matches any
+  //     file (no basename starts with `**/`). Strip the `**/` prefix so the
+  //     picomatch-style config globs used elsewhere in the app work here too.
+  //     Complex path-constrained globs (`docs/**/*.md`) lose the directory
+  //     constraint at this layer — accept as a known limitation; restrict
+  //     via `opts.paths` instead.
   for (const inc of opts.include ?? []) {
-    flags.push('--include', shellEscape(inc));
+    flags.push(`--include=${shellEscape(normalizeGrepGlob(inc))}`);
   }
   for (const exc of opts.exclude ?? []) {
-    flags.push('--exclude', shellEscape(exc));
-    flags.push('--exclude-dir', shellEscape(exc));
+    flags.push(`--exclude=${shellEscape(normalizeGrepGlob(exc))}`);
+    flags.push(`--exclude-dir=${shellEscape(normalizeGrepGlob(exc))}`);
   }
 
   const searchPaths = opts.paths?.length ? opts.paths.map(shellEscape) : ['.'];
