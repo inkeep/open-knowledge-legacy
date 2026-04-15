@@ -48,7 +48,7 @@ describe('find_dead_links MCP tool', () => {
       expect(handler).toBeDefined();
       if (!handler) throw new Error('Missing tool handler');
 
-      const result = await handler({ sourceDocNames: ['alpha', 'beta'] });
+      const result = await handler({ sourceDocNames: ['alpha.md', 'beta'] });
       expect(requests).toEqual(['/api/dead-links?sourceDocName=alpha&sourceDocName=beta']);
       expect(result).toEqual({
         content: [

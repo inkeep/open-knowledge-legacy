@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, normalizeDocName, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find missing internal page targets across the corpus.',
@@ -25,7 +25,9 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
 
       const params = new URLSearchParams();
       for (const sourceDocName of args.sourceDocNames ?? []) {
-        params.append('sourceDocName', sourceDocName);
+        const normalized = normalizeDocName(sourceDocName);
+        if (!normalized.ok) return textResult(normalized.error, true);
+        params.append('sourceDocName', normalized.docName);
       }
 
       const query = params.toString();
