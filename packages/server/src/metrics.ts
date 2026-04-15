@@ -17,6 +17,16 @@ export interface ReconciliationMetrics {
   cc1BroadcastDropCount: number;
   cc1SubscriberCount: number;
   cc1LastSeq: Record<string, number>;
+  serverObserverFiresA: number;
+  serverObserverFiresB: number;
+  serverObserverErrorsA: number;
+  serverObserverErrorsB: number;
+  /** Count of successful atomic disk writes from persistence.onStoreDocument.
+   *  Used as the Mutation F regression gate: if OBSERVER_SYNC_ORIGIN drops
+   *  skipStoreHooks, onStoreDocument fires on every observer write and
+   *  produces amplified disk I/O. Under skipStoreHooks: true, a single
+   *  agent-write produces exactly one persistence disk write. */
+  persistenceDiskWrites: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -32,6 +42,11 @@ const counters: ReconciliationMetrics = {
   cc1BroadcastDropCount: 0,
   cc1SubscriberCount: 0,
   cc1LastSeq: {},
+  serverObserverFiresA: 0,
+  serverObserverFiresB: 0,
+  serverObserverErrorsA: 0,
+  serverObserverErrorsB: 0,
+  persistenceDiskWrites: 0,
 };
 
 export function incrementReconcile(): void {
@@ -78,6 +93,20 @@ export function setCC1SubscriberCount(count: number): void {
   counters.cc1SubscriberCount = count;
 }
 
+export function incrementServerObserverFire(direction: 'a' | 'b'): void {
+  if (direction === 'a') counters.serverObserverFiresA++;
+  else counters.serverObserverFiresB++;
+}
+
+export function incrementPersistenceDiskWrite(): void {
+  counters.persistenceDiskWrites++;
+}
+
+export function incrementServerObserverError(direction: 'a' | 'b'): void {
+  if (direction === 'a') counters.serverObserverErrorsA++;
+  else counters.serverObserverErrorsB++;
+}
+
 export function setCC1LastSeq(channel: string, seq: number): void {
   counters.cc1LastSeq[channel] = seq;
 }
@@ -99,4 +128,9 @@ export function resetMetrics(): void {
   counters.cc1BroadcastDropCount = 0;
   counters.cc1SubscriberCount = 0;
   counters.cc1LastSeq = {};
+  counters.serverObserverFiresA = 0;
+  counters.serverObserverFiresB = 0;
+  counters.serverObserverErrorsA = 0;
+  counters.serverObserverErrorsB = 0;
+  counters.persistenceDiskWrites = 0;
 }

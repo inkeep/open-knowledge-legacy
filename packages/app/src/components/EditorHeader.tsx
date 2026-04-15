@@ -5,8 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { PresenceBar } from '@/presence/PresenceBar';
+import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
@@ -43,7 +45,10 @@ export function EditorHeader({
   diffLayout,
   onDiffLayoutChange,
 }: EditorHeaderProps) {
-  const { activeDocName } = useDocumentContext();
+  const { activeDocName, activeProvider } = useDocumentContext();
+  const syncStatus = useSyncStatus(activeProvider);
+  const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
+  const sourceDisabled = !activeDocName || !isConnected;
 
   const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
   const isDiffMode = editorMode === 'diff';
@@ -86,10 +91,27 @@ export function EditorHeader({
             <Textbox className="size-4 text-muted-foreground" />
             Visual
           </ToggleGroupItem>
-          <ToggleGroupItem value="source" aria-label="Markdown source" className="gap-1.5 text-xs">
-            <Markdown className="size-4 text-muted-foreground" />
-            Markdown
-          </ToggleGroupItem>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={sourceDisabled ? 0 : undefined}>
+                <ToggleGroupItem
+                  value="source"
+                  aria-label="Markdown source"
+                  className="gap-1.5 text-xs"
+                  disabled={sourceDisabled}
+                >
+                  <Markdown className="size-4 text-muted-foreground" />
+                  Markdown
+                </ToggleGroupItem>
+              </span>
+            </TooltipTrigger>
+            {sourceDisabled && !activeDocName ? null : sourceDisabled ? (
+              <TooltipContent>
+                Source mode requires a live connection — your edits are saved and will appear when
+                you reconnect.
+              </TooltipContent>
+            ) : null}
+          </Tooltip>
         </ToggleGroup>
       )}
 

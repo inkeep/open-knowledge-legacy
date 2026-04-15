@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { diffLinesFast } from './diff-lines-fast';
+import { diffLinesFast } from './diff-lines.ts';
 
 test('identical strings return single unchanged entry', () => {
   const result = diffLinesFast('foo\n', 'foo\n');
