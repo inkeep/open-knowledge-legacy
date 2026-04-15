@@ -43,6 +43,7 @@ const PAGES_CACHE_TTL_MS = 5_000;
 
 let pagesCache: PageItem[] | null = null;
 let pagesCacheTime = 0;
+let pageSet: Set<string> | null = null;
 const headingsCache = new Map<string, { headings: HeadingEntry[]; time: number }>();
 
 async function getPages(): Promise<PageItem[]> {
@@ -50,6 +51,7 @@ async function getPages(): Promise<PageItem[]> {
   if (pagesCache && now - pagesCacheTime < PAGES_CACHE_TTL_MS) return pagesCache;
   pagesCache = await fetchPages();
   pagesCacheTime = now;
+  pageSet = new Set(pagesCache.map((p) => p.docName));
   return pagesCache;
 }
 
@@ -82,9 +84,8 @@ const wikiLinkBrokenMark = Decoration.mark({ class: 'cm-wiki-link cm-wiki-link-b
 
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  // Only check broken state when pagesCache is populated (avoid false-positive flash)
-  const pages = pagesCache;
-  const pageSet = pages ? new Set(pages.map((p) => p.docName)) : null;
+  // Only check broken state when pageSet is populated (avoid false-positive flash)
+  const currentPageSet = pageSet;
 
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
@@ -96,11 +97,11 @@ function buildDecorations(view: EditorView): DecorationSet {
 
       // Determine if the target resolves to an existing page
       let isBroken = false;
-      if (pageSet) {
+      if (currentPageSet) {
         const targetMatch = WIKI_LINK_TARGET_RE.exec(m[0]);
         if (targetMatch) {
           const target = targetMatch[1].trim();
-          isBroken = target.length > 0 && !pageSet.has(target);
+          isBroken = target.length > 0 && !currentPageSet.has(target);
         }
       }
 

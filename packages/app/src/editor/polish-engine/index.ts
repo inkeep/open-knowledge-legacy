@@ -45,7 +45,7 @@ import {
 import { thematicBreakConstruct } from './constructs/thematic-break';
 import type { Registry } from './registry';
 import { createCrossScanField } from './state-field';
-import { createPolishViewPlugin } from './view-plugin';
+import { buildMarkerIndex, buildNodeIndex, createPolishViewPlugin } from './view-plugin';
 
 /** Internal-only Compartment wrapping the engine extensions. */
 export const polishCompartment = new Compartment();
@@ -89,12 +89,16 @@ export const defaultRegistry: Registry = [
 /**
  * Build the polish engine Extension[] from a registry.
  * Returns [ViewPlugin, StateField (if cross-scan configs exist)].
+ * Indices are pre-built once here — not on every update cycle.
  */
 export function constructPolishEngine(registry: Registry): Extension[] {
+  const nodeIndex = buildNodeIndex(registry);
+  const markerIndex = buildMarkerIndex(registry);
+
   const extensions: Extension[] = [];
 
   // ViewPlugin: shared syntaxTree walk for line/mark/widget-side constructs
-  extensions.push(createPolishViewPlugin(registry));
+  extensions.push(createPolishViewPlugin(registry, nodeIndex, markerIndex));
 
   // StateField: cross-scan for broken-reference detection
   extensions.push(createCrossScanField(registry));
@@ -106,7 +110,7 @@ export function constructPolishEngine(registry: Registry): Extension[] {
  * Build the full engine extension set including the auto-bail wrapper.
  * This is what SourceEditor.tsx should wire into its extensions array.
  */
-export function createPolishEngineExtension(registry?: Registry): Extension[] {
+export function createPolishEngineExtension(registry?: Registry): Extension {
   const reg = registry ?? defaultRegistry;
   return [
     polishCompartment.of(constructPolishEngine(reg)),

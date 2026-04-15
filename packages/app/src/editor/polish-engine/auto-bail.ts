@@ -2,62 +2,54 @@
  * Polish Engine — Auto-bail predicate
  *
  * Silent safety net: if a document exceeds the line-count ceiling or
- * the first paint takes too long, reconfigure the polish Compartment
- * to [] (empty). No user UI. Internal-only.
+ * the first decoration build took too long, reconfigure the polish
+ * Compartment to [] (empty). No user UI. Internal-only.
  *
- * Trigger conditions (evaluated once per document):
- * 1. doc.lines > 5000
- * 2. First ViewPlugin update() exceeds 200ms wall-clock
+ * Trigger conditions:
+ * 1. doc.lines > 5000 (checked on every update — O(1))
+ * 2. First buildDecorations() wall-clock > 200ms (read from ViewPlugin)
  *
  * Once bailed, the engine stays off for that doc until reload.
  */
 
 import type { Compartment } from '@codemirror/state';
 import { ViewPlugin, type ViewUpdate } from '@codemirror/view';
+import { getFirstPaintMs } from './view-plugin';
 
-const LINE_CEILING = 5000;
-const FIRST_PAINT_CEILING_MS = 200;
+export const LINE_CEILING = 5000;
+export const FIRST_PAINT_CEILING_MS = 200;
 
 export function createAutoBailPlugin(compartment: Compartment) {
   return ViewPlugin.fromClass(
     class {
       bailed = false;
-      checked = false;
 
       update(update: ViewUpdate) {
-        if (this.bailed || this.checked) return;
-        this.checked = true;
+        if (this.bailed) return;
 
-        const view = update.view;
-        const doc = view.state.doc;
+        const doc = update.view.state.doc;
 
-        // Check line-count ceiling
+        // Check line-count ceiling (O(1) — safe to run on every update)
         if (doc.lines > LINE_CEILING) {
           this.bailed = true;
-          // Defer the dispatch to avoid dispatching during an update
           queueMicrotask(() => {
-            view.dispatch({
+            update.view.dispatch({
               effects: compartment.reconfigure([]),
             });
           });
           return;
         }
 
-        // Check first-paint latency
-        const start = performance.now();
-        // The ViewPlugin already computed decorations in its constructor;
-        // measure the duration from the time this update fires.
-        // If we're here in the first update and it took too long, bail.
-        requestAnimationFrame(() => {
-          if (this.bailed) return;
-          const elapsed = performance.now() - start;
-          if (elapsed > FIRST_PAINT_CEILING_MS) {
-            this.bailed = true;
-            view.dispatch({
+        // Check first-paint latency (measured by the ViewPlugin constructor)
+        const paintMs = getFirstPaintMs();
+        if (paintMs >= 0 && paintMs > FIRST_PAINT_CEILING_MS) {
+          this.bailed = true;
+          queueMicrotask(() => {
+            update.view.dispatch({
               effects: compartment.reconfigure([]),
             });
-          }
-        });
+          });
+        }
       }
     },
   );

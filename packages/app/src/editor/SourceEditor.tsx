@@ -75,7 +75,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
         createAgentFlashSourceExtension(provider.document),
         createWikiLinkSourceExtension(),
         createMdLinkSourceExtension(),
-        ...createPolishEngineExtension(),
+        createPolishEngineExtension(),
         themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
         EditorView.lineWrapping,
         EditorView.theme({

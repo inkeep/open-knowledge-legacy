@@ -20,7 +20,7 @@
     "test:fidelity": "bun test --timeout 120000 tests/fidelity/",
     "test:fuzz": "bun test tests/stress/observers.fuzz.test.ts",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
-    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts"
+    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts && VITE_PORT=13579 playwright test --project=polish-engine"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
@@ -29,6 +29,8 @@
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.2",
     "@codemirror/lang-markdown": "^6.5.0",
+    "@lezer/common": "^1.5.2",
+    "@lezer/markdown": "^1.6.3",
     "@codemirror/lang-python": "^6.2.1",
     "@codemirror/lang-rust": "^6.0.2",
     "@codemirror/lang-yaml": "^6.1.3",

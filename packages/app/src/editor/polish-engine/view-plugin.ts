@@ -29,7 +29,7 @@ function countLeadingWhitespace(text: string): number {
 }
 
 /** Build a lookup map: lezer node name → array of configs that handle it. */
-function buildNodeIndex(registry: Registry) {
+export function buildNodeIndex(registry: Registry) {
   const index = new Map<string, ConstructConfig[]>();
   for (const config of registry) {
     if (config.kind === 'cross-scan-mark' || config.kind === 'none') continue;
@@ -48,7 +48,7 @@ function buildNodeIndex(registry: Registry) {
 }
 
 /** Build a marker node name → config lookup. */
-function buildMarkerIndex(registry: Registry) {
+export function buildMarkerIndex(registry: Registry) {
   const index = new Map<string, ConstructConfig>();
   for (const config of registry) {
     if (config.kind === 'cross-scan-mark' || config.kind === 'none') continue;
@@ -69,14 +69,16 @@ interface PendingDecoration {
   decoration: Decoration;
 }
 
-function buildDecorations(view: EditorView, registry: Registry): DecorationSet {
+function buildDecorations(
+  view: EditorView,
+  registry: Registry,
+  nodeIndex: Map<string, ConstructConfig[]>,
+  markerIndex: Map<string, ConstructConfig>,
+): DecorationSet {
   // Gate: don't read from a partial/incremental tree
   if (!syntaxTreeAvailable(view.state, view.viewport.to)) {
     return Decoration.none;
   }
-
-  const nodeIndex = buildNodeIndex(registry);
-  const markerIndex = buildMarkerIndex(registry);
   const pending: PendingDecoration[] = [];
 
   // Track which config+line pairs we've already decorated (avoid duplicates
@@ -230,18 +232,38 @@ function inlineStyle(attrs: Record<string, string>): string {
     .join('; ');
 }
 
-export function createPolishViewPlugin(registry: Registry) {
+/**
+ * Module-level first-paint duration (ms) from the ViewPlugin constructor.
+ * Read by auto-bail to decide whether decoration computation is too expensive.
+ * Only written once (first ViewPlugin instantiation); subsequent updates don't overwrite.
+ */
+let firstPaintMs = -1;
+
+/** Read the first-paint duration. Returns -1 if not yet measured. */
+export function getFirstPaintMs(): number {
+  return firstPaintMs;
+}
+
+export function createPolishViewPlugin(
+  registry: Registry,
+  nodeIndex: Map<string, ConstructConfig[]>,
+  markerIndex: Map<string, ConstructConfig>,
+) {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
 
       constructor(view: EditorView) {
-        this.decorations = buildDecorations(view, registry);
+        const start = performance.now();
+        this.decorations = buildDecorations(view, registry, nodeIndex, markerIndex);
+        if (firstPaintMs < 0) {
+          firstPaintMs = performance.now() - start;
+        }
       }
 
       update(update: ViewUpdate) {
         if (update.docChanged || update.viewportChanged) {
-          this.decorations = buildDecorations(update.view, registry);
+          this.decorations = buildDecorations(update.view, registry, nodeIndex, markerIndex);
         }
       }
     },

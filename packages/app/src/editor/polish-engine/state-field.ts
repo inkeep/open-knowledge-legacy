@@ -19,8 +19,13 @@ function buildCrossScanDecorations(
     return Decoration.none;
   }
 
-  const builder = new RangeSetBuilder<Decoration>();
   const tree = syntaxTree(state);
+
+  // Collect all marks from ALL configs into a single array, then sort once.
+  // RangeSetBuilder requires strictly non-decreasing `from` values across
+  // all additions — per-config sorting is insufficient when multiple configs
+  // produce interleaved positions.
+  const allMarks: { from: number; to: number; cls: string }[] = [];
 
   for (const config of configs) {
     if (!config.crossScan) continue;
@@ -34,15 +39,13 @@ function buildCrossScanDecorations(
         : [config.nodeName]
       : [];
 
-    const marks: { from: number; to: number; cls: string }[] = [];
-
     tree.iterate({
       enter(nodeRef) {
         if (!nodeNames.includes(nodeRef.name)) return;
 
         const result = crossScan.check(nodeRef.node, collected, state);
         if (result === 'broken') {
-          marks.push({
+          allMarks.push({
             from: nodeRef.from,
             to: nodeRef.to,
             cls: crossScan.brokenClass,
@@ -50,14 +53,14 @@ function buildCrossScanDecorations(
         }
       },
     });
-
-    // Sort by position (required by RangeSetBuilder)
-    marks.sort((a, b) => a.from - b.from || a.to - b.to);
-    for (const m of marks) {
-      builder.add(m.from, m.to, Decoration.mark({ class: m.cls }));
-    }
   }
 
+  allMarks.sort((a, b) => a.from - b.from || a.to - b.to);
+
+  const builder = new RangeSetBuilder<Decoration>();
+  for (const m of allMarks) {
+    builder.add(m.from, m.to, Decoration.mark({ class: m.cls }));
+  }
   return builder.finish();
 }
 
