@@ -68,7 +68,8 @@ Recursive \`grep -r\` / \`find\` walk every file under the path, which on a real
 - **Filter to markdown:** \`grep -rn TERM --include="*.md" <dir>\` — skips every non-md file.
 - **Scope to a known knowledge dir:** \`grep -rn TERM reports/ specs/\` (or whatever folders the project uses) beats \`grep -rn TERM .\`.
 - **Bail early:** pipe through \`| head -20\` for bounded output. The server waits for the pipeline to finish before returning, so unscoped commands block on the slowest stage.
-- **Auto-prune (built in):** the server transparently adds \`--exclude-dir=\` for \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`.next\`, \`.turbo\`, \`coverage\`, etc. on recursive \`grep\`, and \`-not -path\` equivalents on \`find\`. This saves you from remembering them — but explicit scoping via \`--include\` or a narrower path is still dramatically faster on monorepos.
+- **Existence vs. enumeration:** "does X exist in any wiki doc?" is \`grep -rl PATTERN <dir>\` (list matching files, unbounded) — NOT \`grep -rn PATTERN <dir> | head -N\`. When \`head\` truncates, alphabetically-earlier files dominate the output and later files silently go missing. The server surfaces a banner when \`head\` / \`tail\` hits its cap, but the fix is to pick the right command up front.
+- **Auto-prune (built in):** the server transparently adds \`--exclude-dir=\` for \`node_modules\`, \`.git\`, \`dist\`, \`build\`, \`.next\`, \`.turbo\`, \`coverage\`, \`.claude\`, etc. on recursive \`grep\`, and \`-not -path\` equivalents on \`find\`. This saves you from remembering them — but explicit scoping via \`--include\` or a narrower path is still dramatically faster on monorepos.
 
 ### Why \`exec\` over typed tools
 

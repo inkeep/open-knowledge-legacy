@@ -115,6 +115,72 @@ function detectBinaryArgs(stages: Stage[]): string[] {
   return hits;
 }
 
+/**
+ * Best-effort parse of a `head`/`tail` `-N` line-count limit. Recognized forms:
+ *   `head -30` / `head -n 30` / `head -n30` / `head --lines=30`
+ * Falls back to head/tail's POSIX default of 10 when no explicit flag is found.
+ */
+function extractHeadTailLimit(args: string[]): number {
+  for (let i = 1; i < args.length; i++) {
+    const arg = args[i];
+    // `--lines=N`
+    const longEq = arg.match(/^--lines=(\d+)$/);
+    if (longEq) return Number(longEq[1]);
+    // `--lines N`
+    if (arg === '--lines' && i + 1 < args.length) {
+      const n = Number(args[i + 1]);
+      if (Number.isFinite(n)) return n;
+    }
+    // `-n N`
+    if (arg === '-n' && i + 1 < args.length) {
+      const n = Number(args[i + 1]);
+      if (Number.isFinite(n)) return n;
+    }
+    // `-n30` (joined short form)
+    const nJoined = arg.match(/^-n(\d+)$/);
+    if (nJoined) return Number(nJoined[1]);
+    // `-30` (classic short form)
+    const shortN = arg.match(/^-(\d+)$/);
+    if (shortN) return Number(shortN[1]);
+  }
+  return 10;
+}
+
+/**
+ * When `head` or `tail` is the final pipeline stage AND the output hit its
+ * line cap, the upstream stages may have had more matches that never made it
+ * into stdout. Surface this as a banner so agents don't mistake a truncated
+ * result for an exhaustive one. See the "Scope searches" section of the MCP
+ * handshake instructions for the recommended patterns (`grep -rl` for
+ * existence, unbounded `grep -rn` for enumeration).
+ */
+function detectHeadTailTruncation(stages: Stage[], stdout: string): { banner: string } | null {
+  if (stages.length < 2) return null; // need at least one upstream stage
+  const last = stages[stages.length - 1];
+  if (last.command !== 'head' && last.command !== 'tail') return null;
+  const limit = extractHeadTailLimit(last.args);
+  // Count non-empty lines; trailing newline shouldn't count as content.
+  const lines = stdout.split('\n').filter((l) => l.length > 0);
+  if (lines.length < limit) return null;
+  const uniqueFiles = new Set(
+    lines.map((l) => {
+      const colon = l.indexOf(':');
+      return colon > 0 ? l.slice(0, colon) : l;
+    }),
+  ).size;
+  const upstream = stages
+    .slice(0, -1)
+    .map((s) => s.command)
+    .join(' | ');
+  return {
+    banner:
+      `Output hit \`${last.command} -${limit}\` cap (${lines.length} lines, ${uniqueFiles} unique file${uniqueFiles === 1 ? '' : 's'}). ` +
+      `The \`${upstream}\` stage may have had more matches that never reached stdout. ` +
+      `For existence checks across many files, prefer \`grep -rl PATTERN <dir>\` (list files only, no head). ` +
+      `For enumeration, drop the \`| ${last.command}\` or widen the cap.`,
+  };
+}
+
 function isDirectoryMeta(e: EnrichedEntry): e is DirectoryMeta {
   return (e as DirectoryMeta).type === 'directory';
 }
@@ -320,6 +386,10 @@ export async function buildExecResult(
     banners.push(
       `File${binaryHits.length > 1 ? 's' : ''} ${binaryHits.join(', ')} appear${binaryHits.length === 1 ? 's' : ''} to be binary (image/PDF/etc.) — exec returns text only (NG8). For binary retrieval, use native Read.`,
     );
+  }
+  const truncation = detectHeadTailTruncation(stages, stdout);
+  if (truncation) {
+    banners.push(truncation.banner);
   }
   if (stderr) {
     banners.push(`stderr: ${stderr.trim()}`);

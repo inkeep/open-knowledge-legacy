@@ -258,3 +258,81 @@ describe('exec — CC9 parity with read_document', () => {
     expect(readOutput).toContain('wrote parity');
   });
 });
+
+describe('exec — head/tail truncation banner', () => {
+  async function seed(project: string, nFiles: number, linesPerFile: number): Promise<void> {
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    for (let i = 0; i < nFiles; i++) {
+      const body = Array.from({ length: linesPerFile }, (_, j) => `line ${j} needle`).join('\n');
+      writeFileSync(resolve(content, `doc${String(i).padStart(3, '0')}.md`), `${body}\n`);
+    }
+  }
+
+  test('warns when `grep | head -N` hits its cap', async () => {
+    const project = await bootstrap();
+    await seed(project, 5, 20); // 5 files × 20 lines = 100 matching lines, capped to 10
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | head -10' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0].text;
+    expect(text).toMatch(/Output hit `head -10` cap/);
+    expect(text).toMatch(/grep -rl PATTERN <dir>/);
+  });
+
+  test('does NOT warn when output is below the head cap', async () => {
+    const project = await bootstrap();
+    await seed(project, 1, 3); // only 3 matches, below head -10 default
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | head' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).not.toMatch(/Output hit/);
+  });
+
+  test('does NOT warn on single-stage commands (no head/tail at end)', async () => {
+    const project = await bootstrap();
+    await seed(project, 3, 5);
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).not.toMatch(/Output hit/);
+  });
+
+  test('warns on `tail -N` truncation too', async () => {
+    const project = await bootstrap();
+    await seed(project, 5, 10);
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | tail -5' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toMatch(/Output hit `tail -5` cap/);
+  });
+
+  test('recognizes `-n N` flag form', async () => {
+    const project = await bootstrap();
+    await seed(project, 5, 10);
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | head -n 8' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toMatch(/Output hit `head -8` cap/);
+  });
+});
