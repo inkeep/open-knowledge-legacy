@@ -40,15 +40,22 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
       const xmlFragment = doc.getXmlFragment('default');
       const ytext = doc.getText('source');
 
-      const unsubscribe = setupServerObservers({
-        doc,
-        xmlFragment,
-        ytext,
-        mdManager: opts.mdManager,
-        schema: opts.schema,
-      });
+      try {
+        const unsubscribe = setupServerObservers({
+          doc,
+          xmlFragment,
+          ytext,
+          mdManager: opts.mdManager,
+          schema: opts.schema,
+        });
 
-      cleanups.set(documentName, unsubscribe);
+        cleanups.set(documentName, unsubscribe);
+      } catch (err) {
+        console.error(
+          `[ServerObserverExtension] Failed to attach observers for '${documentName}':`,
+          err,
+        );
+      }
     },
 
     async afterUnloadDocument({ documentName }) {
@@ -59,8 +66,12 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
     },
 
     async onDestroy() {
-      for (const cleanup of cleanups.values()) {
-        cleanup();
+      for (const [docName, cleanup] of cleanups.entries()) {
+        try {
+          cleanup();
+        } catch (err) {
+          console.error(`[ServerObserverExtension] Cleanup failed for '${docName}':`, err);
+        }
       }
       cleanups.clear();
     },

@@ -28,7 +28,7 @@ import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import DiffMatchPatch from 'diff-match-patch';
 import type * as Y from 'yjs';
-import { incrementServerObserverFire } from './metrics.ts';
+import { incrementServerObserverError, incrementServerObserverFire } from './metrics.ts';
 
 // ─────────────────────────────────────────────────────────────
 // Diff utilities (ported from packages/app/src/editor/diff-lines-fast.ts
@@ -174,8 +174,19 @@ function applyUserDelta(ytext: Y.Text, oldXmlMd: string, newXmlMd: string): void
 
   if (results.some((ok: boolean) => !ok)) {
     const failedPatches = results.filter((ok: boolean) => !ok).length;
+    const info = {
+      failedPatches,
+      totalPatches: results.length,
+      baseLen: oldXmlMd.length,
+      userLen: newXmlMd.length,
+      agentLen: currentText.length,
+      mergedLen: mergedText.length,
+    };
+    const failedPatchDetail = dmpMerge.patch_toText(patches.filter((_, idx) => !results[idx]));
     console.warn(
       `[Server Observer A] patch_apply had ${failedPatches}/${results.length} failed patches`,
+      info,
+      failedPatchDetail,
     );
   }
 
@@ -290,6 +301,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       incrementServerObserverFire('a');
       lastSyncedXmlMd = md;
     } catch (err) {
+      incrementServerObserverError('a');
       console.error('[Server Observer A] Failed to sync tree→text:', err);
     }
   };
@@ -328,6 +340,12 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       lastSyncedXmlMd = md;
     } catch (err) {
       console.error('[Server Observer A] Failed initial sync:', err);
+      // Reset baseline to match Y.Text's actual state (still empty) so the
+      // next Observer A firing treats the entire XmlFragment as new content
+      // via Path A (incremental diff from empty → full doc). Without this,
+      // baseline holds the full doc from init while Y.Text is empty — Path B's
+      // DMP patch_apply would fail (no matching context in empty string).
+      lastSyncedXmlMd = '';
     }
   }
 
@@ -409,10 +427,15 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
         const postBody = mdManager.serialize(postJson);
         lastSyncedXmlMd = prependFrontmatter(frontmatter, postBody);
-      } catch (_err) {
+      } catch (reserializeErr) {
+        console.warn(
+          '[Server Observer B] Post-sync re-serialization failed — using input body as baseline:',
+          reserializeErr,
+        );
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
       }
     } catch (err) {
+      incrementServerObserverError('b');
       console.error('[Server Observer B] Failed to sync text→tree:', err);
     }
   };

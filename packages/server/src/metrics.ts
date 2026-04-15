@@ -19,6 +19,8 @@ export interface ReconciliationMetrics {
   cc1LastSeq: Record<string, number>;
   serverObserverFiresA: number;
   serverObserverFiresB: number;
+  serverObserverErrorsA: number;
+  serverObserverErrorsB: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -36,6 +38,8 @@ const counters: ReconciliationMetrics = {
   cc1LastSeq: {},
   serverObserverFiresA: 0,
   serverObserverFiresB: 0,
+  serverObserverErrorsA: 0,
+  serverObserverErrorsB: 0,
 };
 
 export function incrementReconcile(): void {
@@ -87,6 +91,11 @@ export function incrementServerObserverFire(direction: 'a' | 'b'): void {
   else counters.serverObserverFiresB++;
 }
 
+export function incrementServerObserverError(direction: 'a' | 'b'): void {
+  if (direction === 'a') counters.serverObserverErrorsA++;
+  else counters.serverObserverErrorsB++;
+}
+
 export function setCC1LastSeq(channel: string, seq: number): void {
   counters.cc1LastSeq[channel] = seq;
 }
@@ -110,4 +119,6 @@ export function resetMetrics(): void {
   counters.cc1LastSeq = {};
   counters.serverObserverFiresA = 0;
   counters.serverObserverFiresB = 0;
+  counters.serverObserverErrorsA = 0;
+  counters.serverObserverErrorsB = 0;
 }
