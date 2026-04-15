@@ -14,7 +14,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { Readable } from 'node:stream';
+import { Hocuspocus } from '@hocuspocus/server';
+import type * as Y from 'yjs';
 import { createApiExtension } from './api-extension.ts';
+import { BacklinkIndex } from './backlink-index.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 
 function makeReq(url: string, method: string, body: unknown): IncomingMessage {
@@ -71,23 +74,42 @@ function buildFileIndex(contentDir: string): ReadonlyMap<string, FileIndexEntry>
   return index;
 }
 
+function buildBacklinkIndex(contentDir: string): BacklinkIndex {
+  const index = new BacklinkIndex({
+    projectDir: contentDir,
+    contentDir,
+  });
+  index.rebuildFromDisk();
+  return index;
+}
+
 async function callApi(
   contentDir: string,
   url: string,
   method: string,
   body: unknown,
+  options?: {
+    backlinkIndex?: BacklinkIndex;
+    hocuspocus?: Parameters<typeof createApiExtension>[0]['hocuspocus'];
+    sessionManager?: Parameters<typeof createApiExtension>[0]['sessionManager'];
+  },
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
-    hocuspocus: {
-      documents: new Map(),
-      closeConnections() {},
-      unloadDocument: async () => {},
-    } as unknown as Parameters<typeof createApiExtension>[0]['hocuspocus'],
-    sessionManager: {
-      closeSession: async () => {},
-    } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager'],
+    hocuspocus:
+      options?.hocuspocus ??
+      ({
+        documents: new Map(),
+        closeConnections() {},
+        unloadDocument: async () => {},
+      } as unknown as Parameters<typeof createApiExtension>[0]['hocuspocus']),
+    sessionManager:
+      options?.sessionManager ??
+      ({
+        closeSession: async () => {},
+      } as unknown as Parameters<typeof createApiExtension>[0]['sessionManager']),
     contentDir,
     getFileIndex: () => buildFileIndex(contentDir),
+    backlinkIndex: options?.backlinkIndex ?? buildBacklinkIndex(contentDir),
   });
 
   const req = makeReq(url, method, body);
@@ -114,6 +136,120 @@ afterEach(() => {
 });
 
 describe('file operation API routes', () => {
+  test('managed rename rewrites inbound wiki-links and markdown links', async () => {
+    const dir = setupTmpDir();
+    mkdirSync(join(dir, 'nested'), { recursive: true });
+    writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
+    writeFileSync(
+      join(dir, 'journal.md'),
+      '# Journal\n\nSee [[notes]] and [Notes](./notes.md).\n',
+      'utf-8',
+    );
+    writeFileSync(
+      join(dir, 'nested/child.md'),
+      '# Child\n\nJump to [Notes](../notes.md#intro "Section").\n',
+      'utf-8',
+    );
+
+    const result = await callApi(
+      dir,
+      '/api/rename',
+      'POST',
+      {
+        docName: 'notes',
+        newDocName: 'renamed-notes',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(200);
+    expect(existsSync(join(dir, 'notes.md'))).toBe(false);
+    expect(readFileSync(join(dir, 'renamed-notes.md'), 'utf-8')).toBe('# Notes\n');
+    expect(readFileSync(join(dir, 'journal.md'), 'utf-8')).toBe(
+      '# Journal\n\nSee [[renamed-notes]] and [Notes](./renamed-notes.md).\n',
+    );
+    expect(readFileSync(join(dir, 'nested/child.md'), 'utf-8')).toBe(
+      '# Child\n\nJump to [Notes](../renamed-notes.md#intro "Section").\n',
+    );
+
+    const body = JSON.parse(result.body) as {
+      ok: boolean;
+      renamed: Array<{ fromDocName: string; toDocName: string }>;
+      rewrittenDocs: Array<{ docName: string; rewrites: number }>;
+    };
+    expect(body.ok).toBe(true);
+    expect(body.renamed).toEqual([{ fromDocName: 'notes', toDocName: 'renamed-notes' }]);
+    expect(body.rewrittenDocs).toEqual([
+      { docName: 'journal', rewrites: 2 },
+      { docName: 'nested/child', rewrites: 1 },
+    ]);
+  });
+
+  test('managed rename updates an already-loaded referring document', async () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
+    writeFileSync(join(dir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
+
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const conn = await hocuspocus.openDirectConnection('journal');
+    const document = (conn as unknown as { document: Y.Doc }).document;
+    const ytext = document.getText('source');
+    document.transact(() => {
+      ytext.insert(0, '# Journal\n\nSee [[notes]].\n');
+    });
+
+    try {
+      const result = await callApi(
+        dir,
+        '/api/rename',
+        'POST',
+        {
+          docName: 'notes',
+          newDocName: 'renamed-notes',
+        },
+        {
+          backlinkIndex: buildBacklinkIndex(dir),
+          hocuspocus,
+        },
+      );
+
+      expect(result.status).toBe(200);
+      expect(document.getText('source').toString()).toBe('# Journal\n\nSee [[renamed-notes]].\n');
+      expect(readFileSync(join(dir, 'journal.md'), 'utf-8')).toBe(
+        '# Journal\n\nSee [[renamed-notes]].\n',
+      );
+    } finally {
+      await conn.disconnect();
+    }
+  });
+
+  test('managed rename rejects destination collisions without changing files', async () => {
+    const dir = setupTmpDir();
+    writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');
+    writeFileSync(join(dir, 'renamed-notes.md'), '# Existing\n', 'utf-8');
+    writeFileSync(join(dir, 'journal.md'), '# Journal\n\nSee [[notes]].\n', 'utf-8');
+
+    const result = await callApi(
+      dir,
+      '/api/rename',
+      'POST',
+      {
+        docName: 'notes',
+        newDocName: 'renamed-notes',
+      },
+      { backlinkIndex: buildBacklinkIndex(dir) },
+    );
+
+    expect(result.status).toBe(409);
+    expect(readFileSync(join(dir, 'notes.md'), 'utf-8')).toBe('# Notes\n');
+    expect(readFileSync(join(dir, 'renamed-notes.md'), 'utf-8')).toBe('# Existing\n');
+    expect(readFileSync(join(dir, 'journal.md'), 'utf-8')).toBe('# Journal\n\nSee [[notes]].\n');
+
+    const body = JSON.parse(result.body) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toBe('Destination already exists');
+  });
+
   test('renames a file and returns the old-to-new mapping', async () => {
     const dir = setupTmpDir();
     writeFileSync(join(dir, 'notes.md'), '# Notes\n', 'utf-8');

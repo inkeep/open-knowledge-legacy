@@ -27,6 +27,7 @@ import {
   ALLOWED_IMAGE_MIME_TYPES,
   getHeadingSlug,
   type HeadingEntry,
+  prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
@@ -53,6 +54,12 @@ const ROLLBACK_ORIGIN = {
   context: { origin: 'rollback-apply' },
 };
 
+const MANAGED_RENAME_ORIGIN = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'managed-rename' },
+};
+
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import {
@@ -66,6 +73,10 @@ import {
   type ManagedRenameSnapshot,
   withManagedRenameRecovery,
 } from './managed-rename-journal.ts';
+import {
+  rewriteMarkdownLinksForDocumentRename,
+  rewriteWikiLinksForDocumentRename,
+} from './managed-rename-rewrite.ts';
 import { mdManager, schema } from './md-manager.ts';
 import { getMetrics } from './metrics.ts';
 import {
@@ -233,6 +244,16 @@ export interface RenamedDocMapping {
   toDocName: string;
 }
 
+interface ManagedRenameRewriteSummary {
+  markdown: string;
+  rewrites: number;
+}
+
+interface ManagedRenameRewrittenDoc {
+  docName: string;
+  rewrites: number;
+}
+
 export function isValidRelativeContentPath(path: string): boolean {
   if (!path || path.startsWith('/') || path.includes('\\') || path.includes('\x00')) {
     return false;
@@ -262,6 +283,27 @@ export function remapDocNameForRename(
   if (kind === 'file') return toPath;
   if (docName === fromPath) return toPath;
   return `${toPath}${docName.slice(fromPath.length)}`;
+}
+
+function rewriteSupportedLinksForDocumentRename(
+  markdown: string,
+  sourceDocName: string,
+  oldDocName: string,
+  newDocName: string,
+): ManagedRenameRewriteSummary {
+  const { frontmatter, body } = stripFrontmatter(markdown);
+  const wikiRewrite = rewriteWikiLinksForDocumentRename(body, oldDocName, newDocName);
+  const markdownRewrite = rewriteMarkdownLinksForDocumentRename(
+    wikiRewrite.markdown,
+    sourceDocName,
+    oldDocName,
+    newDocName,
+  );
+
+  return {
+    markdown: prependFrontmatter(frontmatter, markdownRewrite.markdown),
+    rewrites: wikiRewrite.rewrites + markdownRewrite.rewrites,
+  };
 }
 
 /**
@@ -553,6 +595,184 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         content: readFileSync(filePath, 'utf-8'),
       };
     });
+  }
+
+  function readCurrentDocumentContent(docName: string): string | null {
+    const document = hocuspocus.documents.get(docName);
+    if (document) {
+      return document.getText('source').toString();
+    }
+
+    const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+    if (!existsSync(filePath)) {
+      return null;
+    }
+    return readFileSync(filePath, 'utf-8');
+  }
+
+  function writeManagedRenameDocumentToDisk(docName: string, markdown: string): void {
+    const filePath = resolveContentEntryPath(contentDir, 'file', docName);
+    mkdirSync(dirname(filePath), { recursive: true });
+    writeFileSync(filePath, markdown, 'utf-8');
+    registerWrite(filePath, contentHash(markdown));
+    setReconciledBase(docName, markdown);
+
+    const fileIndex = getFileIndex();
+    if (fileIndex instanceof Map) {
+      updateFileIndex(
+        { kind: 'update', path: filePath, docName, content: markdown },
+        fileIndex as Map<string, FileIndexEntry>,
+      );
+    }
+  }
+
+  function applyManagedRenameToLoadedDocument(
+    docName: string,
+    oldDocName: string,
+    newDocName: string,
+  ): ManagedRenameRewriteSummary {
+    const document = hocuspocus.documents.get(docName);
+    if (!document) {
+      throw new Error(`Document is not loaded: ${docName}`);
+    }
+
+    let result: ManagedRenameRewriteSummary = { markdown: '', rewrites: 0 };
+    document.transact(() => {
+      const ytext = document.getText('source');
+      const currentText = ytext.toString();
+      result = rewriteSupportedLinksForDocumentRename(currentText, docName, oldDocName, newDocName);
+      if (result.rewrites === 0) {
+        return;
+      }
+
+      ytext.delete(0, currentText.length);
+      ytext.insert(0, result.markdown);
+      syncTextToFragment(document);
+    }, MANAGED_RENAME_ORIGIN);
+    return result;
+  }
+
+  async function performManagedRename(
+    sourceDocName: string,
+    destinationDocName: string,
+  ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
+    if (!backlinkIndex) {
+      throw new Error('Managed rename requires backlink index support');
+    }
+
+    const sourcePath = resolveContentEntryPath(contentDir, 'file', sourceDocName);
+    const destinationPath = resolveContentEntryPath(contentDir, 'file', destinationDocName);
+    const renamed: RenamedDocMapping[] = [
+      { fromDocName: sourceDocName, toDocName: destinationDocName },
+    ];
+
+    const backlinkSources = [
+      ...new Set(backlinkIndex.getBacklinks(sourceDocName).map((entry) => entry.source)),
+    ].sort((a, b) => a.localeCompare(b));
+    const snapshotContents = new Map<string, string>();
+    const rewriteDocNames: string[] = [];
+    const missingBacklinkSources: string[] = [];
+
+    for (const docName of [sourceDocName, ...backlinkSources]) {
+      if (snapshotContents.has(docName)) continue;
+      const content = readCurrentDocumentContent(docName);
+      if (typeof content === 'string') {
+        snapshotContents.set(docName, content);
+        if (docName !== sourceDocName) {
+          rewriteDocNames.push(docName);
+        }
+      } else if (docName !== sourceDocName) {
+        missingBacklinkSources.push(docName);
+      }
+    }
+
+    const sourceSnapshot = snapshotContents.get(sourceDocName);
+    if (typeof sourceSnapshot !== 'string') {
+      throw new Error(`Cannot rename missing document: ${sourceDocName}`);
+    }
+
+    const recoveryJournal = createManagedRenameRecoveryJournal({
+      sourceDocName,
+      destinationDocName,
+      snapshots: buildManagedRenameSnapshots([...snapshotContents.keys()], snapshotContents),
+    });
+
+    const rewrittenDocs: ManagedRenameRewrittenDoc[] = [];
+
+    await withManagedRenameRecovery(contentDir, recoveryJournal, async () => {
+      for (const docName of missingBacklinkSources) {
+        backlinkIndex.deleteDocument(docName);
+      }
+
+      for (const docName of rewriteDocNames) {
+        const document = hocuspocus.documents.get(docName);
+        const rewritten = document
+          ? applyManagedRenameToLoadedDocument(docName, sourceDocName, destinationDocName)
+          : rewriteSupportedLinksForDocumentRename(
+              snapshotContents.get(docName) ?? '',
+              docName,
+              sourceDocName,
+              destinationDocName,
+            );
+
+        if (rewritten.rewrites > 0) {
+          writeManagedRenameDocumentToDisk(docName, rewritten.markdown);
+          rewrittenDocs.push({ docName, rewrites: rewritten.rewrites });
+        }
+
+        backlinkIndex.updateDocumentFromMarkdown(docName, rewritten.markdown);
+      }
+
+      const sourceLiveContents = await captureAndCloseDocuments([sourceDocName]);
+      const sourceCurrentContent =
+        sourceLiveContents.get(sourceDocName) ??
+        snapshotContents.get(sourceDocName) ??
+        readFileSync(sourcePath, 'utf-8');
+      const renamedSource = rewriteSupportedLinksForDocumentRename(
+        sourceCurrentContent,
+        sourceDocName,
+        sourceDocName,
+        destinationDocName,
+      );
+
+      mkdirSync(dirname(destinationPath), { recursive: true });
+      renameSync(sourcePath, destinationPath);
+      syncRenamedDocsToDisk(renamed, new Map([[sourceDocName, renamedSource.markdown]]));
+      setReconciledBase(destinationDocName, renamedSource.markdown);
+
+      const fileIndex = getFileIndex();
+      if (fileIndex instanceof Map) {
+        updateFileIndex(
+          {
+            kind: 'rename',
+            oldPath: sourcePath,
+            newPath: destinationPath,
+            oldDocName: sourceDocName,
+            newDocName: destinationDocName,
+            content: renamedSource.markdown,
+          },
+          fileIndex as Map<string, FileIndexEntry>,
+        );
+      }
+
+      backlinkIndex.renameDocument(sourceDocName, destinationDocName, renamedSource.markdown);
+      if (renamedSource.rewrites > 0) {
+        rewrittenDocs.push({ docName: destinationDocName, rewrites: renamedSource.rewrites });
+      }
+    });
+
+    void backlinkIndex.saveToDisk().catch((err) => {
+      console.warn(
+        `[backlinks] Failed to persist managed rename cache for ${sourceDocName} -> ${destinationDocName}:`,
+        err,
+      );
+    });
+    signalChannel?.('files');
+    signalChannel?.('backlinks');
+    signalChannel?.('graph');
+
+    rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
+    return { renamed, rewrittenDocs };
   }
 
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -1732,6 +1952,75 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleRename(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    try {
+      let rawBody: Buffer;
+      try {
+        rawBody = await readBody(req);
+      } catch {
+        json(res, 413, { ok: false, error: 'Payload too large' });
+        return;
+      }
+
+      let body: unknown;
+      try {
+        body = JSON.parse(rawBody.toString());
+      } catch {
+        json(res, 400, { ok: false, error: 'Invalid JSON' });
+        return;
+      }
+
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        json(res, 400, { ok: false, error: 'Body must be a JSON object' });
+        return;
+      }
+
+      const { docName, newDocName } = body as Record<string, unknown>;
+      if (typeof docName !== 'string' || typeof newDocName !== 'string') {
+        json(res, 400, { ok: false, error: 'docName and newDocName are required' });
+        return;
+      }
+      if (!isValidRelativeContentPath(docName) || !isValidRelativeContentPath(newDocName)) {
+        json(res, 400, { ok: false, error: 'Document names must be relative content paths' });
+        return;
+      }
+      if (isSystemDoc(docName) || isSystemDoc(newDocName)) {
+        json(res, 400, { ok: false, error: 'Reserved document names cannot be renamed' });
+        return;
+      }
+      if (docName === newDocName) {
+        json(res, 200, { ok: true, renamed: [], rewrittenDocs: [] });
+        return;
+      }
+      if (!backlinkIndex) {
+        json(res, 503, { ok: false, error: 'Backlink index unavailable' });
+        return;
+      }
+
+      const sourcePath = resolveContentEntryPath(contentDir, 'file', docName);
+      const destinationPath = resolveContentEntryPath(contentDir, 'file', newDocName);
+      if (!existsSync(sourcePath)) {
+        json(res, 404, { ok: false, error: 'Document does not exist' });
+        return;
+      }
+      if (existsSync(destinationPath)) {
+        json(res, 409, { ok: false, error: 'Destination already exists' });
+        return;
+      }
+
+      const result = await performManagedRename(docName, newDocName);
+      json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
+    } catch (e) {
+      console.error('[rename]', e);
+      json(res, 500, { ok: false, error: 'Failed to rename document' });
+    }
+  }
+
   async function handleRenamePath(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -2065,6 +2354,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/pages': handlePages,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
+    '/api/rename': handleRename,
     '/api/rename-path': handleRenamePath,
     '/api/delete-path': handleDeletePath,
     '/api/upload-image': handleUploadImage,

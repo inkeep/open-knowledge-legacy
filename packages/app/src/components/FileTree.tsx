@@ -42,6 +42,7 @@ import { cn } from '@/lib/utils';
 interface RenamePathResponse {
   ok: boolean;
   renamed?: RenamedDocMapping[];
+  rewrittenDocs?: Array<{ docName: string; rewrites: number }>;
   error?: string;
 }
 
@@ -331,10 +332,16 @@ export function FileTree() {
     setError(null);
 
     try {
-      const res = await fetch('/api/rename-path', {
+      const endpoint = target.kind === 'file' ? '/api/rename' : '/api/rename-path';
+      const payload =
+        target.kind === 'file'
+          ? { docName: target.path, newDocName: nextPath }
+          : { kind: target.kind, fromPath: target.path, toPath: nextPath };
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: target.kind, fromPath: target.path, toPath: nextPath }),
+        body: JSON.stringify(payload),
       });
       const data: RenamePathResponse = await res.json();
 
