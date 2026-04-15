@@ -8,6 +8,7 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
+import { useActiveHeading } from '@/hooks/useActiveHeading';
 import { cn } from '@/lib/utils';
 
 interface HeadingEntry {
@@ -28,6 +29,49 @@ async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   const data = (await res.json()) as PageHeadingsResponse;
   if (!data.ok) throw new Error(data.error ?? 'Failed to load headings');
   return data.headings ?? [];
+}
+
+// Each button is py-1 (4px × 2) + text-sm line-height (20px) = 28px tall.
+// These values must stay in sync with the button className below.
+const ITEM_H = 28;
+const PAD_TOP = 4; // py-1
+const PAD_BOT = 4; // py-1
+// Horizontal px per nesting level (1-based)
+const LEVEL_W = 8;
+
+function lineX(level: number): number {
+  // +0.5 centres a 1px stroke on a pixel column (crisp rendering)
+  return (level - 1) * LEVEL_W + 0.5;
+}
+
+/**
+ * Single SVG path that runs
+ * vertically within each heading's text region, then draws a diagonal
+ * to the next heading's x-position via `L x top` between items.
+ *
+ *   |  H1                 ← vertical at x=0
+ *    \                    ← diagonal (L to H2 top)
+ *     |  H2               ← vertical at x=8
+ *     |  H2               ← vertical at x=8
+ *    /                    ← diagonal (L to H1 top)
+ *   |  H1                 ← vertical at x=0
+ */
+function buildLinePath(headings: HeadingEntry[]): string {
+  if (headings.length === 0) return '';
+  const parts: string[] = [];
+
+  for (let i = 0; i < headings.length; i++) {
+    const x = lineX(headings[i].level);
+    const top = i * ITEM_H + PAD_TOP;
+    const bot = i * ITEM_H + ITEM_H - PAD_BOT;
+
+    // Move on first item; subsequent items arrive via an L that draws the
+    // diagonal (or straight line when same depth) from the previous bottom.
+    parts.push(`${i === 0 ? 'M' : 'L'}${x} ${top}`);
+    parts.push(`L${x} ${bot}`);
+  }
+
+  return parts.join(' ');
 }
 
 export interface OutlineNavDetail {
@@ -58,13 +102,43 @@ export function OutlinePanel({
     refetchIntervalInBackground: false,
   });
 
+  const slugs = headings.map((h) => h.slug);
+  const activeSlug = useActiveHeading(slugs, isSourceMode);
+  const activeIndex = activeSlug ? headings.findIndex((h) => h.slug === activeSlug) : -1;
+
+  function handleNav(index: number, slug: string) {
+    const detail: OutlineNavDetail = {
+      index,
+      slug,
+      mode: isSourceMode ? 'source' : 'wysiwyg',
+    };
+    window.dispatchEvent(new CustomEvent(OUTLINE_NAV_EVENT, { detail }));
+  }
+
+  const maxLevel = headings.reduce((m, h) => Math.max(m, h.level), 1);
+  const svgW = (maxLevel - 1) * LEVEL_W + 1;
+  const svgH = headings.length * ITEM_H;
+  const linePath = buildLinePath(headings);
+
+  // The SVG path doubles as a CSS mask so the animated thumb is clipped to
+  // the path shape — primary color travels along the diagonal connectors too.
+  const maskUrl = linePath
+    ? `url("data:image/svg+xml,${encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${svgW} ${svgH}"><path d="${linePath}" stroke="black" stroke-width="2" fill="none" /></svg>`,
+      )}")`
+    : undefined;
+
+  // Thumb covers the text region of the active item (excluding py-1 padding).
+  const thumbTop = activeIndex >= 0 ? activeIndex * ITEM_H + PAD_TOP : 0;
+  const thumbHeight = activeIndex >= 0 ? ITEM_H - PAD_TOP - PAD_BOT : 0;
+
   return (
     <Panel className={className}>
       <PanelHeader>
         <PanelTitle>Outline</PanelTitle>
         {!isLoading && <PanelCount>{headings.length}</PanelCount>}
       </PanelHeader>
-      <PanelBody className="px-2 py-2" aria-busy={isLoading}>
+      <PanelBody className="px-3 py-2" aria-busy={isLoading}>
         {error ? (
           <PanelError className="px-2">
             {error instanceof Error ? error.message : 'Failed to load headings'}
@@ -72,30 +146,65 @@ export function OutlinePanel({
         ) : headings.length === 0 && !isLoading ? (
           <PanelEmpty className="px-2">No headings yet.</PanelEmpty>
         ) : (
-          <div className="flex flex-col gap-0.5">
-            {headings.map((heading, index) => (
-              <button
-                type="button"
-                // biome-ignore lint/suspicious/noArrayIndexKey: headings are positionally stable per load
-                key={index}
-                onClick={() => {
-                  const detail: OutlineNavDetail = {
-                    index,
-                    slug: heading.slug,
-                    mode: isSourceMode ? 'source' : 'wysiwyg',
-                  };
-                  window.dispatchEvent(new CustomEvent(OUTLINE_NAV_EVENT, { detail }));
+          <div className="relative">
+            {/* Single SVG path — vertical within each item, diagonal between
+                items when depth changes */}
+            {/* Gray base path */}
+            <svg
+              width={svgW}
+              height={svgH}
+              className="pointer-events-none absolute left-0 top-0"
+              aria-hidden="true"
+            >
+              <path d={linePath} fill="none" strokeWidth="1" style={{ stroke: 'var(--border)' }} />
+            </svg>
+            {/* Animated primary thumb — same path used as a CSS mask so the
+                colored block is clipped to the path shape. As margin-top
+                transitions between headings the highlight slides along the
+                diagonals too, matching the clerk-toc motion. */}
+            {maskUrl && (
+              <div
+                className="pointer-events-none absolute left-0 top-0"
+                style={{
+                  width: svgW,
+                  height: svgH,
+                  maskImage: maskUrl,
+                  WebkitMaskImage: maskUrl,
                 }}
-                className={cn(
-                  'h-auto w-full cursor-pointer justify-start truncate rounded-md py-1 text-left text-sm font-normal text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                  heading.level === 1 && 'font-medium text-foreground',
-                )}
-                style={{ paddingLeft: `${(heading.level - 1) * 12 + 8}px`, paddingRight: '8px' }}
-                title={heading.text}
               >
-                {heading.text}
-              </button>
-            ))}
+                <div
+                  style={{
+                    marginTop: thumbTop,
+                    height: thumbHeight,
+                    backgroundColor: 'var(--primary)',
+                    transition: 'margin-top 0.25s ease, height 0.1s ease',
+                    width: '100%',
+                  }}
+                />
+              </div>
+            )}
+            {/* Buttons sit on top of the SVG; paddingLeft aligns text with line */}
+            {headings.map((heading, index) => {
+              const isActive = heading.slug === activeSlug;
+              return (
+                <button
+                  // biome-ignore lint/suspicious/noArrayIndexKey: headings are positionally stable per load
+                  key={index}
+                  type="button"
+                  onClick={() => handleNav(index, heading.slug)}
+                  className={cn(
+                    'w-full cursor-pointer truncate py-1 pe-2 text-left text-sm transition-colors',
+                    isActive
+                      ? 'font-medium text-primary'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                  style={{ paddingLeft: `${(heading.level - 1) * LEVEL_W + 12}px` }}
+                  title={heading.text}
+                >
+                  {heading.text}
+                </button>
+              );
+            })}
           </div>
         )}
       </PanelBody>

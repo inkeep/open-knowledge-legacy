@@ -1,0 +1,65 @@
+import { useEffect, useRef, useState } from 'react';
+
+/**
+ * Tracks which heading is currently "active" based on scroll position.
+ *
+ * Uses a capturing scroll listener on document to catch scrolling inside any
+ * container (including the editor's inner overflow-y-auto div). Determines
+ * the active heading by finding the last one whose top edge is at or above
+ * 35% of the viewport height — i.e., the section currently being read.
+ *
+ * Requires heading DOM elements to have `id` attributes matching the slugs,
+ * which the HeadingAnchors TipTap extension provides.
+ *
+ * Disabled (returns undefined) in source mode since CodeMirror headings
+ * don't have real DOM id attributes.
+ */
+export function useActiveHeading(slugs: string[], isSourceMode = false): string | undefined {
+  const [activeSlug, setActiveSlug] = useState<string | undefined>(undefined);
+  const rafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (isSourceMode || slugs.length === 0) {
+      setActiveSlug(undefined);
+      return;
+    }
+
+    function compute() {
+      const threshold = window.innerHeight * 0.35;
+      let result: string | undefined;
+
+      for (const slug of slugs) {
+        const el = document.getElementById(slug);
+        if (!el) continue;
+        if (el.getBoundingClientRect().top <= threshold) {
+          result = slug; // keep the last heading at/above threshold (document order)
+        }
+      }
+
+      setActiveSlug(result);
+    }
+
+    function handleScroll() {
+      if (rafRef.current !== null) return;
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        compute();
+      });
+    }
+
+    // capture: true catches scroll events from any element, including the
+    // editor's inner overflow-y-auto container
+    document.addEventListener('scroll', handleScroll, { capture: true, passive: true });
+    compute();
+
+    return () => {
+      document.removeEventListener('scroll', handleScroll, { capture: true });
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [slugs, isSourceMode]);
+
+  return activeSlug;
+}
