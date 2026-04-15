@@ -41,6 +41,10 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import { extractPageTitle } from './page-identity.ts';
+
+export { extractPageTitle } from './page-identity.ts';
+
 import { type BacklinkIndex, isOrphanMode } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
@@ -74,6 +78,7 @@ import {
   shadowGit,
   type WriterIdentity,
 } from './shadow-repo.ts';
+import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 /**
@@ -437,44 +442,6 @@ export function extractHeadings(content: string): HeadingEntry[] {
     }
   }
   return headings;
-}
-
-/**
- * Extract a human-readable title from a markdown file's content.
- *
- * Priority:
- *  1. `title:` field in YAML frontmatter (between leading `---` delimiters)
- *  2. First `# heading` line in the file
- *  3. filename (without extension, as provided by the caller)
- */
-export function extractPageTitle(content: string, filename: string): string {
-  // 1. Frontmatter title — only if the file starts with ---
-  if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
-    const closingIdx = content.indexOf('\n---', 3);
-    if (closingIdx !== -1) {
-      const frontmatter = content.slice(0, closingIdx + 4);
-      const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
-      if (titleMatch) {
-        let title = titleMatch[1].trim();
-        if (
-          (title.startsWith('"') && title.endsWith('"')) ||
-          (title.startsWith("'") && title.endsWith("'"))
-        ) {
-          title = title.slice(1, -1);
-        }
-        return title;
-      }
-    }
-  }
-
-  // 2. First # heading
-  const headingMatch = content.match(/^# (.+)$/m);
-  if (headingMatch) {
-    return headingMatch[1].trim();
-  }
-
-  // 3. Filename fallback
-  return filename;
 }
 
 function isSafeDocName(docName: string): boolean {
@@ -1264,7 +1231,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Body must be a JSON object' });
         return;
       }
-      const { find, replace, docName: bodyDocName } = body as Record<string, unknown>;
+      const {
+        find,
+        replace,
+        docName: bodyDocName,
+        offset: rawOffset,
+      } = body as Record<string, unknown>;
       if (typeof find !== 'string' || find.length === 0) {
         json(res, 400, { ok: false, error: 'find field required' });
         return;
@@ -1272,6 +1244,15 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       if (typeof replace !== 'string') {
         json(res, 400, { ok: false, error: 'replace field required' });
         return;
+      }
+      const hasOffset = Object.hasOwn(body, 'offset');
+      let offset: number | undefined;
+      if (hasOffset) {
+        if (typeof rawOffset !== 'number' || !Number.isInteger(rawOffset) || rawOffset < 0) {
+          json(res, 400, { ok: false, error: 'offset must be a non-negative integer' });
+          return;
+        }
+        offset = rawOffset;
       }
       const effectivePatchDocName =
         typeof bodyDocName === 'string' && bodyDocName.length > 0 ? bodyDocName : 'test-doc';
@@ -1288,14 +1269,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       const timestamp = new Date().toISOString();
 
       let notFound = false;
+      let staleTarget = false;
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
           const ytext = dc.document.getText('source');
           const currentText = ytext.toString();
-          const pos = currentText.indexOf(find);
+          const pos =
+            offset == null
+              ? currentText.indexOf(find)
+              : currentText.slice(offset, offset + find.length) === find
+                ? offset
+                : -1;
           if (pos === -1) {
-            notFound = true;
+            if (offset == null) {
+              notFound = true;
+            } else {
+              staleTarget = true;
+            }
             return;
           }
           ytext.delete(pos, find.length);
@@ -1313,6 +1304,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
+      if (staleTarget) {
+        json(res, 409, {
+          ok: false,
+          error: 'Target text no longer matches at the requested offset',
+        });
+        return;
+      }
       if (notFound) {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
@@ -2319,6 +2317,43 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleSuggestLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const docName = url.searchParams.get('docName');
+      if (!docName) {
+        json(res, 400, { ok: false, error: 'Missing docName parameter' });
+        return;
+      }
+      if (!isSafeDocName(docName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
+
+      const result = await suggestLinks({
+        hocuspocus,
+        fileIndex: getFileIndex(),
+        docName,
+      });
+      json(res, 200, { ok: true, ...result });
+    } catch (error) {
+      if (error instanceof SuggestLinksTargetNotFoundError) {
+        json(res, 404, { ok: false, error: 'Page not found' });
+        return;
+      }
+      console.error('[suggest-links]', error);
+      json(res, 500, { ok: false, error: 'Failed to suggest links' });
+    }
+  }
+
   async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -2445,6 +2480,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
     '/api/pages': handlePages,
+    '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
     '/api/rename': handleRename,
