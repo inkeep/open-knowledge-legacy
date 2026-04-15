@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { Document } from '@hocuspocus/server';
-import { type AgentDirectConnection, AgentSessionManager } from './agent-sessions.ts';
+import {
+  type AgentDirectConnection,
+  AgentSessionManager,
+  iconFromClientName,
+} from './agent-sessions.ts';
 
 // Minimal Hocuspocus mock for session management tests.
 // Each openDirectConnection call returns a unique mock DC so we can track disconnects.
@@ -49,6 +53,25 @@ beforeEach(() => {
 
 afterEach(async () => {
   await manager.closeAll();
+});
+
+describe('iconFromClientName', () => {
+  test('returns claude icon for claude-code', () => {
+    expect(iconFromClientName('claude-code')).toBe('claude');
+  });
+
+  test('returns cursor icon for cursor clients', () => {
+    expect(iconFromClientName('cursor')).toBe('cursor');
+    expect(iconFromClientName('cursor-vscode')).toBe('cursor');
+  });
+
+  test('returns bot for unknown clients', () => {
+    expect(iconFromClientName('unknown-harness')).toBe('bot');
+  });
+
+  test('returns bot for undefined input', () => {
+    expect(iconFromClientName(undefined)).toBe('bot');
+  });
 });
 
 describe('getSession — composite key (docName + agentId)', () => {

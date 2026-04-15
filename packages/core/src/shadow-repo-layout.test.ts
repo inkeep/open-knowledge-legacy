@@ -56,6 +56,14 @@ describe('parseContributors', () => {
     expect(result[0].v).toBe(1);
   });
 
+  test('parses colorSeed field when present', () => {
+    const body =
+      '\nok-contributors: {"id":"agent-a","name":"A","colorSeed":"my-seed","docs":["x"]}';
+    const result = parseContributors(body);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.colorSeed).toBe('my-seed');
+  });
+
   test('silently skips malformed JSON', () => {
     const body = '\nok-contributors: {not valid json}';
     expect(parseContributors(body)).toEqual([]);
@@ -88,6 +96,16 @@ describe('parseContributors', () => {
 
   test('skips entry where name is not a string (type guard)', () => {
     const body = '\nok-contributors: {"id":"agent-a","name":null,"docs":["x"]}';
+    expect(parseContributors(body)).toEqual([]);
+  });
+
+  test('skips entry where colorSeed is not a string', () => {
+    const body = '\nok-contributors: {"id":"agent-a","name":"A","colorSeed":123,"docs":["x"]}';
+    expect(parseContributors(body)).toEqual([]);
+  });
+
+  test('skips entry where docs contains non-string elements', () => {
+    const body = '\nok-contributors: {"id":"agent-a","name":"A","docs":["a",1,"b"]}';
     expect(parseContributors(body)).toEqual([]);
   });
 });

@@ -42,6 +42,18 @@ describe('recordContributor', () => {
     // Only one "a.md" entry
     expect((output.match(/a\.md/g) ?? []).length).toBe(1);
   });
+
+  test('includes colorSeed in formatted output', () => {
+    recordContributor('doc.md', 'agent-alice', 'Alice', 'alice-custom-seed');
+    const output = formatContributors();
+    expect(output).toContain('"colorSeed":"alice-custom-seed"');
+  });
+
+  test('colorSeed defaults to displayName when not provided', () => {
+    recordContributor('doc.md', 'agent-alice', 'Alice');
+    const output = formatContributors();
+    expect(output).toContain('"colorSeed":"Alice"');
+  });
 });
 
 describe('formatContributors / formatContributorsFrom', () => {
@@ -70,6 +82,14 @@ describe('formatContributors / formatContributorsFrom', () => {
     expect(parsed).toHaveLength(2);
     const ids = parsed.map((c) => c.id).sort();
     expect(ids).toEqual(['agent-claude-1', 'agent-cursor-abc']);
+  });
+
+  test('colorSeed round-trips through parseContributors', () => {
+    recordContributor('doc.md', 'agent-alice', 'Alice', 'my-seed');
+    const body = formatContributors();
+    const parsed = parseContributors(body);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.colorSeed).toBe('my-seed');
   });
 
   test('formatContributorsFrom uses provided snapshot, not live map', () => {
