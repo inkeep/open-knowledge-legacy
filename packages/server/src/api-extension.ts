@@ -497,6 +497,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return getAliasMap?.().get(docName) ?? docName;
   }
 
+  /**
+   * Fire-and-forget L1 → L2 flush for a single document.
+   *
+   * L1 (CRDT → disk): per-document debounce flush so concurrent human edits on
+   * other documents are undisturbed.
+   * L2 (disk → git): chained after L1 resolves to guarantee disk content is
+   * up-to-date before the shadow-repo commit.
+   *
+   * The returned promise is intentionally not awaited by callers — the HTTP
+   * response fires immediately after the CRDT transaction; persistence is
+   * best-effort background work.
+   */
+  function flushDocToGit(docName: string, label: string): void {
+    const debounceId = `onStoreDocument-${docName}`;
+    const l1 = hocuspocus.debouncer.isDebounced(debounceId)
+      ? hocuspocus.debouncer.executeNow(debounceId)
+      : Promise.resolve();
+    l1.then(() => flushGitCommit?.()).catch((err: unknown) => {
+      log.warn({ err }, `[${label}] post-write flush failed`);
+    });
+  }
+
   function collectAdmittedDocNames(): Set<string> {
     const admitted = new Set<string>();
     for (const [docName, entry] of getFileIndex()) {
@@ -890,21 +912,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
-      // Force L1 flush (CRDT → disk) for THIS document only, then L2 flush
-      // (disk → git) so the agent write appears in the shadow-repo timeline
-      // immediately rather than waiting for the 15s debounce.  Per-document
-      // flush avoids disrupting concurrent human edits on other documents.
-      const debounceId = `onStoreDocument-${docName}`;
-      if (hocuspocus.debouncer.isDebounced(debounceId)) {
-        hocuspocus.debouncer.executeNow(debounceId).catch((err: unknown) => {
-          log.warn({ err }, '[agent-write] L1 flush failed');
-        });
-      }
-      if (flushGitCommit) {
-        flushGitCommit().catch((e) => {
-          log.warn({ err: e }, '[agent-write] post-write git flush failed');
-        });
-      }
+      flushDocToGit(docName, 'agent-write');
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -989,21 +997,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
-      // Force L1 flush (CRDT → disk) for THIS document only, then L2 flush
-      // (disk → git) so the agent write appears in the shadow-repo timeline
-      // immediately rather than waiting for the 15s debounce.  Per-document
-      // flush avoids disrupting concurrent human edits on other documents.
-      const debounceId = `onStoreDocument-${resolvedDocName}`;
-      if (hocuspocus.debouncer.isDebounced(debounceId)) {
-        hocuspocus.debouncer.executeNow(debounceId).catch((err: unknown) => {
-          log.warn({ err }, '[agent-write-md] L1 flush failed');
-        });
-      }
-      if (flushGitCommit) {
-        flushGitCommit().catch((e) => {
-          log.warn({ err: e }, '[agent-write-md] post-write git flush failed');
-        });
-      }
+      flushDocToGit(resolvedDocName, 'agent-write-md');
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -1440,21 +1434,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Force L1 flush (CRDT → disk) for THIS document only, then L2 flush
-      // (disk → git) so the agent patch appears in the shadow-repo timeline
-      // immediately rather than waiting for the 15s debounce.  Per-document
-      // flush avoids disrupting concurrent human edits on other documents.
-      const debounceId = `onStoreDocument-${docName}`;
-      if (hocuspocus.debouncer.isDebounced(debounceId)) {
-        hocuspocus.debouncer.executeNow(debounceId).catch((err: unknown) => {
-          log.warn({ err }, '[agent-patch] L1 flush failed');
-        });
-      }
-      if (flushGitCommit) {
-        flushGitCommit().catch((e) => {
-          log.warn({ err: e }, '[agent-patch] post-write git flush failed');
-        });
-      }
+      flushDocToGit(docName, 'agent-patch');
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
