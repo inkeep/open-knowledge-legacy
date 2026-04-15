@@ -1,4 +1,14 @@
 import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import {
   ChevronRight,
   File,
   Folder,
@@ -9,8 +19,9 @@ import {
   SquarePen,
   Trash2,
 } from 'lucide-react';
-import { type FC, useEffect, useRef, useState } from 'react';
+import { createContext, type FC, use, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { parentDirOfDocName, validateMoveToFolder } from '@/components/file-tree-dnd';
 import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
@@ -53,6 +64,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+
+const FileTreeDragContext = createContext<FileTreeTarget | null>(null);
+
+function useFileTreeDragSource(): FileTreeTarget | null {
+  return use(FileTreeDragContext);
+}
 
 function navigateTo(docName: string) {
   window.location.hash = `#/${docName}`;
@@ -132,6 +149,48 @@ function InlineCreateRow({
   );
 }
 
+function dropHighlightClass(
+  activeSource: FileTreeTarget | null,
+  destinationFolderPath: string,
+): string {
+  if (!activeSource) return '';
+  const v = validateMoveToFolder(activeSource, destinationFolderPath);
+  if (!v.ok && (v.reason === 'self' || v.reason === 'descendant')) {
+    return 'bg-destructive/15 ring-2 ring-destructive/40';
+  }
+  if (v.ok) {
+    return 'bg-primary/10 ring-2 ring-primary/35';
+  }
+  return '';
+}
+
+function RootDropRow({ treeActionsLocked }: { treeActionsLocked: boolean }) {
+  const activeSource = useFileTreeDragSource();
+  const { setNodeRef, isOver } = useDroppable({
+    id: 'drop-root',
+    disabled: treeActionsLocked,
+    data: { destinationFolderPath: '' },
+  });
+
+  if (!activeSource) {
+    return null;
+  }
+
+  return (
+    <SidebarMenuItem>
+      <div
+        ref={setNodeRef}
+        className={cn(
+          'flex h-8 items-center rounded-md border border-dashed border-sidebar-border px-2 text-xs text-muted-foreground transition-colors',
+          isOver && dropHighlightClass(activeSource, ''),
+        )}
+      >
+        Drop here to move to library root
+      </div>
+    </SidebarMenuItem>
+  );
+}
+
 const FileTreeNode: FC<{
   node: TreeNode;
   selectedPath: string | null;
@@ -141,6 +200,7 @@ const FileTreeNode: FC<{
   editingPath: string | null;
   editingValue: string;
   busyPath: string | null;
+  treeActionsLocked: boolean;
   onSelect: (docName: string) => void;
   onStartRename: (target: FileTreeTarget) => void;
   onEditingValueChange: (value: string) => void;
@@ -161,6 +221,7 @@ const FileTreeNode: FC<{
   editingPath,
   editingValue,
   busyPath,
+  treeActionsLocked,
   onSelect,
   onStartRename,
   onEditingValueChange,
@@ -182,6 +243,35 @@ const FileTreeNode: FC<{
   const ComponentToUse = nested ? SidebarMenuSubItem : SidebarMenuItem;
   const ButtonToUse = nested ? SidebarMenuSubButton : SidebarMenuButton;
   const target: FileTreeTarget = { kind: node.kind, path: node.path, name: node.name };
+
+  const destFolderForDrop = isFile ? parentDirOfDocName(node.path) : node.path;
+  const activeDragSource = useFileTreeDragSource();
+
+  const {
+    attributes,
+    listeners,
+    setNodeRef: setDragRef,
+    isDragging,
+  } = useDraggable({
+    id: `drag-${node.kind}-${node.path}`,
+    disabled: treeActionsLocked || isEditing,
+    data: { source: target },
+  });
+
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: `drop-${node.kind}-${node.path}`,
+    disabled: treeActionsLocked,
+    data: { destinationFolderPath: destFolderForDrop },
+  });
+
+  const rowRef = (el: HTMLDivElement | null) => {
+    setDragRef(el);
+    setDropRef(el);
+    if (isActive) activeRowRef(el);
+  };
+
+  const overDropClass =
+    isOver && activeDragSource ? dropHighlightClass(activeDragSource, destFolderForDrop) : '';
 
   const showSymlink = isFile && node.isSymlink;
 
@@ -276,7 +366,18 @@ const FileTreeNode: FC<{
     <ComponentToUse>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div ref={isActive ? activeRowRef : undefined}>{triggerContent}</div>
+          <div
+            ref={rowRef}
+            className={cn(
+              'rounded-md transition-[opacity,box-shadow]',
+              isDragging && 'opacity-40',
+              overDropClass,
+            )}
+            {...(isEditing ? {} : listeners)}
+            {...(isEditing ? {} : attributes)}
+          >
+            {triggerContent}
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
           {!isFile && (
@@ -342,6 +443,7 @@ const FileTreeNode: FC<{
               editingPath={editingPath}
               editingValue={editingValue}
               busyPath={busyPath}
+              treeActionsLocked={treeActionsLocked}
               onSelect={onSelect}
               onStartRename={onStartRename}
               onEditingValueChange={onEditingValueChange}
@@ -383,7 +485,10 @@ export function FileTree({
   const [creatingValue, setCreatingValue] = useState('');
   const [creatingBusy, setCreatingBusy] = useState(false);
   const [creatingError, setCreatingError] = useState<string | null>(null);
+  const [activeDragSource, setActiveDragSource] = useState<FileTreeTarget | null>(null);
   const prevCreateSeqRef = useRef(0);
+
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 12 } }));
 
   if (activeDocName !== prevActiveDocName) {
     // Clear user-collapsed overrides on navigation so ancestors of the new
@@ -653,6 +758,74 @@ export function FileTree({
     }
   }
 
+  async function handleMove(source: FileTreeTarget, destinationFolderPath: string) {
+    const v = validateMoveToFolder(source, destinationFolderPath);
+    if (!v.ok) {
+      if (v.reason === 'no_op') return;
+      toast.error(
+        v.reason === 'self'
+          ? 'Cannot move a folder into itself'
+          : 'Cannot move a folder into one of its subfolders',
+      );
+      return;
+    }
+
+    const nextPath = v.destinationPath;
+    setBusyPath(source.path);
+    setError(null);
+
+    try {
+      const endpoint = source.kind === 'file' ? '/api/rename' : '/api/rename-path';
+      const payload =
+        source.kind === 'file'
+          ? { docName: source.path, newDocName: nextPath }
+          : { kind: 'folder', fromPath: source.path, toPath: nextPath };
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data: RenamePathResponse = await res.json();
+
+      if (!res.ok || !data.ok) {
+        const msg = data.error ?? 'Failed to move';
+        toast.error(msg);
+        setError(msg);
+        setBusyPath(null);
+        return;
+      }
+
+      const renamed = Array.isArray(data.renamed) ? data.renamed : [];
+      const nextActiveDocName = remapActiveDocName(activeDocName, renamed);
+
+      for (const entry of renamed) closeDocument(entry.fromDocName);
+
+      setDocuments((current) => applyRenameToDocuments(current, renamed));
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
+
+      const segments = nextPath.split('/').filter(Boolean);
+      if (segments.length > 1) {
+        setUserExpanded((prev) => {
+          const n = new Set(prev);
+          for (let i = 0; i < segments.length - 1; i++) {
+            n.add(segments.slice(0, i + 1).join('/'));
+          }
+          return n;
+        });
+      }
+
+      if (activeDocName && nextActiveDocName !== activeDocName) {
+        window.location.hash = `#/${nextActiveDocName}`;
+      }
+      setBusyPath(null);
+    } catch (err) {
+      console.warn('[FileTree] move failed:', err);
+      toast.error('Network error — please try again');
+      setBusyPath(null);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-1 items-center justify-center py-8">
@@ -731,53 +904,89 @@ export function FileTree({
 
   const rootInlineCreate = getInlineCreate('');
 
+  const treeActionsLocked = busyPath !== null || editingPath !== null || creatingItem !== null;
+
   return (
-    <>
-      {error && (
-        <span role="alert" className="px-3 pb-1 text-xs text-destructive">
-          {error}
-        </span>
-      )}
-      <SidebarMenu>
-        {rootInlineCreate && (
-          <SidebarMenuItem>
-            <InlineCreateRow {...rootInlineCreate} />
-          </SidebarMenuItem>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={pointerWithin}
+      onDragStart={({ active }) => {
+        setActiveDragSource((active.data.current?.source as FileTreeTarget | undefined) ?? null);
+      }}
+      onDragEnd={({ active, over }) => {
+        setActiveDragSource(null);
+        if (!over) return;
+        const src = active.data.current?.source as FileTreeTarget | undefined;
+        const dest = over.data.current?.destinationFolderPath;
+        if (!src || typeof dest !== 'string') return;
+        void handleMove(src, dest);
+      }}
+      onDragCancel={() => setActiveDragSource(null)}
+    >
+      <FileTreeDragContext.Provider value={activeDragSource}>
+        {error && (
+          <span role="alert" className="px-3 pb-1 text-xs text-destructive">
+            {error}
+          </span>
         )}
-        {treeNodes.map((node) => (
-          <FileTreeNode
-            key={node.path}
-            node={node}
-            selectedPath={activeDocName}
-            expandedPaths={expandedPaths}
-            onToggle={handleToggle}
-            activeRowRef={activeRowRef}
-            editingPath={editingPath}
-            editingValue={editingValue}
-            busyPath={busyPath}
-            onSelect={(docName) => {
-              navigateTo(docName);
-            }}
-            onStartRename={(target) => {
-              setEditingPath(target.path);
-              setEditingValue(target.name);
-              setError(null);
-            }}
-            onEditingValueChange={setEditingValue}
-            onCommitRename={(target) => void handleRename(target)}
-            onCancelRename={() => {
-              if (!busyPath) {
-                setEditingPath(null);
-                setEditingValue('');
-              }
-            }}
-            onDelete={(target) => void handleDelete(target)}
-            onStartCreating={startCreating}
-            inlineCreate={getInlineCreate(node.path)}
-            getInlineCreate={getInlineCreate}
-          />
-        ))}
-      </SidebarMenu>
-    </>
+        <SidebarMenu>
+          {rootInlineCreate && (
+            <SidebarMenuItem>
+              <InlineCreateRow {...rootInlineCreate} />
+            </SidebarMenuItem>
+          )}
+          <RootDropRow treeActionsLocked={treeActionsLocked} />
+          {treeNodes.map((node) => (
+            <FileTreeNode
+              key={node.path}
+              node={node}
+              selectedPath={activeDocName}
+              expandedPaths={expandedPaths}
+              onToggle={handleToggle}
+              activeRowRef={activeRowRef}
+              editingPath={editingPath}
+              editingValue={editingValue}
+              busyPath={busyPath}
+              treeActionsLocked={treeActionsLocked}
+              onSelect={(docName) => {
+                navigateTo(docName);
+              }}
+              onStartRename={(target) => {
+                setEditingPath(target.path);
+                setEditingValue(target.name);
+                setError(null);
+              }}
+              onEditingValueChange={setEditingValue}
+              onCommitRename={(target) => void handleRename(target)}
+              onCancelRename={() => {
+                if (!busyPath) {
+                  setEditingPath(null);
+                  setEditingValue('');
+                }
+              }}
+              onDelete={(target) => void handleDelete(target)}
+              onStartCreating={startCreating}
+              inlineCreate={getInlineCreate(node.path)}
+              getInlineCreate={getInlineCreate}
+            />
+          ))}
+        </SidebarMenu>
+        <DragOverlay dropAnimation={null}>
+          {activeDragSource ? (
+            <div className="pointer-events-none flex max-w-[min(100vw-2rem,280px)] items-center gap-2 rounded-md border border-sidebar-border bg-sidebar px-3 py-1.5 text-sm shadow-lg">
+              {activeDragSource.kind === 'file' ? (
+                <File className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+              ) : (
+                <Folder className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-sidebar-foreground">
+                {activeDragSource.name}
+                {activeDragSource.kind === 'file' ? '.md' : ''}
+              </span>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </FileTreeDragContext.Provider>
+    </DndContext>
   );
 }
