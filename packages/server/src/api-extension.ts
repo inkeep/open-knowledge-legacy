@@ -1,5 +1,5 @@
 /**
- * HTTP API extension for Hocuspocus — agent write, undo/redo, and test reset endpoints.
+ * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
  *
  * Implemented as a Hocuspocus onRequest extension so it works with both
  * the standalone Server and the Vite dev plugin.
@@ -22,24 +22,25 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
-import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
+  applyByPrefixSuffix,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { updateYFragment } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
+  applyAgentMarkdownWrite,
   DEFAULT_AGENT_ID,
-  syncTextToFragment,
 } from './agent-sessions.ts';
 import { extractPageTitle } from './page-identity.ts';
 
@@ -54,6 +55,7 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { getLogger } from './logger.ts';
 import {
   createManagedRenameRecoveryJournal,
   type ManagedRenameSnapshot,
@@ -88,17 +90,19 @@ import { getDocumentHistory } from './timeline-query.ts';
  * restored content reaches disk through the normal pipeline. The file-watcher's
  * registerWrite hash check prevents the self-write from re-triggering reconciliation.
  */
-const ROLLBACK_ORIGIN = {
+export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply' },
-};
+} satisfies LocalTransactionOrigin;
 
 const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'managed-rename' },
-};
+} satisfies LocalTransactionOrigin;
+
+const log = getLogger('api');
 
 /** Validates a docName and builds a shadow-repo-safe path.
  * Uses the same traversal check as safeContentPath (reject `..` and null bytes)
@@ -654,6 +658,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     let result: ManagedRenameRewriteSummary = { markdown: '', rewrites: 0 };
     document.transact(() => {
+      const xmlFragment = document.getXmlFragment('default');
       const ytext = document.getText('source');
       const currentText = ytext.toString();
       result = rewriteSupportedLinksForDocumentRename(currentText, docName, oldDocName, newDocName);
@@ -661,9 +666,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      ytext.delete(0, currentText.length);
-      ytext.insert(0, result.markdown);
-      syncTextToFragment(document);
+      // Apply rewrite via XmlFragment-authoritative pattern (AGENTS.md precedent #12;
+      // replaces the deleted syncTextToFragment helper). Parse new markdown →
+      // updateYFragment (preserves user-content Items at matching positions) →
+      // mirror Y.Text via applyByPrefixSuffix (minimal CRDT mutation).
+      const { body } = stripFrontmatter(result.markdown);
+      const parsedJson = mdManager.parseWithFallback(body);
+      const pmNode = schema.nodeFromJSON(parsedJson);
+      updateYFragment(document, xmlFragment, pmNode, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
+      applyByPrefixSuffix(ytext, currentText, result.markdown);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }
@@ -835,12 +849,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
-          const insertAt = currentText.length;
-          const separator = currentText.trim() ? '\n\n' : '';
-          ytext.insert(insertAt, `${separator}${content}\n`);
-          syncTextToFragment(dc.document);
+          applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
 
           const activityMap = dc.document.getMap('activity');
           activityMap.set(DEFAULT_AGENT_ID, {
@@ -856,7 +865,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
-      console.error('[agent-write]', e);
+      log.error({ err: e }, '[agent-write] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -915,21 +924,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
-
-          if (position === 'replace') {
-            ytext.delete(0, currentText.length);
-            ytext.insert(0, markdown.trim());
-          } else if (position === 'prepend') {
-            ytext.insert(0, `${markdown.trim()}\n\n`);
-          } else {
-            const insertAt = currentText.length;
-            const separator = currentText.trim() ? '\n\n' : '';
-            ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
-          }
-
-          syncTextToFragment(dc.document);
+          applyAgentMarkdownWrite(dc.document, markdown, position);
 
           const activityMap = dc.document.getMap('activity');
           activityMap.set(DEFAULT_AGENT_ID, {
@@ -945,7 +940,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
-      console.error('[agent-write-md]', e);
+      log.error({ err: e }, '[agent-write-md] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -1325,12 +1320,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
+          // Read current authoritative body from XmlFragment (Bug-A fix — precedent #12)
+          const xmlFragment = dc.document.getXmlFragment('default');
+          const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
           const pos =
             offset == null
-              ? currentText.indexOf(find)
-              : currentText.slice(offset, offset + find.length) === find
+              ? currentBody.indexOf(find)
+              : currentBody.slice(offset, offset + find.length) === find
                 ? offset
                 : -1;
           if (pos === -1) {
@@ -1341,9 +1337,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             }
             return;
           }
-          ytext.delete(pos, find.length);
-          ytext.insert(pos, replace);
-          syncTextToFragment(dc.document);
+          const newBody =
+            currentBody.slice(0, pos) + replace + currentBody.slice(pos + find.length);
+          applyAgentMarkdownWrite(dc.document, newBody, 'replace');
+
           const activityMap = dc.document.getMap('activity');
           activityMap.set(DEFAULT_AGENT_ID, {
             agentId: DEFAULT_AGENT_ID,
@@ -1369,7 +1366,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
-      console.error('[agent-patch]', e);
+      log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }

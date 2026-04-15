@@ -58,7 +58,7 @@ Hocuspocus embeds in Vite via `configureServer()` plugin hook with a standalone 
 Two agent write endpoints use `hocuspocus.openDirectConnection()`:
 
 - **`POST /api/agent-write`** -- raw Y.XmlElement write (appends a paragraph with `applyDelta()`)
-- **`POST /api/agent-write-md`** -- markdown write (unified path). Accepts `{ markdown, position? }`. Serializes the current Y.Doc to markdown, splices the agent's content at the specified position (append/prepend), parses the combined result, and applies via `updateYFragment()`. This shares the same diff-based code path as the source toggle-back.
+- **`POST /api/agent-write-md`** -- markdown write (unified path). Accepts `{ markdown, position? }`. Routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative composition per AGENTS.md precedent #10): reads the current `Y.XmlFragment` (reflects all CRDT-synced content including concurrent client WYSIWYG typing), composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`), applies to XmlFragment via `updateYFragment()` (structural diff preserves user-content Items), then mirrors `Y.Text` via `applyByPrefixSuffix` (minimal mutation, preserves non-agent Y.Text Items and their origins). Replaces the deleted `syncTextToFragment` which used `Y.Text` as the authoritative input and destroyed concurrent user XmlFragment content — Bug-A in the `2026-04-14-bridge-convergence-under-concurrent-writes` spec.
 
 ## Source toggle
 
