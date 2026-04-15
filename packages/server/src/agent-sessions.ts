@@ -18,10 +18,10 @@ import {
   applyByPrefixSuffix,
   colorFromSeed,
   prependFrontmatter,
-  stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
+
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';

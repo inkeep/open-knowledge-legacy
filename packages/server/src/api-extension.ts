@@ -40,7 +40,6 @@ import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
   applyAgentMarkdownWrite,
-  DEFAULT_AGENT_ID,
 } from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { extractPageTitle } from './page-identity.ts';
@@ -683,7 +682,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return result;
   }
 
-  async function performManagedRename(
+  async function _performManagedRename(
     sourceDocName: string,
     destinationDocName: string,
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
@@ -806,6 +805,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       rewrittenDocs.sort((a, b) => a.docName.localeCompare(b.docName));
       return { renamed, rewrittenDocs };
     });
+  }
 
   /** Extract agent identity fields shared across the three write endpoints. */
   function extractAgentIdentity(body: Record<string, unknown>): {
@@ -2192,7 +2192,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const result = await performManagedRename(docName, newDocName);
+      const result = await _performManagedRename(docName, newDocName);
       json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
     } catch (e) {
       console.error('[rename]', e);

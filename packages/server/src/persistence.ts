@@ -161,7 +161,7 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   // so that standalone.ts and persistence stay in sync.
 
   const gitEnabled = options?.gitEnabled ?? true;
-  const commitDebounceMs = options?.commitDebounceMs ?? 30_000;
+  const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
   const wipRef = options?.wipRef ?? 'refs/wip/main';
   const getCurrentBranch = options?.getCurrentBranch;
 
