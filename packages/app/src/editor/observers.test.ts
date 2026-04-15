@@ -1469,7 +1469,6 @@ describe('applyUserDelta: divergence preservation', () => {
   });
 });
 
-<<<<<<< HEAD
 // ─────────────────────────────────────────────────────────────
 // Group A (FR-1): Content-comparison gate in applyIncrementalDiff
 // ─────────────────────────────────────────────────────────────
