@@ -576,3 +576,116 @@ export function createManualScheduler(): ManualScheduler {
     pending: () => queue.map(({ id, dueAt }) => ({ id, dueAt })),
   };
 }
+
+// ─── Origin-preservation probe (FR-12) ───
+
+export interface ItemOriginProbe {
+  recordCapture(label?: string): void;
+  assertCaptureIntact(label?: string): void;
+  capturedContent(): string;
+  undoStackLength(): number;
+  cleanup(): void;
+}
+
+/**
+ * Create a probe wrapping Y.UndoManager that records stack state and asserts
+ * Items-remained-captured. Replaces scattered inline `new Y.UndoManager(...)`
+ * in test code.
+ *
+ * trackedOrigins accepts any value — strings for ORIGIN_TREE_TO_TEXT,
+ * objects for AGENT_WRITE_ORIGIN. Y.UndoManager's Set.has matches by value
+ * for strings and by identity for objects (precedent #1).
+ */
+export function createItemOriginProbe(
+  ytext: Y.Text,
+  opts: { trackedOrigins: Array<unknown>; captureTimeout?: number },
+): ItemOriginProbe {
+  const um = new Y.UndoManager(ytext, {
+    trackedOrigins: new Set(opts.trackedOrigins),
+    captureTimeout: opts.captureTimeout ?? 0,
+  });
+  const captures = new Map<string, { stackLength: number; content: string }>();
+  return {
+    recordCapture(label = 'default') {
+      captures.set(label, {
+        stackLength: um.undoStack.length,
+        content: ytext.toString(),
+      });
+    },
+    assertCaptureIntact(label = 'default') {
+      const cap = captures.get(label);
+      if (!cap) throw new Error(`No capture recorded for label: ${label}`);
+      if (um.undoStack.length < cap.stackLength) {
+        throw new Error(
+          `Origin probe: tracked Items disappeared from UM stack. ` +
+            `Expected >=${cap.stackLength}, got ${um.undoStack.length}.`,
+        );
+      }
+    },
+    capturedContent: () => ytext.toString(),
+    undoStackLength: () => um.undoStack.length,
+    cleanup: () => um.destroy(),
+  };
+}
+
+// ─── Multi-client factory + convergence assert (FR-14) ──��
+
+export class ClientConvergenceError extends Error {
+  constructor(details: string) {
+    super(`Client convergence timed out.\n${details}`);
+    this.name = 'ClientConvergenceError';
+  }
+}
+
+/**
+ * Create multiple TestClients all joined to the same docName.
+ * Auto-generates docName if not provided.
+ */
+export async function createTestClients(
+  port: number,
+  opts: { count: number; docName?: string; perClientOptions?: CreateTestClientOptions },
+): Promise<TestClient[]> {
+  const docName = opts.docName ?? `test-${crypto.randomUUID()}`;
+  const clients: TestClient[] = [];
+  for (let i = 0; i < opts.count; i++) {
+    clients.push(await createTestClient(port, docName, opts.perClientOptions));
+  }
+  return clients;
+}
+
+/**
+ * Poll until all clients have converged: identical ytext, identical fragment
+ * serialization, and bridge invariant holds on each. Throws on timeout.
+ */
+export async function assertAllConverged(
+  clients: TestClient[],
+  opts: { timeout?: number; pollIntervalMs?: number } = {},
+): Promise<void> {
+  const timeout = opts.timeout ?? 2000;
+  const pollMs = opts.pollIntervalMs ?? 50;
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const ytexts = clients.map((c) => c.ytext.toString());
+    const fragMds = clients.map((c) => serializeFragment(c.fragment));
+    const allYtextSame = ytexts.every((t) => t === ytexts[0]);
+    const allFragSame = fragMds.every((m) => m === fragMds[0]);
+    if (allYtextSame && allFragSame) {
+      // Also verify bridge invariant on each
+      for (const c of clients) {
+        assertBridgeInvariant(c.ytext, c.fragment);
+      }
+      return;
+    }
+    await wait(pollMs);
+  }
+  // Build per-client diff for error message
+  const details = clients
+    .map(
+      (c, i) =>
+        `  Client ${i} (${c.docName}):\n` +
+        `    ytext (${c.ytext.toString().length}): ${c.ytext.toString().slice(0, 200)}\n` +
+        `    frag  (${serializeFragment(c.fragment).length}): ${serializeFragment(c.fragment).slice(0, 200)}`,
+    )
+    .join('\n');
+  throw new ClientConvergenceError(details);
+}
