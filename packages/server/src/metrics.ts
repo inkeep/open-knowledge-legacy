@@ -21,6 +21,12 @@ export interface ReconciliationMetrics {
   serverObserverFiresB: number;
   serverObserverErrorsA: number;
   serverObserverErrorsB: number;
+  /** Count of successful atomic disk writes from persistence.onStoreDocument.
+   *  Used as the Mutation F regression gate: if OBSERVER_SYNC_ORIGIN drops
+   *  skipStoreHooks, onStoreDocument fires on every observer write and
+   *  produces amplified disk I/O. Under skipStoreHooks: true, a single
+   *  agent-write produces exactly one persistence disk write. */
+  persistenceDiskWrites: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -40,6 +46,7 @@ const counters: ReconciliationMetrics = {
   serverObserverFiresB: 0,
   serverObserverErrorsA: 0,
   serverObserverErrorsB: 0,
+  persistenceDiskWrites: 0,
 };
 
 export function incrementReconcile(): void {
@@ -91,6 +98,10 @@ export function incrementServerObserverFire(direction: 'a' | 'b'): void {
   else counters.serverObserverFiresB++;
 }
 
+export function incrementPersistenceDiskWrite(): void {
+  counters.persistenceDiskWrites++;
+}
+
 export function incrementServerObserverError(direction: 'a' | 'b'): void {
   if (direction === 'a') counters.serverObserverErrorsA++;
   else counters.serverObserverErrorsB++;
@@ -121,4 +132,5 @@ export function resetMetrics(): void {
   counters.serverObserverFiresB = 0;
   counters.serverObserverErrorsA = 0;
   counters.serverObserverErrorsB = 0;
+  counters.persistenceDiskWrites = 0;
 }
