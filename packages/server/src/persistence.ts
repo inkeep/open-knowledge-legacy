@@ -15,6 +15,11 @@ import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-cor
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type { BacklinkIndex } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import {
+  formatContributorsFrom,
+  restoreContributors,
+  swapContributors,
+} from './contributor-tracker.ts';
 import { getDocExtension } from './doc-extensions.ts';
 import { contentHash, registerWrite } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
@@ -36,6 +41,8 @@ export interface PersistenceOptions {
   /** Content root relative to project dir (e.g., 'content/docs'). Used for shadow repo staging. */
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
+  /** Accessor for the current branch from the HEAD watcher. Used to scope WIP refs per branch. */
+  getCurrentBranch?: () => string | null;
 }
 
 export function safeContentPath(documentName: string, contentDir: string): string {
@@ -154,8 +161,9 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
   // so that standalone.ts and persistence stay in sync.
 
   const gitEnabled = options?.gitEnabled ?? true;
-  const commitDebounceMs = options?.commitDebounceMs ?? 30_000;
+  const commitDebounceMs = options?.commitDebounceMs ?? 15_000;
   const wipRef = options?.wipRef ?? 'refs/wip/main';
+  const getCurrentBranch = options?.getCurrentBranch;
 
   // Default writer identity for L2 commits
   const defaultWriter: WriterIdentity = {
@@ -175,19 +183,20 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
     const shadow = shadowRef?.current;
     if (shadow) {
       // L2 commits go to shadow repo
+      const snapshot = swapContributors(); // atomic drain — new writes go to fresh map
+      const contributors = formatContributorsFrom(snapshot);
+      const message = `WIP auto-save ${new Date().toISOString()}${contributors}`;
+      const branch = getCurrentBranch?.() ?? 'main';
       try {
-        const sha = await commitWip(
-          shadow,
-          defaultWriter,
-          contentRoot,
-          `WIP auto-save ${new Date().toISOString()}`,
-        );
+        const sha = await commitWip(shadow, defaultWriter, contentRoot, message, branch);
+        // snapshot discarded on success — new map already accumulating
         consecutiveGitFailures = 0;
         log.info(
           { sha: sha.slice(0, 8), writer: defaultWriter.id },
           `[persistence] Shadow WIP commit: ${sha.slice(0, 8)} on refs/wip/${defaultWriter.id}`,
         );
       } catch (e) {
+        restoreContributors(snapshot); // merge snapshot back — don't lose attribution (D16)
         consecutiveGitFailures++;
         incrementGitAutoSaveFailure();
         log.error(

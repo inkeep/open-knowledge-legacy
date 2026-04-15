@@ -1,3 +1,7 @@
+import type { ShadowContributor } from '../shadow-repo-layout.ts';
+
+export type { ShadowContributor };
+
 /** Entry type classification — derived from shadow repo commit message prefix. */
 export type EntryType = 'checkpoint' | 'wip' | 'upstream';
 
@@ -9,6 +13,8 @@ export interface TimelineEntry {
   authorEmail: string;
   type: EntryType;
   message: string;
+  /** Agent contributors parsed from the WIP commit message body. Empty for pre-attribution commits. */
+  contributors: ShadowContributor[];
 }
 
 /** Diff line change type for full-file diff views. */

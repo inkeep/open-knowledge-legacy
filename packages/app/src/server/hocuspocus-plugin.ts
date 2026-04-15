@@ -184,6 +184,7 @@ try {
     gitEnabled: !isTestIsolated,
     shadowRef,
     backlinkIndex,
+    getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
   });
 
   hocuspocus = new Hocuspocus({
