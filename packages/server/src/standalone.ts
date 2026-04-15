@@ -172,6 +172,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       shadowRef,
       contentRoot,
       backlinkIndex,
+      getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
     };
 
     persistence = createPersistenceExtension(persistenceOpts);

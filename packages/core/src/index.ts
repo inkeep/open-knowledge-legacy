@@ -58,11 +58,19 @@ export {
 // Types
 export type { ActivityEntry, AwarenessState, AwarenessUser } from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
-export type { DiffLine, DiffLineType, EntryType, TimelineEntry } from './types/timeline.ts';
+export type {
+  DiffLine,
+  DiffLineType,
+  EntryType,
+  ShadowContributor,
+  TimelineEntry,
+} from './types/timeline.ts';
 
 // Utils
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export {
+  AGENT_COLORS,
+  colorFromSeed,
   deriveIconColor,
   generateRandomColor,
   generateRandomName,
