@@ -14,6 +14,7 @@
 import { describe, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
+import { AGENT_WRITE_ORIGIN } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
@@ -149,7 +150,7 @@ const mutators: Array<{ name: string; fn: Mutator }> = [
       ctx.doc.transact(() => {
         ctx.ytext.delete(0, ctx.ytext.length);
         ctx.ytext.insert(0, stabilized);
-      }, 'agent-write');
+      }, AGENT_WRITE_ORIGIN);
     },
   },
   {
@@ -212,7 +213,7 @@ const mutators: Array<{ name: string; fn: Mutator }> = [
       ctx.doc.transact(() => {
         ctx.ytext.delete(0, ctx.ytext.length);
         ctx.ytext.insert(0, newContent);
-      }, 'agent-write');
+      }, AGENT_WRITE_ORIGIN);
     },
   },
 ];
@@ -230,7 +231,7 @@ async function runFuzz(iterations: number, seedOverride?: number): Promise<void>
   const fragment = doc.getXmlFragment('default');
   const ytext = doc.getText('source');
   const undoManager = new Y.UndoManager(ytext, {
-    trackedOrigins: new Set(['agent-write']),
+    trackedOrigins: new Set([AGENT_WRITE_ORIGIN]),
     captureTimeout: 0,
   });
   const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
