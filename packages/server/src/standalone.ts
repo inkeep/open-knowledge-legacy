@@ -16,7 +16,7 @@ import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';
-import { mdManager } from './md-manager.ts';
+import { mdManager, schema } from './md-manager.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -40,6 +40,7 @@ import {
 } from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
+import { createServerObserverExtension } from './server-observer-extension.ts';
 import {
   commitUpstreamImport,
   destroyShadowRepo,
@@ -181,6 +182,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       shadowRef,
       contentRoot,
       backlinkIndex,
+      getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -218,6 +220,8 @@ export function createServer(options: ServerOptions): ServerInstance {
       onAgentWrite: options.onAgentWrite,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
+
+    hocuspocus.configuration.extensions.push(createServerObserverExtension({ mdManager, schema }));
   } catch (err) {
     releaseServerLock(lockDir);
     throw err;

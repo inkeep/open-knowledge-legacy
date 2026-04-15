@@ -2,108 +2,6 @@
 
 Bun monorepo (`bun@1.3.11`) — CRDT collaboration server + editor, packaged as `@inkeep/open-knowledge` CLI.
 
-## Working posture
-
-### Staff-engineer mindset (read this first)
-
-Do not worry about how long things take or context windows — it's all taken care of for you automatically. Your job is to be thorough and detailed, and to help us fully realize the goal and purpose of the spec without cutting corners. You're acting as a staff engineer. Be extremely careful not to skip any steps, including phases 4 and beyond. Each phase must be completed fully and faithfully according to the `/ship` skill.
-
-This is a greenfield project, so in general: don't lean heavily on "defer to future"; don't worry about breaking changes or blast radius; **no deferred tech debt.** Instead, optimize for:
-
-1. **Best architecture and correctness** — evidence-based decisions that two staff-level engineers would agree are architecturally sound and correct.
-2. **A clean, maintainable codebase** that establishes or fixes the right precedents and patterns to follow.
-3. **The best product experience** without over-engineering beyond what users would reasonably expect.
-
-Do not optimize for expediency or narrow "scope." Prioritize architectural choices and correctness (aligned with customer and product outcomes) over superficial "pragmatism."
-
-### Research prior art heavily
-
-When making tricky engineering decisions or weighing product-design and functionality choices, it is often useful to research at a source-code level — or via web search — how other platforms and libraries in the ecosystem do things. We should heavily lean on learning from and researching how others have made product decisions or technical architecture decisions. Third-party sources like these are often helpful when using the `/research` skill, and in general serve as a reference for any tricky engineering work.
-
-Practical triggers to reach for prior art:
-
-- **Architectural decisions** (CRDT sync, editor state machines, observer bridges, persistence): Outline, AFFiNE, Logseq DB-mode, Yjs ecosystem, HedgeDoc.
-- **Markdown/MDX pipeline** (parsing, serialization, fidelity edge cases): remark ecosystem, Milkdown, Plate/slate-mdx, TinaCMS, Mintlify, Fumadocs.
-- **Editor UX** (block editing, slash menus, shortcuts, WYSIWYG ↔ source toggle): TipTap, BlockNote, Milkdown, BlockSuite, ProseMirror examples, Zettlr, SilverBullet.
-- **Agent-native patterns** (SKILL.md, MCP tool design, wiki-as-context, agent attribution): obsidian-skills, obsidian-mind, Graphify, ByteRover, Zep/Graphiti, DeepWiki.
-- **Retrieval / search** (hybrid search, in-browser indexes, graph queries): Chroma, Orama, Trieve, DeepWiki.
-
-The non-exhaustive catalog below gives starting points — don't treat it as complete. Star counts and notes are snapshots; verify current state before relying on them.
-
-### Content-editor universe (prior-art catalog)
-
-#### Tier 1 — Direct competitors (agent-native KB / docs editor)
-
-| Player | What it is | License | Stars | Why relevant |
-|---|---|---|---|---|
-| Obsidian | Desktop markdown KB over a local folder ("vault"); plugins + wikilinks + graph view | Proprietary (free since Feb 2026) | closed; ecosystem: obsidian-skills 21K, obsidian-git 10.2K, dataview 8.7K | Markdown + git + agent-skills. 1.5M users. The bar. Fails: no real-time collab |
-| AFFiNE | OSS Notion-alternative: block-based WYSIWYG + whiteboards + databases | MIT | 67K | Block-WYSIWYG + Yjs CRDT + MCP. Fails: not markdown-primary (CRDT in SQLite, lossy MD import). Closest architectural neighbor |
-| Notion | SaaS all-in-one workspace: docs, databases, wikis — proprietary block format | Proprietary SaaS | — | $600M ARR, $11B val. Real-time collab + AI bundled. Fails: proprietary blocks, not markdown, not local-first |
-| Confluence | Atlassian enterprise wiki; ADF editor, Jira integration, Rovo AI | Proprietary SaaS | — | 300K+ customers. Fails: ADF is agent-hostile |
-| Outline | Self-hostable team wiki; polished ProseMirror editor + real-time collab | BSL 1.1 (not OSI-OSS) | 37.9K | Yjs CRDT + MCP. 5+ years of prod Y.js. Fails: ProseMirror JSON in Postgres, not markdown |
-| Mintlify | Hosted docs: MDX in your git repo, Mintlify renders the site | Proprietary | — (ecosystem: holocron 535) | MDX in git + Claude Sonnet. 10K+ companies. Fails: one-way read, no co-creation |
-| Docmost | Self-hosted OSS Confluence/Notion alternative — collaborative wiki with AI + MCP | AGPL-3.0 | 19.6K | Closest Outline alternative. AI features behind enterprise license |
-
-#### Tier 2 — Folder-of-markdown editors
-
-| Player | What it is | License | Stars | Notes |
-|---|---|---|---|---|
-| Logseq (file-mode) | Privacy-first outliner PKM over plain markdown/org files | AGPL-3.0 | 36K+ | Reshapes content into bullets on edit |
-| Logseq (DB-mode) | Same product; SQLite-backed rewrite in beta | same | — | Breaks the markdown-portable promise |
-| SilverBullet | Self-hosted web-based markdown notebook; live-preview + query language | MIT | ~3–4K (est.) | Closest architectural match to Obsidian |
-| Foam | VS Code extension adding `[[wikilinks]]`, backlinks, graph over a plain folder | MIT | ~16K (est.) | Zero-sidecar; lowest-impact tool |
-| Dendron | VS Code extension for hierarchical notes; frontmatter-heavy schema | Apache-2.0 | ~6K (est.) | Frontmatter-aggressive |
-| Zettlr | Standalone desktop markdown editor (CM6) for academics — citations, source toggle | GPL-3.0 | ~10K (est.) | Text-canonical CM6 editor |
-| HedgeDoc | Self-hosted collaborative markdown pad — HackMD OSS fork | AGPL-3.0 | ~5K (est.) | Only production system with real-time collaborative source editing (OT on markdown text) |
-
-#### Tier 3 — Docs-as-code frameworks
-
-| Player | What it is | License | Stars | Notes |
-|---|---|---|---|---|
-| Fumadocs | Next.js-based docs site framework — MDX + TypeScript, library-shaped | MIT | 11.4K | Single-maintainer. Source-level reusable |
-| Docusaurus | Meta's React-based OSS docs framework — MDX + versioning + i18n | MIT | 60K+ (est.) | Dominant OSS docs framework |
-| Fern | API-docs generator from OpenAPI/AsyncAPI specs with SDK generation | Mixed | — | API docs focus. Less relevant to editor bet |
-
-#### Tier 4 — Agent-native KB prior art (same bet, different form)
-
-| Player | What it is | License | Stars | Notes |
-|---|---|---|---|---|
-| obsidian-mind | Pre-built Obsidian vault template wired with agent skills | MIT | 1.3K | Strongest "you might not need this product" pressure |
-| obsidian-skills (kepano) | Obsidian's official agent-skills spec + registry — `npx skills add` distributes SKILL.md files | MIT | 21K (0 → 21K since Jan 2026, ~221 stars/day) | Teach agents via SKILL.md. Industry-bending pace |
-| Graphify (safishamsi) | Claude Code skill + MCP that extracts codebases into Obsidian vaults | ? | 3.4K | tree-sitter + Claude subagent extraction |
-| ByteRover CLI | TS daemon + CLI + TUI + MCP maintaining a hierarchical "Context Tree" for agents | Elastic License 2.0 | 4.3K | Filesystem hierarchy as agent context |
-| Orca (stablyai) | Electron app for orchestrating multi-agent workflows over a markdown workspace | MIT | 495 | Tiptap + Monaco |
-| Zep / Graphiti | Agent memory service — temporal knowledge graph over conversations, MCP | Apache | 14K in 8 months | Temporal knowledge graph with MCP |
-| OpenViking (ByteDance) | Agent runtime modeling agent context as a virtual filesystem | OSS | 15K in 3 months | Agent context as virtual FS |
-| DeepWiki | Cognition product that auto-generates browsable wikis from any public GitHub repo | Proprietary | — | Repo wiki generator; MCP server |
-| Karpathy's LLM Wiki gist | GitHub gist sketching wiki-as-codebase, LLM-as-programmer, Obsidian-as-IDE | — | — | Idea file. No implementation |
-| GBrain (Garry Tan) | Public spec for an MCP-first personal "knowledge brain" | Spec only | — | No running product |
-
-#### Tier 5 — Retrieval / adjacent infra (not editors)
-
-| Player | What it is | License | Stars | Notes |
-|---|---|---|---|---|
-| Chroma | Embedded vector database — Python/TS, local or hosted | Apache-2.0 | 27K | MCP server. Not an editor |
-| Orama | In-browser / in-memory hybrid search (keyword + vector) | Apache-2.0 | ~9K (est.) | Used in OK's search decision research |
-| Trieve | Self-hostable retrieval API — hybrid search + reranking + analytics | OSS | ~2K (est.) | Retrieval infrastructure |
-| Anytype | Local-first PKM with typed objects and relations — P2P-synced, custom binary format over IPFS | OSS | ~6K (est.) | Not folder-of-markdown |
-
-#### Tier 6 — Editor libraries (used by us or competitors)
-
-| Library | What it is | License | Stars | Used by |
-|---|---|---|---|---|
-| TipTap | Headless rich-text editor framework on ProseMirror | MIT | ~30K (est.) | Us, BlockNote |
-| ProseMirror | Low-level toolkit for structured WYSIWYG (by marijnh) | MIT | ~7K (est.) | TipTap, Outline, Plate |
-| CodeMirror 6 | Modular code/text editor component (by marijnh) | MIT | ~7K (est.) | Us (source view), Obsidian, Zettlr, SilverBullet |
-| Yjs | CRDT framework for real-time collaboration | MIT | ~15K (est.) | Us, AFFiNE (via y-octo), Outline, HedgeDoc (alt) |
-| Hocuspocus | Server for Yjs — persistence, auth, webhooks, awareness | MIT | ~2K (est.) | Us |
-| BlockSuite | AFFiNE's OSS block editor framework — CRDT-native doc layer | MIT | — | AFFiNE |
-| BlockNote | Notion-style block editor built on TipTap/ProseMirror | MPL-2.0 | ~7K (est.) | Block editor on TipTap |
-| Milkdown | Plugin-driven WYSIWYG markdown editor on ProseMirror | MIT | ~9K (est.) | Plugin-driven WYSIWYG |
-| Plate / slate-mdx | Plate = plugin framework for Slate; slate-mdx = MDX support | MIT | ~14K (est.) | MDX-capable editor |
-| TinaCMS | Visual markdown editor that commits back to git — headless CMS over your repo | Apache-2.0 | ~12K (est.) | Git-backed visual editor for markdown |
-
-
 ## Monorepo Structure
 
 ```
@@ -182,6 +80,7 @@ These are patterns that ALL work in the repo should follow. Established during t
     (c) **CRDT races are tested by message ordering, not wall-clock timing.** WebSocket-layer `pauseSync`/`resumeSync` reproduces races structurally. Ad-hoc observer disabling or `wait(N)` timing races are the old pattern.
     (d) **Example-based coverage is a floor, not a ceiling.** A multi-client convergence fuzzer (`bridge-convergence.fuzz.test.ts`) samples the continuous race space that hand-written scenarios cannot enumerate. D18 coverage gate ensures new bridge surfaces extend the fuzzer's op set. Replay via `STRESS_FUZZ_SEED=<n>`.
     Applies to all future bridge work. When a new bridge write surface is added (e.g., V0-14 agent-undo), the D18 coverage gate fails CI until a corresponding fuzzer op kind is added. Cross-references precedent #11 (minimize CRDT mutation), #12 (XmlFragment-authoritative).
+14. **Cross-CRDT sync is single-writer, server-side.** Bidirectional observer pairs between Y.XmlFragment and Y.Text must run exclusively on the server. Client-side observer callbacks for cross-CRDT sync do not write the derived CRDT — the write paths are removed, not gated (a flag would be ceremony in a monorepo with atomic client+server deploy). Local-only observer firings (user CodeMirror edit → writes Y.Text directly; user TipTap edit → writes Y.XmlFragment directly) still run client-side because the client is the sole writer for that local edit's source CRDT; the server then mirrors to the derived CRDT. Why: client-side multi-writer bridges interleave at the CRDT protocol layer, producing duplication under concurrent edits (see `specs/2026-04-15-server-authoritative-observer-bridge/`). Applies to all dual-CRDT bridge work.
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -225,6 +124,7 @@ Hocuspocus CRDT server library — persistence, file-watcher, agent sessions, sh
 Hocuspocus Server
 ├── Persistence Extension (CRDT → markdown → disk → shadow git)
 ├── API Extension (onRequest hook — reads file index from watcher)
+├── Server Observer Extension (server-authoritative cross-CRDT sync — precedent #14)
 ├── Agent Sessions (DirectConnection + UndoManager per agent)
 ├── Content Filter (gitignore + config exclude/include filtering)
 ├── File Watcher (@parcel/watcher → chokidar fallback — owns in-memory file index)
@@ -247,7 +147,7 @@ The CC1 broadcaster is the shared push primitive for derived views (file list, b
 
 **Channel ownership.** `ch:'files'` fires on `create | delete | rename` DiskEvents only (`update` / `conflict` do not change the file list). V0-3 will emit `ch:'backlinks'` from the backlink-index update path inside `persistence.ts`. Each channel's semantics are owned by its emitter.
 
-**Cross-cutting skip surface.** `__system__` is not a content doc. Every subsystem that keys off `documentName` short-circuits via the single `isSystemDoc()` helper in `cc1-broadcast.ts`: persistence, file-watcher, content-filter, reconciliation, backlink-index, agent-sessions, external-change, frontmatter cache. Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time, and `POST /api/create-page` returns 400 on that name.
+**Cross-cutting skip surface.** `__system__` is not a content doc. Every subsystem that keys off `documentName` short-circuits via the single `isSystemDoc()` helper in `cc1-broadcast.ts`: persistence, file-watcher, content-filter, reconciliation, backlink-index, agent-sessions, external-change, frontmatter cache, server-observer-extension. Reserved-name policy: `ContentFilter` rejects `__system__.md` at admit time, and `POST /api/create-page` returns 400 on that name.
 
 **Status.** Server-side primitive landed (PR #106). Client-side consumer (ProviderPool pin, `main.tsx` mount, `FileSidebar` subscriber, Playwright L2 test) lands in a follow-up.
 
@@ -323,11 +223,13 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
 - `src/file-watcher.ts` — `startWatcher()` + writeTracker; emits `DiskEvent` unions (create / update / delete / rename / conflict)
-- `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park
+- `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B
 - `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
 - `src/agent-sessions.ts` — `AgentSessionManager` class
 - `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, and metrics endpoints
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
+- `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline + 50ms debounce via injected `Scheduler`
+- `src/server-observer-extension.ts` — `createServerObserverExtension()`; Hocuspocus extension wiring via `openDirectConnection` per-document at `afterLoadDocument`, cleanup at `afterUnloadDocument`
 
 ## Package: cli
 
@@ -380,8 +282,10 @@ Y.Doc
 ├── Y.Map('metadata')         ← frontmatter cache
 └── Y.Map('activity')         ← agent write attribution side-channel
 
-Observer A: XmlFragment → Text (incremental diff, origin: 'sync-from-tree')
-Observer B: Text → XmlFragment (parse + updateYFragment, origin: 'sync-from-text')
+Cross-CRDT sync (server-authoritative — precedent #14):
+  Server Observer A: XmlFragment → Y.Text  (origin: OBSERVER_SYNC_ORIGIN)
+  Server Observer B: Y.Text → XmlFragment  (origin: OBSERVER_SYNC_ORIGIN)
+Client observers maintain baselines only — cross-CRDT write paths deleted.
 ```
 
 ### Presence & awareness
@@ -390,6 +294,7 @@ Observer B: Text → XmlFragment (parse + updateYFragment, origin: 'sync-from-te
 - Agent activity flash via Y.Map('activity') → CSS @keyframes
 - Per-origin undo via server-side UndoManager
 - Agent writes use `dc.document.transact(fn, 'agent-write')` (not `conn.transact()`)
+- Source-mode toggle disabled when `provider.status !== 'connected'` (FR-7a) — prevents stale Y.Text display during disconnect
 
 ### Theming
 
@@ -409,7 +314,7 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
 - `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
-- `src/editor/observers.ts` — Bidirectional observer sync
+- `src/editor/observers.ts` — Client-side observer baseline tracking (cross-CRDT write paths deleted; writes are server-authoritative per precedent #14)
 - `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
 - `src/components/FileSidebar.tsx` — Sidebar shell; header `+` dropdown opens `NewItemDialog` for file/folder creation
 - `src/components/FileTree.tsx` — Tree rendering; folder-row "New file here" / "New folder here" context-menu entries, empty-state "Create your first page" CTA, subscribes to `documents-events` for immediate post-create refresh
@@ -419,15 +324,16 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 
 ## CRDT Bridge Architecture
 
-The editor uses a **dual-representation** CRDT model: Y.XmlFragment (WYSIWYG via TipTap) and Y.Text (source mode via CodeMirror), connected by bidirectional observers.
+The editor uses a **dual-representation** CRDT model: Y.XmlFragment (WYSIWYG via TipTap) and Y.Text (source mode via CodeMirror), connected by server-authoritative bidirectional observers (precedent #14).
 
 ```
 Y.Doc
 ├── Y.XmlFragment('default')  ← TipTap binds here (tree structure)
 ├── Y.Text('source')          ← CodeMirror binds here (flat string)
 │
-│  Observer A: XmlFragment → Y.Text  (origin: 'sync-from-tree')
-│  Observer B: Y.Text → XmlFragment  (origin: 'sync-from-text')
+│  Server Observer A: XmlFragment → Y.Text  (origin: OBSERVER_SYNC_ORIGIN)
+│  Server Observer B: Y.Text → XmlFragment  (origin: OBSERVER_SYNC_ORIGIN)
+│  Client observers: baseline tracking only (cross-CRDT write paths deleted)
 │
 ├── Y.Map('metadata')         ← frontmatter cache
 └── Y.Map('activity')         ← agent write attribution
@@ -436,42 +342,53 @@ Y.Doc
 ### Three invariants
 
 1. **Bridge invariant:** `stripTrailingWhitespace(ytext) === stripTrailingWhitespace(serialize(fragment))` — must hold after every propagation path settles.
-2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (See the `lastSyncedXmlMd` declaration in `setupObservers()` in `observers.ts`.)
+2. **Baseline invariant:** Observer A's `lastSyncedXmlMd` must match the current XmlFragment state. Staleness causes incorrect diffs. (Server-side: `setupServerObservers()` in `server-observers.ts`; client-side: `setupObservers()` in `observers.ts`.)
 3. **Item-preservation invariant:** Sync operations must not replace CRDT Items whose content at the target position already matches what would be written. Ensures `Y.UndoManager({ trackedOrigins })` consumers see correct origin attribution through bridge cycles. (See Architectural precedent #9.)
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
 | Write Surface             | → Y.Text                         | → XmlFragment                | → Disk               |
 | ------------------------- | -------------------------------- | ---------------------------- | -------------------- |
-| W1: WYSIWYG (XmlFragment) | Observer A                       | (direct)                     | Persistence debounce |
-| W2: Source (Y.Text)       | (direct)                         | Observer B                   | Persistence debounce |
+| W1: WYSIWYG (XmlFragment) | Server Observer A                | (direct)                     | Persistence debounce |
+| W2: Source (Y.Text)       | (direct)                         | Server Observer B             | Persistence debounce |
 | W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket) | applyAgentMarkdownWrite on server | Persistence debounce |
 | W4: Disk (file watcher)   | applyExternalChange              | applyExternalChange          | (direct)             |
 | Undo/Redo (V0-14 pending) | applyAgentUndo (V0-14 template — see §7e of bridge-convergence SPEC) | applyAgentUndo (V0-14) | Persistence debounce |
 
 ### transaction.local semantics
 
-- **Local transactions** (`transaction.local === true`): Mutations on the same Y.Doc instance. Observers fire for everything.
-- **Remote transactions** (`transaction.local === false`): Arrive via HocuspocusProvider WebSocket sync. Observers SKIP these (origin guards prevent double-sync).
+- **Local transactions** (`transaction.local === true`): Mutations on the same Y.Doc instance.
+- **Remote transactions** (`transaction.local === false`): Arrive via HocuspocusProvider WebSocket sync.
+- **Client observers:** fire on local transactions; skip remote (origin guards prevent double-sync). Client observers no longer write the derived CRDT (precedent #14).
+- **Server observers:** fire on BOTH local (`applyAgentMarkdownWrite`, `applyExternalChange`) AND remote (client edits arriving via WebSocket). The server is the single coordination point for cross-CRDT sync.
 - **Critical:** Layer A unit tests use `transaction.local=true` — NOT the same code path as production.
 
 ### Observer A (XmlFragment → Y.Text)
 
-- File: `packages/app/src/editor/observers.ts`
-- Origin: `ORIGIN_TREE_TO_TEXT` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'sync-from-tree'`)
+**Server-side (write path)** — `packages/server/src/server-observers.ts`:
+- Origin: `OBSERVER_SYNC_ORIGIN` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'observer-sync'`, `skipStoreHooks: true`)
 - **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
-- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge (base=lastSyncedXmlMd, user=newXmlMd, agent=currentText), then `applyByPrefixSuffix` (imported from `@inkeep/open-knowledge-core` — shared with server-side `applyAgentMarkdownWrite` per FR-2 of the bridge-convergence SPEC) to minimize CRDT mutations
-- Debounced (DEBOUNCE\_MS=50ms) to coalesce rapid keystrokes. Debounce timer uses the injected `ObserverDeps.scheduler` (FR-15) — production default is `globalThis.setTimeout` passthrough; tests use `createManualScheduler()` from `test-harness.ts` for deterministic flush
-- **Bug-B fix (US-009):** conditional baseline refresh on remote transactions — if a local debounce is pending (`debounceA !== null`), `lastSyncedXmlMd` is NOT refreshed to the post-remote state. This preserves the old baseline so the pending debounce fires with the correct delta (`old baseline → current XmlFragment including both local + remote edits`) instead of early-exiting on `lastSyncedXmlMd === md`. Fixes the "Observer A absorbs local changes on remote baseline refresh" bug reproduced in `bridge-convergence-regression.test.ts`.
-- Updates `lastSyncedXmlMd` after every successful sync
+- **Path B** (Y.Text diverged from baseline): uses DMP `patch_make`/`patch_apply` three-way merge, then `applyByPrefixSuffix` to minimize CRDT mutations
+- Debounced (50ms) via injected `Scheduler`; also handles frontmatter sync (reads `Y.Map('metadata').get('frontmatter')` and prepends on serialize)
+- Fires on both `transaction.local=true` (server-side writes) and `transaction.local=false` (client edits arriving via WebSocket)
+
+**Client-side (baseline tracking only)** — `packages/app/src/editor/observers.ts`:
+- Origin: `ORIGIN_TREE_TO_TEXT` (retained for origin guards; no cross-CRDT write performed)
+- Maintains `lastSyncedXmlMd` for baseline-refresh reasoning and Bug-B conditional-refresh logic
+- **Bug-B fix (US-009):** conditional baseline refresh on remote transactions — if a local debounce is pending, `lastSyncedXmlMd` is NOT refreshed to the post-remote state
 
 ### Observer B (Y.Text → XmlFragment)
 
-- File: `packages/app/src/editor/observers.ts`
-- Origin: `ORIGIN_TEXT_TO_TREE` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'sync-from-text'`)
+**Server-side (write path)** — `packages/server/src/server-observers.ts`:
+- Origin: `OBSERVER_SYNC_ORIGIN`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
+- Handles frontmatter sync: reads `stripFrontmatter(md)` and writes `Y.Map('metadata').set('frontmatter', ...)`
+- Debounced (50ms) via injected `Scheduler`
+
+**Client-side (baseline tracking only)** — `packages/app/src/editor/observers.ts`:
+- Origin: `ORIGIN_TEXT_TO_TREE` (retained for origin guards; no cross-CRDT write performed)
+- Maintains `lastSyncedYText` baseline
 - Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
-- Early-exits if XmlFragment already serializes to the same markdown as Y.Text
 
 ### applyAgentMarkdownWrite (XmlFragment-authoritative — precedent #10)
 
@@ -484,14 +401,27 @@ Y.Doc
 
 All transaction origins are `LocalTransactionOrigin` **object references** (precedent #1) exported from their owning module. Identity-based matching in `Set.has` / `Y.UndoManager.trackedOrigins` / `attachBridgeInvariantWatcher` enforcing sets requires the exact object ref — a string literal or a reconstructed object with the same shape will NOT match.
 
-| Transaction Origin                                      | Observer A (tree→text)                            | Observer B (text→tree) |
-| ------------------------------------------------------- | ------------------------------------------------- | ---------------------- |
-| `ORIGIN_TREE_TO_TEXT` (observers.ts)                    | — (self)                                          | SKIP                   |
-| `ORIGIN_TEXT_TO_TREE` (observers.ts)                    | SKIP                                              | — (self)               |
-| `AGENT_WRITE_ORIGIN` (agent-sessions.ts)                | Skip local; conditional baseline refresh on remote (Bug-B fix) | Sync normally          |
-| `FILE_WATCHER_ORIGIN` (external-change.ts)              | Sync normally                                     | Sync normally          |
-| `ROLLBACK_ORIGIN` (api-extension.ts)                    | Sync normally                                     | Sync normally          |
-| `undefined` (WebSocket remote / local WYSIWYG typing)   | Sync normally                                     | Sync normally          |
+**Server observers** (write cross-CRDT sync — `server-observers.ts`):
+
+| Transaction Origin                                      | Server Observer A (tree→text)                          | Server Observer B (text→tree)                          |
+| ------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------ |
+| `OBSERVER_SYNC_ORIGIN` (server self-writes)             | — (self)                                               | SKIP                                                   |
+| `AGENT_WRITE_ORIGIN` (applyAgentMarkdownWrite)          | Sync (but early-exit: already-in-sync)                 | Sync (but early-exit: already-in-sync)                 |
+| `FILE_WATCHER_ORIGIN` (applyExternalChange)             | Sync (early-exit via setReconciledBase + already-in-sync) | Sync (early-exit)                                   |
+| `ROLLBACK_ORIGIN` (future)                              | Sync                                                   | Sync                                                   |
+| Remote-arrived (no origin; `local=false`)               | Sync                                                   | Sync                                                   |
+
+**Client observers** (baseline tracking only — `observers.ts`; cross-CRDT write paths deleted per precedent #14):
+
+| Transaction Origin                                      | Client Observer A (baseline only)                 | Client Observer B (baseline only) |
+| ------------------------------------------------------- | ------------------------------------------------- | --------------------------------- |
+| `ORIGIN_TREE_TO_TEXT` (observers.ts)                    | — (self)                                          | SKIP                              |
+| `ORIGIN_TEXT_TO_TREE` (observers.ts)                    | SKIP                                              | — (self)                          |
+| `AGENT_WRITE_ORIGIN` (agent-sessions.ts)                | Skip local; conditional baseline refresh on remote (Bug-B fix) | Baseline refresh         |
+| `FILE_WATCHER_ORIGIN` (external-change.ts)              | Baseline refresh                                  | Baseline refresh                  |
+| `ROLLBACK_ORIGIN` (api-extension.ts)                    | Baseline refresh                                  | Baseline refresh                  |
+| `OBSERVER_SYNC_ORIGIN` (server-observers.ts)            | Baseline refresh                                  | Baseline refresh                  |
+| `undefined` (WebSocket remote / local WYSIWYG typing)   | Baseline refresh                                  | Baseline refresh                  |
 
 ## Testing
 
@@ -505,11 +435,12 @@ All transaction origins are `LocalTransactionOrigin` **object references** (prec
 
 | Layer       | Type                                                              | Location                                                                                                    | Command                                                    |
 | ----------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| A           | Unit + stress                                                     | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` | `bun run test` (unit), `bun run test:stress:*` (per-shard) |
+| A           | Unit (client baseline)                                            | `packages/app/src/editor/observers.test.ts` (client cross-CRDT write paths deleted per precedent #14; server owns them. Old Layer A stress shards `observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` and Layer D `observers.fuzz.test.ts` were deleted because they tested removed code paths.) | `bun run test` (unit) |
 | B           | HTTP + server-side CRDT                                           | `packages/app/tests/stress/stress-api.ts`                                                                   | `bun run tests/stress/stress-api.ts` (needs dev server)    |
 | C           | Playwright E2E                                                    | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`                       | `bunx playwright test`                                     |
-| D           | Fuzz                                                              | `packages/app/tests/stress/observers.fuzz.test.ts`                                                          | `STRESS_FUZZ_SEED=<seed> bun run test`                     |
-| Integration | Tier 1 bridge matrix                                              | `packages/app/tests/integration/bridge-matrix.test.ts`                                                      | `bun run test`                                             |
+| D           | Multi-client convergence fuzz                                     | `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`                                                 | `bun run test:fuzz:bridge` or `STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts` |
+| Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`              | `bun run test`                                             |
+| Stress      | 5-client × 30s mixed edits with convergence timing                | `packages/app/tests/stress/server-authoritative-stress.test.ts`                                             | `bun run test:stress:server-authoritative`                 |
 | Fidelity    | PBT invariants (I1-I7) + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
 
 ### Tier 1 integration harness
@@ -525,7 +456,7 @@ Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/int
 - Server uses `debounce: 200` (not production 2s) for fast disk tests
 
 **Bridge invariant watcher (FR-11 / US-005):**
-- `attachBridgeInvariantWatcher(doc, opts?)` → attached by default in `createTestClient`. Fires on every `afterTransaction` whose origin is a `LocalTransactionOrigin` object-ref in the enforcing set: `ORIGIN_TREE_TO_TEXT`, `ORIGIN_TEXT_TO_TREE`, `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN` (every entry is the actual object ref, not a string). On violation throws `BridgeInvariantViolationError` with origin + unified diff. Settled-state assertion is `assertAllConverged`'s job (FR-14), not the watcher's — no quiescence timer, no magic numbers.
+- `attachBridgeInvariantWatcher(doc, opts?)` → attached by default in `createTestClient`. Fires on every `afterTransaction` whose origin is a `LocalTransactionOrigin` object-ref in the enforcing set: `ORIGIN_TREE_TO_TEXT`, `ORIGIN_TEXT_TO_TREE`, `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `OBSERVER_SYNC_ORIGIN` (every entry is the actual object ref, not a string). On violation throws `BridgeInvariantViolationError` with origin + unified diff. Settled-state assertion is `assertAllConverged`'s job (FR-14), not the watcher's — no quiescence timer, no magic numbers.
 
 **Origin-preservation probe (FR-12 / US-006):**
 - `createItemOriginProbe(ytext, { trackedOrigins: Array<LocalTransactionOrigin>, captureTimeout? })` → wraps `Y.UndoManager`. API: `recordCapture(label?)`, `assertCaptureIntact(label?)`, `capturedContent()`, `undoStackLength()`, `cleanup()`. Use to verify Items survive bridge cycles without origin laundering. `trackedOrigins` must contain object refs — strings fail identity match.
@@ -543,6 +474,12 @@ Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/int
 - `bridge-convergence-regression.test.ts` — primary 4-test regression harness for Bug-A + Bug-B (renamed from `observer-a-baseline-absorption-repro.test.ts`).
 - `bug-a-mechanism-isolation.test.ts`, `bug-c-real-reachability.test.ts` — empirical reachability reproducers.
 - `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — skip-guarded (FR-10); V0-14 unskips when wiring per-agent UM + agent-undo handler.
+
+**Mutation validation gates (server-authoritative bridge, US-012):**
+- **Mutation E:** revert server Observer B attachment → C2 + concurrent-source-mode fuzzer seeds fail with XmlFragment duplicates.
+- **Mutation F:** revert server Observer A's `skipStoreHooks: true` → persistence-feedback-loop detected as disk-write thrashing.
+- **Mutation G:** revert FR-7 deletion of client Observer A/B write paths → C1, C2, C3 fail with multi-writer RGA interleave. Validates the client write-path deletion is load-bearing.
+- Documented in `specs/2026-04-15-server-authoritative-observer-bridge/meta/mutation-validation.md`.
 
 ### Writing a new integration test
 
@@ -583,7 +520,7 @@ Client lifecycle is inside the test body via `try/finally` — NOT via `beforeEa
 
 ### Observer bridge coverage
 
-Changes to `observers.ts` (Observer A / Observer B / `applyUserDelta`) require **multi-client test coverage**, not just single-client tests. A remote peer's WYSIWYG edit can arrive as a Y.Text-only transaction during a local user's mid-sync on XmlFragment — this creates divergence states that single-client tests cannot reproduce. PR #43's multi-client test matrix proved this is a real production trigger. See the `applyUserDelta` JSDoc in `observers.ts` for the full explanation.
+Changes to `observers.ts` or `server-observers.ts` require **multi-client test coverage**, not just single-client tests. A remote peer's WYSIWYG edit can arrive as a Y.Text-only transaction during a local user's mid-sync on XmlFragment — this creates divergence states that single-client tests cannot reproduce. PR #43's multi-client test matrix proved this is a real production trigger. The C1-C9 integration tests (`packages/app/tests/integration/c1-*.test.ts` through `c9-*.test.ts`) exercise the full server-authoritative bridge under multi-client concurrent writes.
 
 ### Playwright policy
 
@@ -592,7 +529,7 @@ Playwright E2E tests run on every PR. The Playwright suite covers DOM-binding an
 ### Fuzz replay
 
 ```bash
-STRESS_FUZZ_SEED=42 bun test packages/app/tests/stress/observers.fuzz.test.ts
+STRESS_FUZZ_SEED=42 bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts
 ```
 
 Fuzz tests write snapshots to `/tmp/fuzz-*` on failure for deterministic reproduction.
@@ -644,12 +581,22 @@ No environment variables must be set by hand for any of these scenarios.
 - **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
 - **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
-- **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
+- **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. `server-observer-extension.ts` short-circuits on `isSystemDoc()` in `afterLoadDocument`. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
+- **STOP:** Server-side observer cross-CRDT writes MUST use `OBSERVER_SYNC_ORIGIN`. Do not re-add client-side cross-CRDT write paths in `observers.ts` (deleted code under precedent #14). See Mutation G in `specs/2026-04-15-server-authoritative-observer-bridge/meta/mutation-validation.md`.
+- **STOP (V0-14 agent-undo, future spec):** V0-14's `applyAgentUndo` handler is a NEW server-side write surface and MUST satisfy all of the following simultaneously:
+  1. **Use the XmlFragment-authoritative composition pattern** from `applyAgentMarkdownWrite` (precedent #10, #12) — never rebuild XmlFragment from Y.Text (Bug-A/Bug-D anti-pattern).
+  2. **Fire under a new `LocalTransactionOrigin` object-ref** (e.g. `AGENT_UNDO_ORIGIN`) distinct from `OBSERVER_SYNC_ORIGIN` and `AGENT_WRITE_ORIGIN` (precedent #1). Server Observer A/B already early-exit on the `AGENT_WRITE_ORIGIN` paired-write path; V0-14 inherits that behavior only if the new origin is similarly added to the origin-guard truth table in `server-observers.ts` with the "already-in-sync early-exit" classification.
+  3. **Extend the FR-17 fuzzer op set** (`packages/app/tests/stress/bridge-convergence.fuzz.test.ts`) with an `agent-undo` op kind. The D18 coverage gate (precedent #13(d)) enforces that every bridge write surface has a corresponding fuzzer op — adding `applyAgentUndo` without extending the fuzzer fails CI.
+  4. **Do NOT re-add client-side cross-CRDT write paths** — even if convenient for client-side undo UX. Mutation G enforces that the deletion is load-bearing; any reintroduction re-surfaces the 2-4% multi-client RGA-interleave race.
+  5. **Depend on the event-loop serialization guarantee** from the server-authoritative spec §7a + A7 — `applyAgentUndo` runs as a synchronous `doc.transact()` block with the subsequent observer fires as `setTimeout` callbacks. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
+  6. **Unskip** `packages/app/tests/integration/bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` (skip-guarded per FR-10).
+
+  Reference template: `packages/server/src/agent-sessions.ts:applyAgentMarkdownWrite` (lines 68-113). Evidence: `specs/2026-04-14-bridge-convergence-under-concurrent-writes/evidence/bug-d-mechanism.md`.
 
 ### WARN rules
 
 - **WARN:** Markdown round-trip is not always stable. E.g., `## H\nP` normalizes to `## H\n\nP` (paragraph after heading gets a blank line). Test with `serialize(parse(md)) !== md` to find constructs that normalize.
-- **WARN:** Observer A's `lastSyncedXmlMd` must be refreshed on ALL XmlFragment changes, not just user edits. A stale baseline produces incorrect diffs that destroy content.
+- **WARN:** Server Observer A's `lastSyncedXmlMd` (in `server-observers.ts`) must be refreshed on ALL XmlFragment changes, not just user edits. A stale baseline produces incorrect diffs that destroy content.
 - **WARN:** Layer A tests use `transaction.local=true`. This does NOT exercise the same code path as production where WebSocket updates arrive with `transaction.local=false`.
 - **WARN:** `hocuspocus.configure({ extensions: [...] })` REPLACES the extensions array (object spread). Use `hocuspocus.configuration.extensions.push()` to add extensions without losing existing ones.
 
@@ -691,7 +638,7 @@ console.assert(textNorm === fragNorm, 'Bridge invariant violated');
 ### Fuzz replay for deterministic reproduction
 
 ```bash
-STRESS_FUZZ_SEED=<seed-from-failure> bun test packages/app/tests/stress/observers.fuzz.test.ts
+STRESS_FUZZ_SEED=<seed-from-failure> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts
 ```
 
 Check `/tmp/fuzz-*` for the snapshot of the failing state.
@@ -802,10 +749,7 @@ bun run release          # Publish to npm
 - In React components, prefer Tailwind CSS utility classes via `className` instead of inline `style` props. Only use inline styles when there is no practical Tailwind expression for the requirement
 - Prefer existing shadcn components before building custom UI primitives. If the needed shadcn component is not installed yet, suggest installing it rather than reimplementing it from scratch
 
-<!-- open-knowledge:begin -->
-## Open Knowledge
 
-This repo uses Open Knowledge — agent-collaborative wiki tooling exposed via MCP. The scope of tracked content is `.open-knowledge/config.yml` (default: every `**/*.md` under the repo root).
 
 **Reading (wiki markdown) — ALWAYS use `exec`.** For ANY read, search, or listing of wiki markdown files, you MUST use the `exec` MCP tool instead of native `Read` / `Grep` / `Glob`. This is not optional. `exec` runs `cat` / `ls` / `grep` / `find` / `head` / `tail` / `wc` / `sort` / `uniq` / `cut` with pipes, and every returned path is enriched with frontmatter (title, description, tags), backlink count, and recent shadow-repo activity with agent-vs-human attribution. Native tools miss all of this context. Examples: `exec("cat docs/auth.md")`, `exec("ls articles/")`, `exec("grep -rn oauth . | head -5")`. Also use `read_document` and `search` MCP tools — they provide the same enrichment. Reserve native `Read` / `Grep` / `Glob` for non-wiki files only (`.ts`, `.py`, configs, etc.).
 

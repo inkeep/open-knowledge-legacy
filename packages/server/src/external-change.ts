@@ -11,6 +11,7 @@ import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
+import { setReconciledBase } from './persistence.ts';
 
 /**
  * Transaction origin for file-watcher disk→CRDT bridge operations.
@@ -70,6 +71,10 @@ export function applyExternalChange(
       ytext.insert(0, content);
     }
   }, FILE_WATCHER_ORIGIN);
+
+  // Set the reconciled base so persistence does not re-serialize and re-write
+  // the same content on next flush (EC3 blocker resolution — FR-6).
+  setReconciledBase(docName, content);
 }
 
 /**

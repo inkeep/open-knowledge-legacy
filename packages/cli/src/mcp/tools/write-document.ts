@@ -7,6 +7,7 @@
 import { z } from 'zod';
 import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { Config } from '../../config/schema.ts';
+import type { AgentIdentity } from '../agent-identity.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
@@ -36,6 +37,7 @@ export interface WriteDocumentDeps {
   serverUrl: ServerUrlOrResolver;
   config: Config;
   resolveCwd: (explicit?: string) => Promise<string>;
+  identityRef?: { current: AgentIdentity };
 }
 
 export function register(server: ServerInstance, deps: WriteDocumentDeps): void {
@@ -52,10 +54,19 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
+      const identity = deps.identityRef?.current;
       const result = await httpPost(url, '/api/agent-write-md', {
         docName: normalized.docName,
         markdown: args.markdown,
         position: args.position,
+        ...(identity
+          ? {
+              agentId: identity.connectionId,
+              agentName: identity.displayName,
+              clientName: identity.clientInfo?.name,
+              colorSeed: identity.colorSeed,
+            }
+          : {}),
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 

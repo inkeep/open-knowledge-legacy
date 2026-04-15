@@ -14,7 +14,14 @@ import type {
   Hocuspocus,
   LocalTransactionOrigin,
 } from '@hocuspocus/server';
-import { applyByPrefixSuffix, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  applyByPrefixSuffix,
+  colorFromSeed,
+  prependFrontmatter,
+} from '@inkeep/open-knowledge-core';
+
+export { colorFromSeed } from '@inkeep/open-knowledge-core';
+
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getLogger } from './logger.ts';
@@ -47,8 +54,20 @@ export const AGENT_WRITE_ORIGIN = {
   context: { origin: 'agent-write' },
 } satisfies LocalTransactionOrigin;
 
-/** Default agent identity. Key used in Y.Map('activity'). */
-export const DEFAULT_AGENT_ID = 'claude-1';
+/** Map known MCP clientInfo.name values to icon identifiers. */
+export function iconFromClientName(name?: string): string {
+  const ICON_MAP: Record<string, string> = {
+    'claude-code': 'claude',
+    'claude-ai': 'claude',
+    cursor: 'cursor',
+    'cursor-vscode': 'cursor',
+    cascade: 'windsurf',
+    codex: 'openai',
+    copilot: 'github',
+    cline: 'cline',
+  };
+  return name ? (ICON_MAP[name] ?? 'bot') : 'bot';
+}
 
 /**
  * XmlFragment-authoritative agent write composition (FR-1, precedent #10).
@@ -117,6 +136,12 @@ export function applyAgentMarkdownWrite(
   }
 }
 
+export interface AgentSessionIdentity {
+  displayName: string;
+  colorSeed: string;
+  clientName?: string;
+}
+
 export class AgentSessionManager {
   private sessions = new Map<string, AgentDirectConnection>();
   private hocuspocus: Hocuspocus;
@@ -125,59 +150,119 @@ export class AgentSessionManager {
     this.hocuspocus = hocuspocus;
   }
 
+  private sessionKey(docName: string, agentId: string): string {
+    return `${docName}\0${agentId}`;
+  }
+
   /**
    * Get or create a persistent agent DirectConnection for a document.
-   * Sets agent awareness (name, color, type) on first open.
+   * Sessions are keyed by (docName, agentId) for multi-agent isolation.
+   * Sets per-agent awareness (name, color, icon) on first open.
    */
-  async getSession(docName: string): Promise<AgentDirectConnection> {
+  async getSession(
+    docName: string,
+    agentId = 'claude-1',
+    identity?: AgentSessionIdentity,
+  ): Promise<AgentDirectConnection> {
     if (isSystemDoc(docName)) {
       throw new Error(`Cannot create agent session for reserved doc: ${docName}`);
     }
-    let dc = this.sessions.get(docName);
+    const key = this.sessionKey(docName, agentId);
+    let dc = this.sessions.get(key);
     if (!dc) {
       dc = (await this.hocuspocus.openDirectConnection(docName)) as AgentDirectConnection;
+      const color = colorFromSeed(identity?.colorSeed ?? agentId);
+      const icon = iconFromClientName(identity?.clientName);
       dc.document.awareness.setLocalState({
         user: {
-          name: 'Claude',
-          color: '#D97757',
+          name: identity?.displayName ?? 'Claude',
+          color,
           type: 'agent',
-          icon: 'claude',
-          tabId: `agent-${crypto.randomUUID()}`,
+          icon,
+          tabId: `agent-${agentId}`,
         },
         mode: 'idle',
       });
-      this.sessions.set(docName, dc);
-      log.info({ docName }, `[agent-session] Created persistent session for: ${docName}`);
+      this.sessions.set(key, dc);
+      log.info(
+        { docName, agentId },
+        `[agent-session] Created session for: ${docName} / ${agentId}`,
+      );
     }
     return dc;
   }
 
   /** Check if a session exists without creating one. */
-  hasSession(docName: string): boolean {
-    return this.sessions.has(docName);
+  hasSession(docName: string, agentId = 'claude-1'): boolean {
+    return this.sessions.has(this.sessionKey(docName, agentId));
   }
 
   /**
-   * Disconnect and remove an agent session. Clears awareness before disconnect.
+   * Disconnect and remove a specific agent session.
+   * Clears awareness before disconnect.
    */
-  async closeSession(docName: string): Promise<void> {
-    const dc = this.sessions.get(docName);
+  async closeSession(docName: string, agentId = 'claude-1'): Promise<void> {
+    const key = this.sessionKey(docName, agentId);
+    const dc = this.sessions.get(key);
     if (dc) {
       dc.document.awareness.setLocalState(null);
       await dc.disconnect();
-      this.sessions.delete(docName);
-      log.info({ docName }, `[agent-session] Closed session for: ${docName}`);
+      this.sessions.delete(key);
+      log.info({ docName, agentId }, `[agent-session] Closed session for: ${docName} / ${agentId}`);
     }
   }
 
-  /** Close agent sessions. When docName is provided, only that session is closed. */
+  /** Close all sessions for a given agent (across all docs). */
+  async closeAllForAgent(agentId: string): Promise<void> {
+    const suffix = `\0${agentId}`;
+    for (const [key, dc] of this.sessions) {
+      if (key.endsWith(suffix)) {
+        try {
+          dc.document.awareness.setLocalState(null);
+          await dc.disconnect();
+          this.sessions.delete(key);
+        } catch (err) {
+          log.error(
+            { err, agentId },
+            `[agent-session] Failed to close session for agent ${agentId}`,
+          );
+        }
+      }
+    }
+  }
+
+  /** Close all sessions for a given document (all agents). */
+  async closeAllForDoc(docName: string): Promise<void> {
+    const prefix = `${docName}\0`;
+    for (const [key, dc] of this.sessions) {
+      if (key.startsWith(prefix)) {
+        try {
+          dc.document.awareness.setLocalState(null);
+          await dc.disconnect();
+          this.sessions.delete(key);
+        } catch (err) {
+          log.error({ err, docName }, `[agent-session] Failed to close session for doc ${docName}`);
+        }
+      }
+    }
+  }
+
+  /** Close all sessions (optionally scoped to a single docName for backward compat). */
   async closeAll(docName?: string): Promise<void> {
-    const entries = docName ? [docName] : [...this.sessions.keys()];
-    for (const name of entries) {
+    if (docName) {
+      await this.closeAllForDoc(docName);
+      return;
+    }
+    const keys = [...this.sessions.keys()];
+    for (const key of keys) {
+      const dc = this.sessions.get(key);
+      if (!dc) continue;
       try {
-        await this.closeSession(name);
+        dc.document.awareness.setLocalState(null);
+        await dc.disconnect();
+        this.sessions.delete(key);
       } catch (err) {
-        log.error({ err, docName: name }, `[agent-session] Failed to close session for ${name}`);
+        log.error({ err, key }, `[agent-session] Failed to close session: ${key}`);
       }
     }
   }

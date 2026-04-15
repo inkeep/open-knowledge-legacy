@@ -1,6 +1,7 @@
 import { deriveIconColor } from '@inkeep/open-knowledge-core';
 import {
   Bird,
+  Bot,
   Cat,
   Dog,
   Fish,
@@ -12,8 +13,9 @@ import {
   Squirrel,
   Turtle,
 } from 'lucide-react';
-import type { FC } from 'react';
+import type { FC, SVGProps } from 'react';
 import { ClaudeIcon } from '@/components/icons/claude';
+import { CursorIcon } from '@/components/icons/cursor';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { type Participant, usePresence } from './use-presence';
@@ -32,6 +34,31 @@ const ANIMAL_ICON_MAP: Record<string, FC<LucideProps>> = {
   Turtle,
 };
 
+/** Map the `icon` field from awareness to a component. Falls back to Bot for unknown agents. */
+function AgentIcon({ icon, ...props }: { icon?: string } & SVGProps<SVGSVGElement>) {
+  if (icon === 'claude') return <ClaudeIcon {...props} />;
+  if (icon === 'cursor') return <CursorIcon {...props} />;
+  // Unknown or missing icon — generic bot
+  return <Bot {...(props as LucideProps)} />;
+}
+
+const AGENT_DISPLAY_NAME: Record<string, string> = {
+  claude: 'Claude',
+  cursor: 'Cursor',
+  windsurf: 'Windsurf',
+  openai: 'Codex',
+  github: 'Copilot',
+  cline: 'Cline',
+  bot: 'Agent',
+};
+
+/** Friendly display name for agent tooltip. Prefers label (user-provided), then icon-derived name, then raw name. */
+function agentTooltipName(user: Participant['user']): string {
+  // If the user set AGENT_LABEL, the name will differ from the icon-derived name — show the label
+  const iconName = user.icon ? AGENT_DISPLAY_NAME[user.icon] : undefined;
+  return iconName ?? user.name;
+}
+
 function PresenceAvatar({ user, mode }: { user: Participant['user']; mode: Participant['mode'] }) {
   if (user.type === 'agent') {
     return (
@@ -42,12 +69,13 @@ function PresenceAvatar({ user, mode }: { user: Participant['user']; mode: Parti
             data-presence-mode={mode}
             role="img"
             aria-label={user.name}
-            className="inline-flex size-7 shrink-0 cursor-default items-center justify-center rounded-full bg-agent ring-2 ring-background"
+            className="inline-flex size-7 shrink-0 cursor-default items-center justify-center rounded-full ring-2 ring-background"
+            style={{ backgroundColor: user.color }}
           >
-            <ClaudeIcon width={16} height={16} className="text-white" />
+            <AgentIcon icon={user.icon} width={16} height={16} className="text-white" />
           </div>
         </TooltipTrigger>
-        <TooltipContent>{user.name}</TooltipContent>
+        <TooltipContent>{agentTooltipName(user)}</TooltipContent>
       </Tooltip>
     );
   }

@@ -61,16 +61,37 @@ Deferred to post-V0 as a product decision. Server-authoritative (invisible to us
 
 **Why deferred.** `reports/peritext-on-yjs-feasibility/`: Yjs 14 unified YType exists only in pre-release. Not yet compatible with TipTap/Hocuspocus pinned versions. Multi-week ecosystem-wait + migration. Tracked as long-term future work in `projects/v0-launch/PROJECT.md`. Server-authoritative is the correct short-term answer; unified YType is the correct long-term answer.
 
+## Option 8 — Server-side post-merge reconciliation (reactive, not preventive)
+
+**What.** Keep client observers writing the derived CRDT exactly as they do today. Server runs a reconciliation pass after CRDT sync settles: if `serialize(XmlFragment) !== ytext.toString()`, server performs a corrective transaction. This is the same pattern as `applyExternalChange` + `reconcile()` for file-watcher divergence — apply to observer-bridge divergence instead.
+
+**Why rejected.** Three compounding reasons:
+
+1. **User-visible corruption window.** Reconciliation detects divergence AFTER it has propagated to clients. Between the race producing duplication and the server's corrective write propagating back, users see RGA-interleave in the editor — "hheelllloo" or duplicated paragraphs. For a prose editor, visible broken-typing is disqualifying even if transient (50-150ms window). The race rate is 2-4% in the fuzzer; in production user sessions with concurrent editors, this would produce visible artifacts at a rate users would notice and report.
+
+2. **Heuristic detection is non-trivial.** "Y.Text contains content not in serialize(XmlFragment)" could be (a) RGA-interleave from a race (detect and fix), (b) legitimate client source-mode edit that hasn't been reconciled yet (don't touch), or (c) transient state during normal CRDT propagation. Distinguishing these requires timing windows and state tracking that's itself a source of bugs.
+
+3. **Corrective-write cascade risk.** The corrective write lands under some origin. If that origin triggers client Observer A reactions, we're back in the multi-writer race. Adding a new "reconciliation origin" that's guarded against adds complexity without eliminating the underlying race (just moves where it's fought).
+
+**Why the file-watcher precedent doesn't transfer.** `applyExternalChange`-style reconciliation works for file-watcher because (a) disk changes are unambiguous sources of truth (no question of "whose edit wins"), (b) the correction is bounded and directional (disk → CRDT), and (c) the user already expects file-watcher changes to appear. Observer-bridge divergence is ambiguous in source of truth and bidirectional in correction needs; the file-watcher pattern doesn't map cleanly.
+
+**Why it was tempting.** Simpler rollout (no mode coordination, no client changes). Faster to implement (~1 day vs. 3-4 days for server-authoritative). Would close the 2-4% fuzzer flake.
+
+**Why we chose server-authoritative over Option 8 despite the cost difference.** Under greenfield principles, architectural correctness beats expediency. Server-authoritative solves the race structurally (single-writer-by-design) rather than reactively (detect-and-correct). Reactive approaches compound costs over time: heuristic detection needs ongoing tuning, corrective cascades introduce new failure modes, and user-visible corruption even briefly erodes product trust. For a prose editor where typing is the primary interaction, we can't ship a known-visible-corruption design.
+
+**When would this be the right choice?** Not for this product. Potentially for a non-real-time collaborative text tool where brief correction windows are acceptable (e.g., a document-review tool where only finalizers see diffs, or a batch-processing pipeline). Not our case.
+
 ## Summary ranking
 
-| Option | Fixes WYSIWYG race? | Fixes source-mode race? | Preserves bidirectional API? | Preserves char-level co-edit? | Effort | Chosen? |
-|---|---|---|---|---|---|---|
-| E (remote-reconcile) | ✗ (propagates dupes) | ✗ | ✓ | ✓ | S | No |
-| A (awareness leader) | ✗ (gossip ≠ consensus) | ✗ | ✓ | ✓ | M | No |
-| C (per-paragraph IDs) | ✗ (not atomic) | ✗ | ✓ | ✓ | L | No |
-| 2 (Y.Text → Y.Map) | ✓ | ✓ | ✗ | ✗ (product regression) | L | No |
-| LWW at Y.Text CRDT | ✗ (no primitive) | ✗ | ✓ | ✓ | unknown | No |
-| B (server-only Observer A) | ✓ | ✗ | ✓ | ✓ | M | Superseded |
-| **Server-authoritative (full)** | **✓** | **✓** | **✓** | **✓** | **M (3-4 days)** | **Yes** |
-| I (UX mode-lock) | ✓ | ✓ | ✓ | N/A (one-at-a-time) | M | Deferred |
-| Unified YType | ✓ | ✓ | ✓ | ✓ | XL (multi-week) | Long-term |
+| Option | Fixes WYSIWYG race? | Fixes source-mode race? | Preserves bidirectional API? | Preserves char-level co-edit? | User-visible defects? | Effort | Chosen? |
+|---|---|---|---|---|---|---|---|
+| E (remote-reconcile at Observer B) | ✗ (propagates dupes) | ✗ | ✓ | ✓ | ✓ (dupes on both sides) | S | No |
+| A (awareness leader election) | ✗ (gossip ≠ consensus) | ✗ | ✓ | ✓ | ✓ (partition-split) | M | No |
+| C (per-paragraph IDs in Y.Text) | ✗ (scan-insert not atomic) | ✗ | ✓ | ✓ | ✓ (ID cruft in source) | L | No |
+| 2 (Y.Text → Y.Map) | ✓ | ✓ | ✗ | ✗ (LWW-clobbers char edits) | ✓ (source-mode regression) | L | No |
+| LWW at Y.Text CRDT primitive | ✗ (no primitive) | ✗ | ✓ | ✓ | N/A | unknown | No |
+| B (server-only Observer A) | ✓ | ✗ | ✓ | ✓ | ✓ (source-side race) | M | Superseded |
+| 8 (server-side reconciliation) | ✓ (after window) | ✓ (after window) | ✓ | ✓ | ✓ (visible corruption window) | S (~1d) | No |
+| **Server-authoritative (full, this spec)** | **✓** | **✓** | **✓** | **✓** | **✗** | **M (3-4 days)** | **Yes** |
+| I (UX mode-lock — Option I from source-toggle report) | ✓ | ✓ | ✓ | N/A (one-at-a-time) | ✗ | M | Deferred to post-V0 |
+| Unified YType (Yjs 14) | ✓ | ✓ | ✓ | ✓ | ✗ | XL (multi-week) | Long-term |

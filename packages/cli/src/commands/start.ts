@@ -136,16 +136,29 @@ export function startCommand(getConfig: () => Config): Command {
 
       // Create HTTP server and wire up Hocuspocus
       const httpServer = createHttpServer((req, res) => {
-        // Priority 1: API routes via Hocuspocus onRequest extensions
+        // Priority 1: API routes via Hocuspocus onRequest extensions.
+        // Unknown `/api/*` routes must return 404 JSON, NOT fall through to
+        // static/SPA (which would return index.html and confuse API clients
+        // like MCP stdio). Await the hook and check writableEnded; if no
+        // handler consumed the request, emit 404 JSON explicitly.
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
-          // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
-          hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
-            if (!res.writableEnded) {
-              res.writeHead(500);
-              res.end('Internal server error');
-            }
-          });
+          hocuspocus
+            // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
+            .hooks('onRequest', { request: req, response: res } as any)
+            .then(() => {
+              if (res.writableEnded) return;
+              // Unhandled /api/* route — 404 JSON.
+              res.statusCode = 404;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'API route not found', path: url }));
+            })
+            .catch(() => {
+              if (!res.writableEnded) {
+                res.writeHead(500);
+                res.end('Internal server error');
+              }
+            });
           return;
         }
 

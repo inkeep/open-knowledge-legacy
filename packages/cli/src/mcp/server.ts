@@ -15,6 +15,7 @@
  * Does NOT require Hocuspocus running. All diagnostic logging goes to stderr
  * (stdout is the MCP wire).
  */
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { readServerLock } from '@inkeep/open-knowledge-server';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -25,6 +26,7 @@ import type { Config } from '../config/schema.ts';
 import { MCP_SERVER_NAME, PACKAGE_VERSION } from '../constants.ts';
 import { PREVIEW_GUIDANCE } from '../content/init.ts';
 import { dim } from '../ui/colors.ts';
+import type { AgentIdentity } from './agent-identity.ts';
 import { registerAllTools, TOOL_DESCRIPTIONS } from './tools/index.ts';
 
 export interface McpServerOptions {
@@ -238,11 +240,40 @@ export async function startMcpServer(options: McpServerOptions): Promise<void> {
     return lock && lock.port > 0 ? `http://localhost:${lock.port}` : undefined;
   };
 
+  // --- Agent identity (Ref pattern — tool handlers read .current at call time).
+  // From attribution PR #134: every MCP connection gets a stable connectionId
+  // used as the agentId; displayName/colorSeed fall back to label env → client
+  // name → connectionId suffix.
+  const connectionId = randomUUID();
+  const label = process.env.AGENT_LABEL || undefined;
+
+  const identityRef: { current: AgentIdentity } = {
+    current: {
+      connectionId,
+      label,
+      displayName: label ?? 'Agent',
+      colorSeed: label ?? connectionId,
+    },
+  };
+
+  server.server.oninitialized = () => {
+    const clientInfo = server.server.getClientVersion();
+    identityRef.current = {
+      connectionId,
+      clientInfo: clientInfo ? { name: clientInfo.name, version: clientInfo.version } : undefined,
+      label,
+      displayName: label ?? clientInfo?.name ?? 'Agent',
+      colorSeed: label ?? clientInfo?.name ?? connectionId,
+    };
+    log(`Agent identity: ${identityRef.current.displayName} (${connectionId.slice(0, 8)})`);
+  };
+
   registerAllTools(server, {
     serverUrl: resolveServerUrlForTools,
     resolveCwd,
     startupCwd,
     config,
+    identityRef,
   });
 
   const transport = new StdioServerTransport();

@@ -57,9 +57,13 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
         }
         const data = (await res.json()) as { content: string };
         if (!cancelled) {
-          // Git stores full file (with frontmatter); Y.Text('source') has body only.
+          // Strip frontmatter from both sides so the diff shows only body changes.
+          // Git stores full file (with frontmatter); Y.Text('source') also includes
+          // frontmatter (Observer A prepends it), so both must be stripped.
           const historical = stripFrontmatter(data.content ?? '').body;
-          const current = activeProvider?.document.getText('source').toString() ?? '';
+          const current = stripFrontmatter(
+            activeProvider?.document.getText('source').toString() ?? '',
+          ).body;
           // Normalize trailing whitespace + line endings before comparing —
           // the markdown pipeline may add/remove trailing newlines or spaces.
           const norm = (s: string) =>

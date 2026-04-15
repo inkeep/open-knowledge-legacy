@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
+import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import {
   AgentSessionManager,
   acquireServerLock,
@@ -18,6 +19,7 @@ import {
   createExternalChangeHandler,
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
+  createServerObserverExtension,
   initShadowRepo,
   readBranchFromHead,
   releaseServerLock,
@@ -27,6 +29,7 @@ import {
   updateServerLockPort,
   type WatcherHandle,
 } from '@inkeep/open-knowledge-server';
+import { getSchema } from '@tiptap/core';
 import sirv from 'sirv';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
@@ -184,6 +187,7 @@ try {
     gitEnabled: !isTestIsolated,
     shadowRef,
     backlinkIndex,
+    getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
   });
 
   hocuspocus = new Hocuspocus({
@@ -216,6 +220,12 @@ try {
       backlinkIndex,
       signalChannel,
     }),
+  );
+
+  const pluginMdManager = new MarkdownManager({ extensions: sharedExtensions });
+  const pluginSchema = getSchema(sharedExtensions);
+  hocuspocus.configuration.extensions.push(
+    createServerObserverExtension({ mdManager: pluginMdManager, schema: pluginSchema }),
   );
 } catch (err) {
   try {
@@ -275,7 +285,15 @@ export function hocuspocusPlugin(): Plugin {
         }
       });
 
-      // Wire up API endpoints via Vite middleware
+      // Wire up API endpoints via Vite middleware.
+      //
+      // Unknown `/api/*` routes must NOT fall through to Vite's SPA
+      // fallback (which would return index.html with a 200, confusing API
+      // clients like MCP stdio that expect JSON). Any `/api/*` request that
+      // no Hocuspocus onRequest handler consumed returns 404 JSON here.
+      // Production behavior (packages/cli/src/commands/start.ts) naturally
+      // 404s on unknown routes because there's no SPA fallback; this aligns
+      // dev-mode with production.
       server.middlewares.use(async (req, res, next) => {
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
@@ -283,6 +301,12 @@ export function hocuspocusPlugin(): Plugin {
           // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
           await hocuspocus.hooks('onRequest', { request: req, response: res } as any);
           if (res.writableEnded) return;
+          // Unhandled /api/* route — return 404 JSON, do NOT fall through
+          // to the SPA fallback which would return index.html.
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'API route not found', path: url }));
+          return;
         }
         next();
       });

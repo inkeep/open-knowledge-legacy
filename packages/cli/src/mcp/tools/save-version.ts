@@ -5,6 +5,7 @@
  * into a checkpoint commit in the shadow repo (and optionally the project repo).
  * The resulting checkpoint ref can later be found via `get_history`.
  */
+import type { AgentIdentity } from '../agent-identity.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, resolveServerUrl, textResult } from './shared.ts';
 
@@ -15,12 +16,29 @@ export const DESCRIPTION = [
   'be found via `get_history` and restored via `rollback_to_version`.',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
+export function register(
+  server: ServerInstance,
+  serverUrl: ServerUrlOrResolver,
+  identityRef?: { current: AgentIdentity },
+): void {
   server.tool('save_version', DESCRIPTION, {}, async () => {
     const url = await resolveServerUrl(serverUrl);
     if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
-    const result = await httpPost(url, '/api/save-version');
+    const identity = identityRef?.current;
+    const result = await httpPost(url, '/api/save-version', {
+      ...(identity
+        ? {
+            writers: [
+              {
+                id: `agent-${identity.connectionId}`,
+                name: identity.displayName,
+                email: `agent-${identity.connectionId}@openknowledge.local`,
+              },
+            ],
+          }
+        : {}),
+    });
     if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
     return textResult(`Version saved. Checkpoint ref: ${result.checkpointRef}`);
