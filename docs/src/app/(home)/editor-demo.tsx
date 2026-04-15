@@ -1,6 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { EditorContent, useEditor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import { useEffect, useRef, useState } from 'react';
+import { Markdown as TiptapMarkdown } from 'tiptap-markdown';
 
 const DEMO_MARKDOWN = `# Getting Started with Open Knowledge
 
@@ -10,7 +13,7 @@ Open Knowledge is an **agent-native knowledge platform** where humans and AI col
 
 Run a single command to start:
 
-\`\`\`bash
+\`\`\`
 npx @inkeep/open-knowledge
 \`\`\`
 
@@ -19,7 +22,7 @@ This starts the server, editor, and MCP endpoint. Your current directory becomes
 ## Key Concepts
 
 - **CRDT collaboration** — multiple writers never conflict
-- **[[Wiki Links]]** — connect ideas across pages
+- **Wiki Links** — connect ideas across pages
 - **Shadow git** — every edit is attributed to its author
 - Connect any MCP-compatible agent: *Claude*, *Cursor*, *Codex*
 
@@ -27,6 +30,50 @@ This starts the server, editor, and MCP endpoint. Your current directory becomes
 
 export function EditorDemo() {
   const [mode, setMode] = useState<'visual' | 'source'>('visual');
+  const [markdown, setMarkdown] = useState(DEMO_MARKDOWN);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit,
+      TiptapMarkdown.configure({
+        html: false,
+        transformCopiedText: true,
+        transformPastedText: true,
+      }),
+    ],
+    content: DEMO_MARKDOWN,
+    editorProps: {
+      attributes: {
+        class: 'ok-prosemirror outline-none min-h-[360px] px-8 py-6 sm:px-12 sm:py-8',
+        style: 'line-height: 1.7; color: var(--slide-text)',
+      },
+    },
+  });
+
+  function handleModeChange(newMode: 'visual' | 'source') {
+    if (newMode === mode) return;
+
+    if (newMode === 'source' && editor) {
+      // tiptap-markdown extends storage but doesn't export types
+      const storage = editor.storage as unknown as Record<string, { getMarkdown: () => string }>;
+      const md = storage.markdown.getMarkdown();
+      setMarkdown(md);
+    }
+
+    if (newMode === 'visual' && editor) {
+      editor.commands.setContent(markdown);
+    }
+
+    setMode(newMode);
+  }
+
+  useEffect(() => {
+    if (mode === 'source' && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [mode]);
 
   return (
     <section className="border-t border-[var(--slide-border)] bg-[var(--slide-bg)] px-6 py-24 md:py-32">
@@ -39,16 +86,11 @@ export function EditorDemo() {
             Two modes, one source of truth
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-[var(--slide-muted)]">
-            Switch between rich editing and raw markdown at any time. The CRDT bridge keeps them
-            perfectly in sync — your content is always plain{' '}
-            <code className="rounded bg-[var(--slide-border)]/50 px-1.5 py-0.5 text-[13px]">
-              .md
-            </code>{' '}
-            files.
+            Switch between rich editing and raw markdown. Edit in either mode — the content stays in
+            sync, just like the real product.
           </p>
         </div>
 
-        {/* Editor shell — mirrors the real app's EditorPane + EditorHeader */}
         <div
           className="overflow-hidden rounded-xl border shadow-2xl"
           style={{
@@ -56,12 +98,10 @@ export function EditorDemo() {
             backgroundColor: 'var(--slide-bg-elevated)',
           }}
         >
-          {/* EditorHeader — matches packages/app/src/components/EditorHeader.tsx */}
           <header
             className="flex h-12 shrink-0 items-center border-b"
             style={{ borderColor: 'var(--slide-border)' }}
           >
-            {/* Left: sidebar trigger + doc name */}
             <div className="flex flex-1 items-center gap-2 px-3">
               <SidebarIcon />
               <div
@@ -71,17 +111,15 @@ export function EditorDemo() {
               <span className="truncate text-sm text-[var(--slide-muted)]">getting-started.md</span>
             </div>
 
-            {/* Center: segmented toggle — mirrors the real ToggleGroup variant="segmented" */}
-            <ModeToggle mode={mode} onChange={setMode} />
+            <ModeToggle mode={mode} onChange={handleModeChange} />
 
-            {/* Right: presence bar + sync */}
             <div className="flex flex-1 items-center justify-end gap-2 px-3">
               <MockPresenceBar />
             </div>
           </header>
 
-          {/* Content area — mirrors EditorArea.tsx's CSS show/hide pattern */}
           <div className="relative h-[420px] overflow-hidden sm:h-[480px]">
+            {/* Visual mode — real TipTap editor */}
             <div
               className="absolute inset-0 overflow-y-auto transition-all duration-400"
               style={{
@@ -91,8 +129,10 @@ export function EditorDemo() {
                 transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
               }}
             >
-              <ProseMirrorView />
+              <EditorContent editor={editor} />
             </div>
+
+            {/* Source mode — editable textarea */}
             <div
               className="absolute inset-0 overflow-y-auto transition-all duration-400"
               style={{
@@ -102,10 +142,11 @@ export function EditorDemo() {
                 transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
               }}
             >
-              <CodeMirrorView content={DEMO_MARKDOWN} />
+              <SourceTextarea ref={textareaRef} value={markdown} onChange={setMarkdown} />
             </div>
+
             <div
-              className="pointer-events-none absolute right-0 bottom-0 left-0 h-20"
+              className="pointer-events-none absolute right-0 bottom-0 left-0 h-20 z-10"
               style={{
                 background: 'linear-gradient(to top, var(--slide-bg-elevated), transparent)',
               }}
@@ -114,6 +155,54 @@ export function EditorDemo() {
         </div>
       </div>
     </section>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * SourceTextarea — styled to look like the real CodeMirror source editor
+ * --------------------------------------------------------------------------- */
+
+function SourceTextarea({
+  ref,
+  value,
+  onChange,
+}: {
+  ref: React.Ref<HTMLTextAreaElement>;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const lines = value.split('\n');
+  return (
+    <div
+      className="flex h-full py-3"
+      style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
+    >
+      {/* Line numbers */}
+      <div
+        className="shrink-0 select-none pt-0 text-right text-[13px] leading-[1.7] whitespace-pre"
+        style={{
+          color: 'var(--slide-muted)',
+          opacity: 0.35,
+          width: '3rem',
+          paddingRight: '0.75rem',
+        }}
+        aria-hidden="true"
+      >
+        {lines.map((_, i) => `${i + 1}\n`).join('')}
+      </div>
+      {/* Editable area */}
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="flex-1 resize-none border-none bg-transparent text-[13px] leading-[1.7] outline-none"
+        style={{ color: 'var(--slide-text)', caretColor: 'var(--slide-accent)' }}
+        spellCheck={false}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+      />
+    </div>
   );
 }
 
@@ -187,7 +276,6 @@ function ModeToggle({
       className="relative flex shrink-0 rounded-lg p-0.5"
       style={{ backgroundColor: 'color-mix(in srgb, var(--slide-text) 6%, transparent)' }}
     >
-      {/* Sliding background pill */}
       <div
         className="absolute top-0.5 bottom-0.5 rounded-md transition-all duration-300"
         style={{
@@ -231,21 +319,17 @@ function ModeToggle({
 function MockPresenceBar() {
   return (
     <div className="flex items-center gap-2 px-1 py-1.5">
-      {/* SyncIndicator — "synced" state: green dot, no label */}
       <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wide text-[var(--slide-muted)]">
         <span className="relative inline-flex size-2">
           <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
         </span>
       </span>
-      {/* Participant avatars — overlapping like the real -space-x-1.5 */}
       <div className="flex items-center -space-x-1.5">
-        {/* Human avatar with animal icon */}
         <div
           className="inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-2"
           style={
             {
               backgroundColor: '#6366f1',
-              // ring color matches elevated bg for punched-out look
               '--tw-ring-color': 'var(--slide-bg-elevated)',
             } as React.CSSProperties
           }
@@ -269,7 +353,6 @@ function MockPresenceBar() {
             <path d="M16.93 10H20a2 2 0 0 1 0 4H2" />
           </svg>
         </div>
-        {/* Agent avatar (Claude) */}
         <div
           className="inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-2"
           style={
@@ -303,210 +386,4 @@ function MockPresenceBar() {
       </div>
     </div>
   );
-}
-
-/* ---------------------------------------------------------------------------
- * ProseMirrorView — styled to match the real .ProseMirror CSS from globals.css
- * Uses the exact same font sizes, spacing, colors, and element styling.
- * --------------------------------------------------------------------------- */
-
-function ProseMirrorView() {
-  return (
-    <div
-      className="ok-prosemirror px-8 py-6 sm:px-12 sm:py-8"
-      style={{ lineHeight: 1.7, color: 'var(--slide-text)' }}
-    >
-      <h1>Getting Started with Open Knowledge</h1>
-
-      <p>
-        Open Knowledge is an <strong>agent-native knowledge platform</strong> where humans and AI
-        collaborate in real time.
-      </p>
-
-      <h2>Quick Setup</h2>
-
-      <p>Run a single command to start:</p>
-
-      <pre>
-        <code>npx @inkeep/open-knowledge</code>
-      </pre>
-
-      <p>
-        This starts the server, editor, and MCP endpoint. Your current directory becomes the content
-        root — every <code>.md</code> file is instantly available.
-      </p>
-
-      <h2>Key Concepts</h2>
-
-      <ul>
-        <li>
-          <strong>CRDT collaboration</strong> — multiple writers never conflict
-        </li>
-        <li>
-          <span className="ok-wikilink">[[Wiki Links]]</span> — connect ideas across pages
-        </li>
-        <li>
-          <strong>Shadow git</strong> — every edit is attributed to its author
-        </li>
-        <li>
-          Connect any MCP-compatible agent: <em>Claude</em>, <em>Cursor</em>, <em>Codex</em>
-        </li>
-      </ul>
-
-      <blockquote>
-        <p>
-          Open Knowledge stores everything as plain markdown files. No database, no lock-in — just
-          files in a folder you already own.
-        </p>
-      </blockquote>
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------------------
- * CodeMirrorView — styled to match the real CodeMirror source editor
- * --------------------------------------------------------------------------- */
-
-function CodeMirrorView({ content }: { content: string }) {
-  const lines = content.split('\n');
-  return (
-    <div
-      className="source-editor-demo py-3"
-      style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
-    >
-      {lines.map((line, n) => (
-        <div key={lineKey(line, n + 1)} className="flex">
-          <span
-            className="inline-block w-10 shrink-0 select-none pr-3 text-right text-[13px] leading-[1.7]"
-            style={{ color: 'var(--slide-muted)', opacity: 0.35 }}
-            aria-hidden="true"
-          >
-            {n + 1}
-          </span>
-          <span className="flex-1 text-[13px] leading-[1.7]">
-            <HighlightedLine line={line} />
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function lineKey(line: string, n: number) {
-  return `${n}:${line.length}:${line.charCodeAt(0) || 0}`;
-}
-
-function HighlightedLine({ line }: { line: string }) {
-  if (line.startsWith('# ') || line.startsWith('## ')) {
-    return <span style={{ color: 'var(--slide-accent)', fontWeight: 600 }}>{line}</span>;
-  }
-
-  if (line.startsWith('```')) {
-    return <span style={{ color: 'var(--slide-muted)' }}>{line}</span>;
-  }
-
-  if (line.startsWith('> ')) {
-    return (
-      <span>
-        <span style={{ color: 'var(--slide-accent)', opacity: 0.6 }}>{'> '}</span>
-        <span style={{ color: 'var(--slide-text)', opacity: 0.7, fontStyle: 'italic' }}>
-          {line.slice(2)}
-        </span>
-      </span>
-    );
-  }
-
-  if (line.startsWith('- ')) {
-    return (
-      <span>
-        <span style={{ color: 'var(--slide-accent)', opacity: 0.5 }}>{'- '}</span>
-        <HighlightInline text={line.slice(2)} />
-      </span>
-    );
-  }
-
-  if (line === '') return <span>{'\u200B'}</span>;
-
-  return <HighlightInline text={line} />;
-}
-
-function HighlightInline({ text }: { text: string }) {
-  const parts: React.ReactNode[] = [];
-  let remaining = text;
-  let key = 0;
-
-  while (remaining.length > 0) {
-    const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
-    if (boldMatch) {
-      parts.push(
-        <span key={`b${key++}`} style={{ color: 'var(--slide-text)', fontWeight: 600 }}>
-          <span style={{ opacity: 0.4 }}>**</span>
-          {boldMatch[1]}
-          <span style={{ opacity: 0.4 }}>**</span>
-        </span>,
-      );
-      remaining = remaining.slice(boldMatch[0].length);
-      continue;
-    }
-
-    const italicMatch = remaining.match(/^\*(.+?)\*/);
-    if (italicMatch) {
-      parts.push(
-        <span key={`i${key++}`} style={{ color: 'var(--slide-text)', fontStyle: 'italic' }}>
-          <span style={{ opacity: 0.4 }}>*</span>
-          {italicMatch[1]}
-          <span style={{ opacity: 0.4 }}>*</span>
-        </span>,
-      );
-      remaining = remaining.slice(italicMatch[0].length);
-      continue;
-    }
-
-    const codeMatch = remaining.match(/^`(.+?)`/);
-    if (codeMatch) {
-      parts.push(
-        <span
-          key={`c${key++}`}
-          className="rounded px-1"
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--slide-accent) 10%, transparent)',
-            color: 'var(--slide-accent)',
-          }}
-        >
-          `{codeMatch[1]}`
-        </span>,
-      );
-      remaining = remaining.slice(codeMatch[0].length);
-      continue;
-    }
-
-    const wikiMatch = remaining.match(/^\[\[(.+?)\]\]/);
-    if (wikiMatch) {
-      parts.push(
-        <span key={`w${key++}`} style={{ color: 'var(--slide-accent)' }}>
-          [[{wikiMatch[1]}]]
-        </span>,
-      );
-      remaining = remaining.slice(wikiMatch[0].length);
-      continue;
-    }
-
-    const nextSpecial = remaining.search(/\*\*|\*|`|\[\[/);
-    if (nextSpecial === -1) {
-      parts.push(
-        <span key={`t${key++}`} style={{ color: 'var(--slide-text)', opacity: 0.85 }}>
-          {remaining}
-        </span>,
-      );
-      break;
-    }
-    parts.push(
-      <span key={`t${key++}`} style={{ color: 'var(--slide-text)', opacity: 0.85 }}>
-        {remaining.slice(0, nextSpecial)}
-      </span>,
-    );
-    remaining = remaining.slice(nextSpecial);
-  }
-
-  return <>{parts}</>;
 }

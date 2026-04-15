@@ -16,8 +16,8 @@ export default function HomePage() {
   return (
     <main className="font-[family-name:var(--font-dm-sans)] selection:bg-[var(--slide-accent)]/20">
       <Hero />
-      <StickyShowcase />
       <EditorDemo />
+      <StickyShowcase />
       <HowItWorks />
       <Features />
       <Inspiration />
