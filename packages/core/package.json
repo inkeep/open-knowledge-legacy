@@ -48,11 +48,13 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "build-registry": "bun run scripts/build-registry.ts"
   },
   "devDependencies": {
     "@types/mdast": "^4.0.4",
     "@types/unist": "^3.0.3",
+    "react-docgen-typescript": "^2.2.2",
     "typescript": "^5.9.3"
   }
 }

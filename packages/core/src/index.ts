@@ -50,6 +50,23 @@ export {
   type ParseHealthMetrics,
   resetParseHealth,
 } from './metrics/parse-health.ts';
+// Registry
+export {
+  builtInComponents,
+  type ComponentRegistry,
+  createRegistry,
+  wildcardMeta,
+} from './registry/index.ts';
+export type {
+  JsxComponentMeta,
+  PropDef,
+  PropDefBase,
+  PropDefBoolean,
+  PropDefEnum,
+  PropDefNumber,
+  PropDefReactNode,
+  PropDefString,
+} from './registry/types.ts';
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
 // subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.
