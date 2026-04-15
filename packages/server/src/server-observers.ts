@@ -147,7 +147,15 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       }, OBSERVER_SYNC_ORIGIN);
 
       incrementServerObserverFire('a');
-      lastSyncedXmlMd = md;
+      // Set baseline to the ACTUAL Y.Text state after the merge, not just
+      // the XmlFragment serialization (md). Under Path B, the DMP merge
+      // preserves content from Y.Text that wasn't in XmlFragment (e.g.,
+      // concurrent source-mode edits). Setting baseline = md would cause
+      // the NEXT firing to re-diff "old XmlFragment → new XmlFragment"
+      // and re-include content already in Y.Text — producing duplication.
+      // Setting baseline = Y.Text ensures the next Path B merge's
+      // patch_make(baseline, newMd) only includes GENUINELY NEW changes.
+      lastSyncedXmlMd = ytext.toString();
     } catch (err) {
       incrementServerObserverError('a');
       console.error('[Server Observer A] Failed to sync tree→text:', err);
