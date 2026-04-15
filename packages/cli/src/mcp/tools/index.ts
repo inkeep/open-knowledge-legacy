@@ -3,8 +3,9 @@
  *
  * Aggregates workflow tools (init-content, ingest, research, consolidate),
  * document tools (write_document, edit_document, rename_document,
- * undo_agent_edit, redo_agent_edit, list_documents), link-graph tools (get_backlinks,
- * get_forward_links, get_orphans, get_hubs), and enriched tools
+ * undo_agent_edit, redo_agent_edit, list_documents), link-graph tools
+ * (get_backlinks, get_forward_links, get_orphans, get_hubs, get_dead_links),
+ * and enriched tools
  * (read_document, search) into a single `registerAllTools` function that
  * `server.ts` calls during startup.
  *
@@ -30,6 +31,10 @@ import {
   DESCRIPTION as GET_BACKLINKS_DESCRIPTION,
   register as registerGetBacklinks,
 } from './get-backlinks.ts';
+import {
+  DESCRIPTION as GET_DEAD_LINKS_DESCRIPTION,
+  register as registerGetDeadLinks,
+} from './get-dead-links.ts';
 import {
   DESCRIPTION as GET_FORWARD_LINKS_DESCRIPTION,
   register as registerGetForwardLinks,
@@ -104,6 +109,7 @@ export const TOOL_DESCRIPTIONS = {
   get_forward_links: GET_FORWARD_LINKS_DESCRIPTION,
   get_orphans: GET_ORPHANS_DESCRIPTION,
   get_hubs: GET_HUBS_DESCRIPTION,
+  get_dead_links: GET_DEAD_LINKS_DESCRIPTION,
 } as const;
 
 export interface RegisterAllToolsOptions {
@@ -150,4 +156,5 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   registerGetForwardLinks(server, opts.serverUrl);
   registerGetOrphans(server, opts.serverUrl);
   registerGetHubs(server, opts.serverUrl);
+  registerGetDeadLinks(server, opts.serverUrl);
 }
