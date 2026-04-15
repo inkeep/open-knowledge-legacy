@@ -5,12 +5,16 @@
  * through a DirectConnection and propagates to all connected editors in real-time.
  */
 import { z } from 'zod';
+import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
+import type { Config } from '../../config/schema.ts';
+import { resolvePreviewUrl } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
   resolveServerUrl,
+  textPlusStructured,
   textResult,
 } from './shared.ts';
 
@@ -26,7 +30,13 @@ export const DESCRIPTION = [
   '- `position` — Where to insert: "append", "prepend", or "replace"',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
+export interface WriteDocumentDeps {
+  serverUrl: ServerUrlOrResolver;
+  config: Config;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function register(server: ServerInstance, deps: WriteDocumentDeps): void {
   server.tool(
     'write_document',
     DESCRIPTION,
@@ -36,7 +46,7 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
       position: z.enum(['append', 'prepend', 'replace']).describe('Where to insert the content'),
     },
     async (args: { docName: string; markdown: string; position: string }) => {
-      const url = await resolveServerUrl(serverUrl);
+      const url = await resolveServerUrl(deps.serverUrl);
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -46,7 +56,17 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
         position: args.position,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
-      return textResult(`Written successfully (${args.position})`);
+
+      const cwd = await deps.resolveCwd();
+      const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
+      const preview = resolvePreviewUrl(normalized.docName, { config: deps.config, lockDir });
+      if (!preview) {
+        return textResult(`Written successfully (${args.position})`);
+      }
+      return textPlusStructured(
+        `Written successfully (${args.position}).\nPreview: ${preview.url}`,
+        { previewUrl: preview.url, previewUrlSource: preview.source },
+      );
     },
   );
 }

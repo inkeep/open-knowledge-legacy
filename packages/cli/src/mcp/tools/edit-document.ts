@@ -5,12 +5,16 @@
  * in the Y.Text and replaces it, propagating to all connected editors.
  */
 import { z } from 'zod';
+import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
+import type { Config } from '../../config/schema.ts';
+import { resolvePreviewUrl } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
   resolveServerUrl,
+  textPlusStructured,
   textResult,
 } from './shared.ts';
 
@@ -28,7 +32,13 @@ export const DESCRIPTION = [
   '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
+export interface EditDocumentDeps {
+  serverUrl: ServerUrlOrResolver;
+  config: Config;
+  resolveCwd: (explicit?: string) => Promise<string>;
+}
+
+export function register(server: ServerInstance, deps: EditDocumentDeps): void {
   server.tool(
     'edit_document',
     DESCRIPTION,
@@ -46,7 +56,7 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
         ),
     },
     async (args: { docName: string; find: string; replace: string; offset?: number }) => {
-      const url = await resolveServerUrl(serverUrl);
+      const url = await resolveServerUrl(deps.serverUrl);
       if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalized = normalizeDocName(args.docName);
       if (!normalized.ok) return textResult(normalized.error, true);
@@ -57,7 +67,17 @@ export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver)
         offset: args.offset,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
-      return textResult('Edit applied successfully');
+
+      const cwd = await deps.resolveCwd();
+      const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
+      const preview = resolvePreviewUrl(normalized.docName, { config: deps.config, lockDir });
+      if (!preview) {
+        return textResult('Edit applied successfully');
+      }
+      return textPlusStructured(`Edit applied successfully.\nPreview: ${preview.url}`, {
+        previewUrl: preview.url,
+        previewUrlSource: preview.source,
+      });
     },
   );
 }
