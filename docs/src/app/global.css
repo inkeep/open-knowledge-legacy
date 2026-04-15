@@ -130,3 +130,64 @@
 .dark .ok-prosemirror code {
   background: color-mix(in srgb, var(--slide-text) 10%, transparent);
 }
+
+/* Placeholder */
+.ok-prosemirror p.is-empty::before {
+  content: attr(data-placeholder);
+  pointer-events: none;
+  float: left;
+  height: 0;
+  color: var(--slide-muted);
+  opacity: 0.5;
+}
+
+/* Ordered lists */
+.ok-prosemirror ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+/* Task lists */
+.ok-prosemirror ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.ok-prosemirror ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+.ok-prosemirror ul[data-type="taskList"] li > label {
+  margin-top: 0.25em;
+}
+
+/* Tables */
+.ok-prosemirror table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 0.5em;
+}
+.ok-prosemirror th,
+.ok-prosemirror td {
+  border: 1px solid var(--slide-border);
+  padding: 0.4em 0.6em;
+  text-align: left;
+}
+.ok-prosemirror th {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--slide-text) 4%, transparent);
+}
+
+/* Tippy.js — minimal styles for slash command popup (no theme import needed) */
+.tippy-box {
+  background: transparent;
+  border: none;
+  padding: 0;
+  border-radius: 0;
+}
+.tippy-box[data-placement^="bottom"] > .tippy-arrow { display: none; }
+.tippy-box[data-placement^="top"] > .tippy-arrow { display: none; }
+.tippy-content {
+  padding: 0;
+}
