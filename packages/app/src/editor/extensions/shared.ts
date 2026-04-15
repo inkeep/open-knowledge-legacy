@@ -7,6 +7,7 @@ import {
   ALLOWED_IMAGE_MIME_TYPES,
   sharedExtensions as coreExtensions,
 } from '@inkeep/open-knowledge-core';
+import { DragHandle } from '@tiptap/extension-drag-handle';
 import FileHandler from '@tiptap/extension-file-handler';
 import Placeholder from '@tiptap/extension-placeholder';
 import { KeyboardNav } from '../block-ux/KeyboardNav';
@@ -15,7 +16,6 @@ import { getComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
 import { BridgeIdPlugin } from './bridge-id-plugin';
-import { BlockDragHandle } from './drag-handle';
 import { HeadingAnchors } from './heading-anchors';
 import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';
@@ -56,7 +56,16 @@ export const sharedExtensions = [
     },
   }),
   HeadingAnchors,
-  BlockDragHandle,
+  // Commands-only DragHandle — provides lockDragHandle/unlockDragHandle commands
+  // without registering a PM plugin. The actual drag-handle plugin is created by
+  // the React <DragHandle> component in SideMenu.tsx to avoid double-registration.
+  DragHandle.extend({
+    addProseMirrorPlugins() {
+      return [];
+    },
+  }).configure({
+    render: () => document.createElement('div'),
+  }),
   BlockMover,
   SourceDirtyObserver,
   BridgeIdPlugin,

@@ -15,6 +15,7 @@ import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef } from 'react';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
+import { SideMenu } from './block-ux/SideMenu';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
 import { sharedExtensions } from './extensions/shared.ts';
 import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
@@ -406,6 +407,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     >
       {editor && <BubbleMenuBar editor={editor} />}
       {editor && <TableControlsMenu editor={editor} />}
+      {editor && <SideMenu editor={editor} />}
       <EditorContent editor={editor} className="h-full" />
     </div>
   );
