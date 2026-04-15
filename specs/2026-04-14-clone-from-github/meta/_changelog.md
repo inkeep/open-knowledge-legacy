@@ -76,6 +76,22 @@
   - Write-access detection at clone time — 5-10 line UX improvement to preempt "I cloned but can't push" frustration.
 - No decisions changed. Baseline commit still db8a6d6.
 
+## 2026-04-14 — Session 1: Rebased to origin/main (f17ad00), reconciled drift
+
+- Origin advanced 18+ commits past our baseline db8a6d6 → pulled to f17ad00.
+- PR #127 (Andrew, merged 2026-04-14, same day as our spec) directly changed our §8 claims:
+  - Empty state now has "Create your first file" CTA (previously: dead-end grey text)
+  - CreatePageDialog.tsx renamed to NewItemDialog.tsx (supports file + folder)
+  - Sidebar has + button + context menus + keyboard shortcut
+  - Andrew's spec: specs/2026-04-14-file-sidebar-new-file/SPEC.md
+- Updated §8 Current state to reflect PR #127 reality.
+- Updated §16 Agent Constraints: reference NewItemDialog.tsx (not CreatePageDialog).
+- Updated FR12 ProjectPicker: wire "Start fresh" card to NewItemDialog; flag coordination with Andrew required.
+- Added §14 Risks: F1 npm-install asset-path bug from PR #138 walkthrough audit (blocks any bunx validation of our feature until fixed; Andrew owns).
+- Added §15 Future Work Noted: project-identity-as-UUID migration from PR #138's lifecycle-edge-cases report (non-foreclosed; schema bump if adopted).
+- Baseline commit updated: db8a6d6 → f17ad00.
+- No LOCKED decisions changed.
+
 ## 2026-04-14 — Session 1: Test strategy designed; emulate evaluated and partially adopted
 
 - Test strategy designed via `/tdd` methodology + existing harness review:
