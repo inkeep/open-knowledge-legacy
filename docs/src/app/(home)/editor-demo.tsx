@@ -26,7 +26,7 @@ This starts the server, editor, and MCP endpoint. Your current directory becomes
 > Open Knowledge stores everything as plain markdown files. No database, no lock-in — just files in a folder you already own.`;
 
 export function EditorDemo() {
-  const [mode, setMode] = useState<'visual' | 'markdown'>('visual');
+  const [mode, setMode] = useState<'visual' | 'source'>('visual');
 
   return (
     <section className="border-t border-[var(--slide-border)] bg-[var(--slide-bg)] px-6 py-24 md:py-32">
@@ -48,75 +48,62 @@ export function EditorDemo() {
           </p>
         </div>
 
+        {/* Editor shell — mirrors the real app's EditorPane + EditorHeader */}
         <div
-          className="overflow-hidden rounded-xl shadow-2xl"
+          className="overflow-hidden rounded-xl border shadow-2xl"
           style={{
-            border: '1px solid var(--slide-border)',
+            borderColor: 'var(--slide-border)',
             backgroundColor: 'var(--slide-bg-elevated)',
           }}
         >
-          {/* Title bar */}
-          <div
-            className="flex items-center gap-2 border-b px-4 py-2.5"
+          {/* EditorHeader — matches packages/app/src/components/EditorHeader.tsx */}
+          <header
+            className="flex h-12 shrink-0 items-center border-b"
             style={{ borderColor: 'var(--slide-border)' }}
           >
-            <div className="flex gap-1.5">
-              <div className="size-3 rounded-full bg-[#ff5f57]" />
-              <div className="size-3 rounded-full bg-[#febc2e]" />
-              <div className="size-3 rounded-full bg-[#28c840]" />
+            {/* Left: sidebar trigger + doc name */}
+            <div className="flex flex-1 items-center gap-2 px-3">
+              <SidebarIcon />
+              <div
+                className="h-4 w-px shrink-0"
+                style={{ backgroundColor: 'var(--slide-border)' }}
+              />
+              <span className="truncate text-sm text-[var(--slide-muted)]">getting-started.md</span>
             </div>
-            <span className="ml-2 text-xs text-[var(--slide-muted)]">
-              open-knowledge — getting-started.md
-            </span>
-          </div>
 
-          {/* Toolbar */}
-          <div
-            className="flex items-center justify-between border-b px-4 py-2"
-            style={{ borderColor: 'var(--slide-border)' }}
-          >
-            <div className="flex items-center gap-1">
-              <ModeToggle mode={mode} onChange={setMode} />
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1">
-                <div className="size-5 rounded-full bg-[var(--slide-accent)] text-center text-[9px] leading-5 font-bold text-white">
-                  Y
-                </div>
-                <div className="size-5 rounded-full bg-emerald-500 text-center text-[9px] leading-5 font-bold text-white">
-                  AI
-                </div>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="size-1.5 rounded-full bg-emerald-500" />
-                <span className="text-[11px] text-emerald-600 dark:text-emerald-400">Live</span>
-              </div>
-            </div>
-          </div>
+            {/* Center: segmented toggle — mirrors the real ToggleGroup variant="segmented" */}
+            <ModeToggle mode={mode} onChange={setMode} />
 
-          {/* Content area */}
+            {/* Right: presence bar + sync */}
+            <div className="flex flex-1 items-center justify-end gap-2 px-3">
+              <MockPresenceBar />
+            </div>
+          </header>
+
+          {/* Content area — mirrors EditorArea.tsx's CSS show/hide pattern */}
           <div className="relative h-[420px] overflow-hidden sm:h-[480px]">
             <div
-              className="absolute inset-0 overflow-y-auto transition-all duration-400 ease-out"
+              className="absolute inset-0 overflow-y-auto transition-all duration-400"
               style={{
                 opacity: mode === 'visual' ? 1 : 0,
                 transform: mode === 'visual' ? 'translateX(0)' : 'translateX(-20px)',
                 pointerEvents: mode === 'visual' ? 'auto' : 'none',
+                transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
               }}
             >
-              <VisualView />
+              <ProseMirrorView />
             </div>
             <div
-              className="absolute inset-0 overflow-y-auto transition-all duration-400 ease-out"
+              className="absolute inset-0 overflow-y-auto transition-all duration-400"
               style={{
-                opacity: mode === 'markdown' ? 1 : 0,
-                transform: mode === 'markdown' ? 'translateX(0)' : 'translateX(20px)',
-                pointerEvents: mode === 'markdown' ? 'auto' : 'none',
+                opacity: mode === 'source' ? 1 : 0,
+                transform: mode === 'source' ? 'translateX(0)' : 'translateX(20px)',
+                pointerEvents: mode === 'source' ? 'auto' : 'none',
+                transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
               }}
             >
-              <MarkdownView content={DEMO_MARKDOWN} />
+              <CodeMirrorView content={DEMO_MARKDOWN} />
             </div>
-            {/* Bottom fade */}
             <div
               className="pointer-events-none absolute right-0 bottom-0 left-0 h-20"
               style={{
@@ -130,259 +117,283 @@ export function EditorDemo() {
   );
 }
 
+/* ---------------------------------------------------------------------------
+ * Icons — exact SVGs from packages/app/src/components/icons/
+ * --------------------------------------------------------------------------- */
+
+function TextboxIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 256 256"
+      fill="currentColor"
+      width="16"
+      height="16"
+      aria-hidden="true"
+    >
+      <path d="M112,40a8,8,0,0,0-8,8V64H24A16,16,0,0,0,8,80v96a16,16,0,0,0,16,16h80v16a8,8,0,0,0,16,0V48A8,8,0,0,0,112,40ZM24,176V80h80v96ZM248,80v96a16,16,0,0,1-16,16H144a8,8,0,0,1,0-16h88V80H144a8,8,0,0,1,0-16h88A16,16,0,0,1,248,80ZM88,112a8,8,0,0,1-8,8H72v24a8,8,0,0,1-16,0V120H48a8,8,0,0,1,0-16H80A8,8,0,0,1,88,112Z" />
+    </svg>
+  );
+}
+
+function MarkdownIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 256 256"
+      fill="currentColor"
+      width="16"
+      height="16"
+      aria-hidden="true"
+    >
+      <path d="M232,48H24A16,16,0,0,0,8,64V192a16,16,0,0,0,16,16H232a16,16,0,0,0,16-16V64A16,16,0,0,0,232,48Zm0,144H24V64H232V192ZM128,104v48a8,8,0,0,1-16,0V123.31L93.66,141.66a8,8,0,0,1-11.32,0L64,123.31V152a8,8,0,0,1-16,0V104a8,8,0,0,1,13.66-5.66L88,124.69l26.34-26.35A8,8,0,0,1,128,104Zm77.66,18.34a8,8,0,0,1,0,11.32l-24,24a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L168,132.69V104a8,8,0,0,1,16,0v28.69l10.34-10.35A8,8,0,0,1,205.66,122.34Z" />
+    </svg>
+  );
+}
+
+function SidebarIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ color: 'var(--slide-muted)' }}
+    >
+      <rect width="18" height="18" x="3" y="3" rx="2" />
+      <path d="M9 3v18" />
+    </svg>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * ModeToggle — mirrors the real ToggleGroup with variant="segmented" size="sm"
+ * --------------------------------------------------------------------------- */
+
 function ModeToggle({
   mode,
   onChange,
 }: {
-  mode: 'visual' | 'markdown';
-  onChange: (mode: 'visual' | 'markdown') => void;
+  mode: 'visual' | 'source';
+  onChange: (mode: 'visual' | 'source') => void;
 }) {
   return (
     <div
-      className="relative flex rounded-md p-0.5"
+      className="relative flex shrink-0 rounded-lg p-0.5"
       style={{ backgroundColor: 'color-mix(in srgb, var(--slide-text) 6%, transparent)' }}
     >
+      {/* Sliding background pill */}
       <div
-        className="absolute top-0.5 bottom-0.5 rounded transition-all duration-300 ease-out"
+        className="absolute top-0.5 bottom-0.5 rounded-md transition-all duration-300"
         style={{
           backgroundColor: 'var(--slide-bg-elevated)',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+          boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
           width: 'calc(50% - 2px)',
           left: mode === 'visual' ? '2px' : 'calc(50%)',
+          transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
         }}
       />
       <button
         type="button"
         onClick={() => onChange('visual')}
-        className="relative z-10 flex items-center gap-1.5 rounded px-3 py-1 text-xs font-medium transition-colors duration-200"
+        className="relative z-10 flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-200"
         style={{
           color: mode === 'visual' ? 'var(--slide-text)' : 'var(--slide-muted)',
         }}
       >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          role="img"
-          aria-label="Visual mode"
-        >
-          <path d="M12 20h9" />
-          <path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z" />
-        </svg>
+        <TextboxIcon className="size-3.5" />
         Visual
       </button>
       <button
         type="button"
-        onClick={() => onChange('markdown')}
-        className="relative z-10 flex items-center gap-1.5 rounded px-3 py-1 text-xs font-medium transition-colors duration-200"
+        onClick={() => onChange('source')}
+        className="relative z-10 flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors duration-200"
         style={{
-          color: mode === 'markdown' ? 'var(--slide-text)' : 'var(--slide-muted)',
+          color: mode === 'source' ? 'var(--slide-text)' : 'var(--slide-muted)',
         }}
       >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          role="img"
-          aria-label="Markdown mode"
-        >
-          <path d="m18 16 4-4-4-4" />
-          <path d="m6 8-4 4 4 4" />
-          <path d="m14.5 4-5 16" />
-        </svg>
+        <MarkdownIcon className="size-3.5" />
         Markdown
       </button>
     </div>
   );
 }
 
-function VisualView() {
+/* ---------------------------------------------------------------------------
+ * MockPresenceBar — mirrors packages/app/src/presence/PresenceBar.tsx
+ * --------------------------------------------------------------------------- */
+
+function MockPresenceBar() {
   return (
-    <div className="wysiwyg-demo overflow-y-auto p-6 sm:p-8 md:p-10">
-      <h1
-        className="mb-5 text-2xl font-semibold tracking-tight sm:text-3xl"
-        style={{ color: 'var(--slide-text)' }}
-      >
-        Getting Started with Open Knowledge
-      </h1>
-
-      <p
-        className="mb-5 text-[15px] leading-relaxed"
-        style={{ color: 'var(--slide-text)', opacity: 0.85 }}
-      >
-        Open Knowledge is an{' '}
-        <strong className="font-semibold" style={{ color: 'var(--slide-text)' }}>
-          agent-native knowledge platform
-        </strong>{' '}
-        where humans and AI collaborate in real time.
-      </p>
-
-      <h2
-        className="mb-4 mt-8 text-xl font-semibold tracking-tight"
-        style={{ color: 'var(--slide-text)' }}
-      >
-        Quick Setup
-      </h2>
-
-      <p
-        className="mb-4 text-[15px] leading-relaxed"
-        style={{ color: 'var(--slide-text)', opacity: 0.85 }}
-      >
-        Run a single command to start:
-      </p>
-
-      <div
-        className="mb-5 overflow-hidden rounded-lg"
-        style={{
-          backgroundColor: 'color-mix(in srgb, var(--slide-text) 5%, transparent)',
-          border: '1px solid var(--slide-border)',
-        }}
-      >
+    <div className="flex items-center gap-2 px-1 py-1.5">
+      {/* SyncIndicator — "synced" state: green dot, no label */}
+      <span className="inline-flex items-center gap-1.5 text-[11px] font-mono uppercase tracking-wide text-[var(--slide-muted)]">
+        <span className="relative inline-flex size-2">
+          <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+        </span>
+      </span>
+      {/* Participant avatars — overlapping like the real -space-x-1.5 */}
+      <div className="flex items-center -space-x-1.5">
+        {/* Human avatar with animal icon */}
         <div
-          className="flex items-center gap-2 px-4 py-2 text-[11px]"
-          style={{
-            borderBottom: '1px solid var(--slide-border)',
-            color: 'var(--slide-muted)',
-          }}
+          className="inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-2"
+          style={
+            {
+              backgroundColor: '#6366f1',
+              // ring color matches elevated bg for punched-out look
+              '--tw-ring-color': 'var(--slide-bg-elevated)',
+            } as React.CSSProperties
+          }
+          role="img"
+          aria-label="Happy Turtle"
         >
-          bash
-        </div>
-        <pre className="overflow-x-auto p-4">
-          <code className="text-[13px]" style={{ color: 'var(--slide-text)', opacity: 0.9 }}>
-            npx @inkeep/open-knowledge
-          </code>
-        </pre>
-      </div>
-
-      <p
-        className="mb-5 text-[15px] leading-relaxed"
-        style={{ color: 'var(--slide-text)', opacity: 0.85 }}
-      >
-        This starts the server, editor, and MCP endpoint. Your current directory becomes the content
-        root — every{' '}
-        <code
-          className="rounded px-1.5 py-0.5 text-[13px]"
-          style={{
-            backgroundColor: 'color-mix(in srgb, var(--slide-text) 7%, transparent)',
-            color: 'var(--slide-accent)',
-          }}
-        >
-          .md
-        </code>{' '}
-        file is instantly available.
-      </p>
-
-      <h2
-        className="mb-4 mt-8 text-xl font-semibold tracking-tight"
-        style={{ color: 'var(--slide-text)' }}
-      >
-        Key Concepts
-      </h2>
-
-      <ul className="mb-5 space-y-2 pl-6" style={{ color: 'var(--slide-text)', opacity: 0.85 }}>
-        <li className="list-disc text-[15px] leading-relaxed">
-          <strong className="font-semibold" style={{ color: 'var(--slide-text)' }}>
-            CRDT collaboration
-          </strong>{' '}
-          — multiple writers never conflict
-        </li>
-        <li className="list-disc text-[15px] leading-relaxed">
-          <span
-            className="rounded px-1 py-0.5 text-[14px] font-medium"
-            style={{
-              backgroundColor: 'color-mix(in srgb, var(--slide-accent) 10%, transparent)',
-              color: 'var(--slide-accent)',
-            }}
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#fff"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
           >
-            [[Wiki Links]]
-          </span>{' '}
-          — connect ideas across pages
-        </li>
-        <li className="list-disc text-[15px] leading-relaxed">
-          <strong className="font-semibold" style={{ color: 'var(--slide-text)' }}>
-            Shadow git
-          </strong>{' '}
-          — every edit is attributed to its author
-        </li>
-        <li className="list-disc text-[15px] leading-relaxed">
-          Connect any MCP-compatible agent: <em>Claude</em>, <em>Cursor</em>, <em>Codex</em>
-        </li>
-      </ul>
-
-      <div
-        className="rounded-lg p-4"
-        style={{
-          backgroundColor: 'color-mix(in srgb, var(--slide-accent) 5%, transparent)',
-          borderLeft: '3px solid var(--slide-accent)',
-        }}
-      >
-        <p
-          className="text-[15px] leading-relaxed"
-          style={{ color: 'var(--slide-text)', opacity: 0.85 }}
+            <path d="m12 10 2 4v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3a8 8 0 1 0-16 0v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3l2-4h4Z" />
+            <path d="M4.82 7.9 8 10" />
+            <path d="M15.18 7.9 12 10" />
+            <path d="M16.93 10H20a2 2 0 0 1 0 4H2" />
+          </svg>
+        </div>
+        {/* Agent avatar (Claude) */}
+        <div
+          className="inline-flex size-7 shrink-0 items-center justify-center rounded-full ring-2"
+          style={
+            {
+              backgroundColor: '#d97757',
+              '--tw-ring-color': 'var(--slide-bg-elevated)',
+            } as React.CSSProperties
+          }
+          role="img"
+          aria-label="Claude"
         >
-          Open Knowledge stores everything as plain markdown files. No database, no lock-in — just
-          files in a folder you already own.
-        </p>
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="#fff"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 8V4H8" />
+            <rect width="16" height="12" x="4" y="8" rx="2" />
+            <path d="M2 14h2" />
+            <path d="M20 14h2" />
+            <path d="M15 13v2" />
+            <path d="M9 13v2" />
+          </svg>
+        </div>
       </div>
     </div>
   );
 }
 
-function MarkdownView({ content }: { content: string }) {
+/* ---------------------------------------------------------------------------
+ * ProseMirrorView — styled to match the real .ProseMirror CSS from globals.css
+ * Uses the exact same font sizes, spacing, colors, and element styling.
+ * --------------------------------------------------------------------------- */
+
+function ProseMirrorView() {
   return (
-    <div className="overflow-y-auto p-6 sm:p-8 md:p-10">
-      <div className="relative">
-        <LineNumbers content={content} />
-        <pre className="overflow-x-auto pl-12">
-          <code className="text-[13px] leading-[1.7]">
-            <HighlightedMarkdown content={content} />
-          </code>
-        </pre>
-      </div>
+    <div
+      className="ok-prosemirror px-8 py-6 sm:px-12 sm:py-8"
+      style={{ lineHeight: 1.7, color: 'var(--slide-text)' }}
+    >
+      <h1>Getting Started with Open Knowledge</h1>
+
+      <p>
+        Open Knowledge is an <strong>agent-native knowledge platform</strong> where humans and AI
+        collaborate in real time.
+      </p>
+
+      <h2>Quick Setup</h2>
+
+      <p>Run a single command to start:</p>
+
+      <pre>
+        <code>npx @inkeep/open-knowledge</code>
+      </pre>
+
+      <p>
+        This starts the server, editor, and MCP endpoint. Your current directory becomes the content
+        root — every <code>.md</code> file is instantly available.
+      </p>
+
+      <h2>Key Concepts</h2>
+
+      <ul>
+        <li>
+          <strong>CRDT collaboration</strong> — multiple writers never conflict
+        </li>
+        <li>
+          <span className="ok-wikilink">[[Wiki Links]]</span> — connect ideas across pages
+        </li>
+        <li>
+          <strong>Shadow git</strong> — every edit is attributed to its author
+        </li>
+        <li>
+          Connect any MCP-compatible agent: <em>Claude</em>, <em>Cursor</em>, <em>Codex</em>
+        </li>
+      </ul>
+
+      <blockquote>
+        <p>
+          Open Knowledge stores everything as plain markdown files. No database, no lock-in — just
+          files in a folder you already own.
+        </p>
+      </blockquote>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * CodeMirrorView — styled to match the real CodeMirror source editor
+ * --------------------------------------------------------------------------- */
+
+function CodeMirrorView({ content }: { content: string }) {
+  const lines = content.split('\n');
+  return (
+    <div
+      className="source-editor-demo py-3"
+      style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
+    >
+      {lines.map((line, n) => (
+        <div key={lineKey(line, n + 1)} className="flex">
+          <span
+            className="inline-block w-10 shrink-0 select-none pr-3 text-right text-[13px] leading-[1.7]"
+            style={{ color: 'var(--slide-muted)', opacity: 0.35 }}
+            aria-hidden="true"
+          >
+            {n + 1}
+          </span>
+          <span className="flex-1 text-[13px] leading-[1.7]">
+            <HighlightedLine line={line} />
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
 
 function lineKey(line: string, n: number) {
   return `${n}:${line.length}:${line.charCodeAt(0) || 0}`;
-}
-
-function LineNumbers({ content }: { content: string }) {
-  const lines = content.split('\n');
-  return (
-    <div
-      className="absolute top-0 left-0 select-none text-right text-[13px] leading-[1.7]"
-      style={{ color: 'var(--slide-muted)', opacity: 0.4, width: '2rem' }}
-      aria-hidden="true"
-    >
-      {lines.map((line, n) => (
-        <div key={lineKey(line, n + 1)}>{n + 1}</div>
-      ))}
-    </div>
-  );
-}
-
-function HighlightedMarkdown({ content }: { content: string }) {
-  const lines = content.split('\n');
-  return (
-    <>
-      {lines.map((line, n) => (
-        <div key={lineKey(line, n + 1)}>
-          <HighlightedLine line={line} />
-        </div>
-      ))}
-    </>
-  );
 }
 
 function HighlightedLine({ line }: { line: string }) {
@@ -428,7 +439,7 @@ function HighlightInline({ text }: { text: string }) {
     const boldMatch = remaining.match(/^\*\*(.+?)\*\*/);
     if (boldMatch) {
       parts.push(
-        <span key={key++} style={{ color: 'var(--slide-text)', fontWeight: 600 }}>
+        <span key={`b${key++}`} style={{ color: 'var(--slide-text)', fontWeight: 600 }}>
           <span style={{ opacity: 0.4 }}>**</span>
           {boldMatch[1]}
           <span style={{ opacity: 0.4 }}>**</span>
@@ -441,7 +452,7 @@ function HighlightInline({ text }: { text: string }) {
     const italicMatch = remaining.match(/^\*(.+?)\*/);
     if (italicMatch) {
       parts.push(
-        <span key={key++} style={{ color: 'var(--slide-text)', fontStyle: 'italic' }}>
+        <span key={`i${key++}`} style={{ color: 'var(--slide-text)', fontStyle: 'italic' }}>
           <span style={{ opacity: 0.4 }}>*</span>
           {italicMatch[1]}
           <span style={{ opacity: 0.4 }}>*</span>
@@ -455,7 +466,7 @@ function HighlightInline({ text }: { text: string }) {
     if (codeMatch) {
       parts.push(
         <span
-          key={key++}
+          key={`c${key++}`}
           className="rounded px-1"
           style={{
             backgroundColor: 'color-mix(in srgb, var(--slide-accent) 10%, transparent)',
@@ -472,7 +483,7 @@ function HighlightInline({ text }: { text: string }) {
     const wikiMatch = remaining.match(/^\[\[(.+?)\]\]/);
     if (wikiMatch) {
       parts.push(
-        <span key={key++} style={{ color: 'var(--slide-accent)' }}>
+        <span key={`w${key++}`} style={{ color: 'var(--slide-accent)' }}>
           [[{wikiMatch[1]}]]
         </span>,
       );
@@ -483,14 +494,14 @@ function HighlightInline({ text }: { text: string }) {
     const nextSpecial = remaining.search(/\*\*|\*|`|\[\[/);
     if (nextSpecial === -1) {
       parts.push(
-        <span key={key++} style={{ color: 'var(--slide-text)', opacity: 0.85 }}>
+        <span key={`t${key++}`} style={{ color: 'var(--slide-text)', opacity: 0.85 }}>
           {remaining}
         </span>,
       );
       break;
     }
     parts.push(
-      <span key={key++} style={{ color: 'var(--slide-text)', opacity: 0.85 }}>
+      <span key={`t${key++}`} style={{ color: 'var(--slide-text)', opacity: 0.85 }}>
         {remaining.slice(0, nextSpecial)}
       </span>,
     );

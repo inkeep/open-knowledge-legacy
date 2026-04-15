@@ -40,3 +40,93 @@
 .slide-btn-outline:hover {
   background-color: color-mix(in srgb, var(--slide-text) 5%, transparent) !important;
 }
+
+/* ------------------------------------------------------------------
+ * .ok-prosemirror — Landing-page editor demo content styles.
+ * Mirrors the real .ProseMirror styles from packages/app/src/globals.css
+ * so the demo looks identical to the shipped product.
+ * ------------------------------------------------------------------ */
+
+.ok-prosemirror h1,
+.ok-prosemirror h2,
+.ok-prosemirror h3 {
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.4em;
+}
+.ok-prosemirror h1 {
+  font-size: 1.5em;
+  letter-spacing: -0.04em;
+}
+.ok-prosemirror h2 {
+  font-size: 1.25em;
+  letter-spacing: -0.02em;
+}
+.ok-prosemirror h3 {
+  font-size: 1.1em;
+  letter-spacing: -0.02em;
+}
+.ok-prosemirror p {
+  margin-bottom: 0.5em;
+}
+.ok-prosemirror ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin-bottom: 0.5em;
+}
+.ok-prosemirror li {
+  margin-bottom: 0.15em;
+}
+.ok-prosemirror blockquote {
+  border-left: 3px solid var(--slide-border);
+  padding-left: 1em;
+  margin-left: 0;
+  margin-bottom: 0.5em;
+  color: var(--slide-muted);
+}
+.ok-prosemirror pre {
+  background: color-mix(in srgb, var(--slide-text) 4%, transparent);
+  border-radius: 0.5em;
+  padding: 0.75em 1em;
+  margin-bottom: 0.5em;
+  overflow-x: auto;
+}
+.ok-prosemirror code {
+  background: color-mix(in srgb, var(--slide-text) 6%, transparent);
+  border-radius: 0.25em;
+  padding: 0.15em 0.35em;
+  font-family: ui-monospace, monospace;
+  font-size: 0.875em;
+}
+.ok-prosemirror pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+}
+.ok-prosemirror a {
+  color: var(--slide-accent);
+  font-weight: 500;
+}
+.ok-prosemirror hr {
+  border: none;
+  border-top: 1px solid var(--slide-border);
+  margin: 1em 0;
+}
+.ok-prosemirror .ok-wikilink {
+  color: var(--slide-accent);
+  font-weight: 500;
+  background: color-mix(in srgb, var(--slide-accent) 8%, transparent);
+  border-radius: 0.25em;
+  padding: 0.1em 0.35em;
+}
+.dark .ok-prosemirror blockquote {
+  border-color: color-mix(in srgb, var(--slide-muted) 40%, transparent);
+}
+.dark .ok-prosemirror pre {
+  background: color-mix(in srgb, var(--slide-text) 6%, transparent);
+}
+.dark .ok-prosemirror code {
+  background: color-mix(in srgb, var(--slide-text) 10%, transparent);
+}
