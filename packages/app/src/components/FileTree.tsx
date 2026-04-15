@@ -442,6 +442,11 @@ export function FileTree({
       setCreatingError(null);
       if (createParentDir) {
         setUserExpanded((prev) => new Set(prev).add(createParentDir));
+        setUserCollapsed((prev) => {
+          const next = new Set(prev);
+          next.delete(createParentDir);
+          return next;
+        });
       }
     }
   }, [createSeq, createKind, createParentDir]);
@@ -452,6 +457,11 @@ export function FileTree({
     setCreatingError(null);
     if (parentDir) {
       setUserExpanded((prev) => new Set(prev).add(parentDir));
+      setUserCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(parentDir);
+        return next;
+      });
     }
   }
 
