@@ -317,6 +317,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
       {activeMode === 'explore' ? (
         <GraphView
           activeDocName={activeDocName}
+          isFullscreen={isFullscreen}
           className="min-h-0 flex-1"
           onStatsChange={(nodes, links, loading) => {
             if (loading) {

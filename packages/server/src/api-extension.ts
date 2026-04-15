@@ -53,8 +53,10 @@ const ROLLBACK_ORIGIN = {
   context: { origin: 'rollback-apply' },
 };
 
+import { getParseHealth } from '@inkeep/open-knowledge-core';
 import { type BacklinkIndex, isOrphanMode } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
   contentHash,
   type FileIndexEntry,
@@ -86,7 +88,8 @@ function safeDocPath(docName: string, contentRoot: string): { path: string } | {
     return { error: 'Invalid document name' };
   }
   const normalized = contentRoot.replace(/^\.\//, '');
-  const path = normalized ? `${normalized}/${docName}.md` : `${docName}.md`;
+  const ext = getDocExtension(docName);
+  const path = normalized ? `${normalized}/${docName}${ext}` : `${docName}${ext}`;
   return { path };
 }
 
@@ -305,7 +308,7 @@ function resolveContentEntryPath(contentDir: string, kind: ContentEntryKind, pat
   }
 
   const resolvedContentDir = resolve(contentDir);
-  const relativePath = kind === 'file' ? `${path}.md` : path;
+  const relativePath = kind === 'file' ? `${path}${getDocExtension(path)}` : path;
   const fullPath = resolve(resolvedContentDir, relativePath);
 
   if (fullPath !== resolvedContentDir && !fullPath.startsWith(`${resolvedContentDir}${sep}`)) {
@@ -456,7 +459,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
     const resolvedContentDir = resolve(contentDir);
-    const filePath = resolve(resolvedContentDir, `${docName}.md`);
+    const filePath = resolve(resolvedContentDir, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${resolvedContentDir}/`) && filePath !== resolvedContentDir) {
       return null;
     }
@@ -852,7 +855,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      const { nodes, links } = backlinkIndex.getLinkGraph();
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const docName = url.searchParams.get('docName');
+      if (docName && !isSafeDocName(docName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+
+      const rawDegrees = url.searchParams.get('degrees');
+      if (rawDegrees && !docName) {
+        json(res, 400, { ok: false, error: 'docName is required when degrees is provided' });
+        return;
+      }
+
+      let nodes: string[];
+      let links: Array<{ source: string; target: string }>;
+
+      if (rawDegrees && docName) {
+        const degrees = Number.parseInt(rawDegrees, 10);
+        if (!Number.isFinite(degrees) || degrees < 0) {
+          json(res, 400, { ok: false, error: 'degrees must be a non-negative integer' });
+          return;
+        }
+
+        ({ nodes, links } = backlinkIndex.getLinkGraphNeighborhood(docName, degrees));
+      } else {
+        ({ nodes, links } = backlinkIndex.getLinkGraph());
+      }
+
       const enrichedNodes = nodes.map((id) => ({
         id,
         label: readPageTitleForDocName(id),
@@ -1434,7 +1464,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
 
       const { frontmatter, body: mdBody } = stripFrontmatter(markdown);
-      const parsedJson = mdManager.parse(mdBody);
+      const parsedJson = mdManager.parseWithFallback(mdBody);
       const pmNode = schema.nodeFromJSON(parsedJson);
       const xmlFragment = document.getXmlFragment('default');
 
@@ -1490,6 +1520,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getMetrics());
   }
 
+  async function handleMetricsParseHealth(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    json(res, 200, getParseHealth());
+  }
+
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -1514,7 +1556,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const entries: { docName: string; timestamp: string; size: number }[] = [];
 
     try {
-      const files = readdirSync(rescueDir).filter((f) => f.endsWith('.md'));
+      const files = readdirSync(rescueDir).filter((f) => isSupportedDocFile(f));
       for (const file of files) {
         const filePath = resolve(rescueDir, file);
         const stat = statSync(filePath);
@@ -1531,7 +1573,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
 
         entries.push({
-          docName: file.replace(/\.md$/, ''),
+          docName: stripDocExtension(file),
           timestamp: stat.mtime.toISOString(),
           size: stat.size,
         });
@@ -1560,7 +1602,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     const rescueBase = resolve(shadowRef.current.gitDir, 'rescue');
-    const filePath = resolve(rescueBase, `${docName}.md`);
+    const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) {
       res.writeHead(400);
       res.end('Invalid document name');
@@ -1622,8 +1664,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'path is required' });
         return;
       }
-      if (!filePath.endsWith('.md')) {
-        json(res, 400, { ok: false, error: 'path must end with .md' });
+      if (!isSupportedDocFile(filePath)) {
+        json(res, 400, { ok: false, error: 'path must end with .md or .mdx' });
         return;
       }
       if (
@@ -1641,7 +1683,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'path must not escape content directory' });
         return;
       }
-      const candidateDocName = filePath.slice(0, -3);
+      const candidateDocName = stripDocExtension(filePath);
       if (isSystemDoc(candidateDocName)) {
         json(res, 400, { ok: false, error: `'${candidateDocName}' is a reserved document name` });
         return;
@@ -1657,7 +1699,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         }
         throw err;
       }
-      const docName = filePath.slice(0, -3);
+      const docName = stripDocExtension(filePath);
       const fileIndex = typeof getFileIndex === 'function' ? getFileIndex() : null;
       if (fileIndex instanceof Map) {
         updateFileIndex(
@@ -1888,7 +1930,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       for (const [docName] of index) {
         let title = docName;
         try {
-          const filePath = resolve(contentDir, `${docName}.md`);
+          const filePath = resolve(contentDir, `${docName}${getDocExtension(docName)}`);
           const content = readFileSync(filePath, 'utf-8');
           title = extractPageTitle(content, docName);
         } catch (err) {
@@ -2043,6 +2085,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/diff': handleDiff,
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
+    '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/rescue': handleRescueList,
   };
 

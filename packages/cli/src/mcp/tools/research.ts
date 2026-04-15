@@ -9,6 +9,7 @@
  */
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
+import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
@@ -17,7 +18,7 @@ function buildBody(topic: string, contentDir: string): string {
 
 Topic: ${topic}
 
-The content directory for this project is **\`${contentDir}\`** (from \`.open-knowledge/config.yml\`).
+The content directory for this project is **\`${contentDir}\`** (from \`${OK_DIR}/config.yml\`).
 
 ## When to use this workflow
 
@@ -163,7 +164,7 @@ Research articles are discovery surfaces — they should link out to **every** r
 - **Don't skip \`ingest\`** — always capture raw sources first, then analyze
 - **Don't overwrite existing research** — if the topic was researched before, either iterate on the existing file or create a clearly-named successor (e.g., \`crdt-alternatives-2.md\`) and mark the old one as superseded
 
-Full convention: read \`.open-knowledge/AGENTS.md\`.`;
+Full convention: read \`${OK_DIR}/AGENTS.md\`.`;
 }
 
 export const DESCRIPTION = [

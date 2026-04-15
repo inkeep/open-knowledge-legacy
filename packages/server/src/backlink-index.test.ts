@@ -333,6 +333,34 @@ describe('BacklinkIndex', () => {
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
+
+  test('getLinkGraphNeighborhood returns an undirected degree-limited neighborhood', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-linkgraph-neighborhood-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.updateDocumentFromMarkdown('alpha', '[[beta]]');
+      index.updateDocumentFromMarkdown('beta', '[[gamma]] [[delta]]');
+      index.updateDocumentFromMarkdown('gamma', '[[epsilon]]');
+      index.updateDocumentFromMarkdown('delta', '');
+      index.updateDocumentFromMarkdown('epsilon', '');
+
+      const oneHop = index.getLinkGraphNeighborhood('beta', 1);
+      expect(oneHop.nodes).toEqual(['alpha', 'beta', 'delta', 'gamma']);
+      expect(oneHop.links).toContainEqual({ source: 'alpha', target: 'beta' });
+      expect(oneHop.links).toContainEqual({ source: 'beta', target: 'gamma' });
+      expect(oneHop.links).toContainEqual({ source: 'beta', target: 'delta' });
+      expect(oneHop.links).toHaveLength(3);
+
+      const twoHop = index.getLinkGraphNeighborhood('beta', 2);
+      expect(twoHop.nodes).toEqual(['alpha', 'beta', 'delta', 'epsilon', 'gamma']);
+      expect(twoHop.links).toContainEqual({ source: 'gamma', target: 'epsilon' });
+      expect(twoHop.links).toHaveLength(4);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── resolveMarkdownHref ────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@
  */
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
+import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 
 export function startCommand(getConfig: () => Config): Command {
   const cmd = new Command('start')
@@ -11,10 +12,10 @@ export function startCommand(getConfig: () => Config): Command {
     .option('-p, --port <port>', 'Server port', undefined)
     .option('-H, --host <host>', 'Server host', undefined)
     .option('--open', 'Open browser after start')
-    .option('--no-init', 'Skip auto-scaffolding of .open-knowledge/')
+    .option('--no-init', `Skip auto-scaffolding of ${OK_DIR}/`)
     .action(async (opts) => {
       // Lazy imports — avoids loading TipTap/Hocuspocus for other commands
-      const { existsSync } = await import('node:fs');
+      const { existsSync, mkdirSync } = await import('node:fs');
       const { createServer: createHttpServer } = await import('node:http');
       const { resolve } = await import('node:path');
       const { createServer, getLogger, updateServerLockPort } = await import(
@@ -26,15 +27,13 @@ export function startCommand(getConfig: () => Config): Command {
       const { renderBanner } = await import('../ui/banner.ts');
       const { dim, error, info, warning } = await import('../ui/colors.ts');
 
-      const { mkdirSync } = await import('node:fs');
-
       const log = getLogger('start');
       const config = getConfig();
       const cwd = process.cwd();
 
       // Auto-init: scaffold .open-knowledge/ on first run (unless --no-init)
       let didAutoInit = false;
-      const okDir = resolve(cwd, '.open-knowledge');
+      const okDir = resolve(cwd, OK_DIR);
       if (!existsSync(okDir) && opts.init !== false) {
         try {
           const { runInit } = await import('./init.ts');
@@ -202,13 +201,13 @@ export function startCommand(getConfig: () => Config): Command {
         console.log(
           renderBanner({
             name: 'open-knowledge',
-            version: '0.0.1',
+            version: PACKAGE_VERSION,
             localUrl,
             networkUrl,
           }),
         );
         if (didAutoInit) {
-          console.log(`  ${info('\u2713')} Scaffolded .open-knowledge/ (first run)`);
+          console.log(`  ${info('\u2713')} Scaffolded ${OK_DIR}/ (first run)`);
           console.log(
             `  ${dim('Tip: Run `open-knowledge init` to register MCP tools for Claude Code')}\n`,
           );

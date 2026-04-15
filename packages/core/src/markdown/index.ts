@@ -41,16 +41,14 @@ import type {
   Text,
   ThematicBreak,
 } from 'mdast';
-import type { ContainerDirective, LeafDirective, TextDirective } from 'mdast-util-directive';
 import type {
   MdxFlowExpression,
   MdxJsxFlowElement,
   MdxJsxTextElement,
-  MdxjsEsm,
   MdxTextExpression,
 } from 'mdast-util-mdx';
-import { GUARD_OPEN_BRACE } from './autolink-void-html-guard.ts';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
+import { parseWithFallback } from './parse-with-fallback.ts';
 import { parseMd, serializeMd } from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
 
@@ -85,11 +83,11 @@ export class MarkdownManager {
   /**
    * Parse a markdown string to TipTap JSONContent.
    *
-   * May throw SyntaxError for inputs containing matched `{…}` with non-JS
-   * content (remark-mdx/acorn rejects them). This is expected — Observer B
-   * catches SyntaxError and keeps last valid XmlFragment state during live
-   * editing. The R23 guard prevents the more severe class of crash (bare
-   * unmatched `<` and `{` that cause "Unexpected end of file" errors).
+   * May throw for structurally invalid MDX (e.g., mismatched open/close tags
+   * like `<Foo>...</Bar>`). This is expected — Observer B catches errors and
+   * keeps last valid XmlFragment state during live editing. The R23 guard
+   * prevents the more severe class of crash (bare unmatched `<` and `{` that
+   * cause "Unexpected end of file" errors).
    */
   parse(markdown: string): JSONContent {
     if (!markdown.trim()) {
@@ -108,34 +106,30 @@ export class MarkdownManager {
   }
 
   /**
-   * Crash-safe parse: never throws. Returns degraded content on failure.
+   * Parse with block-level fallback (R6). Never throws.
    *
-   * Use this on code paths where a throw = user-visible data loss:
-   *   - Server persistence (onLoadDocument) — better to show degraded text
-   *     than an empty document
-   *   - Any caller that can't keep "last valid state" like Observer B does
+   * On parse failure with position info, splits source at the enclosing block
+   * boundary, replaces the failing block with rawMdxFallback, parses the
+   * halves recursively, and merges. On position-less error (e.g., PM-
+   * construction RangeError), splits at blank-line boundaries and dispatches
+   * each block independently. On MAX_SPLIT_DEPTH exhaustion or when every
+   * block fails, falls through to whole-doc raw text. The `never throws`
+   * contract is preserved across all paths.
    *
-   * On failure, retries with all `{` protected via PUA sentinel (defeats
-   * acorn's "Could not parse expression" error while preserving all other
-   * markdown parsing). If that also fails, returns raw text as a paragraph.
+   * Use for all server-side R6 callers where throwing = user-visible data
+   * loss: server persistence (onLoadDocument), agent-sessions, rollback
+   * endpoint, external-change disk→CRDT bridge. NOT for Observer B, which
+   * uses freeze-on-failure for live-typing UX (retains the last-valid
+   * XmlFragment while the user is mid-type).
+   *
+   * Supersedes the prior `parseSafe` API (removed as a redundant alias —
+   * one name per function, per greenfield precedent).
    */
-  parseSafe(markdown: string): JSONContent {
-    try {
-      return this.parse(markdown);
-    } catch {
-      // Retry with all { protected — remark-mdx expression parser can't
-      // claim them, restoreFromMdx() converts PUA back to { in the tree
-      try {
-        const safeMd = markdown.replaceAll('{', GUARD_OPEN_BRACE);
-        return this.parse(safeMd);
-      } catch {
-        // Last resort: raw text as paragraph
-        return {
-          type: 'doc',
-          content: [{ type: 'paragraph', content: [{ type: 'text', text: markdown }] }],
-        };
-      }
+  parseWithFallback(markdown: string): JSONContent {
+    if (!markdown.trim()) {
+      return { type: 'doc', content: [{ type: 'paragraph', content: [] }] };
     }
+    return parseWithFallback(markdown, { parse: (md) => this.parse(md) });
   }
 
   /**
@@ -430,38 +424,67 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
       n.jsxComponent.createAndFill({
         content: rawFromData(node.data) ?? '',
       });
-    handlers.mdxJsxTextElement = (node: MdxJsxTextElement) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? '',
-      });
+    // Inline JSX → jsxInline (R3) if available; block-lift fallback otherwise
+    if (n.jsxInline) {
+      handlers.mdxJsxTextElement = (
+        node: MdxJsxTextElement,
+        _: MdastParent,
+        state: MdastToPmState,
+      ) => {
+        const children = state.all(node as unknown as MdastNodes).flat();
+        const attrs = {
+          sourceRaw: rawFromData(node.data) ?? '',
+          attributes: (node.attributes ?? []).map((a) =>
+            'type' in a && a.type === 'mdxJsxExpressionAttribute'
+              ? { type: 'spread', value: a.value }
+              : {
+                  type: 'attr',
+                  name: (a as { name: string }).name,
+                  value: (a as { value: unknown }).value,
+                },
+          ),
+        };
+        return n.jsxInline.createAndFill(attrs, children.length > 0 ? children : null);
+      };
+    } else {
+      // Fallback: map to block jsxComponent if jsxInline not in schema
+      handlers.mdxJsxTextElement = (node: MdxJsxTextElement) =>
+        n.jsxComponent.createAndFill({
+          content: rawFromData(node.data) ?? '',
+        });
+    }
 
-    // MDX expressions and ESM
+    // MDX expressions
+    //
+    // - mdxFlowExpression (block-level `{expr}` on its own line) → jsxComponent
+    //   (block node, `atom: true`, raw source in `content` attr).
+    //
+    // - mdxTextExpression (inline `{expr}` in prose) → plain `text` node
+    //   carrying the raw expression verbatim. This is the correct level per
+    //   NG1 + agnostic-mode intent: "balanced-brace prose like `{ noServer: true }`
+    //   preserves the braces on parse → serialize round-trip." Mapping to
+    //   jsxComponent (block) would violate paragraph's `inline*` content
+    //   expression when the expression appears mid-prose (e.g., inside a
+    //   table cell that wraps content in a paragraph). The spec §8 matrix
+    //   showed mdxTextExpression → jsxComponent; that's an inherited
+    //   inconsistency from the pre-agnostic schema. Under agnostic mode,
+    //   inline expressions ARE just prose — emit them as text.
+    //
+    // Under agnostic MDX (R1), both text and flow expressions only tokenize
+    // on BALANCED braces. Unmatched `{` is preserved as prose by the R23
+    // guard. So `{ noServer: true }` round-trips: text → serialize → `{ noServer: true }`
+    // → parse → mdxTextExpression → text → ...
     handlers.mdxFlowExpression = (node: MdxFlowExpression) =>
       n.jsxComponent.createAndFill({
         content: rawFromData(node.data) ?? `{${node.value ?? ''}}`,
       });
-    handlers.mdxTextExpression = (node: MdxTextExpression) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? `{${node.value ?? ''}}`,
-      });
-    handlers.mdxjsEsm = (node: MdxjsEsm) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? node.value ?? '',
-      });
-
-    // Directive nodes
-    handlers.containerDirective = (node: ContainerDirective) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? '',
-      });
-    handlers.leafDirective = (node: LeafDirective) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? '',
-      });
-    handlers.textDirective = (node: TextDirective) =>
-      n.jsxComponent.createAndFill({
-        content: rawFromData(node.data) ?? '',
-      });
+    handlers.mdxTextExpression = (node: MdxTextExpression) => {
+      const source = rawFromData(node.data) ?? `{${node.value ?? ''}}`;
+      return schema.text(source);
+    };
+    // mdxjsEsm handler removed (R4): agnostic mode never produces mdxjsEsm
+    // nodes — ESM import/export re-parses as prose per NG1.
+    // Directive handlers removed (D14): remark-directive removed from pipeline.
   }
 
   // Wiki-link → inline atom node
@@ -476,6 +499,80 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
 
   // Frontmatter: keep ignored (handled via Y.Map, not PM schema)
   // yaml + toml are pre-ignored by the library — correct behavior
+
+  // R8: Unknown-mdast-type catch-all for types that remark plugins may produce
+  // but our handler table doesn't cover. Block unknowns → rawMdxFallback;
+  // inline unknowns → plain text node with source slice.
+  const blockUnknownHandler = (node: {
+    type: string;
+    position?: { start: { offset: number }; end: { offset: number } };
+    value?: string;
+  }) => {
+    const sourceRaw = node.value ?? node.type;
+    if (n.rawMdxFallback) {
+      console.warn(
+        JSON.stringify({
+          event: 'unknown-mdast-type',
+          type: node.type,
+          reason: `Unhandled block mdast: ${node.type}`,
+        }),
+      );
+      return n.rawMdxFallback.createAndFill(
+        { reason: `Unhandled block mdast: ${node.type}` },
+        sourceRaw ? [schema.text(sourceRaw)] : null,
+      );
+    }
+    return null;
+  };
+  const inlineUnknownHandler = (node: { type: string; value?: string }) => {
+    console.warn(
+      JSON.stringify({
+        event: 'unknown-mdast-type',
+        type: node.type,
+        reason: `Unhandled inline mdast: ${node.type}`,
+      }),
+    );
+    return schema.text(node.value ?? node.type);
+  };
+
+  // Known-possible block types that may appear from remark-gfm or other extensions
+  if (!handlers.math) handlers.math = blockUnknownHandler;
+  // Known-possible inline types
+  if (!handlers.inlineMath) handlers.inlineMath = inlineUnknownHandler;
+  if (!handlers.footnoteReference) handlers.footnoteReference = inlineUnknownHandler;
+
+  // R8 wildcard: `unknownMdastGuardPlugin` in pipeline.ts substitutes any
+  // unknown-type mdast node with this synthetic type. We route it through
+  // blockUnknownHandler to produce a block-level rawMdxFallback — preserves
+  // surrounding structure instead of whole-doc fallback.
+  handlers.rawMdxFallbackMdast = (node: {
+    type: 'rawMdxFallbackMdast';
+    originalType: string;
+    value: string;
+    position?: { start: { offset: number }; end: { offset: number } };
+  }) => {
+    if (!n.rawMdxFallback) return null;
+    const span = node.position
+      ? {
+          start: node.position.start?.offset ?? 0,
+          end: node.position.end?.offset ?? 0,
+        }
+      : { start: 0, end: 0 };
+    console.warn(
+      JSON.stringify({
+        event: 'unknown-mdast-type',
+        type: node.originalType,
+        reason: `Unhandled mdast: ${node.originalType}`,
+      }),
+    );
+    return n.rawMdxFallback.createAndFill(
+      {
+        reason: `Unhandled mdast: ${node.originalType}`,
+        originalSpan: span,
+      },
+      node.value ? [schema.text(node.value)] : null,
+    );
+  };
 
   return handlers as RemarkProseMirrorOptions['handlers'];
 }
@@ -591,6 +688,23 @@ function buildPmToMdastHandlers(schema: Schema): {
     nodeHandlers.jsxComponent = (pmNode: PmNode) => ({
       type: 'html' as const,
       value: pmNode.attrs.content ?? '',
+    });
+  }
+
+  // rawMdxFallback → emit inner text as html mdast node (preserves raw bytes)
+  if (n.rawMdxFallback) {
+    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => ({
+      type: 'html' as const,
+      value: pmNode.textContent ?? '',
+    });
+  }
+
+  // jsxInline → prefer sourceRaw for byte-identical round-trip; fallback to
+  // reconstructing from structured attributes
+  if (n.jsxInline) {
+    nodeHandlers.jsxInline = (pmNode: PmNode) => ({
+      type: 'html' as const,
+      value: pmNode.attrs.sourceRaw || pmNode.textContent || '',
     });
   }
 

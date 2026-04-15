@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { OK_DIR } from '../constants.ts';
 import { loadConfig } from './loader';
 
 let testDir: string;
@@ -20,7 +21,7 @@ afterEach(() => {
 
 /** Helper: write a workspace config.yml inside testDir */
 function writeWorkspaceConfig(yaml: string) {
-  const configDir = resolve(testDir, '.open-knowledge');
+  const configDir = resolve(testDir, OK_DIR);
   mkdirSync(configDir, { recursive: true });
   writeFileSync(resolve(configDir, 'config.yml'), yaml, 'utf-8');
 }
@@ -35,7 +36,7 @@ describe('loadConfig', () => {
     expect(sources).toHaveLength(0);
 
     // content globs
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.content.exclude).toEqual([]);
 
     // server
@@ -52,7 +53,7 @@ describe('loadConfig', () => {
     const { config } = loadConfig(testDir);
 
     expect(config.server.port).toBe(3000);
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.persistence.debounceMs).toBe(2000);
   });
 
@@ -72,7 +73,7 @@ describe('loadConfig', () => {
     // Comments-only YAML parses to null, so no source is recorded
     expect(sources).toHaveLength(0);
     expect(config.server.port).toBe(3000);
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
   });
 
   // ── Workspace overrides ─────────────────────────────────────────────
@@ -87,7 +88,7 @@ describe('loadConfig', () => {
     // sibling default preserved
     expect(config.server.host).toBe('localhost');
     // other sections untouched
-    expect(config.content.include).toEqual(['**/*.md']);
+    expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.persistence.debounceMs).toBe(2000);
   });
 

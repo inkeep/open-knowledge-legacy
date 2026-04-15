@@ -2,7 +2,6 @@ import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
 import {
   ChevronDown,
-  Code2,
   Heading1,
   Heading2,
   Heading3,
@@ -11,6 +10,7 @@ import {
   ListTodo,
   Pilcrow,
   Quote,
+  SquareCode,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -93,7 +93,7 @@ const blockTypes: BlockType[] = [
   {
     name: 'codeBlock',
     label: 'Code Block',
-    icon: Code2,
+    icon: SquareCode,
     isActive: (editor) => editor.isActive('codeBlock'),
     command: (editor) => editor.chain().focus().toggleCodeBlock().run(),
   },

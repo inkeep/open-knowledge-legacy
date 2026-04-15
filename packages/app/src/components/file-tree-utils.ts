@@ -43,6 +43,12 @@ export function collectFolderPaths(tree: TreeNode[]): Set<string> {
   return paths;
 }
 
+export function defaultInitialDir(activeDocName: string | null): string {
+  if (!activeDocName) return '';
+  const slash = activeDocName.lastIndexOf('/');
+  return slash > 0 ? activeDocName.slice(0, slash) : '';
+}
+
 /**
  * Build a hierarchical tree from a flat list of documents.
  * Each docName is split on '/' to create folder structure.

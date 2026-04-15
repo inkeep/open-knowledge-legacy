@@ -9,7 +9,8 @@ import { NodeViewWrapper } from '@tiptap/react';
 import { Ellipsis, Pencil, Trash2 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
-import { CreatePageDialog } from '../../components/CreatePageDialog';
+import { defaultInitialDir } from '../../components/file-tree-utils';
+import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
 import {
@@ -21,9 +22,10 @@ import {
 } from '../../components/ui/dropdown-menu';
 import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
+import { docNameFromHash } from '../../lib/doc-hash';
 import { cn } from '../../lib/utils';
 import { LinkTooltipHint } from '../link-tooltip';
-import { isResolvedWikiLinkTarget } from './wiki-link-helpers';
+import { isResolvedWikiLinkTarget, wikiLinkSuggestedFilename } from './wiki-link-helpers';
 
 // ── Heading picker ────────────────────────────────────────────────────────────
 
@@ -264,7 +266,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
     if (docName !== target) {
       updateAttributes({ target: docName, alias: alias ?? label });
     }
-    window.location.hash = `#/${docName}`;
+    // Navigation is handled by NewItemDialog after creation
   }
 
   function handleSaveEdit(newTarget: string, newAlias: string | null, newAnchor: string | null) {
@@ -379,10 +381,17 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
         </DropdownMenuRoot>
       </NodeViewWrapper>
 
-      <CreatePageDialog
+      <NewItemDialog
         open={createDialogOpen}
-        target={target}
         onOpenChange={setCreateDialogOpen}
+        kind="file"
+        initialDir={defaultInitialDir(docNameFromHash(window.location.hash) ?? '')}
+        suggestedName={wikiLinkSuggestedFilename(target)}
+        description={
+          <>
+            Create a page for <span className="font-medium text-foreground">[[{target}]]</span>
+          </>
+        }
         onCreated={handleCreated}
       />
 
