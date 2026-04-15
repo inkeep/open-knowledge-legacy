@@ -44,6 +44,7 @@ import {
   type Scheduler,
   setupObservers,
 } from '../../src/editor/observers';
+import { ControllableWebSocket } from './network-control';
 
 // ─── Shared instances (created once, reused across all tests) ───
 
@@ -164,12 +165,18 @@ export interface TestClient {
   provider: HocuspocusProvider;
   cleanup: () => Promise<void>;
   docName: string;
+  /** Pause inbound CRDT sync. Only available when syncControl: true. */
+  pauseSync: () => void;
+  /** Resume inbound CRDT sync, draining queued messages. Only available when syncControl: true. */
+  resumeSync: () => void;
 }
 
 export interface CreateTestClientOptions {
   /** Skip attaching the bridge invariant watcher. Use for tests that
    *  deliberately drive divergence (e.g., Bug-D skip-guarded test). */
   skipInvariantWatcher?: boolean;
+  /** Wrap the WebSocket with a ControllableWebSocket for pause/resume sync. */
+  syncControl?: boolean;
 }
 
 export async function createTestClient(
@@ -183,12 +190,26 @@ export async function createTestClient(
   const ytext = doc.getText('source');
   const fragment = doc.getXmlFragment('default');
 
-  const provider = new HocuspocusProvider({
+  // FR-16: optionally wrap WebSocket with ControllableWebSocket for pause/resume
+  let controllableWs: ControllableWebSocket | undefined;
+  const providerOpts: Record<string, unknown> = {
     url: `ws://localhost:${port}/collab`,
     name: resolvedDocName,
     document: doc,
     connect: true,
-  });
+  };
+  if (options?.syncControl) {
+    providerOpts.WebSocketPolyfill = class extends ControllableWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        controllableWs = this;
+      }
+    };
+  }
+
+  const provider = new HocuspocusProvider(
+    providerOpts as ConstructorParameters<typeof HocuspocusProvider>[0],
+  );
 
   await waitForSync(provider);
 
@@ -211,6 +232,14 @@ export async function createTestClient(
     fragment,
     provider,
     docName: resolvedDocName,
+    pauseSync: () => {
+      if (!controllableWs) throw new Error('pauseSync requires syncControl: true');
+      controllableWs.pauseInbound();
+    },
+    resumeSync: () => {
+      if (!controllableWs) throw new Error('resumeSync requires syncControl: true');
+      controllableWs.resumeInbound();
+    },
     cleanup: async () => {
       watcherDetach?.();
       observerCleanup();
