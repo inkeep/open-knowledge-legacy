@@ -121,13 +121,23 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   const httpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
     if (url?.startsWith('/api/')) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
-      srv.hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
-        if (!res.writableEnded) {
-          res.writeHead(500);
-          res.end('Internal server error');
-        }
-      });
+      srv.hocuspocus
+        // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
+        .hooks('onRequest', { request: req, response: res } as any)
+        .then(() => {
+          if (res.writableEnded) return;
+          // Unhandled /api/* route — 404 JSON. Matches production CLI and
+          // dev-plugin behavior.
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'API route not found', path: url }));
+        })
+        .catch(() => {
+          if (!res.writableEnded) {
+            res.writeHead(500);
+            res.end('Internal server error');
+          }
+        });
       return;
     }
     res.writeHead(404);
