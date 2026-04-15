@@ -8,7 +8,7 @@ type ToolHandler = (args: { sourceDocNames?: string[] }) => Promise<{
   isError?: boolean;
 }>;
 
-describe('find_dead_links MCP tool', () => {
+describe('get_dead_links MCP tool', () => {
   test('registers the tool and forwards repeated sourceDocName query params', async () => {
     const requests: string[] = [];
     const server = Bun.serve({
@@ -42,7 +42,7 @@ describe('find_dead_links MCP tool', () => {
       register(fakeServer, `http://localhost:${server.port}`);
 
       expect(DESCRIPTION).toContain('missing internal page targets');
-      expect(registrations.map((entry) => entry.name)).toEqual(['find_dead_links']);
+      expect(registrations.map((entry) => entry.name)).toEqual(['get_dead_links']);
 
       const handler = registrations[0]?.handler;
       expect(handler).toBeDefined();
@@ -90,7 +90,7 @@ describe('find_dead_links MCP tool', () => {
 
     register(fakeServer, undefined);
 
-    expect(registrations.map((entry) => entry.name)).toEqual(['find_dead_links']);
+    expect(registrations.map((entry) => entry.name)).toEqual(['get_dead_links']);
     const handler = registrations[0]?.handler;
     expect(handler).toBeDefined();
     if (!handler) throw new Error('Missing tool handler');

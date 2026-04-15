@@ -32,7 +32,7 @@ describe('registerAllTools', () => {
       config,
     });
 
-    expect(toolNames).toContain('find_dead_links');
+    expect(toolNames).toContain('get_dead_links');
   });
 
   it('each tool returns instructional text content', () => {

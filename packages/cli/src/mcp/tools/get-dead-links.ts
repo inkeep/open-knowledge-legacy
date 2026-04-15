@@ -12,7 +12,7 @@ export const DESCRIPTION = [
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {
   server.tool(
-    'find_dead_links',
+    'get_dead_links',
     DESCRIPTION,
     {
       sourceDocNames: z

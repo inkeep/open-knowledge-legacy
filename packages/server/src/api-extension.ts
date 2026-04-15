@@ -1234,7 +1234,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const t0 = Date.now();
       const sourceDocNameFilter = sourceDocNames.length
         ? [...new Set(sourceDocNames.map((docName) => resolveAlias(docName)))]
         : undefined;
@@ -1251,20 +1250,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           })),
         })),
       };
-
-      const sourceRowCount = response.deadLinks.reduce(
-        (sum, entry) => sum + entry.sources.length,
-        0,
-      );
-      const sourceDocNameLabel = sourceDocNameFilter?.length
-        ? sourceDocNameFilter.join(',')
-        : '(global)';
-      console.log('[dead-links]', {
-        sourceDocNames: sourceDocNameLabel,
-        targets: response.deadLinks.length,
-        sourceRows: sourceRowCount,
-        durationMs: Date.now() - t0,
-      });
 
       json(res, 200, response);
     } catch (e) {
