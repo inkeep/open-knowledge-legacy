@@ -23,6 +23,7 @@ export function createAutoBailPlugin(compartment: Compartment) {
   return ViewPlugin.fromClass(
     class {
       bailed = false;
+      destroyed = false;
 
       update(update: ViewUpdate) {
         if (this.bailed) return;
@@ -36,6 +37,7 @@ export function createAutoBailPlugin(compartment: Compartment) {
             `[polish-engine] auto-bail: ${doc.lines} lines exceeds ceiling of ${LINE_CEILING}`,
           );
           queueMicrotask(() => {
+            if (this.destroyed) return;
             update.view.dispatch({
               effects: compartment.reconfigure([]),
             });
@@ -51,11 +53,16 @@ export function createAutoBailPlugin(compartment: Compartment) {
             `[polish-engine] auto-bail: first-paint ${paintMs.toFixed(1)}ms exceeds ceiling of ${FIRST_PAINT_CEILING_MS}ms`,
           );
           queueMicrotask(() => {
+            if (this.destroyed) return;
             update.view.dispatch({
               effects: compartment.reconfigure([]),
             });
           });
         }
+      }
+
+      destroy() {
+        this.destroyed = true;
       }
     },
   );
