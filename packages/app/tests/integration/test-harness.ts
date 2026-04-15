@@ -29,6 +29,7 @@ import {
   AGENT_WRITE_ORIGIN,
   createServer,
   FILE_WATCHER_ORIGIN,
+  OBSERVER_SYNC_ORIGIN,
   ROLLBACK_ORIGIN,
   type ServerInstance,
   type ServerOptions,
@@ -502,6 +503,7 @@ const BRIDGE_ENFORCING_ORIGINS: Set<LocalTransactionOrigin> = new Set([
   AGENT_WRITE_ORIGIN,
   FILE_WATCHER_ORIGIN,
   ROLLBACK_ORIGIN,
+  OBSERVER_SYNC_ORIGIN,
 ]);
 
 export interface InvariantViolation {

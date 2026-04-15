@@ -46,7 +46,7 @@ import {
   VFileMessage,
 } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
-import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import DiffMatchPatch from 'diff-match-patch';
 import type * as Y from 'yjs';
 import { diffLinesFast as diffLines } from './diff-lines-fast';
@@ -210,7 +210,7 @@ interface ObserverDeps {
  * Uses diffLines to minimize CRDT mutations — preserves concurrent source-mode edits
  * when the changes are line-aligned.
  */
-function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: string): void {
+function _applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: string): void {
   if (currentText === newText) return;
 
   // No padding needed here — this function walks the diff with byte-level
@@ -277,7 +277,7 @@ function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: strin
  *   - D9: user-wins on collision — when user deletes a line that agent modified,
  *     the deletion wins (DMP default behavior).
  */
-function applyUserDelta(deps: ObserverDeps, oldXmlMd: string, newXmlMd: string): void {
+function _applyUserDelta(deps: ObserverDeps, oldXmlMd: string, newXmlMd: string): void {
   if (oldXmlMd === newXmlMd) return;
   const { ytext } = deps;
   const currentText = ytext.toString();
@@ -332,7 +332,7 @@ function getFrontmatter(doc: Y.Doc): string {
  * Returns a cleanup function that removes both observers.
  */
 export function setupObservers(deps: ObserverDeps): () => void {
-  const { doc, xmlFragment, ytext, mdManager, schema } = deps;
+  const { doc, xmlFragment, ytext, mdManager } = deps;
   const sched: Scheduler = deps.scheduler ?? defaultScheduler;
 
   // Register the scheduler into the doc's TypingState so `markUserTyping`
@@ -382,7 +382,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
         return;
       }
 
-      const currentText = ytext.toString();
+      const _currentText = ytext.toString();
 
       // If Y.Text already matches the serialized XmlFragment, skip the write.
       // This guard covers two independent cases (both fixes converged on the
@@ -398,19 +398,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
       //    next user-delta diff starts from the right baseline. Without this,
       //    Observer A would re-propagate the external content as a "user delta"
       //    on its next firing, duplicating it in Y.Text.
-      if (currentText === md) {
-        lastSyncedXmlMd = md;
-        return;
-      }
-
-      doc.transact(() => {
-        if (currentText === lastSyncedXmlMd) {
-          applyIncrementalDiff(ytext, currentText, md);
-        } else {
-          applyUserDelta(deps, lastSyncedXmlMd, md);
-        }
-      }, ORIGIN_TREE_TO_TEXT);
-
+      // Under server-authoritative architecture (precedent #14), cross-CRDT
+      // writes are performed exclusively by the server observer. The client
+      // observer only maintains the baseline for read-side reasoning.
       lastSyncedXmlMd = md;
     } catch (err) {
       console.error('[Observer A] Failed to sync tree→text:', err);
@@ -521,9 +511,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
         return;
       }
 
-      let parsedJson: ReturnType<typeof mdManager.parse>;
+      let _parsedJson: ReturnType<typeof mdManager.parse>;
       try {
-        parsedJson = mdManager.parse(body);
+        _parsedJson = mdManager.parse(body);
       } catch (parseErr) {
         // MDX expression attributes (e.g., `<Chart data={[1,2,3]} />`) and other
         // partial syntax can cause remark-mdx / acorn parse failures while the user
@@ -553,44 +543,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
         throw parseErr;
       }
 
-      // Schema validation errors (e.g., malformed PM JSON from a handler bug) are
-      // NOT transient — they indicate a pipeline regression and must reach onSyncError
-      // via the outer catch. Kept outside the parse try/catch deliberately.
-      const pmNode = schema.nodeFromJSON(parsedJson);
-
-      doc.transact(() => {
-        const meta = { mapping: new Map(), isOMark: new Map() };
-        updateYFragment(doc, xmlFragment, pmNode, meta);
-        const metaMap = doc.getMap('metadata');
-        metaMap.set('frontmatter', frontmatter);
-      }, ORIGIN_TEXT_TO_TREE);
-
-      // After updateYFragment, re-serialize XmlFragment to capture the post-sync state
-      // (updateYFragment may normalize the tree differently from the input body). This
-      // becomes Observer A's new baseline so its next delta diff starts from reality —
-      // otherwise Observer A would see the new content as a "user delta" and re-propagate
-      // it back into Y.Text (duplication / undo reversal bug).
-      try {
-        const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
-        const postBody = mdManager.serialize(postJson);
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, postBody);
-      } catch (err) {
-        // Serialization failure is non-fatal — use the input body as a best-effort
-        // baseline so Observer A's next delta diff starts from a reasonable state.
-        // The convergence guard (currentText === md) will correct any remaining drift.
-        //
-        // Note: `onSyncError` is deliberately NOT called here. This is a recoverable
-        // baseline drift (the fallback assignment below + the next-run convergence
-        // guard together recover automatically), not a sync failure. Surfacing it as
-        // an onSyncError would pollute telemetry with transient noise. The outer
-        // catch below reserves onSyncError for actual sync failures (parse errors
-        // that leave XmlFragment in a stale state).
-        console.warn(
-          '[Observer B] Post-sync re-serialization failed — using input body as baseline:',
-          err,
-        );
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-      }
+      // Under server-authoritative architecture (precedent #14), cross-CRDT
+      // writes (updateYFragment) are performed exclusively by the server observer.
+      // The client observer only validates parse success for diagnostic purposes.
     } catch (err) {
       // Parse error — log but don't crash. XmlFragment keeps last valid state.
       console.error('[Observer B] Failed to sync text→tree:', err);
@@ -634,22 +589,9 @@ export function setupObservers(deps: ObserverDeps): () => void {
     lastSyncedXmlMd = '';
   }
 
-  // Initial sync: populate Y.Text from current XmlFragment content
-  if (xmlFragment.length > 0 && ytext.length === 0) {
-    try {
-      const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
-      const body = mdManager.serialize(json);
-      const frontmatter = getFrontmatter(doc);
-      const md = prependFrontmatter(frontmatter, body);
-      doc.transact(() => {
-        ytext.insert(0, md);
-      }, ORIGIN_TREE_TO_TEXT);
-      lastSyncedXmlMd = md;
-    } catch (err) {
-      console.error('[Observer A] Failed initial sync:', err);
-      deps.onSyncError?.('tree-to-text', err instanceof Error ? err : new Error(String(err)));
-    }
-  }
+  // Initial Y.Text population is handled by the server observer (precedent #14).
+  // The server observer's setupServerObservers() populates Y.Text from XmlFragment
+  // on first attach if Y.Text is empty. Client observer no longer writes Y.Text.
 
   return () => {
     if (debounceA) sched.clearTimeout(debounceA);

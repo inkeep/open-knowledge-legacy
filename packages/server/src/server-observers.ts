@@ -28,6 +28,7 @@ import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import DiffMatchPatch from 'diff-match-patch';
 import type * as Y from 'yjs';
+import { incrementServerObserverFire } from './metrics.ts';
 
 // ─────────────────────────────────────────────────────────────
 // Diff utilities (ported from packages/app/src/editor/diff-lines-fast.ts
@@ -182,6 +183,21 @@ function applyUserDelta(ytext: Y.Text, oldXmlMd: string, newXmlMd: string): void
   applyByPrefixSuffix(ytext, currentText, mergedText);
 }
 
+/**
+ * Normalize for bridge comparison: strip trailing whitespace per line,
+ * strip trailing newlines, collapse 3+ consecutive newlines to 2.
+ * Matches the client-side normalizeBridge in test-harness.ts and the
+ * bridge invariant definition (CLAUDE.md §Bridge invariant).
+ */
+function normalizeBridge(s: string): string {
+  return s
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\n+$/, '');
+}
+
 /** Read frontmatter from Y.Doc metadata map. */
 function getFrontmatter(doc: Y.Doc): string {
   const metaMap = doc.getMap('metadata');
@@ -252,9 +268,11 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
       const currentText = ytext.toString();
 
-      // Already-in-sync gate: if Y.Text already matches XmlFragment, just
-      // update baseline. Covers disk-bridge feedback and Observer B writes.
-      if (currentText === md) {
+      // Already-in-sync gate: if Y.Text already matches XmlFragment (after
+      // bridge normalization), just update baseline. The normalization handles
+      // trailing newline differences between raw Y.Text and serialized
+      // XmlFragment (remark-stringify adds a trailing newline).
+      if (normalizeBridge(currentText) === normalizeBridge(md)) {
         lastSyncedXmlMd = md;
         return;
       }
@@ -269,6 +287,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         }
       }, OBSERVER_SYNC_ORIGIN);
 
+      incrementServerObserverFire('a');
       lastSyncedXmlMd = md;
     } catch (err) {
       console.error('[Server Observer A] Failed to sync tree→text:', err);
@@ -322,14 +341,26 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
    */
   const runObserverBSync = (): void => {
     debounceB = null;
+
+    // If Observer A has a pending debounce, defer Observer B until after
+    // Observer A runs. This prevents Observer B from overwriting XmlFragment
+    // content that was just added by a WYSIWYG edit but hasn't been synced
+    // to Y.Text yet. Observer B will be re-triggered after Observer A writes
+    // Y.Text (because Observer B observes Y.Text changes).
+    if (debounceA) {
+      debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
+      return;
+    }
+
     try {
       const md = ytext.toString();
       const { frontmatter, body } = stripFrontmatter(md);
 
-      // Early-exit: if XmlFragment already serializes to the same body, no work.
+      // Early-exit: if XmlFragment already serializes to the same body
+      // (after normalization), no work needed.
       const currentJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
       const currentBody = mdManager.serialize(currentJson);
-      if (currentBody === body) {
+      if (normalizeBridge(currentBody) === normalizeBridge(body)) {
         // Tree and text are already in sync — just update frontmatter if changed.
         const metaMap = doc.getMap('metadata');
         const currentFm = metaMap.get('frontmatter');
@@ -369,6 +400,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         const metaMap = doc.getMap('metadata');
         metaMap.set('frontmatter', frontmatter);
       }, OBSERVER_SYNC_ORIGIN);
+
+      incrementServerObserverFire('b');
 
       // Re-serialize XmlFragment post-update for Observer A's baseline
       // (updateYFragment may normalize differently from input).

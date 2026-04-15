@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
+import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 import {
   AgentSessionManager,
   acquireServerLock,
@@ -18,6 +19,7 @@ import {
   createExternalChangeHandler,
   createLiveDerivedIndexExtension,
   createPersistenceExtension,
+  createServerObserverExtension,
   initShadowRepo,
   readBranchFromHead,
   releaseServerLock,
@@ -27,6 +29,7 @@ import {
   updateServerLockPort,
   type WatcherHandle,
 } from '@inkeep/open-knowledge-server';
+import { getSchema } from '@tiptap/core';
 import sirv from 'sirv';
 import type { Plugin } from 'vite';
 import { WebSocketServer } from 'ws';
@@ -217,6 +220,12 @@ try {
       backlinkIndex,
       signalChannel,
     }),
+  );
+
+  const pluginMdManager = new MarkdownManager({ extensions: sharedExtensions });
+  const pluginSchema = getSchema(sharedExtensions);
+  hocuspocus.configuration.extensions.push(
+    createServerObserverExtension({ mdManager: pluginMdManager, schema: pluginSchema }),
   );
 } catch (err) {
   try {

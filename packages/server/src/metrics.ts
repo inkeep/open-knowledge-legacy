@@ -17,6 +17,8 @@ export interface ReconciliationMetrics {
   cc1BroadcastDropCount: number;
   cc1SubscriberCount: number;
   cc1LastSeq: Record<string, number>;
+  serverObserverFiresA: number;
+  serverObserverFiresB: number;
 }
 
 const counters: ReconciliationMetrics = {
@@ -32,6 +34,8 @@ const counters: ReconciliationMetrics = {
   cc1BroadcastDropCount: 0,
   cc1SubscriberCount: 0,
   cc1LastSeq: {},
+  serverObserverFiresA: 0,
+  serverObserverFiresB: 0,
 };
 
 export function incrementReconcile(): void {
@@ -78,6 +82,11 @@ export function setCC1SubscriberCount(count: number): void {
   counters.cc1SubscriberCount = count;
 }
 
+export function incrementServerObserverFire(direction: 'a' | 'b'): void {
+  if (direction === 'a') counters.serverObserverFiresA++;
+  else counters.serverObserverFiresB++;
+}
+
 export function setCC1LastSeq(channel: string, seq: number): void {
   counters.cc1LastSeq[channel] = seq;
 }
@@ -99,4 +108,6 @@ export function resetMetrics(): void {
   counters.cc1BroadcastDropCount = 0;
   counters.cc1SubscriberCount = 0;
   counters.cc1LastSeq = {};
+  counters.serverObserverFiresA = 0;
+  counters.serverObserverFiresB = 0;
 }
