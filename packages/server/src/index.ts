@@ -12,6 +12,9 @@ export {
   type ExtractedWikiLink,
   extractWikiLinksFromMarkdown,
   type HubEntry,
+  isOrphanMode,
+  ORPHAN_MODES,
+  type OrphanMode,
 } from './backlink-index.ts';
 export {
   CC1_CONTRACT_VERSION,
@@ -58,6 +61,11 @@ export {
   PinoLogger,
   type PinoLoggerConfig,
 } from './logger.ts';
+export {
+  type RenameRewriteResult,
+  rewriteMarkdownLinksForDocumentRename,
+  rewriteWikiLinksForDocumentRename,
+} from './managed-rename-rewrite.ts';
 export {
   getMetrics,
   type ReconciliationMetrics,

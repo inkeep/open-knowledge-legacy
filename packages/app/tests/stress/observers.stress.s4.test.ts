@@ -284,3 +284,144 @@ describe('S4b: unterminated-final-line gap 2 regression', () => {
     );
   }
 });
+
+// ---------- TQ6: Same-line concurrent edits ----------
+
+describe('TQ6: same-line concurrent edits', () => {
+  test('TQ6.1: agent writes end of line, user edits start — both preserved', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    // Baseline: multi-line content
+    doc.transact(() => {
+      ytext.insert(0, 'Hello world\n\nSecond line\n');
+    }, 'agent-write');
+    await wait(500);
+
+    // Agent appends " brave" to first line
+    doc.transact(() => {
+      const text = ytext.toString();
+      const firstNewline = text.indexOf('\n');
+      ytext.insert(firstNewline, ' brave');
+    }, 'agent-write');
+
+    // User edits start of first line via XmlFragment
+    markUserTyping(doc);
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+
+    const userPara = new Y.XmlElement('paragraph');
+    const userText = new Y.XmlText();
+    userText.applyDelta([{ insert: 'Hey! Hello world' }]);
+    userPara.insert(0, [userText]);
+    if (fragment.length > 0) fragment.delete(0, 1);
+    fragment.insert(0, [userPara]);
+
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    expect(finalText).toContain('Hello');
+    expect(finalText).toContain('Second line');
+    assertBridgeInvariant(ytext, fragment, 'TQ6.1');
+
+    cleanup();
+  }, 30_000);
+
+  test('TQ6.2 (D9): user deletes line, agent modifies — user-wins', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    // Baseline: three paragraphs
+    doc.transact(() => {
+      ytext.insert(0, 'aaa\n\nbbb\n\nccc\n');
+    }, 'agent-write');
+    await wait(500);
+
+    // Agent modifies middle line
+    doc.transact(() => {
+      const text = ytext.toString();
+      const bbbStart = text.indexOf('bbb');
+      if (bbbStart >= 0) {
+        ytext.delete(bbbStart, 3);
+        ytext.insert(bbbStart, 'bbb!');
+      }
+    }, 'agent-write');
+
+    markUserTyping(doc);
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+
+    // User deletes middle paragraph via XmlFragment
+    if (fragment.length >= 2) fragment.delete(1, 1);
+
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    const finalText = ytext.toString();
+    expect(finalText).toContain('aaa');
+    expect(finalText).toContain('ccc');
+    expect(finalText).not.toContain('bbb');
+    assertBridgeInvariant(ytext, fragment, 'TQ6.2');
+
+    cleanup();
+  }, 30_000);
+
+  test('TQ6.5 (FR-7): no console.warn on successful merge', async () => {
+    const doc = new Y.Doc();
+    const fragment = doc.getXmlFragment('default');
+    const ytext = doc.getText('source');
+
+    const origWarn = console.warn;
+    const warnCalls: unknown[][] = [];
+    console.warn = (...args: unknown[]) => {
+      warnCalls.push(args);
+    };
+
+    const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });
+
+    // Baseline
+    doc.transact(() => {
+      ytext.insert(0, 'First line\n\nSecond line\n');
+    }, 'agent-write');
+    await wait(500);
+
+    // Agent appends (non-conflicting)
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\nAgent added\n');
+    }, 'agent-write');
+
+    markUserTyping(doc);
+    const typingInterval = setInterval(() => markUserTyping(doc), 30);
+
+    // User modifies first line via XmlFragment
+    const firstChild = fragment.get(0);
+    if (firstChild instanceof Y.XmlElement) {
+      const newPara = new Y.XmlElement('paragraph');
+      const newText = new Y.XmlText();
+      newText.applyDelta([{ insert: 'First line modified' }]);
+      newPara.insert(0, [newText]);
+      fragment.delete(0, 1);
+      fragment.insert(0, [newPara]);
+    }
+
+    await wait(200);
+    clearInterval(typingInterval);
+    await wait(500);
+
+    console.warn = origWarn;
+
+    const observerAWarns = warnCalls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('[Observer A] patch_apply had'),
+    );
+    expect(observerAWarns.length).toBe(0);
+
+    assertBridgeInvariant(ytext, fragment, 'TQ6.5');
+
+    cleanup();
+  }, 30_000);
+});

@@ -123,6 +123,14 @@ describe('pathToDocName', () => {
   test('handles nested paths', () => {
     expect(pathToDocName('/app/content/docs/guide.md', '/app/content')).toBe('docs/guide');
   });
+
+  test('strips .mdx extension', () => {
+    expect(pathToDocName('/app/content/component.mdx', '/app/content')).toBe('component');
+  });
+
+  test('strips .mdx from nested paths', () => {
+    expect(pathToDocName('/app/content/docs/guide.mdx', '/app/content')).toBe('docs/guide');
+  });
 });
 
 describe('contentHash', () => {

@@ -343,6 +343,27 @@ describe('BacklinkIndex', () => {
     }
   });
 
+  test('getOrphans supports incoming, outgoing, and both modes', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-orphan-modes-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.updateDocumentFromMarkdown('alpha', '[[beta]]');
+      index.updateDocumentFromMarkdown('beta', '# Beta');
+      index.updateDocumentFromMarkdown('gamma', '# Gamma');
+
+      const allDocs = ['alpha', 'beta', 'gamma'];
+
+      expect(index.getOrphans(allDocs, 'incoming')).toEqual(['alpha', 'gamma']);
+      expect(index.getOrphans(allDocs, 'outgoing')).toEqual(['beta', 'gamma']);
+      expect(index.getOrphans(allDocs, 'both')).toEqual(['gamma']);
+      expect(index.getOrphans(allDocs)).toEqual(['gamma']);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test('getLinkGraph returns sorted nodes and directed edges', () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-linkgraph-'));
     const contentDir = join(projectDir, 'content');

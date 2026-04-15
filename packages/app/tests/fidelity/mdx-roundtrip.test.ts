@@ -79,21 +79,35 @@ describe('MDX round-trip — paired flow elements', () => {
   });
 });
 
-describe('MDX round-trip — import/export statements', () => {
-  test('named import', () => {
-    assertRoundTrip("import { Chart } from './Chart'\n");
+describe('MDX round-trip — import/export statements (agnostic mode: prose)', () => {
+  // Under agnostic MDX mode (R1), import/export statements are no longer parsed
+  // as mdxjsEsm nodes — they re-parse as prose paragraphs per NG1. The text
+  // content is preserved on round-trip (not lost), but the structural mechanism
+  // differs: prose paragraph instead of atom jsxComponent.
+  test('named import re-parses as prose (braces become expression)', () => {
+    // Under agnostic mode, `{ Chart }` is claimed as an MDX expression.
+    // The import keyword and path remain as prose text.
+    const output = normalize(mdRoundTrip("import { Chart } from './Chart'\n"));
+    expect(output).toContain('import');
+    expect(output).toContain('Chart');
+    expect(output).toContain("'./Chart'");
   });
 
-  test('default import', () => {
-    assertRoundTrip("import Chart from './Chart'\n");
+  test('default import preserved as prose', () => {
+    const output = normalize(mdRoundTrip("import Chart from './Chart'\n"));
+    expect(output).toContain('import');
+    expect(output).toContain('Chart');
   });
 
-  test('export const', () => {
-    assertRoundTrip("export const meta = { title: 'Test' }\n");
+  test('export const preserved as prose', () => {
+    const output = normalize(mdRoundTrip("export const meta = { title: 'Test' }\n"));
+    expect(output).toContain('export const meta');
   });
 
-  test('import + content', () => {
-    assertRoundTrip("import { Chart } from './Chart'\n\n# Hello\n");
+  test('import + content: content structure preserved', () => {
+    const output = normalize(mdRoundTrip("import { Chart } from './Chart'\n\n# Hello\n"));
+    expect(output).toContain('import');
+    expect(output).toContain('# Hello');
   });
 });
 

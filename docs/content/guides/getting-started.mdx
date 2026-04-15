@@ -60,6 +60,17 @@ This starts the collaborative editor at `http://localhost:3000`. The port is con
 Starting the editor is optional. AI agents work without it -- the MCP server operates in disk-only mode when no editor is running.
 </Callout>
 
+## Create files from the sidebar
+
+The file sidebar offers several ways to create a new markdown file or folder:
+
+- **Header `+` button** -- opens a dropdown with "New file" and "New folder". Defaults to the active file's parent directory, or project root when no file is open.
+- **Right-click a folder row** -- "New file here" / "New folder here" targets that folder.
+- **`Cmd+Alt+N` (macOS) / `Ctrl+Alt+N` (Linux/Windows)** -- opens the new-file dialog with the active-directory default. The shortcut is ignored while focus is inside a text input, textarea, or content-editable element.
+- **Empty workspace** -- a "Create your first file" button appears when no files exist yet.
+
+New folders are always created with an initial file (default `index.md`) so they appear in the tree immediately. Filenames without a `.md` extension get one appended on submit.
+
 ## Connect AI agents
 
 <Steps>

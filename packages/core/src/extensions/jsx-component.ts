@@ -12,6 +12,7 @@ export const JsxComponent = Node.create({
   name: 'jsxComponent',
   group: 'block',
   atom: true,
+  isolating: true,
   priority: 60,
 
   addAttributes() {

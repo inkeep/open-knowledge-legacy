@@ -31,6 +31,7 @@
  */
 import { resolve } from 'node:path';
 import { Bash, ReadWriteFs } from 'just-bash';
+import { shellEscape } from './shell-escape.ts';
 
 /** Hard cap on stdout bytes returned by `execBash` (16 MB per FR19/D9). */
 const MAX_STDOUT_BYTES = 16 * 1024 * 1024;
@@ -50,12 +51,10 @@ export function getProjectDir(): string {
 }
 
 // ── POSIX shell escape (retained for display/tool-description use) ──────
-
-export function shellEscape(arg: string): string {
-  if (arg === '') return "''";
-  if (/^[\w.\-/]+$/.test(arg)) return arg;
-  return `'${arg.replace(/'/g, "'\\''")}'`;
-}
+// Lives in `./shell-escape.ts` so the pure parse-command module can import
+// it without pulling in the just-bash runtime. Re-exported here for callers
+// that expect the function on the bash barrel.
+export { shellEscape } from './shell-escape.ts';
 
 // ── just-bash primitives ────────────────────────────────────────────────
 

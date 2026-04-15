@@ -14,6 +14,7 @@
  */
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
+import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
@@ -22,7 +23,7 @@ function buildBody(topic: string, contentDir: string): string {
 
 Topic: ${topic}
 
-The content directory for this project is **\`${contentDir}\`** (from \`.open-knowledge/config.yml\`).
+The content directory for this project is **\`${contentDir}\`** (from \`${OK_DIR}/config.yml\`).
 
 ## When to use this workflow
 
@@ -160,7 +161,7 @@ superseded_by: <path-to-new-canonical-article>.md
 - **Don't rewrite research prose verbatim** — canonical articles have a different voice (direct, decided) than research (exploratory, provisional)
 - **Don't skip the supersedes / superseded_by links** — the audit trail matters for future readers
 
-Full convention: read \`.open-knowledge/AGENTS.md\`.`;
+Full convention: read \`${OK_DIR}/AGENTS.md\`.`;
 }
 
 export const DESCRIPTION = [

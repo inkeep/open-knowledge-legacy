@@ -7,7 +7,13 @@
  */
 import { z } from 'zod';
 import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, httpPost, textResult } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpGet,
+  httpPost,
+  normalizeDocName,
+  textResult,
+} from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Restore a document to a historical version via the CRDT layer.',
@@ -15,7 +21,7 @@ export const DESCRIPTION = [
   'preserving all history. All connected editors see the change in real-time.',
   '',
   '**Parameters:**',
-  '- `docName` — Document name to restore',
+  '- `docName` — Document name to restore, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `commitSha` — The 40-character SHA of the shadow repo commit to restore to.',
   '  Use `get_history` to find available versions.',
 ].join('\n');
@@ -35,10 +41,14 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     async (args: { docName: string; commitSha: string }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
 
+      const normalized = normalizeDocName(args.docName);
+      if (!normalized.ok) return textResult(normalized.error, true);
+      const docName = normalized.docName;
+
       // First, verify the version exists and show what we're restoring
       const versionResult = await httpGet(
         serverUrl,
-        `/api/history/${args.commitSha}?docName=${encodeURIComponent(args.docName)}`,
+        `/api/history/${args.commitSha}?docName=${encodeURIComponent(docName)}`,
       );
       if (!versionResult.ok) {
         return textResult(`Error: ${versionResult.error ?? 'Version not found'}`, true);
@@ -46,13 +56,13 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
 
       // Perform the rollback
       const result = await httpPost(serverUrl, '/api/rollback', {
-        docName: args.docName,
+        docName,
         commitSha: args.commitSha,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
       return textResult(
-        `Restored "${args.docName}" to version ${args.commitSha.slice(0, 8)} (${versionResult.author}, ${versionResult.timestamp}). The change has been applied to all connected editors.`,
+        `Restored "${docName}" to version ${args.commitSha.slice(0, 8)} (${versionResult.author}, ${versionResult.timestamp}). The change has been applied to all connected editors.`,
       );
     },
   );

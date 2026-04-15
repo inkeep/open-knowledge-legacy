@@ -60,7 +60,7 @@ async function callRoute(
 }
 
 describe('graph endpoints', () => {
-  test('serve backlinks, forward links, orphans, and hubs', async () => {
+  test('serve backlinks, forward links, mode-based orphans, and hubs', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-graph-api-'));
     const contentDir = join(projectDir, 'content');
     mkdirSync(contentDir, { recursive: true });
@@ -119,13 +119,29 @@ describe('graph endpoints', () => {
       const forward = JSON.parse(
         (await callRoute(contentDir, '/api/forward-links?docName=alpha', fileIndex, backlinkIndex))
           .body,
-      ) as { forwardLinks: string[] };
-      expect(forward.forwardLinks).toEqual(['beta']);
+      ) as { forwardLinks: Array<{ docName: string; title: string; snippet: string | null }> };
+      expect(forward.forwardLinks).toEqual([
+        {
+          docName: 'beta',
+          title: 'Beta',
+          snippet: 'Links to beta.',
+        },
+      ]);
 
       const orphans = JSON.parse(
         (await callRoute(contentDir, '/api/orphans', fileIndex, backlinkIndex)).body,
       ) as { orphans: Array<{ docName: string }> };
-      expect(orphans.orphans.map((entry) => entry.docName)).toEqual(['alpha', 'gamma']);
+      expect(orphans.orphans.map((entry) => entry.docName)).toEqual(['gamma']);
+
+      const incomingOrphans = JSON.parse(
+        (await callRoute(contentDir, '/api/orphans?mode=incoming', fileIndex, backlinkIndex)).body,
+      ) as { orphans: Array<{ docName: string }> };
+      expect(incomingOrphans.orphans.map((entry) => entry.docName)).toEqual(['alpha', 'gamma']);
+
+      const outgoingOrphans = JSON.parse(
+        (await callRoute(contentDir, '/api/orphans?mode=outgoing', fileIndex, backlinkIndex)).body,
+      ) as { orphans: Array<{ docName: string }> };
+      expect(outgoingOrphans.orphans.map((entry) => entry.docName)).toEqual(['beta', 'gamma']);
 
       const hubs = JSON.parse(
         (await callRoute(contentDir, '/api/hubs?limit=1', fileIndex, backlinkIndex)).body,
@@ -349,6 +365,37 @@ describe('graph endpoints', () => {
       expect(JSON.parse(response.body)).toEqual({
         ok: false,
         error: 'Backlink index not configured',
+      });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('reject invalid orphan mode query values', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-graph-api-invalid-mode-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      writeFileSync(join(contentDir, 'alpha.md'), '# Alpha\n', 'utf-8');
+
+      const fileIndex = new Map<string, FileIndexEntry>([
+        ['alpha', { size: 10, modified: new Date(0).toISOString() }],
+      ]);
+      const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
+      backlinkIndex.rebuildFromDisk();
+
+      const response = await callRoute(
+        contentDir,
+        '/api/orphans?mode=sideways',
+        fileIndex,
+        backlinkIndex,
+      );
+
+      expect(response.status).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({
+        ok: false,
+        error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
       });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });

@@ -37,7 +37,7 @@ export const DESCRIPTION = [
   'Prefer this over your native `Read` for wiki files — one call returns what otherwise takes 3-4.',
   '',
   '**Parameters:**',
-  '- `path` — Project-root-relative path to the file (e.g. `articles/auth/sso.md`)',
+  '- `path` — Project-root-relative path to the file, including extension (e.g. `articles/auth/sso.md`). To pass this document to `edit_document` / `write_document` / `get_backlinks`, strip the extension (they take extension-less `docName`).',
   '- `since` (reserved) — Reserved for shadow-log since-filter; currently unused.',
 ].join('\n');
 
