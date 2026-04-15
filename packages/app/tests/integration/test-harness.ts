@@ -177,6 +177,21 @@ export interface CreateTestClientOptions {
   skipInvariantWatcher?: boolean;
   /** Wrap the WebSocket with a ControllableWebSocket for pause/resume sync. */
   syncControl?: boolean;
+  /**
+   * Inject a custom Scheduler for Observer A/B debounce control (FR-15).
+   *
+   * Default (omitted) routes setTimeout/clearTimeout to globalThis (passthrough —
+   * zero behavioral difference from pre-FR-15 code). Multi-client tests
+   * should hold a single `ManualScheduler` instance at test scope and pass
+   * it to every client via `perClientOptions` so `scheduler.flush()` advances
+   * all clients' observers atomically.
+   *
+   * Scheduler only controls Observer A/B internal timers (debounce, typing
+   * defer, remote-tree grace). WebSocket CRDT propagation timing is
+   * unaffected and remains real-clock — ControllableWebSocket does not use
+   * setTimeout and coexists cleanly with the scheduler option.
+   */
+  scheduler?: Scheduler;
 }
 
 export async function createTestClient(
@@ -219,6 +234,9 @@ export async function createTestClient(
     ytext,
     mdManager,
     schema,
+    // FR-15: caller-injected scheduler overrides globalThis.setTimeout.
+    // When undefined, setupObservers falls back to defaultScheduler (passthrough).
+    scheduler: options?.scheduler,
   });
 
   // FR-11: attach bridge invariant watcher by default
