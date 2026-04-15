@@ -421,10 +421,10 @@ function json(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 /**
- * Extract all ATX headings (# … ######) from a markdown document.
+ * Extract all ATX headings (# … ######) from a Markdown document.
  * Frontmatter is stripped before scanning so `title:` YAML lines are ignored.
  */
-function extractHeadings(content: string): HeadingEntry[] {
+export function extractHeadings(content: string): HeadingEntry[] {
   let body = content;
   if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
     const closingIdx = content.indexOf('\n---', 3);
