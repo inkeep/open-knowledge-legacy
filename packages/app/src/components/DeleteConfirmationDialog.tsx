@@ -18,7 +18,7 @@ interface DeleteConfirmationProps {
   children?: ReactNode;
 }
 
-export function DeleteConfirmation({
+export function DeleteConfirmationDialog({
   itemName = 'this item',
   isSubmitting,
   onDelete,
@@ -39,7 +39,9 @@ export function DeleteConfirmation({
       {children}
       <DialogFooter>
         <DialogClose asChild>
-          <Button variant="outline">Cancel</Button>
+          <Button variant="outline" disabled={isSubmitting}>
+            Cancel
+          </Button>
         </DialogClose>
         <Button variant="destructive" onClick={onDelete} disabled={isSubmitting}>
           {isSubmitting ? (

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { type FC, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { DeleteConfirmation } from '@/components/DeleteConfirmationDialog';
+import { DeleteConfirmationDialog } from '@/components/DeleteConfirmationDialog';
 import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
@@ -664,7 +664,7 @@ export function FileTree({
 
   async function handleDelete(target: FileTreeTarget) {
     setBusyPath(target.path);
-    setError(null);
+    setDeleteTarget(null);
 
     try {
       const res = await fetch('/api/delete-path', {
@@ -675,7 +675,7 @@ export function FileTree({
       const data = (await res.json()) as DeletePathResponse;
 
       if (!res.ok || !data.ok) {
-        setError(data.error ?? 'Failed to delete path');
+        toast.error(data.error ?? 'Failed to delete path');
         setBusyPath(null);
         return;
       }
@@ -693,11 +693,10 @@ export function FileTree({
         setEditingPath(null);
         setEditingValue('');
       }
-      setDeleteTarget(null);
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] delete failed:', err);
-      setError('Network error — please try again');
+      toast.error('Network error — please try again');
       setBusyPath(null);
     }
   }
@@ -834,10 +833,15 @@ export function FileTree({
         }}
       >
         {deleteTarget && (
-          <DeleteConfirmation
+          <DeleteConfirmationDialog
             itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? '.md' : '/'}`}
             isSubmitting={busyPath === deleteTarget.path}
             onDelete={() => handleDelete(deleteTarget)}
+            customDescription={
+              deleteTarget.kind === 'folder'
+                ? `Are you sure you want to delete ${deleteTarget.name}/ and all files inside? This action cannot be undone.`
+                : undefined
+            }
           />
         )}
       </Dialog>
