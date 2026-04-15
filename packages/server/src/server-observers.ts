@@ -19,54 +19,20 @@
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
-  applyByPrefixSuffix,
+  applyIncrementalDiff,
+  applyUserDelta,
+  defaultScheduler,
+  getFrontmatter,
+  normalizeBridge,
   prependFrontmatter,
+  type Scheduler,
   stripFrontmatter,
   VFileMessage,
 } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
-import DiffMatchPatch from 'diff-match-patch';
 import type * as Y from 'yjs';
 import { incrementServerObserverError, incrementServerObserverFire } from './metrics.ts';
-
-// ─────────────────────────────────────────────────────────────
-// Diff utilities (ported from packages/app/src/editor/diff-lines-fast.ts
-// and packages/app/src/editor/observers.ts)
-// ─────────────────────────────────────────────────────────────
-
-/** Module-local DMP instance for line-level diff. */
-const dmpDiff = new DiffMatchPatch();
-
-interface DiffChange {
-  value: string;
-  added?: boolean;
-  removed?: boolean;
-}
-
-/** Fast line-level diff using DMP's line-mode optimization. */
-function diffLinesFast(oldStr: string, newStr: string): DiffChange[] {
-  if (oldStr === newStr) return [{ value: oldStr }];
-  const { chars1, chars2, lineArray } = dmpDiff.diff_linesToChars_(oldStr, newStr);
-  const diffs = dmpDiff.diff_main(chars1, chars2, false);
-  dmpDiff.diff_charsToLines_(diffs, lineArray);
-  dmpDiff.diff_cleanupSemantic(diffs);
-  const result: DiffChange[] = [];
-  for (const [op, text] of diffs) {
-    if (op === DiffMatchPatch.DIFF_DELETE) {
-      result.push({ value: text, removed: true });
-    } else if (op === DiffMatchPatch.DIFF_INSERT) {
-      result.push({ value: text, added: true });
-    } else {
-      result.push({ value: text });
-    }
-  }
-  return result;
-}
-
-/** Module-local DMP instance for three-way merge. Match_Threshold pinned to 0.5. */
-const dmpMerge = new DiffMatchPatch();
-dmpMerge.Match_Threshold = 0.5;
 
 // ─────────────────────────────────────────────────────────────
 // Origin constant
@@ -81,7 +47,8 @@ dmpMerge.Match_Threshold = 0.5;
  *
  * skipStoreHooks: true — prevents observer → persistence → file-watcher →
  * observer feedback loop (EC4 blocker resolution). Same pattern as
- * FILE_WATCHER_ORIGIN in external-change.ts.
+ * FILE_WATCHER_ORIGIN in external-change.ts. Verified by the
+ * persistenceDiskWrites counter in `server-observer-feedback-loop.test.ts`.
  */
 export const OBSERVER_SYNC_ORIGIN = {
   source: 'local' as const,
@@ -89,132 +56,12 @@ export const OBSERVER_SYNC_ORIGIN = {
   context: { origin: 'observer-sync' },
 } satisfies LocalTransactionOrigin;
 
-// ─────────────────────────────────────────────────────────────
-// Scheduler interface (structural match with client Scheduler)
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Scheduler interface for observer debounces and clock reference.
- * Structurally identical to the client-side Scheduler (observers.ts).
- * Production: real setTimeout/clearTimeout/Date.now passthrough.
- * Tests: inject ManualScheduler for deterministic flush.
- */
-export interface Scheduler {
-  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
-  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
-  now: () => number;
-}
-
-const defaultScheduler: Scheduler = {
-  setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
-  clearTimeout: (handle) => globalThis.clearTimeout(handle),
-  now: () => Date.now(),
-};
-
-// ─────────────────────────────────────────────────────────────
-// Constants
-// ─────────────────────────────────────────────────────────────
+// Bridge utilities (applyIncrementalDiff, applyUserDelta, diffLinesFast,
+// Scheduler, defaultScheduler, getFrontmatter, normalizeBridge) are imported
+// from `@inkeep/open-knowledge-core` so they live in one place shared with
+// the client observer (precedent #4: shared computation, per-surface rendering).
 
 const DEBOUNCE_MS = 50;
-
-// ─────────────────────────────────────────────────────────────
-// Observer internals
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Apply incremental diff from `currentText` to `newText` on a Y.Text instance.
- * Uses diffLines to minimize CRDT mutations — preserves concurrent source-mode
- * edits when the changes are line-aligned.
- *
- * Ported from client observers.ts:213-258.
- */
-function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: string): void {
-  if (currentText === newText) return;
-  const changes = diffLinesFast(currentText, newText);
-  let offset = 0;
-  for (let i = 0; i < changes.length; i++) {
-    const change = changes[i];
-    const next = changes[i + 1];
-    if (change.removed && next?.added) {
-      const targetSlice = currentText.substring(offset, offset + next.value.length);
-      if (targetSlice === next.value) {
-        offset += next.value.length;
-        i++;
-        continue;
-      }
-      ytext.delete(offset, change.value.length);
-      ytext.insert(offset, next.value);
-      offset += next.value.length;
-      i++;
-    } else if (change.removed) {
-      ytext.delete(offset, change.value.length);
-    } else if (change.added) {
-      ytext.insert(offset, change.value);
-      offset += change.value.length;
-    } else {
-      offset += change.value.length;
-    }
-  }
-}
-
-/**
- * Apply ONLY the user's delta to Y.Text when Y.Text has diverged from the
- * last synced XmlFragment state (Path B). Uses DMP three-way merge:
- *   base  = oldXmlMd (lastSyncedXmlMd)
- *   user  = newXmlMd (current XmlFragment serialized)
- *   agent = currentText (current Y.Text)
- *
- * Ported from client observers.ts:280-319.
- */
-function applyUserDelta(ytext: Y.Text, oldXmlMd: string, newXmlMd: string): void {
-  if (oldXmlMd === newXmlMd) return;
-  const currentText = ytext.toString();
-  const patches = dmpMerge.patch_make(oldXmlMd, newXmlMd);
-  const [mergedText, results] = dmpMerge.patch_apply(patches, currentText);
-
-  if (results.some((ok: boolean) => !ok)) {
-    const failedPatches = results.filter((ok: boolean) => !ok).length;
-    const info = {
-      failedPatches,
-      totalPatches: results.length,
-      baseLen: oldXmlMd.length,
-      userLen: newXmlMd.length,
-      agentLen: currentText.length,
-      mergedLen: mergedText.length,
-    };
-    const failedPatchDetail = dmpMerge.patch_toText(patches.filter((_, idx) => !results[idx]));
-    console.warn(
-      `[Server Observer A] patch_apply had ${failedPatches}/${results.length} failed patches`,
-      info,
-      failedPatchDetail,
-    );
-  }
-
-  if (mergedText === currentText) return;
-  applyByPrefixSuffix(ytext, currentText, mergedText);
-}
-
-/**
- * Normalize for bridge comparison: strip trailing whitespace per line,
- * strip trailing newlines, collapse 3+ consecutive newlines to 2.
- * Matches the client-side normalizeBridge in test-harness.ts and the
- * bridge invariant definition (CLAUDE.md §Bridge invariant).
- */
-function normalizeBridge(s: string): string {
-  return s
-    .split('\n')
-    .map((l) => l.trimEnd())
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/\n+$/, '');
-}
-
-/** Read frontmatter from Y.Doc metadata map. */
-function getFrontmatter(doc: Y.Doc): string {
-  const metaMap = doc.getMap('metadata');
-  const fm = metaMap.get('frontmatter');
-  return typeof fm === 'string' ? fm : '';
-}
 
 // ─────────────────────────────────────────────────────────────
 // Public API

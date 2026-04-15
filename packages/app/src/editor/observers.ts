@@ -39,10 +39,22 @@
 
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import { prependFrontmatter, stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
+import {
+  defaultScheduler,
+  getFrontmatter,
+  prependFrontmatter,
+  type Scheduler,
+  stripFrontmatter,
+  VFileMessage,
+} from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+
+// Re-export Scheduler + defaultScheduler for backward-compatible imports
+// (test-harness.ts and observers.test.ts import Scheduler from this module).
+// Authoritative definitions live in @inkeep/open-knowledge-core/bridge.
+export { defaultScheduler, type Scheduler };
 
 /**
  * Transaction origin for Observer A (tree → text).
@@ -98,36 +110,6 @@ const REMOTE_TREE_SYNC_GRACE_MS = DEBOUNCE_MS * 3;
 // Per-document coordination state
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Scheduler interface for observer debounces, typing-defer timers, and the
- * clock reference used by elapsed-time comparisons (FR-15).
- *
- * Production: arrow-wrapped passthrough to `globalThis.setTimeout` /
- * `clearTimeout` / `Date.now()`. Tests inject `createManualScheduler()` for
- * synchronous deterministic flush AND a virtual clock so that `now()`
- * advances in lockstep with `setTimeout` dueAt calculations.
- *
- * The `now()` method is essential: observer callbacks use elapsed-time
- * comparisons (typing defer, remote-tree grace window) to decide whether
- * to reschedule their debounce. Under ManualScheduler, those comparisons
- * must use the same virtual clock as `setTimeout` — mixing `Date.now()`
- * (real) with scheduler `dueAt` (virtual) produces unbounded skew and
- * breaks the deterministic timing model.
- */
-export interface Scheduler {
-  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
-  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
-  /** Current clock reading in milliseconds. Production: `Date.now()`.
-   *  Tests with ManualScheduler: virtual time advanced by `advanceTime`. */
-  now: () => number;
-}
-
-const defaultScheduler: Scheduler = {
-  setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
-  clearTimeout: (handle) => globalThis.clearTimeout(handle),
-  now: () => Date.now(),
-};
-
 interface TypingState {
   lastUserTypedAt: number;
   lastRemoteTreeOnlyAt: number;
@@ -179,12 +161,7 @@ interface ObserverDeps {
   scheduler?: Scheduler;
 }
 
-/** Read frontmatter from Y.Doc metadata map. */
-function getFrontmatter(doc: Y.Doc): string {
-  const metaMap = doc.getMap('metadata');
-  const fm = metaMap.get('frontmatter');
-  return typeof fm === 'string' ? fm : '';
-}
+// getFrontmatter imported from @inkeep/open-knowledge-core (bridge module)
 
 /**
  * Set up bidirectional observers between Y.XmlFragment and Y.Text.
