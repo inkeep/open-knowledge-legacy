@@ -306,18 +306,39 @@ function propToMdxJsxAttribute(name: string, value: unknown): MdxJsxAttribute {
       value: { type: 'mdxJsxAttributeValueExpression', value: 'false' },
     };
   }
+  // Null/undefined: boolean shorthand (omit value)
+  if (value == null) {
+    return { type: 'mdxJsxAttribute', name, value: null };
+  }
   // String: string literal
   if (typeof value === 'string') {
     return { type: 'mdxJsxAttribute', name, value };
   }
-  // Number, array, object: expression
-  if (typeof value === 'number' || Array.isArray(value) || typeof value === 'object') {
+  // Number: expression
+  if (typeof value === 'number') {
     return {
       type: 'mdxJsxAttribute',
       name,
       value: {
         type: 'mdxJsxAttributeValueExpression',
         value: JSON.stringify(value),
+      },
+    };
+  }
+  // Array, object: expression with safe stringify
+  if (typeof value === 'object') {
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(value);
+    } catch {
+      serialized = String(value);
+    }
+    return {
+      type: 'mdxJsxAttribute',
+      name,
+      value: {
+        type: 'mdxJsxAttributeValueExpression',
+        value: serialized,
       },
     };
   }

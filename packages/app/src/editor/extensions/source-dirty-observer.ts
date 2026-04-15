@@ -22,6 +22,7 @@
 
 import { Extension } from '@tiptap/core';
 import { Plugin } from '@tiptap/pm/state';
+import { Mapping } from '@tiptap/pm/transform';
 import { ySyncPluginKey } from 'y-prosemirror';
 
 export const SourceDirtyObserver = Extension.create({
@@ -44,14 +45,25 @@ export const SourceDirtyObserver = Extension.create({
           const docChanged = transactions.some((tr) => tr.docChanged);
           if (!docChanged) return null;
 
+          // Build a combined mapping from all transactions to map new-state
+          // positions back to old-state positions. Without this, insertions or
+          // deletions before a jsxComponent shift its position — using the same
+          // numeric position in oldState would find the wrong node, causing
+          // false-positive dirty marking that defeats the pristine γ path (I12).
+          const combinedMapping = new Mapping();
+          for (const tr of transactions) {
+            combinedMapping.appendMapping(tr.mapping);
+          }
+
           const updates: Array<{ pos: number }> = [];
 
           newState.doc.descendants((node, pos) => {
             if (node.type.name !== 'jsxComponent') return;
             if (node.attrs.sourceDirty) return; // already dirty, skip
 
-            // Check if this node changed vs the old state
-            const oldNode = oldState.doc.nodeAt(pos);
+            // Map from newState position back to oldState position
+            const oldPos = combinedMapping.invert().map(pos);
+            const oldNode = oldState.doc.nodeAt(oldPos);
             if (!oldNode) {
               // Node is new (inserted) — mark dirty if it has content
               if (node.content.size > 0 || Object.keys(node.attrs.props ?? {}).length > 0) {

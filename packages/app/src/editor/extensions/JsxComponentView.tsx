@@ -59,7 +59,13 @@ class ComponentErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBo
   }
 
   render(): ReactNode {
-    if (this.state.errored) return null;
+    if (this.state.errored) {
+      // Render children even in error state so NodeViewContent stays in the DOM
+      // (Precedent #14: all user content always visible). The parent JsxComponentView
+      // switches to Branch 3 via the onError callback, but if that pathway fails,
+      // this ensures content is never permanently invisible.
+      return <div className="jsx-component-error-fallback">{this.props.children}</div>;
+    }
     return this.props.children;
   }
 }

@@ -21,7 +21,7 @@
  * imports (full D12 fidelity) — they have no compound context dependency.
  */
 
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 
 // ─── EditorTabs ───────────────────────────────────────────────────────────────
 // Parent wrapper for <Tabs> blocks. Manages active tab state and renders the
@@ -41,10 +41,26 @@ export function EditorTabs({
 }) {
   // Resolve initial items from props or derive from children
   const tabItems = items ?? [];
-  const defaultValue = tabItems[defaultIndex] ?? tabItems[0] ?? '';
+  const defaultValue = escapeValue(tabItems[defaultIndex] ?? tabItems[0] ?? '');
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // Activate the default tab panel on mount — child Tab NodeViews render in
+  // separate portals with data-state="inactive" default. This effect walks
+  // the DOM to set the matching panel active after children mount.
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || !defaultValue) return;
+    for (const panel of root.querySelectorAll('.editor-tab-content')) {
+      panel.setAttribute(
+        'data-state',
+        panel.getAttribute('data-value') === defaultValue ? 'active' : 'inactive',
+      );
+    }
+  }, [defaultValue]);
 
   return (
     <div
+      ref={rootRef}
       className="editor-tabs-root flex flex-col overflow-hidden rounded-xl border bg-fd-secondary my-4"
       data-active-tab={defaultValue}
     >
@@ -101,7 +117,7 @@ export function EditorTab({ value, children }: { value?: string; children?: Reac
     <div
       className="editor-tab-content p-4 text-[0.9375rem] bg-fd-background rounded-xl prose-no-margin data-[state=inactive]:hidden"
       data-value={escaped}
-      data-state="active"
+      data-state="inactive"
     >
       {children}
     </div>
@@ -177,10 +193,8 @@ export function EditorAccordion({ title, children }: { title?: string; children?
             strokeLinecap="round"
             strokeLinejoin="round"
             className="shrink-0 transition-transform duration-200"
-            role="img"
-            aria-label="Toggle"
+            aria-hidden="true"
           >
-            <title>Toggle accordion</title>
             <path d="m6 9 6 6 6-6" />
           </svg>
         </button>
@@ -196,5 +210,5 @@ export function EditorAccordion({ title, children }: { title?: string; children?
 }
 
 function escapeValue(v: string): string {
-  return v.toLowerCase().replace(/\s/, '-');
+  return v.toLowerCase().replace(/\s+/g, '-');
 }

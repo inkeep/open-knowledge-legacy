@@ -45,6 +45,17 @@ export function createContextBridgeStore(): BridgeStore {
 
   return {
     publish(bridgeId: string, e: ContextEntry[]) {
+      // Skip notify when entries haven't changed (shallow equality).
+      // Prevents cascading re-renders when usePublishContexts fires
+      // on every committed render with identical data.
+      const existing = entries.get(bridgeId);
+      if (
+        existing &&
+        existing.length === e.length &&
+        existing.every((entry, i) => entry.context === e[i].context && entry.value === e[i].value)
+      ) {
+        return;
+      }
       entries.set(bridgeId, e);
       notify();
     },

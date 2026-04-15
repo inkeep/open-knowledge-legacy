@@ -33,6 +33,7 @@
  *   transaction can merge before updateYFragment rebuilds the tree.
  */
 
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { prependFrontmatter, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
@@ -48,8 +49,29 @@ import { diffLinesFast as diffLines } from './diff-lines-fast';
 const dmp = new DiffMatchPatch();
 dmp.Match_Threshold = 0.5;
 
-export const ORIGIN_TREE_TO_TEXT = 'sync-from-tree';
-export const ORIGIN_TEXT_TO_TREE = 'sync-from-text';
+/**
+ * Transaction origin for Observer A (tree → text).
+ *
+ * Precedent #1 (CLAUDE.md): all Y.Doc transaction origins are `LocalTransactionOrigin`
+ * OBJECT references, never raw strings. `Set.has()` matching in `trackedOrigins` or
+ * the bridge-invariant watcher's enforcing set is identity-based for objects — a
+ * string literal would silently fail to match the production tx.origin object.
+ */
+export const ORIGIN_TREE_TO_TEXT = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'sync-from-tree' },
+} satisfies LocalTransactionOrigin;
+
+/**
+ * Transaction origin for Observer B (text → tree). See `ORIGIN_TREE_TO_TEXT` JSDoc
+ * for why this is an object, not a string.
+ */
+export const ORIGIN_TEXT_TO_TREE = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'sync-from-text' },
+} satisfies LocalTransactionOrigin;
 
 const DEBOUNCE_MS = 50;
 

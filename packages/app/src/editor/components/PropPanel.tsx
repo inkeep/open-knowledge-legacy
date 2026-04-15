@@ -53,11 +53,15 @@ function PropControl({
   onChange: (value: unknown) => void;
 }) {
   switch (propDef.type) {
-    case 'string':
+    case 'string': {
+      const stringId = `prop-${propDef.name}`;
       return (
         <div className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">{propDef.name}</span>
+          <label htmlFor={stringId} className="text-xs text-muted-foreground">
+            {propDef.name}
+          </label>
           <Input
+            id={stringId}
             type="text"
             value={(value as string) ?? ''}
             onChange={(e) => onChange(e.target.value)}
@@ -65,27 +69,38 @@ function PropControl({
           />
         </div>
       );
+    }
 
-    case 'boolean':
+    case 'boolean': {
+      const boolId = `prop-${propDef.name}`;
       return (
         <div className="flex items-center gap-2">
           <Toggle
+            id={boolId}
             pressed={Boolean(value)}
             onPressedChange={(pressed) => onChange(pressed)}
             size="sm"
             className="h-6 w-6"
+            aria-label={propDef.name}
           >
             {value ? '✓' : ''}
           </Toggle>
-          <span className="text-xs text-muted-foreground">{propDef.name}</span>
+          <label htmlFor={boolId} className="text-xs text-muted-foreground">
+            {propDef.name}
+          </label>
         </div>
       );
+    }
 
-    case 'enum':
+    case 'enum': {
+      const enumId = `prop-${propDef.name}`;
       return (
         <div className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">{propDef.name}</span>
+          <label htmlFor={enumId} className="text-xs text-muted-foreground">
+            {propDef.name}
+          </label>
           <select
+            id={enumId}
             value={(value as string) ?? propDef.enumValues[0] ?? ''}
             onChange={(e) => onChange(e.target.value)}
             className="h-7 rounded border border-input bg-background px-2 text-sm"
@@ -98,12 +113,17 @@ function PropControl({
           </select>
         </div>
       );
+    }
 
-    case 'number':
+    case 'number': {
+      const numberId = `prop-${propDef.name}`;
       return (
         <div className="flex flex-col gap-1">
-          <span className="text-xs text-muted-foreground">{propDef.name}</span>
+          <label htmlFor={numberId} className="text-xs text-muted-foreground">
+            {propDef.name}
+          </label>
           <Input
+            id={numberId}
             type="number"
             inputMode="numeric"
             value={value != null ? String(value) : ''}
@@ -112,6 +132,7 @@ function PropControl({
           />
         </div>
       );
+    }
 
     default:
       return null;

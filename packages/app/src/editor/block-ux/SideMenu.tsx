@@ -59,15 +59,8 @@ export function SideMenu({ editor }: SideMenuProps) {
         }
       }}
     >
-      {/* Grip icon — the drag initiator */}
-      {/* biome-ignore lint/a11y/useSemanticElements: grip icon is a drag handle, not a button */}
-      <div
-        className="ok-drag-handle"
-        role="button"
-        tabIndex={0}
-        aria-label="Drag to reorder block — keyboard: Mod+Shift+↑/↓"
-        draggable
-      >
+      {/* Grip icon — the drag initiator (pointer-only; keyboard reorder via Mod+Shift+↑/↓) */}
+      <div className="ok-drag-handle" aria-hidden="true" draggable>
         <svg
           xmlns="http://www.w3.org/2000/svg"
           width="16"
@@ -78,8 +71,6 @@ export function SideMenu({ editor }: SideMenuProps) {
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          role="img"
-          aria-label="Drag handle"
         >
           <title>Drag handle</title>
           <circle cx="9" cy="12" r="1" />

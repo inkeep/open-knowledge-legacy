@@ -22,6 +22,7 @@ import { NodeViewWrapper } from '@tiptap/react';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef } from 'react';
 import { markUserTyping } from '../observers';
+import { getYDoc } from '../utils/get-ydoc';
 import { createNestedCMExtensions, darkTheme, lightTheme } from './nested-cm-extensions';
 
 /**
@@ -146,8 +147,7 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
 
     // FR-32: forward markUserTyping for Observer B typing-defer
     try {
-      const collabExt = editor.extensionManager.extensions.find((e) => e.name === 'collaboration');
-      const ydoc = collabExt?.options?.document as import('yjs').Doc | undefined;
+      const ydoc = getYDoc(editor);
       if (ydoc) {
         const mark = () => markUserTyping(ydoc);
         const dom = cmView.contentDOM;
