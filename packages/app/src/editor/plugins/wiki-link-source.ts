@@ -75,16 +75,36 @@ async function getHeadings(docName: string): Promise<HeadingEntry[]> {
 
 // Matches complete [[...]] (lazy, no nested brackets needed)
 const WIKI_LINK_RE = /\[\[[^\]]*?\]\]/g;
+// Extracts target from [[target]] or [[target|alias]] or [[target#anchor]]
+const WIKI_LINK_TARGET_RE = /\[\[([^[\]|#]+)/;
 const wikiLinkMark = Decoration.mark({ class: 'cm-wiki-link' });
+const wikiLinkBrokenMark = Decoration.mark({ class: 'cm-wiki-link cm-wiki-link-broken' });
 
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
+  // Only check broken state when pagesCache is populated (avoid false-positive flash)
+  const pages = pagesCache;
+  const pageSet = pages ? new Set(pages.map((p) => p.docName)) : null;
+
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
     WIKI_LINK_RE.lastIndex = 0;
     let m = WIKI_LINK_RE.exec(text);
     while (m !== null) {
-      builder.add(from + m.index, from + m.index + m[0].length, wikiLinkMark);
+      const matchFrom = from + m.index;
+      const matchTo = from + m.index + m[0].length;
+
+      // Determine if the target resolves to an existing page
+      let isBroken = false;
+      if (pageSet) {
+        const targetMatch = WIKI_LINK_TARGET_RE.exec(m[0]);
+        if (targetMatch) {
+          const target = targetMatch[1].trim();
+          isBroken = target.length > 0 && !pageSet.has(target);
+        }
+      }
+
+      builder.add(matchFrom, matchTo, isBroken ? wikiLinkBrokenMark : wikiLinkMark);
       m = WIKI_LINK_RE.exec(text);
     }
   }
@@ -94,13 +114,43 @@ function buildDecorations(view: EditorView): DecorationSet {
 const wikiLinkDecorations = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
+    cachePopulated = false;
+
     constructor(view: EditorView) {
       this.decorations = buildDecorations(view);
+      // Trigger a rebuild after pagesCache populates (for broken-state detection)
+      this.ensureCachePopulated(view);
     }
+
     update(update: ViewUpdate) {
       if (update.docChanged || update.viewportChanged) {
         this.decorations = buildDecorations(update.view);
       }
+      // Re-check cache population on each update
+      if (!this.cachePopulated && pagesCache) {
+        this.cachePopulated = true;
+        this.decorations = buildDecorations(update.view);
+      }
+    }
+
+    ensureCachePopulated(view: EditorView) {
+      if (pagesCache) {
+        this.cachePopulated = true;
+        return;
+      }
+      // Kick off a cache population and rebuild decorations when done
+      getPages()
+        .then(() => {
+          if (!this.cachePopulated) {
+            this.cachePopulated = true;
+            // Trigger a decoration rebuild via a no-op dispatch
+            view.dispatch({});
+          }
+        })
+        .catch(() => {
+          // If fetch fails, mark as populated to avoid retry
+          this.cachePopulated = true;
+        });
     }
   },
   { decorations: (v) => v.decorations },
@@ -221,6 +271,10 @@ const wikiLinkTheme = EditorView.theme({
   '.cm-wiki-link:hover': {
     textDecoration: 'underline',
     cursor: 'pointer',
+  },
+  '.cm-wiki-link-broken': {
+    textDecoration: 'underline wavy',
+    textDecorationColor: 'oklch(55% 0.15 25)',
   },
 });
 
