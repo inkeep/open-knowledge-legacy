@@ -149,7 +149,7 @@ describe('GET /api/suggest-links', () => {
     }
   });
 
-  test('returns graph-style errors for missing, invalid, and unknown docName inputs', async () => {
+  test('returns graph-style errors for missing, invalid, reserved, and unknown docName inputs', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-api-suggest-links-'));
     const contentDir = join(projectDir, 'content');
 
@@ -175,6 +175,17 @@ describe('GET /api/suggest-links', () => {
       expect(JSON.parse(invalidDocName.body)).toEqual({
         ok: false,
         error: 'Invalid docName',
+      });
+
+      const reservedDocName = await callRoute(
+        contentDir,
+        '/api/suggest-links?docName=__system__',
+        fileIndex,
+      );
+      expect(reservedDocName.status).toBe(400);
+      expect(JSON.parse(reservedDocName.body)).toEqual({
+        ok: false,
+        error: "'__system__' is a reserved document name",
       });
 
       const missingPage = await callRoute(

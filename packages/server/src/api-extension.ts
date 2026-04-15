@@ -2333,6 +2333,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: 'Invalid docName' });
         return;
       }
+      if (isSystemDoc(docName)) {
+        json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
+        return;
+      }
 
       const result = await suggestLinks({
         hocuspocus,
