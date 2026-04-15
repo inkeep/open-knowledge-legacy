@@ -18,14 +18,14 @@ Method: read SPEC end-to-end; opened evidence directory (empty); read the two ci
 **Issue:** D5 rejects splitting parser behavior by `.md` vs `.mdx` extension with the rationale "Product direction is 'one editor for both' (PROJECT.md:70). Extension gating conflicts with 'bring your own files' and component support in `.md` files." This conflates two orthogonal concerns:
   - **UI surface** — "one editor" means the same TipTap view, keybindings, sidebar, CRDT sync (not in dispute).
   - **Parser configuration** — which micromark extensions and mdast handlers run before that view gets populated.
-  
+
   A single editor UI can still dispatch to different parser configurations based on file extension, content signal, or workspace config. Conflating them forecloses an option the spec's own cited prior art endorses.
 **Current design:** "D5 Don't split by `.md` vs `.mdx` extension ... **Locked** ... Extension gating conflicts with 'bring your own files' and component support in `.md` files."
 **Alternative:** Two parser profiles sharing one editor:
   - `.md` default profile: agnostic MDX mode + R23 guard (tolerant; JSX tags still recognized so `<Callout>` works in `.md` for users who want it).
   - `.mdx` default profile: strict MDX mode with acorn validation available for authors who do want expression validation.
   - Workspace config overrides both defaults; extension is only the *default*, not a hard gate — satisfies "component support in `.md` files."
-  
+
   This is the two-tier strategy tinacms-production-architecture-beyond-mdx/REPORT.md:52, 367, 371, 373, 379 explicitly documents after 7 years of production shipping: *"OK could adopt a similar two-tier strategy if supporting both strict MDX and plain markdown content — forgiving parse for `.md`, strict for `.mdx`"* (line 379). TinaCMS's dispatch is per-collection via `field.parser.type`; the product ships one UI.
 **Trade-off:** Gained — authors who want strict validation on `.mdx` keep it without forcing every `.md` user to carry MDX parser risk; rollback story is simpler (downgrade only affects `.md`). Lost — two code paths to maintain; config surface grows by one knob.
 **Status:** CHALLENGED
@@ -61,7 +61,7 @@ Method: read SPEC end-to-end; opened evidence directory (empty); read the two ci
   - Commit B: jsxInline node type + handler change (independent of mode).
   - Commit C: flip default to agnostic in a follow-up after the I9/I11 PBT run and round-trip suite on a branch.
   - Commit D: remove parseSafe brace-retry once C has soaked.
-  
+
   This also mitigates Finding 1 — the flag becomes the per-file dispatch mechanism if the spec ever accepts the dual-parser model.
 **Trade-off:** Gained — independent revertability, staged validation, flag becomes a hook for future dual-parser dispatch. Lost — a larger merge sequence, a transient "unused plugin" state.
 **Status:** CHALLENGED
@@ -97,7 +97,7 @@ Method: read SPEC end-to-end; opened evidence directory (empty); read the two ci
   - User edits `<Callout>...` to `<Note>...` via source mode. `content` updates via CRDT. Does the observer re-parse and update `componentName`? Handler path isn't specified.
   - User (later, under T1) uses a prop panel to edit the component. T1 writes structured attrs. If the prop panel writes `componentName` directly but the raw-source serializer reconstructs from `content`, the two can diverge silently.
   - A typo in `content` (`<Caout>`) paired with a stale `componentName: "Callout"` — which wins for UI label?
-  
+
   "Read-only metadata" doesn't define a refresh policy. Without one, `componentName` becomes stale and the UI shows wrong labels over time.
 **Current design:** "~5 lines (1 attr + 1 handler line) ... Read-only metadata — serialization still uses raw `content`."
 **Alternative:**
@@ -136,7 +136,7 @@ Method: read SPEC end-to-end; opened evidence directory (empty); read the two ci
   - `reports/mdx-tolerant-parsing-architecture/` — does not exist (checked `ls reports/ | grep mdx`).
   - `specs/2026-04-13-markdown-mdx-tolerant-parsing/` — does not exist.
   - `specs/2026-04-13-mdx-tolerant-parsing/evidence/` — exists but is empty.
-  
+
   A cold reader cannot verify any claim that cites these. Section 16's "Relationship to other specs" treats Mike's PR #105 as authoritative prior art for D1, D3, D4, D5 mapping — but the artifact isn't reachable. §9's architecture diagram and D4's "no production system has implemented block-level fallback" both lean on the missing `mdx-tolerant-parsing-architecture` report.
 **Current design:** Spec relies on links that resolve in some other branch but not this one.
 **Alternative:** Either (a) cherry-pick the cited artifacts into this worktree before finalization, (b) inline the load-bearing findings from Mike's PR #105 and the missing report into evidence files in this spec's `evidence/`, or (c) replace the links with direct citations the reader can verify (git refs to PRs/commits, quoted excerpts).

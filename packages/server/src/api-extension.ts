@@ -493,6 +493,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return getAliasMap?.().get(docName) ?? docName;
   }
 
+  function collectAdmittedDocNames(): Set<string> {
+    const admitted = new Set<string>();
+    for (const [docName, entry] of getFileIndex()) {
+      admitted.add(docName);
+      for (const alias of entry.aliases) {
+        admitted.add(alias);
+      }
+    }
+    return admitted;
+  }
+
   function createSerializedRunner() {
     let pending = Promise.resolve();
     return async function runSerialized<T>(task: () => Promise<T>): Promise<T> {
@@ -1203,6 +1214,47 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (e) {
       console.error('[hubs]', e);
       json(res, 500, { ok: false, error: 'Failed to read hub pages' });
+    }
+  }
+
+  async function handleDeadLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const sourceDocNames = url.searchParams.getAll('sourceDocName');
+      if (sourceDocNames.some((docName) => docName.length === 0 || !isSafeDocName(docName))) {
+        json(res, 400, { ok: false, error: 'Invalid sourceDocName' });
+        return;
+      }
+
+      const sourceDocNameFilter = sourceDocNames.length
+        ? [...new Set(sourceDocNames.map((docName) => resolveAlias(docName)))]
+        : undefined;
+      const deadLinks = backlinkIndex.getDeadLinks(collectAdmittedDocNames(), sourceDocNameFilter);
+
+      const response = {
+        ok: true,
+        deadLinks: deadLinks.map((entry) => ({
+          target: entry.target,
+          sources: entry.sources.map((sourceEntry) => ({
+            source: sourceEntry.source,
+            title: readPageTitleForDocName(sourceEntry.source),
+            snippet: sourceEntry.snippet,
+          })),
+        })),
+      };
+
+      json(res, 200, response);
+    } catch (e) {
+      console.error('[dead-links]', e);
+      json(res, 500, { ok: false, error: 'Failed to read dead links' });
     }
   }
 
@@ -2477,6 +2529,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/backlinks': handleBacklinks,
     '/api/forward-links': handleForwardLinks,
     '/api/link-graph': handleLinkGraph,
+    '/api/dead-links': handleDeadLinks,
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
     '/api/pages': handlePages,

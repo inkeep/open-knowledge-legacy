@@ -717,13 +717,13 @@ All three commits in one PR. Staged-commit structure supports granular revert; e
 - **R23 tag-matcher factoring (revisit trigger):** audit cut the refactor because R23's scanner and R6's inline helper serve complementary (not shared) purposes. Revisit if either surface gains support for `<Namespace.Component>` or other tag-shape variation — that's the point where divergence between the two scanners becomes real maintenance cost. Until then, inline helper is simpler.
 
 - **Investigate `Y.Map` usage across the codebase for speculative / consumerless patterns.** The research pass grounding R14 (see `evidence/observability-pattern.md`) surfaced a concrete finding about `Y.Map('conflicts')` in `packages/server/src/standalone.ts:314,951` — shipped in PR #13 (dd23a4e, spec `2026-04-08-external-write-reconciliation`), written by the server on reconciliation, replicated to every peer via CRDT sync, and **read by nothing** (grep across `packages/app/src/`, `packages/core/src/`, `packages/cli/`, `docs/` returns zero consumers). This pays the CRDT replication cost (wire size, initial-sync payload growth, monotonic schema commitment) for zero benefit. A second instance of the same pattern is proposed in the parallel Observer A origin-aware-diff spec's `Y.Map('safety-events')` — explicitly described as "no render-path consumer in V0."
-  
+
   **The systemic question:** is the `per-doc Y.Map` pattern being used without consumer analysis elsewhere? Candidates worth auditing: `Y.Map('lifecycle')` (server writes; unclear if client reads), `Y.Map('metadata')` (frontmatter cache — debatable whether CRDT replication is needed vs. server-side state), `Y.Map('safety-events')` (proposed).
-  
+
   **Investigation scope:** (1) walk each `Y.Map('X')` usage in the codebase; (2) identify real consumer(s) and whether the consumer needs CRDT convergence specifically (vs. HTTP/server-owned state); (3) classify each as legitimate (e.g., `Y.Map('activity')` → real per-peer line-flash UI in `agent-flash-source.ts`), speculative-no-consumer (e.g., `conflicts`), or borderline; (4) propose migration for the speculative cases (either add the missing consumer, migrate to server-owned + HTTP, or delete).
-  
+
   **Rule of thumb surfaced by research:** put in the Y.Doc only what needs multi-peer convergence. Observability, forensics, and server-authoritative state don't belong in the CRDT.
-  
+
   **Trigger:** Candidate for a standalone spec when bandwidth permits. Not urgent (no user-visible bug) but real architectural debt that grows with every new `Y.Map` introduced on speculative grounds. The parallel Observer A spec review is a natural coordination point — ideally flag before `safety-events` ships so it isn't a third data point of the anti-pattern.
 
 ---
