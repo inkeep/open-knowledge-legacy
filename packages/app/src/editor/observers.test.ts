@@ -141,7 +141,7 @@ describe('Observer B: Y.Text → XmlFragment', () => {
     cleanup();
   });
 
-  test('Observer B skips incomplete MDX gracefully and recovers on next valid write', async () => {
+  test('Observer B renders broken MDX as rawMdxFallback (G9 always-live) and recovers on next valid write', async () => {
     const doc = new Y.Doc();
     const fragment = doc.getXmlFragment('default');
     const ytext = doc.getText('source');
@@ -156,9 +156,10 @@ describe('Observer B: Y.Text → XmlFragment', () => {
     const beforeMd = mdManager.serialize(beforeJson);
     expect(beforeMd).toContain('# Heading');
 
-    // Write tag-mismatch MDX — agnostic mode still throws VFileMessage for
-    // end-tag mismatch ("<Foo>...</Bar>"). Observer B should catch this and
-    // keep XmlFragment at its last valid state.
+    // Write tag-mismatch MDX — agnostic mode throws VFileMessage for
+    // end-tag mismatch ("<Foo>...</Bar>"). Post-FR-22 (G9 bridge always-live),
+    // Observer B uses parseWithFallback which produces rawMdxFallback instead
+    // of freezing. The XmlFragment now always reflects the current Y.Text state.
     doc.transact(() => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, '<Foo>broken text</Bar>\n');
@@ -166,12 +167,13 @@ describe('Observer B: Y.Text → XmlFragment', () => {
 
     await wait();
 
-    // XmlFragment should still contain the heading (last valid state preserved)
+    // XmlFragment should NOW contain rawMdxFallback with the broken text
+    // (not the old heading — the freeze behavior is removed by FR-22).
     const duringJson = yXmlFragmentToProsemirrorJSON(fragment);
     const duringMd = mdManager.serialize(duringJson);
-    expect(duringMd).toContain('# Heading');
+    expect(duringMd).toContain('<Foo>broken text</Bar>');
 
-    // Write valid markdown — Observer B should recover
+    // Write valid markdown — Observer B should recover to structured content
     doc.transact(() => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, 'Recovered content\n');

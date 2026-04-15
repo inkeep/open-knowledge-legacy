@@ -147,52 +147,6 @@ interface Region {
   end: number;
 }
 
-/**
- * Find the enclosing paired tag (e.g., `<Callout>...</Callout>`) around the
- * error offset. Only matches UpperCase tag names (JSX / MDX component
- * convention); lowercase `<div>` or `<span>` are treated as HTML and skipped.
- * Fence-aware: tags inside ``` fences are not considered.
- *
- * When no matching close tag exists, returns a span from the opening tag to
- * the nearest blank line (or EOF) — the "dangling open tag" case.
- *
- * Known edge case: `<DIV>...</DIV>` (uppercase HTML) matches the JSX regex
- * and gets treated as an MDX paired region. This is technically incorrect
- * (uppercase HTML is still HTML), but extremely rare in practice and
- * produces correct rawMdxFallback behavior (the region degrades safely).
- */
-function findEnclosingPairedTag(src: string, offset: number): Region | null {
-  const fences = findFencedRegions(src);
-  if (isInsideFence(offset, fences)) return null;
-
-  // Walk backward for an unclosed <UpperCase (opening tag)
-  const OPEN_TAG_RE = /<([A-Z][A-Za-z0-9.]*)[\s/>]/g;
-  const CLOSE_TAG_RE = /<\/([A-Z][A-Za-z0-9.]*)\s*>/g;
-
-  let bestOpen: { name: string; start: number } | null = null;
-
-  for (const match of src.matchAll(OPEN_TAG_RE)) {
-    if (match.index > offset) break;
-    if (isInsideFence(match.index, fences)) continue;
-    bestOpen = { name: match[1], start: match.index };
-  }
-
-  if (!bestOpen) return null;
-
-  // Walk forward for the matching close tag
-  for (const match of src.matchAll(CLOSE_TAG_RE)) {
-    if (match.index < offset) continue;
-    if (isInsideFence(match.index, fences)) continue;
-    if (match[1] === bestOpen.name) {
-      return { start: bestOpen.start, end: match.index + match[0].length };
-    }
-  }
-
-  // No close tag found — span from open tag to nearest blank line after offset
-  const blankAfter = nearestBlankLineAfter(src, offset);
-  return { start: bestOpen.start, end: blankAfter ?? src.length };
-}
-
 function nearestBlankLineBefore(src: string, offset: number): number | null {
   const BLANK_RE = /\n\s*\n/g;
   let best: number | null = null;
@@ -211,10 +165,206 @@ function nearestBlankLineAfter(src: string, offset: number): number | null {
   return null;
 }
 
-function findFallbackRegion(src: string, errorOffset: number): Region {
-  const enclosing = findEnclosingPairedTag(src, errorOffset);
-  if (enclosing) return enclosing;
+// ── Single-pass structural enumeration (FR-23) ────────────────────
 
+/**
+ * Tag event produced by scanTagEvents — an open, close, or self-closing tag
+ * occurrence in source order. Only matches UpperCase tag names (JSX / MDX
+ * component convention); lowercase `<div>` or `<span>` are treated as HTML.
+ */
+export interface TagEvent {
+  kind: 'open' | 'close' | 'self-close';
+  name: string;
+  start: number;
+  end: number;
+}
+
+/**
+ * A region in the source identified as either a properly-paired tag span
+ * or an unmatched open tag bounded by blank line / EOF.
+ */
+export interface FallbackRegion {
+  start: number;
+  end: number;
+  source: 'pair' | 'unmatched';
+}
+
+/**
+ * Scan source for JSX/MDX tag events in source order.
+ *
+ * Fence-aware: tags inside ``` fences are skipped.
+ * Quote-aware: `>` inside attribute double-quotes is not treated as the tag
+ * terminator. When a quote never closes, the tag emits no event (safe-coarsening
+ * documented in FR-23).
+ * Brace-aware: `>` inside `{…}` expression attributes is not treated as the
+ * tag terminator (handles `<Foo bar={x > 5}>` correctly).
+ *
+ * Only matches UpperCase tag names (JSX / MDX component convention).
+ */
+export function scanTagEvents(src: string, fences: Array<[number, number]>): TagEvent[] {
+  const events: TagEvent[] = [];
+  // Match potential tag starts: `<UpperCase` or `</UpperCase`
+  const TAG_START_RE = /<(\/?)([A-Z][A-Za-z0-9.]*)/g;
+
+  for (const match of src.matchAll(TAG_START_RE)) {
+    const tagStartPos = match.index;
+    if (isInsideFence(tagStartPos, fences)) continue;
+
+    const isClose = match[1] === '/';
+    const name = match[2];
+    // Forward-scan from after the tag name to find the terminating `>`
+    // while respecting quote and brace state.
+    const scanStart = tagStartPos + match[0].length;
+    let inDoubleQuote = false;
+    let braceDepth = 0;
+    let terminatorPos = -1;
+    let isSelfClosing = false;
+
+    for (let i = scanStart; i < src.length; i++) {
+      const ch = src[i];
+      if (inDoubleQuote) {
+        if (ch === '"') inDoubleQuote = false;
+        // Backslash escape inside quotes — skip next char
+        if (ch === '\\' && i + 1 < src.length) i++;
+        continue;
+      }
+      if (ch === '"') {
+        inDoubleQuote = true;
+        continue;
+      }
+      if (ch === '{') {
+        braceDepth++;
+        continue;
+      }
+      if (ch === '}' && braceDepth > 0) {
+        braceDepth--;
+        continue;
+      }
+      if (braceDepth > 0) continue;
+      if (ch === '>') {
+        terminatorPos = i;
+        // Check if the char before `>` is `/` (self-closing)
+        if (i > 0 && src[i - 1] === '/') isSelfClosing = true;
+        break;
+      }
+    }
+
+    // If forward scan never found `>` outside quotes/braces, emit no event
+    // (safe-coarsening documented in FR-23: unclosed attribute quote case).
+    if (terminatorPos === -1) continue;
+
+    const tagEnd = terminatorPos + 1;
+
+    if (isClose) {
+      events.push({ kind: 'close', name, start: tagStartPos, end: tagEnd });
+    } else if (isSelfClosing) {
+      events.push({ kind: 'self-close', name, start: tagStartPos, end: tagEnd });
+    } else {
+      events.push({ kind: 'open', name, start: tagStartPos, end: tagEnd });
+    }
+  }
+
+  return events;
+}
+
+/**
+ * Build a list of fallback regions from the source in a single pass.
+ *
+ * Uses a stack-based enumeration of open/close tag events:
+ * - Open tags push onto the stack.
+ * - Self-closing tags (<Foo />) are skipped (never enter the stack).
+ * - Close tags pop the stack to the matching name. Tags between the top and
+ *   the match are evicted as unmatched-open regions (bounded by the evicting
+ *   close's start, capped by nearest blank line).
+ * - At EOF, remaining stack entries emit unmatched-open regions bounded by
+ *   the nearest blank line after the open tag (or EOF).
+ *
+ * Properly-matched open+close pairs emit as 'pair' regions.
+ *
+ * O(n) in source length — one regex scan + O(1) work per tag event.
+ */
+export function enumerateFallbackRegions(src: string): FallbackRegion[] {
+  const fences = findFencedRegions(src);
+  const events = scanTagEvents(src, fences);
+  const stack: TagEvent[] = [];
+  const regions: FallbackRegion[] = [];
+
+  for (const ev of events) {
+    if (ev.kind === 'self-close') continue;
+
+    if (ev.kind === 'open') {
+      stack.push(ev);
+      continue;
+    }
+
+    // Close tag — pop to matching name
+    let matchIdx = -1;
+    for (let i = stack.length - 1; i >= 0; i--) {
+      if (stack[i].name === ev.name) {
+        matchIdx = i;
+        break;
+      }
+    }
+
+    if (matchIdx === -1) continue; // orphan close with no matching open — drop
+
+    // Tags above the match are evicted as unmatched-opens
+    for (let i = stack.length - 1; i > matchIdx; i--) {
+      const open = stack[i];
+      const blankCap = nearestBlankLineAfter(src, open.start) ?? src.length;
+      regions.push({
+        start: open.start,
+        end: Math.min(ev.start, blankCap),
+        source: 'unmatched',
+      });
+    }
+
+    // Emit the proper pair
+    regions.push({
+      start: stack[matchIdx].start,
+      end: ev.end,
+      source: 'pair',
+    });
+
+    stack.length = matchIdx;
+  }
+
+  // Anything still on the stack at EOF is an unmatched-open
+  for (const open of stack) {
+    const blankCap = nearestBlankLineAfter(src, open.start) ?? src.length;
+    regions.push({
+      start: open.start,
+      end: Math.min(src.length, blankCap),
+      source: 'unmatched',
+    });
+  }
+
+  return regions;
+}
+
+/**
+ * Find the tightest structural fallback region containing the error offset.
+ *
+ * Uses single-pass structural enumeration (FR-23) to identify paired and
+ * unmatched-open regions; returns the smallest region containing the error
+ * offset. Falls back to blank-line block bounds when no MDX region contains
+ * the offset (position-less errors, errors in pure prose).
+ *
+ * Does NOT take a parse parameter. Does NOT invoke any parse call.
+ */
+function findFallbackRegion(src: string, errorOffset: number): Region {
+  const regions = enumerateFallbackRegions(src);
+
+  // Innermost containing region wins (smallest span)
+  let best: FallbackRegion | null = null;
+  for (const r of regions) {
+    if (r.start <= errorOffset && errorOffset <= r.end) {
+      if (!best || r.end - r.start < best.end - best.start) best = r;
+    }
+  }
+  if (best) return { start: best.start, end: best.end };
+
+  // No MDX structure around the error — fall back to blank-line block bounds
   const blockStart = nearestBlankLineBefore(src, errorOffset) ?? 0;
   const blockEnd = nearestBlankLineAfter(src, errorOffset) ?? src.length;
   return { start: blockStart, end: blockEnd };
