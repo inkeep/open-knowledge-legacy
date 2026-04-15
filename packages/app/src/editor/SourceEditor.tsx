@@ -9,6 +9,7 @@ import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePa
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
 import { codeLanguages } from './markdown-code-languages';
 import { createPolishEngineExtension } from './polish-engine';
+import { getFirstPaintMs } from './polish-engine/view-plugin';
 
 // Customize the dark editor surface colors here.
 const darkTheme = basicDarkInit({
@@ -92,6 +93,13 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
     });
     viewRef.current = view;
 
+    // Test seams for Playwright R9 perf verification (§10.7 / §10.4 targets).
+    // Consistent with the existing DocumentContext pattern that exposes
+    // __activeProvider / __providerPool unconditionally. Both are read-only
+    // from the test side and carry no security surface.
+    window.__activeEditorView = view;
+    window.__polishFirstPaintMs = getFirstPaintMs;
+
     // Mirror the TiptapEditor DOM listeners so Observer B's typing-defer
     // window applies uniformly regardless of which editor has focus (R7 fix).
     const mark = () => markUserTyping(provider.document);
@@ -108,6 +116,7 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
       dom.removeEventListener('cut', mark);
       view.destroy();
       viewRef.current = null;
+      window.__activeEditorView = null;
     };
   }, [ytext, provider]);
 
