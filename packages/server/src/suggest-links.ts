@@ -3,6 +3,7 @@ import type { Document, Hocuspocus } from '@hocuspocus/server';
 import {
   getWikiLinkText,
   prependFrontmatter,
+  resolveInternalHref,
   stripFrontmatter,
   toWikiLinkSlug,
 } from '@inkeep/open-knowledge-core';
@@ -278,9 +279,25 @@ function findSegmentMatches(text: string, labels: readonly SearchLabel[]): Segme
   return matches;
 }
 
+function contiguousOffsets(start: number, text: string): number[] {
+  const offsets: number[] = [];
+  for (let index = 0; index < text.length; index += 1) {
+    offsets.push(start + index);
+  }
+  return offsets;
+}
+
+function wikiLinkResolvesToTarget(target: string, targetDocName: string): boolean {
+  const trimmed = target.trim();
+  if (!trimmed) return false;
+  return trimmed === targetDocName || toWikiLinkSlug(trimmed) === targetDocName;
+}
+
 function scanLineForMentions(
   line: string,
   lineStartOffset: number,
+  sourceDocName: string,
+  targetDocName: string,
   labels: readonly SearchLabel[],
 ): Array<{ excerpt: string; offset: number }> {
   let flatText = '';
@@ -307,6 +324,17 @@ function scanLineForMentions(
 
   function appendNonMatchableText(text: string): void {
     flushPlainBuffer();
+    flatText += text;
+  }
+
+  function appendMatchableText(text: string, sourceOffsets: number[]): void {
+    flushPlainBuffer();
+    if (!text) return;
+    plainSegments.push({
+      flatStart: flatText.length,
+      text,
+      sourceOffsets,
+    });
     flatText += text;
   }
 
@@ -339,7 +367,13 @@ function scanLineForMentions(
     if (line[index] === '[' && line[index + 1] === '[') {
       const wikiLink = readWikiLink(line, index);
       if (wikiLink) {
-        appendNonMatchableText(getWikiLinkText(wikiLink));
+        const label = getWikiLinkText(wikiLink);
+        if (wikiLinkResolvesToTarget(wikiLink.target, targetDocName)) {
+          appendNonMatchableText(label);
+        } else {
+          const labelStart = wikiLink.alias ? line.indexOf('|', index) + 1 : index + 2;
+          appendMatchableText(label, contiguousOffsets(lineStartOffset + labelStart, label));
+        }
         index = wikiLink.nextIndex;
         continue;
       }
@@ -348,7 +382,14 @@ function scanLineForMentions(
     if (line[index] === '[' && line[index - 1] !== '!') {
       const markdownLink = readMarkdownLink(line, index);
       if (markdownLink) {
-        appendNonMatchableText(markdownLink.text);
+        if (resolveInternalHref(markdownLink.href, sourceDocName)?.docName === targetDocName) {
+          appendNonMatchableText(markdownLink.text);
+        } else {
+          appendMatchableText(
+            markdownLink.text,
+            contiguousOffsets(lineStartOffset + index + 1, markdownLink.text),
+          );
+        }
         index = markdownLink.nextIndex;
         continue;
       }
@@ -379,6 +420,8 @@ function scanLineForMentions(
 
 function scanMarkdownForMentions(
   markdown: string,
+  sourceDocName: string,
+  targetDocName: string,
   labels: readonly SearchLabel[],
 ): Array<{ excerpt: string; offset: number }> {
   const { frontmatter, body } = stripFrontmatter(markdown);
@@ -404,7 +447,15 @@ function scanMarkdownForMentions(
       if (nextFence) {
         fence = nextFence;
       } else {
-        mentions.push(...scanLineForMentions(line, bodyStartOffset + lineStart, labels));
+        mentions.push(
+          ...scanLineForMentions(
+            line,
+            bodyStartOffset + lineStart,
+            sourceDocName,
+            targetDocName,
+            labels,
+          ),
+        );
       }
     }
 
@@ -503,7 +554,12 @@ export async function suggestLinks(options: SuggestLinksOptions): Promise<Sugges
       continue;
     }
 
-    const sourceMentions = scanMarkdownForMentions(markdown, searchLabels).map((mention) => ({
+    const sourceMentions = scanMarkdownForMentions(
+      markdown,
+      sourceDocName,
+      docName,
+      searchLabels,
+    ).map((mention) => ({
       source: sourceDocName,
       excerpt: mention.excerpt,
       offset: mention.offset,

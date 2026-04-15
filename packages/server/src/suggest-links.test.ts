@@ -156,6 +156,47 @@ describe('suggestLinks', () => {
     }
   });
 
+  test('keeps labels linked to other pages matchable', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-suggest-links-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    const hocuspocus = new Hocuspocus({ quiet: true });
+    const source = [
+      'See [Project Alpha](./other.md) for the external plan.',
+      'Alias form [[other|Project Alpha]] should also stay matchable.',
+    ].join('\n');
+
+    try {
+      writeFileSync(join(contentDir, 'project-alpha.md'), '# Project Alpha\n', 'utf-8');
+      writeFileSync(join(contentDir, 'other.md'), '# Other\n', 'utf-8');
+      writeFileSync(join(contentDir, 'notes.md'), source, 'utf-8');
+
+      const result = await suggestLinks({
+        hocuspocus,
+        fileIndex: buildFileIndex(contentDir, ['project-alpha', 'other', 'notes']),
+        docName: 'project-alpha',
+      });
+
+      const firstOffset = source.indexOf('Project Alpha');
+      const secondOffset = source.indexOf('Project Alpha', firstOffset + 1);
+
+      expect(result.mentions).toEqual([
+        {
+          source: 'notes',
+          excerpt: 'See Project Alpha for the external plan.',
+          offset: firstOffset,
+        },
+        {
+          source: 'notes',
+          excerpt: 'Alias form Project Alpha should also stay matchable.',
+          offset: secondOffset,
+        },
+      ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test('prefers live open-doc content over stale disk content', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-suggest-links-'));
     const contentDir = join(projectDir, 'content');
