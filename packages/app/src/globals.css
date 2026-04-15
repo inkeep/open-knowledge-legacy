@@ -797,18 +797,18 @@
   text-indent: -2ch;
 }
 
-.cm-list-marker {
+.cm-list-mark {
   color: var(--color-muted-foreground);
   font-variant-numeric: tabular-nums;
 }
 
-.cm-task-marker {
+.cm-task-mark {
   border: 1px solid var(--color-muted-foreground);
   border-radius: 2px;
   padding: 0 1px;
 }
 
-.cm-task-marker-checked {
+.cm-task-mark-checked {
   background: var(--color-accent);
   border-color: var(--color-accent);
 }
@@ -874,8 +874,8 @@
   color: var(--color-muted-foreground);
 }
 
-.cm-em-marker,
-.cm-del-marker {
+.cm-em-mark,
+.cm-del-mark {
   color: var(--color-muted-foreground);
   opacity: 0.65;
 }

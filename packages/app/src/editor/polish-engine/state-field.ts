@@ -11,9 +11,11 @@ import { type Extension, RangeSetBuilder, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView } from '@codemirror/view';
 import type { ConstructConfig, Registry } from './registry';
 
+type CrossScanConfig = Extract<ConstructConfig, { kind: 'cross-scan-mark' }>;
+
 function buildCrossScanDecorations(
   state: import('@codemirror/state').EditorState,
-  configs: ConstructConfig[],
+  configs: CrossScanConfig[],
 ): DecorationSet {
   // We intentionally do NOT gate on syntaxTreeAvailable here.
   //
@@ -32,8 +34,6 @@ function buildCrossScanDecorations(
   const allMarks: { from: number; to: number; cls: string }[] = [];
 
   for (const config of configs) {
-    if (!config.crossScan) continue;
-
     const { crossScan } = config;
     const collected = crossScan.collect(state);
 
@@ -69,7 +69,9 @@ function buildCrossScanDecorations(
 }
 
 export function createCrossScanField(registry: Registry): Extension {
-  const crossScanConfigs = registry.filter((c) => c.kind === 'cross-scan-mark' && c.crossScan);
+  const crossScanConfigs = registry.filter(
+    (c): c is CrossScanConfig => c.kind === 'cross-scan-mark',
+  );
 
   if (crossScanConfigs.length === 0) {
     return [];
@@ -81,8 +83,8 @@ export function createCrossScanField(registry: Registry): Extension {
     },
     update(decorations, tr) {
       // CRITICAL: early-return on !tr.docChanged — StateField.update fires on
-      // every transaction (selection, focus, viewport scroll, etc.). Without
-      // this gate, cross-scan work runs on every cursor move.
+      // every Transaction (selection changes, focus, facet reconfigurations,
+      // etc.). Without this gate, cross-scan work runs on every cursor move.
       if (!tr.docChanged) return decorations;
       return buildCrossScanDecorations(tr.state, crossScanConfigs);
     },

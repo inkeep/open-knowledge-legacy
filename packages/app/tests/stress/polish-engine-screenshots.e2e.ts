@@ -37,8 +37,7 @@ const THEMES: Theme[] = ['light', 'dark'];
 
 /**
  * The composition fixture covering every construct the engine touches.
- * Mirrors the structure of `tests/fixtures/polish-engine/composition.md`
- * but expanded to exercise every decoration class that `/polish-engine/`
+ * Inline composition fixture expanded to exercise every decoration class that `/polish-engine/`
  * emits, so the per-construct locators below resolve reliably.
  */
 const FIXTURE = [
@@ -199,13 +198,13 @@ test.describe('§10.7b — Polish engine construct screenshots (capture only)', 
         'item-line',
         'List item line — hanging indent keeps wrapped text under content, not marker',
       );
-      await capture('.cm-list-marker', 'list', 'marker', 'List marker (tabular-nums, muted)');
-      await capture('.cm-task-marker', 'list', 'task-unchecked', 'Task marker — unchecked border');
+      await capture('.cm-list-mark', 'list', 'marker', 'List mark (tabular-nums, muted)');
+      await capture('.cm-task-mark', 'list', 'task-unchecked', 'Task mark — unchecked border');
       await capture(
-        '.cm-task-marker-checked',
+        '.cm-task-mark-checked',
         'list',
         'task-checked',
-        'Task marker — checked (accent background)',
+        'Task mark — checked (accent background)',
       );
 
       // Tables — Tier 1 (row), Tier 2 (cell bands), Tier 3 (compactness = implicit in all).
@@ -288,10 +287,10 @@ test.describe('§10.7b — Polish engine construct screenshots (capture only)', 
       await capture('.cm-del', 'inline', 'delete', 'Strikethrough content');
       await capture('.cm-inline-code', 'inline', 'inline-code', 'Inline code (monospace tint)');
       await capture(
-        '.cm-em-marker',
+        '.cm-em-mark',
         'inline',
-        'em-marker',
-        '`*` / `**` / `~~` marker — visible but opacity 0.65',
+        'em-mark',
+        '`*` / `**` / `~~` mark — visible but opacity 0.65',
       );
 
       // Links + references.

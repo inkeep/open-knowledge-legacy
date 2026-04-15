@@ -37,7 +37,7 @@ export const listMarkerConstruct: ConstructConfig = {
   id: 'list-marker',
   nodeName: 'ListMark',
   kind: 'mark',
-  class: 'cm-list-marker',
+  class: 'cm-list-mark',
 };
 
 export const taskMarkerConstruct: ConstructConfig = {
@@ -47,7 +47,7 @@ export const taskMarkerConstruct: ConstructConfig = {
   class(node, state) {
     const text = state.sliceDoc(node.from, node.to);
     return text.includes('x') || text.includes('X')
-      ? 'cm-task-marker cm-task-marker-checked'
-      : 'cm-task-marker';
+      ? 'cm-task-mark cm-task-mark-checked'
+      : 'cm-task-mark';
   },
 };

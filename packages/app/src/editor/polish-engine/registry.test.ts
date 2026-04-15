@@ -12,12 +12,16 @@ describe('ConstructConfig parsing', () => {
     expect(blockquoteConstruct.id).toBe('blockquote');
     expect(blockquoteConstruct.nodeName).toBe('Blockquote');
     expect(blockquoteConstruct.kind).toBe('line');
+    // Narrow to LineConfig for variant-specific field access
+    if (blockquoteConstruct.kind !== 'line') throw new Error('expected line kind');
     expect(blockquoteConstruct.class).toBe('cm-blockquote-line');
     expect(blockquoteConstruct.markerNodeName).toBe('QuoteMark');
     expect(blockquoteConstruct.markerClass).toBe('cm-quote-mark');
   });
 
   test('blockquote depthClass returns correct classes', () => {
+    if (blockquoteConstruct.kind !== 'line') throw new Error('expected line kind');
+
     // Create mock nodes with parent chain for depth testing
     type MockNode = { name: string; parent: MockNode | null };
     const mockNode = (depth: number): MockNode => {
@@ -40,12 +44,16 @@ describe('dispatch routing', () => {
     const lineConfigs = defaultRegistry.filter((c) => c.kind === 'line');
     expect(lineConfigs.length).toBeGreaterThan(0);
     for (const config of lineConfigs) {
-      expect(config.crossScan).toBeUndefined();
+      // After discriminated union refactor, crossScan is structurally absent
+      // from LineConfig. Verify at runtime via `in` for defense-in-depth.
+      expect('crossScan' in config).toBe(false);
     }
   });
 
   test('kind=cross-scan-mark entries have crossScan config', () => {
-    const crossScanConfigs = defaultRegistry.filter((c) => c.kind === 'cross-scan-mark');
+    const crossScanConfigs = defaultRegistry.filter(
+      (c): c is Extract<typeof c, { kind: 'cross-scan-mark' }> => c.kind === 'cross-scan-mark',
+    );
     for (const config of crossScanConfigs) {
       expect(config.crossScan).toBeDefined();
     }

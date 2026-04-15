@@ -17,6 +17,8 @@ import {
 } from '@codemirror/view';
 import type { ConstructConfig, Registry } from './registry';
 
+type LineConfig = Extract<ConstructConfig, { kind: 'line' }>;
+
 /** Count leading whitespace characters in a line (tabs count as 4 spaces). */
 function countLeadingWhitespace(text: string): number {
   let count = 0;
@@ -47,11 +49,11 @@ export function buildNodeIndex(registry: Registry) {
   return index;
 }
 
-/** Build a marker node name → config lookup. */
+/** Build a marker node name → config lookup (only LineConfig has markerNodeName). */
 export function buildMarkerIndex(registry: Registry) {
-  const index = new Map<string, ConstructConfig>();
+  const index = new Map<string, LineConfig>();
   for (const config of registry) {
-    if (config.kind === 'cross-scan-mark' || config.kind === 'none') continue;
+    if (config.kind !== 'line') continue;
     if (!config.markerNodeName) continue;
     const names = Array.isArray(config.markerNodeName)
       ? config.markerNodeName
@@ -73,7 +75,7 @@ function buildDecorations(
   view: EditorView,
   registry: Registry,
   nodeIndex: Map<string, ConstructConfig[]>,
-  markerIndex: Map<string, ConstructConfig>,
+  markerIndex: Map<string, LineConfig>,
 ): DecorationSet {
   // We intentionally do NOT gate on syntaxTreeAvailable here.
   //
@@ -260,7 +262,7 @@ export function getFirstPaintMs(): number {
 export function createPolishViewPlugin(
   registry: Registry,
   nodeIndex: Map<string, ConstructConfig[]>,
-  markerIndex: Map<string, ConstructConfig>,
+  markerIndex: Map<string, LineConfig>,
 ) {
   return ViewPlugin.fromClass(
     class {

@@ -32,14 +32,14 @@ export const emphasisMarkConstruct: ConstructConfig = {
   id: 'emphasis-mark',
   nodeName: 'EmphasisMark',
   kind: 'mark',
-  class: 'cm-em-marker',
+  class: 'cm-em-mark',
 };
 
 export const strikethroughMarkConstruct: ConstructConfig = {
   id: 'strikethrough-mark',
   nodeName: 'StrikethroughMark',
   kind: 'mark',
-  class: 'cm-del-marker',
+  class: 'cm-del-mark',
 };
 
 export const inlineCodeConstruct: ConstructConfig = {

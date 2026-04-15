@@ -1,9 +1,8 @@
 /**
- * Polish Engine — Construct Registry
+ * Polish Engine — Construct Registry Types
  *
- * Defines the ConstructConfig type and the default registry of markdown
- * constructs the engine decorates. Each entry maps lezer node types
- * (or regex-based custom detection) to CM6 decoration instructions.
+ * Defines the ConstructConfig discriminated union and supporting interfaces.
+ * The default registry is assembled in index.ts.
  */
 
 import type { EditorState } from '@codemirror/state';
@@ -22,7 +21,8 @@ export interface CollectedInfo {
   to: number;
 }
 
-export type ConstructConfig = {
+/** Shared fields present on every construct config. */
+type BaseConfig = {
   /** Unique identifier for this construct. */
   id: string;
 
@@ -31,14 +31,16 @@ export type ConstructConfig = {
 
   /** Regex-based detection over visible ranges (for constructs without lezer nodes). */
   customDetect?: (state: EditorState) => NodeRange[];
+};
 
-  /** Decoration kind — determines dispatch path. */
-  kind: 'line' | 'mark' | 'cross-scan-mark' | 'none';
+/** Line-kind construct — applies Decoration.line to every line the node spans. */
+type LineConfig = BaseConfig & {
+  kind: 'line';
 
   /** CSS class(es) to apply. Can be dynamic based on the node. */
   class?: string | ((node: SyntaxNode, state: EditorState) => string);
 
-  /** Class for markers within the construct (HeaderMark, ListMark, etc.). */
+  /** Class for markers within the construct (HeaderMark, QuoteMark, etc.). */
   markerClass?: string;
 
   /** Marker node name(s) to match for markerClass application. */
@@ -52,9 +54,22 @@ export type ConstructConfig = {
 
   /** Inline styles to apply to line decorations (e.g., CSS custom properties). */
   lineAttributes?: (node: SyntaxNode, state: EditorState) => Record<string, string> | null;
+};
+
+/** Mark-kind construct — applies Decoration.mark to the node's range. */
+type MarkConfig = BaseConfig & {
+  kind: 'mark';
+
+  /** CSS class(es) to apply. Can be dynamic based on the node. */
+  class?: string | ((node: SyntaxNode, state: EditorState) => string);
+};
+
+/** Cross-scan-mark-kind construct — uses StateField for document-wide analysis. */
+type CrossScanMarkConfig = BaseConfig & {
+  kind: 'cross-scan-mark';
 
   /** Cross-scan configuration for broken-reference detection. */
-  crossScan?: {
+  crossScan: {
     collect: (state: EditorState) => Map<string, CollectedInfo>;
     check: (
       node: SyntaxNode,
@@ -64,6 +79,17 @@ export type ConstructConfig = {
     brokenClass: string;
   };
 };
+
+/** None-kind construct — registered for cross-cutting concerns but produces no decorations. */
+type NoneConfig = BaseConfig & {
+  kind: 'none';
+};
+
+/**
+ * Discriminated union on `kind`. Each variant only permits the fields
+ * that the engine's dispatch path actually reads for that kind.
+ */
+export type ConstructConfig = LineConfig | MarkConfig | CrossScanMarkConfig | NoneConfig;
 
 /** The full registry is an array of construct configs. */
 export type Registry = ConstructConfig[];
