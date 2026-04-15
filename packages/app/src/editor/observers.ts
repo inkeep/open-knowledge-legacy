@@ -1,40 +1,30 @@
 /**
- * Bidirectional observers between Y.XmlFragment('default') and Y.Text('source').
+ * Client-side observer baseline tracking for Y.XmlFragment and Y.Text.
  *
- * Observer A (tree→text): Two-path sync algorithm.
- *   Path A (Y.Text in sync with baseline): uses diffLines with a content-comparison
- *     gate to skip no-op replacements, preserving CRDT Items and their origins.
- *   Path B (Y.Text diverged, e.g., concurrent agent write): uses DMP patch_make/
- *     patch_apply three-way merge to apply only the user's delta while preserving
- *     divergent content. Both paths minimize CRDT Item replacement (precedent #9).
+ * Under the server-authoritative architecture (precedent #14), cross-CRDT
+ * sync writes are performed exclusively by the server observer module at
+ * `packages/server/src/server-observers.ts`. This client module NO LONGER
+ * writes the derived CRDT — the write paths (Observer A → Y.Text via
+ * `applyByPrefixSuffix`, Observer B → XmlFragment via `updateYFragment`)
+ * were deleted per FR-7 of the server-authoritative observer bridge spec.
  *
- * Observer B (text→tree): Parses Y.Text markdown, applies to XmlFragment via
- *   updateYFragment. Defers while the user is actively typing in WYSIWYG (the tree
- *   replacement would otherwise obliterate in-flight user mutations).
+ * What this module STILL does:
+ *   - Subscribes to XmlFragment and Y.Text changes (callbacks still fire)
+ *   - Maintains `lastSyncedXmlMd` baseline for read-side reasoning and
+ *     the Bug-B conditional-refresh logic from 2026-04-14 spec
+ *   - Exports `ORIGIN_TREE_TO_TEXT` and `ORIGIN_TEXT_TO_TREE` typed origins
+ *     (still used by the bridge-invariant watcher's enforcing set)
+ *   - Exports `markUserTyping(doc)` for typing-defer in Observer B
+ *   - Exports `setupObservers(deps)` — callers unchanged (G3)
  *
- * Transaction origin guards prevent infinite loops:
- *   - Observer A writes under ORIGIN_TREE_TO_TEXT (LocalTransactionOrigin object,
- *     `context.origin === 'sync-from-tree'`); Observer B skips those.
- *   - Observer B writes under ORIGIN_TEXT_TO_TREE (LocalTransactionOrigin object,
- *     `context.origin === 'sync-from-text'`); Observer A skips those.
- *   Both constants are exported object refs — identity match is required for
- *   Set-based enforcement (precedent #1). See AGENTS.md.
+ * What this module does NOT do:
+ *   - Write Y.Text (no `doc.transact(..., ORIGIN_TREE_TO_TEXT)`)
+ *   - Write XmlFragment (no `doc.transact(..., ORIGIN_TEXT_TO_TREE)`)
+ *   - Perform initial Y.Text population (server observer handles this)
  *
- * Observer B early-exit: If the current XmlFragment already serializes to the same
- * markdown as Y.Text, skip updateYFragment entirely — nothing to do, avoid the tree
- * replacement and any cursor disruption.
- *
- * Race condition fix — concurrent user typing + agent write:
- *   Previously Observer A's diffLines(currentYText, newXmlMd) would subtract agent
- *   content from Y.Text because the XmlFragment didn't yet have it, and Observer B's
- *   updateYFragment would overwrite user XmlFragment content with the agent-only
- *   parsed tree. Both sides could destroy the other's in-flight content.
- *
- *   Fix: Observer A now tracks the last XmlFragment state it synced (lastSyncedXmlMd)
- *   and applies only the user's delta (lastSyncedXmlMd → currentXmlMd), preserving
- *   any other content in Y.Text. Observer B defers while the user is typing, and also
- *   waits briefly after a peer tree-only update so the corresponding remote Y.Text
- *   transaction can merge before updateYFragment rebuilds the tree.
+ * See `specs/2026-04-15-server-authoritative-observer-bridge/SPEC.md` for
+ * the full architectural rationale and Mutation G (FR-11) which validates
+ * the deletion is load-bearing.
  */
 
 import type { LocalTransactionOrigin } from '@hocuspocus/server';

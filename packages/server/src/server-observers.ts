@@ -103,6 +103,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     const initialFrontmatter = getFrontmatter(doc);
     lastSyncedXmlMd = prependFrontmatter(initialFrontmatter, initialBody);
   } catch (err) {
+    incrementServerObserverError('a');
     console.warn(
       '[Server Observer A] Baseline init failed — starting from empty snapshot:',
       err instanceof Error ? err.message : String(err),
@@ -150,6 +151,13 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     } catch (err) {
       incrementServerObserverError('a');
       console.error('[Server Observer A] Failed to sync tree→text:', err);
+      // Reset baseline to current Y.Text so the next retry computes a
+      // fresh delta instead of re-applying the stale diff that just failed.
+      try {
+        lastSyncedXmlMd = ytext.toString();
+      } catch {
+        /* ignore — best-effort baseline recovery */
+      }
     }
   };
 
@@ -186,6 +194,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       }, OBSERVER_SYNC_ORIGIN);
       lastSyncedXmlMd = md;
     } catch (err) {
+      incrementServerObserverError('a');
       console.error('[Server Observer A] Failed initial sync:', err);
       // Reset baseline to match Y.Text's actual state (still empty) so the
       // next Observer A firing treats the entire XmlFragment as new content
