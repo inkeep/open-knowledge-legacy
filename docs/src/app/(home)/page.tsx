@@ -15,7 +15,6 @@ export default function HomePage() {
   return (
     <main className="font-[family-name:var(--font-dm-sans)] selection:bg-[var(--slide-accent)]/20">
       <Hero />
-      <Pillars />
       <StickyShowcase />
       <HowItWorks />
       <Features />
@@ -81,48 +80,6 @@ function Hero() {
             <GitBranchIcon className="size-4" />
             View on GitHub
           </Link>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function Pillars() {
-  const pillars = [
-    {
-      title: 'Knowledge\nEngine',
-      icon: PenToolIcon,
-      description: 'Understand your\nproduct & KB',
-    },
-    {
-      title: 'Agent\nIntelligence',
-      icon: BrainCircuitIcon,
-      description: 'Query for User-Specific\nContext',
-    },
-    {
-      title: 'Git-Native\nWorkflows',
-      icon: GitBranchIcon,
-      description: 'Update Systems &\nAutomate Tasks',
-    },
-  ];
-
-  return (
-    <section className="bg-[var(--slide-bg)] px-6 pb-24 md:pb-32">
-      <div className="mx-auto max-w-4xl">
-        <div className="grid gap-16 md:grid-cols-3 md:gap-12">
-          {pillars.map(({ title, icon: Icon, description }) => (
-            <div key={title} className="text-center">
-              <h3 className="whitespace-pre-line text-xl font-normal leading-snug text-[var(--slide-text)]">
-                {title}
-              </h3>
-              <div className="mx-auto my-10">
-                <Icon className="mx-auto size-16 text-[var(--slide-text)]" strokeWidth={0.8} />
-              </div>
-              <p className="whitespace-pre-line text-sm leading-relaxed text-[var(--slide-muted)]">
-                {description}
-              </p>
-            </div>
-          ))}
         </div>
       </div>
     </section>
