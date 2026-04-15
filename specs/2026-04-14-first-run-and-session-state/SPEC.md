@@ -29,16 +29,16 @@ The compound effect: the ticket as written solves an onboarding surface for an a
 
 **Resolution.** One vertical slice delivering:
 - (a) `state.json` as a versioned, lock-coordinated, atomically-written per-project state file — schema generous enough to carry session + UI state without further migrations;
-- (b) a server-side init-status endpoint that reports what the file watcher has indexed (count, scope, sample, detected category: empty / small / large / suspicious);
+- (b) a server-side init-status endpoint that reports what the file watcher has indexed (count, scope, sample, detected category: empty / existing / suspicious);
 - (c) an `initContent()` primitive extension that creates a starter `README.md` only when the vault is truly empty;
-- (d) a welcome screen UX with **four explicit branches** — empty, small existing, large existing, and suspicious (e.g., indexing `node_modules/`) — that renders the right affordances for each;
+- (d) a welcome screen UX with **three explicit branches** — empty, existing, and suspicious (e.g., indexing `node_modules/`) — that renders the right affordances for each;
 - (e) a dismissal-state model that respects schemaVersion so welcome can be meaningfully re-presented after future UX updates.
 
 The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the schema-versioned dismissal model. It is complementary to, and non-overlapping with, `specs/2026-04-14-multi-project-path/SPEC.md`.
 
 ## 2) Goals
 
-- **G1:** A first-time user who opens Open Knowledge against an existing knowledge base with 50 markdown files lands on a welcome screen that tells them *exactly* what was indexed, invites them to confirm or narrow scope, and then takes them to their content.
+- **G1:** A first-time user who opens Open Knowledge against an existing knowledge base lands on a welcome screen that tells them what was indexed, invites them to confirm or narrow scope, and then takes them to their content.
 - **G2:** A first-time user who opens Open Knowledge against a fresh empty directory lands on a welcome screen that creates a starter `README.md` and takes them into it, ready to edit.
 - **G3:** A first-time user whose vault accidentally indexes `node_modules/**` or similar noise is warned on the welcome screen, not left to discover it via a confused sidebar.
 - **G4:** A returning user, having dismissed the welcome screen, resumes on the document they were last editing, not a random first-index entry.
@@ -61,8 +61,8 @@ The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the 
 ## 4) Personas / consumers
 
 - **P1 — Fresh-vault evaluator.** Creates an empty directory, runs `open-knowledge init && start`, opens the editor. Has never seen the product. Expects a "here's what this is, here's a starter, start editing" flow. Sarah's primary target audience.
-- **P2 — Existing-KB adopter (the under-served case).** Has a `~/notes` directory or a repo's `docs/` folder with 20–500 markdown files. Adds Open Knowledge to it. Expects: "we found 47 files under `docs/`, does this look right?" → scope confirmation → lands in their content. Is the **modal real-world first-run user** — this spec's distinguishing concern over the Linear ticket as originally written.
-- **P3 — Noisy-KB adopter.** Same as P2 but the project has `node_modules/`, vendored docs, or a massive git history, and the default `**/*.md` scope sweeps in thousands of files. Needs a warning on the welcome screen plus a nudge to fix scope before continuing. (This is also the user the multi-project spec's F3 default-excludes fix partially serves; this spec complements that by surfacing the problem in UI even if the default excludes miss something.)
+- **P2 — Existing-KB adopter (the under-served case).** Has a `~/notes` directory or a repo's `docs/` folder with markdown files — could be 5, could be 5,000. Adds Open Knowledge to it. Expects: "we found N files under `docs/`, does this look right?" → scope confirmation → lands in their content. Is the **modal real-world first-run user** — this spec's distinguishing concern over the Linear ticket as originally written.
+- **P3 — Noisy-KB adopter.** Same as P2 but the project has `node_modules/`, vendored docs, or similar noise, and the default `**/*.md` scope sweeps in suspicious paths. Needs a warning on the welcome screen plus a nudge to fix scope before continuing. (This is also the user the multi-project spec's F3 default-excludes fix partially serves; this spec complements that by surfacing the problem in UI even if the default excludes miss something.)
 - **P4 — Returning user.** Used Open Knowledge yesterday; reopens it today. Expects to land on the doc they were editing, no welcome screen.
 - **P5 — Returning user after a tool update.** Used Open Knowledge a month ago; reopens it after a version bump that changed the welcome screen flow. Might benefit from a re-surfaced scope-confirmation. Handled via `schemaVersion` in `state.json.welcome`.
 - **P6 — Power user / config editor.** Edited `.open-knowledge/config.yml` to add exclusions, wants to re-run welcome to see current scope. Handled via a manual "reset welcome" affordance (`open-knowledge welcome --reset` CLI or a menu item — scope TBD in R-level).
@@ -77,17 +77,17 @@ The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the 
 5. `state.json` written: `{version:1, lastOpenedDoc:"README.md", lastOpenedAt:<now>, welcome:{state:"dismissed", seenAt:<now>, variant:"empty", schemaVersion:1}}`.
 6. User types. Lives happily.
 
-### P2 — Existing small KB (1–50 files)
-1. User `cd ~/notes && open-knowledge init && open-knowledge start`. `~/notes` has 47 `.md` files under `/topics/*.md`.
-2. SPA loads. `state.json` does not exist. `/api/init-status` reports `{variant: "small", fileCount: 47, contentDir: ".", include: ["**/*.md"], exclude: ["node_modules/**", ...], sampleFiles: ["topics/a.md", ...], topDirs: ["topics"]}`.
-3. **Welcome screen — small-existing branch:** *"Open Knowledge found 47 markdown files in `~/notes`. Top-level: `topics/`. Looks good?"* → sample file list (5 paths) → two buttons: *"Start exploring"* (dismiss + open first file) and *"Edit scope"* (link to `config.yml` docs + open `.open-knowledge/config.yml` in the editor itself).
+### P2 — Existing KB (any size, no suspicious patterns)
+1. User `cd ~/notes && open-knowledge init && open-knowledge start`. `~/notes` has 47 `.md` files under `/topics/*.md` (could equally be 4 or 4,000 — same flow).
+2. SPA loads. `state.json` does not exist. `/api/init-status` reports `{variant: "existing", fileCount: 47, contentDir: ".", include: ["**/*.md"], exclude: ["node_modules/**", ...], sampleFiles: ["topics/a.md", ...], topDirs: ["topics"], suspiciousPatterns: []}`.
+3. **Welcome screen — existing branch:** *"Open Knowledge found 47 markdown files in `~/notes`. Top-level: `topics/`. Looks good?"* → sample file list (5 paths) → two buttons: *"Start exploring"* (dismiss + open first file) and *"Edit scope"* (link to `config.yml` docs + open `.open-knowledge/config.yml` in the editor itself).
 4. Click **Start exploring** → welcome dismissed, SPA opens the first file in the sidebar, `state.json` is written.
 
-### P3 — Existing large KB (>N files) and P3' — suspicious (indexed noise detected)
-1. User `cd ~/work/monorepo && open-knowledge init && open-knowledge start`. Repo has 8,000 `.md` files because `node_modules/` snuck in (or was not caught by defaults, or the user has legitimate large content).
-2. `/api/init-status` reports `{variant: "large" OR "suspicious", fileCount: 8413, contentDir: ".", sampleFiles: [..., "node_modules/some-pkg/README.md", ...], topDirs: ["node_modules", "docs", "packages"], suspiciousPatterns: ["node_modules"]}`.
-3. **Welcome screen — large / suspicious branch:** *"Open Knowledge indexed 8,413 files from `~/work/monorepo`. That's a lot — some of it may be content you don't want to track (`node_modules/` detected)."* → sample file list with suspicious files highlighted → three buttons: *"Add exclusions"* (opens `config.yml` with `exclude:` cursor positioned), *"Start anyway"* (dismiss + accept the scope), *"Edit later"* (dismiss + mark `welcome.needsAttention:true` for a return nudge).
-4. User adds `node_modules/**` to excludes, saves, file watcher rebuilds, welcome screen re-queries `/api/init-status`, count drops to 200, variant becomes "small" → user clicks "Start exploring" → welcome dismissed.
+### P3 — Suspicious-pattern detection
+1. User `cd ~/work/monorepo && open-knowledge init && open-knowledge start`. Repo has 8,000 `.md` files because `node_modules/` snuck in (or was not caught by defaults).
+2. `/api/init-status` reports `{variant: "suspicious", fileCount: 8413, contentDir: ".", sampleFiles: [..., "node_modules/some-pkg/README.md", ...], topDirs: ["node_modules", "docs", "packages"], suspiciousPatterns: ["node_modules"]}`.
+3. **Welcome screen — suspicious branch:** *"Open Knowledge may be indexing files you don't want — `node_modules/` detected."* → sample file list with suspicious files highlighted → three buttons: *"Add exclusions"* (opens `config.yml` with `exclude:` cursor positioned, primary CTA), *"Start anyway"* (dismiss + accept the scope), *"Decide later"* (dismiss + mark `welcome.needsAttention:true` for a return nudge).
+4. User adds `node_modules/**` to excludes, saves, file watcher rebuilds, welcome screen re-queries `/api/init-status`, variant becomes "existing" → user clicks "Start exploring" → welcome dismissed.
 
 ### P4 — Returning user
 1. User reopens tab. `state.json` exists with `lastOpenedDoc: "notes/yesterday.md"` and `welcome.state: "dismissed"`.
@@ -107,7 +107,7 @@ The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the 
 - **`state.json` corrupt JSON on read.** SPA logs a warning, treats as missing, shows welcome screen. Old file backed up to `state.json.bak.<timestamp>`. No data loss (the primary content is the markdown files themselves).
 - **`state.json` lock contention (two processes try to write simultaneously).** V0-1 lock owner is the only writer; non-owner processes attempting to write fail fast with a clear log message. UI never writes directly — all writes go through an API endpoint that the lock-holding server process handles.
 - **`initContent()` fails (permission denied writing `README.md`).** Welcome screen shows error with retry + "pick a different directory" link. Does NOT write `state.json.welcome.dismissed`.
-- **`/api/init-status` enumeration times out on huge repos.** Endpoint is capped at 10,000 files enumerated for the sample; total count is exact (uses existing `ContentFilter` which is already fast). If > 10,000, variant forces to "large" and the banner reads "10,000+ files."
+- **`/api/init-status` enumeration times out on huge repos.** Endpoint is capped at 10,000 files enumerated for the sample; total count is exact (uses existing `ContentFilter` which is already fast). If > 10,000, the existing or suspicious branch displays "10,000+ files" instead of an exact count.
 - **User closes the tab mid-onboarding.** `welcome.state` remains unset (or `pending` if we decide to write intermediate state — see open questions). Next load re-shows welcome. No state corruption.
 - **V0-1 lock not acquired (e.g., another process already holds it).** `state.json` reads are fine; writes from non-lock-holding processes are refused. UI sees a "read-only" indicator; welcome screen still functional but dismiss button warns "another instance of Open Knowledge is running for this project."
 
@@ -117,24 +117,23 @@ The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the 
 | Priority | ID | Requirement | Acceptance criteria |
 |---|---|---|---|
 | Must | R1 | `state.json` schema + read/write primitive | `packages/server/src/state-json.ts` (new) exports `readState()` / `writeState()`. Schema validated by Zod. Atomic write: tmp-file + rename. Write is lock-coordinated — only the V0-1 server-lock-holding process writes. Non-owner writes throw a clear error. Unit test: concurrent write attempts from two simulated owners → one succeeds, one fails cleanly; corrupt JSON on read → warning + backup + empty state. |
-| Must | R2 | `state.json` schema (v1) | Schema: `{version: 1, lastOpenedDoc?: string, lastOpenedAt?: ISO8601, welcome: {state: "not-shown"\|"pending"\|"dismissed", seenAt?: ISO8601, variant?: "empty"\|"small"\|"large"\|"suspicious", schemaVersion: number, needsAttention?: boolean}, recentDocs?: string[]}`. `version` gates future migrations. Unknown fields preserved on round-trip (forward-compat). |
-| Must | R3 | `GET /api/init-status` endpoint | `packages/server/src/api-extension.ts` adds this route. Returns: `{fileCount: number, contentDir: string, include: string[], exclude: string[], sampleFiles: string[] (max 5), topDirs: string[] (max 3), variant: "empty"\|"small"\|"large"\|"suspicious", suspiciousPatterns: string[]}`. Variant thresholds defined in schema (see D1). Reads from existing `ContentFilter` + `fileWatcher` in-memory index — no separate walk. Response time < 200ms for 10k files. |
+| Must | R2 | `state.json` schema (v1) | Schema: `{version: 1, lastOpenedDoc?: string, lastOpenedAt?: ISO8601, welcome: {state: "not-shown"\|"pending"\|"dismissed", seenAt?: ISO8601, variant?: "empty"\|"existing"\|"suspicious", schemaVersion: number, needsAttention?: boolean}, recentDocs?: string[]}`. `version` gates future migrations. Unknown fields preserved on round-trip (forward-compat). |
+| Must | R3 | `GET /api/init-status` endpoint | `packages/server/src/api-extension.ts` adds this route. Returns: `{fileCount: number, contentDir: string, include: string[], exclude: string[], sampleFiles: string[] (max 5), topDirs: string[] (max 3), variant: "empty"\|"existing"\|"suspicious", suspiciousPatterns: string[]}`. Variant logic defined in §9. Reads from existing `ContentFilter` + `fileWatcher` in-memory index — no separate walk. Response time < 200ms for 10k files. |
 | Must | R4 | `initContent()` starter-README writer | `packages/server/src/init-content.ts` (new) exports `initContent({contentDir, contentFilter, templatePath})`. Writes `<contentDir>/README.md` with a 5–10 line starter template (markdown + JSX component example). Only writes if: (a) the file does not exist, AND (b) no files currently match `content.include`. Idempotent on re-run: does nothing if either condition fails. Exposed to CLI via `open-knowledge init-content`, to API via `POST /api/init-content` (lock-owner-only). |
 | Must | R5 | Starter template | Content of `README.md` decided in `meta/starter-template.md` during implementation. Must include: heading, one paragraph of welcome text, one wiki-link `[[Open Knowledge]]` (shows wiki-link feature), one JSX component example (shows component authoring), and one external link (shows plain markdown). 5–10 lines total. |
-| Must | R6 | Welcome screen React component | `packages/app/src/onboarding/WelcomePage.tsx` (new). Renders four variants driven by `/api/init-status` response + `state.json.welcome` state. Owner: **Sarah (primary)**. Uses shadcn primitives. Responsive layout. Dismissal button calls `POST /api/state-json/welcome-dismiss` (lock-owner writes through). |
+| Must | R6 | Welcome screen React component | `packages/app/src/onboarding/WelcomePage.tsx` (new). Renders three variants driven by `/api/init-status` response + `state.json.welcome` state. Owner: **Sarah (primary)**. Uses shadcn primitives. Responsive layout. Dismissal button calls `POST /api/state-json/welcome-dismiss` (lock-owner writes through). |
 | Must | R7 | Welcome branch: empty | When variant=`empty`: heading "Your knowledge base is empty", body explaining starter doc, single CTA "Create starter document" → POSTs `/api/init-content` → on success, dismisses welcome + opens `README.md`. |
-| Must | R8 | Welcome branch: small existing | When variant=`small`: heading "Open Knowledge found N markdown files", body listing top dirs + sample paths, CTAs "Start exploring" (dismiss + open first file) and "Edit scope" (opens `.open-knowledge/config.yml` in the editor as a document). |
-| Must | R9 | Welcome branch: large existing | When variant=`large` (threshold: > 500 files by default, configurable): same as R8 plus a warning banner "That's a lot of files — consider narrowing scope." Links to docs on `config.exclude`. Three CTAs: "Add exclusions", "Start anyway", "Decide later" (dismisses with `needsAttention: true`). |
-| Must | R10 | Welcome branch: suspicious | When variant=`suspicious` (detected patterns: `node_modules`, `.git`, `vendor`, `dist`, `build`, `target`, `.next`, `.nuxt`, `.output` present in top 100 indexed paths): heading "Open Knowledge may be indexing files you don't want", highlights the suspicious paths in the sample, CTAs identical to R9 but "Add exclusions" is primary/highlighted. |
-| Must | R11 | Session-restore on app load | SPA on initial load reads `state.json` (via existing API or new `GET /api/state-json`). If `welcome.state === "dismissed"` and `lastOpenedDoc` exists in the current file index, open it. If `lastOpenedDoc` missing from index (deleted), fall back to first file and update `lastOpenedDoc`. If no `lastOpenedDoc` at all, fall back to first file without updating until the user navigates. |
-| Must | R12 | Dismissal write-through | Welcome dismiss calls `POST /api/state-json/welcome-dismiss` with `{variant}`. Server (lock-owner) updates `state.json.welcome` to `{state:"dismissed", seenAt:<now>, variant, schemaVersion: WELCOME_SCHEMA_VERSION}`. 200 on success, 423 Locked if the server doesn't hold the lock. |
-| Must | R13 | `lastOpenedDoc` write-through | On document navigation in the editor, debounced (500ms) write through `POST /api/state-json/last-opened` with `{docName}`. Coalesces rapid navigation. No write if welcome is still pending. |
-| Must | R14 | `.gitignore` state.json | `open-knowledge init` appends `.open-knowledge/state.json` to project `.gitignore` (state.json is per-machine, per-user, must not be committed). Idempotent append. |
-| Should | R15 | `open-knowledge welcome --reset` CLI | New subcommand deletes the `welcome` block from `state.json` for the current project. Direct file write (not via API — this runs when server may not be running). Warns if server is running and instructs to run it through the server instead. Low-effort; ship if time permits. |
-| Should | R16 | `WELCOME_SCHEMA_VERSION` constant | Exported from `packages/core/src/constants/welcome.ts`. Starts at `1`. On load, SPA compares `state.json.welcome.schemaVersion` to current constant; if older, re-shows welcome with a one-line "We've updated the onboarding flow" banner. Future version bumps must document the change in the banner. |
-| Should | R17 | Welcome never-reappear guarantee | After dismissal with current `schemaVersion`, welcome MUST NOT re-render unless (a) user explicitly resets via R15, (b) `state.json` is deleted, or (c) `WELCOME_SCHEMA_VERSION` is bumped. Tested by: dismiss → reload 5x → assert no welcome. |
-| Could | R18 | Manual "Re-run welcome" editor menu item | In-editor menu entry that clears `welcome.state`, reloads. Convenience over R15 CLI. Ship if trivial. |
-| Could | R19 | "Needs attention" post-dismiss nudge | When welcome was dismissed with `needsAttention: true` (from R9 "Decide later"), editor shows a small banner linking back to scope review. Dismissible. One-time. |
+| Must | R8 | Welcome branch: existing | When variant=`existing`: heading "Open Knowledge found N markdown files", body listing top dirs + sample paths, CTAs "Start exploring" (dismiss + open first file) and "Edit scope" (opens `.open-knowledge/config.yml` in the editor as a document). N is shown faithfully whether it's 5 or 5,000 — no threshold-based warning text. |
+| Must | R9 | Welcome branch: suspicious | When variant=`suspicious` (detected patterns: `node_modules`, `.git`, `vendor`, `dist`, `build`, `target`, `.next`, `.nuxt`, `.output` present in top 100 indexed paths): heading "Open Knowledge may be indexing files you don't want", highlights the suspicious paths in the sample, three CTAs: "Add exclusions" (primary, opens `.open-knowledge/config.yml` with `exclude:` cursor positioned), "Start anyway" (dismiss + accept the scope), "Decide later" (dismiss + mark `welcome.needsAttention:true`). |
+| Must | R10 | Session-restore on app load | SPA on initial load reads `state.json` (via existing API or new `GET /api/state-json`). If `welcome.state === "dismissed"` and `lastOpenedDoc` exists in the current file index, open it. If `lastOpenedDoc` missing from index (deleted), fall back to first file and update `lastOpenedDoc`. If no `lastOpenedDoc` at all, fall back to first file without updating until the user navigates. |
+| Must | R11 | Dismissal write-through | Welcome dismiss calls `POST /api/state-json/welcome-dismiss` with `{variant}`. Server (lock-owner) updates `state.json.welcome` to `{state:"dismissed", seenAt:<now>, variant, schemaVersion: WELCOME_SCHEMA_VERSION}`. 200 on success, 423 Locked if the server doesn't hold the lock. |
+| Must | R12 | `lastOpenedDoc` write-through | On document navigation in the editor, debounced (500ms) write through `POST /api/state-json/last-opened` with `{docName}`. Coalesces rapid navigation. No write if welcome is still pending. |
+| Must | R13 | `.gitignore` state.json | `open-knowledge init` appends `.open-knowledge/state.json` to project `.gitignore` (state.json is per-machine, per-user, must not be committed). Idempotent append. |
+| Should | R14 | `open-knowledge welcome --reset` CLI | New subcommand deletes the `welcome` block from `state.json` for the current project. Direct file write (not via API — this runs when server may not be running). Warns if server is running and instructs to run it through the server instead. Low-effort; ship if time permits. |
+| Should | R15 | `WELCOME_SCHEMA_VERSION` constant | Exported from `packages/core/src/constants/welcome.ts`. Starts at `1`. On load, SPA compares `state.json.welcome.schemaVersion` to current constant; if older, re-shows welcome with a one-line "We've updated the onboarding flow" banner. Future version bumps must document the change in the banner. |
+| Should | R16 | Welcome never-reappear guarantee | After dismissal with current `schemaVersion`, welcome MUST NOT re-render unless (a) user explicitly resets via R14, (b) `state.json` is deleted, or (c) `WELCOME_SCHEMA_VERSION` is bumped. Tested by: dismiss → reload 5x → assert no welcome. |
+| Could | R17 | Manual "Re-run welcome" editor menu item | In-editor menu entry that clears `welcome.state`, reloads. Convenience over R14 CLI. Ship if trivial. |
+| Could | R18 | "Needs attention" post-dismiss nudge | When welcome was dismissed with `needsAttention: true` (from R9 "Decide later"), editor shows a small banner linking back to scope review. Dismissible. One-time. |
 
 ### Non-functional
 - **Performance:**
@@ -185,8 +184,7 @@ The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the 
 │  ┌────────────────────────────────────────────────┐  │
 │  │  WelcomePage.tsx  ← Sarah                      │  │
 │  │  ├ Empty variant                               │  │
-│  │  ├ Small variant                               │  │
-│  │  ├ Large variant                               │  │
+│  │  ├ Existing variant                            │  │
 │  │  └ Suspicious variant                          │  │
 │  └───────────────┬────────────────────────────────┘  │
 │                  │ fetch + POST                      │
@@ -234,7 +232,7 @@ The scope is the full V0-7 PRD-6522 surface plus the existing-KB branch and the 
 | `state.json` schema + read/write primitive | Andrew | Platform primitive; lock coordination is Andrew's area |
 | `initContent()` | Andrew | Platform primitive used by both UI and CLI |
 | `/api/init-status`, `/api/state-json*`, `/api/init-content` | Andrew | Server API |
-| `WelcomePage.tsx` + four variant renderers | **Sarah** | Novel UX; shadcn composition; highest-leverage first-impression work |
+| `WelcomePage.tsx` + three variant renderers | **Sarah** | Novel UX; shadcn composition; highest-leverage first-impression work |
 | Session-restore hook in `TiptapEditor.tsx` | Sarah | Editor-side wiring |
 | `.gitignore` append | Andrew (coord with multi-project spec) | CLI side-effect |
 | `open-knowledge welcome --reset` CLI | Andrew | Escape hatch |
@@ -254,7 +252,7 @@ export const StateJsonSchema = z.object({
   welcome: z.object({
     state: z.enum(['not-shown', 'pending', 'dismissed']),
     seenAt: z.string().datetime().optional(),
-    variant: z.enum(['empty', 'small', 'large', 'suspicious']).optional(),
+    variant: z.enum(['empty', 'existing', 'suspicious']).optional(),
     schemaVersion: z.number().int(),
     needsAttention: z.boolean().optional(),
   }).default({ state: 'not-shown', schemaVersion: WELCOME_SCHEMA_VERSION }),
@@ -274,17 +272,18 @@ export type StateJson = z.infer<typeof StateJsonSchema>;
   exclude: string[],
   sampleFiles: string[],          // max 5, relative to contentDir
   topDirs: string[],              // max 3, by file count
-  variant: 'empty' | 'small' | 'large' | 'suspicious',
+  variant: 'empty' | 'existing' | 'suspicious',
   suspiciousPatterns: string[],   // which noise patterns were detected; empty if none
 }
 ```
 
-### Variant thresholds (D1 below)
+### Variant logic (D1 below)
 
 - **empty:** `fileCount === 0`
-- **small:** `1 <= fileCount <= 500` AND no suspicious patterns
-- **large:** `fileCount > 500` AND no suspicious patterns
-- **suspicious:** `fileCount > 0` AND at least one suspicious pattern in top 100 indexed paths. Takes priority over small/large classification when triggered.
+- **existing:** `fileCount > 0` AND no suspicious patterns
+- **suspicious:** `fileCount > 0` AND at least one suspicious pattern in top 100 indexed paths. Takes priority over `existing` when triggered.
+
+No file-count thresholds — `existing` covers any non-zero count without noise patterns. We display the count faithfully in the UI but do not change branch behavior based on it. Users with 5 files and users with 5,000 files both see the same scope-confirmation flow; only the `suspicious` branch warns.
 
 Suspicious patterns (hardcoded in server, overridable via `config.onboarding.suspiciousPatterns` later — out of scope for v1): `node_modules`, `.git`, `vendor`, `dist`, `build`, `target`, `.next`, `.nuxt`, `.output`, `out`.
 
@@ -292,9 +291,9 @@ Suspicious patterns (hardcoded in server, overridable via `config.onboarding.sus
 
 | ID | Decision | Alternatives | Rationale |
 |---|---|---|---|
-| D1 | Four welcome variants: empty / small / large / suspicious | Two variants (empty / has-files) per ticket; three variants (empty / small / large) | User explicitly flagged "existing KB" as the high-likelihood case. Two-variant misses it. Three-variant is close but hides the noise-detection use case, which is the most-likely failure of the product to satisfy first impressions (per onboarding-walkthrough-audit F3). Four is the minimum to cover the real shape of reality. |
+| D1 | Three welcome variants: empty / existing / suspicious | Two variants (empty / has-files) per ticket as originally written; four variants with a large-KB warning branch | Two-variant misses the existing-KB case, which is the modal real-world first-run user. A four-variant version added a size threshold warning (">500 files: consider narrowing scope"), but most users with large KBs are intentionally working with a large KB — a count-based warning is either noise or condescending. The signal worth surfacing is *noise detection* (suspicious patterns), not raw count. Three variants is the minimum to cover the real shape without overreaching. |
 | D2 | Suspicious-pattern list hardcoded in v1; configurable later | Make it a config field from day one | Hardcoded is enough for v1; the list is short and well-known. Configurability adds surface area with no clear caller yet. |
-| D3 | Large threshold = 500 files | 100, 1000, dynamic based on repo size | Arbitrary but defensible: small personal KBs peak around 100–200, dev notes and docs folders hit 500 before you notice, anything above 500 is "you might want to narrow scope." Easy to tune post-ship. |
+| D3 | No file-count thresholds gate the UI branch | Thresholds at 100, 500, 1000 | Count-based warnings either annoy users with intentionally-large KBs or fail to catch users with small-but-wrong scope. Noise-pattern detection is the real signal. The count is displayed faithfully but does not change UX branching. |
 | D4 | `state.json` schema is explicitly versioned with a `version: 1` literal | Unversioned; file-presence as version signal | Versioning is cheap insurance. Forward migration in a future spec is trivial if the field is there from day one. |
 | D5 | Welcome dismissal state lives in `state.json`, not as a separate file or as a config flag | Separate `welcome.marker` cache file; `config.yml` flag; inferred from doc count | Resolves TQ7 from `projects/v0-launch/PROJECT.md`. Separate marker file is fragile (cache wipes). Config flag conflates content config with UI state. Doc-count inference gives wrong answer when users dismiss scope-confirmation then add more files. `state.json` is the right primitive and already needs to exist for session persistence. |
 | D6 | `/api/init-status` as a new dedicated endpoint, not an extension of `/api/documents` | Extend existing documents API | Resolves TQ8. Dedicated endpoint is clearer, testable in isolation, and the shape is entirely about onboarding (variant classification, suspicious-pattern detection, samples). Future endpoints like `/api/hub-status` can follow the same pattern cleanly. |
@@ -303,18 +302,18 @@ Suspicious patterns (hardcoded in server, overridable via `config.onboarding.sus
 | D9 | Starter template is a fixed string with no variables in v1 | Templated with project name, author, date | Keep v1 minimal. Users can edit after creation. Templating is future work. |
 | D10 | `schemaVersion` bumps re-surface welcome (not forcefully — with a small banner) | Silent re-surface; no re-surface ever | Quiet re-surface respects user intent (they dismissed before) while opening a channel to meaningfully update the first-run UX later. |
 | D11 | Welcome never shows for returning users (dismissed + same schemaVersion) | Show if `lastOpenedDoc` is null | Don't interrupt users who've already onboarded. If they cleared `state.json` deliberately, they get welcome; otherwise no. |
-| D12 | Four-variant logic computed server-side in `/api/init-status`, not client-side | Client computes variant from file counts | Server already has the `ContentFilter` + file index; one place of truth. Client just renders the variant the server tells it. |
+| D12 | Three-variant logic computed server-side in `/api/init-status`, not client-side | Client computes variant from file counts | Server already has the `ContentFilter` + file index; one place of truth. Client just renders the variant the server tells it. |
 
 ## 11) Open questions
 
 | ID | Question | Blocker? | Next step |
 |---|---|---|---|
 | Q1 | Exact copy for each variant's welcome screen | No — Sarah's domain | Sarah drafts during UI implementation; review with Andrew before ship |
-| Q2 | Does the "Edit scope" CTA in branches R8/R9/R10 open `.open-knowledge/config.yml` as a regular document in the editor, or open an OS-level editor? | No | Open as a regular document — the editor already round-trips YAML-fronted docs and this is the most consistent UX. Confirm with Sarah. |
+| Q2 | Does the "Edit scope" CTA in branches R8/R9 open `.open-knowledge/config.yml` as a regular document in the editor, or open an OS-level editor? | No | Open as a regular document — the editor already round-trips YAML-fronted docs and this is the most consistent UX. Confirm with Sarah. |
 | Q3 | Does `welcome.state === "pending"` need to be a real state, or is "not-shown" → "dismissed" sufficient? | No | Defer; use only not-shown / dismissed in v1; add `pending` if a multi-step flow needs it later |
 | Q4 | How is the `WELCOME_SCHEMA_VERSION` bump communicated on re-surface — banner text, modal, nothing? | No — Sarah's call | One-line banner at top of welcome screen, dismissible; no modal |
-| Q5 | Does R15 (`open-knowledge welcome --reset`) belong in this spec or the `cli-init-clarity` line of specs? | No | Keep here; it's the escape hatch for the state this spec owns |
-| Q6 | Should `needsAttention` nudge (R19) be a banner in the editor or a badge on some corner? | No — Sarah's call | Defer to Sarah; R19 is a Could anyway |
+| Q5 | Does R14 (`open-knowledge welcome --reset`) belong in this spec or the `cli-init-clarity` line of specs? | No | Keep here; it's the escape hatch for the state this spec owns |
+| Q6 | Should `needsAttention` nudge (R18) be a banner in the editor or a badge on some corner? | No — Sarah's call | Defer to Sarah; R18 is a Could anyway |
 | Q7 | What happens to `state.json` when the content directory is renamed / moved? | Yes — but handled | `state.json` is at `<contentDir>/.open-knowledge/state.json`, which moves with the project. Handled transparently. The adjacent multi-project spec's project-id primitive does NOT need to propagate into state.json in v1. |
 | Q8 | Coordination with multi-project spec's `~/.open-knowledge/projects.json` — two different state files at two different scopes. Risk of confusion? | No | They're at different paths (user-scope vs project-scope) and carry different data (registry vs session). Document the distinction in CLAUDE.md. |
 
@@ -330,9 +329,9 @@ Suspicious patterns (hardcoded in server, overridable via `config.onboarding.sus
 
 ## 13) In scope
 
-- R1–R14 (all MUST).
-- R15–R17 (SHOULD) — ship unless blocked.
-- R18, R19 (COULD) — defer freely.
+- R1–R13 (all MUST).
+- R14–R16 (SHOULD) — ship unless blocked.
+- R17, R18 (COULD) — defer freely.
 
 ## 14) Risks & mitigations
 
@@ -341,11 +340,11 @@ Suspicious patterns (hardcoded in server, overridable via `config.onboarding.sus
 | Welcome-screen UI work blocks on unclear copy/design, delaying the whole spec | Medium | Medium | Sarah drafts variant copy in `meta/welcome-copy.md` early; Andrew's platform work proceeds in parallel with placeholder copy |
 | `state.json` lock contention bugs surface only under multi-process scenarios that our tests don't cover | Medium | High | Integration test with two simulated server instances against one `.open-knowledge/` directory; assert exactly one succeeds, the other fails cleanly |
 | Starter `README.md` content choice triggers user disappointment ("it's too cute" or "it's too bland") | Medium | Low | Keep the template minimal; let users edit immediately |
-| `suspicious` variant's false-positive rate is too high, annoying legitimate large-repo users | Low | Medium | `Start anyway` CTA is equal-weight; no forced correction; dismissal is final unless schemaVersion bumps |
+| `suspicious` variant's false-positive rate is too high, annoying users with legitimate `vendor/`, `target/`, etc. directories | Low | Medium | `Start anyway` CTA is equal-weight; no forced correction; dismissal is final unless schemaVersion bumps |
 | Session-restore opens a deleted doc, crashes the editor | Low | Medium | `lastOpenedDoc` existence-check against the file index before opening; fall back to first file on miss |
 | `schemaVersion` churn annoys returning users every time we tweak welcome copy | Low | Medium | Bump only for meaningful flow changes; don't bump for copy edits |
 | `/api/init-status` exposes absolute paths (privacy on shared machines) | Low | Low | localhost-only binding; no different from existing document APIs |
-| Users who want to pre-commit `.open-knowledge/state.json` (unusual, but possible) get a surprise when R14 `.gitignore`s it | Very low | Low | Document in AGENTS.md that `state.json` is per-user session state and should not be committed |
+| Users who want to pre-commit `.open-knowledge/state.json` (unusual, but possible) get a surprise when R13 `.gitignore`s it | Very low | Low | Document in AGENTS.md that `state.json` is per-user session state and should not be committed |
 
 ## 15) Future work (deferred)
 
@@ -368,7 +367,7 @@ Suspicious patterns (hardcoded in server, overridable via `config.onboarding.sus
 - Do NOT touch `packages/server/src/persistence.ts`, `reconciliation.ts`, `shadow-repo.ts`. `state.json` is adjacent to but not part of the CRDT/shadow-repo subsystem.
 - Do NOT write an unbounded `sampleFiles` array — cap at 5.
 - Do NOT write an unbounded `topDirs` array — cap at 3.
-- Do NOT build R18 (editor menu re-run) or R19 (needs-attention banner) before R1–R14 are green.
+- Do NOT build R17 (editor menu re-run) or R18 (needs-attention banner) before R1–R13 are green.
 - When adding Zod schemas, match existing style in `packages/cli/src/config/schema.ts` and `packages/server/src/server-lock.ts`.
 - Co-locate tests: `state-json.test.ts` next to `state-json.ts`; `init-content.test.ts` next to `init-content.ts`; welcome-page integration tests under `packages/app/tests/integration/`.
 - Pre-commit: `bun run check` must pass. No skip-hooks.
