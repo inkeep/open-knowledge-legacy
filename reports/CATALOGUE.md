@@ -1,16 +1,18 @@
 # Research Reports Catalogue
 
 > Auto-generated on 2026-04-15 by `generate-catalogue.ts`
-> 80 valid reports indexed
+> 82 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
 | [CodeMirror Markdown Source-View Rendering: Primitives,…](codemirror-markdown-source-view-rendering/REPORT.md) | 2026-04-14 | 8 files | CodeMirror 6 primitives, line wrap… | CodeMirror 6, Obsidian, SilverBull… |
+| [V0 Day-Zero Delight: What Would Make Our Launch Feel S…](v0-day-zero-delight/REPORT.md) | 2026-04-14 | 4 files | v0 launch strategy, day-0 delight,… | Open Knowledge, Obsidian, Notion, … |
 | [Clone-from-GitHub Onboarding Mechanics for On-Device E…](open-from-github-onboarding-mechanics/REPORT.md) | 2026-04-14 | 10 files | clone from github, oauth device fl… | VSCode, GitHub Desktop, Zed, Obsid… |
 | [Markdown Source-View Per-Construct Rendering: Evidence…](markdown-source-view-constructs/REPORT.md) | 2026-04-14 | 13 files | markdown source view, CodeMirror p… | CodeMirror 6, @lezer/markdown, @co… |
-| [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-14 | 8 files | git lifecycle UX, staging and comm… | VS Code, GitHub Desktop, lazygit, … |
+| [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-14 | 14 files | git lifecycle UX, staging and comm… | Linear, Figma, Notion, Replit, Goo… |
+| [Storybook Alternatives and Adjacent Component Playgrou…](storybook-alternatives-component-playgrounds/REPORT.md) | 2026-04-14 | 8 files | component playgrounds, prop editin… | Ladle, Histoire, Playroom, React C… |
 | [Markdown Table Rendering in Prose-Constrained Columns](markdown-table-rendering-in-prose-columns/REPORT.md) | 2026-04-14 | 8 files | table rendering, prose column layo… | TipTap, BlockNote, Milkdown, Plate… |
 | [Bun Workspace ProseMirror-Model Deduplication](bun-prosemirror-model-dedup/REPORT.md) | 2026-04-13 | 3 files | module resolution, dependency dedu… | Bun, ProseMirror, TipTap, @tiptap/… |
 | [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md) | 2026-04-13 | 9 files | git-backed CMS architecture, markd… | TinaCMS, SSW, isomorphic-git, Plat… |
@@ -102,6 +104,16 @@
 - **Evidence files:** 8
 - **Warnings:** 1
 
+### [V0 Day-Zero Delight: What Would Make Our Launch Feel Special](v0-day-zero-delight/REPORT.md)
+
+> Research-driven divergent exploration of how Open Knowledge's v0 launch can feel special, differentiated, and shareable on day 0. Four-phase methodology (multi-channel worldmodel harvest + 20 parallel divergent agents + thematic consolidation + synthesis) producing a top-20 curated shortlist across…
+
+- **Created:** 2026-04-14
+- **Topics:** v0 launch strategy, day-0 delight, differentiation narrative, mascot and voice, onboarding ceremony, time-to-wow, shareability mechanics, viral dev-tool launches, power-user advocacy, benchmark-as-flywheel, anti-incumbent manifesto, divergent ideation methodology
+- **Subjects:** Open Knowledge, Obsidian, Notion, Claude Code, obsidian-mind, kepano, Andrej Karpathy, Clawd /buddy, Bolt.new, Cursor, Linear, Arc Browser, Finch, Tamagotchi, Octocat, Supabase Launch Week
+- **Evidence files:** 4
+- **Warnings:** 4
+
 ### [Clone-from-GitHub Onboarding Mechanics for On-Device Editors](open-from-github-onboarding-mechanics/REPORT.md)
 
 > Factual landscape and architectural archetypes for implementing 'Clone from GitHub' or 'Open from GitHub' in an on-device editor with no backend. Source-level evidence from VSCode, GitHub Desktop (+ dugite), Zed, Obsidian-Git, gh CLI, isomorphic-git, simple-git, and @octokit/auth-oauth-device. Cove…
@@ -125,10 +137,19 @@
 > How 15+ editors and tools across the spectrum — developer IDEs, visual git clients, power-user TUIs, and non-developer wrappers — implement the post-clone git lifecycle. Covers staging/commit, push/pull, merge/rebase conflicts, branch management, credential persistence, error recovery, history/diff…
 
 - **Created:** 2026-04-14
-- **Topics:** git lifecycle UX, staging and commit patterns, push pull mechanics, merge conflict resolution, branch management, credential persistence, error recovery, non-developer git abstraction, editor spectrum
-- **Subjects:** VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, diffview.nvim, Sublime Merge, Logseq, SiYuan
-- **Evidence files:** 8
+- **Topics:** git lifecycle UX, staging and commit patterns, push pull mechanics, merge conflict resolution, branch management, credential persistence, error recovery, non-developer git abstraction, editor spectrum, sync engine architecture, offline affordances, progress reporting, failure taxonomy, sustained auth lifecycle
+- **Subjects:** Linear, Figma, Notion, Replit, Google Docs, Obsidian Sync, iCloud Drive, Dropbox, Stripe API, gRPC, Tower, VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, diffview.nvim, Sublime Merge, Logseq, SiYuan
+- **Evidence files:** 14
 - **Warnings:** 1
+
+### [Storybook Alternatives and Adjacent Component Playground Tools](storybook-alternatives-component-playgrounds/REPORT.md)
+
+> Primary-source survey of 7 tools (Ladle, Histoire, Playroom, React Cosmos, Docusaurus live code/react-live, Sandpack, and additional projects) covering maintenance status, component registration models, prop editing architectures, and relevance to in-editor component block systems with inline prop …
+
+- **Created:** 2026-04-14
+- **Topics:** component playgrounds, prop editing architecture, live preview rendering, component registration
+- **Subjects:** Ladle, Histoire, Playroom, React Cosmos, Sandpack, react-live, Docusaurus, react-styleguidist
+- **Evidence files:** 8
 
 ### [Markdown Table Rendering in Prose-Constrained Columns](markdown-table-rendering-in-prose-columns/REPORT.md)
 
