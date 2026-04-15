@@ -67,6 +67,23 @@ export interface ExecDeps {
 
 export interface ExecStructuredResult {
   enrichedPaths: EnrichedEntry[];
+  /**
+   * Raw stdout (after soft-cap truncation). Duplicated from the `text` content
+   * stream into `structuredContent` because some MCP clients (notably Claude
+   * Desktop) hide or drop `content[].text` when `structuredContent` is present,
+   * leaving the agent with only enrichedPaths + no actual output. Duplication
+   * costs ~50KB per response (soft-capped) and unlocks every client.
+   */
+  stdout?: string;
+  /**
+   * Tool-level warnings — head/tail truncation, binary-file detection, stderr.
+   * Duplicated here for the same reason as `stdout`: the text-content banner
+   * path is invisible on Desktop, so safety signals must live in structured
+   * content too or agents miss them.
+   */
+  warnings?: string[];
+  /** True when stdout was truncated by the soft cap (500 lines / 50KB). */
+  stdoutTruncated?: boolean;
   error?: { category: ErrorCategory; message: string };
 }
 
@@ -400,7 +417,16 @@ export async function buildExecResult(
   const enrichmentBlock = formatEnrichedBlock(enriched);
   const content = `${bannerText}${stdoutText}${enrichmentBlock}`;
 
-  const structured: ExecStructuredResult = { enrichedPaths: enriched };
+  // Duplicate stdout + banners into structuredContent. Claude Desktop and some
+  // other MCP clients hide the text content stream when structuredContent is
+  // present; without this duplication, Desktop agents see only enrichedPaths
+  // and miss both the actual output AND our safety warnings.
+  const structured: ExecStructuredResult = {
+    enrichedPaths: enriched,
+    stdout: stdoutText,
+    stdoutTruncated: capped.truncated,
+    ...(banners.length > 0 ? { warnings: banners } : {}),
+  };
   return textPlusStructured(content, structured);
 }
 

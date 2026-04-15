@@ -336,3 +336,76 @@ describe('exec — head/tail truncation banner', () => {
     expect(result.content[0].text).toMatch(/Output hit `head -8` cap/);
   });
 });
+
+describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', () => {
+  async function seed(project: string, nFiles: number, linesPerFile: number): Promise<void> {
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    for (let i = 0; i < nFiles; i++) {
+      const body = Array.from({ length: linesPerFile }, (_, j) => `line ${j} needle`).join('\n');
+      writeFileSync(resolve(content, `doc${String(i).padStart(3, '0')}.md`), `${body}\n`);
+    }
+  }
+
+  test('structuredContent.stdout contains the raw output', async () => {
+    const project = await bootstrap();
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    writeFileSync(resolve(content, 'a.md'), '---\ntitle: A\n---\n\nalpha body\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat content/a.md' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(typeof s.stdout).toBe('string');
+    expect(s.stdout).toContain('alpha body');
+    expect(s.stdoutTruncated).toBe(false);
+  });
+
+  test('structuredContent.warnings includes head-cap truncation banner', async () => {
+    const project = await bootstrap();
+    await seed(project, 5, 20);
+
+    const result = (await buildExecResult(
+      { command: 'grep -rn needle content/ | head -10' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.warnings).toBeDefined();
+    expect(s.warnings?.some((w) => /Output hit `head -10` cap/.test(w))).toBe(true);
+  });
+
+  test('structuredContent.warnings absent when no banner fires', async () => {
+    const project = await bootstrap();
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    writeFileSync(resolve(content, 'tiny.md'), 'only a few lines\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat content/tiny.md' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.warnings).toBeUndefined();
+  });
+
+  test('stdoutTruncated true when soft-cap applies', async () => {
+    const project = await bootstrap();
+    const content = resolve(project, 'content');
+    mkdirSync(content, { recursive: true });
+    const body = Array.from({ length: 600 }, (_, i) => `line ${i}`).join('\n');
+    writeFileSync(resolve(content, 'big.md'), `${body}\n`);
+
+    const result = (await buildExecResult(
+      { command: 'cat content/big.md' },
+      { projectDir: project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdoutTruncated).toBe(true);
+  });
+});
