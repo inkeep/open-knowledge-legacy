@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { buildTree, collectFolderPaths, computeAncestors, type DocEntry } from './file-tree-utils';
+import {
+  buildTree,
+  collectFolderPaths,
+  composeInlineFilePath,
+  composeInlineFolderPath,
+  computeAncestors,
+  type DocEntry,
+  defaultInitialDir,
+} from './file-tree-utils';
 
 function doc(docName: string): DocEntry {
   return { docName, size: 100, modified: '2026-01-01T00:00:00Z' };
@@ -215,5 +223,75 @@ describe('collectFolderPaths', () => {
     const first = collectFolderPaths(tree);
     const second = collectFolderPaths(tree);
     expect(first).toEqual(second);
+  });
+});
+
+describe('composeInlineFilePath', () => {
+  test('appends .md extension', () => {
+    expect(composeInlineFilePath('', 'note')).toBe('note.md');
+  });
+
+  test('does not double-append .md', () => {
+    expect(composeInlineFilePath('', 'note.md')).toBe('note.md');
+  });
+
+  test('prepends parentDir with slash', () => {
+    expect(composeInlineFilePath('docs', 'guide')).toBe('docs/guide.md');
+  });
+
+  test('handles nested parentDir', () => {
+    expect(composeInlineFilePath('docs/guides', 'intro')).toBe('docs/guides/intro.md');
+  });
+
+  test('trims whitespace from name', () => {
+    expect(composeInlineFilePath('', '  note  ')).toBe('note.md');
+  });
+});
+
+describe('composeInlineFolderPath', () => {
+  test('plain name → index.md under new folder', () => {
+    expect(composeInlineFolderPath('', 'myfolder')).toBe('myfolder/index.md');
+  });
+
+  test('slash name → named file (no index.md)', () => {
+    expect(composeInlineFolderPath('', 'myfolder/notes')).toBe('myfolder/notes.md');
+  });
+
+  test('with parentDir — plain name', () => {
+    expect(composeInlineFolderPath('docs', 'guides')).toBe('docs/guides/index.md');
+  });
+
+  test('with parentDir — slash name', () => {
+    expect(composeInlineFolderPath('docs', 'guides/intro')).toBe('docs/guides/intro.md');
+  });
+
+  test('slash name with .md already present does not double-append', () => {
+    expect(composeInlineFolderPath('', 'myfolder/notes.md')).toBe('myfolder/notes.md');
+  });
+
+  test('trims whitespace from name', () => {
+    expect(composeInlineFolderPath('', '  myfolder  ')).toBe('myfolder/index.md');
+  });
+});
+
+describe('defaultInitialDir', () => {
+  test('returns empty string for null', () => {
+    expect(defaultInitialDir(null)).toBe('');
+  });
+
+  test('returns empty string for root-level file', () => {
+    expect(defaultInitialDir('README')).toBe('');
+  });
+
+  test('returns parent directory for nested file', () => {
+    expect(defaultInitialDir('docs/guide')).toBe('docs');
+  });
+
+  test('returns deepest parent for deeply nested file', () => {
+    expect(defaultInitialDir('a/b/c/d')).toBe('a/b/c');
+  });
+
+  test('returns empty string for empty string', () => {
+    expect(defaultInitialDir('')).toBe('');
   });
 });

@@ -30,15 +30,18 @@ Accepts a JSON body:
 }
 ```
 
-The endpoint:
+The endpoint routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative composition per AGENTS.md precedent #10):
 
 1. Opens a `DirectConnection` to the Y.Doc
-2. Serializes the current Y.Doc to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
-3. Splices the agent's markdown at the specified position (append or prepend)
-4. Parses the combined markdown back to a ProseMirror node
-5. Applies via `updateYFragment()` (diff-based, preserves collaboration state)
+2. Reads the current `Y.XmlFragment` — reflects all CRDT-synced content including any concurrent client WYSIWYG typing that has propagated via the tree-sync message but not yet landed in `Y.Text` on the server (client Observer A is what syncs XmlFragment→Y.Text, and runs on the client with a 50ms debounce)
+3. Serializes XmlFragment to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
+4. Composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`)
+5. Parses the composed markdown and applies to XmlFragment via `updateYFragment()` — structural diff preserves user-content Items at matching positions
+6. Mirrors the canonical post-fragment markdown to `Y.Text` via `applyByPrefixSuffix` (shared `@inkeep/open-knowledge-core` utility) — minimal mutation, preserves non-agent Y.Text Items and their origins
 
-This shares the same code path as the source toggle-back, ensuring consistent behavior.
+The XmlFragment-authoritative shape is required to preserve concurrent user WYSIWYG content during agent writes. The prior implementation (`syncTextToFragment`, deleted by the `2026-04-14-bridge-convergence-under-concurrent-writes` spec — FR-9) read `Y.Text` as the authoritative input, which lagged the XmlFragment for client-originated WYSIWYG typing and caused `updateYFragment` to stomp user content (Bug-A, deterministic).
+
+V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` in the bridge-convergence spec for the template.
 
 ## Source mode live injection
 

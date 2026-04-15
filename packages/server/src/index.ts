@@ -2,16 +2,24 @@ export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,
   AgentSessionManager,
+  applyAgentMarkdownWrite,
   DEFAULT_AGENT_ID,
-  syncTextToFragment,
 } from './agent-sessions.ts';
-export { type ApiExtensionOptions, createApiExtension, safeSubdir } from './api-extension.ts';
+export {
+  type ApiExtensionOptions,
+  createApiExtension,
+  ROLLBACK_ORIGIN,
+  safeSubdir,
+} from './api-extension.ts';
 export {
   type BacklinkEntry,
   BacklinkIndex,
   type ExtractedWikiLink,
   extractWikiLinksFromMarkdown,
   type HubEntry,
+  isOrphanMode,
+  ORPHAN_MODES,
+  type OrphanMode,
 } from './backlink-index.ts';
 export {
   CC1_CONTRACT_VERSION,
@@ -25,7 +33,11 @@ export {
   type ContentFilterOptions,
   createContentFilter,
 } from './content-filter.ts';
-export { applyExternalChange, createExternalChangeHandler } from './external-change.ts';
+export {
+  applyExternalChange,
+  createExternalChangeHandler,
+  FILE_WATCHER_ORIGIN,
+} from './external-change.ts';
 export {
   type AsyncSubscription,
   classifyEvents,
@@ -58,6 +70,11 @@ export {
   PinoLogger,
   type PinoLoggerConfig,
 } from './logger.ts';
+export {
+  type RenameRewriteResult,
+  rewriteMarkdownLinksForDocumentRename,
+  rewriteWikiLinksForDocumentRename,
+} from './managed-rename-rewrite.ts';
 export {
   getMetrics,
   type ReconciliationMetrics,

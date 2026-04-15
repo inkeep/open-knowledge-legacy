@@ -3,22 +3,23 @@ import { renderBanner } from './banner.ts';
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ANSI escape code detection
 const ANSI_RE = /\x1b\[[0-9;]*m/;
+const VERSION = '0.0.1';
 
 describe('renderBanner', () => {
   test('contains product name and version', () => {
     const output = renderBanner({
       name: 'open-knowledge',
-      version: '0.0.1',
+      version: VERSION,
       localUrl: 'http://localhost:3000',
     });
     expect(output).toContain('open-knowledge');
-    expect(output).toContain('0.0.1');
+    expect(output).toContain(VERSION);
   });
 
   test('contains local URL', () => {
     const output = renderBanner({
       name: 'open-knowledge',
-      version: '0.0.1',
+      version: VERSION,
       localUrl: 'http://localhost:3000',
     });
     expect(output).toContain('http://localhost:3000');
@@ -28,7 +29,7 @@ describe('renderBanner', () => {
   test('contains network URL when provided', () => {
     const output = renderBanner({
       name: 'open-knowledge',
-      version: '0.0.1',
+      version: VERSION,
       localUrl: 'http://localhost:3000',
       networkUrl: 'http://0.0.0.0:3000',
     });
@@ -39,7 +40,7 @@ describe('renderBanner', () => {
   test('omits network line when not provided', () => {
     const output = renderBanner({
       name: 'open-knowledge',
-      version: '0.0.1',
+      version: VERSION,
       localUrl: 'http://localhost:3000',
     });
     expect(output).not.toContain('Network:');
@@ -48,7 +49,7 @@ describe('renderBanner', () => {
   test('contains Ctrl+C hint', () => {
     const output = renderBanner({
       name: 'open-knowledge',
-      version: '0.0.1',
+      version: VERSION,
       localUrl: 'http://localhost:3000',
     });
     expect(output).toContain('Ctrl+C');
@@ -57,7 +58,7 @@ describe('renderBanner', () => {
   test('uses box-drawing characters', () => {
     const output = renderBanner({
       name: 'open-knowledge',
-      version: '0.0.1',
+      version: VERSION,
       localUrl: 'http://localhost:3000',
     });
     // Round box style from cli-boxes
@@ -70,7 +71,7 @@ describe('renderBanner', () => {
   test('box lines have consistent width', () => {
     const output = renderBanner({
       name: 'open-knowledge',
-      version: '0.0.1',
+      version: VERSION,
       localUrl: 'http://localhost:3000',
       networkUrl: 'http://0.0.0.0:3000',
     });

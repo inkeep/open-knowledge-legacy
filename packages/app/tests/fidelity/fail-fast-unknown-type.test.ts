@@ -1,25 +1,22 @@
 /**
- * Fail-fast on unknown mdast type — R16(i).
+ * Unknown mdast type handling — R8 + R16(i) contract.
  *
- * Verifies that an unregistered mdast node type throws a clear error
- * during parsing, rather than silently dropping content.
+ * Post-R8: unknown mdast types produce a rawMdxFallback node (block) or
+ * plain text (inline) + console.warn structured event — no throw, no
+ * silent drop. Content is preserved AND developer signal is louder than
+ * the previous throw-on-unknown behavior.
  *
- * This is a structural safeguard: if a remark plugin produces a node
- * type that our handler table doesn't cover, we want a loud failure
- * (not data loss).
- *
- * Note: We test this indirectly by verifying the pipeline's behavior
- * with known good types (which succeed) vs the error message format
- * from remark-prosemirror (which throws for unregistered types).
+ * R8 contract (finalized in US-004): unknown mdast types produce
+ * rawMdxFallback for block types and plain text for inline types +
+ * console.warn structured event — no throw, no silent drop.
  */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
-describe('fail-fast on unknown mdast type (R16i)', () => {
+describe('unknown mdast type handling (R8 + R16i)', () => {
   test('known types parse without error', () => {
-    // Sanity check — all standard markdown constructs parse cleanly
     expect(() => mdManager.parse('# Heading\n')).not.toThrow();
     expect(() => mdManager.parse('- list\n')).not.toThrow();
     expect(() => mdManager.parse('**bold**\n')).not.toThrow();
@@ -30,20 +27,30 @@ describe('fail-fast on unknown mdast type (R16i)', () => {
 
   test('MDX types parse without error (registered handlers)', () => {
     expect(() => mdManager.parse('<Component />\n')).not.toThrow();
-    expect(() => mdManager.parse("import x from 'y'\n")).not.toThrow();
+  });
+
+  test('ESM import under agnostic mode re-parses as prose (not thrown, not structured)', () => {
+    // Under agnostic mode (R1), ESM import/export are no longer recognized
+    // as mdxjsEsm — they re-parse as prose paragraphs per NG1.
+    const result = mdManager.parse("import x from 'y'\n");
+    const serialized = mdManager.serialize(result);
+    expect(serialized).toContain('import');
   });
 
   test('wiki-link types parse without error', () => {
     expect(() => mdManager.parse('[[Page]]\n')).not.toThrow();
   });
 
-  test('directive types parse without error', () => {
-    expect(() => mdManager.parse(':::note\ncontent\n:::\n')).not.toThrow();
+  test('directive syntax renders as literal text (D14 — remark-directive removed)', () => {
+    // After D14, :::note syntax is no longer parsed as a directive.
+    // It renders as literal text containing the colons.
+    const result = mdManager.parse(':::note\ncontent\n:::\n');
+    const serialized = mdManager.serialize(result);
+    expect(serialized).toContain(':::note');
+    expect(serialized).toContain('content');
   });
 
   test('all known node types are handled (no silent drops)', () => {
-    // Parse a document with many construct types and verify
-    // serialize produces non-empty output for each
     const md = [
       '# Heading',
       '',
@@ -68,7 +75,6 @@ describe('fail-fast on unknown mdast type (R16i)', () => {
     ].join('\n');
     const json = mdManager.parse(md);
     const output = mdManager.serialize(json);
-    // Every construct type should produce some output
     expect(output).toContain('Heading');
     expect(output).toContain('bold');
     expect(output).toContain('emphasis');

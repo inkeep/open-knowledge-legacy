@@ -19,6 +19,7 @@
     "test:stress:s5-s6": "bun test tests/stress/observers.stress.s5-s6.test.ts",
     "test:fidelity": "bun test --timeout 120000 tests/fidelity/",
     "test:fuzz": "bun test tests/stress/observers.fuzz.test.ts",
+    "test:fuzz:bridge": "bun test tests/stress/bridge-convergence.fuzz.test.ts",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
     "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts"
   },
@@ -39,6 +40,7 @@
     "@tiptap/core": "^3.22.3",
     "@tiptap/extension-collaboration": "^3.22.3",
     "@tiptap/extension-collaboration-cursor": "3.0.0",
+    "@tiptap/extension-drag-handle": "3.22.3",
     "@tiptap/extension-file-handler": "^3.22.3",
     "@tiptap/extension-image": "^3.22.3",
     "@tiptap/extension-link": "^3.22.3",

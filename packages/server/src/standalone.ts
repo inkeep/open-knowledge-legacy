@@ -8,11 +8,13 @@ import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
+import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
+import { recoverPendingManagedRename } from './managed-rename-journal.ts';
 import { mdManager } from './md-manager.ts';
 import {
   incrementBatch,
@@ -96,7 +98,8 @@ export interface ServerInstance {
    * Names of subsystems that failed to initialize during boot.
    * Read AFTER `await ready` for a stable list; reads before may return a partial result.
    * Empty array means all subsystems initialized successfully.
-   * Possible values: `'shadow-repo'`, `'file-watcher'`, `'head-watcher'`.
+   * Possible values: `'shadow-repo'`, `'managed-rename-recovery'`, `'file-watcher'`,
+   * `'head-watcher'`.
    */
   readonly degraded: readonly string[];
   /**
@@ -120,7 +123,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
-    includePatterns = ['**/*.md'],
+    includePatterns = ['**/*.md', '**/*.mdx'],
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
   } = options;
@@ -212,7 +215,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
     const rescueBase = resolve(shadowGitDir, 'rescue');
-    const filePath = resolve(rescueBase, `${docName}.md`);
+    const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) return null;
     return filePath;
   }
@@ -340,16 +343,6 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
                 incrementConflict();
-                const conflictsMap = document.getMap('conflicts');
-                for (const c of result.conflicts) {
-                  conflictsMap.set(String(c.blockIndex), {
-                    blockIndex: c.blockIndex,
-                    base: c.base,
-                    ours: c.ours,
-                    theirs: c.theirs,
-                    resolution: 'pending',
-                  });
-                }
                 backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(
@@ -829,6 +822,23 @@ export function createServer(options: ServerOptions): ServerInstance {
       }
     }
 
+    try {
+      const recovery = recoverPendingManagedRename(contentDir);
+      if (recovery.recovered && recovery.journal) {
+        log.warn(
+          {
+            sourceDocName: recovery.journal.sourceDocName,
+            destinationDocName: recovery.journal.destinationDocName,
+            restoredDocNames: recovery.restoredDocNames,
+          },
+          `[managed-rename] recovered pending rename ${recovery.journal.sourceDocName} -> ${recovery.journal.destinationDocName}`,
+        );
+      }
+    } catch (err) {
+      log.error({ err }, '[server] managed rename recovery failed');
+      degraded.push('managed-rename-recovery');
+    }
+
     // Pre-materialize __system__ Y.Doc so CC1 broadcaster has a target before
     // any browser connects. Must happen before the file watcher starts.
     try {
@@ -1017,19 +1027,6 @@ export function createServer(options: ServerOptions): ServerInstance {
                     case 'conflicts': {
                       applyToDoc(docName, outcome.newContent);
                       setReconciledBase(docName, outcome.newContent);
-                      const conflictDoc = hocuspocus.documents.get(docName);
-                      if (conflictDoc) {
-                        const conflictsMap = conflictDoc.getMap('conflicts');
-                        for (const c of outcome.conflicts) {
-                          conflictsMap.set(String(c.blockIndex), {
-                            blockIndex: c.blockIndex,
-                            base: c.base,
-                            ours: c.ours,
-                            theirs: c.theirs,
-                            resolution: 'pending',
-                          });
-                        }
-                      }
                       incrementConflict();
                       restoredCount++;
                       break;

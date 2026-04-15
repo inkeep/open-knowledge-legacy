@@ -1,0 +1,260 @@
+/**
+ * Pure-function unit tests for NewItemDialog helpers.
+ *
+ * These exercise the client-side validation, `.md` auto-append behavior,
+ * path composition for both `kind='file'` and `kind='folder'`, and the
+ * Cmd/Ctrl+Alt+N keydown predicate used by App.tsx's NewItemShortcutHandler.
+ *
+ * Covers QA-007 (shortcut focus-guard), QA-009 (client validation),
+ * QA-017 (.md auto-append), QA-018 (folder name required), and the
+ * path-composition pieces feeding QA-001/002/003/012.
+ */
+
+import { describe, expect, test } from 'bun:test';
+
+import {
+  composeNewItemPath,
+  ensureMdExtension,
+  isNewItemShortcut,
+  validatePath,
+} from './NewItemDialog';
+
+describe('validatePath', () => {
+  test('rejects empty / whitespace-only', () => {
+    expect(validatePath('')).toMatch(/empty/i);
+    expect(validatePath('   ')).toMatch(/empty/i);
+  });
+
+  test('rejects "..', () => {
+    expect(validatePath('foo/../bar.md')).toMatch(/\.\./);
+    expect(validatePath('..')).toMatch(/\.\./);
+  });
+
+  test('rejects leading /', () => {
+    expect(validatePath('/abs.md')).toMatch(/start with/);
+  });
+
+  test('rejects backslashes', () => {
+    expect(validatePath('a\\b.md')).toMatch(/backslash/);
+  });
+
+  test('rejects null bytes', () => {
+    expect(validatePath('a\0b.md')).toMatch(/null/);
+  });
+
+  test('accepts regular names', () => {
+    expect(validatePath('notes.md')).toBeNull();
+    expect(validatePath('docs/nested.md')).toBeNull();
+    expect(validatePath('my-page')).toBeNull();
+  });
+});
+
+describe('ensureMdExtension', () => {
+  test('appends .md when missing', () => {
+    expect(ensureMdExtension('foo')).toBe('foo.md');
+  });
+  test('leaves .md in place', () => {
+    expect(ensureMdExtension('foo.md')).toBe('foo.md');
+  });
+  test('does not double-append', () => {
+    expect(ensureMdExtension('foo.md')).toBe('foo.md');
+  });
+  test('preserves an already-qualified extension like .md.md', () => {
+    // Users typing `foo.md.md` is their choice — we don't strip.
+    expect(ensureMdExtension('foo.md.md')).toBe('foo.md.md');
+  });
+});
+
+describe('composeNewItemPath — kind=file', () => {
+  test('root: fileName only', () => {
+    expect(composeNewItemPath({ kind: 'file', initialDir: '', fileName: 'note.md' })).toBe(
+      'note.md',
+    );
+  });
+
+  test('root: auto-appends .md', () => {
+    expect(composeNewItemPath({ kind: 'file', initialDir: '', fileName: 'my-note' })).toBe(
+      'my-note.md',
+    );
+  });
+
+  test('subdir: joins with slash', () => {
+    expect(composeNewItemPath({ kind: 'file', initialDir: 'docs', fileName: 'guide.md' })).toBe(
+      'docs/guide.md',
+    );
+  });
+
+  test('trims fileName whitespace', () => {
+    expect(composeNewItemPath({ kind: 'file', initialDir: 'docs', fileName: '  guide  ' })).toBe(
+      'docs/guide.md',
+    );
+  });
+
+  test('nested dir', () => {
+    expect(composeNewItemPath({ kind: 'file', initialDir: 'a/b/c', fileName: 'leaf.md' })).toBe(
+      'a/b/c/leaf.md',
+    );
+  });
+});
+
+describe('composeNewItemPath — kind=folder (composite)', () => {
+  test('root: folder + first file', () => {
+    expect(
+      composeNewItemPath({
+        kind: 'folder',
+        initialDir: '',
+        folderName: 'proj',
+        fileName: 'index.md',
+      }),
+    ).toBe('proj/index.md');
+  });
+
+  test('nested: dir + folder + first file', () => {
+    expect(
+      composeNewItemPath({
+        kind: 'folder',
+        initialDir: 'docs',
+        folderName: 'guides',
+        fileName: 'index.md',
+      }),
+    ).toBe('docs/guides/index.md');
+  });
+
+  test('auto .md on first file', () => {
+    expect(
+      composeNewItemPath({
+        kind: 'folder',
+        initialDir: 'docs',
+        folderName: 'guides',
+        fileName: 'home',
+      }),
+    ).toBe('docs/guides/home.md');
+  });
+
+  test('trims folder and file names', () => {
+    expect(
+      composeNewItemPath({
+        kind: 'folder',
+        initialDir: 'docs',
+        folderName: '  guides  ',
+        fileName: '  home  ',
+      }),
+    ).toBe('docs/guides/home.md');
+  });
+});
+
+describe('isNewItemShortcut', () => {
+  const base = { metaKey: false, ctrlKey: false, altKey: false, key: 'n' };
+
+  test('Cmd+Alt+N on BODY matches', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        metaKey: true,
+        altKey: true,
+        target: { tagName: 'BODY' },
+      }),
+    ).toBe(true);
+  });
+
+  test('Ctrl+Alt+N on DIV matches', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        ctrlKey: true,
+        altKey: true,
+        target: { tagName: 'DIV' },
+      }),
+    ).toBe(true);
+  });
+
+  test('uppercase N also matches (shift may be held)', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        metaKey: true,
+        altKey: true,
+        key: 'N',
+        target: { tagName: 'BODY' },
+      }),
+    ).toBe(true);
+  });
+
+  test('blocked when target is INPUT', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        metaKey: true,
+        altKey: true,
+        target: { tagName: 'INPUT' },
+      }),
+    ).toBe(false);
+  });
+
+  test('blocked when target is TEXTAREA', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        ctrlKey: true,
+        altKey: true,
+        target: { tagName: 'TEXTAREA' },
+      }),
+    ).toBe(false);
+  });
+
+  test('blocked when target is contenteditable', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        metaKey: true,
+        altKey: true,
+        target: { tagName: 'DIV', isContentEditable: true },
+      }),
+    ).toBe(false);
+  });
+
+  test('does not match without Alt', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        metaKey: true,
+        key: 'n',
+        target: { tagName: 'BODY' },
+      }),
+    ).toBe(false);
+  });
+
+  test('does not match without Cmd/Ctrl', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        altKey: true,
+        key: 'n',
+        target: { tagName: 'BODY' },
+      }),
+    ).toBe(false);
+  });
+
+  test('does not match other keys', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        metaKey: true,
+        altKey: true,
+        key: 'm',
+        target: { tagName: 'BODY' },
+      }),
+    ).toBe(false);
+  });
+
+  test('tolerates null target', () => {
+    expect(
+      isNewItemShortcut({
+        ...base,
+        metaKey: true,
+        altKey: true,
+        target: null,
+      }),
+    ).toBe(true);
+  });
+});

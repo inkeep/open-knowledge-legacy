@@ -4,6 +4,7 @@ import { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
+import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
 
 // Customize the dark editor surface colors here.
 const darkTheme = basicDarkInit({
@@ -142,6 +143,30 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
     }
     window.addEventListener(OUTLINE_NAV_EVENT, onNav);
     return () => window.removeEventListener(OUTLINE_NAV_EVENT, onNav);
+  }, []);
+
+  // R7: rawMdxFallback click → scroll CodeMirror to the broken region's offset.
+  // EditorPane handles the mode switch; this hook scrolls once the view is active.
+  useEffect(() => {
+    function onRawMdxNav(e: Event) {
+      const detail = (e as CustomEvent<RawMdxNavDetail>).detail;
+      if (!detail) return;
+      // Delay to allow the source view to mount/become visible after mode switch
+      requestAnimationFrame(() => {
+        const view = viewRef.current;
+        if (!view) return;
+        const doc = view.state.doc;
+        // Clamp offset to doc length (offset may exceed doc length if content differs between Y.Text and originalSpan)
+        const pos = Math.min(detail.offset, doc.length);
+        view.dispatch({
+          selection: EditorSelection.cursor(pos),
+          effects: EditorView.scrollIntoView(pos, { y: 'center' }),
+        });
+        view.focus();
+      });
+    }
+    window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
+    return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, []);
 
   return <div ref={containerRef} className="source-editor h-full py-3" />;

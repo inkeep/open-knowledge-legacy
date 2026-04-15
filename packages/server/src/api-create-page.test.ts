@@ -113,6 +113,29 @@ describe('POST /api/create-page', () => {
     expect(existsSync(join(dir, 'my-page.md'))).toBe(true);
   });
 
+  test('creates a .mdx file and returns the extension-less docName', async () => {
+    const dir = setupTmpDir();
+    const result = await callCreatePage(dir, 'POST', { path: 'component.mdx' });
+
+    expect(result.status).toBe(200);
+    const body = JSON.parse(result.body) as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.docName).toBe('component');
+    expect(existsSync(join(dir, 'component.mdx'))).toBe(true);
+    // Must not create a shadow .md file.
+    expect(existsSync(join(dir, 'component.md'))).toBe(false);
+  });
+
+  test('rejects unsupported extensions with a message naming .md and .mdx', async () => {
+    const dir = setupTmpDir();
+    const result = await callCreatePage(dir, 'POST', { path: 'notes.txt' });
+
+    expect(result.status).toBe(400);
+    const body = JSON.parse(result.body) as Record<string, unknown>;
+    expect(body.ok).toBe(false);
+    expect(String(body.error)).toContain('.mdx');
+  });
+
   test('creates parent directories for nested paths and returns full docName', async () => {
     const dir = setupTmpDir();
     const result = await callCreatePage(dir, 'POST', { path: 'nested/folder/my-page.md' });

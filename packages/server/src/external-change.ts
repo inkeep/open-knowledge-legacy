@@ -13,6 +13,23 @@ import { isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
 
 /**
+ * Transaction origin for file-watcher disk→CRDT bridge operations.
+ *
+ * Exported so the bridge-invariant watcher (FR-11) can include it in its
+ * enforcing-origins Set by identity (not by string literal). Y.js transaction
+ * matching uses `Set.has(tx.origin)` which is identity-based for objects;
+ * a string literal `'file-watcher'` would never match this object.
+ *
+ * skipStoreHooks: true — prevents persistence from re-saving a file we just
+ * loaded from disk (feedback loop prevention).
+ */
+export const FILE_WATCHER_ORIGIN = {
+  source: 'local' as const,
+  skipStoreHooks: true,
+  context: { origin: 'file-watcher' },
+} satisfies LocalTransactionOrigin;
+
+/**
  * Apply external file content to a live Y.Doc — the throwing core of the
  * disk→CRDT bridge. Both standalone.ts (CLI) and the dev plugin delegate here.
  *
@@ -36,30 +53,23 @@ export function applyExternalChange(
   const document = hocuspocus.documents.get(docName);
   if (!document) return;
   const { frontmatter, body } = stripFrontmatter(content);
-  const parsedJson = mdManager.parse(body);
+  const parsedJson = mdManager.parseWithFallback(body);
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
-  document.transact(
-    () => {
-      const meta = { mapping: new Map(), isOMark: new Map() };
-      updateYFragment(document, xmlFragment, pmNode, meta);
-      const metaMap = document.getMap('metadata');
-      metaMap.set('frontmatter', frontmatter);
+  document.transact(() => {
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(document, xmlFragment, pmNode, meta);
+    const metaMap = document.getMap('metadata');
+    metaMap.set('frontmatter', frontmatter);
 
-      const ytext = document.getText('source');
-      const currentText = ytext.toString();
-      if (currentText !== content) {
-        ytext.delete(0, currentText.length);
-        ytext.insert(0, content);
-      }
-    },
-    {
-      source: 'local',
-      skipStoreHooks: true,
-      context: { origin: 'file-watcher' },
-    } satisfies LocalTransactionOrigin,
-  );
+    const ytext = document.getText('source');
+    const currentText = ytext.toString();
+    if (currentText !== content) {
+      ytext.delete(0, currentText.length);
+      ytext.insert(0, content);
+    }
+  }, FILE_WATCHER_ORIGIN);
 }
 
 /**
