@@ -88,7 +88,7 @@ import { getDocumentHistory } from './timeline-query.ts';
  * restored content reaches disk through the normal pipeline. The file-watcher's
  * registerWrite hash check prevents the self-write from re-triggering reconciliation.
  */
-const ROLLBACK_ORIGIN = {
+export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply' },

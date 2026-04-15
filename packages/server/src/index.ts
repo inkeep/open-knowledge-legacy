@@ -5,7 +5,12 @@ export {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
-export { type ApiExtensionOptions, createApiExtension, safeSubdir } from './api-extension.ts';
+export {
+  type ApiExtensionOptions,
+  createApiExtension,
+  ROLLBACK_ORIGIN,
+  safeSubdir,
+} from './api-extension.ts';
 export {
   type BacklinkEntry,
   BacklinkIndex,
@@ -28,7 +33,11 @@ export {
   type ContentFilterOptions,
   createContentFilter,
 } from './content-filter.ts';
-export { applyExternalChange, createExternalChangeHandler } from './external-change.ts';
+export {
+  applyExternalChange,
+  createExternalChangeHandler,
+  FILE_WATCHER_ORIGIN,
+} from './external-change.ts';
 export {
   type AsyncSubscription,
   classifyEvents,
