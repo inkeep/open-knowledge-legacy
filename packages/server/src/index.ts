@@ -12,6 +12,9 @@ export {
   type ExtractedWikiLink,
   extractWikiLinksFromMarkdown,
   type HubEntry,
+  isOrphanMode,
+  ORPHAN_MODES,
+  type OrphanMode,
 } from './backlink-index.ts';
 export {
   CC1_CONTRACT_VERSION,

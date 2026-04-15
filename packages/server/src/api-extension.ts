@@ -41,7 +41,7 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
-import type { BacklinkIndex } from './backlink-index.ts';
+import { type BacklinkIndex, isOrphanMode } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
@@ -1121,7 +1121,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, {
         ok: true,
         docName,
-        forwardLinks: backlinkIndex.getForwardLinks(docName),
+        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) => ({
+          docName: entry.target,
+          title: readPageTitleForDocName(entry.target),
+          snippet: entry.snippet,
+        })),
       });
     } catch (e) {
       console.error('[forward-links]', e);
@@ -1188,7 +1192,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     try {
-      const orphans = backlinkIndex.getOrphans([...getFileIndex().keys()]).map((docName) => ({
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const mode = url.searchParams.get('mode') ?? 'both';
+      if (!isOrphanMode(mode)) {
+        json(res, 400, {
+          ok: false,
+          error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
+        });
+        return;
+      }
+
+      const orphans = backlinkIndex.getOrphans([...getFileIndex().keys()], mode).map((docName) => ({
         docName,
         title: readPageTitleForDocName(docName),
       }));

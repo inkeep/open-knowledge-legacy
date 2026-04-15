@@ -13,6 +13,7 @@ export {
   hasNewEntries,
 } from './constants/activity.ts';
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
+export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
 
 // Extensions
