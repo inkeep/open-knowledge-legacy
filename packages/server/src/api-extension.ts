@@ -78,6 +78,7 @@ import {
   shadowGit,
   type WriterIdentity,
 } from './shadow-repo.ts';
+import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 /**
@@ -2285,6 +2286,39 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleSuggestLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const docName = url.searchParams.get('docName');
+      if (!docName) {
+        json(res, 400, { ok: false, error: 'Missing docName parameter' });
+        return;
+      }
+      if (!isSafeDocName(docName)) {
+        json(res, 400, { ok: false, error: 'Invalid docName' });
+        return;
+      }
+
+      const result = await suggestLinks({
+        hocuspocus,
+        fileIndex: getFileIndex(),
+        docName,
+      });
+      json(res, 200, { ok: true, ...result });
+    } catch (error) {
+      if (error instanceof SuggestLinksTargetNotFoundError) {
+        json(res, 404, { ok: false, error: 'Page not found' });
+        return;
+      }
+      console.error('[suggest-links]', error);
+      json(res, 500, { ok: false, error: 'Failed to suggest links' });
+    }
+  }
+
   async function handleUploadImage(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -2411,6 +2445,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/orphans': handleOrphans,
     '/api/hubs': handleHubs,
     '/api/pages': handlePages,
+    '/api/suggest-links': handleSuggestLinks,
     '/api/page-headings': handlePageHeadings,
     '/api/create-page': handleCreatePage,
     '/api/rename': handleRename,
