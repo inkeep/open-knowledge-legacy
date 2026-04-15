@@ -17,7 +17,7 @@
  */
 import type { MarkViewProps } from '@tiptap/core';
 import { MarkViewContent } from '@tiptap/react';
-import { ExternalLink } from 'lucide-react';
+import { ArrowUpRight, CircleAlert, File, Loader2 } from 'lucide-react';
 import { usePageList } from '../../components/PageListContext';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { cn } from '../../lib/utils';
@@ -45,13 +45,10 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
             href={href}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-baseline gap-0.5"
+            className="inline-flex items-center gap-1"
           >
             <MarkViewContent />
-            <ExternalLink
-              className="inline size-3 shrink-0 translate-y-px opacity-60"
-              aria-hidden="true"
-            />
+            <ArrowUpRight className="inline size-3.5 shrink-0 translate-y-px" aria-hidden="true" />
           </a>
         </TooltipTrigger>
         <TooltipContent side="top" sideOffset={4}>
@@ -84,12 +81,12 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
       <TooltipTrigger asChild>
         <span
           className={cn(
-            'mx-0.5 inline-flex max-w-full select-none items-center rounded-md border px-2 py-0.5 align-baseline text-[0.85em] font-medium',
+            'mx-0.5 inline-flex max-w-full select-none items-center rounded-sm px-1.5 py-0.5 align-baseline text-sm font-medium',
             isResolved &&
-              'border-sky-200 bg-sky-50 text-sky-900 hover:bg-sky-100 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200',
+              'bg-azure-900/5 text-azure-500 hover:bg-azure-50 dark:bg-azure-100/10 dark:text-azure-200',
             isUnresolved &&
-              'border-red-300 bg-red-50 text-red-700 hover:bg-red-100 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60',
-            loading && 'border-border bg-muted/60 text-muted-foreground hover:bg-muted',
+              'bg-red-50 text-red-700 hover:bg-red-100 dark:bg-red-100/10 dark:text-red-300 dark:hover:bg-red-100/10 dark:hover:text-red-200',
+            loading && 'bg-muted/60 text-muted-foreground hover:bg-muted',
           )}
           data-internal-link=""
           data-resolution-state={resolutionState}
@@ -99,7 +96,7 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
           <a
             href={hashHref}
             className={cn(
-              'cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1',
+              'cursor-pointer truncate focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 flex items-center gap-1',
               isResolved
                 ? 'focus-visible:ring-sky-300'
                 : isUnresolved
@@ -109,12 +106,15 @@ export function InternalLinkView({ mark, HTMLAttributes }: MarkViewProps) {
             onMouseDown={(e) => e.preventDefault()}
             onClick={handleClick}
           >
+            {loading && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
+            {isResolved && <File className="size-3.5 shrink-0" />}
+            {isUnresolved && <CircleAlert className="size-3.5 shrink-0" />}
             <MarkViewContent />
           </a>
         </span>
       </TooltipTrigger>
       <TooltipContent side="top" sideOffset={4}>
-        <LinkTooltipHint href={href} />
+        {isUnresolved ? <div>This page cannot be found.</div> : <LinkTooltipHint href={href} />}
       </TooltipContent>
     </Tooltip>
   );

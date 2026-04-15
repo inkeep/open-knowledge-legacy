@@ -1,5 +1,5 @@
 import type { Editor } from '@tiptap/react';
-import { CornerDownLeft, ExternalLink, Link, Trash2 } from 'lucide-react';
+import { ArrowUpRight, CornerDownLeft, Link, Trash2 } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -85,28 +85,42 @@ export function LinkEditPopover({ editor }: { editor: Editor }) {
         </div>
         {isLinkActive && (
           <>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Open link in new tab"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                window.open(currentUrl, '_blank', 'noopener,noreferrer');
-              }}
-            >
-              <ExternalLink className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Remove link"
-              onMouseDown={(e) => {
-                e.preventDefault();
-                removeLink();
-              }}
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Open link in new tab"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    window.open(currentUrl, '_blank', 'noopener,noreferrer');
+                  }}
+                >
+                  <ArrowUpRight className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={8}>
+                Open link in new tab
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Remove link"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    removeLink();
+                  }}
+                >
+                  <Trash2 className="size-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" sideOffset={8}>
+                Remove link
+              </TooltipContent>
+            </Tooltip>
           </>
         )}
       </div>
