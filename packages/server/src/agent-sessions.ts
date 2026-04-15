@@ -60,6 +60,7 @@ export function iconFromClientName(name?: string): string {
     'claude-code': 'claude',
     'claude-ai': 'claude',
     cursor: 'cursor',
+    'cursor-vscode': 'cursor',
     cascade: 'windsurf',
     codex: 'openai',
     copilot: 'github',

@@ -48,6 +48,7 @@ export function register(
               agentId: identity.connectionId,
               agentName: identity.displayName,
               clientName: identity.clientInfo?.name,
+              colorSeed: identity.colorSeed,
             }
           : {}),
       });

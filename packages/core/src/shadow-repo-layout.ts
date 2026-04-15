@@ -140,7 +140,12 @@ export function parseContributors(body: string): ShadowContributor[] {
         'name' in parsed &&
         typeof (parsed as Record<string, unknown>).name === 'string' &&
         'docs' in parsed &&
-        Array.isArray((parsed as Record<string, unknown>).docs)
+        Array.isArray((parsed as Record<string, unknown>).docs) &&
+        ((parsed as Record<string, unknown>).docs as unknown[]).every(
+          (d) => typeof d === 'string',
+        ) &&
+        (!('colorSeed' in parsed) ||
+          typeof (parsed as Record<string, unknown>).colorSeed === 'string')
       ) {
         contributors.push(parsed as ShadowContributor);
       }

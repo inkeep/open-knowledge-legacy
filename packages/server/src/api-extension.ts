@@ -819,8 +819,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
     const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
     const clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
-    // colorSeed must match what getSession() uses for presence bar color consistency
-    const colorSeed = rawAgentId ?? agentId;
+    // colorSeed must match what getSession() uses for presence bar color consistency.
+    // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
+    const colorSeed =
+      typeof body.colorSeed === 'string' && body.colorSeed.length > 0
+        ? body.colorSeed
+        : (rawAgentId ?? agentId);
     return { rawAgentId, agentId, agentName, colorSeed, clientName };
   }
 
