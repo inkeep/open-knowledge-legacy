@@ -41,6 +41,10 @@ import {
   DEFAULT_AGENT_ID,
   syncTextToFragment,
 } from './agent-sessions.ts';
+import { extractPageTitle } from './page-identity.ts';
+
+export { extractPageTitle } from './page-identity.ts';
+
 import { type BacklinkIndex, isOrphanMode } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
@@ -437,44 +441,6 @@ export function extractHeadings(content: string): HeadingEntry[] {
     }
   }
   return headings;
-}
-
-/**
- * Extract a human-readable title from a markdown file's content.
- *
- * Priority:
- *  1. `title:` field in YAML frontmatter (between leading `---` delimiters)
- *  2. First `# heading` line in the file
- *  3. filename (without extension, as provided by the caller)
- */
-export function extractPageTitle(content: string, filename: string): string {
-  // 1. Frontmatter title — only if the file starts with ---
-  if (content.startsWith('---\n') || content.startsWith('---\r\n')) {
-    const closingIdx = content.indexOf('\n---', 3);
-    if (closingIdx !== -1) {
-      const frontmatter = content.slice(0, closingIdx + 4);
-      const titleMatch = frontmatter.match(/^title:\s*(.+)$/m);
-      if (titleMatch) {
-        let title = titleMatch[1].trim();
-        if (
-          (title.startsWith('"') && title.endsWith('"')) ||
-          (title.startsWith("'") && title.endsWith("'"))
-        ) {
-          title = title.slice(1, -1);
-        }
-        return title;
-      }
-    }
-  }
-
-  // 2. First # heading
-  const headingMatch = content.match(/^# (.+)$/m);
-  if (headingMatch) {
-    return headingMatch[1].trim();
-  }
-
-  // 3. Filename fallback
-  return filename;
 }
 
 function isSafeDocName(docName: string): boolean {
