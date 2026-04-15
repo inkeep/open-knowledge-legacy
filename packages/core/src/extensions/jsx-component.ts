@@ -47,6 +47,8 @@ export const JsxComponent = Node.create({
       attributes: { default: [] },
       sourceRaw: { default: '' },
       sourceDirty: { default: false },
+      /** Structured props destructured from MdxJsxAttribute[] via descriptor.props (FR-1). */
+      props: { default: {} },
     };
   },
 

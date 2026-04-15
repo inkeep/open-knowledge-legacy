@@ -124,6 +124,9 @@
         },
         "sourceDirty": {
           "hasDefault": true
+        },
+        "props": {
+          "hasDefault": true
         }
       },
       "content": "block*",
