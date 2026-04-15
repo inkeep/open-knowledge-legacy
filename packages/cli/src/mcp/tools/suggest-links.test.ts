@@ -83,9 +83,10 @@ afterAll(() => {
 });
 
 describe('suggest_links MCP tool', () => {
-  test('describes the docName contract', () => {
+  test('describes the docName contract and precision workflow', () => {
     expect(DESCRIPTION).toContain('docName');
-    expect(DESCRIPTION).toContain('missing');
+    expect(DESCRIPTION).toContain('offset');
+    expect(DESCRIPTION).toContain('truncated');
   });
 
   test('returns actionable guidance when Hocuspocus is not running', async () => {
@@ -117,7 +118,41 @@ describe('suggest_links MCP tool', () => {
           type: 'text',
           text: JSON.stringify(
             {
-              ok: true,
+              target: {
+                docName: 'project-alpha',
+                title: 'Project Alpha',
+                aliases: ['PA'],
+              },
+              mentions: [
+                {
+                  source: 'notes',
+                  excerpt: 'Project Alpha should link back to the launch notes.',
+                  offset: 0,
+                },
+              ],
+              truncated: false,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    });
+  });
+
+  test('normalizes trailing markdown extensions before querying the API', async () => {
+    const { server, getTool } = createFakeServer();
+
+    register(server, baseUrl);
+
+    const result = await getTool().handler({ docName: 'project-alpha.md' });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
               target: {
                 docName: 'project-alpha',
                 title: 'Project Alpha',

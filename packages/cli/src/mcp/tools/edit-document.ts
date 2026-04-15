@@ -19,7 +19,7 @@ export const DESCRIPTION = [
   '- `docName` — Document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `find` — Text to find (exact match)',
   '- `replace` — Replacement text',
-  '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown',
+  '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
 ].join('\n');
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {

@@ -80,6 +80,7 @@ describe('edit_document MCP tool', () => {
   test('describes the optional offset precision contract', () => {
     expect(DESCRIPTION).toContain('offset');
     expect(DESCRIPTION).toContain('exact occurrence');
+    expect(DESCRIPTION).toContain('suggest_links');
   });
 
   test('sends offset to the agent-patch endpoint when provided', async () => {

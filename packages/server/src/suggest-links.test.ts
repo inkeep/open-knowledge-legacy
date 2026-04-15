@@ -163,7 +163,7 @@ describe('suggestLinks', () => {
     const hocuspocus = new Hocuspocus({ quiet: true });
     const source = [
       'See [Project Alpha](./other.md) for the external plan.',
-      'Alias form [[other|Project Alpha]] should also stay matchable.',
+      'Alias form [[other|  Project Alpha  ]] should also stay matchable.',
     ].join('\n');
 
     try {

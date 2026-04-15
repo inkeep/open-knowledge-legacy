@@ -1,7 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { Document, Hocuspocus } from '@hocuspocus/server';
 import {
-  getWikiLinkText,
   prependFrontmatter,
   resolveInternalHref,
   stripFrontmatter,
@@ -131,7 +130,12 @@ function matchFence(line: string): FenceState | null {
 }
 
 function isFenceClose(line: string, fence: FenceState): boolean {
-  return new RegExp(`^\\s{0,3}\\${fence.char}{${fence.length},}\\s*$`).test(line);
+  const trimmed = line.trimStart();
+  if (line.length - trimmed.length > 3) return false;
+  let markerCount = 0;
+  while (trimmed[markerCount] === fence.char) markerCount += 1;
+  if (markerCount < fence.length) return false;
+  return trimmed.slice(markerCount).trim().length === 0;
 }
 
 function leadingMarkdownPrefixLength(line: string): number {
@@ -165,20 +169,36 @@ function readInlineCode(line: string, start: number): { text: string; nextIndex:
 function readWikiLink(
   line: string,
   start: number,
-): { target: string; alias: string | null; anchor: string | null; nextIndex: number } | null {
+): {
+  target: string;
+  alias: string | null;
+  anchor: string | null;
+  label: string;
+  labelStart: number;
+  nextIndex: number;
+} | null {
   WIKI_LINK_RE.lastIndex = start;
   const match = WIKI_LINK_RE.exec(line);
   if (!match) return null;
 
-  const target = match[1]?.trim();
+  const targetRaw = match[1] ?? '';
+  const target = targetRaw.trim();
   const anchor = match[2]?.trim() || null;
-  const alias = match[3]?.trim() || null;
+  const aliasRaw = match[3] ?? null;
+  const alias = aliasRaw?.trim() || null;
   if (!target) return null;
+
+  const label = alias ?? target;
+  const rawLabel = alias ? aliasRaw : targetRaw;
+  const labelIndexInMatch = alias ? match[0].lastIndexOf(aliasRaw ?? '') : 2;
+  const labelTrimOffset = rawLabel?.indexOf(label) ?? 0;
 
   return {
     target,
     alias,
     anchor,
+    label,
+    labelStart: start + labelIndexInMatch + Math.max(labelTrimOffset, 0),
     nextIndex: start + match[0].length,
   };
 }
@@ -367,12 +387,14 @@ function scanLineForMentions(
     if (line[index] === '[' && line[index + 1] === '[') {
       const wikiLink = readWikiLink(line, index);
       if (wikiLink) {
-        const label = getWikiLinkText(wikiLink);
+        const label = wikiLink.label;
         if (wikiLinkResolvesToTarget(wikiLink.target, targetDocName)) {
           appendNonMatchableText(label);
         } else {
-          const labelStart = wikiLink.alias ? line.indexOf('|', index) + 1 : index + 2;
-          appendMatchableText(label, contiguousOffsets(lineStartOffset + labelStart, label));
+          appendMatchableText(
+            label,
+            contiguousOffsets(lineStartOffset + wikiLink.labelStart, label),
+          );
         }
         index = wikiLink.nextIndex;
         continue;

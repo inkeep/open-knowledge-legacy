@@ -1,13 +1,15 @@
 import { z } from 'zod';
 import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, normalizeDocName, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find missing link candidates for a target page.',
-  'Returns unlinked mentions from other admitted documents as JSON so an agent can review and patch specific occurrences.',
+  'Returns JSON with structure: `{ target: { docName, title, aliases }, mentions: [{ source, excerpt, offset }], truncated }`.',
+  'Each mention includes an `offset` you can pass to `edit_document` for precision patching.',
+  'When `truncated` is true, the scan hit its time budget before reading every admitted document.',
   '',
   '**Parameters:**',
-  '- `docName` — Target page docName (for example, "articles/project-alpha")',
+  '- `docName` — Target page docName, typically without extension (for example, "articles/project-alpha"). A trailing `.md` or `.mdx` is stripped automatically.',
 ].join('\n');
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {
@@ -19,15 +21,18 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
     },
     async (args: { docName: string }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const normalized = normalizeDocName(args.docName);
+      if (!normalized.ok) return textResult(normalized.error, true);
 
       const result = await httpGet(
         serverUrl,
-        `/api/suggest-links?docName=${encodeURIComponent(args.docName)}`,
+        `/api/suggest-links?docName=${encodeURIComponent(normalized.docName)}`,
       );
 
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-      return textResult(JSON.stringify(result, null, 2));
+      const { ok: _ok, ...data } = result;
+      return textResult(JSON.stringify(data, null, 2));
     },
   );
 }
