@@ -13,8 +13,12 @@
  *   replacement would otherwise obliterate in-flight user mutations).
  *
  * Transaction origin guards prevent infinite loops:
- *   - Observer A writes with origin 'sync-from-tree', Observer B skips those.
- *   - Observer B writes with origin 'sync-from-text', Observer A skips those.
+ *   - Observer A writes under ORIGIN_TREE_TO_TEXT (LocalTransactionOrigin object,
+ *     `context.origin === 'sync-from-tree'`); Observer B skips those.
+ *   - Observer B writes under ORIGIN_TEXT_TO_TREE (LocalTransactionOrigin object,
+ *     `context.origin === 'sync-from-text'`); Observer A skips those.
+ *   Both constants are exported object refs — identity match is required for
+ *   Set-based enforcement (precedent #1). See AGENTS.md.
  *
  * Observer B early-exit: If the current XmlFragment already serializes to the same
  * markdown as Y.Text, skip updateYFragment entirely — nothing to do, avoid the tree
@@ -33,6 +37,7 @@
  *   transaction can merge before updateYFragment rebuilds the tree.
  */
 
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
   applyByPrefixSuffix,
@@ -53,8 +58,29 @@ import { diffLinesFast as diffLines } from './diff-lines-fast';
 const dmp = new DiffMatchPatch();
 dmp.Match_Threshold = 0.5;
 
-export const ORIGIN_TREE_TO_TEXT = 'sync-from-tree';
-export const ORIGIN_TEXT_TO_TREE = 'sync-from-text';
+/**
+ * Transaction origin for Observer A (tree → text).
+ *
+ * Precedent #1 (AGENTS.md): all Y.Doc transaction origins are `LocalTransactionOrigin`
+ * OBJECT references, never raw strings. `Set.has()` matching in `trackedOrigins` or
+ * the bridge-invariant watcher's enforcing set is identity-based for objects — a
+ * string literal would silently fail to match the production tx.origin object.
+ */
+export const ORIGIN_TREE_TO_TEXT = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'sync-from-tree' },
+} satisfies LocalTransactionOrigin;
+
+/**
+ * Transaction origin for Observer B (text → tree). See `ORIGIN_TREE_TO_TEXT` JSDoc
+ * for why this is an object, not a string.
+ */
+export const ORIGIN_TEXT_TO_TREE = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'sync-from-text' },
+} satisfies LocalTransactionOrigin;
 
 const DEBOUNCE_MS = 50;
 

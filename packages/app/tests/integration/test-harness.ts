@@ -22,8 +22,8 @@ import { createServer as createHttpServer } from 'node:http';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { HocuspocusProvider } from '@hocuspocus/provider';
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { MarkdownManager, prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
 import {
   AGENT_WRITE_ORIGIN,
@@ -466,17 +466,19 @@ export function getServerState(server: TestServer, docName: string): ServerDocSt
 // ─── Bridge invariant watcher (FR-11) ───
 
 /**
- * Enforcing origins for the bridge invariant watcher. Includes both string
- * origins (ORIGIN_TREE_TO_TEXT, ORIGIN_TEXT_TO_TREE) and LocalTransactionOrigin
- * objects (AGENT_WRITE_ORIGIN, FILE_WATCHER_ORIGIN, ROLLBACK_ORIGIN).
+ * Enforcing origins for the bridge invariant watcher.
  *
- * Set.has uses value equality for strings and identity for objects — both
- * work correctly with their respective origin types.
+ * Every entry is a `LocalTransactionOrigin` OBJECT reference per precedent #1
+ * (AGENTS.md): ORIGIN_TREE_TO_TEXT, ORIGIN_TEXT_TO_TREE (observers.ts),
+ * AGENT_WRITE_ORIGIN (agent-sessions.ts), FILE_WATCHER_ORIGIN (external-change.ts),
+ * ROLLBACK_ORIGIN (api-extension.ts). `Set.has()` performs identity matching for
+ * objects — a string literal would NEVER match the actual production tx.origin
+ * object, silently skipping enforcement.
  *
  * Deliberately excludes `undefined` (local WYSIWYG typing) — its invariant
  * satisfaction comes via a subsequent ORIGIN_TREE_TO_TEXT tx from Observer A.
  */
-const BRIDGE_ENFORCING_ORIGINS: Set<unknown> = new Set([
+const BRIDGE_ENFORCING_ORIGINS: Set<LocalTransactionOrigin> = new Set([
   ORIGIN_TREE_TO_TEXT,
   ORIGIN_TEXT_TO_TREE,
   AGENT_WRITE_ORIGIN,
@@ -621,13 +623,15 @@ export interface ItemOriginProbe {
  * Items-remained-captured. Replaces scattered inline `new Y.UndoManager(...)`
  * in test code.
  *
- * trackedOrigins accepts any value — strings for ORIGIN_TREE_TO_TEXT,
- * objects for AGENT_WRITE_ORIGIN. Y.UndoManager's Set.has matches by value
- * for strings and by identity for objects (precedent #1).
+ * `trackedOrigins` must contain `LocalTransactionOrigin` OBJECT references per
+ * precedent #1 (AGENTS.md) — e.g., `AGENT_WRITE_ORIGIN`, `ORIGIN_TREE_TO_TEXT`,
+ * `ORIGIN_TEXT_TO_TREE`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`. `Y.UndoManager`'s
+ * internal `trackedOrigins.has(tx.origin)` is identity-based for objects — a raw
+ * string literal would silently fail to match the production tx.origin object.
  */
 export function createItemOriginProbe(
   ytext: Y.Text,
-  opts: { trackedOrigins: Array<unknown>; captureTimeout?: number },
+  opts: { trackedOrigins: Array<LocalTransactionOrigin>; captureTimeout?: number },
 ): ItemOriginProbe {
   const um = new Y.UndoManager(ytext, {
     trackedOrigins: new Set(opts.trackedOrigins),
