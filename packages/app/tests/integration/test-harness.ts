@@ -585,9 +585,14 @@ export function attachBridgeInvariantWatcher(
 // ─── Manual scheduler for deterministic observer testing (FR-15) ───
 
 export interface ManualScheduler extends Scheduler {
-  /** Fire all pending callbacks synchronously, regardless of due-time. */
+  /** Fire all pending callbacks synchronously, regardless of due-time.
+   *  Cascading: if a fired callback schedules a new timer, that new timer
+   *  also fires in the same flush. Bounded to 100 drain passes. */
   flush(): void;
-  /** Fire callbacks whose due-time is ≤ (current virtual time + ms). */
+  /** Advance virtual time by `ms`, fire all callbacks whose dueAt ≤ new now.
+   *  Cascading: if a fired callback schedules a new timer at dueAt ≤ new now,
+   *  that new timer also fires in the same advance. Bounded to 100 drain
+   *  passes to prevent runaway chains. */
   advanceTime(ms: number): void;
   /** Inspect the pending callback queue (read-only). */
   pending(): ReadonlyArray<{ id: number; dueAt: number }>;
@@ -610,20 +615,32 @@ export function createManualScheduler(): ManualScheduler {
       const idx = queue.findIndex((e) => e.id === id);
       if (idx >= 0) queue.splice(idx, 1);
     },
+    now: () => now,
     advanceTime(ms) {
       now += ms;
-      const due = queue.filter((e) => e.dueAt <= now);
-      for (const e of due) {
-        queue.splice(queue.indexOf(e), 1);
-        e.cb();
+      // Drain cascading timers: each callback may schedule new timers. Loop
+      // until no more timers are due at the current virtual time. Bounded
+      // to prevent runaway re-scheduling chains.
+      for (let pass = 0; pass < 100; pass++) {
+        const due = queue.filter((e) => e.dueAt <= now);
+        if (due.length === 0) return;
+        for (const e of due) {
+          const idx = queue.indexOf(e);
+          if (idx >= 0) queue.splice(idx, 1);
+          e.cb();
+        }
       }
+      throw new Error('ManualScheduler.advanceTime: re-scheduling loop exceeded 100 drain passes');
     },
     flush() {
-      let e = queue.shift();
-      while (e) {
+      // Drain cascading timers: callbacks may schedule new ones; keep going
+      // until the queue is empty. Bounded to prevent runaway chains.
+      for (let pass = 0; pass < 100; pass++) {
+        const e = queue.shift();
+        if (!e) return;
         e.cb();
-        e = queue.shift();
       }
+      throw new Error('ManualScheduler.flush: re-scheduling loop exceeded 100 drain passes');
     },
     pending: () => queue.map(({ id, dueAt }) => ({ id, dueAt })),
   };

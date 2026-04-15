@@ -112,9 +112,45 @@ const REMOTE_TREE_SYNC_GRACE_MS = DEBOUNCE_MS * 3;
 // Per-document coordination state
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Scheduler interface for observer debounces, typing-defer timers, and the
+ * clock reference used by elapsed-time comparisons (FR-15).
+ *
+ * Production: arrow-wrapped passthrough to `globalThis.setTimeout` /
+ * `clearTimeout` / `Date.now()`. Tests inject `createManualScheduler()` for
+ * synchronous deterministic flush AND a virtual clock so that `now()`
+ * advances in lockstep with `setTimeout` dueAt calculations.
+ *
+ * The `now()` method is essential: observer callbacks use elapsed-time
+ * comparisons (typing defer, remote-tree grace window) to decide whether
+ * to reschedule their debounce. Under ManualScheduler, those comparisons
+ * must use the same virtual clock as `setTimeout` — mixing `Date.now()`
+ * (real) with scheduler `dueAt` (virtual) produces unbounded skew and
+ * breaks the deterministic timing model.
+ */
+export interface Scheduler {
+  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
+  /** Current clock reading in milliseconds. Production: `Date.now()`.
+   *  Tests with ManualScheduler: virtual time advanced by `advanceTime`. */
+  now: () => number;
+}
+
+const defaultScheduler: Scheduler = {
+  setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
+  clearTimeout: (handle) => globalThis.clearTimeout(handle),
+  now: () => Date.now(),
+};
+
 interface TypingState {
   lastUserTypedAt: number;
   lastRemoteTreeOnlyAt: number;
+  /** Scheduler used to read `now()` for timestamp recording. Defaults to
+   *  `defaultScheduler` (real clock) when `markUserTyping` is called before
+   *  `setupObservers` runs for this doc. `setupObservers` overrides with its
+   *  injected scheduler so all elapsed-time comparisons use a consistent
+   *  clock. */
+  scheduler: Scheduler;
 }
 
 const typingStateByDoc = new WeakMap<Y.Doc, TypingState>();
@@ -122,7 +158,7 @@ const typingStateByDoc = new WeakMap<Y.Doc, TypingState>();
 function getTypingState(doc: Y.Doc): TypingState {
   let state = typingStateByDoc.get(doc);
   if (!state) {
-    state = { lastUserTypedAt: 0, lastRemoteTreeOnlyAt: 0 };
+    state = { lastUserTypedAt: 0, lastRemoteTreeOnlyAt: 0, scheduler: defaultScheduler };
     typingStateByDoc.set(doc, state);
   }
   return state;
@@ -131,25 +167,14 @@ function getTypingState(doc: Y.Doc): TypingState {
 /**
  * Mark that the local user just typed. Call this from the editor's DOM event handlers
  * (keydown, paste, drop, etc.). Observer B uses this to defer its tree replacement.
+ *
+ * Uses the scheduler's `now()` so virtual-clock tests observe consistent
+ * timestamps with scheduler `setTimeout` dueAt calculations.
  */
 export function markUserTyping(doc: Y.Doc): void {
-  getTypingState(doc).lastUserTypedAt = Date.now();
+  const state = getTypingState(doc);
+  state.lastUserTypedAt = state.scheduler.now();
 }
-
-/**
- * Scheduler interface for observer debounces and typing-defer timers (FR-15).
- * Production: arrow-wrapped passthrough to globalThis.setTimeout/clearTimeout.
- * Tests: inject createManualScheduler() for synchronous deterministic flush.
- */
-export interface Scheduler {
-  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
-  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
-}
-
-const defaultScheduler: Scheduler = {
-  setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
-  clearTimeout: (handle) => globalThis.clearTimeout(handle),
-};
 
 // ─────────────────────────────────────────────────────────────
 // Observer internals
@@ -310,6 +335,14 @@ export function setupObservers(deps: ObserverDeps): () => void {
   const { doc, xmlFragment, ytext, mdManager, schema } = deps;
   const sched: Scheduler = deps.scheduler ?? defaultScheduler;
 
+  // Register the scheduler into the doc's TypingState so `markUserTyping`
+  // (called from editor DOM event handlers, external to setupObservers)
+  // reads the same clock as the observer timers. Without this, an injected
+  // ManualScheduler would have `setTimeout` on virtual time but
+  // `markUserTyping` would record real-clock timestamps, producing unbounded
+  // skew in `elapsedSinceTyping` comparisons.
+  getTypingState(doc).scheduler = sched;
+
   // Track the last XmlFragment state we successfully synced to Y.Text. On each sync,
   // Observer A computes the incremental delta between this snapshot and the current
   // XmlFragment state, and applies ONLY that delta to Y.Text. This preserves any
@@ -402,7 +435,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const changedParentTypes = (
           transaction as Y.Transaction & { changedParentTypes?: Map<unknown, unknown> }
         ).changedParentTypes;
-        state.lastRemoteTreeOnlyAt = changedParentTypes?.has(ytext) ? 0 : Date.now();
+        state.lastRemoteTreeOnlyAt = changedParentTypes?.has(ytext) ? 0 : sched.now();
 
         // Bug-B fix: only refresh baseline when no local debounce is pending.
         // If debounceA is active, a local edit is waiting to sync — refreshing
@@ -442,7 +475,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
   const runObserverBSync = (): void => {
     debounceB = null;
     const { lastRemoteTreeOnlyAt, lastUserTypedAt } = getTypingState(doc);
-    const elapsedSinceTyping = Date.now() - lastUserTypedAt;
+    const elapsedSinceTyping = sched.now() - lastUserTypedAt;
     if (elapsedSinceTyping < TYPING_DEFER_MS) {
       // User is still typing. Defer.
       const waitMs = TYPING_DEFER_MS - elapsedSinceTyping;
@@ -450,7 +483,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
       return;
     }
     if (lastRemoteTreeOnlyAt > 0) {
-      const elapsedSinceRemoteTree = Date.now() - lastRemoteTreeOnlyAt;
+      const elapsedSinceRemoteTree = sched.now() - lastRemoteTreeOnlyAt;
       if (elapsedSinceRemoteTree < REMOTE_TREE_SYNC_GRACE_MS) {
         debounceB = sched.setTimeout(
           runObserverBSync,
