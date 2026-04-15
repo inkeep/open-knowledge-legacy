@@ -318,24 +318,11 @@ export function setupObservers(deps: ObserverDeps): () => void {
       const frontmatter = getFrontmatter(doc);
       const md = prependFrontmatter(frontmatter, body);
 
-      const currentText = ytext.toString();
-
-      // Early-exit path with drift detection (FR-3 / Bug-B fix).
       if (lastSyncedXmlMd === md) {
-        // Baseline matches XmlFragment. Check if Y.Text has drifted (Bug-B:
-        // a prior remote-tx baseline refresh captured a state that included
-        // content the local Y.Text doesn't have yet — e.g., a remote peer's
-        // WYSIWYG typing propagated via XmlFragment CRDT but not via Y.Text).
-        if (currentText === md) {
-          return; // fully in sync
-        }
-        // Y.Text drifted. Reconcile via applyByPrefixSuffix — minimal mutation,
-        // preserves Items in the matching prefix/suffix. Origin: ORIGIN_TREE_TO_TEXT.
-        doc.transact(() => {
-          applyByPrefixSuffix(ytext, currentText, md);
-        }, ORIGIN_TREE_TO_TEXT);
         return;
       }
+
+      const currentText = ytext.toString();
 
       // If Y.Text already matches the serialized XmlFragment, skip the write.
       // This guard covers two independent cases (both fixes converged on the
@@ -393,7 +380,17 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
         const body = mdManager.serialize(json);
         const frontmatter = getFrontmatter(doc);
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        const remoteMd = prependFrontmatter(frontmatter, body);
+
+        // Bug-B fix: only refresh baseline when no local debounce is pending.
+        // If debounceA is active, a local edit is waiting to sync — refreshing
+        // the baseline to the post-remote state would cause the debounce's
+        // early-exit (lastSyncedXmlMd === md) to fire, absorbing the local
+        // edit. By keeping the old baseline, the debounce fires Path A/B with
+        // the correct delta (old baseline → current XmlFragment).
+        if (!debounceA) {
+          lastSyncedXmlMd = remoteMd;
+        }
       } catch (err) {
         // Non-critical — baseline will catch up on next local sync
         console.debug('[Observer A] Baseline refresh failed on remote change:', err);
