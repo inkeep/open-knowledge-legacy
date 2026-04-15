@@ -497,6 +497,28 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     return getAliasMap?.().get(docName) ?? docName;
   }
 
+  /**
+   * Fire-and-forget L1 → L2 flush for a single document.
+   *
+   * L1 (CRDT → disk): per-document debounce flush so concurrent human edits on
+   * other documents are undisturbed.
+   * L2 (disk → git): chained after L1 resolves to guarantee disk content is
+   * up-to-date before the shadow-repo commit.
+   *
+   * The returned promise is intentionally not awaited by callers — the HTTP
+   * response fires immediately after the CRDT transaction; persistence is
+   * best-effort background work.
+   */
+  function flushDocToGit(docName: string, label: string): void {
+    const debounceId = `onStoreDocument-${docName}`;
+    const l1 = hocuspocus.debouncer.isDebounced(debounceId)
+      ? hocuspocus.debouncer.executeNow(debounceId)
+      : Promise.resolve();
+    l1.then(() => flushGitCommit?.()).catch((err: unknown) => {
+      log.warn({ err }, `[${label}] post-write flush failed`);
+    });
+  }
+
   function collectAdmittedDocNames(): Set<string> {
     const admitted = new Set<string>();
     for (const [docName, entry] of getFileIndex()) {
@@ -890,6 +912,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
+      flushDocToGit(docName, 'agent-write');
+
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       log.error({ err: e }, '[agent-write] handler failed');
@@ -972,6 +996,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
+
+      flushDocToGit(resolvedDocName, 'agent-write-md');
 
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
@@ -1407,6 +1433,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
       }
+
+      flushDocToGit(docName, 'agent-patch');
+
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
       log.error({ err: e }, '[agent-patch] handler failed');
