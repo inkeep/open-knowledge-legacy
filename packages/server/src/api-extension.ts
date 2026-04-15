@@ -1761,7 +1761,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         fromContent = doc.getText('source').toString();
       }
 
-      const changes = diffLines(fromContent, toContent);
+      // Strip frontmatter from both sides so the diff shows only body changes.
+      // Git content includes frontmatter; Y.Text may or may not depending on
+      // sync state. Stripping both sides normalizes the comparison.
+      const fromBody = stripFrontmatter(fromContent).body;
+      const toBody = stripFrontmatter(toContent).body;
+      const changes = diffLines(fromBody, toBody);
 
       // Build full-file line array: every line annotated as added/removed/unchanged
       const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
