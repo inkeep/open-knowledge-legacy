@@ -34,7 +34,7 @@ cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
 cd packages/<pkg> && bun test           # Unit tests per package
 ```
 
-`bun run check`** is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is \\<50ms.
+`bun run check`\*\* is the canonical quality gate for agents and developers.\*\* Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is \\<50ms.
 
 ### Agent simulator (requires dev server running)
 
@@ -70,7 +70,7 @@ These are patterns that ALL work in the repo should follow. Established during t
 10. **Opaque-but-content-bearing nodes for Y.Item identity.** Any PM node that stores user-editable raw content AND needs to be opaque in WYSIWYG MUST use `atom: false, content: 'text*'` (or equivalent content expression) — never `atom: true` with raw-content-in-attrs. Combine with `isolating: true`, `selectable: true`, `contenteditable: false` via NodeView to block WYSIWYG editing. Rationale: `updateYFragment` (`y-prosemirror@1.3.7/sync-plugin.js:1145-1298`) uses `equalYTypePNode` deep-attr-equality for atom nodes — any attr value change causes full delete+reinsert of the `Y.XmlElement`, tombstoning the old Y.Item. For any node whose attrs change on every keystroke (raw source atoms), this produces per-keystroke Y.Item churn and cursor jumps for every peer viewing in WYSIWYG. Content-based shape preserves parent Y.XmlElement identity, mutating only the inner Y.Text granularly. Applies to `rawMdxFallback` (R5 in tolerant-parsing spec) and `jsxInline` (Layer 3 target shape).
 11. **Minimize CRDT mutation in sync bridges.** Bridges between CRDT representations (e.g., Y.XmlFragment ↔ Y.Text) must avoid replacing Items unnecessarily. Three concrete patterns enforce this:
     (a) **Content-comparison gate before delete+insert** — if a sync would replace content with content that's already present at the same offset, skip both operations to preserve existing CRDT Items.
-    (b) **Finer-grained merge via DMP `patch_make`/`patch_apply` over line-level for divergent paths** — DMP's character-level matching shrinks the "blast radius" of Items replaced; `applyByPrefixSuffix` preserves matching prefix/suffix regions.
+    (b) **Finer-grained merge via DMP **`patch_make`**/**`patch_apply`** over line-level for divergent paths** — DMP's character-level matching shrinks the "blast radius" of Items replaced; `applyByPrefixSuffix` preserves matching prefix/suffix regions.
     (c) **Origin-aware reconciliation at the bridge layer** — three-way merge (e.g., DMP `patch_apply`) lets bridge-side reconciliation preserve content from both writers without a custom diff-walk.
     Why this exists as a precedent: research (`reports/crdt-origin-laundering-prior-art/REPORT.md`) confirms these three patterns are unclaimed in academic + engineering literature as of 2026-04-13. They're how Open Knowledge solves "origin-laundering" (sync bridges replacing tracked Items with untracked replacements) without per-character attribution. Applies wherever a CRDT bridge converts one Y type to another. See `specs/2026-04-13-observer-a-origin-aware-diff/SPEC.md` and precedent #1 (typed transaction origins) for related discipline.
 12. **Direct PM dispatch for nested editors.** Embedded editor instances inside PM NodeViews (e.g., CodeMirror inside `rawMdxFallback` or `jsxComponent` error-state) always dispatch PM transactions rather than binding directly to Y types. CM changes forward to PM via `tr.replaceWith()`/`tr.delete()`; PM-side changes flow back via the NodeView `update(node)` method with character-diff minimizing CM-level mutations. A single `updating: boolean` flag prevents feedback loops. Avoids dual-observer conflicts between y-codemirror.next and y-prosemirror observing the same Y.XmlText with independent origin guards. See `reports/cm-in-pm-nested-editor-architecture/REPORT.md`.
@@ -234,11 +234,11 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 
 ### CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app |
-| `open-knowledge init` | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json` |
-| `open-knowledge mcp` | Start MCP stdio server (disk-only or connects to running Hocuspocus — port auto-discovered via `server.lock`) |
+| Command                                   | Description                                                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app                                                                     |
+| `open-knowledge init`                     | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json`                                            |
+| `open-knowledge mcp`                      | Start MCP stdio server (disk-only or connects to running Hocuspocus — port auto-discovered via `server.lock`) |
 
 ### Config system
 
@@ -433,21 +433,21 @@ Y.Doc
 
 - `*.test.ts` — Bun test runner (unit, integration, stress). Auto-discovered by `bun test`.
 - `*.e2e.ts` — Playwright E2E tests. Auto-discovered by `playwright.config.ts` (`testMatch: /.*\.e2e\.ts$/`). Run via `bun run test:stress:e2e`.
-- **Do not use **`*.spec.ts` — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
+- \*\*Do not use \*\*`*.spec.ts` — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
 
 ### Test layers
 
-| Layer       | Type                                                                         | Location                                                                                                    | Command                                                    |
-| ----------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| A           | Unit + stress                                                                | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` | `bun run test` (unit), `bun run test:stress:*` (per-shard) |
-| B           | HTTP + server-side CRDT                                                      | `packages/app/tests/stress/stress-api.ts`                                                                   | `bun run tests/stress/stress-api.ts` (needs dev server)    |
-| C           | Playwright E2E                                                               | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`                       | `bunx playwright test`                                     |
-| D           | Fuzz                                                                         | `packages/app/tests/stress/observers.fuzz.test.ts`                                                          | `STRESS_FUZZ_SEED=<seed> bun run test`                     |
-| Integration | Tier 1 bridge matrix                                                         | `packages/app/tests/integration/bridge-matrix.test.ts`                                                      | `bun run test`                                             |
-| Fidelity    | PBT invariants (I1-I7, I12-I17) + CommonMark/GFM corpus + P0 entity/escape  | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
-| Visual      | Playwright screenshot diffing — editor vs docs-site render parity per component | `packages/app/tests/visual/component-parity.e2e.ts`                                                        | `bun run test:visual`                                      |
-| Perf        | Component block parse/render/serialize benchmarks with thresholds            | `packages/app/tests/stress/component-blocks.perf.test.ts`                                                   | `bun run test:perf`                                        |
-| A11y        | WCAG keyboard + screen reader via Playwright + axe-core                      | `packages/app/tests/a11y/component-blocks.e2e.ts`                                                           | `bun run test:a11y`                                        |
+| Layer       | Type                                                                            | Location                                                                                                    | Command                                                    |
+| ----------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| A           | Unit + stress                                                                   | `packages/app/src/editor/observers.test.ts`, `tests/stress/observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` | `bun run test` (unit), `bun run test:stress:*` (per-shard) |
+| B           | HTTP + server-side CRDT                                                         | `packages/app/tests/stress/stress-api.ts`                                                                   | `bun run tests/stress/stress-api.ts` (needs dev server)    |
+| C           | Playwright E2E                                                                  | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`                       | `bunx playwright test`                                     |
+| D           | Fuzz                                                                            | `packages/app/tests/stress/observers.fuzz.test.ts`                                                          | `STRESS_FUZZ_SEED=<seed> bun run test`                     |
+| Integration | Tier 1 bridge matrix                                                            | `packages/app/tests/integration/bridge-matrix.test.ts`                                                      | `bun run test`                                             |
+| Fidelity    | PBT invariants (I1-I7, I12-I17) + CommonMark/GFM corpus + P0 entity/escape      | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
+| Visual      | Playwright screenshot diffing — editor vs docs-site render parity per component | `packages/app/tests/visual/component-parity.e2e.ts`                                                         | `bun run test:visual`                                      |
+| Perf        | Component block parse/render/serialize benchmarks with thresholds               | `packages/app/tests/stress/component-blocks.perf.test.ts`                                                   | `bun run test:perf`                                        |
+| A11y        | WCAG keyboard + screen reader via Playwright + axe-core                         | `packages/app/tests/a11y/component-blocks.e2e.ts`                                                           | `bun run test:a11y`                                        |
 
 ### Tier 1 integration harness
 
@@ -628,21 +628,21 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 
 ### Fidelity invariants
 
-| ID  | Invariant                        | Description                                                                                                                                             |
-| --- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| I1  | Identity                         | `serialize(parse(md)) === md` for supported constructs                                                                                                  |
-| I2  | Character preservation           | Every literal char in input appears in output — no entity encoding                                                                                      |
-| I3  | Normalization canonicality       | `f(f(x)) === f(x)` — double round-trip equals single round-trip                                                                                        |
-| I4  | Idempotence                      | `serialize(parse(X))` applied twice produces identical output                                                                                           |
-| I5  | Layer A === Layer B              | mdManager path and Y.Doc path produce the same output                                                                                                   |
-| I6  | Multi-client preservation        | Content survives Y.Doc state sync between clients                                                                                                       |
-| I7  | Cross-path consistency           | All write paths produce equivalent serialized output                                                                                                    |
-| I12 | Pristine JSX byte-identity       | For each built-in component, `parse(md) → PM → serialize === md` (byte-exact) when `sourceDirty=false`                                                 |
-| I13 | Edited JSX idempotence           | `serialize(parse(serialize(parse(X_edited)))) === serialize(parse(X_edited))` — NG12 normalization converges on first serialize                          |
-| I14 | rawMdxFallback byte-identity     | `serialize(rawMdxFallback) === sourceRaw` — raw passthrough, no transformation                                                                          |
-| I15 | JSX cross-path consistency       | Agent-write-md path and source-mode-edit path produce semantically identical PM trees for the same MDX input                                            |
-| I16 | Nested-dirty serialization       | Pristine parent with dirty descendant MUST reconstruct (not emit stale sourceRaw). No subtree edit lost on save.                                        |
-| I17 | All-user-content-visible         | Every text-bearing node's content is present in the rendered DOM as visible text or editable nested-CM content. No `display: none` on user content.      |
+| ID  | Invariant                    | Description                                                                                                                                         |
+| --- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| I1  | Identity                     | `serialize(parse(md)) === md` for supported constructs                                                                                              |
+| I2  | Character preservation       | Every literal char in input appears in output — no entity encoding                                                                                  |
+| I3  | Normalization canonicality   | `f(f(x)) === f(x)` — double round-trip equals single round-trip                                                                                     |
+| I4  | Idempotence                  | `serialize(parse(X))` applied twice produces identical output                                                                                       |
+| I5  | Layer A === Layer B          | mdManager path and Y.Doc path produce the same output                                                                                               |
+| I6  | Multi-client preservation    | Content survives Y.Doc state sync between clients                                                                                                   |
+| I7  | Cross-path consistency       | All write paths produce equivalent serialized output                                                                                                |
+| I12 | Pristine JSX byte-identity   | For each built-in component, `parse(md) → PM → serialize === md` (byte-exact) when `sourceDirty=false`                                              |
+| I13 | Edited JSX idempotence       | `serialize(parse(serialize(parse(X_edited)))) === serialize(parse(X_edited))` — NG12 normalization converges on first serialize                     |
+| I14 | rawMdxFallback byte-identity | `serialize(rawMdxFallback) === sourceRaw` — raw passthrough, no transformation                                                                      |
+| I15 | JSX cross-path consistency   | Agent-write-md path and source-mode-edit path produce semantically identical PM trees for the same MDX input                                        |
+| I16 | Nested-dirty serialization   | Pristine parent with dirty descendant MUST reconstruct (not emit stale sourceRaw). No subtree edit lost on save.                                    |
+| I17 | All-user-content-visible     | Every text-bearing node's content is present in the rendered DOM as visible text or editable nested-CM content. No `display: none` on user content. |
 
 ### Irreducible gaps (by design)
 
@@ -724,3 +724,4 @@ bun run release          # Publish to npm
 - Use `use()` instead of `useContext()` (React 19 pattern)
 - In React components, prefer Tailwind CSS utility classes via `className` instead of inline `style` props. Only use inline styles when there is no practical Tailwind expression for the requirement
 - Prefer existing shadcn components before building custom UI primitives. If the needed shadcn component is not installed yet, suggest installing it rather than reimplementing it from scratch
+

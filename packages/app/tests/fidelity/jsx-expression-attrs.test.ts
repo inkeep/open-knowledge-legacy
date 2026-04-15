@@ -87,6 +87,11 @@ describe('EX — Expression attr destructuring (D5, FR-1) via block path', () =>
     const props = parseJsxProps(wrap('Comp bool'));
     expect(props.bool).toBe(true);
   });
+
+  test('EX07: bool={false} → false (explicit false expression)', () => {
+    const props = parseJsxProps(wrap('Comp bool={false}'));
+    expect(props.bool).toBe(false); // JSON.parse('false') → boolean false
+  });
 });
 
 describe('EX — Pristine round-trip byte-identity (inline + block)', () => {

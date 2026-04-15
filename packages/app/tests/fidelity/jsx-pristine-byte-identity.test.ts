@@ -9,7 +9,7 @@
  * the source forms that users/agents write.
  */
 import { describe, expect, test } from 'bun:test';
-import { mdRoundTrip, normalize } from './helpers';
+import { mdManager, mdRoundTrip, normalize } from './helpers';
 
 function assertByteIdentity(input: string): void {
   const output = normalize(mdRoundTrip(input));
@@ -82,6 +82,88 @@ describe('I12 — Pristine jsxComponent byte-identity (block form)', () => {
 
   test('Component with spread attr', () => {
     assertByteIdentity('<Comp {...rest}>\n\nContent\n\n</Comp>\n');
+  });
+});
+
+describe('γ dirty-path serialization edge cases', () => {
+  /**
+   * Helper: parse MDX, force the first jsxComponent to sourceDirty:true,
+   * then serialize — exercises the reconstruction path.
+   */
+  function dirtyRoundTrip(md: string): string {
+    const json = mdManager.parse(md);
+    // Walk to find jsxComponent and flip sourceDirty
+    function markDirty(node: import('@tiptap/core').JSONContent): void {
+      if (node.type === 'jsxComponent' && node.attrs) {
+        node.attrs.sourceDirty = true;
+      }
+      if (node.content) {
+        for (const child of node.content) markDirty(child);
+      }
+    }
+    markDirty(json);
+    return mdManager.serialize(json);
+  }
+
+  test('String attr with double quotes escapes to expression form', () => {
+    const input = '<Comp title="say hello">\n\nContent\n\n</Comp>\n';
+    const output = dirtyRoundTrip(input);
+    // Should produce valid JSX — not malformed quotes
+    expect(output).not.toContain('title="say "');
+  });
+
+  test('String attr with double quotes round-trips through dirty path', () => {
+    // Manually construct input with quote-containing attr via dirty path
+    const json = mdManager.parse('<Comp title="test">\n\nContent\n\n</Comp>\n');
+    function setDirtyWithQuotedTitle(node: import('@tiptap/core').JSONContent): void {
+      if (node.type === 'jsxComponent' && node.attrs) {
+        node.attrs.sourceDirty = true;
+        // Simulate user editing the title to contain quotes
+        const props = (node.attrs.props ?? {}) as Record<string, unknown>;
+        props.title = 'say "hello"';
+        node.attrs.props = props;
+      }
+      if (node.content) {
+        for (const child of node.content) setDirtyWithQuotedTitle(child);
+      }
+    }
+    setDirtyWithQuotedTitle(json);
+    const output = mdManager.serialize(json);
+    // The expression form should preserve the quotes
+    expect(output).toContain('title={"say \\"hello\\""}');
+    // Re-parse should not degrade to rawMdxFallback
+    const reParsed = mdManager.parse(output);
+    function findNode(
+      n: import('@tiptap/core').JSONContent,
+      type: string,
+    ): import('@tiptap/core').JSONContent | undefined {
+      if (n.type === type) return n;
+      if (n.content)
+        for (const c of n.content) {
+          const f = findNode(c, type);
+          if (f) return f;
+        }
+      return undefined;
+    }
+    expect(findNode(reParsed, 'rawMdxFallback')).toBeUndefined();
+  });
+
+  test('Boolean false serializes as expression {false}', () => {
+    const json = mdManager.parse('<Comp disabled>\n\nContent\n\n</Comp>\n');
+    function setDirtyWithFalse(node: import('@tiptap/core').JSONContent): void {
+      if (node.type === 'jsxComponent' && node.attrs) {
+        node.attrs.sourceDirty = true;
+        const props = (node.attrs.props ?? {}) as Record<string, unknown>;
+        props.disabled = false;
+        node.attrs.props = props;
+      }
+      if (node.content) for (const child of node.content) setDirtyWithFalse(child);
+    }
+    setDirtyWithFalse(json);
+    const output = mdManager.serialize(json);
+    // disabled={false} — NOT disabled (boolean shorthand)
+    expect(output).toContain('disabled={false}');
+    expect(output).not.toMatch(/disabled(?!\s*=)/);
   });
 });
 

@@ -39,7 +39,7 @@ export interface PropDefNumber extends PropDefBase {
 
 export interface PropDefEnum extends PropDefBase {
   type: 'enum';
-  enumValues: string[];
+  enumValues: [string, ...string[]];
   defaultValue?: string;
 }
 

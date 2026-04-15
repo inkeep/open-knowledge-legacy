@@ -127,7 +127,12 @@ function PropControl({
             type="number"
             inputMode="numeric"
             value={value != null ? String(value) : ''}
-            onChange={(e) => onChange(Number(e.target.value))}
+            onChange={(e) => {
+              const raw = e.target.value;
+              if (raw === '' || raw === '-') return;
+              const num = Number(raw);
+              if (!Number.isNaN(num)) onChange(num);
+            }}
             className="h-7 text-sm"
           />
         </div>

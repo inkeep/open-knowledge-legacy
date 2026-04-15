@@ -319,8 +319,14 @@ function serializeMdxJsxAttrs(attrs: Array<MdxJsxAttribute | MdxJsxExpressionAtt
       continue;
     }
     if (typeof attr.value === 'string') {
-      // String literal: type="warning"
-      parts.push(`${name}="${attr.value}"`);
+      if (attr.value.includes('"')) {
+        // Contains double quotes — use JSX expression form with escaped quotes
+        const escaped = attr.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        parts.push(`${name}={"${escaped}"}`);
+      } else {
+        // String literal: type="warning"
+        parts.push(`${name}="${attr.value}"`);
+      }
       continue;
     }
     // Expression: data={[1,2,3]}

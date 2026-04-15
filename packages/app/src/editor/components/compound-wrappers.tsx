@@ -66,11 +66,16 @@ export function EditorTabs({
     >
       {/* Tab trigger bar */}
       {tabItems.length > 0 && (
-        <div className="flex gap-3.5 text-fd-secondary-foreground overflow-x-auto px-4 not-prose">
+        <div
+          role="tablist"
+          className="flex gap-3.5 text-fd-secondary-foreground overflow-x-auto px-4 not-prose"
+        >
           {tabItems.map((item) => (
             <button
               key={item}
               type="button"
+              role="tab"
+              aria-selected={escapeValue(item) === defaultValue}
               className="editor-tab-trigger inline-flex items-center gap-2 whitespace-nowrap text-fd-muted-foreground border-b border-transparent py-2 text-sm font-medium transition-colors hover:text-fd-accent-foreground data-[state=active]:border-fd-primary data-[state=active]:text-fd-primary"
               data-value={escapeValue(item)}
               data-state={escapeValue(item) === defaultValue ? 'active' : 'inactive'}
@@ -81,10 +86,9 @@ export function EditorTabs({
                 root.setAttribute('data-active-tab', val);
                 // Update all triggers
                 for (const trigger of root.querySelectorAll('.editor-tab-trigger')) {
-                  trigger.setAttribute(
-                    'data-state',
-                    trigger.getAttribute('data-value') === val ? 'active' : 'inactive',
-                  );
+                  const isActive = trigger.getAttribute('data-value') === val;
+                  trigger.setAttribute('data-state', isActive ? 'active' : 'inactive');
+                  trigger.setAttribute('aria-selected', String(isActive));
                 }
                 // Update all tab content panels
                 for (const panel of root.querySelectorAll('.editor-tab-content')) {
@@ -109,12 +113,16 @@ export function EditorTabs({
 
 // ─── EditorTab ────────────────────────────────────────────────────────────────
 // Child wrapper for <Tab> blocks. Reads active state from parent DOM.
+// Inactive panels use data-[state=inactive]:hidden (display:none) — this is a
+// documented exemption from Precedent #14: standard tab UX hides inactive panels;
+// content is accessible by clicking the tab trigger, not permanently hidden.
 
 export function EditorTab({ value, children }: { value?: string; children?: ReactNode }) {
   const escaped = value ? escapeValue(value) : '';
 
   return (
     <div
+      role="tabpanel"
       className="editor-tab-content p-4 text-[0.9375rem] bg-fd-background rounded-xl prose-no-margin data-[state=inactive]:hidden"
       data-value={escaped}
       data-state="inactive"
@@ -153,6 +161,7 @@ export function EditorAccordion({ title, children }: { title?: string; children?
       <h3 className="flex">
         <button
           type="button"
+          aria-expanded={false}
           className="flex flex-1 items-center gap-2 p-4 text-start text-sm font-medium transition-all [&[data-state=open]>svg]:rotate-180"
           data-state="closed"
           onClick={(e) => {
@@ -168,7 +177,10 @@ export function EditorAccordion({ title, children }: { title?: string; children?
                 if (other !== item) {
                   other.setAttribute('data-state', 'closed');
                   const otherBtn = other.querySelector('button');
-                  if (otherBtn) otherBtn.setAttribute('data-state', 'closed');
+                  if (otherBtn) {
+                    otherBtn.setAttribute('data-state', 'closed');
+                    otherBtn.setAttribute('aria-expanded', 'false');
+                  }
                   const otherContent = other.querySelector('.editor-accordion-content');
                   if (otherContent) otherContent.setAttribute('data-state', 'closed');
                 }
@@ -177,6 +189,7 @@ export function EditorAccordion({ title, children }: { title?: string; children?
 
             item.setAttribute('data-state', next);
             e.currentTarget.setAttribute('data-state', next);
+            e.currentTarget.setAttribute('aria-expanded', String(next === 'open'));
             const content = item.querySelector('.editor-accordion-content');
             if (content) content.setAttribute('data-state', next);
           }}

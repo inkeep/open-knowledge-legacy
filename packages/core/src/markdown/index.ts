@@ -268,7 +268,10 @@ function reconstructAttrs(pmNode: PmNode): Array<MdxJsxAttribute | MdxJsxExpress
   const preserved: Array<MdxJsxAttribute | MdxJsxExpressionAttribute> = Array.isArray(
     pmNode.attrs.attributes,
   )
-    ? [...pmNode.attrs.attributes]
+    ? [...pmNode.attrs.attributes].filter(
+        (a): a is MdxJsxAttribute | MdxJsxExpressionAttribute =>
+          a != null && typeof a === 'object' && 'type' in a,
+      )
     : [];
   const structuredProps: Record<string, unknown> = pmNode.attrs.props ?? {};
 

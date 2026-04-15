@@ -1392,8 +1392,6 @@ Located in `evidence/` alongside this PROJECT.md. Support specific decisions and
 | [yjs-constrained-observer-sync](reports/yjs-constrained-observer-sync/REPORT.md)                                                   | One-Way Y.XmlFragment to Y.Text Observer Sync with y-codemirror.next Binding              | TQ9, TQ25                          | 2026-04-07 | 7 files  |
 | [yjs-dual-key-shimmer-analysis](reports/yjs-dual-key-shimmer-analysis/REPORT.md)                                                   | Yjs Dual-Key Shimmer Analysis: Will Bidirectional Observer Sync Actually Cascade?         | TQ9, TQ25                          | 2026-04-07 | 5 files  |
 
-
-
 # Project: Build an agent-native knowledge platform
 
 **Last verified:** 2026-04-08

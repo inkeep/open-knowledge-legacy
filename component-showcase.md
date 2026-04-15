@@ -22,6 +22,8 @@ This is an **error** callout — for destructive or critical messaging.
 
 </Callout>
 
+
+
 <Callout type="success">
 
 This is a **success** callout — for confirmations and positive outcomes.
@@ -36,13 +38,17 @@ This is an **idea** callout — for tips, tricks, and inspirations.
 
 ## 2. Card (single) — with title, description, icon, href
 
-<Card title="Getting Started" description="Read the quickstart guide" href="/docs/quickstart" />
+<Card title="Getting Started" description="Read the quickstart guide" href="/docs/quickstart" external />
 
 ## 3. Cards (grid) — container with emptyChildName='Card'
 
 <Cards>
 
-<Card title="Guides" description="Step-by-step tutorials" href="/guides" />
+<Card title="Guides" description="Step-by-step tutorials" href="/guides">
+
+
+
+</Card>
 
 <Card title="Reference" description="API reference" href="/reference" />
 
@@ -51,6 +57,8 @@ This is an **idea** callout — for tips, tricks, and inspirations.
 <Card title="Showcase" description="Community projects" href="/showcase" />
 
 </Cards>
+
+
 
 ## 4. Steps + Step — numbered vertical sequence
 
@@ -81,6 +89,10 @@ bun run dev
 ```
 
 Open `http://localhost:5173` in your browser.
+
+
+
+
 
 </Step>
 
@@ -148,13 +160,15 @@ Compound components (Tabs, Accordion) that rely on React Context don't cross Tip
 
 </Accordions>
 
+
+
 ## 7. Files + Folder + File — file tree visualization
 
 <Files>
 
-<Folder name="packages" defaultOpen="true">
+<Folder name="packages" defaultOpen>
 
-<Folder name="core" defaultOpen="true">
+<Folder name="core" defaultOpen>
 
 <File name="jsx-component.ts" />
 
@@ -166,7 +180,7 @@ Compound components (Tabs, Accordion) that rely on React Context don't cross Tip
 
 </Folder>
 
-<Folder name="app" defaultOpen="true">
+<Folder name="app" defaultOpen>
 
 <File name="JsxComponentView.tsx" />
 
@@ -244,20 +258,18 @@ export const nodeHandlers = {
 
 ### Table
 
-| Component | Category | hasChildren | Provider |
-|-----------|----------|-------------|----------|
-| Callout | content | yes | fumadocs-ui |
-| Card | layout | yes | fumadocs-ui |
-| Tabs | layout | yes | editor-local (Fallback 2) |
-| Accordion | layout | yes | editor-local (Fallback 2) |
-| Mermaid | data | no | shadcn wrapper |
-| Audio | media | no | shadcn wrapper |
+| Component | Category | hasChildren | Provider                  |
+| --------- | -------- | ----------- | ------------------------- |
+| Callout   | content  | yes         | fumadocs-ui               |
+| Card      | layout   | yes         | fumadocs-ui               |
+| Tabs      | layout   | yes         | editor-local (Fallback 2) |
+| Accordion | layout   | yes         | editor-local (Fallback 2) |
+| Mermaid   | data     | no          | shadcn wrapper            |
+| Audio     | media    | no          | shadcn wrapper            |
 
 ### Wiki links + internal links
 
 Here's a [[wiki-link]] and an [internal link](./ARCHITECTURE.md) and an [external link](https://fumadocs.dev).
-
-## 14. Nested composition (compound components + block children)
 
 <Accordions type="single">
 
@@ -293,8 +305,10 @@ The Icon renders as source text per NG14.
 
 </Accordions>
 
+## 14. Nested composition (compound components + block children)
+
 ---
 
-*End of showcase — try clicking any block to see the PropPanel, hover to see the SideMenu drag handle, type `/` to open the slash menu, and press Esc inside a component's children to select the parent (L1 keyboard nav).*
+*End of showcase — try clicking any block to see the PropPanel, hover to see the SideMenu drag handle, type *`/`* to open the slash menu, and press Esc inside a component's children to select the parent (L1 keyboard nav).*
 
 *Note: TypeTable, InlineTOC, and Mermaid components are omitted from this showcase because they require complex expression attrs (object literals and template strings) that our parser doesn't currently round-trip cleanly — tracked as a known fidelity gap for a follow-up spec.*
