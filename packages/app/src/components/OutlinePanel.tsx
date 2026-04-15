@@ -146,9 +146,7 @@ export function OutlinePanel({
         ) : headings.length === 0 && !isLoading ? (
           <PanelEmpty className="px-2">No headings yet.</PanelEmpty>
         ) : (
-          <div className="relative">
-            {/* Single SVG path — vertical within each item, diagonal between
-                items when depth changes */}
+          <nav aria-label="Document outline" className="relative">
             {/* Gray base path */}
             <svg
               width={svgW}
@@ -158,10 +156,8 @@ export function OutlinePanel({
             >
               <path d={linePath} fill="none" strokeWidth="1" style={{ stroke: 'var(--border)' }} />
             </svg>
-            {/* Animated primary thumb — same path used as a CSS mask so the
-                colored block is clipped to the path shape. As margin-top
-                transitions between headings the highlight slides along the
-                diagonals too, matching the clerk-toc motion. */}
+            {/* Animated primary thumb — path used as CSS mask so the colored
+                block is clipped to the path shape; translateY is GPU-composited. */}
             {maskUrl && (
               <div
                 className="pointer-events-none absolute left-0 top-0"
@@ -173,12 +169,11 @@ export function OutlinePanel({
                 }}
               >
                 <div
+                  className="w-full motion-safe:[transition:transform_0.25s_var(--ease-out-strong),height_0.1s_var(--ease-out-strong)]"
                   style={{
-                    marginTop: thumbTop,
+                    transform: `translateY(${thumbTop}px)`,
                     height: thumbHeight,
                     backgroundColor: 'var(--primary)',
-                    transition: 'margin-top 0.25s ease, height 0.1s ease',
-                    width: '100%',
                   }}
                 />
               </div>
@@ -191,6 +186,7 @@ export function OutlinePanel({
                   // biome-ignore lint/suspicious/noArrayIndexKey: headings are positionally stable per load
                   key={index}
                   type="button"
+                  aria-current={isActive ? 'location' : undefined}
                   onClick={() => handleNav(index, heading.slug)}
                   className={cn(
                     'w-full cursor-pointer truncate py-1 pe-2 text-left text-sm transition-colors',
@@ -205,7 +201,7 @@ export function OutlinePanel({
                 </button>
               );
             })}
-          </div>
+          </nav>
         )}
       </PanelBody>
     </Panel>
