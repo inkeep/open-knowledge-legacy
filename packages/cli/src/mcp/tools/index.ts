@@ -77,6 +77,10 @@ import {
 import { register as registerSearch, DESCRIPTION as SEARCH_DESCRIPTION } from './search.ts';
 import type { ServerInstance } from './shared.ts';
 import {
+  register as registerSuggestLinks,
+  DESCRIPTION as SUGGEST_LINKS_DESCRIPTION,
+} from './suggest-links.ts';
+import {
   register as registerWriteDocument,
   DESCRIPTION as WRITE_DOCUMENT_DESCRIPTION,
 } from './write-document.ts';
@@ -94,6 +98,7 @@ export const TOOL_DESCRIPTIONS = {
   read_document: READ_DOCUMENT_DESCRIPTION,
   rename_document: RENAME_DOCUMENT_DESCRIPTION,
   search: SEARCH_DESCRIPTION,
+  suggest_links: SUGGEST_LINKS_DESCRIPTION,
   write_document: WRITE_DOCUMENT_DESCRIPTION,
   edit_document: EDIT_DOCUMENT_DESCRIPTION,
   get_history: GET_HISTORY_DESCRIPTION,
@@ -137,6 +142,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
+  registerSuggestLinks(server, opts.serverUrl);
 
   // Document tools — make HTTP calls to Hocuspocus
   registerWriteDocument(server, opts.serverUrl);
