@@ -85,13 +85,12 @@ function InlineCreateRow({
   value,
   busy,
   error,
-  nested,
   onChange,
   onCommit,
   onCancel,
-}: InlineCreateProps & { nested: boolean }) {
+}: InlineCreateProps) {
   return (
-    <div className={cn('flex h-8 items-center gap-2 rounded-md px-2', !nested && 'ml-2')}>
+    <div className={cn('flex h-8 items-center gap-2 rounded-md px-2')}>
       {kind === 'folder' ? (
         <Folder className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
       ) : (
@@ -314,7 +313,7 @@ const FileTreeNode: FC<{
         <SidebarMenuSub className="mr-0 pr-0">
           {inlineCreate && (
             <SidebarMenuSubItem>
-              <InlineCreateRow {...inlineCreate} nested />
+              <InlineCreateRow {...inlineCreate} />
             </SidebarMenuSubItem>
           )}
           {node.children.map((child) => (
