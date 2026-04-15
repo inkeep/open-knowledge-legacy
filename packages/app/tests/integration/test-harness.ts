@@ -24,7 +24,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
+import { MarkdownManager, prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
 import {
   createServer,
   type ServerInstance,
@@ -361,4 +361,51 @@ export async function pollUntil(
     await wait(intervalMs);
   }
   throw new Error(`pollUntil timed out after ${timeoutMs}ms`);
+}
+
+// ─── Server-side state inspector (FR-13) ───
+
+export type ServerDocState = {
+  ytext: Y.Text;
+  fragment: Y.XmlFragment;
+  /** Body only (no frontmatter) — serialized from the server's XmlFragment */
+  md: string;
+  /** Frontmatter + body — full markdown as would be persisted to disk */
+  fullMd: string;
+  frontmatter: string;
+  metaMap: Y.Map<unknown>;
+  activityMap: Y.Map<unknown>;
+  connectionCount: number;
+};
+
+/**
+ * Inspect the server's internal Y.Doc state for a given docName.
+ *
+ * Encapsulates `server.instance.hocuspocus.documents.get(docName)` behind a
+ * typed, documented surface. Returns null when the doc is not loaded on the
+ * server (observable via pollUntil when tests need to wait for doc init).
+ */
+export function getServerState(server: TestServer, docName: string): ServerDocState | null {
+  const document = server.instance.hocuspocus.documents.get(docName);
+  if (!document) return null;
+
+  const ytext = document.getText('source');
+  const fragment = document.getXmlFragment('default');
+  const metaMap = document.getMap('metadata');
+  const activityMap = document.getMap('activity');
+  const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
+  const md = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  const fullMd = prependFrontmatter(frontmatter, md);
+  const connectionCount = document.getConnectionsCount?.() ?? 0;
+
+  return {
+    ytext,
+    fragment,
+    md,
+    fullMd,
+    frontmatter,
+    metaMap,
+    activityMap,
+    connectionCount,
+  };
 }
