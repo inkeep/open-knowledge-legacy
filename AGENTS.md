@@ -73,6 +73,7 @@ These are patterns that ALL work in the repo should follow. Established during t
     (b) **Finer-grained merge via DMP `patch_make`/`patch_apply` over line-level for divergent paths** — DMP's character-level matching shrinks the "blast radius" of Items replaced; `applyByPrefixSuffix` preserves matching prefix/suffix regions.
     (c) **Origin-aware reconciliation at the bridge layer** — three-way merge (e.g., DMP `patch_apply`) lets bridge-side reconciliation preserve content from both writers without a custom diff-walk.
     Why this exists as a precedent: research (`reports/crdt-origin-laundering-prior-art/REPORT.md`) confirms these three patterns are unclaimed in academic + engineering literature as of 2026-04-13. They're how Open Knowledge solves "origin-laundering" (sync bridges replacing tracked Items with untracked replacements) without per-character attribution. Applies wherever a CRDT bridge converts one Y type to another. See `specs/2026-04-13-observer-a-origin-aware-diff/SPEC.md` and precedent #1 (typed transaction origins) for related discipline.
+12. **XmlFragment is authoritative for markdown state; Y.Text mirrors it under minimal mutation.** Server-side agent writes (and any future server-side mutation path) read the current XmlFragment, compose the delta at the markdown level, apply via `updateYFragment` (structural diff preserves user-content Items), then mirror Y.Text via `applyByPrefixSuffix` (preserves non-agent Y.Text Items and their origins). The template is `applyAgentMarkdownWrite` in `agent-sessions.ts`. A naive rebuild-from-Y.Text pattern (`syncTextToFragment`) destroys concurrent user XmlFragment content — Bug-A in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`. Applies to all server-side CRDT bridge mutations including V0-14's future `applyAgentUndo` handler. Cross-references precedent #11 (minimize CRDT mutation) and PR #128's D14 (no Y.Map for diagnostics).
 
 ### Resolving `bun.lock` merge conflicts
 
@@ -506,8 +507,8 @@ No environment variables must be set by hand for any of these scenarios.
 
 ### STOP rules
 
-- **STOP:** Never write raw markdown to Y.Text without calling `syncTextToFragment()` afterward. The XmlFragment will be stale, breaking the bridge invariant.
-- **STOP:** Always call `syncTextToFragment()` after `um.undo()` / `um.redo()`. Without it, Y.Text reverts but XmlFragment stays stale.
+- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
+- **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
 - **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
 
@@ -1136,8 +1137,8 @@ No environment variables must be set by hand for any of these scenarios.
 
 ### STOP rules
 
-- **STOP:** Never write raw markdown to Y.Text without calling `syncTextToFragment()` afterward. The XmlFragment will be stale, breaking the bridge invariant.
-- **STOP:** Always call `syncTextToFragment()` after `um.undo()` / `um.redo()`. Without it, Y.Text reverts but XmlFragment stays stale.
+- **STOP:** Server-side agent writes MUST use the XmlFragment-authoritative pattern (`applyAgentMarkdownWrite` in `agent-sessions.ts`, precedent #10). A naive rebuild-from-Y.Text pattern destroys concurrent user XmlFragment content (Bug-A / Bug-D in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). V0-14's future `applyAgentUndo` handler must follow the same pattern — see `evidence/bug-d-mechanism.md` for the template.
+- **STOP:** `syncTextToFragment` has been deleted (FR-9). Do not recreate or reintroduce a rebuild-from-Y.Text pattern. If you need to sync Y.Text → XmlFragment on the server, use the XmlFragment-authoritative composition pattern from `applyAgentMarkdownWrite`.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
 
 ### WARN rules

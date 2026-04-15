@@ -31,15 +31,15 @@ import {
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { updateYFragment } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
+  applyAgentMarkdownWrite,
   DEFAULT_AGENT_ID,
-  syncTextToFragment,
 } from './agent-sessions.ts';
 import { extractPageTitle } from './page-identity.ts';
 
@@ -835,12 +835,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
-          const insertAt = currentText.length;
-          const separator = currentText.trim() ? '\n\n' : '';
-          ytext.insert(insertAt, `${separator}${content}\n`);
-          syncTextToFragment(dc.document);
+          applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
 
           const activityMap = dc.document.getMap('activity');
           activityMap.set(DEFAULT_AGENT_ID, {
@@ -915,21 +910,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
-
-          if (position === 'replace') {
-            ytext.delete(0, currentText.length);
-            ytext.insert(0, markdown.trim());
-          } else if (position === 'prepend') {
-            ytext.insert(0, `${markdown.trim()}\n\n`);
-          } else {
-            const insertAt = currentText.length;
-            const separator = currentText.trim() ? '\n\n' : '';
-            ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
-          }
-
-          syncTextToFragment(dc.document);
+          applyAgentMarkdownWrite(dc.document, markdown, position);
 
           const activityMap = dc.document.getMap('activity');
           activityMap.set(DEFAULT_AGENT_ID, {
@@ -1325,12 +1306,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
+          // Read current authoritative body from XmlFragment (Bug-A fix — precedent #12)
+          const xmlFragment = dc.document.getXmlFragment('default');
+          const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
           const pos =
             offset == null
-              ? currentText.indexOf(find)
-              : currentText.slice(offset, offset + find.length) === find
+              ? currentBody.indexOf(find)
+              : currentBody.slice(offset, offset + find.length) === find
                 ? offset
                 : -1;
           if (pos === -1) {
@@ -1341,9 +1323,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             }
             return;
           }
-          ytext.delete(pos, find.length);
-          ytext.insert(pos, replace);
-          syncTextToFragment(dc.document);
+          const newBody =
+            currentBody.slice(0, pos) + replace + currentBody.slice(pos + find.length);
+          applyAgentMarkdownWrite(dc.document, newBody, 'replace');
+
           const activityMap = dc.document.getMap('activity');
           activityMap.set(DEFAULT_AGENT_ID, {
             agentId: DEFAULT_AGENT_ID,

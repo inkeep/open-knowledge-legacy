@@ -2,8 +2,8 @@ export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,
   AgentSessionManager,
+  applyAgentMarkdownWrite,
   DEFAULT_AGENT_ID,
-  syncTextToFragment,
 } from './agent-sessions.ts';
 export {
   type ApiExtensionOptions,
