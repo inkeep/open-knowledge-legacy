@@ -25,6 +25,7 @@ import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
+  applyByPrefixSuffix,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -102,7 +103,6 @@ const MANAGED_RENAME_ORIGIN = {
 };
 
 const log = getLogger('api');
-
 
 /** Validates a docName and builds a shadow-repo-safe path.
  * Uses the same traversal check as safeContentPath (reject `..` and null bytes)
@@ -658,6 +658,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     let result: ManagedRenameRewriteSummary = { markdown: '', rewrites: 0 };
     document.transact(() => {
+      const xmlFragment = document.getXmlFragment('default');
       const ytext = document.getText('source');
       const currentText = ytext.toString();
       result = rewriteSupportedLinksForDocumentRename(currentText, docName, oldDocName, newDocName);
@@ -665,9 +666,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      ytext.delete(0, currentText.length);
-      ytext.insert(0, result.markdown);
-      syncTextToFragment(document);
+      // Apply rewrite via XmlFragment-authoritative pattern (AGENTS.md precedent #12;
+      // replaces the deleted syncTextToFragment helper). Parse new markdown →
+      // updateYFragment (preserves user-content Items at matching positions) →
+      // mirror Y.Text via applyByPrefixSuffix (minimal CRDT mutation).
+      const { body } = stripFrontmatter(result.markdown);
+      const parsedJson = mdManager.parseWithFallback(body);
+      const pmNode = schema.nodeFromJSON(parsedJson);
+      updateYFragment(document, xmlFragment, pmNode, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
+      applyByPrefixSuffix(ytext, currentText, result.markdown);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }
