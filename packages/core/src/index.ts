@@ -13,6 +13,7 @@ export {
   hasNewEntries,
 } from './constants/activity.ts';
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
+export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
 export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
 
 // Extensions
@@ -24,9 +25,11 @@ export { HardBreakFidelity } from './extensions/hard-break-fidelity.ts';
 export { HeadingFidelity } from './extensions/heading-fidelity.ts';
 export { HtmlBlockFidelity } from './extensions/html-block-fidelity.ts';
 export { JsxComponent } from './extensions/jsx-component.ts';
+export { JsxInline } from './extensions/jsx-inline.ts';
 export { LinkFidelity } from './extensions/link-fidelity.ts';
 export { LinkRefDefFidelity } from './extensions/link-ref-def-fidelity.ts';
 export { List, ListItem, ListItemNode, ListNode } from './extensions/list.ts';
+export { RawMdxFallback } from './extensions/raw-mdx-fallback.ts';
 export { sharedExtensions } from './extensions/shared.ts';
 export { ThematicBreakFidelity } from './extensions/thematic-break-fidelity.ts';
 export {
@@ -38,6 +41,15 @@ export {
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
 export { MarkdownManager } from './markdown/index.ts';
+export {
+  getParseHealth,
+  incrementBlockFallback,
+  incrementWholeDocFallback,
+  incrementYpsMismatchBlock,
+  incrementYpsMismatchInline,
+  type ParseHealthMetrics,
+  resetParseHealth,
+} from './metrics/parse-health.ts';
 // Shadow-repo layout helpers are NOT re-exported here — they import `node:fs`
 // and would contaminate core's browser-compatibility contract. Import via the
 // subpath: `import { parseWriterId } from '@inkeep/open-knowledge-core/shadow-repo-layout'`.

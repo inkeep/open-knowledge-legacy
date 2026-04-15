@@ -6,7 +6,7 @@ export const OK_MARKER_BEGIN = '<!-- open-knowledge:begin -->';
 export const OK_MARKER_END = '<!-- open-knowledge:end -->';
 const OK_MARKER_RE = /<!-- open-knowledge:begin -->[\s\S]*?<!-- open-knowledge:end -->/;
 
-export const AGENTS_MD_CONTENT = `# .open-knowledge/ — Open Knowledge config
+export const AGENTS_MD_CONTENT = `# ${OK_DIR}/ — Open Knowledge config
 
 This directory holds Open Knowledge's configuration for this project. It's **not** where content lives — content lives wherever \`content.dir\` + \`content.include\` in \`config.yml\` point. The default is the repo root with \`**/*.md\`, so any markdown file in the project is fair game. Inspect \`config.yml\` for the actual setting.
 
@@ -73,11 +73,11 @@ Per-file frontmatter is the **only** authored metadata surface. Folder-level fro
 
 This directory was scaffolded by running \`open-knowledge init\` (or \`npx @inkeep/open-knowledge init\`) in the project root. That command:
 
-1. Creates \`.open-knowledge/\` (config-only — no content subdirs)
+1. Creates \`${OK_DIR}/\` (config-only — no content subdirs)
 2. Writes \`AGENTS.md\`, \`.gitignore\`, and \`config.yml\`
 3. Registers the Open Knowledge MCP server in \`.mcp.json\` at the repo root
 
-If you're onboarding a new project and \`.open-knowledge/\` doesn't exist yet, run \`open-knowledge init\` from a terminal.
+If you're onboarding a new project and \`${OK_DIR}/\` doesn't exist yet, run \`open-knowledge init\` from a terminal.
 
 ## Tools
 
@@ -100,15 +100,15 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #
 # Precedence (lowest -> highest):
 #   Built-in defaults
-#     -> ~/.open-knowledge/config.yml         (user defaults)
-#     -> ./.open-knowledge/config.yml         (this file)
+#     -> ~/${OK_DIR}/config.yml         (user defaults)
+#     -> ./${OK_DIR}/config.yml         (this file)
 #
 # Schema reference: packages/cli/src/config/schema.ts
 
 
 # --- Content ---------------------------------------------------------------
 # dir: where the CRDT editor reads/writes documents. Relative to the project
-# root (the directory containing .open-knowledge/), NOT to this file.
+# root (the directory containing ${OK_DIR}/), NOT to this file.
 #
 # include/exclude: glob patterns for tracked content files. Relative to the
 # content directory (content.dir).
@@ -130,7 +130,7 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 export const CLAUDE_MD_SECTION = `${OK_MARKER_BEGIN}
 ## Open Knowledge
 
-This repo uses Open Knowledge — agent-collaborative wiki tooling exposed via MCP. The scope of tracked content is \`.open-knowledge/config.yml\` (default: every \`**/*.md\` under the repo root).
+This repo uses Open Knowledge — agent-collaborative wiki tooling exposed via MCP. The scope of tracked content is \`${OK_DIR}/config.yml\` (default: every \`**/*.md\` under the repo root).
 
 **Reading (wiki markdown).** Prefer the \`exec\` MCP tool over native \`Read\` / \`Grep\` / \`Glob\`. \`exec\` runs \`cat\` / \`ls\` / \`grep\` / \`find\` / \`head\` / \`tail\` / \`wc\` / \`sort\` / \`uniq\` / \`cut\` with pipes, and every returned path is enriched with frontmatter (title, description, tags), backlink count, and recent shadow-repo activity with agent-vs-human attribution. One tool covers read/list/search with attribution that native tools don't see. Examples: \`exec("cat docs/auth.md")\`, \`exec("ls articles/")\`, \`exec("grep -rn oauth . | head -5")\`.
 

@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import { type GrepMatch, grep } from '../../bash/index.ts';
 import type { Config } from '../../config/schema.ts';
+import { OK_DIR } from '../../constants.ts';
 import { type EnrichedMeta, enrichPath } from '../../content/enrichment.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
@@ -64,7 +65,7 @@ export async function buildSearchResult(
   const matches = await grep(args.query, {
     caseInsensitive: !(args.case_sensitive ?? false),
     include,
-    exclude: [...exclude, 'node_modules', '.git', '.claude', '.changeset', '.open-knowledge'],
+    exclude: [...exclude, 'node_modules', '.git', '.claude', '.changeset', OK_DIR],
     maxResults: maxResults + 1,
   });
 

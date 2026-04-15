@@ -15,6 +15,7 @@ import { BlockDragHandle } from './drag-handle';
 import { HeadingAnchors } from './heading-anchors';
 import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';
+import { RawMdxFallback } from './raw-mdx-fallback';
 import { SlashCommand } from './slash-command';
 import { WikiLink } from './wiki-link';
 
@@ -22,6 +23,7 @@ import { WikiLink } from './wiki-link';
 export const sharedExtensions = [
   ...coreExtensions.map((ext) => {
     if (ext.name === 'jsxComponent') return JsxComponent;
+    if (ext.name === 'rawMdxFallback') return RawMdxFallback;
     if (ext.name === 'wikiLink') return WikiLink;
     if (ext.name === 'link') return InternalLink;
     return ext;

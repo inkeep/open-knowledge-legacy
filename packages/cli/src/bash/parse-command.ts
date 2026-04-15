@@ -25,6 +25,7 @@
  * Spec: SPEC.md FR2 + FR3 + FR8 + D15 + D21.
  */
 import shellQuote from 'shell-quote';
+import { OK_DIR } from '../constants.ts';
 import { shellEscape } from './shell-escape.ts';
 
 export type ErrorCategory =
@@ -67,7 +68,7 @@ const WIKI_EXCLUDE_DIRS: readonly string[] = [
   '.cache',
   '.parcel-cache',
   '.vercel',
-  '.open-knowledge',
+  OK_DIR,
 ];
 
 /**

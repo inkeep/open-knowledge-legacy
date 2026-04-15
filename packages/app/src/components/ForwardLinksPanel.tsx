@@ -23,11 +23,23 @@ import { cn } from '@/lib/utils';
 
 interface ForwardLinksResponse {
   ok: boolean;
-  forwardLinks?: string[];
+  forwardLinks?: ForwardLinkItem[];
   error?: string;
 }
 
-async function fetchForwardLinks(docName: string): Promise<string[]> {
+interface ForwardLinkItem {
+  docName: string;
+  title: string;
+  snippet: string | null;
+}
+
+function compactForwardLinkPath(docName: string): string {
+  const segments = docName.split('/');
+  if (segments.length <= 2) return docName;
+  return `…/${segments.slice(-2).join('/')}`;
+}
+
+async function fetchForwardLinks(docName: string): Promise<ForwardLinkItem[]> {
   const res = await fetch(`/api/forward-links?docName=${encodeURIComponent(docName)}`);
   if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
   const data = (await res.json()) as ForwardLinksResponse;
@@ -77,8 +89,10 @@ export function ForwardLinksPanel({
             <PanelEmpty>This page doesn't link to anything yet.</PanelEmpty>
           ) : (
             <div className="flex flex-col gap-2">
-              {links.map((target, index) => {
-                const unresolved = !pagesLoading && !isResolvedWikiLinkTarget(target, pages);
+              {links.map((link, index) => {
+                const unresolved = !pagesLoading && !isResolvedWikiLinkTarget(link.docName, pages);
+                const compactPath = compactForwardLinkPath(link.docName);
+                const displayTitle = link.title === link.docName ? compactPath : link.title;
 
                 return (
                   <Button
@@ -86,19 +100,37 @@ export function ForwardLinksPanel({
                     key={index}
                     variant="ghost"
                     className={cn(
-                      'h-auto w-full justify-start px-3 py-2 text-left',
+                      'h-auto w-full items-start justify-start whitespace-normal px-3 py-2 text-left',
                       unresolved &&
                         'border-amber-300 bg-amber-50/70 text-amber-950 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200 dark:hover:bg-amber-950/35',
                     )}
-                    onClick={() => handleRowClick(target)}
+                    onClick={() => handleRowClick(link.docName)}
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{target}</div>
+                      <div
+                        className="truncate text-sm font-medium"
+                        title={link.title === link.docName ? link.docName : undefined}
+                      >
+                        {displayTitle}
+                      </div>
+                      {link.title !== link.docName ? (
+                        <div
+                          className="truncate font-mono text-xs text-muted-foreground"
+                          title={link.docName}
+                        >
+                          {compactPath}
+                        </div>
+                      ) : null}
                       {unresolved ? (
                         <div className="mt-0.5 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
                           <FilePlus2 className="size-3 shrink-0" aria-hidden="true" />
                           <span>Missing page. Click to create.</span>
                         </div>
+                      ) : null}
+                      {link.snippet ? (
+                        <p className="mt-1 break-words text-sm text-muted-foreground">
+                          {link.snippet}
+                        </p>
                       ) : null}
                     </div>
                   </Button>

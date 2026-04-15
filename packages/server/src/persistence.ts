@@ -350,10 +350,12 @@ export function createPersistenceExtension(options?: PersistenceOptions): Persis
         metaMap.set('frontmatter', frontmatter);
       }
 
-      // Use parseSafe() — never throws. On acorn/remark-mdx errors (e.g.,
-      // files with `{non-JS content}`), retries with all { protected. Better
-      // to show degraded content than an empty document.
-      const json = mdManager.parseSafe(body);
+      // parseWithFallback — never throws (R6). On parse failure with position
+      // info, degrades to block-level rawMdxFallback preserving surrounding
+      // structure. On position-less error, splits at blank-line boundaries
+      // per-block. Only falls through to whole-doc raw text when every block
+      // fails — strictly better than parse() throwing on broken MDX.
+      const json = mdManager.parseWithFallback(body);
 
       const xmlFragment = document.getXmlFragment('default');
       log.info(

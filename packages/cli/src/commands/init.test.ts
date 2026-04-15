@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { loadConfig } from '../config/loader.ts';
+import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
 import { ALL_EDITOR_IDS } from './editors.ts';
 import { formatInitResult, runInit } from './init.ts';
@@ -31,12 +32,12 @@ describe('runInit', () => {
 
     expect(result.contentCreated.length).toBeGreaterThan(0);
     // Post-V0-24.2 scaffold: config-only, no content subdirs
-    expect(existsSync(join(testDir, '.open-knowledge', 'cache'))).toBe(true);
-    expect(existsSync(join(testDir, '.open-knowledge', 'AGENTS.md'))).toBe(true);
-    expect(existsSync(join(testDir, '.open-knowledge', 'config.yml'))).toBe(true);
-    expect(existsSync(join(testDir, '.open-knowledge', 'articles'))).toBe(false);
-    expect(existsSync(join(testDir, '.open-knowledge', 'external-sources'))).toBe(false);
-    expect(existsSync(join(testDir, '.open-knowledge', 'research'))).toBe(false);
+    expect(existsSync(join(testDir, OK_DIR, 'cache'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'articles'))).toBe(false);
+    expect(existsSync(join(testDir, OK_DIR, 'external-sources'))).toBe(false);
+    expect(existsSync(join(testDir, OK_DIR, 'research'))).toBe(false);
 
     // Backward-compat fields
     expect(result.mcpAction).toBe('written');
@@ -147,8 +148,8 @@ describe('runInit', () => {
     expect(existsSync(join(testDir, '.mcp.json'))).toBe(false);
 
     // But the .open-knowledge/ config scaffold IS created
-    expect(existsSync(join(testDir, '.open-knowledge', 'AGENTS.md'))).toBe(true);
-    expect(existsSync(join(testDir, '.open-knowledge', 'config.yml'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'config.yml'))).toBe(true);
   });
 
   it('is idempotent — running twice produces the same end state', () => {
@@ -175,7 +176,7 @@ describe('runInit', () => {
     expect(result.mcpError).toMatch(/invalid JSON/i);
 
     // Config scaffold should still have been created
-    expect(existsSync(join(testDir, '.open-knowledge', 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, OK_DIR, 'AGENTS.md'))).toBe(true);
   });
 
   // -----------------------------------------------------------------------

@@ -40,7 +40,7 @@ async function callRoute(
   contentDir: string,
   url: string,
   fileIndex: ReadonlyMap<string, FileIndexEntry>,
-  backlinkIndex: BacklinkIndex,
+  backlinkIndex?: BacklinkIndex,
 ): Promise<CapturedResponse> {
   const ext = createApiExtension({
     hocuspocus: {} as never,
@@ -60,7 +60,7 @@ async function callRoute(
 }
 
 describe('graph endpoints', () => {
-  test('serve backlinks, forward links, orphans, and hubs', async () => {
+  test('serve backlinks, forward links, mode-based orphans, and hubs', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-graph-api-'));
     const contentDir = join(projectDir, 'content');
     mkdirSync(contentDir, { recursive: true });
@@ -71,9 +71,36 @@ describe('graph endpoints', () => {
       writeFileSync(join(contentDir, 'gamma.md'), '# Gamma\n\nNo links.\n', 'utf-8');
 
       const fileIndex = new Map<string, FileIndexEntry>([
-        ['alpha', { size: 10, modified: new Date(0).toISOString() }],
-        ['beta', { size: 10, modified: new Date(0).toISOString() }],
-        ['gamma', { size: 10, modified: new Date(0).toISOString() }],
+        [
+          'alpha',
+          {
+            size: 10,
+            modified: new Date(0).toISOString(),
+            canonicalPath: '',
+            inode: 0,
+            aliases: [],
+          },
+        ],
+        [
+          'beta',
+          {
+            size: 10,
+            modified: new Date(0).toISOString(),
+            canonicalPath: '',
+            inode: 0,
+            aliases: [],
+          },
+        ],
+        [
+          'gamma',
+          {
+            size: 10,
+            modified: new Date(0).toISOString(),
+            canonicalPath: '',
+            inode: 0,
+            aliases: [],
+          },
+        ],
       ]);
       const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
       backlinkIndex.rebuildFromDisk();
@@ -92,13 +119,29 @@ describe('graph endpoints', () => {
       const forward = JSON.parse(
         (await callRoute(contentDir, '/api/forward-links?docName=alpha', fileIndex, backlinkIndex))
           .body,
-      ) as { forwardLinks: string[] };
-      expect(forward.forwardLinks).toEqual(['beta']);
+      ) as { forwardLinks: Array<{ docName: string; title: string; snippet: string | null }> };
+      expect(forward.forwardLinks).toEqual([
+        {
+          docName: 'beta',
+          title: 'Beta',
+          snippet: 'Links to beta.',
+        },
+      ]);
 
       const orphans = JSON.parse(
         (await callRoute(contentDir, '/api/orphans', fileIndex, backlinkIndex)).body,
       ) as { orphans: Array<{ docName: string }> };
-      expect(orphans.orphans.map((entry) => entry.docName)).toEqual(['alpha', 'gamma']);
+      expect(orphans.orphans.map((entry) => entry.docName)).toEqual(['gamma']);
+
+      const incomingOrphans = JSON.parse(
+        (await callRoute(contentDir, '/api/orphans?mode=incoming', fileIndex, backlinkIndex)).body,
+      ) as { orphans: Array<{ docName: string }> };
+      expect(incomingOrphans.orphans.map((entry) => entry.docName)).toEqual(['alpha', 'gamma']);
+
+      const outgoingOrphans = JSON.parse(
+        (await callRoute(contentDir, '/api/orphans?mode=outgoing', fileIndex, backlinkIndex)).body,
+      ) as { orphans: Array<{ docName: string }> };
+      expect(outgoingOrphans.orphans.map((entry) => entry.docName)).toEqual(['beta', 'gamma']);
 
       const hubs = JSON.parse(
         (await callRoute(contentDir, '/api/hubs?limit=1', fileIndex, backlinkIndex)).body,
@@ -171,6 +214,188 @@ describe('graph endpoints', () => {
       expect(JSON.parse(invalidDegrees.body)).toEqual({
         ok: false,
         error: 'degrees must be a non-negative integer',
+      });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('serve dead links globally and with source-doc scoping', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-dead-links-api-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      writeFileSync(
+        join(contentDir, 'alpha.md'),
+        '# Alpha\n\nSee [[missing-target]].\nAlso [missing markdown](./missing-markdown.md).\nSee [[existing]].\n',
+        'utf-8',
+      );
+      writeFileSync(join(contentDir, 'beta.md'), '# Beta\n\nSee [[missing-target]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'gamma.md'), '# Gamma\n\nSee [[other-missing]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'existing.md'), '# Existing\n\nBody.\n', 'utf-8');
+
+      const fileIndex = new Map<string, FileIndexEntry>([
+        [
+          'alpha',
+          {
+            size: 10,
+            modified: new Date(0).toISOString(),
+            canonicalPath: '',
+            inode: 0,
+            aliases: [],
+          },
+        ],
+        [
+          'beta',
+          {
+            size: 10,
+            modified: new Date(0).toISOString(),
+            canonicalPath: '',
+            inode: 0,
+            aliases: [],
+          },
+        ],
+        [
+          'gamma',
+          {
+            size: 10,
+            modified: new Date(0).toISOString(),
+            canonicalPath: '',
+            inode: 0,
+            aliases: [],
+          },
+        ],
+        [
+          'existing',
+          {
+            size: 10,
+            modified: new Date(0).toISOString(),
+            canonicalPath: '',
+            inode: 0,
+            aliases: [],
+          },
+        ],
+      ]);
+      const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
+      backlinkIndex.rebuildFromDisk();
+
+      const globalResponse = await callRoute(
+        contentDir,
+        '/api/dead-links',
+        fileIndex,
+        backlinkIndex,
+      );
+      expect(globalResponse.status).toBe(200);
+      const globalBody = JSON.parse(globalResponse.body) as {
+        ok: boolean;
+        deadLinks: Array<{
+          target: string;
+          sources: Array<{ source: string; title: string; snippet: string | null }>;
+        }>;
+      };
+      expect(globalBody.ok).toBe(true);
+      expect(globalBody.deadLinks).toEqual([
+        {
+          target: 'missing-target',
+          sources: [
+            { source: 'alpha', title: 'Alpha', snippet: 'See missing-target.' },
+            { source: 'beta', title: 'Beta', snippet: 'See missing-target.' },
+          ],
+        },
+        {
+          target: 'missing-markdown',
+          sources: [{ source: 'alpha', title: 'Alpha', snippet: 'Also missing markdown.' }],
+        },
+        {
+          target: 'other-missing',
+          sources: [{ source: 'gamma', title: 'Gamma', snippet: 'See other-missing.' }],
+        },
+      ]);
+
+      const scopedResponse = await callRoute(
+        contentDir,
+        '/api/dead-links?sourceDocName=alpha&sourceDocName=beta',
+        fileIndex,
+        backlinkIndex,
+      );
+      expect(scopedResponse.status).toBe(200);
+      const scopedBody = JSON.parse(scopedResponse.body) as {
+        ok: boolean;
+        deadLinks: Array<{
+          target: string;
+          sources: Array<{ source: string; title: string; snippet: string | null }>;
+        }>;
+      };
+      expect(scopedBody.deadLinks).toEqual([
+        {
+          target: 'missing-target',
+          sources: [
+            { source: 'alpha', title: 'Alpha', snippet: 'See missing-target.' },
+            { source: 'beta', title: 'Beta', snippet: 'See missing-target.' },
+          ],
+        },
+        {
+          target: 'missing-markdown',
+          sources: [{ source: 'alpha', title: 'Alpha', snippet: 'Also missing markdown.' }],
+        },
+      ]);
+
+      const emptyResponse = await callRoute(
+        contentDir,
+        '/api/dead-links?sourceDocName=missing-source',
+        fileIndex,
+        backlinkIndex,
+      );
+      expect(emptyResponse.status).toBe(200);
+      expect(JSON.parse(emptyResponse.body)).toEqual({ ok: true, deadLinks: [] });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('returns 503 when the backlink index is unavailable', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-dead-links-unavailable-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const fileIndex = new Map<string, FileIndexEntry>();
+      const response = await callRoute(contentDir, '/api/dead-links', fileIndex);
+      expect(response.status).toBe(503);
+      expect(JSON.parse(response.body)).toEqual({
+        ok: false,
+        error: 'Backlink index not configured',
+      });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('reject invalid orphan mode query values', async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-graph-api-invalid-mode-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+
+    try {
+      writeFileSync(join(contentDir, 'alpha.md'), '# Alpha\n', 'utf-8');
+
+      const fileIndex = new Map<string, FileIndexEntry>([
+        ['alpha', { size: 10, modified: new Date(0).toISOString() }],
+      ]);
+      const backlinkIndex = new BacklinkIndex({ projectDir, contentDir });
+      backlinkIndex.rebuildFromDisk();
+
+      const response = await callRoute(
+        contentDir,
+        '/api/orphans?mode=sideways',
+        fileIndex,
+        backlinkIndex,
+      );
+
+      expect(response.status).toBe(400);
+      expect(JSON.parse(response.body)).toEqual({
+        ok: false,
+        error: 'Invalid orphan mode. Allowed values: incoming, outgoing, both',
       });
     } finally {
       rmSync(projectDir, { recursive: true, force: true });

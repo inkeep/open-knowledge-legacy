@@ -3,6 +3,9 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   getWikiLinkText,
+  isOrphanMode,
+  ORPHAN_MODES,
+  type OrphanMode,
   resolveInternalHref,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
@@ -41,10 +44,22 @@ export interface BacklinkEntry {
   snippet: string | null;
 }
 
+export interface ForwardLinkEntry {
+  target: string;
+  snippet: string | null;
+}
+
 export interface HubEntry {
   docName: string;
   count: number;
 }
+
+export interface DeadLinkEntry {
+  target: string;
+  sources: BacklinkEntry[];
+}
+
+export { isOrphanMode, ORPHAN_MODES, type OrphanMode };
 
 interface BranchGraphState {
   backward: Map<string, Map<string, string | null>>;
@@ -514,12 +529,24 @@ export class BacklinkIndex {
     return [...(state.forward.get(source) ?? new Set<string>())].sort((a, b) => a.localeCompare(b));
   }
 
-  getOrphans(allDocs: string[], branch = this.activeBranch): string[] {
+  getForwardLinkEntries(source: string, branch = this.activeBranch): ForwardLinkEntry[] {
+    const state = this.getState(branch);
+    return this.getForwardLinks(source, branch).map((target) => ({
+      target,
+      snippet: state.backward.get(target)?.get(source) ?? null,
+    }));
+  }
+
+  getOrphans(allDocs: string[], mode: OrphanMode = 'both', branch = this.activeBranch): string[] {
     const state = this.getState(branch);
     return [...allDocs]
       .filter((docName) => {
-        const backlinks = state.backward.get(docName);
-        return !backlinks || backlinks.size === 0;
+        const hasInboundEdges = (state.backward.get(docName)?.size ?? 0) > 0;
+        const hasOutboundEdges = (state.forward.get(docName)?.size ?? 0) > 0;
+
+        if (mode === 'incoming') return !hasInboundEdges;
+        if (mode === 'outgoing') return !hasOutboundEdges;
+        return !hasInboundEdges && !hasOutboundEdges;
       })
       .sort((a, b) => a.localeCompare(b));
   }
@@ -532,6 +559,39 @@ export class BacklinkIndex {
         b.count === a.count ? a.docName.localeCompare(b.docName) : b.count - a.count,
       )
       .slice(0, limit);
+  }
+
+  getDeadLinks(
+    admittedDocs: Iterable<string>,
+    sourceDocNames?: readonly string[],
+    branch = this.activeBranch,
+  ): DeadLinkEntry[] {
+    const state = this.getState(branch);
+    const admittedDocSet = new Set(admittedDocs);
+    const sourceDocSet = sourceDocNames?.length ? new Set(sourceDocNames) : null;
+
+    return [...state.backward.entries()]
+      .filter(([target, sources]) => {
+        if (admittedDocSet.has(target)) return false;
+        if (!sourceDocSet) return sources.size > 0;
+        for (const source of sources.keys()) {
+          if (sourceDocSet.has(source)) return true;
+        }
+        return false;
+      })
+      .map(([target, sources]) => ({
+        target,
+        sources: [...sources.entries()]
+          .filter(([source]) => !sourceDocSet || sourceDocSet.has(source))
+          .map(([source, snippet]) => ({ source, snippet }))
+          .sort((a, b) => a.source.localeCompare(b.source)),
+      }))
+      .filter((entry) => entry.sources.length > 0)
+      .sort((a, b) =>
+        b.sources.length === a.sources.length
+          ? a.target.localeCompare(b.target)
+          : b.sources.length - a.sources.length,
+      );
   }
 
   getLinkGraph(branch = this.activeBranch): {

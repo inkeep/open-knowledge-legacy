@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Config } from '../config/schema.ts';
+import { OK_DIR } from '../constants.ts';
 import { formatPreviewBlock, previewContent } from '../content/preview.ts';
 
 function makeConfig(overrides: Partial<Config['content']> = {}): Config {
@@ -37,7 +38,7 @@ describe('preview command', () => {
     writeFileSync(join(testDir, 'b.md'), '# B');
     writeFileSync(join(testDir, 'c.md'), '# C');
 
-    expect(existsSync(join(testDir, '.open-knowledge'))).toBe(false);
+    expect(existsSync(join(testDir, OK_DIR))).toBe(false);
 
     const config = makeConfig();
     const contentDir = resolve(testDir, config.content.dir);
@@ -103,7 +104,7 @@ describe('preview command', () => {
   it('produces zero filesystem writes', () => {
     writeFileSync(join(testDir, 'test.md'), '# Test');
 
-    const okExistsBefore = existsSync(join(testDir, '.open-knowledge'));
+    const okExistsBefore = existsSync(join(testDir, OK_DIR));
     const mcpExistsBefore = existsSync(join(testDir, '.mcp.json'));
 
     const config = makeConfig();
@@ -114,7 +115,7 @@ describe('preview command', () => {
       exclude: config.content.exclude,
     });
 
-    expect(existsSync(join(testDir, '.open-knowledge'))).toBe(okExistsBefore);
+    expect(existsSync(join(testDir, OK_DIR))).toBe(okExistsBefore);
     expect(existsSync(join(testDir, '.mcp.json'))).toBe(mcpExistsBefore);
   });
 

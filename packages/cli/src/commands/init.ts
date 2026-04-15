@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { Command } from 'commander';
-import { OK_DIR } from '../constants.ts';
+import { MCP_SERVER_NAME, OK_DIR } from '../constants.ts';
 import {
   initContent,
   type RootInstructionResult,
@@ -31,8 +31,6 @@ import {
   type EditorMcpTarget,
   resolveEditorTargets,
 } from './editors.ts';
-
-const MCP_SERVER_NAME = 'open-knowledge';
 
 // ---------------------------------------------------------------------------
 // Config I/O — generic across all editors
@@ -385,10 +383,10 @@ function parseEditorFlag(value: string): EditorId[] {
 export function initCommand(): Command {
   return new Command('init')
     .description(
-      'Scaffold .open-knowledge/ in the current directory and register the MCP server for your editor(s)',
+      `Scaffold ${OK_DIR}/ in the current directory and register the MCP server for your editor(s)`,
     )
     .option('--mcp', 'Register the MCP server for selected editors (default: true)', true)
-    .option('--no-mcp', 'Scaffold the .open-knowledge/ directory but do not touch MCP config')
+    .option('--no-mcp', `Scaffold the ${OK_DIR}/ directory but do not touch MCP config`)
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
       '--editor <editors>',

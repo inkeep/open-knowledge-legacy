@@ -216,6 +216,57 @@ describe('BacklinkIndex', () => {
     }
   });
 
+  test('getDeadLinks returns missing targets ordered by source count then target', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-dead-links-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      writeFileSync(
+        join(contentDir, 'alpha.md'),
+        '# Alpha\n\nSee [[missing-target]] and [missing markdown](./missing-markdown.md) plus [[existing]].\n',
+        'utf-8',
+      );
+      writeFileSync(join(contentDir, 'beta.md'), '# Beta\n\nSee [[missing-target]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'gamma.md'), '# Gamma\n\nSee [[other-missing]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'existing.md'), '# Existing\n\nBody.\n', 'utf-8');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.rebuildFromDisk();
+
+      const deadLinks = index.getDeadLinks(['alpha', 'beta', 'gamma', 'existing']);
+      expect(deadLinks.map((entry) => entry.target)).toEqual([
+        'missing-target',
+        'missing-markdown',
+        'other-missing',
+      ]);
+      expect(deadLinks[0]?.sources.map((entry) => entry.source)).toEqual(['alpha', 'beta']);
+      expect(deadLinks[1]?.sources.map((entry) => entry.source)).toEqual(['alpha']);
+      expect(deadLinks[2]?.sources.map((entry) => entry.source)).toEqual(['gamma']);
+      expect(
+        deadLinks.every((entry) => entry.sources.every((source) => source.snippet !== null)),
+      ).toBe(true);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('getDeadLinks returns an empty array when every target exists', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-dead-links-empty-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      writeFileSync(join(contentDir, 'alpha.md'), '# Alpha\n\nSee [[beta]].\n', 'utf-8');
+      writeFileSync(join(contentDir, 'beta.md'), '# Beta\n\nReady.\n', 'utf-8');
+
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.rebuildFromDisk();
+
+      expect(index.getDeadLinks(['alpha', 'beta'])).toEqual([]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   test('rebuilds from disk and persists cache per branch', async () => {
     const projectDir = mkdtempSync(join(tmpdir(), 'ok-backlinks-project-'));
     const contentDir = join(projectDir, 'content');
@@ -287,6 +338,27 @@ describe('BacklinkIndex', () => {
           snippet: 'See beta.',
         },
       ]);
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test('getOrphans supports incoming, outgoing, and both modes', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-orphan-modes-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.updateDocumentFromMarkdown('alpha', '[[beta]]');
+      index.updateDocumentFromMarkdown('beta', '# Beta');
+      index.updateDocumentFromMarkdown('gamma', '# Gamma');
+
+      const allDocs = ['alpha', 'beta', 'gamma'];
+
+      expect(index.getOrphans(allDocs, 'incoming')).toEqual(['alpha', 'gamma']);
+      expect(index.getOrphans(allDocs, 'outgoing')).toEqual(['beta', 'gamma']);
+      expect(index.getOrphans(allDocs, 'both')).toEqual(['gamma']);
+      expect(index.getOrphans(allDocs)).toEqual(['gamma']);
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
     }
