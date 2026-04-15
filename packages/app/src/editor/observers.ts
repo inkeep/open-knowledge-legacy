@@ -173,18 +173,6 @@ interface ObserverDeps {
   mdManager: MarkdownManager;
   schema?: Schema;
   onSyncError?: (direction: 'tree-to-text' | 'text-to-tree', error: Error) => void;
-  /** Optional: invoked when DMP patch_apply reports one or more failed patches
-   *  during Observer A's Path B three-way merge. Diagnostic only — non-fatal.
-   *  Consumers (debug panel, V0-14 telemetry) opt in; omitted callback = no-op.
-   *  The same event is always logged via `console.warn`. */
-  onMergeFailed?: (info: {
-    failedPatches: number;
-    totalPatches: number;
-    baseLen: number;
-    userLen: number;
-    agentLen: number;
-    mergedLen: number;
-  }) => void;
   /** Optional scheduler injection for deterministic testing (FR-15).
    *  Default: arrow-wrapped passthrough to globalThis.setTimeout/clearTimeout.
    *  Tests: inject createManualScheduler() for synchronous flush. */
