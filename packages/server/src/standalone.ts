@@ -14,6 +14,7 @@ import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from '.
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
+import { recoverPendingManagedRename } from './managed-rename-journal.ts';
 import { mdManager } from './md-manager.ts';
 import {
   incrementBatch,
@@ -97,7 +98,8 @@ export interface ServerInstance {
    * Names of subsystems that failed to initialize during boot.
    * Read AFTER `await ready` for a stable list; reads before may return a partial result.
    * Empty array means all subsystems initialized successfully.
-   * Possible values: `'shadow-repo'`, `'file-watcher'`, `'head-watcher'`.
+   * Possible values: `'shadow-repo'`, `'managed-rename-recovery'`, `'file-watcher'`,
+   * `'head-watcher'`.
    */
   readonly degraded: readonly string[];
   /**
@@ -818,6 +820,23 @@ export function createServer(options: ServerOptions): ServerInstance {
           log.error({ err: e }, '[server] shadow repo check failed (transient?)');
         }
       }
+    }
+
+    try {
+      const recovery = recoverPendingManagedRename(contentDir);
+      if (recovery.recovered && recovery.journal) {
+        log.warn(
+          {
+            sourceDocName: recovery.journal.sourceDocName,
+            destinationDocName: recovery.journal.destinationDocName,
+            restoredDocNames: recovery.restoredDocNames,
+          },
+          `[managed-rename] recovered pending rename ${recovery.journal.sourceDocName} -> ${recovery.journal.destinationDocName}`,
+        );
+      }
+    } catch (err) {
+      log.error({ err }, '[server] managed rename recovery failed');
+      degraded.push('managed-rename-recovery');
     }
 
     // Pre-materialize __system__ Y.Doc so CC1 broadcaster has a target before

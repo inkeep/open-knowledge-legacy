@@ -59,6 +59,11 @@ export {
   type PinoLoggerConfig,
 } from './logger.ts';
 export {
+  type RenameRewriteResult,
+  rewriteMarkdownLinksForDocumentRename,
+  rewriteWikiLinksForDocumentRename,
+} from './managed-rename-rewrite.ts';
+export {
   getMetrics,
   type ReconciliationMetrics,
   resetMetrics,
