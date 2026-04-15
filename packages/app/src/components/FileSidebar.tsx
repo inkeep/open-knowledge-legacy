@@ -1,8 +1,6 @@
 import { FolderPlus, SquarePen } from 'lucide-react';
 import { useState } from 'react';
 import { FileTree } from '@/components/FileTree';
-import { defaultInitialDir } from '@/components/file-tree-utils';
-import { NewItemDialog } from '@/components/NewItemDialog';
 import { Button } from '@/components/ui/button';
 import {
   Sidebar,
@@ -11,19 +9,17 @@ import {
   SidebarMenu,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { useDocumentContext } from '@/editor/DocumentContext';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 export function FileSidebar() {
-  const { activeDocName } = useDocumentContext();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [dialogKind, setDialogKind] = useState<'file' | 'folder'>('file');
-  const [dialogInitialDir, setDialogInitialDir] = useState('');
+  const [createTrigger, setCreateTrigger] = useState<{
+    kind: 'file' | 'folder';
+    parentDir: string;
+    seq: number;
+  }>({ kind: 'file', parentDir: '', seq: 0 });
 
-  function openNewItemDialog(kind: 'file' | 'folder', initialDir?: string) {
-    setDialogKind(kind);
-    setDialogInitialDir(initialDir ?? defaultInitialDir(activeDocName));
-    setDialogOpen(true);
+  function triggerCreate(kind: 'file' | 'folder', parentDir: string) {
+    setCreateTrigger((prev) => ({ kind, parentDir, seq: prev.seq + 1 }));
   }
 
   return (
@@ -38,11 +34,7 @@ export function FileSidebar() {
               <div className="flex items-center gap-1">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openNewItemDialog('file', '')}
-                    >
+                    <Button variant="ghost" size="icon" onClick={() => triggerCreate('file', '')}>
                       <SquarePen aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
@@ -50,11 +42,7 @@ export function FileSidebar() {
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openNewItemDialog('folder', '')}
-                    >
+                    <Button variant="ghost" size="icon" onClick={() => triggerCreate('folder', '')}>
                       <FolderPlus aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
@@ -66,15 +54,8 @@ export function FileSidebar() {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        <FileTree onNewItem={openNewItemDialog} />
+        <FileTree createTrigger={createTrigger} />
       </SidebarContent>
-
-      <NewItemDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        kind={dialogKind}
-        initialDir={dialogInitialDir}
-      />
     </Sidebar>
   );
 }

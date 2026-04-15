@@ -9,7 +9,8 @@ import {
   SquarePen,
   Trash2,
 } from 'lucide-react';
-import { type FC, useEffect, useState } from 'react';
+import { type FC, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
@@ -23,10 +24,13 @@ import {
 import {
   buildTree,
   collectFolderPaths,
+  composeInlineFilePath,
+  composeInlineFolderPath,
   computeAncestors,
   type DocEntry,
   type TreeNode,
 } from '@/components/file-tree-utils';
+import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -50,6 +54,10 @@ import { useDocumentContext } from '@/editor/DocumentContext';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 
+function navigateTo(docName: string) {
+  window.location.hash = `#/${docName}`;
+}
+
 interface RenamePathResponse {
   ok: boolean;
   renamed?: RenamedDocMapping[];
@@ -60,6 +68,56 @@ interface DeletePathResponse {
   ok: boolean;
   deletedDocNames?: string[];
   error?: string;
+}
+
+interface InlineCreateProps {
+  kind: 'file' | 'folder';
+  value: string;
+  busy: boolean;
+  error: string | null;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}
+
+function InlineCreateRow({
+  kind,
+  value,
+  busy,
+  error,
+  nested,
+  onChange,
+  onCommit,
+  onCancel,
+}: InlineCreateProps & { nested: boolean }) {
+  return (
+    <div className={cn('flex h-8 items-center gap-2 rounded-md px-2', !nested && 'ml-2')}>
+      {kind === 'folder' ? (
+        <Folder className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+      ) : (
+        <File className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+      )}
+      <Input
+        value={value}
+        autoFocus
+        disabled={busy}
+        placeholder={kind === 'folder' ? 'folder-name' : 'file-name'}
+        className={cn('h-7 min-w-0 flex-1 bg-background text-sm', error && 'border-destructive')}
+        onBlur={onCancel}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            onCommit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+      />
+      {kind === 'file' && <span className="text-xs text-sidebar-foreground/40">.md</span>}
+    </div>
+  );
 }
 
 const FileTreeNode: FC<{
@@ -77,7 +135,8 @@ const FileTreeNode: FC<{
   onCommitRename: (target: FileTreeTarget) => void;
   onCancelRename: () => void;
   onDelete: (target: FileTreeTarget) => void;
-  onNewItem: (kind: 'file' | 'folder', initialDir: string) => void;
+  onStartCreating: (kind: 'file' | 'folder', parentDir: string) => void;
+  inlineCreate: InlineCreateProps | null;
   nested?: boolean;
 }> = ({
   node,
@@ -95,7 +154,8 @@ const FileTreeNode: FC<{
   onCommitRename,
   onCancelRename,
   onDelete,
-  onNewItem,
+  onStartCreating,
+  inlineCreate,
 }) => {
   const isFile = node.kind === 'file';
   const expanded = !isFile && expandedPaths.has(node.path);
@@ -210,7 +270,7 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={anyActionBusy}
                 onSelect={() => {
-                  if (!anyActionBusy) onNewItem('file', node.path);
+                  if (!anyActionBusy) onStartCreating('file', node.path);
                 }}
               >
                 <SquarePen aria-hidden="true" />
@@ -219,7 +279,7 @@ const FileTreeNode: FC<{
               <ContextMenuItem
                 disabled={anyActionBusy}
                 onSelect={() => {
-                  if (!anyActionBusy) onNewItem('folder', node.path);
+                  if (!anyActionBusy) onStartCreating('folder', node.path);
                 }}
               >
                 <FolderPlus aria-hidden="true" />
@@ -250,8 +310,13 @@ const FileTreeNode: FC<{
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      {node.children.length > 0 && expanded && (
+      {expanded && (node.children.length > 0 || !!inlineCreate) && (
         <SidebarMenuSub className="mr-0 pr-0">
+          {inlineCreate && (
+            <SidebarMenuSubItem>
+              <InlineCreateRow {...inlineCreate} nested />
+            </SidebarMenuSubItem>
+          )}
           {node.children.map((child) => (
             <FileTreeNode
               key={child.path}
@@ -269,7 +334,8 @@ const FileTreeNode: FC<{
               onCommitRename={onCommitRename}
               onCancelRename={onCancelRename}
               onDelete={onDelete}
-              onNewItem={onNewItem}
+              onStartCreating={onStartCreating}
+              inlineCreate={null}
               nested
             />
           ))}
@@ -280,11 +346,12 @@ const FileTreeNode: FC<{
 };
 
 export function FileTree({
-  onNewItem,
+  createTrigger,
 }: {
-  onNewItem?: (kind: 'file' | 'folder', initialDir: string) => void;
+  createTrigger: { kind: 'file' | 'folder'; parentDir: string; seq: number };
 }) {
   const { activeDocName, closeDocument } = useDocumentContext();
+  const { addPage } = usePageList();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -294,6 +361,15 @@ export function FileTree({
   const [userExpanded, setUserExpanded] = useState<Set<string>>(() => new Set());
   const [userCollapsed, setUserCollapsed] = useState<Set<string>>(() => new Set());
   const [prevActiveDocName, setPrevActiveDocName] = useState(activeDocName);
+  const [creatingItem, setCreatingItem] = useState<{
+    kind: 'file' | 'folder';
+    parentDir: string;
+  } | null>(null);
+  const [creatingValue, setCreatingValue] = useState('');
+  const [creatingBusy, setCreatingBusy] = useState(false);
+  const [creatingError, setCreatingError] = useState<string | null>(null);
+  const prevCreateSeqRef = useRef(0);
+
   if (activeDocName !== prevActiveDocName) {
     // Clear user-collapsed overrides on navigation so ancestors of the new
     // active file are guaranteed to expand. userExpanded is preserved — a user
@@ -352,6 +428,99 @@ export function FileTree({
       unsubscribe();
     };
   }, []);
+
+  // Consume header-button triggers from FileSidebar.
+  const { seq: createSeq, kind: createKind, parentDir: createParentDir } = createTrigger;
+  useEffect(() => {
+    if (createSeq > prevCreateSeqRef.current) {
+      prevCreateSeqRef.current = createSeq;
+      setCreatingItem({ kind: createKind, parentDir: createParentDir });
+      setCreatingValue('');
+      setCreatingError(null);
+      if (createParentDir) {
+        setUserExpanded((prev) => new Set(prev).add(createParentDir));
+      }
+    }
+  }, [createSeq, createKind, createParentDir]);
+
+  function startCreating(kind: 'file' | 'folder', parentDir: string) {
+    setCreatingItem({ kind, parentDir });
+    setCreatingValue('');
+    setCreatingError(null);
+    if (parentDir) {
+      setUserExpanded((prev) => new Set(prev).add(parentDir));
+    }
+  }
+
+  function handleCancelCreating() {
+    if (!creatingBusy) {
+      setCreatingItem(null);
+      setCreatingValue('');
+      setCreatingError(null);
+    }
+  }
+
+  async function handleInlineCreate() {
+    if (!creatingItem) return;
+    const trimmed = creatingValue.trim();
+    if (!trimmed) return;
+
+    if (
+      trimmed.includes('..') ||
+      trimmed.startsWith('/') ||
+      trimmed.includes('\\') ||
+      trimmed.includes('\0')
+    ) {
+      setCreatingError('Invalid name');
+      return;
+    }
+
+    const path =
+      creatingItem.kind === 'file'
+        ? composeInlineFilePath(creatingItem.parentDir, trimmed)
+        : composeInlineFolderPath(creatingItem.parentDir, trimmed);
+
+    setCreatingBusy(true);
+    setCreatingError(null);
+
+    try {
+      const res = await fetch('/api/create-page', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      type CreatePageResponse = { ok: boolean; docName?: string; error?: string };
+      let data: CreatePageResponse | null = null;
+      try {
+        data = (await res.json()) as CreatePageResponse;
+      } catch {
+        /* ignore JSON parse errors */
+      }
+
+      if (!res.ok || !data?.ok) {
+        const msg = data?.error ?? `Failed to create ${creatingItem.kind}`;
+        toast.error(msg);
+        setCreatingError(msg);
+        setCreatingBusy(false);
+        return;
+      }
+
+      const docName = data.docName ?? path.replace(/\.md$/, '');
+      setCreatingItem(null);
+      setCreatingValue('');
+      setCreatingError(null);
+      setCreatingBusy(false);
+      if (docName) navigateTo(docName);
+      addPage(docName);
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
+    } catch (err) {
+      console.warn('[FileTree] create failed:', err);
+      const msg = 'Network error — please try again';
+      toast.error(msg);
+      setCreatingError(msg);
+      setCreatingBusy(false);
+    }
+  }
 
   async function handleRename(target: FileTreeTarget) {
     const normalizedName = normalizeRenameValue(target.kind, editingValue);
@@ -461,20 +630,18 @@ export function FileTree({
     );
   }
 
-  if (documents.length === 0) {
+  if (documents.length === 0 && !creatingItem) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
         <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
-        {onNewItem && (
-          <Button variant="outline" size="sm" onClick={() => onNewItem('file', '')}>
-            Create your first file
-          </Button>
-        )}
+        <Button variant="outline" size="sm" onClick={() => startCreating('file', '')}>
+          Create your first file
+        </Button>
       </div>
     );
   }
 
-  const treeNodes = buildTree(documents);
+  const treeNodes = documents.length > 0 ? buildTree(documents) : [];
   const folderPaths = collectFolderPaths(treeNodes);
   const ancestors = computeAncestors(activeDocName);
 
@@ -510,6 +677,19 @@ export function FileTree({
     }
   }
 
+  const rootInlineCreate: InlineCreateProps | null =
+    creatingItem?.parentDir === ''
+      ? {
+          kind: creatingItem.kind,
+          value: creatingValue,
+          busy: creatingBusy,
+          error: creatingError,
+          onChange: setCreatingValue,
+          onCommit: () => void handleInlineCreate(),
+          onCancel: handleCancelCreating,
+        }
+      : null;
+
   return (
     <>
       {error && (
@@ -518,6 +698,11 @@ export function FileTree({
         </span>
       )}
       <SidebarMenu>
+        {rootInlineCreate && (
+          <SidebarMenuItem>
+            <InlineCreateRow {...rootInlineCreate} nested={false} />
+          </SidebarMenuItem>
+        )}
         {treeNodes.map((node) => (
           <FileTreeNode
             key={node.path}
@@ -546,7 +731,20 @@ export function FileTree({
               }
             }}
             onDelete={(target) => void handleDelete(target)}
-            onNewItem={onNewItem ?? (() => {})}
+            onStartCreating={startCreating}
+            inlineCreate={
+              creatingItem?.parentDir === node.path
+                ? {
+                    kind: creatingItem.kind,
+                    value: creatingValue,
+                    busy: creatingBusy,
+                    error: creatingError,
+                    onChange: setCreatingValue,
+                    onCommit: () => void handleInlineCreate(),
+                    onCancel: handleCancelCreating,
+                  }
+                : null
+            }
           />
         ))}
       </SidebarMenu>
