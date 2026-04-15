@@ -98,7 +98,7 @@ export function ForwardLinksPanel({
                   <Button
                     // biome-ignore lint/suspicious/noArrayIndexKey: forward link targets are stable per fetch
                     key={index}
-                    variant="ghost"
+                    variant="outline"
                     className={cn(
                       'h-auto w-full items-start justify-start whitespace-normal px-3 py-2 text-left',
                       unresolved &&
