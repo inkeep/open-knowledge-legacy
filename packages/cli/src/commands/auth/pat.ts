@@ -1,0 +1,69 @@
+import { createInterface } from 'node:readline';
+import { Octokit } from '@octokit/rest';
+import { Command } from 'commander';
+import type { TokenStore } from '../../auth/token-store.ts';
+
+export interface PatOptions {
+  host: string;
+  json: boolean;
+}
+
+export async function runPat(
+  opts: PatOptions,
+  tokenStore: TokenStore,
+  readToken?: () => Promise<string>,
+): Promise<void> {
+  const { host, json } = opts;
+
+  const getToken =
+    readToken ??
+    (() => {
+      return new Promise<string>((resolve) => {
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        rl.question('Enter PAT: ', (answer) => {
+          rl.close();
+          resolve(answer.trim());
+        });
+      });
+    });
+
+  const token = await getToken();
+  if (!token) {
+    process.stderr.write('No token provided\n');
+    process.exit(1);
+  }
+
+  const baseUrl = host === 'github.com' ? undefined : `https://${host}/api/v3`;
+  const octokit = new Octokit({ auth: token, ...(baseUrl ? { baseUrl } : {}) });
+
+  let login = 'unknown';
+  let name: string | undefined;
+  let email: string | undefined;
+  try {
+    const { data } = await octokit.users.getAuthenticated();
+    login = data.login;
+    name = data.name ?? undefined;
+    email = data.email ?? undefined;
+  } catch {
+    process.stderr.write('Token validation failed\n');
+    process.exit(1);
+  }
+
+  await tokenStore.set(host, login, token, { gitProtocol: 'https', name, email });
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ type: 'complete', host, login })}\n`);
+  } else {
+    process.stderr.write(`✓ PAT stored for ${login} on ${host}\n`);
+  }
+}
+
+export function patCommand(getTokenStore: () => Promise<TokenStore>): Command {
+  return new Command('pat')
+    .description('Store a Personal Access Token')
+    .option('--host <host>', 'GitHub hostname', 'github.com')
+    .option('--json', 'Output JSON', false)
+    .action(async (opts: PatOptions) => {
+      await runPat(opts, await getTokenStore());
+    });
+}
