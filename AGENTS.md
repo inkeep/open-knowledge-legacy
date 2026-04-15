@@ -296,11 +296,37 @@ Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
 The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173. The plugin participates in the same `server.lock` as the published CLI, so `bun run dev` and `open-knowledge start` against the same content directory are mutually exclusive — the second invocation fails fast with `ServerLockCollisionError`.
 
+### Source-view polish engine
+
+Declarative CM6 decoration engine that applies per-line tinting, hanging indent, token-level coloring, and compactness to 17 non-MDX markdown constructs in source mode. Source text stays fully addressable — no `Decoration.replace`, no mode-switching, no horizontal scroll.
+
+**Architecture:**
+- `createPolishEngineExtension()` (the integration point) wraps the engine in `polishCompartment` + auto-bail; call it directly from `SourceEditor.tsx`
+- **ViewPlugin** (`view-plugin.ts`) — single lezer syntax-tree walk per viewport update; dispatches `Decoration.line` and `Decoration.mark` for all registered constructs; gates on `syntaxTreeAvailable` to avoid partial-tree reads
+- **StateField** (`state-field.ts`) — document-wide cross-scan for broken-reference detection; early-returns on `!tr.docChanged` to skip cursor-move and scroll updates
+- **Auto-bail** (`auto-bail.ts`) — silent safety net: if `doc.lines > 5000` OR first-paint exceeds 200 ms, reconfigures `polishCompartment` to `[]`; stays off for that document until reload; no user UI
+- **Construct registry** — `Registry` is `ConstructConfig[]`; each entry maps `@lezer/markdown` node names to decoration instructions via fields: `kind`, `class`, `markerClass`, `depthClass`, `hangingIndent`, `lineAttributes`, `crossScan`, etc.
+
+**CSS conventions:**
+- All `.cm-*` classes for the engine live in `src/globals.css` under the `/* Polish Engine — per-construct source-view decorations */` comment block
+- Alpha ceilings: Tier 1 line tints ≤5% (`color-mix(... 4-5%, transparent)`), Tier 2 cell/token bands ≤4%, structural borders ≤30% of accent color
+- `box-decoration-break: clone` on per-cell table band classes so color continues correctly across wrapped lines
+- The `--line-indent` CSS custom property is set per-line via inline style by the view-plugin for `preserve-source-indent` fenced code blocks
+
+**Adding a construct:** create `constructs/<name>.ts` exporting a `ConstructConfig`, import and add it to `defaultRegistry` in `index.ts`, add matching `.cm-*` CSS class(es) to `globals.css`.
+
 ### Key files
 
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
-- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
+- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next; wires `createPolishEngineExtension()` into extensions
 - `src/editor/observers.ts` — Bidirectional observer sync
+- `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting (~13 languages, lazy-loaded per block)
+- `src/editor/polish-engine/index.ts` — `constructPolishEngine`, `createPolishEngineExtension`, `polishCompartment`, `defaultRegistry`
+- `src/editor/polish-engine/registry.ts` — `ConstructConfig` and `Registry` types
+- `src/editor/polish-engine/view-plugin.ts` — viewport-scoped lezer walk; emits `Decoration.line` / `Decoration.mark`
+- `src/editor/polish-engine/state-field.ts` — cross-scan `StateField` for broken link-reference detection
+- `src/editor/polish-engine/auto-bail.ts` — silent safety net (>5000 lines or >200 ms first-paint)
+- `src/editor/polish-engine/constructs/` — per-construct `ConstructConfig` definitions (11 files covering all 17 constructs)
 - `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
 - `src/components/FileSidebar.tsx` — Sidebar shell; header `+` dropdown opens `NewItemDialog` for file/folder creation
 - `src/components/FileTree.tsx` — Tree rendering; folder-row "New file here" / "New folder here" context-menu entries, empty-state "Create your first page" CTA, subscribes to `documents-events` for immediate post-create refresh
@@ -929,11 +955,17 @@ Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
 The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173.
 
+### Source-view polish engine
+
+Declarative CM6 decoration engine (`src/editor/polish-engine/`) for source mode: per-line tinting, hanging indent, token coloring, compactness across 17 non-MDX constructs. Always-on, no user toggle. Auto-bail silently disables the engine if `doc.lines > 5000` or first-paint exceeds 200 ms. All `.cm-*` CSS for the engine lives in `globals.css` under the `/* Polish Engine */` block. See the detailed section earlier in this file for architecture, CSS conventions, and how to add a construct.
+
 ### Key files
 
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
-- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
+- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next; wires `createPolishEngineExtension()`
 - `src/editor/observers.ts` — Bidirectional observer sync
+- `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting
+- `src/editor/polish-engine/` — source-view polish engine (ViewPlugin + StateField + auto-bail + 11 construct configs)
 - `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
