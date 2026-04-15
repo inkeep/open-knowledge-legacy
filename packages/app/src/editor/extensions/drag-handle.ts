@@ -17,8 +17,8 @@
 import { offset } from '@floating-ui/dom';
 import { type Editor, Extension } from '@tiptap/core';
 import { DragHandlePlugin, normalizeNestedOptions } from '@tiptap/extension-drag-handle';
-import type { Node as PmNode } from 'prosemirror-model';
-import { TextSelection } from 'prosemirror-state';
+import type { Node as PmNode } from '@tiptap/pm/model';
+import { TextSelection } from '@tiptap/pm/state';
 
 // Height of the handle element (matches .ok-block-controls button height: 20px in globals.css).
 const HANDLE_HEIGHT = 20;
@@ -39,7 +39,7 @@ function createBlockControlsElement(): { container: HTMLElement; addBtn: HTMLBut
   addBtn.className = 'ok-add-block-btn';
   addBtn.setAttribute('aria-label', 'Add block below');
   addBtn.setAttribute('type', 'button');
-  addBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus"><path d="M5 12h14"/><path d="M12 5v14"/></svg>`;
+  addBtn.innerHTML = `<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-plus"><path d="M5 12h14"/><path d="M12 5v14"/></svg>`;
 
   // Prevent mousedown from initiating a drag operation on the container
   addBtn.addEventListener('mousedown', (e) => {
@@ -49,7 +49,7 @@ function createBlockControlsElement(): { container: HTMLElement; addBtn: HTMLBut
 
   const grip = document.createElement('div');
   grip.className = 'ok-drag-grip';
-  grip.setAttribute('aria-label', 'Drag to reorder block — keyboard: Mod+Shift+↑/↓');
+  grip.setAttribute('aria-hidden', 'true');
   grip.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-grip-vertical-icon lucide-grip-vertical"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>`;
 
   container.appendChild(addBtn);
@@ -61,6 +61,10 @@ function createBlockControlsElement(): { container: HTMLElement; addBtn: HTMLBut
 function addBlockBelow(editor: Editor, hoveredNodePos: number, hoveredNode: PmNode): void {
   const { state, view } = editor;
   const insertAt = hoveredNodePos + hoveredNode.nodeSize;
+
+  // Guard against stale hover position — remote edits (CRDT, agent writes) can shrink
+  // the document between hover and click, making insertAt exceed doc bounds.
+  if (insertAt > state.doc.content.size) return;
 
   const { tr } = state;
   const paragraph = state.schema.nodes.paragraph?.create();
