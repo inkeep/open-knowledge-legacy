@@ -713,6 +713,41 @@
   box-decoration-break: clone;
 }
 
+/* Fenced code — preserve-source-indent + bordered block
+   --line-indent is set per-line via inline style by the view-plugin. */
+.cm-code-block {
+  background: color-mix(in oklab, var(--color-muted) 40%, transparent);
+  border-left: 2px solid var(--color-border);
+  font-family: var(--font-mono);
+  padding-inline-start: calc(8px + var(--line-indent, 0) * 1ch);
+  text-indent: calc(-1 * var(--line-indent, 0) * 1ch);
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
+.cm-code-block-first {
+  border-top: 1px solid var(--color-border);
+}
+
+.cm-code-block-last {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.cm-code-mark {
+  color: var(--color-muted-foreground);
+  opacity: 0.6;
+}
+
+.cm-code-info {
+  display: inline-block;
+  padding: 0 4px;
+  margin-left: 4px;
+  font-size: 0.75em;
+  color: var(--color-muted-foreground);
+  background: var(--color-muted);
+  border-radius: 2px;
+}
+
 /* ─────────────────────────────────────────────────────────────
    Presence polish — agent badge, undo button, presence bar
    ───────────────────────────────────────────────────────────── */

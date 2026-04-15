@@ -12,6 +12,11 @@ import { Compartment, type Extension } from '@codemirror/state';
 import { createAutoBailPlugin } from './auto-bail';
 import { blockquoteConstruct } from './constructs/blockquote';
 import {
+  codeInfoConstruct,
+  codeMarkConstruct,
+  fencedCodeConstruct,
+} from './constructs/fenced-code';
+import {
   tableCellConstruct,
   tableContainerConstruct,
   tableHeaderConstruct,
@@ -31,6 +36,9 @@ export const defaultRegistry: Registry = [
   tableHeaderConstruct,
   tableRowConstruct,
   tableCellConstruct,
+  fencedCodeConstruct,
+  codeMarkConstruct,
+  codeInfoConstruct,
 ];
 
 /**

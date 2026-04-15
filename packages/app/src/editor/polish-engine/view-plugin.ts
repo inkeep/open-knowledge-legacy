@@ -17,6 +17,17 @@ import {
 } from '@codemirror/view';
 import type { ConstructConfig, Registry } from './registry';
 
+/** Count leading whitespace characters in a line (tabs count as 4 spaces). */
+function countLeadingWhitespace(text: string): number {
+  let count = 0;
+  for (const ch of text) {
+    if (ch === ' ') count++;
+    else if (ch === '\t') count += 4;
+    else break;
+  }
+  return count;
+}
+
 /** Build a lookup map: lezer node name → array of configs that handle it. */
 function buildNodeIndex(registry: Registry) {
   const index = new Map<string, ConstructConfig[]>();
@@ -111,19 +122,40 @@ function buildDecorations(view: EditorView, registry: Registry): DecorationSet {
                 typeof config.class === 'function' ? config.class(node, view.state) : config.class;
 
               const depthCls = config.depthClass ? config.depthClass(node) : '';
-              const fullClass = [cls, depthCls].filter(Boolean).join(' ');
+
+              // First/last line classes for bordered constructs
+              const positionCls =
+                lineNo === lineStart.number
+                  ? `${cls}-first`
+                  : lineNo === lineEnd.number
+                    ? `${cls}-last`
+                    : '';
+
+              const fullClass = [cls, depthCls, positionCls].filter(Boolean).join(' ');
 
               if (fullClass) {
-                const attrs = config.lineAttributes
-                  ? config.lineAttributes(node, view.state)
-                  : null;
+                // Per-line attributes (e.g., preserve-source-indent)
+                const styleAttrs: Record<string, string> = {};
+
+                if (config.lineAttributes) {
+                  const attrs = config.lineAttributes(node, view.state);
+                  if (attrs) Object.assign(styleAttrs, attrs);
+                }
+
+                // Preserve-source-indent: compute per-line leading whitespace
+                if (config.hangingIndent === 'preserve-source-indent') {
+                  const indent = countLeadingWhitespace(line.text);
+                  styleAttrs['--line-indent'] = String(indent);
+                }
+
+                const hasStyle = Object.keys(styleAttrs).length > 0;
 
                 pending.push({
                   from: line.from,
                   to: line.from,
                   decoration: Decoration.line({
                     class: fullClass,
-                    ...(attrs ? { attributes: { style: inlineStyle(attrs) } } : {}),
+                    ...(hasStyle ? { attributes: { style: inlineStyle(styleAttrs) } } : {}),
                   }),
                 });
                 decoratedLines.add(lineKey);
