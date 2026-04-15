@@ -283,24 +283,14 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // Self-skip: our own cross-CRDT write
     if (transaction.origin === OBSERVER_SYNC_ORIGIN) return;
 
-    // Already-paired check for agent writes: applyAgentMarkdownWrite writes
-    // both XmlFragment + Y.Text atomically, so the derived CRDT already matches.
-    // We still schedule a debounce so Observer A can update its baseline, but
-    // the runObserverASync body will early-exit at the currentText === md gate.
-    // Same for FILE_WATCHER_ORIGIN (applyExternalChange pairs both sides).
-
-    // Bug-B conditional baseline refresh (ported from client):
-    // Only refresh baseline when no local debounce is pending.
-    if (!debounceA) {
-      try {
-        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
-        const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-      } catch (_err) {
-        // Non-critical — baseline catches up on next sync
-      }
-    }
+    // No callback-level baseline refresh needed on the server. Unlike the
+    // client Bug-B fix (which conditionally refreshes for remote transactions
+    // to prevent stale baselines when multiple peers collaborate), the server
+    // is the single writer for cross-CRDT sync. The baseline is correctly
+    // managed by runObserverASync: updated after successful write and at the
+    // already-in-sync gate (currentText === md → lastSyncedXmlMd = md).
+    // Refreshing here would cause the debounce to see lastSyncedXmlMd === md
+    // and early-exit without writing Y.Text.
 
     if (debounceA) sched.clearTimeout(debounceA);
     debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
@@ -342,7 +332,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       if (currentBody === body) {
         // Tree and text are already in sync — just update frontmatter if changed.
         const metaMap = doc.getMap('metadata');
-        if (metaMap.get('frontmatter') !== frontmatter) {
+        const currentFm = metaMap.get('frontmatter');
+        if ((currentFm ?? '') !== frontmatter) {
           doc.transact(() => {
             metaMap.set('frontmatter', frontmatter);
           }, OBSERVER_SYNC_ORIGIN);
