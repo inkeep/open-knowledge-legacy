@@ -4,12 +4,12 @@ export const ConfigSchema = z.object({
   content: z
     .object({
       dir: z.string().default('.'),
-      include: z.array(z.string()).min(1).default(['**/*.md']),
+      include: z.array(z.string()).min(1).default(['**/*.md', '**/*.mdx']),
       exclude: z.array(z.string()).default([]),
     })
     .default({
       dir: '.',
-      include: ['**/*.md'],
+      include: ['**/*.md', '**/*.mdx'],
       exclude: [],
     }),
   server: z

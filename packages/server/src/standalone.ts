@@ -8,10 +8,13 @@ import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
 import { CC1Broadcaster, isSystemDoc, SYSTEM_DOC_NAME } from './cc1-broadcast.ts';
 import { type ContentFilter, createContentFilter } from './content-filter.ts';
+import { getDocExtension } from './doc-extensions.ts';
 import { applyExternalChange } from './external-change.ts';
 import { contentHash, type DiskEvent, startWatcher, type WatcherHandle } from './file-watcher.ts';
 import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
+import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
+import { recoverPendingManagedRename } from './managed-rename-journal.ts';
 import { mdManager } from './md-manager.ts';
 import {
   incrementBatch,
@@ -95,7 +98,8 @@ export interface ServerInstance {
    * Names of subsystems that failed to initialize during boot.
    * Read AFTER `await ready` for a stable list; reads before may return a partial result.
    * Empty array means all subsystems initialized successfully.
-   * Possible values: `'shadow-repo'`, `'file-watcher'`, `'head-watcher'`.
+   * Possible values: `'shadow-repo'`, `'managed-rename-recovery'`, `'file-watcher'`,
+   * `'head-watcher'`.
    */
   readonly degraded: readonly string[];
   /**
@@ -119,7 +123,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     enableTestRoutes = false,
     shadowRepo,
     contentRoot,
-    includePatterns = ['**/*.md'],
+    includePatterns = ['**/*.md', '**/*.mdx'],
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
   } = options;
@@ -143,6 +147,11 @@ export function createServer(options: ServerOptions): ServerInstance {
   let persistence: ReturnType<typeof createPersistenceExtension>;
   let hocuspocus: Hocuspocus;
   let sessionManager: AgentSessionManager;
+  let cc1Broadcaster: CC1Broadcaster | null = null;
+
+  function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
+    cc1Broadcaster?.signal(channel);
+  }
   try {
     contentFilter = createContentFilter({
       projectDir,
@@ -163,6 +172,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       shadowRef,
       contentRoot,
       backlinkIndex,
+      getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
     };
 
     persistence = createPersistenceExtension(persistenceOpts);
@@ -173,8 +183,14 @@ export function createServer(options: ServerOptions): ServerInstance {
       maxDebounce,
       extensions: [persistence.extension],
     });
+    cc1Broadcaster = new CC1Broadcaster(hocuspocus);
 
     sessionManager = new AgentSessionManager(hocuspocus);
+    const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
+      backlinkIndex,
+      signalChannel,
+    });
+    hocuspocus.configuration.extensions.push(liveDerivedIndexExtension);
 
     const apiExtension = createApiExtension({
       hocuspocus,
@@ -188,20 +204,19 @@ export function createServer(options: ServerOptions): ServerInstance {
       getCurrentBranch: () => headWatcher?.getLastKnownBranch() ?? null,
       contentRoot,
       backlinkIndex,
+      signalChannel,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
   } catch (err) {
     releaseServerLock(lockDir);
     throw err;
   }
-
-  const cc1Broadcaster = new CC1Broadcaster(hocuspocus);
   let systemDocConnection: Awaited<ReturnType<Hocuspocus['openDirectConnection']>> | null = null;
 
   /** Resolve a safe rescue buffer path, returning null if traversal is detected. */
   function safeRescuePath(shadowGitDir: string, docName: string): string | null {
     const rescueBase = resolve(shadowGitDir, 'rescue');
-    const filePath = resolve(rescueBase, `${docName}.md`);
+    const filePath = resolve(rescueBase, `${docName}${getDocExtension(docName)}`);
     if (!filePath.startsWith(`${rescueBase}/`)) return null;
     return filePath;
   }
@@ -238,7 +253,9 @@ export function createServer(options: ServerOptions): ServerInstance {
           void backlinkIndex.saveToDisk().catch((err) => {
             console.warn(`[backlinks] Failed to persist create for ${event.docName}:`, err);
           });
-          cc1Broadcaster.signal('files');
+          signalChannel('files');
+          signalChannel('backlinks');
+          signalChannel('graph');
           break;
         }
 
@@ -250,6 +267,8 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk().catch((err) => {
               console.warn(`[backlinks] Failed to persist closed-doc update for ${docName}:`, err);
             });
+            signalChannel('backlinks');
+            signalChannel('graph');
             return;
           }
 
@@ -273,6 +292,8 @@ export function createServer(options: ServerOptions): ServerInstance {
               void backlinkIndex.saveToDisk().catch((err) => {
                 console.warn(`[backlinks] Failed to persist noop update for ${docName}:`, err);
               });
+              signalChannel('backlinks');
+              signalChannel('graph');
               break;
 
             case 'clean':
@@ -284,6 +305,8 @@ export function createServer(options: ServerOptions): ServerInstance {
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(`[backlinks] Failed to persist clean update for ${docName}:`, err);
                 });
+                signalChannel('backlinks');
+                signalChannel('graph');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -303,6 +326,8 @@ export function createServer(options: ServerOptions): ServerInstance {
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(`[backlinks] Failed to persist merged update for ${docName}:`, err);
                 });
+                signalChannel('backlinks');
+                signalChannel('graph');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -319,16 +344,6 @@ export function createServer(options: ServerOptions): ServerInstance {
                 setReconciledBase(docName, result.newContent);
                 incrementReconcile();
                 incrementConflict();
-                const conflictsMap = document.getMap('conflicts');
-                for (const c of result.conflicts) {
-                  conflictsMap.set(String(c.blockIndex), {
-                    blockIndex: c.blockIndex,
-                    base: c.base,
-                    ours: c.ours,
-                    theirs: c.theirs,
-                    resolution: 'pending',
-                  });
-                }
                 backlinkIndex.updateDocumentFromMarkdown(docName, theirs);
                 void backlinkIndex.saveToDisk().catch((err) => {
                   console.warn(
@@ -336,6 +351,8 @@ export function createServer(options: ServerOptions): ServerInstance {
                     err,
                   );
                 });
+                signalChannel('backlinks');
+                signalChannel('graph');
               } catch (e) {
                 log.error(
                   { err: e, docName },
@@ -366,7 +383,9 @@ export function createServer(options: ServerOptions): ServerInstance {
             void backlinkIndex.saveToDisk().catch((err) => {
               console.warn(`[backlinks] Failed to persist closed-doc delete for ${docName}:`, err);
             });
-            cc1Broadcaster.signal('files');
+            signalChannel('files');
+            signalChannel('backlinks');
+            signalChannel('graph');
             return;
           }
 
@@ -404,7 +423,9 @@ export function createServer(options: ServerOptions): ServerInstance {
           // Unload document to prevent re-creation on next persistence cycle
           hocuspocus.closeConnections(docName);
           await hocuspocus.unloadDocument(document);
-          cc1Broadcaster.signal('files');
+          signalChannel('files');
+          signalChannel('backlinks');
+          signalChannel('graph');
           break;
         }
 
@@ -429,7 +450,9 @@ export function createServer(options: ServerOptions): ServerInstance {
           }
 
           log.info({ oldDocName, newDocName }, `[reconcile] rename: ${oldDocName} → ${newDocName}`);
-          cc1Broadcaster.signal('files');
+          signalChannel('files');
+          signalChannel('backlinks');
+          signalChannel('graph');
           break;
         }
 
@@ -652,7 +675,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
           // Phase 1b: tear down CC1 broadcaster + __system__ direct connection
           try {
-            cc1Broadcaster.destroy();
+            cc1Broadcaster?.destroy();
             if (systemDocConnection) {
               await systemDocConnection.disconnect();
               systemDocConnection = null;
@@ -798,6 +821,23 @@ export function createServer(options: ServerOptions): ServerInstance {
           log.error({ err: e }, '[server] shadow repo check failed (transient?)');
         }
       }
+    }
+
+    try {
+      const recovery = recoverPendingManagedRename(contentDir);
+      if (recovery.recovered && recovery.journal) {
+        log.warn(
+          {
+            sourceDocName: recovery.journal.sourceDocName,
+            destinationDocName: recovery.journal.destinationDocName,
+            restoredDocNames: recovery.restoredDocNames,
+          },
+          `[managed-rename] recovered pending rename ${recovery.journal.sourceDocName} -> ${recovery.journal.destinationDocName}`,
+        );
+      }
+    } catch (err) {
+      log.error({ err }, '[server] managed rename recovery failed');
+      degraded.push('managed-rename-recovery');
     }
 
     // Pre-materialize __system__ Y.Doc so CC1 broadcaster has a target before
@@ -988,19 +1028,6 @@ export function createServer(options: ServerOptions): ServerInstance {
                     case 'conflicts': {
                       applyToDoc(docName, outcome.newContent);
                       setReconciledBase(docName, outcome.newContent);
-                      const conflictDoc = hocuspocus.documents.get(docName);
-                      if (conflictDoc) {
-                        const conflictsMap = conflictDoc.getMap('conflicts');
-                        for (const c of outcome.conflicts) {
-                          conflictsMap.set(String(c.blockIndex), {
-                            blockIndex: c.blockIndex,
-                            base: c.base,
-                            ours: c.ours,
-                            theirs: c.theirs,
-                            resolution: 'pending',
-                          });
-                        }
-                      }
                       incrementConflict();
                       restoredCount++;
                       break;

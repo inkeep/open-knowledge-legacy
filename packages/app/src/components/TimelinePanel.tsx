@@ -6,7 +6,7 @@
  * are collapsed behind a "Show N auto-saves" expander.
  * Current (pre-checkpoint) WIP entries are expanded by default at top.
  */
-import type { TimelineEntry } from '@inkeep/open-knowledge-core';
+import { colorFromSeed, type TimelineEntry } from '@inkeep/open-knowledge-core';
 import { ChevronDown, ChevronRight, Diamond, RotateCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -44,35 +44,49 @@ export function formatRelativeTime(isoString: string): string {
   return date.toLocaleDateString();
 }
 
-/** Map internal author names to user-friendly display names. */
+/** Map internal author names to user-friendly display names. Uses structured contributors when available. */
 export function displayAuthor(entry: TimelineEntry): string {
   if (entry.type === 'upstream') return 'Upstream sync';
+  if (entry.contributors.length === 1) return entry.contributors[0].name;
+  if (entry.contributors.length > 1) return entry.contributors.map((c) => c.name).join(', ');
+  // Pre-attribution fallback
   if (entry.author === 'openknowledge-server' || entry.author === 'server') return 'Auto-save';
   return entry.author;
 }
 
-/** Dot color by entry type / author heuristic. */
-function getAuthorColor(entry: TimelineEntry): string {
-  if (entry.type === 'upstream') return 'bg-muted-foreground/50';
+/**
+ * Dot color for an entry. Returns either a Tailwind className or an inline hex color.
+ * Structured contributors take precedence; pre-attribution entries use the existing heuristic.
+ */
+function getAuthorColor(
+  entry: TimelineEntry,
+): { className: string; hex?: undefined } | { hex: string; className?: undefined } {
+  if (entry.contributors.length > 0) {
+    const c = entry.contributors[0];
+    return { hex: colorFromSeed(c.colorSeed ?? c.name) };
+  }
+  if (entry.type === 'upstream') return { className: 'bg-muted-foreground/50' };
   if (entry.authorEmail.includes('openknowledge.local') || entry.type === 'wip') {
-    // Agent writes typically have openknowledge.local domain
     if (
       entry.authorEmail.includes('agent') ||
       entry.author.includes('agent') ||
       entry.authorEmail.includes('cursor') ||
       entry.authorEmail.includes('claude')
     ) {
-      return 'bg-[--color-agent]';
+      return { className: 'bg-[--color-agent]' };
     }
   }
-  // Human = blue
-  return 'bg-[--color-azure-blue]';
+  return { className: 'bg-[--color-azure-blue]' };
 }
 
 function authorDot(entry: TimelineEntry) {
   const color = getAuthorColor(entry);
   return (
-    <span aria-hidden="true" className={`inline-block size-2 rounded-full shrink-0 ${color}`} />
+    <span
+      aria-hidden="true"
+      style={color.hex ? { backgroundColor: color.hex } : undefined}
+      className={`inline-block size-2 rounded-full shrink-0 ${color.className ?? ''}`}
+    />
   );
 }
 
@@ -127,6 +141,8 @@ interface EntryRowProps {
 
 function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProps) {
   const relative = formatRelativeTime(entry.timestamp);
+  const authorName = displayAuthor(entry);
+  const allDocs = entry.contributors.flatMap((c) => c.docs);
 
   return (
     <button
@@ -151,13 +167,19 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
           <div className="mb-0.5 flex items-center gap-1.5">
             <span className="text-xs font-medium text-foreground">Save Version</span>
             {authorDot(entry)}
-            <span className="truncate text-xs text-muted-foreground">{entry.author}</span>
+            <span className="truncate text-xs text-muted-foreground">{authorName}</span>
           </div>
         )}
-        {!prominent && <p className="truncate text-xs text-foreground">{entry.author}</p>}
-        <p className="truncate text-xs text-muted-foreground" title={entry.message}>
-          {entry.message}
-        </p>
+        {!prominent && <p className="truncate text-xs text-foreground">{authorName}</p>}
+        {allDocs.length > 0 ? (
+          <p className="truncate text-xs text-muted-foreground" title={allDocs.join(', ')}>
+            {allDocs.join(', ')}
+          </p>
+        ) : (
+          <p className="truncate text-xs text-muted-foreground" title={entry.message}>
+            {entry.message}
+          </p>
+        )}
       </div>
 
       <time
@@ -277,6 +299,7 @@ export function TimelinePanel({
                     authorEmail: '',
                     type: 'wip',
                     message: '',
+                    contributors: [],
                   })
                 }
                 className="text-xs text-muted-foreground"
@@ -377,6 +400,7 @@ export function TimelinePanel({
                   authorEmail: '',
                   type: 'wip',
                   message: '',
+                  contributors: [],
                 })
               }
             >

@@ -43,8 +43,6 @@ export function BacklinksPanel({
   } = useQuery({
     queryKey: ['backlinks', docName],
     queryFn: () => fetchBacklinks(docName),
-    refetchInterval: 2000,
-    refetchIntervalInBackground: false,
   });
 
   return (

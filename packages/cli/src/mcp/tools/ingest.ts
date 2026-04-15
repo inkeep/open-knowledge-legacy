@@ -7,6 +7,7 @@
  */
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
+import { OK_DIR } from '../../constants.ts';
 import type { ServerInstance } from './shared.ts';
 import { textResult } from './shared.ts';
 
@@ -15,7 +16,7 @@ function buildBody(source: string, contentDir: string): string {
 
 Source: ${source}
 
-The content directory for this project is **\`${contentDir}\`** (from \`.open-knowledge/config.yml\`).
+The content directory for this project is **\`${contentDir}\`** (from \`${OK_DIR}/config.yml\`).
 
 ## Step 1: Fetch the content
 
@@ -66,7 +67,7 @@ tags:
 - **No promotion to a canonical article** — that's the \`consolidate\` tool's job, later
 - **No deduplication** — if the same source is ingested twice, let it happen; cleanup is a separate concern
 
-Full convention: read \`.open-knowledge/AGENTS.md\`.`;
+Full convention: read \`${OK_DIR}/AGENTS.md\`.`;
 }
 
 export const DESCRIPTION = [

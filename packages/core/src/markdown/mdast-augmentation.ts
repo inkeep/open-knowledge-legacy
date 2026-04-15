@@ -1,11 +1,10 @@
 /**
  * TypeScript module augmentation for custom mdast node types.
  *
- * MDX types (mdxJsxFlowElement, mdxJsxTextElement, etc.) and directive types
- * (containerDirective, leafDirective, textDirective) are already augmented by
- * their respective remark packages (remark-mdx, remark-directive).
+ * MDX types (mdxJsxFlowElement, mdxJsxTextElement, etc.) are already augmented
+ * by their respective remark packages (mdast-util-mdx-jsx, mdast-util-mdx-expression).
  *
- * We only need to augment for our custom wiki-link node type.
+ * We augment for: wiki-link node type, and sourceRaw data fields on MDX nodes.
  */
 import type { Position } from 'unist';
 

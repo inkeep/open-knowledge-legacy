@@ -22,16 +22,29 @@ import { createServer as createHttpServer } from 'node:http';
 import { type AddressInfo, createServer as createNetServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { HocuspocusProvider } from '@hocuspocus/provider';
-import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
-import { createServer, type ServerInstance } from '@inkeep/open-knowledge-server';
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
+import { MarkdownManager, prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
+import {
+  AGENT_WRITE_ORIGIN,
+  createServer,
+  FILE_WATCHER_ORIGIN,
+  ROLLBACK_ORIGIN,
+  type ServerInstance,
+  type ServerOptions,
+} from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 
-import { setupObservers } from '../../src/editor/observers';
+import {
+  ORIGIN_TEXT_TO_TREE,
+  ORIGIN_TREE_TO_TEXT,
+  type Scheduler,
+  setupObservers,
+} from '../../src/editor/observers';
+import { ControllableWebSocket } from './network-control';
 
 // ─── Shared instances (created once, reused across all tests) ───
 
@@ -60,7 +73,12 @@ export interface TestServer {
   cleanup: () => Promise<void>;
 }
 
-export async function createTestServer(): Promise<TestServer> {
+export interface CreateTestServerOptions {
+  debounce?: ServerOptions['debounce'];
+  maxDebounce?: ServerOptions['maxDebounce'];
+}
+
+export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
   // realpathSync resolves macOS /var → /private/var symlink so that
   // @parcel/watcher event paths match the contentDir used by pathToDocName.
   const contentDir = realpathSync(mkdtempSync(join(tmpdir(), 'ok-test-')));
@@ -71,8 +89,8 @@ export async function createTestServer(): Promise<TestServer> {
   const srv = createServer({
     contentDir,
     quiet: true,
-    debounce: 200,
-    maxDebounce: 1000,
+    debounce: options.debounce ?? 200,
+    maxDebounce: options.maxDebounce ?? 1000,
     gitEnabled: false,
     enableTestRoutes: true,
   });
@@ -147,21 +165,66 @@ export interface TestClient {
   provider: HocuspocusProvider;
   cleanup: () => Promise<void>;
   docName: string;
+  /** Pause inbound CRDT sync. Only available when syncControl: true. */
+  pauseSync: () => void;
+  /** Resume inbound CRDT sync, draining queued messages. Only available when syncControl: true. */
+  resumeSync: () => void;
 }
 
-export async function createTestClient(port: number, docName?: string): Promise<TestClient> {
+export interface CreateTestClientOptions {
+  /** Skip attaching the bridge invariant watcher. Use for tests that
+   *  deliberately drive divergence (e.g., Bug-D skip-guarded test). */
+  skipInvariantWatcher?: boolean;
+  /** Wrap the WebSocket with a ControllableWebSocket for pause/resume sync. */
+  syncControl?: boolean;
+  /**
+   * Inject a custom Scheduler for Observer A/B debounce control (FR-15).
+   *
+   * Default (omitted) routes setTimeout/clearTimeout to globalThis (passthrough —
+   * zero behavioral difference from pre-FR-15 code). Multi-client tests
+   * should hold a single `ManualScheduler` instance at test scope and pass
+   * it to every client via `perClientOptions` so `scheduler.flush()` advances
+   * all clients' observers atomically.
+   *
+   * Scheduler only controls Observer A/B internal timers (debounce, typing
+   * defer, remote-tree grace). WebSocket CRDT propagation timing is
+   * unaffected and remains real-clock — ControllableWebSocket does not use
+   * setTimeout and coexists cleanly with the scheduler option.
+   */
+  scheduler?: Scheduler;
+}
+
+export async function createTestClient(
+  port: number,
+  docName?: string,
+  options?: CreateTestClientOptions,
+): Promise<TestClient> {
   const resolvedDocName = docName ?? `test-${crypto.randomUUID()}`;
 
   const doc = new Y.Doc();
   const ytext = doc.getText('source');
   const fragment = doc.getXmlFragment('default');
 
-  const provider = new HocuspocusProvider({
+  // FR-16: optionally wrap WebSocket with ControllableWebSocket for pause/resume
+  let controllableWs: ControllableWebSocket | undefined;
+  const providerOpts: Record<string, unknown> = {
     url: `ws://localhost:${port}/collab`,
     name: resolvedDocName,
     document: doc,
     connect: true,
-  });
+  };
+  if (options?.syncControl) {
+    providerOpts.WebSocketPolyfill = class extends ControllableWebSocket {
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(url, protocols);
+        controllableWs = this;
+      }
+    };
+  }
+
+  const provider = new HocuspocusProvider(
+    providerOpts as ConstructorParameters<typeof HocuspocusProvider>[0],
+  );
 
   await waitForSync(provider);
 
@@ -171,7 +234,15 @@ export async function createTestClient(port: number, docName?: string): Promise<
     ytext,
     mdManager,
     schema,
+    // FR-15: caller-injected scheduler overrides globalThis.setTimeout.
+    // When undefined, setupObservers falls back to defaultScheduler (passthrough).
+    scheduler: options?.scheduler,
   });
+
+  // FR-11: attach bridge invariant watcher by default
+  const watcherDetach = options?.skipInvariantWatcher
+    ? undefined
+    : attachBridgeInvariantWatcher(doc);
 
   return {
     doc,
@@ -179,7 +250,16 @@ export async function createTestClient(port: number, docName?: string): Promise<
     fragment,
     provider,
     docName: resolvedDocName,
+    pauseSync: () => {
+      if (!controllableWs) throw new Error('pauseSync requires syncControl: true');
+      controllableWs.pauseInbound();
+    },
+    resumeSync: () => {
+      if (!controllableWs) throw new Error('resumeSync requires syncControl: true');
+      controllableWs.resumeInbound();
+    },
     cleanup: async () => {
+      watcherDetach?.();
       observerCleanup();
       // R9: unload the per-test doc on the server to prevent memory growth.
       // Best-effort — if the server is already shutting down or the network
@@ -352,4 +432,375 @@ export async function pollUntil(
     await wait(intervalMs);
   }
   throw new Error(`pollUntil timed out after ${timeoutMs}ms`);
+}
+
+// ─── Server-side state inspector (FR-13) ───
+
+export type ServerDocState = {
+  ytext: Y.Text;
+  fragment: Y.XmlFragment;
+  /** Body only (no frontmatter) — serialized from the server's XmlFragment */
+  md: string;
+  /** Frontmatter + body — full markdown as would be persisted to disk */
+  fullMd: string;
+  frontmatter: string;
+  metaMap: Y.Map<unknown>;
+  activityMap: Y.Map<unknown>;
+  connectionCount: number;
+};
+
+/**
+ * Inspect the server's internal Y.Doc state for a given docName.
+ *
+ * Encapsulates `server.instance.hocuspocus.documents.get(docName)` behind a
+ * typed, documented surface. Returns null when the doc is not loaded on the
+ * server (observable via pollUntil when tests need to wait for doc init).
+ */
+export function getServerState(server: TestServer, docName: string): ServerDocState | null {
+  const document = server.instance.hocuspocus.documents.get(docName);
+  if (!document) return null;
+
+  const ytext = document.getText('source');
+  const fragment = document.getXmlFragment('default');
+  const metaMap = document.getMap('metadata');
+  const activityMap = document.getMap('activity');
+  const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
+  const md = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+  const fullMd = prependFrontmatter(frontmatter, md);
+  const connectionCount = document.getConnectionsCount?.() ?? 0;
+
+  return {
+    ytext,
+    fragment,
+    md,
+    fullMd,
+    frontmatter,
+    metaMap,
+    activityMap,
+    connectionCount,
+  };
+}
+
+// ─── Bridge invariant watcher (FR-11) ───
+
+/**
+ * Enforcing origins for the bridge invariant watcher.
+ *
+ * Every entry is a `LocalTransactionOrigin` OBJECT reference per precedent #1
+ * (AGENTS.md): ORIGIN_TREE_TO_TEXT, ORIGIN_TEXT_TO_TREE (observers.ts),
+ * AGENT_WRITE_ORIGIN (agent-sessions.ts), FILE_WATCHER_ORIGIN (external-change.ts),
+ * ROLLBACK_ORIGIN (api-extension.ts). `Set.has()` performs identity matching for
+ * objects — a string literal would NEVER match the actual production tx.origin
+ * object, silently skipping enforcement.
+ *
+ * Deliberately excludes `undefined` (local WYSIWYG typing) — its invariant
+ * satisfaction comes via a subsequent ORIGIN_TREE_TO_TEXT tx from Observer A.
+ */
+const BRIDGE_ENFORCING_ORIGINS: Set<LocalTransactionOrigin> = new Set([
+  ORIGIN_TREE_TO_TEXT,
+  ORIGIN_TEXT_TO_TREE,
+  AGENT_WRITE_ORIGIN,
+  FILE_WATCHER_ORIGIN,
+  ROLLBACK_ORIGIN,
+]);
+
+export interface InvariantViolation {
+  origin: unknown;
+  ytextSnapshot: string;
+  fragmentMdSnapshot: string;
+  unifiedDiff: string;
+  stack: string | undefined;
+}
+
+export class BridgeInvariantViolationError extends Error {
+  readonly violation: InvariantViolation;
+  constructor(info: InvariantViolation) {
+    const originLabel =
+      typeof info.origin === 'string'
+        ? info.origin
+        : ((info.origin as { context?: { origin?: string } })?.context?.origin ?? 'unknown-object');
+    super(
+      `Bridge invariant violated after tx with origin '${originLabel}'.\n` +
+        `  Y.Text (${info.ytextSnapshot.length} chars): ${info.ytextSnapshot.slice(0, 200)}...\n` +
+        `  Fragment (${info.fragmentMdSnapshot.length} chars): ${info.fragmentMdSnapshot.slice(0, 200)}...\n` +
+        `  Diff:\n${info.unifiedDiff}`,
+    );
+    this.name = 'BridgeInvariantViolationError';
+    this.violation = info;
+  }
+}
+
+/**
+ * Attach a per-transaction bridge invariant watcher to a Y.Doc.
+ *
+ * After every transaction whose origin is in the enforcing set, asserts:
+ *   normalizeBridge(ytext) === normalizeBridge(prependFrontmatter(fm, serialize(fragment)))
+ *
+ * where normalizeBridge strips trailing whitespace per line and collapses
+ * 3+ consecutive newlines to 2 (NG1: blank-line count normalization).
+ *
+ * Returns a detach function that removes the observer.
+ */
+export function attachBridgeInvariantWatcher(
+  doc: Y.Doc,
+  opts: {
+    onViolation?: (info: InvariantViolation) => void;
+    enforcingOrigins?: Set<unknown>;
+  } = {},
+): () => void {
+  const fragment = doc.getXmlFragment('default');
+  const ytext = doc.getText('source');
+  const enforcing = opts.enforcingOrigins ?? BRIDGE_ENFORCING_ORIGINS;
+
+  const afterTx = (tx: Y.Transaction): void => {
+    if (!enforcing.has(tx.origin)) return;
+
+    const ytextStr = ytext.toString();
+    const fm = (doc.getMap('metadata').get('frontmatter') as string | undefined) ?? '';
+    const fragBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(fragment));
+    const fragMd = prependFrontmatter(fm, fragBody);
+
+    const ytextNorm = normalizeBridge(ytextStr);
+    const fragNorm = normalizeBridge(fragMd);
+
+    if (ytextNorm === fragNorm) return;
+
+    const info: InvariantViolation = {
+      origin: tx.origin,
+      ytextSnapshot: ytextStr,
+      fragmentMdSnapshot: fragMd,
+      unifiedDiff: `  ytext: ${ytextNorm.slice(0, 300)}\n  frag:  ${fragNorm.slice(0, 300)}`,
+      stack: new Error().stack,
+    };
+    opts.onViolation?.(info);
+    throw new BridgeInvariantViolationError(info);
+  };
+
+  doc.on('afterTransaction', afterTx);
+  return () => {
+    doc.off('afterTransaction', afterTx);
+  };
+}
+
+// ─── Manual scheduler for deterministic observer testing (FR-15) ───
+
+export interface ManualScheduler extends Scheduler {
+  /** Fire all pending callbacks synchronously, regardless of due-time.
+   *  Cascading: if a fired callback schedules a new timer, that new timer
+   *  also fires in the same flush. Bounded to 100 drain passes. */
+  flush(): void;
+  /** Advance virtual time by `ms`, fire all callbacks whose dueAt ≤ new now.
+   *  Cascading: if a fired callback schedules a new timer at dueAt ≤ new now,
+   *  that new timer also fires in the same advance. Bounded to 100 drain
+   *  passes to prevent runaway chains. */
+  advanceTime(ms: number): void;
+  /** Inspect the pending callback queue (read-only). */
+  pending(): ReadonlyArray<{ id: number; dueAt: number }>;
+}
+
+export function createManualScheduler(): ManualScheduler {
+  type Entry = { id: number; cb: () => void; dueAt: number };
+  const queue: Entry[] = [];
+  let now = 0;
+  let nextId = 1;
+
+  return {
+    setTimeout: (cb, ms) => {
+      const id = nextId++;
+      queue.push({ id, cb, dueAt: now + ms });
+      return id as unknown as ReturnType<typeof globalThis.setTimeout>;
+    },
+    clearTimeout: (handle) => {
+      const id = handle as unknown as number;
+      const idx = queue.findIndex((e) => e.id === id);
+      if (idx >= 0) queue.splice(idx, 1);
+    },
+    now: () => now,
+    advanceTime(ms) {
+      now += ms;
+      // Drain cascading timers: each callback may schedule new timers. Loop
+      // until no more timers are due at the current virtual time. Bounded
+      // to prevent runaway re-scheduling chains.
+      for (let pass = 0; pass < 100; pass++) {
+        const due = queue.filter((e) => e.dueAt <= now);
+        if (due.length === 0) return;
+        for (const e of due) {
+          const idx = queue.indexOf(e);
+          if (idx >= 0) queue.splice(idx, 1);
+          e.cb();
+        }
+      }
+      throw new Error('ManualScheduler.advanceTime: re-scheduling loop exceeded 100 drain passes');
+    },
+    flush() {
+      // Drain cascading timers: callbacks may schedule new ones; keep going
+      // until the queue is empty. Bounded to prevent runaway chains.
+      for (let pass = 0; pass < 100; pass++) {
+        const e = queue.shift();
+        if (!e) return;
+        e.cb();
+      }
+      throw new Error('ManualScheduler.flush: re-scheduling loop exceeded 100 drain passes');
+    },
+    pending: () => queue.map(({ id, dueAt }) => ({ id, dueAt })),
+  };
+}
+
+// ─── Origin-preservation probe (FR-12) ───
+
+export interface ItemOriginProbe {
+  recordCapture(label?: string): void;
+  assertCaptureIntact(label?: string): void;
+  capturedContent(): string;
+  undoStackLength(): number;
+  /** Origins observed at capture time via `'stack-item-added'` events.
+   *  Returns the set of distinct tx.origin values the UM has tracked.
+   *  Empty if no items have been captured yet. */
+  getCapturedOrigins(): ReadonlySet<unknown>;
+  /** Assert that every captured origin is in the `trackedOrigins` set
+   *  provided at construction. Throws if a stray origin appears — which
+   *  would indicate origin-laundering (a non-tracked origin's Items ended
+   *  up in the UM stack, e.g., user content under AGENT_WRITE_ORIGIN).
+   *
+   *  Safe to call when no items have been captured (silently returns).
+   *  Call AFTER convergence, not mid-sequence — the UM may legitimately
+   *  capture items from a tracked origin that hasn't fully settled yet. */
+  assertOnlyTrackedOrigins(): void;
+  cleanup(): void;
+}
+
+/**
+ * Create a probe wrapping Y.UndoManager that records stack state and asserts
+ * Items-remained-captured. Replaces scattered inline `new Y.UndoManager(...)`
+ * in test code.
+ *
+ * `trackedOrigins` must contain `LocalTransactionOrigin` OBJECT references per
+ * precedent #1 (AGENTS.md) — e.g., `AGENT_WRITE_ORIGIN`, `ORIGIN_TREE_TO_TEXT`,
+ * `ORIGIN_TEXT_TO_TREE`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`. `Y.UndoManager`'s
+ * internal `trackedOrigins.has(tx.origin)` is identity-based for objects — a raw
+ * string literal would silently fail to match the production tx.origin object.
+ */
+export function createItemOriginProbe(
+  ytext: Y.Text,
+  opts: { trackedOrigins: Array<LocalTransactionOrigin>; captureTimeout?: number },
+): ItemOriginProbe {
+  const trackedSet = new Set(opts.trackedOrigins);
+  const um = new Y.UndoManager(ytext, {
+    trackedOrigins: trackedSet,
+    captureTimeout: opts.captureTimeout ?? 0,
+  });
+  const captures = new Map<string, { stackLength: number; content: string }>();
+
+  // FR-6 origin-laundering detection: accumulate distinct tx.origin values
+  // observed at capture time. Y.UndoManager's StackItem has no public
+  // `.origin` field (verified from UndoManager.d.ts); the only public API
+  // that exposes origin is the `'stack-item-added'` event at capture time.
+  const capturedOrigins = new Set<unknown>();
+  const onStackItemAdded = (event: { origin: unknown }) => {
+    capturedOrigins.add(event.origin);
+  };
+  um.on('stack-item-added', onStackItemAdded);
+
+  return {
+    recordCapture(label = 'default') {
+      captures.set(label, {
+        stackLength: um.undoStack.length,
+        content: ytext.toString(),
+      });
+    },
+    assertCaptureIntact(label = 'default') {
+      const cap = captures.get(label);
+      if (!cap) throw new Error(`No capture recorded for label: ${label}`);
+      if (um.undoStack.length < cap.stackLength) {
+        throw new Error(
+          `Origin probe: tracked Items disappeared from UM stack. ` +
+            `Expected >=${cap.stackLength}, got ${um.undoStack.length}.`,
+        );
+      }
+    },
+    capturedContent: () => ytext.toString(),
+    undoStackLength: () => um.undoStack.length,
+    getCapturedOrigins: () => capturedOrigins,
+    assertOnlyTrackedOrigins() {
+      for (const origin of capturedOrigins) {
+        if (!trackedSet.has(origin as LocalTransactionOrigin)) {
+          const originLabel =
+            typeof origin === 'object' && origin !== null && 'context' in origin
+              ? ((origin as { context?: { origin?: string } }).context?.origin ?? 'unknown-object')
+              : String(origin);
+          throw new Error(
+            `Origin probe: captured a stray origin '${originLabel}' not in trackedOrigins set. ` +
+              `This indicates origin-laundering — Items under an untracked origin ended up ` +
+              `in the UM stack. trackedOrigins: [${opts.trackedOrigins.map((o) => (o as { context?: { origin?: string } }).context?.origin ?? '?').join(', ')}]`,
+          );
+        }
+      }
+    },
+    cleanup() {
+      um.off('stack-item-added', onStackItemAdded);
+      um.destroy();
+    },
+  };
+}
+
+// ─── Multi-client factory + convergence assert (FR-14) ──��
+
+export class ClientConvergenceError extends Error {
+  constructor(details: string) {
+    super(`Client convergence timed out.\n${details}`);
+    this.name = 'ClientConvergenceError';
+  }
+}
+
+/**
+ * Create multiple TestClients all joined to the same docName.
+ * Auto-generates docName if not provided.
+ */
+export async function createTestClients(
+  port: number,
+  opts: { count: number; docName?: string; perClientOptions?: CreateTestClientOptions },
+): Promise<TestClient[]> {
+  const docName = opts.docName ?? `test-${crypto.randomUUID()}`;
+  const clients: TestClient[] = [];
+  for (let i = 0; i < opts.count; i++) {
+    clients.push(await createTestClient(port, docName, opts.perClientOptions));
+  }
+  return clients;
+}
+
+/**
+ * Poll until all clients have converged: identical ytext, identical fragment
+ * serialization, and bridge invariant holds on each. Throws on timeout.
+ */
+export async function assertAllConverged(
+  clients: TestClient[],
+  opts: { timeout?: number; pollIntervalMs?: number } = {},
+): Promise<void> {
+  const timeout = opts.timeout ?? 2000;
+  const pollMs = opts.pollIntervalMs ?? 50;
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    const ytexts = clients.map((c) => c.ytext.toString());
+    const fragMds = clients.map((c) => serializeFragment(c.fragment));
+    const allYtextSame = ytexts.every((t) => t === ytexts[0]);
+    const allFragSame = fragMds.every((m) => m === fragMds[0]);
+    if (allYtextSame && allFragSame) {
+      // Also verify bridge invariant on each
+      for (const c of clients) {
+        assertBridgeInvariant(c.ytext, c.fragment);
+      }
+      return;
+    }
+    await wait(pollMs);
+  }
+  // Build per-client diff for error message
+  const details = clients
+    .map(
+      (c, i) =>
+        `  Client ${i} (${c.docName}):\n` +
+        `    ytext (${c.ytext.toString().length}): ${c.ytext.toString().slice(0, 200)}\n` +
+        `    frag  (${serializeFragment(c.fragment).length}): ${serializeFragment(c.fragment).slice(0, 200)}`,
+    )
+    .join('\n');
+  throw new ClientConvergenceError(details);
 }

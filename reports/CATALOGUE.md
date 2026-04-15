@@ -1,13 +1,19 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-14 by `generate-catalogue.ts`
-> 76 valid reports indexed
+> Auto-generated on 2026-04-15 by `generate-catalogue.ts`
+> 82 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [CodeMirror Markdown Source-View Rendering: Primitives,…](codemirror-markdown-source-view-rendering/REPORT.md) | 2026-04-14 | 8 files | CodeMirror 6 primitives, line wrap… | CodeMirror 6, Obsidian, SilverBull… |
+| [V0 Day-Zero Delight: What Would Make Our Launch Feel S…](v0-day-zero-delight/REPORT.md) | 2026-04-14 | 4 files | v0 launch strategy, day-0 delight,… | Open Knowledge, Obsidian, Notion, … |
 | [Clone-from-GitHub Onboarding Mechanics for On-Device E…](open-from-github-onboarding-mechanics/REPORT.md) | 2026-04-14 | 10 files | clone from github, oauth device fl… | VSCode, GitHub Desktop, Zed, Obsid… |
+| [Markdown Source-View Per-Construct Rendering: Evidence…](markdown-source-view-constructs/REPORT.md) | 2026-04-14 | 13 files | markdown source view, CodeMirror p… | CodeMirror 6, @lezer/markdown, @co… |
+| [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-14 | 14 files | git lifecycle UX, staging and comm… | Linear, Figma, Notion, Replit, Goo… |
+| [Storybook Alternatives and Adjacent Component Playgrou…](storybook-alternatives-component-playgrounds/REPORT.md) | 2026-04-14 | 8 files | component playgrounds, prop editin… | Ladle, Histoire, Playroom, React C… |
+| [Markdown Table Rendering in Prose-Constrained Columns](markdown-table-rendering-in-prose-columns/REPORT.md) | 2026-04-14 | 8 files | table rendering, prose column layo… | TipTap, BlockNote, Milkdown, Plate… |
 | [Bun Workspace ProseMirror-Model Deduplication](bun-prosemirror-model-dedup/REPORT.md) | 2026-04-13 | 3 files | module resolution, dependency dedu… | Bun, ProseMirror, TipTap, @tiptap/… |
 | [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md) | 2026-04-13 | 9 files | git-backed CMS architecture, markd… | TinaCMS, SSW, isomorphic-git, Plat… |
 | [R23 Autolink & NG10 Frontmatter: Prior Art Grounding f…](r23-autolink-and-ng10-prior-art/REPORT.md) | 2026-04-13 | 5 files | micromark construct priority, MDX … | remark-mdx, micromark-extension-md… |
@@ -88,6 +94,26 @@
 
 ## Report Details
 
+### [CodeMirror Markdown Source-View Rendering: Primitives, Patterns, and Ecosystem Practice](codemirror-markdown-source-view-rendering/REPORT.md)
+
+> How CodeMirror 6-based markdown source editors handle long logical lines (pipe table rows, fenced code blocks, HTML blocks, frontmatter) — what primitives CM6 exposes, what products do in practice, what maintainers and authoritative sources recommend. Covers Obsidian Source Mode & Live Preview, Sil…
+
+- **Created:** 2026-04-14
+- **Topics:** CodeMirror 6 primitives, line wrapping, decorations, block widgets, atomic ranges, syntax tree traversal, live preview pattern, markdown source view, long-line rendering, state field vs view plugin
+- **Subjects:** CodeMirror 6, Obsidian, SilverBullet, codemirror-rich-markdoc, Zettlr, HedgeDoc, Logseq, VS Code, Foam, Dendron, TipTap, @lezer/markdown, @codemirror/lang-markdown, y-codemirror.next, Markdoc
+- **Evidence files:** 8
+- **Warnings:** 1
+
+### [V0 Day-Zero Delight: What Would Make Our Launch Feel Special](v0-day-zero-delight/REPORT.md)
+
+> Research-driven divergent exploration of how Open Knowledge's v0 launch can feel special, differentiated, and shareable on day 0. Four-phase methodology (multi-channel worldmodel harvest + 20 parallel divergent agents + thematic consolidation + synthesis) producing a top-20 curated shortlist across…
+
+- **Created:** 2026-04-14
+- **Topics:** v0 launch strategy, day-0 delight, differentiation narrative, mascot and voice, onboarding ceremony, time-to-wow, shareability mechanics, viral dev-tool launches, power-user advocacy, benchmark-as-flywheel, anti-incumbent manifesto, divergent ideation methodology
+- **Subjects:** Open Knowledge, Obsidian, Notion, Claude Code, obsidian-mind, kepano, Andrej Karpathy, Clawd /buddy, Bolt.new, Cursor, Linear, Arc Browser, Finch, Tamagotchi, Octocat, Supabase Launch Week
+- **Evidence files:** 4
+- **Warnings:** 4
+
 ### [Clone-from-GitHub Onboarding Mechanics for On-Device Editors](open-from-github-onboarding-mechanics/REPORT.md)
 
 > Factual landscape and architectural archetypes for implementing 'Clone from GitHub' or 'Open from GitHub' in an on-device editor with no backend. Source-level evidence from VSCode, GitHub Desktop (+ dugite), Zed, Obsidian-Git, gh CLI, isomorphic-git, simple-git, and @octokit/auth-oauth-device. Cove…
@@ -96,6 +122,44 @@
 - **Topics:** clone from github, oauth device flow, oauth app registration, on-device editor onboarding, git credential delegation, token storage, workspace trust, architectural seams
 - **Subjects:** VSCode, GitHub Desktop, Zed, Obsidian-Git, gh CLI, dugite, simple-git, isomorphic-git, @napi-rs/keyring, @octokit/auth-oauth-device, GitHub App, OAuth App
 - **Evidence files:** 10
+
+### [Markdown Source-View Per-Construct Rendering: Evidence Playbook](markdown-source-view-constructs/REPORT.md)
+
+> For every non-MDX markdown construct Open Knowledge supports (blockquote, code, thematicBreak, list/listItem, html block, yaml frontmatter, definition, heading, inline marks including emphasis/strong/delete/highlight, inlineCode, link/image/linkReference, wikiLink, hardBreak), catalog what CM6 prim…
+
+- **Created:** 2026-04-14
+- **Topics:** markdown source view, CodeMirror primitives, per-construct decoration, line decoration, widget replace, cursor reveal, block widgets, atomic ranges, syntax tree traversal, ecosystem comparison
+- **Subjects:** CodeMirror 6, @lezer/markdown, @codemirror/lang-markdown, Obsidian, SilverBullet, codemirror-rich-markdoc, HedgeDoc, Zettlr, VS Code, Typora, MDXEditor, Marktext, Milkdown, HackMD, Foam, Dendron, Markdoc
+- **Evidence files:** 13
+
+### [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyond](git-lifecycle-push-pull-merge-patterns/REPORT.md)
+
+> How 15+ editors and tools across the spectrum — developer IDEs, visual git clients, power-user TUIs, and non-developer wrappers — implement the post-clone git lifecycle. Covers staging/commit, push/pull, merge/rebase conflicts, branch management, credential persistence, error recovery, history/diff…
+
+- **Created:** 2026-04-14
+- **Topics:** git lifecycle UX, staging and commit patterns, push pull mechanics, merge conflict resolution, branch management, credential persistence, error recovery, non-developer git abstraction, editor spectrum, sync engine architecture, offline affordances, progress reporting, failure taxonomy, sustained auth lifecycle
+- **Subjects:** Linear, Figma, Notion, Replit, Google Docs, Obsidian Sync, iCloud Drive, Dropbox, Stripe API, gRPC, Tower, VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, diffview.nvim, Sublime Merge, Logseq, SiYuan
+- **Evidence files:** 14
+- **Warnings:** 1
+
+### [Storybook Alternatives and Adjacent Component Playground Tools](storybook-alternatives-component-playgrounds/REPORT.md)
+
+> Primary-source survey of 7 tools (Ladle, Histoire, Playroom, React Cosmos, Docusaurus live code/react-live, Sandpack, and additional projects) covering maintenance status, component registration models, prop editing architectures, and relevance to in-editor component block systems with inline prop …
+
+- **Created:** 2026-04-14
+- **Topics:** component playgrounds, prop editing architecture, live preview rendering, component registration
+- **Subjects:** Ladle, Histoire, Playroom, React Cosmos, Sandpack, react-live, Docusaurus, react-styleguidist
+- **Evidence files:** 8
+
+### [Markdown Table Rendering in Prose-Constrained Columns](markdown-table-rendering-in-prose-columns/REPORT.md)
+
+> How 17 markdown editors, docs frameworks, and editor libraries handle the mismatch between wide tables and reader-optimized narrow prose columns. Covers six strategy families — wrapper-scroll, block-scroll, grid-column-escape, negative-margin-bleed, document-width-cap, author-controlled — with evid…
+
+- **Created:** 2026-04-14
+- **Topics:** table rendering, prose column layout, overflow strategies, CSS table-layout, responsive tables, MDX components, markdown editors
+- **Subjects:** TipTap, BlockNote, Milkdown, Plate, TinaCMS, Outline, AFFiNE, BlockSuite, Obsidian, Docmost, Logseq, SilverBullet, HedgeDoc, Zettlr, Dendron, Foam, Docusaurus, Mintlify, Fumadocs, Tailwind Typography, ProseMirror, Infima
+- **Evidence files:** 8
+- **Warnings:** 1
 
 ### [Bun Workspace ProseMirror-Model Deduplication](bun-prosemirror-model-dedup/REPORT.md)
 

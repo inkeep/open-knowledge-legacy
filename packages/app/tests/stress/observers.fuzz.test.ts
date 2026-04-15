@@ -14,6 +14,7 @@
 import { describe, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
+import { AGENT_WRITE_ORIGIN } from '@inkeep/open-knowledge-server';
 import { getSchema } from '@tiptap/core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
@@ -149,7 +150,7 @@ const mutators: Array<{ name: string; fn: Mutator }> = [
       ctx.doc.transact(() => {
         ctx.ytext.delete(0, ctx.ytext.length);
         ctx.ytext.insert(0, stabilized);
-      }, 'agent-write');
+      }, AGENT_WRITE_ORIGIN);
     },
   },
   {
@@ -182,6 +183,39 @@ const mutators: Array<{ name: string; fn: Mutator }> = [
       markUserTyping(ctx.doc);
     },
   },
+  {
+    name: 'agentRewriteParagraph',
+    fn: (ctx) => {
+      // Pick a random paragraph from the current Y.Text content and rewrite
+      // ~50% of its characters. This forces Path B (DMP three-way merge) when
+      // Observer A fires next, exercising Match_Threshold=0.5 under randomized
+      // divergence levels.
+      const currentText = ctx.ytext.toString();
+      const lines = currentText.split('\n');
+      // Find non-empty lines that look like paragraph content (not headings, etc.)
+      const paraLines = lines
+        .map((line, idx) => ({ line, idx }))
+        .filter(({ line }) => line.length > 0 && !line.startsWith('#') && !line.startsWith('---'));
+      if (paraLines.length === 0) return; // null-safe
+
+      const target = paraLines[ctx.prng.nextInt(paraLines.length)];
+      // Mutate ~50% of the characters
+      const chars = target.line.split('');
+      for (let c = 0; c < chars.length; c++) {
+        if (ctx.prng.next() < 0.5) {
+          chars[c] = WORDS[ctx.prng.nextInt(WORDS.length)][0]; // replace with a random letter
+        }
+      }
+      const newLine = chars.join('');
+      lines[target.idx] = newLine;
+      const newContent = lines.join('\n');
+
+      ctx.doc.transact(() => {
+        ctx.ytext.delete(0, ctx.ytext.length);
+        ctx.ytext.insert(0, newContent);
+      }, AGENT_WRITE_ORIGIN);
+    },
+  },
 ];
 
 // ---------- fuzz runner ----------
@@ -197,7 +231,7 @@ async function runFuzz(iterations: number, seedOverride?: number): Promise<void>
   const fragment = doc.getXmlFragment('default');
   const ytext = doc.getText('source');
   const undoManager = new Y.UndoManager(ytext, {
-    trackedOrigins: new Set(['agent-write']),
+    trackedOrigins: new Set([AGENT_WRITE_ORIGIN]),
     captureTimeout: 0,
   });
   const cleanup = setupObservers({ doc, xmlFragment: fragment, ytext, mdManager, schema });

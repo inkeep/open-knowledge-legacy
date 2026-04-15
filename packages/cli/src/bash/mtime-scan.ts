@@ -18,13 +18,14 @@
 import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { relative, resolve } from 'node:path';
+import { OK_DIR } from '../constants.ts';
 
 /** Upper bound on the number of files we scan. Typical content dirs are well under 500. */
 const SCAN_CAP = 1000;
 
 const SKIP_DIRS: ReadonlySet<string> = new Set([
   '.git',
-  '.open-knowledge',
+  OK_DIR,
   '.openknowledge',
   'node_modules',
   '.changeset',

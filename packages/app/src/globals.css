@@ -275,6 +275,7 @@
 
 .tiptap-editor > div {
   grid-column: content;
+  position: relative;
 }
 
 /* Editor polish */
@@ -282,11 +283,19 @@
   outline: none;
   min-height: 200px;
   line-height: 1.7;
+  /* Extend hit area into left margin so the gap between text and the drag handle
+     does not prematurely hide it. padding-left compensates so text is unchanged. */
+  margin-left: -2.5rem;
+  padding-left: 2.5rem;
   @apply text-gray-800 dark:text-white/80;
 }
 
 .ProseMirror p {
   margin-bottom: 0.5em;
+}
+
+.ProseMirror [data-mark-view-content] {
+  @apply truncate;
 }
 
 .ProseMirror mark {
@@ -455,13 +464,8 @@
 /* Links */
 .ProseMirror a {
   color: var(--color-azure-blue);
-  text-decoration: underline;
-  text-underline-offset: 2px;
   cursor: pointer;
-}
-
-.ProseMirror a:hover {
-  color: var(--color-azure-600);
+  @apply font-medium dark:text-sky-blue dark:hover:text-azure-300 hover:underline hover:underline-offset-2;
 }
 
 /* Wiki-link chips contain an <a> for status-bar URL display — reset link styles
@@ -469,6 +473,7 @@
 .ProseMirror [data-resolution-state] a {
   color: inherit;
   text-decoration: none;
+  @apply dark:text-inherit dark:hover:text-inherit;
 }
 
 /* Horizontal rule */
@@ -557,6 +562,74 @@
   float: left;
   height: 0;
   @apply text-muted-foreground/60;
+}
+
+/* Block controls container — replaces ok-drag-handle */
+.ok-block-controls {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 1;
+  transition: opacity 100ms var(--ease-out-strong);
+  user-select: none;
+}
+
+/* + button */
+.ok-add-block-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  color: oklch(0.72 0 0);
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  transition: background-color 100ms var(--ease-out-strong);
+}
+.ok-add-block-btn:hover {
+  background-color: oklch(0 0 0 / 6%);
+}
+
+/* Drag grip */
+.ok-drag-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: grab;
+  color: oklch(0.72 0 0);
+  border-radius: 3px;
+}
+.ok-drag-grip:hover {
+  background-color: oklch(0 0 0 / 6%);
+}
+.ok-drag-grip:active {
+  cursor: grabbing;
+}
+
+/* Visibility fade — DragHandlePlugin sets inline visibility: hidden */
+.ok-block-controls[style*="visibility: hidden"],
+.ok-block-controls[style*="visibility:hidden"] {
+  opacity: 0;
+}
+
+/* Dark mode */
+.dark .ok-add-block-btn {
+  color: oklch(0.5 0 0);
+}
+.dark .ok-add-block-btn:hover {
+  background-color: oklch(1 0 0 / 8%);
+}
+.dark .ok-drag-grip {
+  color: oklch(0.5 0 0);
+}
+.dark .ok-drag-grip:hover {
+  background-color: oklch(1 0 0 / 8%);
 }
 
 /* CodeMirror polish */
@@ -877,14 +950,6 @@ button:active:not(:disabled) {
 
 .dark .ProseMirror li[data-type="taskItem"][data-checked="true"] > div {
   color: var(--color-gray-500);
-}
-
-.dark .ProseMirror a {
-  color: var(--color-sky-blue);
-}
-
-.dark .ProseMirror a:hover {
-  color: var(--color-azure-300);
 }
 
 .dark .ProseMirror .selectedCell::after {

@@ -8,6 +8,7 @@ import {
   type ServerLockMetadata,
   updateServerLockPort,
 } from '@inkeep/open-knowledge-server';
+import { OK_DIR } from '../constants.ts';
 import { discoverServerUrl } from './mcp.ts';
 
 let tmpDir: string;
@@ -16,7 +17,7 @@ let lockPath: string;
 
 beforeEach(async () => {
   tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-mcp-discovery-'));
-  lockDir = resolve(tmpDir, '.open-knowledge');
+  lockDir = resolve(tmpDir, OK_DIR);
   lockPath = resolve(lockDir, 'server.lock');
 });
 

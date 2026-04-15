@@ -1,19 +1,24 @@
 /**
  * Bidirectional observers between Y.XmlFragment('default') and Y.Text('source').
  *
- * Observer A (tree→text): Computes an incremental DELTA between the last-synced
- *   XmlFragment state and the current state, and applies ONLY that delta to Y.Text.
- *   This is non-destructive: if Y.Text has content the XmlFragment doesn't have
- *   (e.g., an agent write that hasn't been propagated via Observer B yet), that
- *   content is preserved.
+ * Observer A (tree→text): Two-path sync algorithm.
+ *   Path A (Y.Text in sync with baseline): uses diffLines with a content-comparison
+ *     gate to skip no-op replacements, preserving CRDT Items and their origins.
+ *   Path B (Y.Text diverged, e.g., concurrent agent write): uses DMP patch_make/
+ *     patch_apply three-way merge to apply only the user's delta while preserving
+ *     divergent content. Both paths minimize CRDT Item replacement (precedent #9).
  *
  * Observer B (text→tree): Parses Y.Text markdown, applies to XmlFragment via
  *   updateYFragment. Defers while the user is actively typing in WYSIWYG (the tree
  *   replacement would otherwise obliterate in-flight user mutations).
  *
  * Transaction origin guards prevent infinite loops:
- *   - Observer A writes with origin 'sync-from-tree', Observer B skips those.
- *   - Observer B writes with origin 'sync-from-text', Observer A skips those.
+ *   - Observer A writes under ORIGIN_TREE_TO_TEXT (LocalTransactionOrigin object,
+ *     `context.origin === 'sync-from-tree'`); Observer B skips those.
+ *   - Observer B writes under ORIGIN_TEXT_TO_TREE (LocalTransactionOrigin object,
+ *     `context.origin === 'sync-from-text'`); Observer A skips those.
+ *   Both constants are exported object refs — identity match is required for
+ *   Set-based enforcement (precedent #1). See AGENTS.md.
  *
  * Observer B early-exit: If the current XmlFragment already serializes to the same
  * markdown as Y.Text, skip updateYFragment entirely — nothing to do, avoid the tree
@@ -32,15 +37,50 @@
  *   transaction can merge before updateYFragment rebuilds the tree.
  */
 
+import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import { prependFrontmatter, stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
+import {
+  applyByPrefixSuffix,
+  prependFrontmatter,
+  stripFrontmatter,
+  VFileMessage,
+} from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import DiffMatchPatch from 'diff-match-patch';
 import type * as Y from 'yjs';
 import { diffLinesFast as diffLines } from './diff-lines-fast';
 
-export const ORIGIN_TREE_TO_TEXT = 'sync-from-tree';
-export const ORIGIN_TEXT_TO_TREE = 'sync-from-text';
+// Module-local instance so DMP tuning never collides with other importers
+// (e.g., diff-lines-fast.ts has its own instance). Match_Threshold pinned to
+// the DMP default (0.5) explicitly per audit F15 — depending on the default
+// would silently regress if a future module mutated the shared singleton.
+const dmp = new DiffMatchPatch();
+dmp.Match_Threshold = 0.5;
+
+/**
+ * Transaction origin for Observer A (tree → text).
+ *
+ * Precedent #1 (AGENTS.md): all Y.Doc transaction origins are `LocalTransactionOrigin`
+ * OBJECT references, never raw strings. `Set.has()` matching in `trackedOrigins` or
+ * the bridge-invariant watcher's enforcing set is identity-based for objects — a
+ * string literal would silently fail to match the production tx.origin object.
+ */
+export const ORIGIN_TREE_TO_TEXT = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'sync-from-tree' },
+} satisfies LocalTransactionOrigin;
+
+/**
+ * Transaction origin for Observer B (text → tree). See `ORIGIN_TREE_TO_TEXT` JSDoc
+ * for why this is an object, not a string.
+ */
+export const ORIGIN_TEXT_TO_TREE = {
+  source: 'local' as const,
+  skipStoreHooks: false,
+  context: { origin: 'sync-from-text' },
+} satisfies LocalTransactionOrigin;
 
 const DEBOUNCE_MS = 50;
 
@@ -72,9 +112,45 @@ const REMOTE_TREE_SYNC_GRACE_MS = DEBOUNCE_MS * 3;
 // Per-document coordination state
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Scheduler interface for observer debounces, typing-defer timers, and the
+ * clock reference used by elapsed-time comparisons (FR-15).
+ *
+ * Production: arrow-wrapped passthrough to `globalThis.setTimeout` /
+ * `clearTimeout` / `Date.now()`. Tests inject `createManualScheduler()` for
+ * synchronous deterministic flush AND a virtual clock so that `now()`
+ * advances in lockstep with `setTimeout` dueAt calculations.
+ *
+ * The `now()` method is essential: observer callbacks use elapsed-time
+ * comparisons (typing defer, remote-tree grace window) to decide whether
+ * to reschedule their debounce. Under ManualScheduler, those comparisons
+ * must use the same virtual clock as `setTimeout` — mixing `Date.now()`
+ * (real) with scheduler `dueAt` (virtual) produces unbounded skew and
+ * breaks the deterministic timing model.
+ */
+export interface Scheduler {
+  setTimeout: (cb: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearTimeout: (handle: ReturnType<typeof setTimeout>) => void;
+  /** Current clock reading in milliseconds. Production: `Date.now()`.
+   *  Tests with ManualScheduler: virtual time advanced by `advanceTime`. */
+  now: () => number;
+}
+
+const defaultScheduler: Scheduler = {
+  setTimeout: (cb, ms) => globalThis.setTimeout(cb, ms),
+  clearTimeout: (handle) => globalThis.clearTimeout(handle),
+  now: () => Date.now(),
+};
+
 interface TypingState {
   lastUserTypedAt: number;
   lastRemoteTreeOnlyAt: number;
+  /** Scheduler used to read `now()` for timestamp recording. Defaults to
+   *  `defaultScheduler` (real clock) when `markUserTyping` is called before
+   *  `setupObservers` runs for this doc. `setupObservers` overrides with its
+   *  injected scheduler so all elapsed-time comparisons use a consistent
+   *  clock. */
+  scheduler: Scheduler;
 }
 
 const typingStateByDoc = new WeakMap<Y.Doc, TypingState>();
@@ -82,7 +158,7 @@ const typingStateByDoc = new WeakMap<Y.Doc, TypingState>();
 function getTypingState(doc: Y.Doc): TypingState {
   let state = typingStateByDoc.get(doc);
   if (!state) {
-    state = { lastUserTypedAt: 0, lastRemoteTreeOnlyAt: 0 };
+    state = { lastUserTypedAt: 0, lastRemoteTreeOnlyAt: 0, scheduler: defaultScheduler };
     typingStateByDoc.set(doc, state);
   }
   return state;
@@ -91,9 +167,13 @@ function getTypingState(doc: Y.Doc): TypingState {
 /**
  * Mark that the local user just typed. Call this from the editor's DOM event handlers
  * (keydown, paste, drop, etc.). Observer B uses this to defer its tree replacement.
+ *
+ * Uses the scheduler's `now()` so virtual-clock tests observe consistent
+ * timestamps with scheduler `setTimeout` dueAt calculations.
  */
 export function markUserTyping(doc: Y.Doc): void {
-  getTypingState(doc).lastUserTypedAt = Date.now();
+  const state = getTypingState(doc);
+  state.lastUserTypedAt = state.scheduler.now();
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -107,6 +187,22 @@ interface ObserverDeps {
   mdManager: MarkdownManager;
   schema: Schema;
   onSyncError?: (direction: 'tree-to-text' | 'text-to-tree', error: Error) => void;
+  /** Optional: invoked when DMP patch_apply reports one or more failed patches
+   *  during Observer A's Path B three-way merge. Diagnostic only — non-fatal.
+   *  Consumers (debug panel, V0-14 telemetry) opt in; omitted callback = no-op.
+   *  The same event is always logged via `console.warn`. */
+  onMergeFailed?: (info: {
+    failedPatches: number;
+    totalPatches: number;
+    baseLen: number;
+    userLen: number;
+    agentLen: number;
+    mergedLen: number;
+  }) => void;
+  /** Optional scheduler injection for deterministic testing (FR-15).
+   *  Default: arrow-wrapped passthrough to globalThis.setTimeout/clearTimeout.
+   *  Tests: inject createManualScheduler() for synchronous flush. */
+  scheduler?: Scheduler;
 }
 
 /**
@@ -117,19 +213,40 @@ interface ObserverDeps {
 function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: string): void {
   if (currentText === newText) return;
 
-  // No padding needed here — unlike `applyUserDelta` below, this function walks the
-  // diff with byte-level `delete(offset, len)` + `insert(offset, value)` operations.
-  // Even if `diffLines` produces a spurious `removed: X` + `added: X + Y` pair on an
-  // unterminated final line, deleting X then re-inserting X+Y at the same offset
-  // produces the correct net effect. The aliasing artifact cancels itself out.
-  //
-  // `applyUserDelta` is different: it walks line-by-line with content-matching
-  // (`indexOf`), which IS vulnerable to the aliasing because lines are treated as
-  // atoms. That function pads its inputs before diffing.
+  // No padding needed here — this function walks the diff with byte-level
+  // `delete(offset, len)` + `insert(offset, value)` operations. Even if `diffLines`
+  // produces a spurious `removed: X` + `added: X + Y` pair on an unterminated final
+  // line, deleting X then re-inserting X+Y at the same offset produces the correct
+  // net effect. The aliasing artifact cancels itself out.
   const changes = diffLines(currentText, newText);
   let offset = 0;
-  for (const change of changes) {
-    if (change.removed) {
+  for (let i = 0; i < changes.length; i++) {
+    const change = changes[i];
+    const next = changes[i + 1];
+    if (change.removed && next?.added) {
+      // Content-comparison gate (D7): if Y.Text already has the added content
+      // at this offset, skip both delete and insert — preserve CRDT Items.
+      //
+      // Note: `offset` tracks the mutated Y.Text position but indexes into the
+      // original `currentText` snapshot. After a genuine replacement where
+      // change.value.length !== next.value.length, subsequent gate checks read
+      // a slightly shifted slice. This is benign: (1) the gate is a pure
+      // optimization — misses fall through to correct delete+insert, (2) false
+      // positives (coincidental match at wrong offset) self-heal on the next
+      // Observer A cycle (≤50ms), (3) Path A only fires when Y.Text is in sync
+      // with baseline, making multi-hunk different-length replacements rare.
+      const targetSlice = currentText.substring(offset, offset + next.value.length);
+      if (targetSlice === next.value) {
+        // No-op replacement; advance offset by the (now equal) length.
+        offset += next.value.length;
+        i++; // consume the paired ADDED
+        continue;
+      }
+      ytext.delete(offset, change.value.length);
+      ytext.insert(offset, next.value);
+      offset += next.value.length;
+      i++; // consume the paired ADDED
+    } else if (change.removed) {
       ytext.delete(offset, change.value.length);
     } else if (change.added) {
       ytext.insert(offset, change.value);
@@ -141,111 +258,64 @@ function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText: strin
 }
 
 /**
- * Apply a text change to Y.Text using prefix/suffix comparison — O(n) string
- * scan, zero diff algorithm overhead. Produces at most one delete + one insert
- * CRDT operation. Used by applyUserDelta to avoid a second diff pass.
- */
-function applyByPrefixSuffix(ytext: Y.Text, currentText: string, newText: string): void {
-  if (currentText === newText) return;
-
-  let prefixLen = 0;
-  const minLen = Math.min(currentText.length, newText.length);
-  while (prefixLen < minLen && currentText[prefixLen] === newText[prefixLen]) prefixLen++;
-
-  let suffixLen = 0;
-  while (
-    suffixLen < minLen - prefixLen &&
-    currentText[currentText.length - 1 - suffixLen] === newText[newText.length - 1 - suffixLen]
-  ) {
-    suffixLen++;
-  }
-
-  const deleteLen = currentText.length - prefixLen - suffixLen;
-  const insertStr = newText.slice(prefixLen, newText.length - suffixLen);
-  if (deleteLen > 0) ytext.delete(prefixLen, deleteLen);
-  if (insertStr.length > 0) ytext.insert(prefixLen, insertStr);
-}
-
-/**
  * Apply ONLY the user's delta to Y.Text, when Y.Text has diverged from the last
- * synced XmlFragment state. This is used in the race-condition path where another
- * source wrote to Y.Text between Observer A syncs. Known triggers: agent writes
- * (via `agent-write` origin), file-watcher disk events (via `file-watcher` origin),
- * and — critically — a remote peer's WYSIWYG edit arriving as a Y.Text-only
- * transaction while the local user is mid-sync on XmlFragment. This last trigger
- * was observed empirically during PR #43's multi-client test matrix merge and is
- * the reason single-client test coverage is insufficient for observer bridge changes.
+ * synced XmlFragment state (Path B). Uses DMP's canonical three-way merge:
  *
- * Strategy: compute the line-level diff between the old XmlFragment md and the new
- * XmlFragment md. For each added line, insert it at the corresponding line index in
- * Y.Text (matched by anchor lines before the insertion). For each removed line,
- * delete it from Y.Text (matched by content). This preserves any lines in Y.Text
- * that weren't in either old or new XmlFragment md — i.e., content from other sources.
+ *   - base   = oldXmlMd (lastSyncedXmlMd, the common ancestor)
+ *   - user   = newXmlMd (the user's branch via XmlFragment serialize)
+ *   - agent  = currentText (the agent's branch in Y.Text)
  *
- * This is not a perfect three-way merge, but it's correct for the common case of
- * "user appends/deletes lines while agent appends lines". When two sources modify
- * overlapping lines simultaneously, the user's change wins (applied last).
+ * DMP `patch_make(base, user)` computes the user's edits as patches, then
+ * `patch_apply(patches, agent)` applies them against the agent's diverged text.
+ * The result preserves Item-equal prefix/suffix via `applyByPrefixSuffix`.
+ *
+ * Known merge semantics (LOCKED decisions):
+ *   - D8: exact-character overlap (`base="hello", user="hello!", agent="hello!"`)
+ *     produces `"hello!!"` — inherent to three-way merge, both sides independently
+ *     made the same change. Mitigation deferred (see SPEC §3 NG6/NG7 — distinct
+ *     from CLAUDE.md's fidelity NG-IDs which cover different concerns).
+ *   - D9: user-wins on collision — when user deletes a line that agent modified,
+ *     the deletion wins (DMP default behavior).
  */
-function applyUserDelta(ytext: Y.Text, oldXmlMd: string, newXmlMd: string): void {
+function applyUserDelta(deps: ObserverDeps, oldXmlMd: string, newXmlMd: string): void {
   if (oldXmlMd === newXmlMd) return;
-
+  const { ytext } = deps;
   const currentText = ytext.toString();
-  const currentLines = currentText.split('\n');
 
-  // Pad both sides with a trailing newline so diffLines aligns cleanly at line
-  // boundaries. Without padding, an unterminated final line in `old` ("foo" with no
-  // \n) aliases into a spurious "removed foo" + "added foo\n..." pair, which then
-  // causes the added block to re-insert content we intended to leave alone.
-  const oldPadded = oldXmlMd.endsWith('\n') ? oldXmlMd : `${oldXmlMd}\n`;
-  const newPadded = newXmlMd.endsWith('\n') ? newXmlMd : `${newXmlMd}\n`;
+  // Three-way merge: patch built from base→user, applied to agent's diverged Y.Text.
+  const patches = dmp.patch_make(oldXmlMd, newXmlMd);
+  const [mergedText, results] = dmp.patch_apply(patches, currentText);
 
-  // Compute line-level diff of the user's change: oldXmlMd → newXmlMd.
-  // With both inputs newline-terminated (padded above), diffLines treats each line as
-  // an atomic token — removed+added pairs never share prefix lines, so no overlap
-  // trimming is needed.
-  const changes = diffLines(oldPadded, newPadded);
-
-  // Walk the diff and apply each change to currentLines by matching context.
-  // This preserves any lines in currentText that aren't part of oldXmlMd → newXmlMd
-  // (e.g., lines from other sources that wrote to Y.Text between Observer A syncs).
-  const resultLines = [...currentLines];
-  let resultCursor = 0;
-
-  for (const change of changes) {
-    const changeLines = change.value.split('\n');
-    // diffLines includes a trailing empty string when value ends with \n
-    if (changeLines[changeLines.length - 1] === '') changeLines.pop();
-
-    if (change.removed) {
-      // Delete these lines from resultLines, matching by content
-      for (const line of changeLines) {
-        const idx = resultLines.indexOf(line, resultCursor);
-        if (idx >= 0) {
-          resultLines.splice(idx, 1);
-          // resultCursor stays at the same position (next line is now here)
-        }
-      }
-    } else if (change.added) {
-      // Insert these lines into resultLines at resultCursor
-      resultLines.splice(resultCursor, 0, ...changeLines);
-      resultCursor += changeLines.length;
-    } else {
-      // Unchanged — advance resultCursor past these context lines
-      for (const line of changeLines) {
-        const idx = resultLines.indexOf(line, resultCursor);
-        if (idx >= 0) {
-          resultCursor = idx + 1;
-        }
-      }
-    }
+  // Failed patches indicate the patch's context could not be located in agent's
+  // text within Match_Threshold. patch_apply still returns mergedText with the
+  // successful patches applied and failed ones skipped — that's "user-wins on what
+  // we could merge". Emit a console.warn (matches existing observer diagnostic
+  // pattern) and invoke the optional onMergeFailed callback for consumers who
+  // want structured signal.
+  if (results.some((ok: boolean) => !ok)) {
+    const failedPatches = results.filter((ok: boolean) => !ok).length;
+    const info = {
+      failedPatches,
+      totalPatches: results.length,
+      baseLen: oldXmlMd.length,
+      userLen: newXmlMd.length,
+      agentLen: currentText.length,
+      mergedLen: mergedText.length,
+    } as const;
+    const failedPatchDetail = dmp.patch_toText(patches.filter((_, idx) => !results[idx]));
+    console.warn(
+      `[Observer A] patch_apply had ${failedPatches}/${results.length} failed patches`,
+      info,
+      failedPatchDetail,
+    );
+    deps.onMergeFailed?.(info);
   }
 
-  const newText = resultLines.join('\n');
-  if (newText === currentText) return;
+  if (mergedText === currentText) return;
 
-  // Apply the result directly via prefix/suffix comparison — avoids a second
-  // diff pass that applyIncrementalDiff would perform.
-  applyByPrefixSuffix(ytext, currentText, newText);
+  // Apply via prefix/suffix to minimize CRDT mutations beyond what patch_apply already
+  // resolved. Items in the matching prefix/suffix are preserved (no delete fires for them).
+  applyByPrefixSuffix(ytext, currentText, mergedText);
 }
 
 /** Read frontmatter from Y.Doc metadata map. */
@@ -263,6 +333,15 @@ function getFrontmatter(doc: Y.Doc): string {
  */
 export function setupObservers(deps: ObserverDeps): () => void {
   const { doc, xmlFragment, ytext, mdManager, schema } = deps;
+  const sched: Scheduler = deps.scheduler ?? defaultScheduler;
+
+  // Register the scheduler into the doc's TypingState so `markUserTyping`
+  // (called from editor DOM event handlers, external to setupObservers)
+  // reads the same clock as the observer timers. Without this, an injected
+  // ManualScheduler would have `setTimeout` on virtual time but
+  // `markUserTyping` would record real-clock timestamps, producing unbounded
+  // skew in `elapsedSinceTyping` comparisons.
+  getTypingState(doc).scheduler = sched;
 
   // Track the last XmlFragment state we successfully synced to Y.Text. On each sync,
   // Observer A computes the incremental delta between this snapshot and the current
@@ -328,7 +407,7 @@ export function setupObservers(deps: ObserverDeps): () => void {
         if (currentText === lastSyncedXmlMd) {
           applyIncrementalDiff(ytext, currentText, md);
         } else {
-          applyUserDelta(ytext, lastSyncedXmlMd, md);
+          applyUserDelta(deps, lastSyncedXmlMd, md);
         }
       }, ORIGIN_TREE_TO_TEXT);
 
@@ -356,20 +435,28 @@ export function setupObservers(deps: ObserverDeps): () => void {
         const changedParentTypes = (
           transaction as Y.Transaction & { changedParentTypes?: Map<unknown, unknown> }
         ).changedParentTypes;
-        state.lastRemoteTreeOnlyAt = changedParentTypes?.has(ytext) ? 0 : Date.now();
+        state.lastRemoteTreeOnlyAt = changedParentTypes?.has(ytext) ? 0 : sched.now();
 
-        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
-        const body = mdManager.serialize(json);
-        const frontmatter = getFrontmatter(doc);
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        // Bug-B fix: only refresh baseline when no local debounce is pending.
+        // If debounceA is active, a local edit is waiting to sync — refreshing
+        // the baseline to the post-remote state would cause the debounce's
+        // early-exit (lastSyncedXmlMd === md) to fire, absorbing the local
+        // edit. By keeping the old baseline, the debounce fires Path A/B with
+        // the correct delta (old baseline → current XmlFragment).
+        if (!debounceA) {
+          const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+          const body = mdManager.serialize(json);
+          const frontmatter = getFrontmatter(doc);
+          lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        }
       } catch (err) {
         // Non-critical — baseline will catch up on next local sync
         console.debug('[Observer A] Baseline refresh failed on remote change:', err);
       }
       return;
     }
-    if (debounceA) clearTimeout(debounceA);
-    debounceA = setTimeout(runObserverASync, DEBOUNCE_MS);
+    if (debounceA) sched.clearTimeout(debounceA);
+    debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -388,17 +475,17 @@ export function setupObservers(deps: ObserverDeps): () => void {
   const runObserverBSync = (): void => {
     debounceB = null;
     const { lastRemoteTreeOnlyAt, lastUserTypedAt } = getTypingState(doc);
-    const elapsedSinceTyping = Date.now() - lastUserTypedAt;
+    const elapsedSinceTyping = sched.now() - lastUserTypedAt;
     if (elapsedSinceTyping < TYPING_DEFER_MS) {
       // User is still typing. Defer.
       const waitMs = TYPING_DEFER_MS - elapsedSinceTyping;
-      debounceB = setTimeout(runObserverBSync, waitMs);
+      debounceB = sched.setTimeout(runObserverBSync, waitMs);
       return;
     }
     if (lastRemoteTreeOnlyAt > 0) {
-      const elapsedSinceRemoteTree = Date.now() - lastRemoteTreeOnlyAt;
+      const elapsedSinceRemoteTree = sched.now() - lastRemoteTreeOnlyAt;
       if (elapsedSinceRemoteTree < REMOTE_TREE_SYNC_GRACE_MS) {
-        debounceB = setTimeout(
+        debounceB = sched.setTimeout(
           runObserverBSync,
           REMOTE_TREE_SYNC_GRACE_MS - elapsedSinceRemoteTree,
         );
@@ -426,9 +513,10 @@ export function setupObservers(deps: ObserverDeps): () => void {
           }, ORIGIN_TEXT_TO_TREE);
         }
         // Refresh Observer A's baseline: XmlFragment and Y.Text are in sync.
-        // Observer A's callback returns early for ORIGIN_TEXT_TO_TREE events (line 325),
-        // so it never runs its sync work for Observer B's writes — this explicit update
-        // prevents the baseline from going stale between Observer B cycles.
+        // Observer A's callback returns early for ORIGIN_TEXT_TO_TREE events (the
+        // origin guard at the top of observerA), so it never runs its sync work for
+        // Observer B's writes — this explicit update prevents the baseline from going
+        // stale between Observer B cycles.
         lastSyncedXmlMd = prependFrontmatter(frontmatter, currentBody);
         return;
       }
@@ -521,8 +609,8 @@ export function setupObservers(deps: ObserverDeps): () => void {
       getTypingState(doc).lastRemoteTreeOnlyAt = 0;
       return;
     }
-    if (debounceB) clearTimeout(debounceB);
-    debounceB = setTimeout(runObserverBSync, DEBOUNCE_MS);
+    if (debounceB) sched.clearTimeout(debounceB);
+    debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
   };
 
   xmlFragment.observeDeep(observerA);
@@ -564,8 +652,8 @@ export function setupObservers(deps: ObserverDeps): () => void {
   }
 
   return () => {
-    if (debounceA) clearTimeout(debounceA);
-    if (debounceB) clearTimeout(debounceB);
+    if (debounceA) sched.clearTimeout(debounceA);
+    if (debounceB) sched.clearTimeout(debounceB);
     xmlFragment.unobserveDeep(observerA);
     ytext.unobserve(observerB);
   };

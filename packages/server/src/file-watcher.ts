@@ -19,6 +19,13 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
+import {
+  type DocExtension,
+  forgetDocExtension,
+  isSupportedDocFile,
+  registerDocExtension,
+  stripDocExtension,
+} from './doc-extensions.ts';
 import { isWithinContentDir } from './persistence.ts';
 import { containsConflictMarkers } from './reconciliation.ts';
 
@@ -102,7 +109,19 @@ export function contentHash(content: string): string {
 /** Map absolute file path to Hocuspocus document name (e.g., 'test-fixture'). */
 export function pathToDocName(absPath: string, contentDir: string): string {
   const rel = relative(contentDir, absPath);
-  return rel.replace(/\.md$/, '');
+  return stripDocExtension(rel);
+}
+
+/**
+ * Extract the supported doc extension from a path, or null if the path does
+ * not end in a supported extension. Used when registering a freshly-observed
+ * file with `doc-extensions`.
+ */
+function extractDocExtension(path: string): DocExtension | null {
+  const lower = path.toLowerCase();
+  if (lower.endsWith('.mdx')) return '.mdx';
+  if (lower.endsWith('.md')) return '.md';
+  return null;
 }
 
 // ─── Last known hash map — for rename detection ─────────────────────────────
@@ -152,7 +171,7 @@ export async function classifyEvents(
   const updates: RawFileEvent[] = [];
 
   for (const event of rawEvents) {
-    if (!event.path.endsWith('.md')) continue;
+    if (!isSupportedDocFile(event.path)) continue;
 
     // Apply content filter if provided
     if (contentFilter) {
@@ -420,7 +439,7 @@ function seedLastKnownHashes(
           const canonStat = statSync(canonical);
           if (visited.has(canonStat.ino)) {
             // Inode already visited — register alias if it's a file
-            if (canonStat.isFile() && entry.name.endsWith('.md')) {
+            if (canonStat.isFile() && isSupportedDocFile(entry.name)) {
               const aliasDocName = pathToDocName(fullPath, contentDir);
               const canonicalDocName = pathToDocName(canonical, contentDir);
               aliasMap.set(aliasDocName, canonicalDocName);
@@ -435,7 +454,7 @@ function seedLastKnownHashes(
 
           if (canonStat.isDirectory()) {
             seedLastKnownHashes(canonical, contentDir, contentFilter, fileIndex, aliasMap, visited);
-          } else if (canonStat.isFile() && entry.name.endsWith('.md')) {
+          } else if (canonStat.isFile() && isSupportedDocFile(entry.name)) {
             if (contentFilter) {
               const relPath = relative(contentDir, canonical);
               if (contentFilter.isExcluded(relPath)) continue;
@@ -448,6 +467,16 @@ function seedLastKnownHashes(
               const content = readFileSync(canonical, 'utf-8');
               const hash = contentHash(content);
               lastKnownHash.set(canonical, hash);
+              const ext = extractDocExtension(canonical);
+              if (ext) {
+                const reg = registerDocExtension(canonicalDocName, ext);
+                if (reg.shadowed) {
+                  console.warn(
+                    `[file-watcher] docName "${canonicalDocName}" has both "${reg.effective}" and "${reg.shadowed}" on disk; "${reg.effective}" wins (industry convention). Rename or delete one to disambiguate.`,
+                  );
+                  if (!reg.changed) continue;
+                }
+              }
               fileIndex.set(canonicalDocName, {
                 size: canonStat.size,
                 modified: canonStat.mtime.toISOString(),
@@ -471,7 +500,7 @@ function seedLastKnownHashes(
           if (contentFilter.isDirExcluded(relPath)) continue;
         }
         seedLastKnownHashes(fullPath, contentDir, contentFilter, fileIndex, aliasMap, visited);
-      } else if (lst.isFile() && entry.name.endsWith('.md')) {
+      } else if (lst.isFile() && isSupportedDocFile(entry.name)) {
         if (visited.has(lst.ino)) continue;
         visited.add(lst.ino);
 
@@ -484,6 +513,18 @@ function seedLastKnownHashes(
           lastKnownHash.set(fullPath, contentHash(content));
 
           const docName = pathToDocName(fullPath, contentDir);
+          const ext = extractDocExtension(fullPath);
+          if (ext) {
+            const reg = registerDocExtension(docName, ext);
+            if (reg.shadowed) {
+              console.warn(
+                `[file-watcher] docName "${docName}" has both "${reg.effective}" and "${reg.shadowed}" on disk; "${reg.effective}" wins (industry convention). Rename or delete one to disambiguate.`,
+              );
+              // When .md is shadowed by an already-registered .mdx (or vice-versa),
+              // skip registering this file in the index — the winning entry remains.
+              if (!reg.changed) continue;
+            }
+          }
           fileIndex.set(docName, {
             size: lst.size,
             modified: lst.mtime.toISOString(),
@@ -525,6 +566,8 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
     case 'conflict': {
       const docName = event.docName;
       const existing = fileIndex.get(docName);
+      const ext = extractDocExtension(event.path);
+      if (ext) registerDocExtension(docName, ext);
       fileIndex.set(docName, {
         size: Buffer.byteLength(event.content, 'utf-8'),
         modified: new Date().toISOString(),
@@ -537,6 +580,7 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
     case 'delete': {
       if (fileIndex.has(event.docName)) {
         fileIndex.delete(event.docName);
+        forgetDocExtension(event.docName);
       } else {
         for (const [, entry] of fileIndex) {
           const idx = entry.aliases.indexOf(event.docName);
@@ -551,6 +595,9 @@ export function updateFileIndex(event: DiskEvent, fileIndex: Map<string, FileInd
     case 'rename': {
       const existing = fileIndex.get(event.oldDocName);
       fileIndex.delete(event.oldDocName);
+      forgetDocExtension(event.oldDocName);
+      const ext = extractDocExtension(event.newPath);
+      if (ext) registerDocExtension(event.newDocName, ext);
       fileIndex.set(event.newDocName, {
         size: Buffer.byteLength(event.content, 'utf-8'),
         modified: new Date().toISOString(),
@@ -577,7 +624,7 @@ async function handleRawEvents(
   onDiskEvent: (event: DiskEvent) => Promise<void>,
   aliasMap?: Map<string, string>,
 ): Promise<void> {
-  const mdEvents = rawEvents.filter((e) => e.path.endsWith('.md'));
+  const mdEvents = rawEvents.filter((e) => isSupportedDocFile(e.path));
   if (mdEvents.length === 0) return;
 
   const diskEvents = await classifyEvents(mdEvents, contentDir, contentFilter, aliasMap);

@@ -1,5 +1,16 @@
-import { ChevronRight, File, Folder, FolderOpen, Link2, Pencil, Trash2 } from 'lucide-react';
-import { type FC, useEffect, useState } from 'react';
+import {
+  ChevronRight,
+  File,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Link2,
+  Pencil,
+  SquarePen,
+  Trash2,
+} from 'lucide-react';
+import { type FC, useEffect, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
@@ -13,10 +24,14 @@ import {
 import {
   buildTree,
   collectFolderPaths,
+  composeInlineFilePath,
+  composeInlineFolderPath,
   computeAncestors,
   type DocEntry,
   type TreeNode,
 } from '@/components/file-tree-utils';
+import { usePageList } from '@/components/PageListContext';
+import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -36,12 +51,17 @@ import {
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
-import { emitDocumentsChanged } from '@/lib/documents-events';
+import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+
+function navigateTo(docName: string) {
+  window.location.hash = `#/${docName}`;
+}
 
 interface RenamePathResponse {
   ok: boolean;
   renamed?: RenamedDocMapping[];
+  rewrittenDocs?: Array<{ docName: string; rewrites: number }>;
   error?: string;
 }
 
@@ -49,6 +69,78 @@ interface DeletePathResponse {
   ok: boolean;
   deletedDocNames?: string[];
   error?: string;
+}
+
+interface InlineCreateProps {
+  kind: 'file' | 'folder';
+  value: string;
+  busy: boolean;
+  error: string | null;
+  onChange: (v: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}
+
+function InlineCreateRow({
+  kind,
+  value,
+  busy,
+  error,
+  onChange,
+  onCommit,
+  onCancel,
+}: InlineCreateProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    // autoFocus is unreliable here: React fires node.focus() during the commit
+    // phase while the ContextMenu portal is mid-teardown, so the browser drops
+    // the focus call as focus moves off the removed portal elements. setTimeout
+    // fires after that cleanup has fully settled.
+    const id = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(id);
+  }, []);
+
+  return (
+    <div className="flex flex-col">
+      <div className={cn('flex h-8 items-center gap-2 rounded-md px-2')}>
+        {kind === 'folder' ? (
+          <Folder className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+        ) : (
+          <File className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
+        )}
+        <Input
+          ref={inputRef}
+          value={value}
+          disabled={busy}
+          aria-label={`Create new ${kind}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? 'inline-create-error' : undefined}
+          placeholder={kind === 'folder' ? 'folder-name' : 'file-name'}
+          className={cn('h-7 min-w-0 flex-1 bg-background text-sm', error && 'border-destructive')}
+          onBlur={() => {
+            if (!busy && !error) onCancel();
+          }}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onCommit();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              onCancel();
+            }
+          }}
+        />
+        {kind === 'file' && <span className="text-xs text-sidebar-foreground/40">.md</span>}
+      </div>
+      {error && (
+        <span id="inline-create-error" role="alert" className="px-2 text-xs text-destructive">
+          {error}
+        </span>
+      )}
+    </div>
+  );
 }
 
 const FileTreeNode: FC<{
@@ -66,6 +158,9 @@ const FileTreeNode: FC<{
   onCommitRename: (target: FileTreeTarget) => void;
   onCancelRename: () => void;
   onDelete: (target: FileTreeTarget) => void;
+  onStartCreating: (kind: 'file' | 'folder', parentDir: string) => void;
+  inlineCreate: InlineCreateProps | null;
+  getInlineCreate: (parentDir: string) => InlineCreateProps | null;
   nested?: boolean;
 }> = ({
   node,
@@ -83,12 +178,34 @@ const FileTreeNode: FC<{
   onCommitRename,
   onCancelRename,
   onDelete,
+  onStartCreating,
+  inlineCreate,
+  getInlineCreate,
 }) => {
+  // Prevent Radix ContextMenu from returning focus to its trigger when an
+  // inline-create input is about to mount. Without this, Radix's
+  // onCloseAutoFocus fires (after the onSelect handler) and steals focus back
+  // from the autoFocus input, which blurs it → triggers onCancel → unmounts.
+  const preventFocusReturnRef = useRef(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+
   const isFile = node.kind === 'file';
   const expanded = !isFile && expandedPaths.has(node.path);
 
   const isActive = isFile && node.path === selectedPath;
   const isEditing = editingPath === node.path;
+
+  useEffect(() => {
+    if (!isEditing) return;
+    const id = setTimeout(() => {
+      const el = renameInputRef.current;
+      if (el) {
+        el.focus();
+        el.select();
+      }
+    }, 0);
+    return () => clearTimeout(id);
+  }, [isEditing]);
   const isBusy = busyPath === node.path;
   const anyActionBusy = busyPath !== null;
   const IconToUse = isFile ? File : !expanded ? Folder : FolderOpen;
@@ -133,11 +250,10 @@ const FileTreeNode: FC<{
     >
       <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
       <Input
+        ref={renameInputRef}
         value={editingValue}
-        autoFocus
         disabled={isBusy}
         aria-label={`Rename ${node.kind}`}
-        onFocus={(event) => event.currentTarget.select()}
         onBlur={onCancelRename}
         onChange={(event) => onEditingValueChange(event.target.value)}
         onKeyDown={(event) => {
@@ -191,11 +307,50 @@ const FileTreeNode: FC<{
         <ContextMenuTrigger asChild>
           <div ref={isActive ? activeRowRef : undefined}>{triggerContent}</div>
         </ContextMenuTrigger>
-        <ContextMenuContent>
+        <ContextMenuContent
+          onCloseAutoFocus={(e) => {
+            if (preventFocusReturnRef.current) {
+              preventFocusReturnRef.current = false;
+              e.preventDefault();
+            }
+          }}
+        >
+          {!isFile && (
+            <>
+              <ContextMenuItem
+                disabled={anyActionBusy}
+                onSelect={() => {
+                  if (!anyActionBusy) {
+                    preventFocusReturnRef.current = true;
+                    onStartCreating('file', node.path);
+                  }
+                }}
+              >
+                <SquarePen aria-hidden="true" />
+                New file
+              </ContextMenuItem>
+              <ContextMenuItem
+                disabled={anyActionBusy}
+                onSelect={() => {
+                  if (!anyActionBusy) {
+                    preventFocusReturnRef.current = true;
+                    onStartCreating('folder', node.path);
+                  }
+                }}
+              >
+                <FolderPlus aria-hidden="true" />
+                New folder
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+            </>
+          )}
           <ContextMenuItem
             disabled={anyActionBusy}
             onSelect={() => {
-              if (!anyActionBusy) onStartRename(target);
+              if (!anyActionBusy) {
+                preventFocusReturnRef.current = true;
+                onStartRename(target);
+              }
             }}
           >
             <Pencil />
@@ -214,8 +369,13 @@ const FileTreeNode: FC<{
           </ContextMenuItem>
         </ContextMenuContent>
       </ContextMenu>
-      {node.children.length > 0 && expanded && (
+      {expanded && (node.children.length > 0 || !!inlineCreate) && (
         <SidebarMenuSub className="mr-0 pr-0">
+          {inlineCreate && (
+            <SidebarMenuSubItem>
+              <InlineCreateRow {...inlineCreate} />
+            </SidebarMenuSubItem>
+          )}
           {node.children.map((child) => (
             <FileTreeNode
               key={child.path}
@@ -233,6 +393,9 @@ const FileTreeNode: FC<{
               onCommitRename={onCommitRename}
               onCancelRename={onCancelRename}
               onDelete={onDelete}
+              onStartCreating={onStartCreating}
+              inlineCreate={getInlineCreate(child.path)}
+              getInlineCreate={getInlineCreate}
               nested
             />
           ))}
@@ -242,8 +405,13 @@ const FileTreeNode: FC<{
   );
 };
 
-export function FileTree() {
+export function FileTree({
+  createTrigger,
+}: {
+  createTrigger: { kind: 'file' | 'folder'; parentDir: string; seq: number };
+}) {
   const { activeDocName, closeDocument } = useDocumentContext();
+  const { addPage } = usePageList();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -253,6 +421,15 @@ export function FileTree() {
   const [userExpanded, setUserExpanded] = useState<Set<string>>(() => new Set());
   const [userCollapsed, setUserCollapsed] = useState<Set<string>>(() => new Set());
   const [prevActiveDocName, setPrevActiveDocName] = useState(activeDocName);
+  const [creatingItem, setCreatingItem] = useState<{
+    kind: 'file' | 'folder';
+    parentDir: string;
+  } | null>(null);
+  const [creatingValue, setCreatingValue] = useState('');
+  const [creatingBusy, setCreatingBusy] = useState(false);
+  const [creatingError, setCreatingError] = useState<string | null>(null);
+  const prevCreateSeqRef = useRef(0);
+
   if (activeDocName !== prevActiveDocName) {
     // Clear user-collapsed overrides on navigation so ancestors of the new
     // active file are guaranteed to expand. userExpanded is preserved — a user
@@ -292,12 +469,136 @@ export function FileTree() {
         });
 
     fetchDocs();
-    const interval = setInterval(fetchDocs, 5000);
+    const handleResume = () => {
+      if (document.visibilityState === 'visible') {
+        void fetchDocs();
+      }
+    };
+    window.addEventListener('focus', handleResume);
+    window.addEventListener('visibilitychange', handleResume);
+    const unsubscribe = subscribeToDocumentsChanged((channels) => {
+      if (channels.includes('files')) {
+        void fetchDocs();
+      }
+    });
     return () => {
       active = false;
-      clearInterval(interval);
+      window.removeEventListener('focus', handleResume);
+      window.removeEventListener('visibilitychange', handleResume);
+      unsubscribe();
     };
   }, []);
+
+  // Consume header-button triggers from FileSidebar.
+  const { seq: createSeq, kind: createKind, parentDir: createParentDir } = createTrigger;
+  useEffect(() => {
+    if (createSeq > prevCreateSeqRef.current) {
+      prevCreateSeqRef.current = createSeq;
+      setCreatingItem({ kind: createKind, parentDir: createParentDir });
+      setCreatingValue('');
+      setCreatingError(null);
+      if (createParentDir) {
+        setUserExpanded((prev) => new Set(prev).add(createParentDir));
+        setUserCollapsed((prev) => {
+          const next = new Set(prev);
+          next.delete(createParentDir);
+          return next;
+        });
+      }
+    }
+  }, [createSeq, createKind, createParentDir]);
+
+  function startCreating(kind: 'file' | 'folder', parentDir: string) {
+    setCreatingItem({ kind, parentDir });
+    setCreatingValue('');
+    setCreatingError(null);
+    if (parentDir) {
+      setUserExpanded((prev) => new Set(prev).add(parentDir));
+      setUserCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(parentDir);
+        return next;
+      });
+    }
+  }
+
+  function handleCancelCreating() {
+    if (!creatingBusy) {
+      setCreatingItem(null);
+      setCreatingValue('');
+      setCreatingError(null);
+    }
+  }
+
+  async function handleInlineCreate() {
+    if (!creatingItem) return;
+    const trimmed = creatingValue.trim();
+    if (!trimmed) {
+      setCreatingError('Name is required');
+      return;
+    }
+
+    if (
+      trimmed.includes('..') ||
+      trimmed.startsWith('/') ||
+      trimmed.includes('\\') ||
+      trimmed.includes('\0')
+    ) {
+      setCreatingError('Invalid name');
+      return;
+    }
+
+    const path =
+      creatingItem.kind === 'file'
+        ? composeInlineFilePath(creatingItem.parentDir, trimmed)
+        : composeInlineFolderPath(creatingItem.parentDir, trimmed);
+
+    setCreatingBusy(true);
+    setCreatingError(null);
+
+    try {
+      const res = await fetch('/api/create-page', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      });
+      type CreatePageResponse = { ok: boolean; docName?: string; error?: string };
+      let data: CreatePageResponse | null = null;
+      try {
+        data = (await res.json()) as CreatePageResponse;
+      } catch (parseErr) {
+        console.warn(
+          '[FileTree] create response JSON parse failed:',
+          parseErr,
+          'status:',
+          res.status,
+        );
+      }
+
+      if (!res.ok || !data?.ok) {
+        const msg = data?.error ?? `Failed to create ${creatingItem.kind}`;
+        toast.error(msg);
+        setCreatingError(msg);
+        setCreatingBusy(false);
+        return;
+      }
+
+      const docName = data.docName ?? path.replace(/\.md$/, '');
+      setCreatingItem(null);
+      setCreatingValue('');
+      setCreatingError(null);
+      setCreatingBusy(false);
+      if (docName) navigateTo(docName);
+      addPage(docName);
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
+    } catch (err) {
+      console.warn('[FileTree] create failed:', err);
+      const msg = 'Network error — please try again';
+      toast.error(msg);
+      setCreatingError(msg);
+      setCreatingBusy(false);
+    }
+  }
 
   async function handleRename(target: FileTreeTarget) {
     const normalizedName = normalizeRenameValue(target.kind, editingValue);
@@ -318,10 +619,16 @@ export function FileTree() {
     setError(null);
 
     try {
-      const res = await fetch('/api/rename-path', {
+      const endpoint = target.kind === 'file' ? '/api/rename' : '/api/rename-path';
+      const payload =
+        target.kind === 'file'
+          ? { docName: target.path, newDocName: nextPath }
+          : { kind: target.kind, fromPath: target.path, toPath: nextPath };
+
+      const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind: target.kind, fromPath: target.path, toPath: nextPath }),
+        body: JSON.stringify(payload),
       });
       const data: RenamePathResponse = await res.json();
 
@@ -337,7 +644,7 @@ export function FileTree() {
       for (const entry of renamed) closeDocument(entry.fromDocName);
 
       setDocuments((current) => applyRenameToDocuments(current, renamed));
-      emitDocumentsChanged();
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
       setEditingPath(null);
       setEditingValue('');
 
@@ -376,7 +683,7 @@ export function FileTree() {
       for (const docName of deleted) closeDocument(docName);
 
       setDocuments((current) => applyDeleteToDocuments(current, deletedDocNames));
-      emitDocumentsChanged();
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
 
       if (activeDocName && deleted.has(activeDocName)) window.location.hash = '';
       if (editingPath && (deleted.has(editingPath) || target.path === editingPath)) {
@@ -407,15 +714,18 @@ export function FileTree() {
     );
   }
 
-  if (documents.length === 0) {
+  if (documents.length === 0 && !creatingItem) {
     return (
-      <div className="flex flex-1 items-center justify-center py-8">
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 py-8">
         <span className="select-none text-sm text-sidebar-foreground/30">No files yet.</span>
+        <Button variant="outline" size="sm" onClick={() => startCreating('file', '')}>
+          Create your first file
+        </Button>
       </div>
     );
   }
 
-  const treeNodes = buildTree(documents);
+  const treeNodes = documents.length > 0 ? buildTree(documents) : [];
   const folderPaths = collectFolderPaths(treeNodes);
   const ancestors = computeAncestors(activeDocName);
 
@@ -451,6 +761,21 @@ export function FileTree() {
     }
   }
 
+  function getInlineCreate(parentDir: string): InlineCreateProps | null {
+    if (!creatingItem || creatingItem.parentDir !== parentDir) return null;
+    return {
+      kind: creatingItem.kind,
+      value: creatingValue,
+      busy: creatingBusy,
+      error: creatingError,
+      onChange: setCreatingValue,
+      onCommit: () => void handleInlineCreate(),
+      onCancel: handleCancelCreating,
+    };
+  }
+
+  const rootInlineCreate = getInlineCreate('');
+
   return (
     <>
       {error && (
@@ -459,6 +784,11 @@ export function FileTree() {
         </span>
       )}
       <SidebarMenu>
+        {rootInlineCreate && (
+          <SidebarMenuItem>
+            <InlineCreateRow {...rootInlineCreate} />
+          </SidebarMenuItem>
+        )}
         {treeNodes.map((node) => (
           <FileTreeNode
             key={node.path}
@@ -471,7 +801,7 @@ export function FileTree() {
             editingValue={editingValue}
             busyPath={busyPath}
             onSelect={(docName) => {
-              window.location.hash = `#/${docName}`;
+              navigateTo(docName);
             }}
             onStartRename={(target) => {
               setEditingPath(target.path);
@@ -487,6 +817,9 @@ export function FileTree() {
               }
             }}
             onDelete={(target) => void handleDelete(target)}
+            onStartCreating={startCreating}
+            inlineCreate={getInlineCreate(node.path)}
+            getInlineCreate={getInlineCreate}
           />
         ))}
       </SidebarMenu>

@@ -1,4 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
+import { FilePlus2 } from 'lucide-react';
+import { useState } from 'react';
+import { defaultInitialDir } from '@/components/file-tree-utils';
+import { NewItemDialog } from '@/components/NewItemDialog';
+import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import {
   Panel,
@@ -9,14 +14,32 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
+import {
+  isResolvedWikiLinkTarget,
+  wikiLinkSuggestedFilename,
+} from '@/editor/extensions/wiki-link-helpers';
+import { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
+import { cn } from '@/lib/utils';
 
 interface ForwardLinksResponse {
   ok: boolean;
-  forwardLinks?: string[];
+  forwardLinks?: ForwardLinkItem[];
   error?: string;
 }
 
-async function fetchForwardLinks(docName: string): Promise<string[]> {
+interface ForwardLinkItem {
+  docName: string;
+  title: string;
+  snippet: string | null;
+}
+
+function compactForwardLinkPath(docName: string): string {
+  const segments = docName.split('/');
+  if (segments.length <= 2) return docName;
+  return `…/${segments.slice(-2).join('/')}`;
+}
+
+async function fetchForwardLinks(docName: string): Promise<ForwardLinkItem[]> {
   const res = await fetch(`/api/forward-links?docName=${encodeURIComponent(docName)}`);
   if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
   const data = (await res.json()) as ForwardLinksResponse;
@@ -31,6 +54,7 @@ export function ForwardLinksPanel({
   docName: string;
   className?: string;
 }) {
+  const { pages, loading: pagesLoading } = usePageList();
   const {
     data: links = [],
     isLoading,
@@ -38,41 +62,94 @@ export function ForwardLinksPanel({
   } = useQuery({
     queryKey: ['forward-links', docName],
     queryFn: () => fetchForwardLinks(docName),
-    refetchInterval: 2000,
-    refetchIntervalInBackground: false,
   });
+  const [createTarget, setCreateTarget] = useState<string | null>(null);
+
+  function handleRowClick(target: string) {
+    if (!pagesLoading && !isResolvedWikiLinkTarget(target, pages)) {
+      setCreateTarget(target);
+      return;
+    }
+    window.location.assign(hashFromDocName(target));
+  }
 
   return (
-    <Panel className={className}>
-      <PanelHeader>
-        <PanelTitle>Outgoing Links</PanelTitle>
-        {!isLoading && <PanelCount>{links.length}</PanelCount>}
-      </PanelHeader>
-      <PanelBody aria-busy={isLoading}>
-        {error ? (
-          <PanelError>
-            {error instanceof Error ? error.message : 'Failed to load outgoing links'}
-          </PanelError>
-        ) : links.length === 0 && !isLoading ? (
-          <PanelEmpty>This page doesn't link to anything yet.</PanelEmpty>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {links.map((target, index) => (
-              <Button
-                // biome-ignore lint/suspicious/noArrayIndexKey: forward link targets are stable per fetch
-                key={index}
-                variant="outline"
-                className="h-auto w-full justify-start px-3 py-2 text-left"
-                onClick={() => {
-                  window.location.hash = `#/${target}`;
-                }}
-              >
-                <span className="truncate text-sm font-medium">{target}</span>
-              </Button>
-            ))}
-          </div>
-        )}
-      </PanelBody>
-    </Panel>
+    <>
+      <Panel className={className}>
+        <PanelHeader>
+          <PanelTitle>Outgoing Links</PanelTitle>
+          {!isLoading && <PanelCount>{links.length}</PanelCount>}
+        </PanelHeader>
+        <PanelBody aria-busy={isLoading}>
+          {error ? (
+            <PanelError>
+              {error instanceof Error ? error.message : 'Failed to load outgoing links'}
+            </PanelError>
+          ) : links.length === 0 && !isLoading ? (
+            <PanelEmpty>This page doesn't link to anything yet.</PanelEmpty>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {links.map((link, index) => {
+                const unresolved = !pagesLoading && !isResolvedWikiLinkTarget(link.docName, pages);
+                const compactPath = compactForwardLinkPath(link.docName);
+                const displayTitle = link.title === link.docName ? compactPath : link.title;
+
+                return (
+                  <Button
+                    // biome-ignore lint/suspicious/noArrayIndexKey: forward link targets are stable per fetch
+                    key={index}
+                    variant="outline"
+                    className={cn(
+                      'h-auto w-full items-start justify-start whitespace-normal px-3 py-2 text-left',
+                      unresolved &&
+                        'border-amber-300 bg-amber-50/70 text-amber-950 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200 dark:hover:bg-amber-950/35',
+                    )}
+                    onClick={() => handleRowClick(link.docName)}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className="truncate text-sm font-medium"
+                        title={link.title === link.docName ? link.docName : undefined}
+                      >
+                        {displayTitle}
+                      </div>
+                      {link.title !== link.docName ? (
+                        <div
+                          className="truncate font-mono text-xs text-muted-foreground"
+                          title={link.docName}
+                        >
+                          {compactPath}
+                        </div>
+                      ) : null}
+                      {unresolved ? (
+                        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+                          <FilePlus2 className="size-3 shrink-0" aria-hidden="true" />
+                          <span>Missing page. Click to create.</span>
+                        </div>
+                      ) : null}
+                      {link.snippet ? (
+                        <p className="mt-1 break-words text-sm text-muted-foreground">
+                          {link.snippet}
+                        </p>
+                      ) : null}
+                    </div>
+                  </Button>
+                );
+              })}
+            </div>
+          )}
+        </PanelBody>
+      </Panel>
+
+      <NewItemDialog
+        open={createTarget !== null}
+        kind="file"
+        initialDir={defaultInitialDir(docNameFromHash(window.location.hash) ?? '')}
+        suggestedName={createTarget ? wikiLinkSuggestedFilename(createTarget) : undefined}
+        onOpenChange={(open: boolean) => {
+          if (!open) setCreateTarget(null);
+        }}
+      />
+    </>
   );
 }

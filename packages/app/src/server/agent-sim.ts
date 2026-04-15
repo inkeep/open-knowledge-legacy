@@ -71,6 +71,9 @@ async function agentWriteRaw(): Promise<{ ok: boolean; timestamp?: string; error
   return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
 }
 
+const SIM_AGENT_ID = 'agent-sim-001';
+const SIM_AGENT_NAME = 'agent-sim';
+
 async function agentWriteMarkdown(
   markdown: string,
   position: 'append' | 'prepend' | 'replace' = 'append',
@@ -78,7 +81,13 @@ async function agentWriteMarkdown(
   const res = await fetch(`${BASE_URL}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ markdown, position, docName }),
+    body: JSON.stringify({
+      markdown,
+      position,
+      docName,
+      agentId: SIM_AGENT_ID,
+      agentName: SIM_AGENT_NAME,
+    }),
   });
   return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
 }
@@ -90,7 +99,13 @@ async function agentPatch(
   const res = await fetch(`${BASE_URL}/api/agent-patch`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ find, replace, docName }),
+    body: JSON.stringify({
+      find,
+      replace,
+      docName,
+      agentId: SIM_AGENT_ID,
+      agentName: SIM_AGENT_NAME,
+    }),
   });
   return (await res.json()) as { ok: boolean; timestamp?: string; error?: string };
 }
