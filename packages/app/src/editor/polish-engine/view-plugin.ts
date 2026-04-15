@@ -6,7 +6,7 @@
  * Viewport-scoped via view.visibleRanges.
  */
 
-import { syntaxTree, syntaxTreeAvailable } from '@codemirror/language';
+import { syntaxTree } from '@codemirror/language';
 import { RangeSetBuilder } from '@codemirror/state';
 import {
   Decoration,
@@ -75,10 +75,18 @@ function buildDecorations(
   nodeIndex: Map<string, ConstructConfig[]>,
   markerIndex: Map<string, ConstructConfig>,
 ): DecorationSet {
-  // Gate: don't read from a partial/incremental tree
-  if (!syntaxTreeAvailable(view.state, view.viewport.to)) {
-    return Decoration.none;
-  }
+  // We intentionally do NOT gate on syntaxTreeAvailable here.
+  //
+  // syntaxTreeAvailable returns false whenever a NESTED language parser is still
+  // loading (e.g. TypeScript inside a FencedCode block).  The outer markdown
+  // tree — which is the only one we need to find FencedCode, Blockquote, Table,
+  // etc. — is always complete at this point.  Gating on syntaxTreeAvailable was
+  // causing fenced-code decorations to stay permanently invisible when a
+  // language specifier triggered a lazy dynamic import.
+  //
+  // For genuinely incomplete outer trees (very large documents mid-parse) the
+  // update() condition — syntaxTree(startState) !== syntaxTree(state) — will
+  // fire again when the outer parse finishes and rebuild decorations correctly.
   const pending: PendingDecoration[] = [];
 
   // Track which config+line pairs we've already decorated (avoid duplicates
@@ -151,7 +159,10 @@ function buildDecorations(
 
             for (let lineNo = lineStart.number; lineNo <= lineEnd.number; lineNo++) {
               const line = view.state.doc.line(lineNo);
-              const lineKey = `${config.id}:${line.from}`;
+              // Key includes nodeRef.from so nested same-config nodes (e.g. inner
+              // Blockquote inside outer Blockquote) each decorate shared lines with
+              // their own depth class, rather than the outer node claiming them first.
+              const lineKey = `${config.id}:${nodeRef.from}:${line.from}`;
               if (decoratedLines.has(lineKey)) continue;
 
               const cls =
@@ -262,7 +273,8 @@ export function createPolishViewPlugin(
       }
 
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
+        const treeChanged = syntaxTree(update.startState) !== syntaxTree(update.state);
+        if (update.docChanged || update.viewportChanged || treeChanged) {
           this.decorations = buildDecorations(update.view, registry, nodeIndex, markerIndex);
         }
       }

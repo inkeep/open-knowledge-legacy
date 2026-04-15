@@ -6,7 +6,7 @@
  * cursor moves, focus changes, etc.
  */
 
-import { syntaxTree, syntaxTreeAvailable } from '@codemirror/language';
+import { syntaxTree } from '@codemirror/language';
 import { type Extension, RangeSetBuilder, StateField } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView } from '@codemirror/view';
 import type { ConstructConfig, Registry } from './registry';
@@ -15,10 +15,14 @@ function buildCrossScanDecorations(
   state: import('@codemirror/state').EditorState,
   configs: ConstructConfig[],
 ): DecorationSet {
-  if (!syntaxTreeAvailable(state)) {
-    return Decoration.none;
-  }
-
+  // We intentionally do NOT gate on syntaxTreeAvailable here.
+  //
+  // syntaxTreeAvailable returns false whenever a NESTED language parser is still
+  // loading (e.g. TypeScript inside a FencedCode block). The outer markdown
+  // tree — which is the only one we need to find LinkReference definitions and
+  // Link nodes — is always complete at this point. Gating on syntaxTreeAvailable
+  // caused broken-reference marks to stay permanently invisible when any
+  // language-fenced block triggered a lazy dynamic import.
   const tree = syntaxTree(state);
 
   // Collect all marks from ALL configs into a single array, then sort once.

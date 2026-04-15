@@ -51,10 +51,10 @@ test.describe('R5 — Zero console errors during composition doc session', () =>
     const errors = setupErrorCollector(page);
 
     // Reset and navigate
-    const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+    const res = await fetch(`${BASE}/api/test-reset?docName=test-doc`, { method: 'POST' });
     if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
     await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'test-doc.md', exact: true }).click({ timeout: 10_000 });
     await waitForProvider(page);
 
     // Switch to source mode
@@ -79,24 +79,28 @@ test.describe('R5 — Zero console errors during composition doc session', () =>
 test.describe('R10 — Decoration class correctness for Phase 1 constructs', () => {
   test('blockquote lines have .cm-blockquote-line class', async ({ page }) => {
     const errors = setupErrorCollector(page);
-    const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+    const res = await fetch(`${BASE}/api/test-reset?docName=test-doc`, { method: 'POST' });
     if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
     await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'test-doc.md', exact: true }).click({ timeout: 10_000 });
     await waitForProvider(page);
 
     const sourceToggle = page.getByRole('radio', { name: 'Markdown source' });
     await sourceToggle.click();
     await page.waitForSelector('.cm-editor');
 
-    // Write a blockquote via agent API
+    // Write a blockquote via agent API (field names: markdown + position; docName must match browser doc)
     await fetch(`${BASE}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: '> This is a blockquote\n> Second line\n', mode: 'replace' }),
+      body: JSON.stringify({
+        markdown: '> This is a blockquote\n> Second line',
+        position: 'replace',
+        docName: 'test-doc',
+      }),
     });
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
 
     // Check for blockquote decoration classes
     const blockquoteLines = await page.locator('.cm-blockquote-line').count();
@@ -107,10 +111,10 @@ test.describe('R10 — Decoration class correctness for Phase 1 constructs', () 
 
   test('table rows have .cm-table-row class', async ({ page }) => {
     const errors = setupErrorCollector(page);
-    const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+    const res = await fetch(`${BASE}/api/test-reset?docName=test-doc`, { method: 'POST' });
     if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
     await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'test-doc.md', exact: true }).click({ timeout: 10_000 });
     await waitForProvider(page);
 
     const sourceToggle = page.getByRole('radio', { name: 'Markdown source' });
@@ -121,12 +125,13 @@ test.describe('R10 — Decoration class correctness for Phase 1 constructs', () 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        content: '| A | B |\n|---|---|\n| 1 | 2 |\n',
-        mode: 'replace',
+        markdown: '| A | B |\n|---|---|\n| 1 | 2 |',
+        position: 'replace',
+        docName: 'test-doc',
       }),
     });
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
 
     const tableRows = await page.locator('.cm-table-row').count();
     expect(tableRows).toBeGreaterThan(0);
@@ -136,10 +141,10 @@ test.describe('R10 — Decoration class correctness for Phase 1 constructs', () 
 
   test('fenced code blocks have .cm-code-block class', async ({ page }) => {
     const errors = setupErrorCollector(page);
-    const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+    const res = await fetch(`${BASE}/api/test-reset?docName=test-doc`, { method: 'POST' });
     if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
     await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'test-doc.md', exact: true }).click({ timeout: 10_000 });
     await waitForProvider(page);
 
     const sourceToggle = page.getByRole('radio', { name: 'Markdown source' });
@@ -150,12 +155,16 @@ test.describe('R10 — Decoration class correctness for Phase 1 constructs', () 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        content: '```typescript\nconst x = 1;\n```\n',
-        mode: 'replace',
+        markdown: '```typescript\nconst x = 1;\n```',
+        position: 'replace',
+        docName: 'test-doc',
       }),
     });
 
-    await page.waitForTimeout(1000);
+    // Wait for the fenced-code decoration to appear. Fenced code with a language
+    // specifier triggers lazy language loading, which delays syntaxTreeAvailable.
+    // Use waitForSelector instead of a fixed timeout to be robust against variable timing.
+    await page.waitForSelector('.cm-code-block', { timeout: 5000 });
 
     const codeBlocks = await page.locator('.cm-code-block').count();
     expect(codeBlocks).toBeGreaterThan(0);
@@ -170,33 +179,31 @@ test.describe('R3 — Cmd+A copy byte-identical clipboard', () => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
     const errors = setupErrorCollector(page);
-    const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+    const res = await fetch(`${BASE}/api/test-reset?docName=test-doc`, { method: 'POST' });
     if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
     await page.goto(BASE);
-    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'test-doc.md', exact: true }).click({ timeout: 10_000 });
     await waitForProvider(page);
 
     const sourceToggle = page.getByRole('radio', { name: 'Markdown source' });
     await sourceToggle.click();
     await page.waitForSelector('.cm-editor');
 
-    // Write content with blockquote + table + code
-    const testContent = '> Quote\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\nconst x = 1;\n```\n';
+    // Write content with blockquote + table + code (field names: markdown + position; docName matches browser)
+    const testContent = '> Quote\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\nconst x = 1;\n```';
     await fetch(`${BASE}/api/agent-write-md`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: testContent, mode: 'replace' }),
+      body: JSON.stringify({ markdown: testContent, position: 'replace', docName: 'test-doc' }),
     });
 
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
 
-    // Get the doc content
-    const docContent = await page.evaluate(() => {
-      const view = document.querySelector('.cm-editor') as HTMLElement & {
-        cmView?: { view: { state: { doc: { toString(): string } } } };
-      };
-      return view?.cmView?.view?.state?.doc?.toString() ?? '';
-    });
+    // Get the doc content from the server API (Y.Text source of truth).
+    // CM6 doesn't expose EditorView via a stable DOM property, so reading from
+    // the server avoids fragile internal property paths.
+    const docRes = await fetch(`${BASE}/api/document?docName=test-doc`);
+    const docContent = (await docRes.json()).content;
 
     // Select all + copy
     await page.locator('.cm-content').focus();

@@ -19,21 +19,21 @@ describe('auto-bail constants', () => {
 
 describe('auto-bail threshold boundary', () => {
   test('4999-line doc does NOT exceed LINE_CEILING', () => {
-    const doc = 'x\n'.repeat(4998) + 'x'; // 4999 lines
+    const doc = `${'x\n'.repeat(4998)}x`; // 4999 lines
     const state = EditorState.create({ doc });
     expect(state.doc.lines).toBe(4999);
     expect(state.doc.lines > LINE_CEILING).toBe(false);
   });
 
   test('5000-line doc does NOT exceed LINE_CEILING (boundary: > not >=)', () => {
-    const doc = 'x\n'.repeat(4999) + 'x'; // 5000 lines
+    const doc = `${'x\n'.repeat(4999)}x`; // 5000 lines
     const state = EditorState.create({ doc });
     expect(state.doc.lines).toBe(5000);
     expect(state.doc.lines > LINE_CEILING).toBe(false);
   });
 
   test('5001-line doc exceeds LINE_CEILING', () => {
-    const doc = 'x\n'.repeat(5000) + 'x'; // 5001 lines
+    const doc = `${'x\n'.repeat(5000)}x`; // 5001 lines
     const state = EditorState.create({ doc });
     expect(state.doc.lines).toBe(5001);
     expect(state.doc.lines > LINE_CEILING).toBe(true);
@@ -41,7 +41,7 @@ describe('auto-bail threshold boundary', () => {
 
   test('doc growing past ceiling via transaction triggers bail condition', () => {
     // Start with a doc under the ceiling
-    const smallDoc = 'x\n'.repeat(4998) + 'x'; // 4999 lines
+    const smallDoc = `${'x\n'.repeat(4998)}x`; // 4999 lines
     const state = EditorState.create({ doc: smallDoc });
     expect(state.doc.lines > LINE_CEILING).toBe(false);
 
