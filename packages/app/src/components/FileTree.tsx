@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { type FC, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { DeleteConfirmation } from '@/components/DeleteConfirmationDialog';
 import {
   applyDeleteToDocuments,
   applyRenameToDocuments,
@@ -39,6 +40,7 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
+import { Dialog } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
   SidebarMenu,
@@ -421,6 +423,7 @@ export function FileTree({
   const [userExpanded, setUserExpanded] = useState<Set<string>>(() => new Set());
   const [userCollapsed, setUserCollapsed] = useState<Set<string>>(() => new Set());
   const [prevActiveDocName, setPrevActiveDocName] = useState(activeDocName);
+  const [deleteTarget, setDeleteTarget] = useState<FileTreeTarget | null>(null);
   const [creatingItem, setCreatingItem] = useState<{
     kind: 'file' | 'folder';
     parentDir: string;
@@ -690,6 +693,7 @@ export function FileTree({
         setEditingPath(null);
         setEditingValue('');
       }
+      setDeleteTarget(null);
       setBusyPath(null);
     } catch (err) {
       console.warn('[FileTree] delete failed:', err);
@@ -816,13 +820,27 @@ export function FileTree({
                 setEditingValue('');
               }
             }}
-            onDelete={(target) => void handleDelete(target)}
+            onDelete={(target) => setDeleteTarget(target)}
             onStartCreating={startCreating}
             inlineCreate={getInlineCreate(node.path)}
             getInlineCreate={getInlineCreate}
           />
         ))}
       </SidebarMenu>
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !busyPath) setDeleteTarget(null);
+        }}
+      >
+        {deleteTarget && (
+          <DeleteConfirmation
+            itemName={`${deleteTarget.name}${deleteTarget.kind === 'file' ? '.md' : '/'}`}
+            isSubmitting={busyPath === deleteTarget.path}
+            onDelete={() => handleDelete(deleteTarget)}
+          />
+        )}
+      </Dialog>
     </>
   );
 }
