@@ -564,43 +564,70 @@
   @apply text-muted-foreground/60;
 }
 
-/* Drag handle */
-.ok-drag-handle {
+/* Block controls container — replaces ok-drag-handle */
+.ok-block-controls {
   position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  user-select: none;
+}
+
+/* + button */
+.ok-add-block-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  color: oklch(0.72 0 0);
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  transition: background-color 100ms var(--ease-out-strong);
+}
+.ok-add-block-btn:hover {
+  background-color: oklch(0 0 0 / 6%);
+}
+
+/* Drag grip */
+.ok-drag-grip {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
   cursor: grab;
-  opacity: 1;
-  transition: opacity 100ms var(--ease-out-strong);
   color: oklch(0.72 0 0);
   border-radius: 3px;
-  user-select: none;
 }
-
-.ok-drag-handle:hover {
+.ok-drag-grip:hover {
   background-color: oklch(0 0 0 / 6%);
 }
-
-.ok-drag-handle:active {
+.ok-drag-grip:active {
   cursor: grabbing;
 }
 
-.dark .ok-drag-handle {
+/* Visibility fade — DragHandlePlugin sets inline visibility: hidden */
+.ok-block-controls[style*="visibility: hidden"],
+.ok-block-controls[style*="visibility:hidden"] {
+  opacity: 0;
+}
+
+/* Dark mode */
+.dark .ok-add-block-btn {
   color: oklch(0.5 0 0);
 }
-
-.dark .ok-drag-handle:hover {
+.dark .ok-add-block-btn:hover {
   background-color: oklch(1 0 0 / 8%);
 }
-
-/* The extension hides via visibility:hidden (inline style). Fade out when hidden,
-   fade in when shown (extension clears the inline visibility style). */
-.ok-drag-handle[style*="visibility: hidden"],
-.ok-drag-handle[style*="visibility:hidden"] {
-  opacity: 0;
+.dark .ok-drag-grip {
+  color: oklch(0.5 0 0);
+}
+.dark .ok-drag-grip:hover {
+  background-color: oklch(1 0 0 / 8%);
 }
 
 /* CodeMirror polish */
