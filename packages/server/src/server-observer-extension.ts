@@ -14,6 +14,7 @@ import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import { incrementServerObserverError } from './metrics.ts';
 import { setupServerObservers } from './server-observers.ts';
 
 export interface ServerObserverExtensionOptions {
@@ -51,10 +52,18 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
 
         cleanups.set(documentName, unsubscribe);
       } catch (err) {
+        // Do NOT re-throw: Hocuspocus afterLoadDocument is not try/catch guarded
+        // (unlike onLoadDocument). Re-throwing would break the document setup
+        // pipeline (beforeBroadcastStateless, awareness wiring) for ALL clients.
+        // Instead, log + increment error counter so monitoring detects the failure.
+        // The document loads without cross-CRDT sync — WYSIWYG and source mode
+        // will diverge until the document is unloaded and reloaded.
         console.error(
           `[ServerObserverExtension] Failed to attach observers for '${documentName}':`,
           err,
         );
+        incrementServerObserverError('a');
+        incrementServerObserverError('b');
       }
     },
 

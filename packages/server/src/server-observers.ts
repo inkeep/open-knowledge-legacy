@@ -363,8 +363,11 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // If Observer A has a pending debounce, defer Observer B until after
     // Observer A runs. This prevents Observer B from overwriting XmlFragment
     // content that was just added by a WYSIWYG edit but hasn't been synced
-    // to Y.Text yet. Observer B will be re-triggered after Observer A writes
-    // Y.Text (because Observer B observes Y.Text changes).
+    // to Y.Text yet. Observer B self-reschedules after DEBOUNCE_MS; by then
+    // Observer A will have fired and cleared debounceA, allowing Observer B
+    // to proceed. (Note: Observer A's Y.Text write uses OBSERVER_SYNC_ORIGIN
+    // which Observer B's callback skips — the self-reschedule on the next
+    // line is the sole recovery mechanism, not a retrigger from Observer A.)
     if (debounceA) {
       debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
       return;
