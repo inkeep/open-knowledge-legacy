@@ -49,6 +49,27 @@ export function defaultInitialDir(activeDocName: string | null): string {
   return slash > 0 ? activeDocName.slice(0, slash) : '';
 }
 
+/** Compose the final path for an inline file creation. */
+export function composeInlineFilePath(parentDir: string, name: string): string {
+  const trimmed = name.trim();
+  const file = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+  return parentDir ? `${parentDir}/${file}` : file;
+}
+
+/**
+ * Compose the final path for an inline folder creation. Slash-aware:
+ *   "myfolder"        → "{parentDir}/myfolder/index.md"
+ *   "myfolder/notes"  → "{parentDir}/myfolder/notes.md"
+ */
+export function composeInlineFolderPath(parentDir: string, name: string): string {
+  const trimmed = name.trim();
+  if (trimmed.includes('/')) {
+    const file = trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+    return parentDir ? `${parentDir}/${file}` : file;
+  }
+  return parentDir ? `${parentDir}/${trimmed}/index.md` : `${trimmed}/index.md`;
+}
+
 /**
  * Build a hierarchical tree from a flat list of documents.
  * Each docName is split on '/' to create folder structure.
