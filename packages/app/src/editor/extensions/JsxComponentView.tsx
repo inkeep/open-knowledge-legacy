@@ -73,19 +73,29 @@ class ComponentErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBo
 /**
  * Extract primitive (non-ReactNode) props from PM node attrs for passing
  * to the live React component.
+ *
+ * Passes through ALL keys from `attrs.props` (destructureAttrs stores every
+ * attribute there, not just declared ones) and excludes only the PropDef
+ * entries whose type is 'reactnode' (those are content holes — handled by
+ * NodeViewContent, not passed as props). This makes the render path symmetric
+ * with FR-21's reconstructAttrs merge: undeclared attrs on the source (e.g.
+ * `<InlineTOC items={...}>` where `items` isn't in the registry PropDef)
+ * still reach the component, preventing crashes like
+ * "Cannot read properties of undefined (reading 'map')" when the component
+ * requires the undeclared prop.
  */
-function extractPrimitiveProps(
+export function extractPrimitiveProps(
   attrs: Record<string, unknown>,
   descriptorProps: import('@inkeep/open-knowledge-core').PropDef[],
 ): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
   const propsObj = (attrs.props ?? {}) as Record<string, unknown>;
-
-  for (const propDef of descriptorProps) {
-    if (propDef.type === 'reactnode') continue;
-    if (propDef.name in propsObj) {
-      result[propDef.name] = propsObj[propDef.name];
-    }
+  const reactnodeNames = new Set(
+    descriptorProps.filter((p) => p.type === 'reactnode').map((p) => p.name),
+  );
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(propsObj)) {
+    if (reactnodeNames.has(key)) continue;
+    result[key] = value;
   }
   return result;
 }
