@@ -138,6 +138,8 @@ This repo uses Open Knowledge — agent-collaborative wiki tooling exposed via M
 
 **Linking.** When authoring, link liberally with \`[[Page Title]]\` wiki-links. Redlinks are fine — they signal "this should exist." Every noun-phrase naming another document should be a link. Backlink density is how this knowledge base stays navigable for the next agent.
 
+**Cadence — maintain hubs as you go.** When you create or edit a child doc in a folder that has a hub doc (\`INDEX.md\`, \`README.md\`, \`REPORT.md\`, \`SPEC.md\`, or a file whose name matches the folder name — e.g. \`reports/r1/r1.md\`), update the hub to reflect the change before the next child. Interleaved child → hub → child → hub makes the hub the live progress bar and the browser-based editor follows your focus cleanly. Orphan writes get a soft hint in the \`write_document\` response pointing to the likely hub.
+
 **Non-wiki code (\`.ts\`, \`.py\`, configs, etc.).** Keep using native \`Read\` / \`Edit\` / \`Grep\` / \`Bash\`. The MCP tools are for markdown in \`content.include\`.
 ${OK_MARKER_END}`;
 

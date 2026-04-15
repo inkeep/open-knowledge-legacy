@@ -92,6 +92,14 @@ Agent writes to wiki markdown **must** go through the \`write_document\` / \`edi
 
 **Rule of thumb:** if a human reader would want to click a term to learn more, make it a link. Err on the side of too many links.
 
+## Cadence — maintain hubs as you create children
+
+When you create or meaningfully edit a doc inside a folder that has a hub doc (\`INDEX.md\`, \`README.md\`, \`REPORT.md\`, \`SPEC.md\`, or a file whose name matches the folder name — e.g. \`reports/r1/r1.md\`), update the hub to reflect the change before moving to the next child. Write one child → update hub → write next child. Don't batch five children and then the hub.
+
+**Why:** the browser follows your focus in real time via push-nav on every write. Hub-as-you-go makes your work legible to the human watching — each pulse is a complete thought (child → hub → child → hub), and the hub doc itself functions as the live progress bar. Batched writes make the nav flicker, flatten the narrative, and hide the structure you're building.
+
+When \`write_document\` creates a doc with zero incoming backlinks and a hub candidate exists in the folder tree, the response includes a \`hints: [{type: 'orphan', parentCandidates: [...], message: ...}]\` entry — that's the soft nudge to interleave the hub update next. Pair with the link-as-you-write discipline above.
+
 ## Frontmatter conventions
 
 Every \`.md\` file in the knowledge base should have YAML frontmatter: \`title\` (required), \`description\` (required), \`tags\` (recommended). Folder-level frontmatter was deprecated — per-file frontmatter is the only authored metadata surface.
