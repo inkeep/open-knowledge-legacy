@@ -901,6 +901,12 @@
   font-size: 0.95em;
 }
 
+/* Broken link-reference (Phase 4) — wavy red underline (LSP convention) */
+.cm-link-ref-broken {
+  text-decoration: underline wavy;
+  text-decoration-color: oklch(55% 0.15 25);
+}
+
 /* ─────────────────────────────────────────────────────────────
    Presence polish — agent badge, undo button, presence bar
    ───────────────────────────────────────────────────────────── */

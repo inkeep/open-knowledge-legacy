@@ -11,6 +11,7 @@
 import { Compartment, type Extension } from '@codemirror/state';
 import { createAutoBailPlugin } from './auto-bail';
 import { blockquoteConstruct } from './constructs/blockquote';
+import { brokenLinkRefConstruct } from './constructs/broken-ref';
 import {
   codeInfoConstruct,
   codeMarkConstruct,
@@ -81,6 +82,8 @@ export const defaultRegistry: Registry = [
   linkReferenceConstruct,
   thematicBreakConstruct,
   htmlBlockConstruct,
+  // Phase 4 — cross-scan
+  brokenLinkRefConstruct,
 ];
 
 /**
