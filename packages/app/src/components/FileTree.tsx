@@ -100,6 +100,7 @@ function InlineCreateRow({
         value={value}
         autoFocus
         disabled={busy}
+        aria-label={`Create new ${kind}`}
         placeholder={kind === 'folder' ? 'folder-name' : 'file-name'}
         className={cn('h-7 min-w-0 flex-1 bg-background text-sm', error && 'border-destructive')}
         onBlur={onCancel}
@@ -136,6 +137,7 @@ const FileTreeNode: FC<{
   onDelete: (target: FileTreeTarget) => void;
   onStartCreating: (kind: 'file' | 'folder', parentDir: string) => void;
   inlineCreate: InlineCreateProps | null;
+  getInlineCreate: (parentDir: string) => InlineCreateProps | null;
   nested?: boolean;
 }> = ({
   node,
@@ -155,6 +157,7 @@ const FileTreeNode: FC<{
   onDelete,
   onStartCreating,
   inlineCreate,
+  getInlineCreate,
 }) => {
   const isFile = node.kind === 'file';
   const expanded = !isFile && expandedPaths.has(node.path);
@@ -334,7 +337,8 @@ const FileTreeNode: FC<{
               onCancelRename={onCancelRename}
               onDelete={onDelete}
               onStartCreating={onStartCreating}
-              inlineCreate={null}
+              inlineCreate={getInlineCreate(child.path)}
+              getInlineCreate={getInlineCreate}
               nested
             />
           ))}
@@ -462,7 +466,10 @@ export function FileTree({
   async function handleInlineCreate() {
     if (!creatingItem) return;
     const trimmed = creatingValue.trim();
-    if (!trimmed) return;
+    if (!trimmed) {
+      setCreatingError('Name is required');
+      return;
+    }
 
     if (
       trimmed.includes('..') ||
@@ -676,18 +683,20 @@ export function FileTree({
     }
   }
 
-  const rootInlineCreate: InlineCreateProps | null =
-    creatingItem?.parentDir === ''
-      ? {
-          kind: creatingItem.kind,
-          value: creatingValue,
-          busy: creatingBusy,
-          error: creatingError,
-          onChange: setCreatingValue,
-          onCommit: () => void handleInlineCreate(),
-          onCancel: handleCancelCreating,
-        }
-      : null;
+  function getInlineCreate(parentDir: string): InlineCreateProps | null {
+    if (!creatingItem || creatingItem.parentDir !== parentDir) return null;
+    return {
+      kind: creatingItem.kind,
+      value: creatingValue,
+      busy: creatingBusy,
+      error: creatingError,
+      onChange: setCreatingValue,
+      onCommit: () => void handleInlineCreate(),
+      onCancel: handleCancelCreating,
+    };
+  }
+
+  const rootInlineCreate = getInlineCreate('');
 
   return (
     <>
@@ -699,7 +708,7 @@ export function FileTree({
       <SidebarMenu>
         {rootInlineCreate && (
           <SidebarMenuItem>
-            <InlineCreateRow {...rootInlineCreate} nested={false} />
+            <InlineCreateRow {...rootInlineCreate} />
           </SidebarMenuItem>
         )}
         {treeNodes.map((node) => (
@@ -714,7 +723,7 @@ export function FileTree({
             editingValue={editingValue}
             busyPath={busyPath}
             onSelect={(docName) => {
-              window.location.hash = `#/${docName}`;
+              navigateTo(docName);
             }}
             onStartRename={(target) => {
               setEditingPath(target.path);
@@ -731,19 +740,8 @@ export function FileTree({
             }}
             onDelete={(target) => void handleDelete(target)}
             onStartCreating={startCreating}
-            inlineCreate={
-              creatingItem?.parentDir === node.path
-                ? {
-                    kind: creatingItem.kind,
-                    value: creatingValue,
-                    busy: creatingBusy,
-                    error: creatingError,
-                    onChange: setCreatingValue,
-                    onCommit: () => void handleInlineCreate(),
-                    onCancel: handleCancelCreating,
-                  }
-                : null
-            }
+            inlineCreate={getInlineCreate(node.path)}
+            getInlineCreate={getInlineCreate}
           />
         ))}
       </SidebarMenu>

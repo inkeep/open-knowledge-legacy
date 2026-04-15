@@ -9,7 +9,7 @@ import {
   SidebarMenu,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 export function FileSidebar() {
   const [createTrigger, setCreateTrigger] = useState<{
@@ -34,7 +34,12 @@ export function FileSidebar() {
               <div className="flex items-center gap-1">
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" onClick={() => triggerCreate('file', '')}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="New file"
+                      onClick={() => triggerCreate('file', '')}
+                    >
                       <SquarePen aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
@@ -42,7 +47,12 @@ export function FileSidebar() {
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" onClick={() => triggerCreate('folder', '')}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="New folder"
+                      onClick={() => triggerCreate('folder', '')}
+                    >
                       <FolderPlus aria-hidden="true" />
                     </Button>
                   </TooltipTrigger>
