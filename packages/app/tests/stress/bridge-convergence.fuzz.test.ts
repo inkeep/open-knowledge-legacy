@@ -121,10 +121,11 @@ function randomShortText(rng: Rng): string {
 }
 
 /**
- * Generate ops biased toward WYSIWYG edits + agent writes (the Bug-A/B
- * scenarios this spec fixes). Source-type and external-change are included
- * but rare — they create cross-mode CRDT merges that require multiple
- * observer reconciliation cycles.
+ * Generate ops at the rebalanced distribution (server-authoritative FR-9):
+ * wysiwyg:25%, source:15%, agent-write:15%, agent-patch:8%,
+ * external-change:8%, sync-pause:12%, sync-resume:12%, wait:5%.
+ * Source-type and external-change elevated from theatre rates (0.5% each)
+ * to validate the symmetric Observer B fix under server-authoritative.
  */
 function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
   const ops: Op[] = [];
@@ -137,39 +138,40 @@ function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
     const roll = rng.next();
     const clientIdx = rng.nextInt(clientCount);
 
-    if (roll < 0.3) {
-      // wysiwyg-type: append a paragraph to XmlFragment (primary Bug-A/B surface)
+    // Rebalanced distribution (server-authoritative spec FR-9):
+    // wysiwyg:25%, source:15%, agent-write:15%, agent-patch:8%,
+    // external-change:8%, sync-pause:12%, sync-resume:12%, wait:5%
+    if (roll < 0.25) {
+      // wysiwyg-type (25%): append a paragraph to XmlFragment
       const marker = `M${markerIdx++}-${randomShortText(rng)}`;
       ops.push({ kind: 'wysiwyg-type', clientIdx, text: marker, marker });
-    } else if (roll < 0.45) {
-      // agent-write via HTTP (primary Bug-A surface) — append only
-      const marker = `M${markerIdx++}-${randomShortText(rng)}`;
-      ops.push({ kind: 'agent-write', text: marker, position: 'append', marker });
-    } else if (roll < 0.52) {
-      // agent-patch via HTTP. `find`/`replace` use raw WORDS — NEVER marker strings —
-      // so agent-patch never accidentally replaces a user/agent marker that the
-      // content-preservation oracle tracks.
-      const find = rng.pick(WORDS);
-      const replace = rng.pick(WORDS);
-      ops.push({ kind: 'agent-patch', find, replace, marker: `patch-${find}→${replace}` });
-    } else if (roll < 0.525) {
-      // source-type — very rare (0.5%). Cross-mode Y.Text→XmlFragment requires
-      // multiple observer reconciliation cycles in multi-client scenarios.
-      // Kept in the generator for D18 coverage gate; tested in isolation by
-      // bridge-matrix.test.ts cross-mode tests.
+    } else if (roll < 0.4) {
+      // source-type (15%): Y.Text write simulating CodeMirror input.
+      // Elevated from 0.5% to exercise symmetric Observer B path under
+      // server-authoritative architecture.
       const marker = `M${markerIdx++}-${randomShortText(rng)}`;
       ops.push({ kind: 'source-type', clientIdx, text: marker, marker });
       ops.push({ kind: 'wait', ms: 500 });
-    } else if (roll < 0.53) {
-      // external-change — very rare (0.5%). Wholesale content replacement
-      // combined with concurrent CRDT inserts creates merge artifacts.
-      // Tested in isolation by P1 file-watcher test.
+    } else if (roll < 0.55) {
+      // agent-write via HTTP (15%) — append only
+      const marker = `M${markerIdx++}-${randomShortText(rng)}`;
+      ops.push({ kind: 'agent-write', text: marker, position: 'append', marker });
+    } else if (roll < 0.63) {
+      // agent-patch via HTTP (8%). `find`/`replace` use raw WORDS — NEVER marker
+      // strings — so agent-patch never accidentally replaces a user/agent marker
+      // that the content-preservation oracle tracks.
+      const find = rng.pick(WORDS);
+      const replace = rng.pick(WORDS);
+      ops.push({ kind: 'agent-patch', find, replace, marker: `patch-${find}→${replace}` });
+    } else if (roll < 0.71) {
+      // external-change (8%): file-watcher disk→CRDT bridge.
+      // Elevated from 0.5% to exercise file-watcher convergence path.
       const marker = `M${markerIdx++}-${randomShortText(rng)}`;
       const content = `${marker}\n`;
       const stabilized = mdManager.serialize(mdManager.parse(content));
       ops.push({ kind: 'external-change', newContent: stabilized, marker });
       ops.push({ kind: 'wait', ms: 500 });
-    } else if (roll < 0.67) {
+    } else if (roll < 0.83) {
       // sync-pause
       if (paused.size < clientCount - 1) {
         const target = clientIdx % clientCount;
@@ -182,8 +184,8 @@ function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
       } else {
         ops.push({ kind: 'wait', ms: rng.nextInt(40) + 20 });
       }
-    } else if (roll < 0.8) {
-      // sync-resume
+    } else if (roll < 0.95) {
+      // sync-resume (12%)
       if (paused.size > 0) {
         const target = rng.pick([...paused]);
         paused.delete(target);
