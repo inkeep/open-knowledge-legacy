@@ -14,7 +14,10 @@
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import React, { type ErrorInfo, type ReactNode, useState } from 'react';
+import { PropPanel } from '../components/PropPanel.tsx';
+import { markUserTyping } from '../observers.ts';
 import { getDescriptor } from '../registry/index.ts';
+import { getYDoc } from '../utils/get-ydoc.ts';
 
 /**
  * Minimal class component error boundary for component render failures.
@@ -99,6 +102,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     // Position resolution can fail during teardown
   }
 
+  // Suppress empty panel: if descriptor has no editable (non-reactnode) props, skip PropPanel
+  const hasEditableProps = descriptor.props.some(
+    (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
+  );
+
   // Compute primitive props for the React component
   const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.props);
   const resetKey = `${descriptor.name}::${JSON.stringify(primitiveProps)}`;
@@ -157,8 +165,6 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
       <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
         <Comp {...primitiveProps}>
-          {/* Precedent #14: NodeViewContent ALWAYS rendered. When empty
-					    (hasChildren:false + 0 children), CSS zero-footprint styling. Never display:none. */}
           <NodeViewContent
             className={`component-children ${
               !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
@@ -166,6 +172,32 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           />
         </Comp>
       </ComponentErrorBoundary>
+
+      {/* PropPanel: auto-generated controls. Suppressed when no editable props (FR-11/ES01).
+          FR-13a: onMouseDown stopPropagation prevents node deselect on input click. */}
+      {selected && hasEditableProps && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: onMouseDown stopPropagation is required inside ProseMirror NodeView to prevent node deselection when interacting with PropPanel controls (FR-13a)
+        <div
+          className="jsx-prop-panel-wrapper mt-1"
+          contentEditable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <PropPanel
+            props={descriptor.props}
+            values={primitiveProps}
+            onChange={(propName, value) => {
+              const ydoc = getYDoc(editor);
+              if (ydoc) markUserTyping(ydoc);
+              // Update the props object in the attrs
+              const currentProps = (node.attrs.props ?? {}) as Record<string, unknown>;
+              editor.commands.updateAttributes('jsxComponent', {
+                props: { ...currentProps, [propName]: value },
+                sourceDirty: true,
+              });
+            }}
+          />
+        </div>
+      )}
     </NodeViewWrapper>
   );
 }
