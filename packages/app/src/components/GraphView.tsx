@@ -160,7 +160,6 @@ function drawGraphLabelPlacements({
     ctx.fillText(placement.text, placement.textX, placement.textY);
   }
 }
-
 export function GraphView({
   activeDocName,
   isFullscreen = false,

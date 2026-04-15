@@ -2,7 +2,13 @@
  * Tests for MCP shared helpers — textResult, httpGet, httpPost.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, httpPost, textResult } from './shared.ts';
+import {
+  HOCUSPOCUS_NOT_RUNNING_ERROR,
+  httpGet,
+  httpPost,
+  normalizeDocName,
+  textResult,
+} from './shared.ts';
 
 describe('textResult', () => {
   test('wraps text in MCP content array', () => {
@@ -25,6 +31,60 @@ describe('textResult', () => {
     expect(result).not.toHaveProperty('isError');
     const result2 = textResult('ok');
     expect(result2).not.toHaveProperty('isError');
+  });
+});
+
+describe('normalizeDocName', () => {
+  test('strips trailing .md silently', () => {
+    const result = normalizeDocName('notes/meeting.md');
+    expect(result).toEqual({ ok: true, docName: 'notes/meeting' });
+  });
+
+  test('strips trailing .mdx silently', () => {
+    const result = normalizeDocName('notes/meeting.mdx');
+    expect(result).toEqual({ ok: true, docName: 'notes/meeting' });
+  });
+
+  test('strips uppercase .MD (case-insensitive)', () => {
+    const result = normalizeDocName('NOTES.MD');
+    expect(result).toEqual({ ok: true, docName: 'NOTES' });
+  });
+
+  test('strips mixed-case .Mdx (case-insensitive)', () => {
+    const result = normalizeDocName('Component.Mdx');
+    expect(result).toEqual({ ok: true, docName: 'Component' });
+  });
+
+  test('strips only one trailing extension (not recursive)', () => {
+    // `foo.md.md` strips once → `foo.md`; avoids over-eager stripping on paths
+    // that happen to have compound-looking extensions.
+    const result = normalizeDocName('notes/meeting.md.md');
+    expect(result).toEqual({ ok: true, docName: 'notes/meeting.md' });
+  });
+
+  test('leaves extension-less docName untouched', () => {
+    const result = normalizeDocName('notes/meeting');
+    expect(result).toEqual({ ok: true, docName: 'notes/meeting' });
+  });
+
+  test('rejects .markdown — unsupported extension', () => {
+    const result = normalizeDocName('notes/meeting.markdown');
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('.markdown');
+      expect(result.error).toContain('not a supported extension');
+    }
+  });
+
+  test('leaves unrelated dotted names untouched', () => {
+    // A docName like "v1.0" is a legitimate extension-less name with a dot.
+    const result = normalizeDocName('releases/v1.0');
+    expect(result).toEqual({ ok: true, docName: 'releases/v1.0' });
+  });
+
+  test('handles root-level docName with .md', () => {
+    const result = normalizeDocName('PROJECT.md');
+    expect(result).toEqual({ ok: true, docName: 'PROJECT' });
   });
 });
 

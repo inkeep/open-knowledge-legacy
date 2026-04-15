@@ -6,18 +6,20 @@
  */
 import { z } from 'zod';
 import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, textResult } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpPost, normalizeDocName, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find-and-replace on a live document via the CRDT layer.',
   'The patch is applied through Hocuspocus and propagated to all connected editors in real-time.',
+  'Use `offset` when you need to patch an exact occurrence; omit it to preserve first-match behavior.',
   '',
   '**When rewriting prose, add `[[wiki-links]]` aggressively.** If the replacement mentions other documents or entities that should have their own page, link them as `[[Page Name]]`. Over-linking is the goal; underlinked documents lose their value in backlink-driven navigation.',
   '',
   '**Parameters:**',
-  '- `docName` — Document name to edit',
+  '- `docName` — Document name, typically without extension. A trailing `.md` or `.mdx` is stripped automatically.',
   '- `find` — Text to find (exact match)',
   '- `replace` — Replacement text',
+  '- `offset` (optional) — Exact occurrence to patch, as a JavaScript string offset in the current markdown. If the document changed and the text no longer matches there, the server returns a stale-target error; re-run `suggest_links` to get fresh offsets.',
 ].join('\n');
 
 export function register(server: ServerInstance, serverUrl: string | undefined): void {
@@ -28,13 +30,24 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       docName: z.string().describe('Document name to edit'),
       find: z.string().describe('Text to find (exact match)'),
       replace: z.string().describe('Replacement text'),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe(
+          'Exact occurrence to patch, as a JavaScript string offset in the current markdown',
+        ),
     },
-    async (args: { docName: string; find: string; replace: string }) => {
+    async (args: { docName: string; find: string; replace: string; offset?: number }) => {
       if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const normalized = normalizeDocName(args.docName);
+      if (!normalized.ok) return textResult(normalized.error, true);
       const result = await httpPost(serverUrl, '/api/agent-patch', {
-        docName: args.docName,
+        docName: normalized.docName,
         find: args.find,
         replace: args.replace,
+        offset: args.offset,
       });
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       return textResult('Edit applied successfully');

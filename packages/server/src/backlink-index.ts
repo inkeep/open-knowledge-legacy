@@ -3,11 +3,15 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import {
   getWikiLinkText,
+  isOrphanMode,
+  ORPHAN_MODES,
+  type OrphanMode,
   resolveInternalHref,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
+import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 
 // Line-oriented variant: excludes \n since lines are pre-split.
 // cf. packages/core/src/extensions/wiki-link.ts WIKI_LINK_PATTERN (no \n exclusion).
@@ -40,10 +44,17 @@ export interface BacklinkEntry {
   snippet: string | null;
 }
 
+export interface ForwardLinkEntry {
+  target: string;
+  snippet: string | null;
+}
+
 export interface HubEntry {
   docName: string;
   count: number;
 }
+
+export { isOrphanMode, ORPHAN_MODES, type OrphanMode };
 
 interface BranchGraphState {
   backward: Map<string, Map<string, string | null>>;
@@ -513,12 +524,24 @@ export class BacklinkIndex {
     return [...(state.forward.get(source) ?? new Set<string>())].sort((a, b) => a.localeCompare(b));
   }
 
-  getOrphans(allDocs: string[], branch = this.activeBranch): string[] {
+  getForwardLinkEntries(source: string, branch = this.activeBranch): ForwardLinkEntry[] {
+    const state = this.getState(branch);
+    return this.getForwardLinks(source, branch).map((target) => ({
+      target,
+      snippet: state.backward.get(target)?.get(source) ?? null,
+    }));
+  }
+
+  getOrphans(allDocs: string[], mode: OrphanMode = 'both', branch = this.activeBranch): string[] {
     const state = this.getState(branch);
     return [...allDocs]
       .filter((docName) => {
-        const backlinks = state.backward.get(docName);
-        return !backlinks || backlinks.size === 0;
+        const hasInboundEdges = (state.backward.get(docName)?.size ?? 0) > 0;
+        const hasOutboundEdges = (state.forward.get(docName)?.size ?? 0) > 0;
+
+        if (mode === 'incoming') return !hasInboundEdges;
+        if (mode === 'outgoing') return !hasOutboundEdges;
+        return !hasInboundEdges && !hasOutboundEdges;
       })
       .sort((a, b) => a.localeCompare(b));
   }
@@ -636,11 +659,11 @@ export class BacklinkIndex {
         this.rebuildFileList(fullPath, docs);
         continue;
       }
-      if (!entry.isFile() || !entry.name.endsWith('.md')) continue;
+      if (!entry.isFile() || !isSupportedDocFile(entry.name)) continue;
 
       const relPath = relative(this.contentDir, fullPath);
       if (this.contentFilter?.isExcluded(relPath)) continue;
-      docs.push(relPath.slice(0, -3));
+      docs.push(stripDocExtension(relPath));
     }
   }
 
@@ -648,13 +671,17 @@ export class BacklinkIndex {
     if (!existsSync(this.contentDir)) return [];
     const docs: string[] = [];
     this.rebuildFileList(this.contentDir, docs);
-    return docs.sort((a, b) => a.localeCompare(b));
+    // Deduplicate: when both foo.md and foo.mdx exist, stripDocExtension maps
+    // both to "foo". The extension-precedence winner is resolved later via
+    // getDocExtension() when building the on-disk path.
+    const unique = Array.from(new Set(docs));
+    return unique.sort((a, b) => a.localeCompare(b));
   }
 
   rebuildFromDisk(branch = this.activeBranch): void {
     const state = createEmptyState();
     for (const docName of this.listDocsOnDisk()) {
-      const filePath = resolve(this.contentDir, `${docName}.md`);
+      const filePath = resolve(this.contentDir, `${docName}${getDocExtension(docName)}`);
       try {
         const markdown = readFileSync(filePath, 'utf-8');
         const { body } = stripFrontmatter(markdown);

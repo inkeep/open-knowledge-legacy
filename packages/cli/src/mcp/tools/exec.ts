@@ -24,7 +24,13 @@ import { z } from 'zod';
 import { extractReferencedPaths } from '../../bash/extract-paths.ts';
 import { createBashInstance, execBash, StdoutOverflowError } from '../../bash/index.ts';
 import { diffMtimes, snapshotMtimes } from '../../bash/mtime-scan.ts';
-import { type ErrorCategory, parseCommand, type Stage } from '../../bash/parse-command.ts';
+import {
+  augmentStagesWithExcludes,
+  type ErrorCategory,
+  parseCommand,
+  type Stage,
+  serializeStages,
+} from '../../bash/parse-command.ts';
 import {
   type DirectoryMeta,
   type EnrichedEntry,
@@ -209,7 +215,11 @@ export async function buildExecResult(
   if ('error' in parsed) {
     return errorCategoryResult(parsed.error.category, parsed.error.message);
   }
-  const stages = parsed.stages;
+  // Auto-inject `WIKI_EXCLUDE_DIRS` filters into recursive grep/find stages so
+  // agents don't wait 20s scanning `node_modules/` etc. Safe: user-provided
+  // excludes disable injection for the affected stage.
+  const stages = augmentStagesWithExcludes(parsed.stages);
+  const effectiveCommand = serializeStages(stages);
 
   // 2. Pre-exec mtime snapshot (FR21 baseline)
   const pre = await snapshotMtimes(deps.projectDir);
@@ -219,7 +229,7 @@ export async function buildExecResult(
   let stdout = '';
   let stderr = '';
   try {
-    const result = await execBash(bash, args.command);
+    const result = await execBash(bash, effectiveCommand);
     stdout = result.stdout;
     stderr = result.stderr;
   } catch (err) {

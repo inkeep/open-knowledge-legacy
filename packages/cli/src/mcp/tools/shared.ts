@@ -39,6 +39,42 @@ export const HOCUSPOCUS_NOT_RUNNING_ERROR =
   'Error: Hocuspocus server is not running. Start it with `open-knowledge start`, then retry.\nFor disk-only writes without real-time sync, use your native Edit tool directly.';
 
 /**
+ * Normalize a user-supplied `docName`. The server keys documents by the
+ * extension-less docName, so a caller that passes `"notes/meeting.md"` would
+ * otherwise produce `meeting.md.md`. The server auto-detects the extension
+ * (`.md` vs `.mdx`) from what it finds on disk.
+ *
+ * Policy:
+ * - Trailing `.md` / `.mdx` is stripped silently (case-insensitive).
+ * - Trailing `.markdown` returns an error — unsupported extension.
+ * - Any other trailing `.x` is left alone; a dotted docName is valid
+ *   (e.g. `releases/v1.0`).
+ *
+ * Note: when creating a new document, the server defaults to `.md` regardless
+ * of the suffix passed by the caller. To create a `.mdx` file, create it on
+ * disk first — the watcher will register the extension and subsequent writes
+ * will route to `.mdx` automatically.
+ */
+export function normalizeDocName(
+  raw: string,
+): { ok: true; docName: string } | { ok: false; error: string } {
+  const lower = raw.toLowerCase();
+  if (lower.endsWith('.md')) {
+    return { ok: true, docName: raw.slice(0, -3) };
+  }
+  if (lower.endsWith('.mdx')) {
+    return { ok: true, docName: raw.slice(0, -4) };
+  }
+  if (lower.endsWith('.markdown')) {
+    return {
+      ok: false,
+      error: `Error: docName "${raw}" ends in ".markdown", which is not a supported extension. Use ".md" or ".mdx", or strip the extension to let the server auto-detect.`,
+    };
+  }
+  return { ok: true, docName: raw };
+}
+
+/**
  * HTTP GET helper for Hocuspocus API calls.
  * Returns `{ ok: false, error }` on network failure or non-JSON response.
  */

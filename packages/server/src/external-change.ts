@@ -36,7 +36,7 @@ export function applyExternalChange(
   const document = hocuspocus.documents.get(docName);
   if (!document) return;
   const { frontmatter, body } = stripFrontmatter(content);
-  const parsedJson = mdManager.parse(body);
+  const parsedJson = mdManager.parseWithFallback(body);
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 

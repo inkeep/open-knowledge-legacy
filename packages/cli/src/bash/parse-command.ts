@@ -25,6 +25,8 @@
  * Spec: SPEC.md FR2 + FR3 + FR8 + D15 + D21.
  */
 import shellQuote from 'shell-quote';
+import { OK_DIR } from '../constants.ts';
+import { shellEscape } from './shell-escape.ts';
 
 export type ErrorCategory =
   | 'unknown_command'
@@ -47,6 +49,114 @@ export interface Stage {
 }
 
 export type ParseResult = { stages: Stage[] } | { error: ParseCommandError };
+
+/**
+ * Dirs that are never wiki content. Auto-injected on recursive `grep` (as
+ * `--exclude-dir=`) and on `find` (as `-not -path "/X/"` glob) so agents don't
+ * wait 20s scanning `node_modules/` etc. Users can opt out by passing their
+ * own `--exclude-dir` / `-not -path`.
+ */
+const WIKI_EXCLUDE_DIRS: readonly string[] = [
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  '.next',
+  '.turbo',
+  '.nuxt',
+  'coverage',
+  '.cache',
+  '.parcel-cache',
+  '.vercel',
+  OK_DIR,
+];
+
+/**
+ * Per-command strategy for auto-injecting ignored-dir filters so agents don't
+ * waste time walking `node_modules/`, `.git/`, build dirs, etc. Strategies
+ * follow a common shape:
+ *   - `applies`   — stage should be augmented (command matches + recurses)
+ *   - `hasUserExcludes` — user already passed their own excludes; skip injection
+ *   - `buildExcludeArgs` — the tokens to splice in
+ *   - `insertionIndex` — where in stage.args to splice
+ */
+interface ExcludeStrategy {
+  command: string;
+  applies(args: string[]): boolean;
+  hasUserExcludes(args: string[]): boolean;
+  buildExcludeArgs(dirs: readonly string[]): string[];
+  insertionIndex(args: string[]): number;
+}
+
+function isRecursiveGrepFlag(arg: string): boolean {
+  if (arg === '--recursive' || arg === '--dereference-recursive') return true;
+  if (arg.startsWith('--')) return false;
+  if (!arg.startsWith('-')) return false;
+  return /[rR]/.test(arg.slice(1));
+}
+
+const GREP_STRATEGY: ExcludeStrategy = {
+  command: 'grep',
+  applies: (args) => args.slice(1).some(isRecursiveGrepFlag),
+  hasUserExcludes: (args) =>
+    args.some((a) => a === '--exclude-dir' || a.startsWith('--exclude-dir=')),
+  buildExcludeArgs: (dirs) => dirs.map((d) => `--exclude-dir=${d}`),
+  // Right after the command token so excludes appear before pattern/paths.
+  insertionIndex: () => 1,
+};
+
+const FIND_STRATEGY: ExcludeStrategy = {
+  command: 'find',
+  // `find` is always recursive — augment unconditionally.
+  applies: () => true,
+  // Respect user's own filtering. Only `-not` / `!` / `-prune` unambiguously
+  // signal the user is managing exclusions — bare `-path` is also used for
+  // inclusion patterns (e.g. `find . -path "docs/*.md"`), so matching on it
+  // would wrongly disable injection for include-style commands.
+  hasUserExcludes: (args) => args.slice(1).some((a) => a === '-not' || a === '!' || a === '-prune'),
+  buildExcludeArgs: (dirs) => {
+    const out: string[] = [];
+    for (const d of dirs) {
+      out.push('-not', '-path', `*/${d}/*`);
+    }
+    return out;
+  },
+  // Splice before the first expression primary (first arg starting with `-`),
+  // so `find . -name X` becomes `find . -not -path ... -name X`. If no path
+  // arg exists (`find -name X`), splice right after `find`.
+  insertionIndex: (args) => {
+    for (let i = 1; i < args.length; i++) {
+      if (args[i].startsWith('-')) return i;
+    }
+    return args.length;
+  },
+};
+
+const STRATEGIES: readonly ExcludeStrategy[] = [GREP_STRATEGY, FIND_STRATEGY];
+
+/**
+ * Inject `WIKI_EXCLUDE_DIRS` filters into any stage whose command has a
+ * matching strategy. Returns a new stage array — original is not mutated.
+ */
+export function augmentStagesWithExcludes(stages: Stage[]): Stage[] {
+  return stages.map((stage) => {
+    const strategy = STRATEGIES.find((s) => s.command === stage.command);
+    if (!strategy) return stage;
+    if (!strategy.applies(stage.args)) return stage;
+    if (strategy.hasUserExcludes(stage.args)) return stage;
+    const extra = strategy.buildExcludeArgs(WIKI_EXCLUDE_DIRS);
+    const at = strategy.insertionIndex(stage.args);
+    return {
+      command: stage.command,
+      args: [...stage.args.slice(0, at), ...extra, ...stage.args.slice(at)],
+    };
+  });
+}
+
+/** Serialize stages back to a pipeline command string for execBash. */
+export function serializeStages(stages: Stage[]): string {
+  return stages.map((s) => s.args.map(shellEscape).join(' ')).join(' | ');
+}
 
 // Conservative-plus allowlist (D15).
 const ALLOWLIST: ReadonlySet<string> = new Set([
