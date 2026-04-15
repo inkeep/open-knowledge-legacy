@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-04-15 — Session 5: Opt-in UX + timing + conflict abort decisions (Q-OPTINUX, Q-TIMING, Q-ABORTUX resolved)
+
+**Trigger:** Miles design session. Analyzed how Tier A auth (silent `gh` delegation) creates a gap in the opt-in flow — no auth surface to attach an "enable sync?" prompt to.
+
+### Decision applied
+
+| # | Direction | Action |
+|---|-----------|--------|
+| D36 (new) | **Auth-tier-aware opt-in UX, non-interactive-init-friendly** | **LOCKED.** Three principles: (1) init is non-interactive — agents set `sync.enabled` via config or `--sync` flag, no prompts during init; (2) Tier A gets one-time prompt on first app open ("Auto-sync your changes? [Enable] / [Not now]"), Tier B/C gets sign-in prompt and auth completion auto-enables sync; (3) three-state config (absent = undecided/prompt-eligible, true = enabled, false = disabled) prevents repeat prompts. |
+| Q-OPTINUX | **RESOLVED** via D36 | Three originally proposed surfaces (init prompt, post-auth flow, config) replaced with auth-tier-aware design. Init prompt dropped (non-interactive init). Post-auth flow replaced with Tier B/C sign-in-as-opt-in. Config retained as primary agent path. |
+| D37 (new) | **Decoupled push/pull intervals: push=60s, pull=30s** | **LOCKED.** Nick's preference confirmed by Miles. Pulls are cheap reads — faster cadence means teammates see changes sooner. 60s push balances cloud-sync feel with load. Replaces single `sync.intervalSeconds: 120`. |
+| Q-TIMING | **RESOLVED** via D37 | Decoupled intervals locked. Config keys: `sync.pushIntervalSeconds` (default 60), `sync.pullIntervalSeconds` (default 30). ±15% jitter per FR21. |
+| D38 (new) | **Conflict abort: merge --abort + clear + paused + all-or-nothing** | **LOCKED.** Four sub-decisions: (1) `git merge --abort` reverts working tree; (2) `conflicts.json` cleared — retry re-merges from scratch; (3) sync paused until manual retry via badge popover — no auto-retry nag loop; (4) all-or-nothing — partial per-file/per-hunk resolutions discarded on abort (Future Work). Toast: "Merge canceled — your changes are safe. Sync paused until you're ready to resolve." |
+| Q-ABORTUX | **RESOLVED** via D38 | Full abort behavior locked. |
+| D21 (revised) | **"Save Version" → "Checkpoint version." Stays in header as icon-only button** | Original Nick direction demoted to overflow. Miles revised: keep in header, rename to "Checkpoint version," icon-only (no text label), tooltip on hover. "Checkpoint" avoids confusion with auto-sync's continuous save semantics. Resolves Q-M5 placement coordination. |
+| Q-M5 | **RESOLVED** via D21 revision | No demotion to overflow = no placement conflict. |
+
+### Spec edits applied
+
+- §6 FR21: updated interval description to decoupled push/pull with D37 defaults
+- §6 FR34: updated config keys to `sync.pushIntervalSeconds` / `sync.pullIntervalSeconds`
+- §9 Config schema: replaced `intervalSeconds: 120` with `pushIntervalSeconds: 60` + `pullIntervalSeconds: 30`
+- §10 D20: revised opt-in surfaces description to reflect auth-tier-aware design
+- §10 D34: revised to reference three-state config + auth-tier-aware prompts
+- §10 D36: new decision row (auth-tier-aware opt-in UX)
+- §10 D37: new decision row (decoupled push/pull intervals)
+- §11 Q-OPTINUX: marked RESOLVED 2026-04-15
+- §11 Q-TIMING: marked RESOLVED 2026-04-15
+- §10 D38: new decision row (conflict abort behavior)
+- §10 D21: revised — renamed "Save Version" → "Checkpoint version," stays in header as icon-only
+- §6 FR28: updated to reflect rename + icon-only header placement
+- §9 Architecture diagram: updated overflow menu reference
+- §11 Q-M5: marked RESOLVED 2026-04-15
+- §11 Q-ABORTUX: marked RESOLVED 2026-04-15
+- §11 Q6: updated to reflect D21 revision
+
+### Design rationale (from session discussion)
+
+1. **Tier A gap:** `gh` delegation is fully silent — no auth modal, no Device Flow, no PAT paste. The user never interacts with an auth surface. The previously proposed "post-auth flow" opt-in surface doesn't exist for these users.
+2. **Non-interactive init:** Optimizing for agent-driven setup (e.g., Claude Code running `open-knowledge init`) means no interactive prompts during init. Config is the only viable path.
+3. **Signing in IS opting in:** For Tier B/C users who go through Device Flow or PAT paste, the act of authenticating demonstrates intent to sync. A separate "enable sync?" step after auth is redundant friction.
+4. **Auth and sync are orthogonal:** Credential helper is wired up regardless of `sync.enabled`. Manual `open-knowledge sync/push/pull` works with auto-sync off. `sync.enabled` only controls the background engine.
+
+### Outstanding
+
+All P0 open questions resolved (Q-OPTINUX, Q-TIMING, Q-ABORTUX). Q-M5 also resolved via D21 revision. Only Q-M6 (`--dry-run` flag) remains — deferred to user demand.
+
+---
+
 ## 2026-04-15 — Merge: clone-from-github + post-clone-git-sync → github-sync
 
 **Trigger:** Nick directive. Co-development rationale: the two precursor specs share credential flow (Tier A/B/C), auth CLI subcommand group, trust-gate interaction, subprocess relay architecture, and testing infrastructure. Neither had shipped; co-developing resolves cross-cutting decisions jointly.
