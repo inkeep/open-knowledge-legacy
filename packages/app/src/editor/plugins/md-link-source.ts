@@ -17,7 +17,12 @@ import {
   ViewPlugin,
   type ViewUpdate,
 } from '@codemirror/view';
-import { classifyCurrentMarkdownHref, navigateToMarkdownTarget } from '../internal-link-helpers';
+import {
+  classifyCurrentMarkdownHref,
+  navigateToMarkdownTarget,
+  openInternalHashHrefInNewTab,
+  shouldOpenInNewTab,
+} from '../internal-link-helpers';
 
 // ── Decoration ────────────────────────────────────────────────────────────────
 
@@ -91,6 +96,10 @@ const mdLinkClickHandler = EditorView.domEventHandlers({
           : classifyCurrentMarkdownHref(getMatchHref(m));
         if (target && target.kind !== 'external') {
           event.preventDefault();
+          if (target.kind === 'doc' && shouldOpenInNewTab(event)) {
+            openInternalHashHrefInNewTab(target);
+            return true;
+          }
           navigateToMarkdownTarget(target);
           return true;
         }

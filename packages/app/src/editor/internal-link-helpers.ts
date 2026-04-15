@@ -34,10 +34,24 @@ export function toInternalHashHref({
   return anchor ? `#/${docName}?anchor=${encodeURIComponent(anchor)}` : `#/${docName}`;
 }
 
+export function openHashHrefInNewTab(href: string): void {
+  window.open(href, '_blank', 'noopener,noreferrer');
+}
+
 export function navigateToInternalHashHref(
   resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>,
 ): void {
   window.location.assign(toInternalHashHref(resolved));
+}
+
+export function openInternalHashHrefInNewTab(
+  resolved: Pick<DocLinkTarget, 'docName' | 'anchor'>,
+): void {
+  openHashHrefInNewTab(toInternalHashHref(resolved));
+}
+
+export function shouldOpenInNewTab(event: { metaKey: boolean; ctrlKey: boolean }): boolean {
+  return event.metaKey || event.ctrlKey;
 }
 
 export function navigateToAnchorHref(anchor: string, locationHash = window.location.hash): void {
@@ -66,7 +80,7 @@ export function navigateToMarkdownTarget(
     return;
   }
 
-  window.open(target.url, '_blank', 'noopener,noreferrer');
+  openHashHrefInNewTab(target.url);
 }
 
 export function buildCurrentRelativeMarkdownHref(

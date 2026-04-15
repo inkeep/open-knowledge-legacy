@@ -29,6 +29,8 @@ import {
   buildCurrentRelativeMarkdownHref,
   classifyCurrentMarkdownHref,
   navigateToMarkdownTarget,
+  openInternalHashHrefInNewTab,
+  shouldOpenInNewTab,
   toInternalHashHref,
 } from '../internal-link-helpers';
 import { LinkTooltipHint } from '../link-tooltip';
@@ -287,6 +289,10 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
     e.preventDefault();
     if (isUnresolved) {
       setCreateDialogOpen(true);
+      return;
+    }
+    if (shouldOpenInNewTab(e)) {
+      openInternalHashHrefInNewTab(docTarget);
       return;
     }
     navigateToMarkdownTarget(docTarget);

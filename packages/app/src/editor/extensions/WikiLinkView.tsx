@@ -24,6 +24,7 @@ import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
 import { docNameFromHash } from '../../lib/doc-hash';
 import { cn } from '../../lib/utils';
+import { openInternalHashHrefInNewTab, shouldOpenInNewTab } from '../internal-link-helpers';
 import { LinkTooltipHint } from '../link-tooltip';
 import { ExternalLinkChip } from './ExternalLinkChip';
 import { useHeadings } from './useHeadings';
@@ -215,13 +216,17 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
   /** Primary click: navigate (resolved/loading) or open create dialog (unresolved). */
-  function handlePrimaryClick() {
+  function handlePrimaryClick(event?: { metaKey: boolean; ctrlKey: boolean }) {
     if (externalTarget) {
       window.open(externalTarget.url, '_blank', 'noopener,noreferrer');
       return;
     }
     if (unresolved) {
       setCreateDialogOpen(true);
+      return;
+    }
+    if (event && shouldOpenInNewTab(event)) {
+      openInternalHashHrefInNewTab({ docName: target, anchor });
       return;
     }
     if (anchor) {
@@ -335,7 +340,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={(e) => {
                     e.preventDefault();
-                    handlePrimaryClick();
+                    handlePrimaryClick(e);
                   }}
                 >
                   {resolutionState === 'loading' && (

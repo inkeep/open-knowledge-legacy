@@ -31,6 +31,7 @@ import {
   filterPages,
   type PageItem,
 } from '../extensions/wiki-link-suggestion';
+import { openInternalHashHrefInNewTab, shouldOpenInNewTab } from '../internal-link-helpers';
 
 // ── Data fetching (module-level TTL cache wrapping shared fetchers) ──────────
 //
@@ -131,6 +132,8 @@ const wikiLinkClickHandler = EditorView.domEventHandlers({
           event.preventDefault();
           if (classified.kind === 'external') {
             window.open(classified.url, '_blank', 'noopener,noreferrer');
+          } else if (shouldOpenInNewTab(event)) {
+            openInternalHashHrefInNewTab(classified);
           } else {
             window.location.hash = classified.anchor
               ? `#/${classified.docName}?anchor=${encodeURIComponent(classified.anchor)}`
