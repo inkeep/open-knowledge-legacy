@@ -160,18 +160,17 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       data-component-name={descriptor.name}
       data-tab-value={((node.attrs.props as Record<string, unknown>)?.value as string) ?? ''}
     >
-      {/* Hover-revealed chrome bar: component name + gear icon for PropPanel */}
-      {/* biome-ignore lint/a11y/noStaticElementInteractions: contentEditable={false} + stopPropagation required inside PM NodeView */}
-      <div
-        className="jsx-component-chrome"
-        contentEditable={false}
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        {/* Badge label — always show component name (hover-revealed overlay, no layout noise) */}
-        <span>{descriptor.displayName ?? descriptor.name}</span>
-
-        {/* Gear icon → Radix Popover with PropPanel. Suppressed when no editable props. */}
-        {hasEditableProps && (
+      {/* Hover-revealed chrome bar: name + gear → Popover PropPanel.
+          Only rendered when there are configurable props — if nothing is editable,
+          the badge is noise (visual rendering already identifies the component). */}
+      {hasEditableProps && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView
+        <div
+          className="jsx-component-chrome"
+          contentEditable={false}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <span>{descriptor.displayName ?? descriptor.name}</span>
           <Popover>
             <PopoverTrigger asChild>
               <button
@@ -205,8 +204,8 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               />
             </PopoverContent>
           </Popover>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Live React component — renders exactly like production */}
       <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
