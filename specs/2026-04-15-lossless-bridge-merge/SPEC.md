@@ -240,7 +240,7 @@ Expected: "Para 1\n\nAGENT EDITED this paragraph.\n\nPara 3" (agent's edit prese
 Document: 1000 lines (69K chars)
 User: 50 line modifications + 20 insertions
 Agent: 30 line modifications + 15 insertions
-Measured: 100 iterations, assert p95 < 15ms
+Measured: 100 iterations, assert p95 < 50ms (debounce budget; local ~4ms, CI ~40ms)
 ```
 
 **What it validates:** The merge algorithm is fast enough for the 50ms debounce budget.
