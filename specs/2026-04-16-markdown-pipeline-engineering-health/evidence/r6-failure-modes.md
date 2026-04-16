@@ -61,6 +61,24 @@ US-009's specified fix (`safeText(safeText(x)) === safeText(x)`) was implementab
 
 The safeText idempotency invariant is now empirically satisfied for all AC-listed §2.4 chars (backslash, *, _, #, <, >, {, }) via the R23 escape-aware brace-stack change (`autolink-void-html-guard.ts:protectFromMdx`). Locked in via `autolink-void-html-guard.test.ts` idempotency suite (21 new tests).
 
+### R24 resolution (US-017 iteration, 2026-04-16)
+
+US-009's correction section above was diagnostically correct but called the closing fixes "out of scope" — the orchestrator extended SPEC.md with R24 (US-017) to land them in the same spec per the greenfield directive. Three coupled changes shipped:
+
+**(a) `hydrateMarks` rewrite — outside-in greedy nesting.** Extended `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch`. The new algorithm intersects marks across all spans, peels one shared mark, and recurses on stripped spans; falls back to max-length adjacent-shared-mark partitioning when no global intersection exists. Termination: each recursion either reduces total mark count (peel) or strictly reduces span count per group (partition produces ≥2 groups). For `[foo[E,S], " bar"[S]]`: shared=[S], peel S → [foo[E], " bar"[]] → partition → [emphasis(foo), text(" bar")] → wrap S → `strong([emphasis(foo), text(" bar")])` byte-identical to original mdast.
+
+**(b) `Code` mark `excludes: '_'` removal.** New `CodeMarkFidelity` extension at `packages/core/src/extensions/code-mark-fidelity.ts` extends `@tiptap/extension-code` and overrides `excludes: ''` (empty). Code mark from `StarterKit` is disabled via `code: false` in `StarterKit.configure`. Schema widening per precedent #9 (add-only schema means widening allowed, narrowing forbidden). Editor render: `<em><code>` and `<strong><code>` use browser default styling — no NodeView changes needed.
+
+**(c) Position-slice + entity-escape policy.** `ESCAPABLE_CHARS` widened from a structurally-ambiguous-only subset to the full CommonMark §2.4 ASCII-punctuation set (added `"'`,;=?`). Plus a value-consistency guard: `value[valIdx] === raw[rawIdx + 1]` before tagging an escape — catches the R23-PUA-substitution case where source `\<` becomes `\<PUA>` and the `\` stays literal (PUA isn't §2.4-escapable). Without the guard, position-slice would tag `\<` as escaped at the wrong offset and corrupt downstream chars. The `safeText` post-pass `escapeEntityAmpersands` prepends `\` to any `&` followed by entity-shaped tail — fixes Backslash Example 2's `\&ouml;` → `&ouml;` → `ö` HTML-entity-decode loss on r2.
+
+**Per-section deltas:**
+- Emphasis and strong emphasis: 127/132 → **132/132** ✓
+- Backslash escapes: 11/13 → **13/13** ✓
+- HTML blocks: 44/44 (unchanged from US-009)
+- Lists, Links, Images: 26/26, 90/90, 22/22 (unchanged from US-010/011)
+
+Full CommonMark corpus: **652/652 with 0 crashes, 0 failures across all 19 formerly-NORMALIZE sections.** US-012's `NORMALIZE_SECTIONS` set is now empty. US-014's two skip-guarded PBTs (emphasis-cumulation + backslash-idempotence) are unskipped and green at 1K samples (seed 42).
+
 ## Newly characterized (this evidence)
 
 ### 4. HTML blocks — CDATA fallthrough + safeText over-escaping

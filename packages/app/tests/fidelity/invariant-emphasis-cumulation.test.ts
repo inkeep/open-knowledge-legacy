@@ -1,39 +1,28 @@
 /**
  * Invariant — emphasis cumulation double round-trip stable.
  *
- * **STATUS: skip-guarded (pending US-009 follow-up R-item).**
+ * **STATUS: enabled (US-017 / R24 unblocked this).**
  *
- * Targets the R6 sub-item 1 bug shape (Emphasis CommonMark section 127/132).
- * The remaining 5 failures are NOT escape cumulation as the original spec
- * draft characterized them — iteration 9's diagnosis showed the actual root
- * cause is structural:
+ * Targets the R6 sub-item 1 bug shape (Emphasis CommonMark section that
+ * previously failed 5/132). The two structural fixes that landed in
+ * US-017 (R24):
  *
  * 1. **Cases 1-3** (`***foo* bar**`-class — adjacent strong+emphasis runs):
- *    `@handlewithcare/remark-prosemirror`'s `hydrateMarks` partitions text
- *    spans by `marks[0]` and the schema normalizes mark order (emphasis
- *    before strong per `sharedExtensions` registration order). So
- *    `strong(emphasis(X), text Y)` round-trips to PM
- *    `[X[E,S], Y[S]]` then back to mdast as
- *    `[emphasis(strong(X)), strong(Y)]` — structural loss before any
- *    escape path runs.
+ *    Replaced `@handlewithcare/remark-prosemirror`'s order-based
+ *    `hydrateMarks` (partition by `marks[0]`) with an outside-in greedy
+ *    intersection algorithm. Now `strong(emphasis(X), text Y)` round-trips
+ *    PM `[X[E,S], Y[S]]` to mdast as `strong([emphasis(X), text(Y)])`
+ *    (byte-identical to original). Implemented via extension to
+ *    `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch`.
  *
  * 2. **Cases 4-5** (`*a` + `code` + `*`-class — emphasis covering inline code):
- *    The `Code` mark's `excludes: '_'` blocks emphasis from co-occurring
- *    with code on the same span. `emphasis(text, code)` round-trips to PM
- *    `[text[E], code]` then back to mdast as `[emphasis(text), inlineCode]`
- *    — siblings, not nested.
+ *    Removed `excludes: '_'` from the `Code` mark via the new
+ *    `CodeMarkFidelity` extension. Schema widening per precedent #9. Now
+ *    `emphasis(text, code)` round-trips PM `[text[E], code[E]]` to mdast
+ *    as `emphasis([text, inlineCode])` — wrapped, not siblings.
  *
- * Proper fix needs (a) outside-in greedy mark nesting replacing `hydrateMarks`
- * (200-500 LOC + this PBT), and (b) removing the `Code` mark `excludes: '_'`
- * (schema widening per precedent #9; needs editor-render audit). Both together
- * are a separate R-item, out of US-009's scope and out of US-014's scope.
- *
- * See `evidence/r6-failure-modes.md` §"Correction (US-009 iteration)" for
- * the full mdast/PM trace and `tmp/ship/spec.json` US-009 notes.
- *
- * **When to unskip:** the follow-up R-item lands the outside-in greedy mark
- * nesting and the schema widening. At that point this PBT validates that
- * the fix doesn't regress on adjacent emphasis/strong run interactions.
+ * See `evidence/r6-failure-modes.md` §"Correction (US-009 iteration)" +
+ * §"R24 resolution" for the full trace.
  *
  * Tier-2 1K samples; tier-3 10K via `STRESS_FIDELITY=1`.
  */
@@ -64,7 +53,7 @@ const emphasisWithCode = fc
   .tuple(safePhrase, safeWord)
   .map(([text, code]) => `*${text} \`${code}\` more*`);
 
-describe.skip('emphasis cumulation — double round-trip stable (DEFERRED — US-009 follow-up R-item)', () => {
+describe('emphasis cumulation — double round-trip stable (R24)', () => {
   test(
     'adjacent strong + emphasis with delimiter run length variation',
     () => {

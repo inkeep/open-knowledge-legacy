@@ -7,16 +7,17 @@
  *
  * US-012 (R5a) tightening: 17 of the original 19 NORMALIZE_SECTIONS
  * promoted to default idempotence assertion. KNOWN_CRASH_CEILING dropped
- * from 50 to 0 (actual crash count is 0 — verified by probe across full
- * 652-example corpus).
+ * from 50 to 0 (actual crash count is 0).
  *
- * Two sections remain in NORMALIZE_SECTIONS, blocked on a structural
- * mark-hydration issue documented in evidence/r6-failure-modes.md
- * §"Correction (US-009 iteration)". A separate R-item is required to
- * (a) replace `@handlewithcare/remark-prosemirror`'s order-based
- * `hydrateMarks` with outside-in greedy nesting, and (b) remove the
- * `excludes: '_'` constraint on the Code mark. Both are out of US-009's
- * scope; promoting these sections requires landing those changes first.
+ * US-017 (R24) closure: the remaining 2 sections (Emphasis and strong
+ * emphasis, Backslash escapes) promoted to idempotence after landing
+ * (a) outside-in greedy mark hydration in the
+ * `@handlewithcare/remark-prosemirror` patch, (b) removal of `excludes: '_'`
+ * from the Code mark via `CodeMarkFidelity`, (c) full CommonMark §2.4
+ * escapable-char tagging in position-slice + value-consistency guard for
+ * R23-PUA interactions, and (d) entity-shaped `\&entity;` escape policy
+ * in `safeText`. NORMALIZE_SECTIONS is now empty — the full 19-section
+ * corpus asserts byte-identical idempotence on every example.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -26,20 +27,11 @@ import { mdRoundTrip, normalize } from './helpers';
 // Sections entirely outside our schema
 const SKIP_SECTIONS = new Set(['Tabs', 'Indented code blocks']);
 
-// Sections still failing idempotence on this corpus.
-//
-// Both blocked on the same structural root cause (PM mark hydration in
-// `@handlewithcare/remark-prosemirror`'s `hydrateMarks` partitions by
-// `marks[0]` and the schema-normalized order places emphasis before
-// strong, producing `[emphasis(strong(X)), strong(Y)]` on round-trip
-// instead of `strong(emphasis(X), Y)`). See evidence/r6-failure-modes.md.
-//
-// Pass rates as of US-012 landing:
-//   - Backslash escapes: 11/13 (HTML entity decode + context-sensitive
-//     unsafe-char escaping in mdast-util-to-markdown)
-//   - Emphasis and strong emphasis: 127/132 (mark hydration + Code mark
-//     `excludes: '_'`)
-const NORMALIZE_SECTIONS = new Set(['Backslash escapes', 'Emphasis and strong emphasis']);
+// US-017 (R24) landed — every formerly-NORMALIZE section now passes
+// idempotence. Set kept for forward extensibility (a future spec section
+// added to the corpus that proves load-bearing-non-idempotent could be
+// noted here with a citation), but currently empty by design.
+const NORMALIZE_SECTIONS = new Set<string>();
 
 // Crash ceiling. Actual count: 0 (probed across full corpus 2026-04-16).
 // Drop to 0 closes the silent-crash-tolerance hole. Any new crash will

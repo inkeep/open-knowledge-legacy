@@ -1,38 +1,29 @@
 /**
  * Invariant — backslash escape idempotence double round-trip stable.
  *
- * **STATUS: skip-guarded (pending US-009 follow-up R-item).**
+ * **STATUS: enabled (US-017 / R24 unblocked this).**
  *
  * Targets the R6 sub-item 2 bug shape (Backslash escapes CommonMark section
- * 11/13). Iteration 9's diagnosis confirmed:
+ * that previously failed 2/13). Two structural fixes that landed in
+ * US-017 (R24):
  *
- * 1. **Example 1** (`\&ouml;`-class — escaped HTML entity):
- *    `mdast-util-to-markdown`'s context-sensitive `unsafe` chars cause a
- *    backslash before an entity-like sequence to be added/removed inconsistently
- *    on round-trip. NG5-adjacent (entity-decode-on-parse + non-byte-identity).
+ * 1. **Example 1** (`\&ouml;`-class — escaped HTML entity): `safeText` now
+ *    runs an `escapeEntityAmpersands` pass that prepends `\` to any `&`
+ *    followed by an entity-shaped tail (named, numeric, or hex). Source
+ *    `\&ouml;` parses to text value `&ouml;`; on serialize the entity-tail
+ *    detection emits `\&ouml;` instead of bare `&ouml;`, preserving the
+ *    literal form on re-parse instead of decoding to `ö`.
  *
- * 2. **Example 2** (`\&` followed by entity-like text):
- *    HTML entity decoding on parse → on serialize, the resulting literal
- *    char is output without preserving the entity reference form (NG5
- *    documents this as irreducible). The leading `\` interaction is what
- *    breaks idempotence specifically.
+ * 2. **Example 0** (kitchen-sink `\!\"\#...\~` — every CommonMark §2.4 char
+ *    escaped): `position-slice`'s `ESCAPABLE_CHARS` widened from a
+ *    structurally-ambiguous-only subset to the full §2.4 set, plus a
+ *    value-consistency guard for the R23-PUA-substitution edge case where
+ *    `\<` in source becomes `\<PUA>` before parse and the `\` stays literal.
+ *    Together, every source escape now produces a paired serialized escape
+ *    (deterministic) instead of falling through to context-sensitive
+ *    `state.safe` decisions.
  *
- * The US-009 brace-stack fix correctly handles all CommonMark §2.4
- * structurally-ambiguous chars (\\, *, _, #, <, >, {, }) via the `safeText`
- * idempotency invariant. The remaining 2 Backslash failures live OUTSIDE
- * §2.4's escapable set — they're context-sensitive serialize-time decisions
- * (entity-adjacent) that need a different fix.
- *
- * Proper fix needs a context-aware backslash policy in the text serialize
- * path that distinguishes "necessary escape" from "redundant escape" based
- * on the surrounding mdast context. Out of US-014's scope.
- *
- * See `evidence/r6-failure-modes.md` §"Correction (US-009 iteration)" for
- * the full trace and `tmp/ship/spec.json` US-009 notes.
- *
- * **When to unskip:** the follow-up R-item lands the context-aware backslash
- * policy. At that point this PBT validates the fix doesn't regress on
- * backslash-before-entity-like-sequence shapes.
+ * See `evidence/r6-failure-modes.md` §"R24 resolution" for the full trace.
  *
  * Tier-2 1K samples; tier-3 10K via `STRESS_FIDELITY=1`.
  */
@@ -65,7 +56,7 @@ const backslashAtNonAmbiguousPositions = fc
   .tuple(safePhrase, fc.constantFrom('foo', 'bar', 'baz'))
   .map(([phrase, suffix]) => `${phrase} \\${suffix}`);
 
-describe.skip('backslash escape idempotence — double round-trip stable (DEFERRED — US-009 follow-up R-item)', () => {
+describe('backslash escape idempotence — double round-trip stable (R24)', () => {
   test(
     'backslash before named HTML entity reference',
     () => {

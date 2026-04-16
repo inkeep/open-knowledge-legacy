@@ -28,10 +28,19 @@ import { visit } from 'unist-util-visit';
 import type { VFile } from 'vfile';
 
 /**
- * CommonMark §2.4 structurally-ambiguous characters.
- * A backslash before any of these is a valid escape that mdast will consume.
+ * CommonMark §2.4 escapable ASCII punctuation set.
+ *
+ * Per CommonMark spec: any ASCII-punctuation char preceded by `\` is a valid
+ * escape — the parser consumes the backslash and emits the literal char.
+ * Position-slice tags ALL such consumed escapes so the serializer can re-emit
+ * the source `\X` form. R24 (US-017) widened this from a structurally-
+ * ambiguous-only subset to the full §2.4 set: previously `"'`,;=?` were absent,
+ * causing chars escaped in source to fall back to mdast-util-to-markdown's
+ * context-sensitive `state.safe` decisions on serialize — non-deterministic
+ * output across round-trips. With the full set, every source escape produces
+ * a paired serialized escape, restoring round-trip stability.
  */
-const ESCAPABLE_CHARS = new Set('\\`*_{}[]()#+-.!|~<>:/&$%@^'.split(''));
+const ESCAPABLE_CHARS = new Set('!"#$%&\'()*+,-./:;<=>?@[\\]^_`{|}~'.split(''));
 
 export interface EscapedChar {
   /** Offset within the text node value (0-based) */
@@ -92,7 +101,14 @@ export function applyPositionSliceToNode(
           if (
             raw[rawIdx] === '\\' &&
             rawIdx + 1 < raw.length &&
-            ESCAPABLE_CHARS.has(raw[rawIdx + 1])
+            ESCAPABLE_CHARS.has(raw[rawIdx + 1]) &&
+            // Sanity: the value at this position must match the char we believe
+            // was escaped. Catches the R23-PUA-substitution case where a `\<`
+            // in raw source was protected to `\<PUA>` before parse, so
+            // remark-parse left the `\` literal (PUA isn't §2.4-escapable). If
+            // we tagged this as an escape anyway, the value's offset would
+            // drift and mdast→PM splitting would corrupt downstream chars.
+            value[valIdx] === raw[rawIdx + 1]
           ) {
             // This is an escape sequence: \X
             escaped.push({ offset: valIdx, char: raw[rawIdx + 1] });

@@ -390,6 +390,30 @@ export function formatLinkUrl(url: string): string {
   return url.replace(/[\\()]/g, '\\$&');
 }
 
+/**
+ * Escape `&` followed by an HTML-entity-shaped tail (named, numeric, or hex).
+ *
+ * Why (R24 / US-017): Source `\&ouml;` parses to text value `&ouml;` (escape
+ * consumed). On serialize, NG5's strip of mdast-util-to-markdown's
+ * `&`-before-`[#A-Za-z]` unsafe rule means the `&` is emitted verbatim. Re-parse
+ * then HTML-entity-decodes `&ouml;` to `ö`, breaking idempotence on the second
+ * round-trip. The fix is to detect entity-shaped tails on serialize and emit
+ * `\&entity;` so re-parse consumes the escape and preserves the literal entity
+ * form.
+ *
+ * The negative lookbehind for `\` keeps already-escaped sequences (e.g. an
+ * upstream `\&entity;` that survived through the pipeline) from doubling up.
+ *
+ * Loss mode (NG5, unchanged): bare `&entity;` in source still decodes to its
+ * literal char on first parse — protection only kicks in when the source had
+ * `\&entity;` (escape-marked) AND on subsequent serialize cycles to keep that
+ * form stable. Plain text `Tom & Jerry` is untouched (`&` followed by space
+ * is not an entity tail).
+ */
+function escapeEntityAmpersands(s: string): string {
+  return s.replace(/(?<!\\)&(?=[A-Za-z][A-Za-z0-9]*;|#[0-9]+;|#[xX][0-9A-Fa-f]+;)/g, '\\&');
+}
+
 function safeText(state: State, value: string, info: Info): string {
   const originalUnsafe = state.unsafe;
   state.unsafe = originalUnsafe.filter((u) => {
@@ -397,9 +421,11 @@ function safeText(state: State, value: string, info: Info): string {
     if (u.character === '<') return false;
     return true;
   });
+  let result: string;
   try {
-    return state.safe(value, info);
+    result = state.safe(value, info);
   } finally {
     state.unsafe = originalUnsafe;
   }
+  return escapeEntityAmpersands(result);
 }
