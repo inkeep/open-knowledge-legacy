@@ -70,6 +70,7 @@ export function ForwardLinksPanel({
   } = useQuery({
     queryKey: ['forward-links', docName],
     queryFn: () => fetchForwardLinks(docName),
+    enabled: !pagesLoading && pages.has(docName),
   });
   const [createTarget, setCreateTarget] = useState<DocumentForwardLinkItem | null>(null);
   const createDialogSeed = createTarget ? docNameToDialogSeed(createTarget.docName) : null;

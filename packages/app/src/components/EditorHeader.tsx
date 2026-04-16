@@ -111,7 +111,7 @@ export function EditorHeader({
           </Tooltip>
         )}
         {isNewDoc && (
-          <span className="shrink-0 rounded border border-dashed border-muted-foreground/40 px-1.5 py-0.5 text-xs text-muted-foreground/70">
+          <span className="ml-1.5 shrink-0 rounded border border-dashed border-blue-400/50 px-1.5 py-0.5 text-xs text-blue-500 dark:border-blue-400/40 dark:text-blue-400">
             New file
           </span>
         )}

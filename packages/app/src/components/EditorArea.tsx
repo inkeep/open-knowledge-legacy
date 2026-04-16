@@ -26,9 +26,7 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
   const { activeDocName, activeProvider } = useDocumentContext();
   const { pages, loading } = usePageList();
   const isNewDoc = !loading && !!activeDocName && !pages.has(activeDocName);
-  const editorPlaceholder = isNewDoc
-    ? 'Start writing to create this page\u2026'
-    : 'Start writing\u2026';
+  const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -152,7 +150,11 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
                   />
                 </div>
                 <div className={isSourceMode ? 'hidden' : 'h-full'}>
-                  <TiptapEditor key={activeDocName} provider={activeProvider} isNewDoc={isNewDoc} />
+                  <TiptapEditor
+                    key={`${activeDocName}-${String(isNewDoc)}`}
+                    provider={activeProvider}
+                    placeholder={editorPlaceholder}
+                  />
                 </div>
               </div>
             </div>

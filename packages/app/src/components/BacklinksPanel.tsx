@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { usePageList } from '@/components/PageListContext';
 import {
   Panel,
   PanelBody,
@@ -38,6 +39,7 @@ export function BacklinksPanel({
   docName: string;
   className?: string;
 }) {
+  const { pages, loading } = usePageList();
   const {
     data: backlinks = [],
     isLoading,
@@ -45,6 +47,7 @@ export function BacklinksPanel({
   } = useQuery({
     queryKey: ['backlinks', docName],
     queryFn: () => fetchBacklinks(docName),
+    enabled: !loading && pages.has(docName),
   });
 
   return (
