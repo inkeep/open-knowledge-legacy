@@ -223,6 +223,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       signalChannel,
       agentFocusBroadcaster,
       onAgentWrite: options.onAgentWrite,
+      getSyncEngine: () => syncEngine,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 

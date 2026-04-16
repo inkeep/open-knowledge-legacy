@@ -281,6 +281,31 @@ export class SyncEngine {
     };
   }
 
+  /** Return all current conflict entries. */
+  getConflicts(): import('./conflict-storage.ts').ConflictEntry[] {
+    return this.conflictStore.list();
+  }
+
+  /**
+   * Resolve a conflict by file path and strategy.
+   * Delegates to ConflictStore.resolveConflict.
+   */
+  async resolveConflict(
+    file: string,
+    strategy: import('./conflict-storage.ts').ResolveStrategy,
+    content?: string,
+  ): Promise<void> {
+    await this.conflictStore.resolveConflict(file, strategy, content);
+    this.conflictCount = this.conflictStore.count();
+    if (this.conflictCount === 0 && this.state === 'conflict') {
+      this.transitionTo('idle');
+      this.pausedReason = undefined;
+      this.schedulePull();
+      this.schedulePush();
+    }
+    this.scheduleSaveState();
+  }
+
   /** Update the current branch (called by head-watcher callbacks). */
   updateCurrentBranch(branch: string | null): void {
     if (branch === null) {

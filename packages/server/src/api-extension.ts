@@ -58,6 +58,7 @@ import {
   isOrphanMode,
 } from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
+import type { ResolveStrategy } from './conflict-storage.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
   contentHash,
@@ -95,6 +96,7 @@ import {
   type WriterIdentity,
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
+import type { SyncEngine } from './sync-engine.ts';
 import { getDocumentHistory } from './timeline-query.ts';
 
 /**
@@ -440,6 +442,11 @@ export interface ApiExtensionOptions {
    * the CLI uses it to open the browser on the first agent edit per session.
    */
   onAgentWrite?: () => void;
+  /**
+   * Getter for the active SyncEngine instance (may be null when dormant or if
+   * no remote was detected). Called per-request so it always reflects current state.
+   */
+  getSyncEngine?: () => SyncEngine | null;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -515,6 +522,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     signalChannel,
     agentFocusBroadcaster,
     onAgentWrite,
+    getSyncEngine,
   } = options;
 
   function resolveDocPath(docName: string): string | null {
@@ -2985,6 +2993,138 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── Security helpers for sync endpoints ────────────────────────────────────
+
+  function isLoopback(req: IncomingMessage): boolean {
+    const addr = req.socket.remoteAddress;
+    return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+  }
+
+  function checkSyncSecurity(req: IncomingMessage, res: ServerResponse): boolean {
+    if (!isLoopback(req)) {
+      json(res, 403, { ok: false, error: 'Forbidden: sync endpoints require loopback connection' });
+      return false;
+    }
+    const origin = req.headers.origin;
+    if (
+      origin &&
+      !origin.startsWith('http://127.0.0.1') &&
+      !origin.startsWith('http://localhost') &&
+      !origin.startsWith('http://[::1]')
+    ) {
+      json(res, 403, { ok: false, error: 'Forbidden: invalid origin' });
+      return false;
+    }
+    return true;
+  }
+
+  // ─── Sync endpoints ──────────────────────────────────────────────────────────
+
+  async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkSyncSecurity(req, res)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 200, {
+        state: 'dormant',
+        lastSyncUtc: null,
+        lastFetchUtc: null,
+        lastPushedSha: null,
+        ahead: 0,
+        behind: 0,
+        consecutiveFailures: 0,
+        conflictCount: 0,
+      });
+      return;
+    }
+    json(res, 200, engine.getStatus());
+  }
+
+  async function handleSyncTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkSyncSecurity(req, res)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let op: 'sync' | 'push' | 'pull' = 'sync';
+    try {
+      const body = await readBody(req);
+      if (body.length > 0) {
+        const parsed = JSON.parse(body.toString()) as { op?: string };
+        if (parsed.op === 'push' || parsed.op === 'pull' || parsed.op === 'sync') {
+          op = parsed.op;
+        }
+      }
+    } catch {
+      // Ignore parse errors — use default op
+    }
+    // Fire-and-return: 202 Accepted immediately, trigger runs in background
+    json(res, 202, { ok: true, op });
+    void engine.trigger(op);
+  }
+
+  async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkSyncSecurity(req, res)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    const conflicts = engine ? engine.getConflicts() : [];
+    json(res, 200, { conflicts });
+  }
+
+  async function handleSyncResolveConflict(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkSyncSecurity(req, res)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let body: { file?: string; strategy?: string; content?: string };
+    try {
+      const raw = await readBody(req);
+      body = JSON.parse(raw.toString()) as { file?: string; strategy?: string; content?: string };
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+    const { file, strategy, content } = body;
+    if (!file || typeof file !== 'string') {
+      json(res, 400, { ok: false, error: 'Missing required field: file' });
+      return;
+    }
+    if (strategy !== 'mine' && strategy !== 'theirs' && strategy !== 'content') {
+      json(res, 400, {
+        ok: false,
+        error: "Invalid strategy: must be 'mine', 'theirs', or 'content'",
+      });
+      return;
+    }
+    try {
+      await engine.resolveConflict(file, strategy as ResolveStrategy, content);
+      json(res, 200, { ok: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
@@ -3014,6 +3154,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/rescue': handleRescueList,
     '/api/workspace': handleWorkspace,
+    '/api/sync/status': handleSyncStatus,
+    '/api/sync/trigger': handleSyncTrigger,
+    '/api/sync/conflicts': handleSyncConflicts,
+    '/api/sync/resolve-conflict': handleSyncResolveConflict,
   };
 
   if (enableTestRoutes) {
