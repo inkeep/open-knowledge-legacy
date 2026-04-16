@@ -32,7 +32,7 @@ export const ConfigSchema = z.object({
     .object({
       baseUrl: z.url().optional(),
     })
-    .optional(),
+    .default({}),
   mcp: z
     .object({
       tools: z

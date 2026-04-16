@@ -44,6 +44,7 @@ const PAGES_CACHE_TTL_MS = 5_000;
 
 let pagesCache: PageItem[] | null = null;
 let pagesCacheTime = 0;
+let pageNameSet: Set<string> | null = null;
 const headingsCache = new Map<string, { headings: HeadingEntry[]; time: number }>();
 
 async function getPages(): Promise<PageItem[]> {
@@ -51,6 +52,7 @@ async function getPages(): Promise<PageItem[]> {
   if (pagesCache && now - pagesCacheTime < PAGES_CACHE_TTL_MS) return pagesCache;
   pagesCache = await fetchPages();
   pagesCacheTime = now;
+  pageNameSet = buildPageNameSet(pagesCache);
   return pagesCache;
 }
 
@@ -77,15 +79,47 @@ async function getHeadings(docName: string): Promise<HeadingEntry[]> {
 // Matches complete [[...]] (lazy, no nested brackets needed)
 const WIKI_LINK_RE = /\[\[[^\]]*?\]\]/g;
 const wikiLinkMark = Decoration.mark({ class: 'cm-wiki-link' });
+const wikiLinkBrokenMark = Decoration.mark({
+  class: 'cm-wiki-link cm-wiki-link-broken',
+});
+
+/** Build a lowercase Set of known page names (docName + title) for O(1) lookup.
+ * Exported for unit tests — the plugin uses it internally. */
+export function buildPageNameSet(pages: PageItem[]): Set<string> {
+  const s = new Set<string>();
+  for (const p of pages) {
+    s.add(p.docName.toLowerCase());
+    if (p.title) s.add(p.title.toLowerCase());
+  }
+  return s;
+}
+
+/** Extract the target page name from a wikilink's inner text (the part between
+ * `[[` and `]]`). Strips optional `#anchor` and `|alias`, normalizes to lowercase.
+ * Returns the empty string for empty or whitespace-only inner text.
+ * Exported for unit tests. */
+export function extractWikilinkTarget(inner: string): string {
+  return inner.split(/[#|]/)[0].trim().toLowerCase();
+}
 
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
+  // Cache-cold → all wikilinks get plain mark (no false-positive broken flash)
+  const pageSet = pagesCache ? pageNameSet : null;
+
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
     WIKI_LINK_RE.lastIndex = 0;
     let m = WIKI_LINK_RE.exec(text);
     while (m !== null) {
-      builder.add(from + m.index, from + m.index + m[0].length, wikiLinkMark);
+      let mark = wikiLinkMark;
+      if (pageSet) {
+        const target = extractWikilinkTarget(m[0].slice(2, -2)); // strip [[ and ]]
+        if (target && !pageSet.has(target)) {
+          mark = wikiLinkBrokenMark;
+        }
+      }
+      builder.add(from + m.index, from + m.index + m[0].length, mark);
       m = WIKI_LINK_RE.exec(text);
     }
   }
@@ -95,13 +129,34 @@ function buildDecorations(view: EditorView): DecorationSet {
 const wikiLinkDecorations = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
+    private cacheWarmAtBuild: boolean;
+
     constructor(view: EditorView) {
+      this.cacheWarmAtBuild = pagesCache !== null;
       this.decorations = buildDecorations(view);
+      if (!this.cacheWarmAtBuild) this.warmCache(view);
     }
+
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged) {
+      const cacheNowWarm = pagesCache !== null;
+      if (update.docChanged || update.viewportChanged || (!this.cacheWarmAtBuild && cacheNowWarm)) {
+        this.cacheWarmAtBuild = cacheNowWarm;
         this.decorations = buildDecorations(update.view);
       }
+    }
+
+    private warmCache(view: EditorView) {
+      getPages()
+        .then(() => {
+          try {
+            view.dispatch({});
+          } catch {
+            /* view destroyed before cache resolved */
+          }
+        })
+        .catch((err) => {
+          console.warn('[wiki-link-source] warmCache fetch failed:', err);
+        });
     }
   },
   { decorations: (v) => v.decorations },

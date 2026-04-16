@@ -77,6 +77,8 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
         typeof result.subscriberCount === 'number' ? result.subscriberCount : undefined;
       const noPreviewAttached = subscriberCount === 0;
 
+      const hints = Array.isArray(result.hints) ? result.hints : undefined;
+
       const lines: string[] = [`Written successfully (${args.position}).`];
       if (preview) lines.push(`Preview: ${preview.url}`);
       if (noPreviewAttached) {
@@ -86,9 +88,14 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
             : `Warning: no preview is currently attached to "${normalized.docName}".`,
         );
       }
+      if (hints) {
+        for (const hint of hints) {
+          if (hint.message) lines.push(hint.message);
+        }
+      }
       const text = lines.join('\n');
 
-      if (!preview && !noPreviewAttached) {
+      if (!preview && !noPreviewAttached && !hints) {
         return textResult(text);
       }
 
@@ -102,6 +109,9 @@ export function register(server: ServerInstance, deps: WriteDocumentDeps): void 
           message: `No preview attached to ${normalized.docName}.`,
           previewUrl: preview?.url ?? null,
         };
+      }
+      if (hints) {
+        structured.hints = hints;
       }
       return textPlusStructured(text, structured);
     },
