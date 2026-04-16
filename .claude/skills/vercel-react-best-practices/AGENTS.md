@@ -521,7 +521,7 @@ export default function RootLayout({ children }) {
 
 Use `next/dynamic` to lazy-load large components not needed on initial render.
 
-**Incorrect: Monaco bundles with main chunk \~300KB**
+**Incorrect: Monaco bundles with main chunk ~300KB**
 
 ```tsx
 import { MonacoEditor } from './monaco-editor'
@@ -1521,7 +1521,7 @@ When memoized component has a default value for some non-primitive optional para
 
 To address this issue, extract the default value into a constant.
 
-**Incorrect: **`onClick`** has different values on every rerender**
+**Incorrect: `onClick` has different values on every rerender**
 
 ```tsx
 const UserAvatar = memo(function UserAvatar({ onClick = () => {} }: { onClick?: () => void }) {
@@ -1673,7 +1673,7 @@ Reference: [https://react.dev/learn/removing-effect-dependencies#should-this-cod
 
 When a hook contains multiple independent tasks with different dependencies, split them into separate hooks. A combined hook reruns all tasks when any dependency changes, even if some tasks don't use the changed value.
 
-**Incorrect: changing **`sortOrder`** recomputes filtering**
+**Incorrect: changing `sortOrder` recomputes filtering**
 
 ```tsx
 const sortedProducts = useMemo(() => {
@@ -2129,7 +2129,7 @@ function MessageList({ messages }: { messages: Message[] }) {
 }
 ```
 
-For 1000 messages, browser skips layout/paint for \~990 off-screen items (10× faster initial render).
+For 1000 messages, browser skips layout/paint for ~990 off-screen items (10× faster initial render).
 
 ### 6.3 Hoist Static JSX Elements
 
@@ -2329,9 +2329,9 @@ Avoids expensive re-renders and state loss.
 
 Script tags without `defer` or `async` block HTML parsing while the script downloads and executes. This delays First Contentful Paint and Time to Interactive.
 
-- `defer`: Downloads in parallel, executes after HTML parsing completes, maintains execution order
+- **`defer`**: Downloads in parallel, executes after HTML parsing completes, maintains execution order
 
-- `async`: Downloads in parallel, executes immediately when ready, no guaranteed order
+- **`async`**: Downloads in parallel, executes immediately when ready, no guaranteed order
 
 Use `defer` for scripts that depend on DOM or other scripts. Use `async` for independent scripts like analytics.
 
@@ -2412,17 +2412,17 @@ function Badge({ count }: { count: number }) {
 
 React DOM provides APIs to hint the browser about resources it will need. These are especially useful in server components to start loading resources before the client even receives the HTML.
 
-- `prefetchDNS(href)`: Resolve DNS for a domain you expect to connect to
+- **`prefetchDNS(href)`**: Resolve DNS for a domain you expect to connect to
 
-- `preconnect(href)`: Establish connection (DNS + TCP + TLS) to a server
+- **`preconnect(href)`**: Establish connection (DNS + TCP + TLS) to a server
 
-- `preload(href, options)`: Fetch a resource (stylesheet, font, script, image) you'll use soon
+- **`preload(href, options)`**: Fetch a resource (stylesheet, font, script, image) you'll use soon
 
-- `preloadModule(href)`: Fetch an ES module you'll use soon
+- **`preloadModule(href)`**: Fetch an ES module you'll use soon
 
-- `preinit(href, options)`: Fetch and evaluate a stylesheet or script
+- **`preinit(href, options)`**: Fetch and evaluate a stylesheet or script
 
-- `preinitModule(href)`: Fetch and evaluate an ES module
+- **`preinitModule(href)`**: Fetch and evaluate an ES module
 
 **Example: preconnect to third-party APIs**
 
@@ -2479,21 +2479,21 @@ function Navigation() {
 
 **When to use each:**
 
-\| API | Use case |
+| API | Use case |
 
-\|-----|----------|
+|-----|----------|
 
-\| `prefetchDNS` | Third-party domains you'll connect to later |
+| `prefetchDNS` | Third-party domains you'll connect to later |
 
-\| `preconnect` | APIs or CDNs you'll fetch from immediately |
+| `preconnect` | APIs or CDNs you'll fetch from immediately |
 
-\| `preload` | Critical resources needed for current page |
+| `preload` | Critical resources needed for current page |
 
-\| `preloadModule` | JS modules for likely next navigation |
+| `preloadModule` | JS modules for likely next navigation |
 
-\| `preinit` | Stylesheets/scripts that must execute early |
+| `preinit` | Stylesheets/scripts that must execute early |
 
-\| `preinitModule` | ES modules that must execute early |
+| `preinitModule` | ES modules that must execute early |
 
 Reference: [https://react.dev/reference/react-dom#resource-preloading-apis](https://react.dev/reference/react-dom#resource-preloading-apis)
 
@@ -3321,7 +3321,7 @@ function useWindowEvent(event: string, handler: (e) => void) {
 }
 ```
 
-**Alternative: use **`useEffectEvent`** if you're on latest React:**
+**Alternative: use `useEffectEvent` if you're on latest React:**
 
 `useEffectEvent` provides a cleaner API for the same pattern: it creates a stable function reference that always calls the latest version of the handler.
 
@@ -3371,4 +3371,3 @@ function SearchInput({ onSearch }: { onSearch: (q: string) => void }) {
 5. [https://github.com/isaacs/node-lru-cache](https://github.com/isaacs/node-lru-cache)
 6. [https://vercel.com/blog/how-we-optimized-package-imports-in-next-js](https://vercel.com/blog/how-we-optimized-package-imports-in-next-js)
 7. [https://vercel.com/blog/how-we-made-the-vercel-dashboard-twice-as-fast](https://vercel.com/blog/how-we-made-the-vercel-dashboard-twice-as-fast)
-
