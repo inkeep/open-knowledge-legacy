@@ -15,14 +15,16 @@ import { uploadAndInsert } from '../image-upload/index.ts';
 import { getComponentItems } from '../slash-command/component-items';
 import { slashCommandItems } from '../slash-command/items';
 import { BlockMover } from './block-mover';
-// BridgeIdPlugin disabled — Context Bridge infrastructure is complete but unused
-// after Fallback 2 (DOM data-attribute compound wrappers). Re-enable when a
-// consumer (e.g., accessible Radix Context bridging) is added.
-// import { BridgeIdPlugin } from './bridge-id-plugin';
+// BridgeIdPlugin re-enabled — SelectionStatePlugin consumes it to resolve
+// stable ancestor-chain IDs across PM re-renders (Precedent #13 + #15).
+// Plugin falls back to pos-derived synthetic IDs if this plugin is absent
+// (unit-test path), but production wants the real Y.XmlElement-keyed IDs.
+import { BridgeIdPlugin } from './bridge-id-plugin';
 import { HeadingAnchors } from './heading-anchors';
 import { InternalLink } from './internal-link';
 import { JsxComponent } from './jsx-component';
 import { RawMdxFallback } from './raw-mdx-fallback';
+import { SelectionStatePlugin } from './selection-state-plugin';
 import { SlashCommand } from './slash-command';
 import { SourceDirtyObserver } from './source-dirty-observer';
 import { TypedChildrenGuard } from './typed-children-guard';
@@ -74,6 +76,11 @@ export const sharedExtensions = [
   SourceDirtyObserver,
   TypedChildrenGuard,
   KeyboardNav,
+  // Selection layer — must come after BridgeIdPlugin so ancestor-chain
+  // lookups resolve stable IDs. Order is load-bearing only wrt BridgeId;
+  // KeyboardNav is orthogonal.
+  BridgeIdPlugin,
+  SelectionStatePlugin,
   Placeholder.configure({
     placeholder: "Type '/' for commands",
     showOnlyCurrent: true,

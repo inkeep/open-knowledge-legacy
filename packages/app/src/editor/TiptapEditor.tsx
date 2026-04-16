@@ -13,6 +13,8 @@ import Collaboration from '@tiptap/extension-collaboration';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef } from 'react';
+import { Breadcrumb } from '@/components/editor/Breadcrumb';
+import { SelectionAnnouncer } from '@/components/editor/SelectionAnnouncer';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
 import { SideMenu } from './block-ux/SideMenu';
@@ -409,6 +411,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
       {editor && <TableControlsMenu editor={editor} />}
       {editor && <SideMenu editor={editor} />}
       <EditorContent editor={editor} className="h-full" />
+      {/* Selection layer footer — ancestry breadcrumb + aria-live announcer.
+          Breadcrumb renders only when a block is selected; announcer is
+          always in the DOM (role=status + sr-only) and updates imperatively. */}
+      {editor && <Breadcrumb editor={editor} />}
+      {editor && <SelectionAnnouncer editor={editor} />}
     </div>
   );
 };
