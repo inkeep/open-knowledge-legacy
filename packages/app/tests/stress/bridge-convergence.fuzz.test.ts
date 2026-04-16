@@ -598,17 +598,16 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
         }
       }
 
-      // DMP three-way merge content-drop tolerance (D8 limitation).
-      // Shared by oracle (d) and oracle (e) — both catch the same class of
-      // issue (DMP patch_apply context failure dropping marker lines).
-      const DROP_TOLERANCE_PCT = 5; // 5% of markers; ~4-5 per typical 90-marker seed
-
       // Oracle (d): content preservation — every live marker prefix from
       // wysiwyg-type / source-type / agent-write (minus those invalidated by
       // external-change) must appear in EVERY client's final ytext. This is
       // what catches Bug-A: a bridge-convergent-but-content-lost state leaves
       // marker prefixes missing while all clients synchronously agree on the
       // wrong content.
+      //
+      // Zero tolerance: the hybrid diff3+DMP merge (mergeThreeWay) eliminates
+      // the DMP patch_apply content drops that previously required a 5%
+      // tolerance. Any missing prefix is a genuine merge bug.
       //
       // Why prefix-only: the marker format is `M<N>-<words>`. agent-patch's
       // find/replace draws from raw WORDS, so it can mutate the `<words>` tail
@@ -625,36 +624,16 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
           }
         }
       }
-      // Apply the same DMP content-drop tolerance as oracle (e) — oracle (d)
-      // and oracle (e) catch the same class of issue (DMP patch_apply context
-      // failure dropping a marker line). Oracle (d) checks the prefix; oracle
-      // (e) checks the full line. Both should tolerate the same % of drops.
-      const maxPrefixDrops = Math.ceil((livePrefixes.size * DROP_TOLERANCE_PCT) / 100);
-      // Per-client worst-case: count unique prefixes missing for the worst client.
-      const prefixDropsByClient = new Map<number, number>();
-      for (const m of missingPrefixes) {
-        prefixDropsByClient.set(m.clientIdx, (prefixDropsByClient.get(m.clientIdx) ?? 0) + 1);
-      }
-      const worstPrefixDrops = Math.max(0, ...Array.from(prefixDropsByClient.values()));
 
-      if (worstPrefixDrops > maxPrefixDrops) {
+      if (missingPrefixes.length > 0) {
         throw new Error(
-          `Content preservation violated — worst-client prefix drop count ${worstPrefixDrops} ` +
-            `exceeds DMP-tolerance threshold ${maxPrefixDrops} ` +
-            `(${DROP_TOLERANCE_PCT}% of ${livePrefixes.size} live prefixes).\n` +
-            `Total missing across all clients: ${missingPrefixes.length}.\n` +
+          `Content preservation violated — ${missingPrefixes.length} missing prefixes ` +
+            `(zero tolerance: hybrid diff3+DMP merge must preserve all content).\n` +
             missingPrefixes
               .slice(0, 5)
               .map((m) => `  client ${m.clientIdx} missing prefix '${m.prefix}'`)
               .join('\n') +
             (missingPrefixes.length > 5 ? `\n  ...and ${missingPrefixes.length - 5} more` : ''),
-        );
-      }
-      if (missingPrefixes.length > 0) {
-        console.warn(
-          `[fuzz] DMP-tolerance prefix drops (${missingPrefixes.length} total, ` +
-            `worst-client ${worstPrefixDrops}/${maxPrefixDrops} allowed):`,
-          missingPrefixes.slice(0, 3).map((m) => `client${m.clientIdx}:'${m.prefix}'`),
         );
       }
 
@@ -665,28 +644,15 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       // sequence, because CRDT inserts from concurrent clients can
       // interleave paragraphs in non-deterministic order.
       //
-      // Catches: content corruption within a marker line (e.g., DMP merge
-      // bug, applyByPrefixSuffix Unicode boundary split) that preserves
-      // the `M<N>-` prefix but mutates the tail — a class oracle (d) misses.
+      // Catches: content corruption within a marker line (e.g., merge
+      // bug, Unicode boundary split) that preserves the `M<N>-` prefix
+      // but mutates the tail — a class oracle (d) misses.
       //
       // Does NOT catch: paragraph reordering (CRDT-correct behavior),
       // duplication (checked by bridge-invariant + convergence oracles).
       //
-      // DMP three-way merge content-drop tolerance (D8 limitation, observers.ts:272-278):
-      //   Path B's DMP patch_apply can fail to locate patch context within
-      //   Match_Threshold=0.5 when concurrent same-line writes produce
-      //   heavily-diverged agent text. Failed patches are silently skipped
-      //   (DMP's documented "user-wins on what we could merge" semantic),
-      //   producing occasional content drops of 1-3 markers per seed on
-      //   roughly 2% of seeds. This is a PRE-EXISTING DMP limitation that
-      //   the refactor preserved faithfully — it was present under the old
-      //   client-side DMP merge too. Fixing requires replacing DMP merge
-      //   with a structurally-aware merger (out of scope; future spec).
-      //
-      //   Oracle tolerates drops up to DROP_TOLERANCE_PCT of the total
-      //   expected marker lines per seed. A rate above this is a real
-      //   regression (e.g., a convergence bug dropping large sections),
-      //   not DMP's known limitation.
+      // Zero tolerance: the hybrid diff3+DMP merge (mergeThreeWay)
+      // eliminates content drops. Any missing marker line is a genuine bug.
       const markerLineRe = /^M\d+-/;
       const expectedMarkerLines = new Set(
         expectedBody
@@ -711,36 +677,16 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
             }
           }
         }
-        // Compute per-client maximum drop count (worst-case across clients)
-        // and compare to the tolerance threshold.
-        const maxDropCount = Math.ceil((expectedMarkerLines.size * DROP_TOLERANCE_PCT) / 100);
-        const dropsByClient = new Map<number, number>();
-        for (const m of missingContent) {
-          dropsByClient.set(m.clientIdx, (dropsByClient.get(m.clientIdx) ?? 0) + 1);
-        }
-        const worstClientDrops = Math.max(0, ...Array.from(dropsByClient.values()));
 
-        if (worstClientDrops > maxDropCount) {
+        if (missingContent.length > 0) {
           throw new Error(
-            `Oracle (e) content-set violation — worst-client drop count ${worstClientDrops} ` +
-              `exceeds DMP-tolerance threshold ${maxDropCount} ` +
-              `(${DROP_TOLERANCE_PCT}% of ${expectedMarkerLines.size} markers).\n` +
-              `Total missing across all clients: ${missingContent.length}.\n` +
+            `Oracle (e) content-set violation — ${missingContent.length} missing marker lines ` +
+              `(zero tolerance: hybrid diff3+DMP merge must preserve all content).\n` +
               missingContent
                 .slice(0, 5)
                 .map((m) => `  client ${m.clientIdx} missing '${m.line}'`)
                 .join('\n') +
               (missingContent.length > 5 ? `\n  ...and ${missingContent.length - 5} more` : ''),
-          );
-        }
-        if (missingContent.length > 0) {
-          // Sub-threshold drops — log as diagnostic, not a hard failure.
-          // Preserves visibility into DMP edge-case frequency without
-          // producing spurious CI failures.
-          console.warn(
-            `[fuzz] DMP-tolerance content drops (${missingContent.length} total, ` +
-              `worst-client ${worstClientDrops}/${maxDropCount} allowed):`,
-            missingContent.slice(0, 3).map((m) => `client${m.clientIdx}:'${m.line.slice(0, 40)}'`),
           );
         }
       }
