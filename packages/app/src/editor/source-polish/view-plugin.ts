@@ -103,11 +103,10 @@ export function buildDecorationsForRanges(
           return false;
         }
 
-        // Tables — structure/layout only. Hanging indent so wrapped row
-        // continuation aligns under cell content (not under `|`), plus
-        // compactness (font-size 0.9em, line-height 1.4) so rows fit more
-        // horizontal content. NO background, border, accent bar, or cell
-        // bands — explicit scope boundary per spec §6.6.
+        // Tables — hanging indent only. Wrapped row continuation aligns under
+        // cell content (not under `|`). NO background, border, accent bar,
+        // cell bands, or font-size/line-height change — explicit scope
+        // boundary per spec §6.6 (compactness cut in the second amendment).
         if (node.name === 'TableHeader') {
           const line = state.doc.lineAt(node.from);
           decorations.push(tableHeaderLine.range(line.from));
