@@ -64,6 +64,11 @@ function extractFromLs(stdout: string, stage: Stage): string[] {
   const baseDir = pathArgs.length > 0 ? pathArgs[pathArgs.length - 1] : '';
   const prefix = baseDir && baseDir !== '.' ? normalize(baseDir) : '';
   const out: string[] = [];
+  // When an explicit dir arg was given, emit the parent itself first so
+  // folder-level frontmatter (title/description/tags from folders: rules)
+  // reaches enrichDirectory alongside the children. classifyPaths stats the
+  // path, so a file arg like `ls foo.md` still classifies correctly.
+  if (prefix) out.push(prefix);
   for (const line of stdout.split('\n')) {
     const name = line.trim();
     if (!name) continue;

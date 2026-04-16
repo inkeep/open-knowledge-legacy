@@ -146,7 +146,10 @@ describe('exec — happy path', () => {
       (e): e is Extract<typeof e, { type: 'directory' }> =>
         (e as { type?: string }).type === 'directory',
     );
-    expect(dirs.length).toBe(2);
+    // Parent `specs` + two children (`specs/spec-a`, `specs/spec-b`).
+    expect(dirs.length).toBe(3);
+    const parentEntry = dirs.find((d) => d.path === 'specs');
+    expect(parentEntry).toBeDefined();
     const specAEntry = dirs.find((d) => d.path === 'specs/spec-a');
     expect(specAEntry).toBeDefined();
     expect(specAEntry?.directMdCount).toBe(1);
@@ -156,6 +159,38 @@ describe('exec — happy path', () => {
     // Content block renders folder summary
     expect(result.content[0].text).toContain('specs/spec-a/');
     expect(result.content[0].text).toContain('md file');
+  });
+
+  test('ls with explicit dir arg surfaces parent folder frontmatter', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '# Foo\n');
+
+    const configWithRules: Config = ConfigSchema.parse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: { title: 'Specs', description: 'Specifications', tags: ['spec'] },
+        },
+      ],
+    });
+
+    const result = (await buildExecResult(
+      { command: 'ls specs/' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: configWithRules },
+    )) as ExecResult;
+
+    const s = structured(result);
+    const dirs = s.enrichedPaths.filter(
+      (e): e is Extract<typeof e, { type: 'directory' }> =>
+        (e as { type?: string }).type === 'directory',
+    );
+    const parent = dirs.find((d) => d.path === 'specs');
+    expect(parent).toBeDefined();
+    expect(parent?.title).toBe('Specs');
+    expect(parent?.description).toBe('Specifications');
+    expect(parent?.tags).toEqual(['spec']);
   });
 });
 
