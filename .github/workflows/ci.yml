@@ -115,21 +115,29 @@ jobs:
       # The playwright.config.ts now defines chromium/webkit/firefox projects;
       # tests fan out across all three automatically.
       #
-      # `--with-deps` is split into two installs:
-      #   - chromium: `--with-deps` (baseline system libs used by ~all browsers)
-      #   - webkit + firefox: plain `install` (no apt pass)
+      # Install strategy (three commands, ordered for speed):
+      #   1. `playwright install chromium webkit firefox` — downloads the
+      #      browser binaries only; served from the actions/cache above on hit.
+      #   2. `playwright install-deps chromium` — installs chromium's system
+      #      libs via apt (baseline graphics/audio/X11 stack).
+      #   3. `playwright install-deps webkit` — installs webkit's specific
+      #      libs (GTK4 + GStreamer + audio codecs + libwoff2dec +
+      #      libhyphen + libmanette + libsecret + libflite + libavif). Without
+      #      this step, `browserType.launch` fails with "Host system is
+      #      missing dependencies to run browsers" listing ~20 libs.
+      #   Firefox doesn't need a dedicated install-deps pass on ubuntu-latest
+      #   — its required libs overlap with chromium's baseline.
       #
-      # Rationale: `--with-deps chromium webkit firefox` runs a full apt install
-      # of ALL browsers' system packages (gstreamer, libsdl2, libpipewire,
-      # timgm6mb-soundfont, etc.) which took ~25 min on ubuntu-latest mirrors
-      # and killed the job before tests started. The chromium apt pass already
-      # installs the shared graphics + audio + X11 stack; webkit and firefox
-      # need only browser-specific additions that are already present on the
-      # ubuntu-latest image or pulled in by chromium's --with-deps. The
-      # browser binaries (in ~/.cache/ms-playwright) are cached across runs
-      # via actions/cache above, so only the apt invocation is the cost.
-      - run: bunx playwright install --with-deps chromium
-      - run: bunx playwright install webkit firefox
+      # Historical footnote: `playwright install --with-deps chromium webkit
+      # firefox` (single command) ran a full apt resolution of ALL browsers'
+      # system packages (gstreamer, libsdl2, libpipewire, timgm6mb-soundfont,
+      # etc.) which took ~25 min on ubuntu-latest mirrors and killed the
+      # job before tests started (commits fddd7ed1 → cancelled at 25-min
+      # timeout). The split approach is cache-friendly and avoids the apt
+      # pathological case.
+      - run: bunx playwright install chromium webkit firefox
+      - run: bunx playwright install-deps chromium
+      - run: bunx playwright install-deps webkit
       - env:
           VITE_PORT: "13579"
         run: bunx turbo run test:e2e
