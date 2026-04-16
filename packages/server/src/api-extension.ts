@@ -2091,6 +2091,25 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
+  async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    // Absolute, canonical contentDir so the client can build full filesystem paths
+    // (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in the
+    // workspace root are resolved via realpath so the path matches on-disk truth.
+    const resolvedContentDir = (() => {
+      try {
+        return realpathSync(resolve(contentDir));
+      } catch {
+        return resolve(contentDir);
+      }
+    })();
+    json(res, 200, { ok: true, contentDir: resolvedContentDir });
+  }
+
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -2771,6 +2790,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/rescue': handleRescueList,
+    '/api/workspace': handleWorkspace,
   };
 
   if (enableTestRoutes) {
