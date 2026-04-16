@@ -68,8 +68,9 @@ export interface BlockChainEntry {
  * imperative test-harness selection injection), refactor to a discriminated
  * union (`{ kind: 'none' | 'selected' }`) so the type system enforces the
  * invariant at the API boundary instead of relying on constructor discipline.
- * Reviewed in PR #ref's Pass 1; declined as premature in this scope but worth
- * the lift the moment a second constructor lands.
+ * Declined as premature in v1 (one producer — `deriveBlockSelection` —
+ * guarantees the invariant by construction); worth the lift the moment a
+ * second constructor lands.
  */
 export interface BlockSelection {
   /** bridgeId of the innermost selected jsxComponent, or null if no block selected. */
