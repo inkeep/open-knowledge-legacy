@@ -85,6 +85,15 @@ Deprecated because it is not maintained upstream! It will be disabled on 2026-09
 **Implications:** This is the **most severe collision on the entire candidate list**. The PyPI tool is not just a brand collision — it literally claims the `openkb` PATH entry via `pip install`, with an almost-identical subcommand vocabulary (`openkb init`, `openkb add`, `openkb query`). Any user who has both Python (near-universal in the AI-dev audience) and runs `pip install openkb` then `npm install -g @inkeep/open-knowledge` will have two `openkb` binaries fighting for the same PATH slot, whichever got installed later wins, with no warning. The semantic collision is worse: VectifyAI's OpenKB is *also* an LLM-oriented knowledge-base tool. Users would confuse the two products in search, support threads, and demos.
 **Severity:** **HARD**
 
+#### Does the TS-vs-Python ecosystem split rescue `openkb`?
+**No.** Three independent reasons it remains HARD:
+
+1. **PATH is shared across language ecosystems.** `pip install openkb` (standard), `pipx install openkb`, and `uv tool install openkb` all drop the binary in a PATH directory — typically `~/.local/bin/openkb`, `/usr/local/bin/openkb`, or (on Homebrew-managed Python) `/opt/homebrew/bin/openkb`. `npm install -g @inkeep/open-knowledge` with `"bin": { "openkb": ... }` drops a symlink in `$(npm config get prefix)/bin/openkb` — commonly one of those same directories, or a sibling directory that's also in `$PATH`. Two outcomes: (a) same directory → last-install-wins, silent overwrite; (b) different directories → `$PATH` ordering determines the winner, silently shadowing the loser. In either case the user has no warning.
+2. **SEO and search-engine context is ecosystem-blind.** A Google query for `openkb init` returns both VectifyAI and Inkeep docs interleaved. Stack Overflow answers, blog posts, Reddit threads, Discord mentions, YouTube screencasts — none of these carry ecosystem metadata that disambiguates. Users reading "openkb init --model gpt-4" in a tutorial cannot tell which tool is being configured.
+3. **Inkeep's audience overlaps heavily with Python/AI tooling users.** The AI-dev-tools segment uses LangChain, DSPy, LiteLLM, Jupyter, and the OpenAI / Anthropic Python SDKs daily. The assumption "our users only touch npm" is wrong for this audience specifically — LLM tooling is Python-first. A large fraction will already have `pip`, `pipx`, or `uv tool` installed and can encounter VectifyAI's OpenKB at any time.
+
+**Conclusion:** `openkb` remains disqualified regardless of Inkeep's npm-first distribution. Recommendation unchanged: `ok`.
+
 ---
 
 ### Finding: `know` — CLEAR

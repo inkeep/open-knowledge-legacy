@@ -152,7 +152,7 @@ Key data points:
 | `kb`      | HARD     | Acronym overload: kilobyte / keyboard / knowledge-base |
 | `wiki`    | HARD     | [Federated Wiki](https://github.com/fedwiki/wiki) npm has active `bin: wiki`; deprecated Homebrew formula |
 | `ink`     | HARD     | [Debian `/usr/bin/ink`](https://manpages.debian.org/unstable/ink/ink.1.en.html) printer util + [Ink.js](https://github.com/vadimdemedes/ink) React-for-CLI mega-brand |
-| **`openkb`** | **HARD (worst)** | [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) PyPI CLI ships `openkb` bin with `init/add/query/chat` subcommands in the same LLM-KB domain; npm `openkb@1.0.22` ([mrvautin/openKB](https://github.com/mrvautin/openKB)) is an active KB/wiki web app. Direct bin + subcommand + domain collision. |
+| **`openkb`** | **HARD (worst)** | [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) PyPI CLI ships `openkb` bin with `init/add/query/chat` subcommands in the same LLM-KB domain; npm `openkb@1.0.22` ([mrvautin/openKB](https://github.com/mrvautin/openKB)) is an active KB/wiki web app. Direct bin + subcommand + domain collision. The TS-vs-Python ecosystem split does **not** rescue this — `pip`/`pipx`/`uv tool` share `$PATH` with npm global bins (commonly `/usr/local/bin`, `~/.local/bin`, `/opt/homebrew/bin`), SEO is ecosystem-blind, and Inkeep's AI-dev audience is heavily Python-fluent. See the evidence file for the full trace. |
 
 **Implications:** The only alternative that meaningfully beats `ok` on collision safety is `oknow`, and it costs 3 characters of length plus loses the recognizability anchor ("ok" is a universal affirmation; "oknow" is a contrived pun). None of these is a compelling upgrade over `ok`.
 
