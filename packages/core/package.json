@@ -50,7 +50,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test src/",
+    "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/"
   },
   "devDependencies": {
     "@types/diff-match-patch": "^1.0.36",

@@ -78,3 +78,20 @@ export function loadMdxCrashTaxonomy(): MdxCrashEntry[] {
 export function loadLargeRealistic(): string {
   return readFileSync(fixturePath('perf', 'large-realistic.md'), 'utf8');
 }
+
+/**
+ * Block counts pinned by SPEC §6 (R1/R18) for the perf benchmark harness.
+ * Each count has a matching `<count>.md` fixture generated deterministically
+ * by `fixtures/perf/generate.ts` — same seed ⇒ byte-identical corpus.
+ */
+export const PERF_BLOCK_COUNTS = [100, 1000, 5000, 10000, 20000] as const;
+export type PerfBlockCount = (typeof PERF_BLOCK_COUNTS)[number];
+
+/**
+ * Load a pinned synthetic fixture for the benchmark harness. Block counts
+ * are restricted at the type level so drift between the harness and the
+ * on-disk corpus fails at compile time.
+ */
+export function loadPerfFixture(blockCount: PerfBlockCount): string {
+  return readFileSync(fixturePath('perf', `${blockCount}.md`), 'utf8');
+}

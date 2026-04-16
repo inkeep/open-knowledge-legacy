@@ -75,6 +75,16 @@
     "test:e2e": {
       "dependsOn": ["^build"],
       "cache": false
+    },
+    "test:perf:bench": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "src/markdown/**/*.ts",
+        "src/markdown/fixtures/perf/*.md",
+        "tests/perf/markdown-bench.test.ts"
+      ],
+      "env": ["RUN_BENCH", "BENCH_RUNNER_CLASS"]
     }
   }
 }

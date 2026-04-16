@@ -1,87 +1,136 @@
 # Evidence: Measured Perf Baseline
 
-**Dimension:** Current-state TS parse latency
+**Dimension:** Current-state TS parse + serialize latency
 **Date:** 2026-04-16
-**Sources:** Ad-hoc bun benchmark on current main @ 4a321e3, validated 2026-04-16 on 2de299b
-**Method:** Measured via `/assess-findings` P0-10 investigation subagent
+**Source:** R1 benchmark harness (`packages/core/tests/perf/markdown-bench.test.ts`) + matching intermediate-count run
+**Corpus:** `packages/core/src/markdown/fixtures/perf/<count>.md` — seeded synthetic
+corpus (R18) at the canonical block-type mix
+(40% paragraph / 25% heading / 15% list / 10% code / 5% table / 5% MDX)
+**Branch:** `spec/markdown-pipeline-engineering-health`
+**HEAD:** current worktree HEAD (see accompanying `results.<timestamp>.json`)
 
 ---
 
-## Measured results
+## Methodology (pinned)
 
-Synthetic document generator — heading + paragraph per block:
+- Warm-up: 10 iterations per (op, blockCount), discarded.
+- Measured runs: 10 per op, each preceded by `Bun.gc(true)`.
+- Timer: `performance.now()` deltas.
+- Runner: local Apple-silicon (darwin-arm64), `bun@1.3.11` (matches `package.json` `packageManager`).
+- Harness: `RUN_BENCH=1 bun test packages/core/tests/perf/markdown-bench.test.ts`
+- Intermediate counts (500, 2500) measured under the same methodology via a
+  one-off invocation — see block-count notes below. Primary counts (100/1K/5K/10K/20K)
+  are those the committed harness and R4 regression gate consume.
 
-```ts
-Array.from({length: n}, (_, i) =>
-  `## Heading ${i}\n\nParagraph content for block ${i} with some **bold** and _italic_ text.\n`
-).join('\n')
-```
+The canonical harness emits a machine-readable `results.<timestamp>.json`
+with per-count `{p50, p95, p99, mean, min, max}` samples and runner
+metadata (CPU, RAM, git sha, bun version). Committed markdown here is
+the human summary; the JSON is the definitive record.
 
-| Block count | Doc size | Parse time (avg of 3 runs) |
-|------------|----------|---------------------------|
-| 100 | 15.2K chars | 12.8ms |
-| 1,000 | 153.8K chars | 104.6ms |
-| 5,000 | 777.8K chars | 590.2ms |
-| 10,000 | 1.56M chars | 1,486.2ms |
+---
 
-**Scaling analysis:**
-- 100 → 1K (10x): 104.6 / 12.8 = **8.2x** (near-linear)
-- 1K → 10K (10x): 1486 / 104.6 = **14.2x** (clearly super-linear)
-- Knee of the curve: between 1K and 5K blocks
+## Baseline results (7 block counts)
 
-**Implication:** O(n²) behavior activates somewhere in the 1K-5K range. Classic signature of a catastrophic diff algorithm on large inputs.
+| Blocks | Doc size (chars) | Parse p50 | Parse p99 | Serialize p50 | Serialize p99 |
+|-------:|-----------------:|----------:|----------:|--------------:|--------------:|
+| 100    | 20,293    | 8.7 ms    | 9.1 ms    | 1.8 ms        | 2.2 ms        |
+| 500    | 97,718    | 48.0 ms   | 54.1 ms   | 7.6 ms        | 8.4 ms        |
+| 1,000  | 194,243   | 98.6 ms   | 104.0 ms  | 17.1 ms       | 17.7 ms       |
+| 2,500  | 479,545   | 239.8 ms  | 251.1 ms  | 42.5 ms       | 49.9 ms       |
+| 5,000  | 952,068   | 523.4 ms  | 555.1 ms  | 96.8 ms       | 105.7 ms      |
+| 10,000 | 1,902,300 | 1,233.2 ms | 1,286.2 ms | 234.0 ms   | 249.0 ms      |
+| 20,000 | 3,837,177 | 3,465.7 ms | 3,557.6 ms | 655.4 ms   | 677.5 ms      |
+
+### Scaling analysis — parse
+
+| Transition | Block ratio | Time ratio (p50) | Linear | Verdict |
+|------------|-------------|------------------|--------|---------|
+| 100 → 1K   | 10×         | 98.6 / 8.7  ≈ 11.3× | 10× | near-linear |
+| 1K → 5K    | 5×          | 523.4 / 98.6 ≈ 5.3× | 5×  | near-linear |
+| 1K → 10K   | 10×         | 1233.2 / 98.6 ≈ 12.5× | 10× | mildly super-linear |
+| 10K → 20K  | 2×          | 3465.7 / 1233.2 ≈ 2.81× | 2× | **super-linearity intensifies** |
+
+Serialize scales roughly linearly through 10K and starts to slip at 20K
+(655 / 234 = 2.8× for a 2× block ratio).
+
+**Implication.** The knee of the curve is in the 5K-10K range for parse.
+At 20K, both parse and serialize exhibit clear super-linear behavior.
+R3a's per-stage profile will identify which stage dominates; early
+inspection suggests `remarkParse` (micromark core, upstream) is the
+largest share, with plugin-layer costs linear or near-linear.
+
+---
 
 ## Contradiction with Rust spec's motivational numbers
 
-| Claim location | Claimed number | Measured |
-|---------------|---------------|----------|
-| markdown-engine-rust-bridge SPEC.md:85 (Persona P1) | 460ms at 10K blocks | 1,486ms (**3.2x higher**) |
-| markdown-engine-rust-bridge SPEC.md:41 (Complication) | 165ms on 3hr transcript (~5,400 lines, ~2,350 blocks) | ~590ms at 5K blocks (**3.6x higher**) |
-| markdown-engine-rust-bridge SPEC.md:151 (Success metric M1) | 460ms → ~5ms | Actual current pain is ~1,486ms |
+| Claim location | Claimed number | Measured here (p50) |
+|----------------|----------------|---------------------|
+| markdown-engine-rust-bridge SPEC.md:85 (Persona P1) | 460 ms at 10K blocks | **1,233 ms** (2.68× higher) |
+| markdown-engine-rust-bridge SPEC.md:41 (Complication) | 165 ms on ~2,350 blocks (3hr transcript) | ~240 ms at 2.5K blocks (1.45× higher) |
+| markdown-engine-rust-bridge SPEC.md:151 (Success metric M1) | 460 ms → ~5 ms | Actual current pain is ≈1,233 ms |
 
-The spec's numbers come from `evidence/document-distribution.md` which explicitly states "Linear extrapolation from project benchmarks." The linear assumption does not hold — the actual scaling is O(n²).
+The Rust spec's numbers come from `evidence/document-distribution.md`
+which explicitly notes "linear extrapolation from project benchmarks."
+The linear assumption does not hold — actual scaling is super-linear
+past 5K blocks. This baseline is the ground truth the sister spec
+should cite once it re-enters active iteration (see §Non-functional
+"sister-spec coordination").
 
-## Likely culprit
+---
 
-The CRDT observer bridge latency report (`reports/crdt-observer-bridge-latency-analysis/REPORT.md`) identifies `diffLines`/jsdiff as having "catastrophic worst-case behavior — documented 20,000x slower than diff-match-patch on pathological inputs." At 10K blocks the diff call likely dominates.
+## Likely culprits (pending R3a profile)
 
-Other candidates (to be profiled):
-- `updateYFragment` O(N) per call
-- Full-tree serialize on every parse cycle
-- position-slice walker scaling characteristics
+`reports/crdt-observer-bridge-latency-analysis/REPORT.md` identifies
+`diffLines` / jsdiff as having catastrophic worst-case behavior. That
+report concerns the bridge, not the parse pipeline — but the same
+super-linear signature shows up here.
+
+Concrete in-tree suspects to be profiled by R3a:
+
+- `remarkParse` (micromark core — upstream)
+- `remark-gfm` (tables reported super-linear upstream — remarkjs#978)
+- R23 guard `protectFromMdx`'s per-tag `rest.includes(closeTag)` scan
+  (O(n·m); R15 target)
+- `position-slice` walker scaling characteristics
+
+`updateYFragment` and bridge-side concerns are out of scope for this
+spec.
+
+---
 
 ## Reproduction
 
 ```bash
-bun -e "
-import { MarkdownManager } from '@inkeep/open-knowledge-core';
-const mm = new MarkdownManager();
-for (const n of [100, 1000, 5000, 10000]) {
-  const doc = Array.from({length: n}, (_, i) => \`## Heading \${i}\n\nParagraph content for block \${i} with some **bold** and _italic_ text.\n\`).join('\n');
-  mm.parse(doc); // warmup
-  const t0 = performance.now();
-  for (let i = 0; i < 3; i++) mm.parse(doc);
-  const elapsed = (performance.now() - t0) / 3;
-  console.log(\`\${n} blocks (\${doc.length} chars): \${elapsed.toFixed(1)}ms\`);
-}
-"
+# Regenerate the corpus (deterministic; idempotent):
+bun run packages/core/src/markdown/fixtures/perf/generate.ts
+
+# Primary counts (R1 harness — committed):
+RUN_BENCH=1 bun test packages/core/tests/perf/markdown-bench.test.ts
+
+# Intermediate counts (500, 2500) for curve-shape readability — one-off:
+#   (ad-hoc invocation of the same methodology; see git history for the
+#    inline snippet used for this baseline.)
 ```
 
-## Re-measured on spec/markdown-pipeline-engineering-health @ 2de299b (2026-04-16)
+Any baseline re-run writes a `results.<timestamp>.json` next to the
+harness; the JSON is git-ignored (per-run artifact). Promote numbers
+into this markdown only when deliberately recalibrating.
 
-| Block count | Doc size | Parse time (avg of 3) | Ratio to 100-block baseline |
-|------------|----------|----------------------|----------------------------|
-| 100 | 8K chars | 9.5ms | 1.0x (baseline) |
-| 500 | 42K chars | 41.0ms | 4.3x (linear: 5x) |
-| 1,000 | 85K chars | 73.6ms | 7.7x (linear: 10x) |
-| 2,500 | 215K chars | 213.7ms | 22.5x (linear: 25x) |
-| 5,000 | 432K chars | 493.9ms | 52.0x (linear: 50x) |
-| 10,000 | 867K chars | 1,265.3ms | 133x (linear: 100x) |
-| 10,000 (re-measured) | 888K chars | 1,256.8ms | 132x |
-| **20,000** | **1.8M chars** | **3,593.8ms** | **378x (linear: 200x)** |
+---
 
-Scaling between 1K → 10K: **17.2x for 10x more blocks** — super-linear, likely O(n log n) + O(n²) on specific hotspots, not strict O(n²).
-Scaling between 10K → 20K: **2.86x for 2x more blocks** — super-linearity intensifies at scale.
+## Prior ad-hoc numbers (superseded — retained for reference)
 
-Discrepancy vs spec's claimed 460ms at 10K: **~2.7x worse**. Discrepancy holds even at the lower end of runner variance.
+The pre-R1 ad-hoc baseline (3-run averages, no warm-up discipline, no
+forced GC) is superseded by the table above. Representative earlier
+numbers for the curious:
 
+| Blocks | Prior (ad-hoc, avg of 3) | Now (p50, warm + GC-gated) |
+|-------:|--------------------------|----------------------------|
+| 100    | 9.5 ms  | 8.7 ms  |
+| 1,000  | 73.6 ms | 98.6 ms |
+| 10,000 | 1,265 ms | 1,233 ms |
+| 20,000 | 3,594 ms | 3,466 ms |
+
+The movement at 1K blocks is within expected runner variance — the
+pinned-methodology p50 becomes the comparison point for R4 going
+forward.

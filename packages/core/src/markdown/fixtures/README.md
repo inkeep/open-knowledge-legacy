@@ -19,7 +19,8 @@ fixtures/
 ├── wiki-links/      — reserved (wiki-link fixtures, future)
 ├── frontmatter/     — reserved (YAML frontmatter fixtures, future)
 ├── ng-pinned/       — reserved (NG1-NG11 byte-identity fixtures, future)
-└── perf/            — large synthetic documents for benchmark + stress
+└── perf/            — pinned synthetic corpus (100/1K/5K/10K/20K blocks)
+                      + large-realistic legacy fixture (see perf/README.md)
 ```
 
 ## Load via the typed API
@@ -29,6 +30,8 @@ import {
   loadGfmExamples,
   loadMdxCrashTaxonomy,
   loadLargeRealistic,
+  loadPerfFixture,      // pinned synthetic corpus (R1/R18)
+  PERF_BLOCK_COUNTS,
   fixturePath,
 } from '../../../core/src/markdown/fixtures';
 ```
