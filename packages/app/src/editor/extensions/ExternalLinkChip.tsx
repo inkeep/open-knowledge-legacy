@@ -80,7 +80,7 @@ export function ExternalLinkChip({
                 }}
                 onKeyDown={(e) => e.stopPropagation()}
               >
-                <Ellipsis className="size-3" />
+                <Ellipsis className="size-3" aria-hidden="true" />
               </button>
             </DropdownMenuTrigger>
           </span>
@@ -99,7 +99,7 @@ export function ExternalLinkChip({
         }}
       >
         <DropdownMenuItem onSelect={onEdit}>
-          <Pencil />
+          <Pencil aria-hidden="true" />
           Edit link
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -107,7 +107,7 @@ export function ExternalLinkChip({
           className="text-red-600 focus:bg-red-50 focus:text-red-600"
           onSelect={onRemove}
         >
-          <Trash2 />
+          <Trash2 aria-hidden="true" />
           Remove
         </DropdownMenuItem>
       </DropdownMenuContent>

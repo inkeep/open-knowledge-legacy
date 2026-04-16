@@ -141,7 +141,10 @@ export function ForwardLinksPanel({
                         <span className="inline-flex items-center gap-1">
                           <span>{displayTitle}</span>
                           {link.kind === 'external' ? (
-                            <ArrowUpRight className="size-3.5 shrink-0 text-muted-foreground" />
+                            <ArrowUpRight
+                              className="size-3.5 shrink-0 text-muted-foreground"
+                              aria-hidden="true"
+                            />
                           ) : null}
                         </span>
                       </div>

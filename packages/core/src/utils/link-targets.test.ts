@@ -45,6 +45,10 @@ describe('classifyMarkdownHref', () => {
 });
 
 describe('classifyWikiLinkTarget', () => {
+  test('returns null for empty targets', () => {
+    expect(classifyWikiLinkTarget('', 'anchor')).toBeNull();
+  });
+
   test('classifies document wiki targets', () => {
     expect(classifyWikiLinkTarget('guides/install', 'intro')).toEqual({
       kind: 'doc',

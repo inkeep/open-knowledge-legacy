@@ -27,7 +27,7 @@ import { cn } from '../../lib/utils';
 import { openInternalHashHrefInNewTab, shouldOpenInNewTab } from '../internal-link-helpers';
 import { LinkTooltipHint } from '../link-tooltip';
 import { ExternalLinkChip } from './ExternalLinkChip';
-import { useHeadings } from './useHeadings';
+import { useHeadings } from './use-headings';
 import { isResolvedWikiLinkTarget, wikiLinkSuggestedFilename } from './wiki-link-helpers';
 
 // ── Edit dialog ───────────────────────────────────────────────────────────────
@@ -344,10 +344,10 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
                   }}
                 >
                   {resolutionState === 'loading' && (
-                    <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                    <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
                   )}
-                  {resolved && <File className="size-3.5 shrink-0" />}
-                  {unresolved && <CircleAlert className="size-3.5 shrink-0" />}
+                  {resolved && <File className="size-3.5 shrink-0" aria-hidden="true" />}
+                  {unresolved && <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />}
                   {label}
                 </a>
 
@@ -371,7 +371,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
                     }}
                     onKeyDown={(e) => e.stopPropagation()}
                   >
-                    <Ellipsis className="size-3" />
+                    <Ellipsis className="size-3" aria-hidden="true" />
                   </button>
                 </DropdownMenuTrigger>
               </span>
@@ -396,7 +396,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
             }}
           >
             <DropdownMenuItem onSelect={() => setEditDialogOpen(true)}>
-              <Pencil />
+              <Pencil aria-hidden="true" />
               Edit link
             </DropdownMenuItem>
             <DropdownMenuSeparator />
@@ -404,7 +404,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
               className="text-red-600 focus:text-red-600 focus:bg-red-50"
               onSelect={deleteNode}
             >
-              <Trash2 />
+              <Trash2 aria-hidden="true" />
               Remove
             </DropdownMenuItem>
           </DropdownMenuContent>

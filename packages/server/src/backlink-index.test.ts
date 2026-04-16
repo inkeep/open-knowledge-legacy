@@ -449,6 +449,36 @@ describe('BacklinkIndex', () => {
       rmSync(projectDir, { recursive: true, force: true });
     }
   });
+
+  test('getLinkGraphNeighborhood includes external neighbors with labels', () => {
+    const projectDir = mkdtempSync(join(tmpdir(), 'ok-linkgraph-neighborhood-external-'));
+    const contentDir = join(projectDir, 'content');
+    mkdirSync(contentDir, { recursive: true });
+    try {
+      const index = new BacklinkIndex({ projectDir, contentDir });
+      index.updateDocumentFromMarkdown('alpha', 'See [Docs](https://example.com/docs).');
+      index.updateDocumentFromMarkdown('beta', '[[alpha]]');
+
+      const neighborhood = index.getLinkGraphNeighborhood('alpha', 1);
+      expect(neighborhood.nodes).toEqual([
+        { kind: 'doc', id: 'alpha', docName: 'alpha', anchor: null },
+        { kind: 'doc', id: 'beta', docName: 'beta', anchor: null },
+        {
+          kind: 'external',
+          id: 'external:https://example.com/docs',
+          url: 'https://example.com/docs',
+          label: 'Docs',
+        },
+      ]);
+      expect(neighborhood.links).toContainEqual({
+        source: 'alpha',
+        target: 'external:https://example.com/docs',
+      });
+      expect(neighborhood.links).toContainEqual({ source: 'beta', target: 'alpha' });
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ── resolveMarkdownHref ────────────────────────────────────────────────────────
@@ -534,6 +564,13 @@ describe('extractMarkdownLinksFromMarkdown', () => {
     const md = 'See [overview](./overview.md "Project overview") for details.';
     expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
       { target: 'overview', anchor: null, snippet: 'See overview for details.' },
+    ]);
+  });
+
+  test('extracts markdown link anchors', () => {
+    const md = 'See [install](./guide.md#install) for details.';
+    expect(extractMarkdownLinksFromMarkdown(md, 'notes')).toEqual([
+      { target: 'guide', anchor: 'install', snippet: 'See install for details.' },
     ]);
   });
 

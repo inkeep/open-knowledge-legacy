@@ -182,7 +182,7 @@ describe('graph endpoints', () => {
         (await callRoute(contentDir, '/api/link-graph', fileIndex, backlinkIndex)).body,
       ) as {
         ok: boolean;
-        nodes: Array<{ id: string; label: string; anchor?: string | null }>;
+        nodes: Array<{ id: string; label: string; anchor: string | null }>;
         links: Array<{ source: string; target: string }>;
       };
 

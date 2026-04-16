@@ -3,7 +3,7 @@ export interface DocGraphNode {
   id: string;
   label: string;
   docName: string;
-  anchor?: string | null;
+  anchor: string | null;
 }
 
 export interface ExternalGraphNode {

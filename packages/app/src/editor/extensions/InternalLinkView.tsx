@@ -35,7 +35,7 @@ import {
 } from '../internal-link-helpers';
 import { LinkTooltipHint } from '../link-tooltip';
 import { ExternalLinkChip } from './ExternalLinkChip';
-import { useHeadings } from './useHeadings';
+import { useHeadings } from './use-headings';
 import { isResolvedWikiLinkTarget } from './wiki-link-helpers';
 
 type MarkdownLinkEditMode = 'doc' | 'anchor' | 'external';
@@ -77,6 +77,7 @@ function EditMarkdownLinkDialog({
   const [editMode, setEditMode] = useState<MarkdownLinkEditMode>('doc');
   const targetId = useId();
   const anchorId = useId();
+  const headingListId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -100,6 +101,7 @@ function EditMarkdownLinkDialog({
   const docTargetMode = editMode === 'doc';
   const resolvedDocTarget = docTargetMode && isResolvedWikiLinkTarget(docTarget, pages);
   const headings = useHeadings(docTarget, resolvedDocTarget && open);
+  const showHeadings = !!headings?.length;
 
   function handleSave() {
     const trimmedTarget = editTarget.trim();
@@ -168,14 +170,24 @@ function EditMarkdownLinkDialog({
                   value={editAnchor}
                   onChange={(e) => setEditAnchor(e.target.value)}
                   placeholder="heading-slug"
+                  aria-controls={showHeadings ? headingListId : undefined}
+                  aria-expanded={showHeadings ? true : undefined}
+                  aria-haspopup={showHeadings ? 'listbox' : undefined}
                   onKeyDown={handleKeyDown}
                 />
-                {headings?.length ? (
-                  <div className="mt-1.5 max-h-36 overflow-y-auto subtle-scrollbar rounded-md border border-border bg-muted/30">
+                {showHeadings ? (
+                  <div
+                    role="listbox"
+                    id={headingListId}
+                    aria-label="Heading anchors"
+                    className="mt-1.5 max-h-36 overflow-y-auto subtle-scrollbar rounded-md border border-border bg-muted/30"
+                  >
                     {headings.map((heading) => (
                       <button
                         key={`${heading.slug}-${heading.level}-${heading.text}`}
                         type="button"
+                        role="option"
+                        aria-selected={editAnchor === heading.slug}
                         className={cn(
                           'flex w-full items-center gap-2 px-2 py-1 text-left text-sm hover:bg-accent hover:text-accent-foreground',
                           editAnchor === heading.slug && 'bg-accent text-accent-foreground',
@@ -264,9 +276,10 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
             href={href}
             className="inline-flex items-center gap-1"
             onClick={(event) => {
-              if (!target) return;
               event.preventDefault();
-              navigateToMarkdownTarget(target);
+              if (target) {
+                navigateToMarkdownTarget(target);
+              }
             }}
           >
             <MarkViewContent />
@@ -284,6 +297,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
   const isUnresolved = !loading && !pages.has(docTarget.docName);
 
   const hashHref = toInternalHashHref(docTarget);
+  const createDialogSeed = docNameToDialogSeed(docTarget.docName);
 
   function handlePrimaryClick(e: React.MouseEvent) {
     e.preventDefault();
@@ -336,9 +350,11 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={handlePrimaryClick}
               >
-                {loading && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
-                {isResolved && <File className="size-3.5 shrink-0" />}
-                {isUnresolved && <CircleAlert className="size-3.5 shrink-0" />}
+                {loading && (
+                  <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
+                )}
+                {isResolved && <File className="size-3.5 shrink-0" aria-hidden="true" />}
+                {isUnresolved && <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />}
                 <MarkViewContent />
               </a>
 
@@ -358,7 +374,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
                   }}
                   onKeyDown={(e) => e.stopPropagation()}
                 >
-                  <Ellipsis className="size-3" />
+                  <Ellipsis className="size-3" aria-hidden="true" />
                 </button>
               </DropdownMenuTrigger>
             </span>
@@ -377,7 +393,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
           }}
         >
           <DropdownMenuItem onSelect={() => setEditDialogOpen(true)}>
-            <Pencil />
+            <Pencil aria-hidden="true" />
             Edit link
           </DropdownMenuItem>
           <DropdownMenuSeparator />
@@ -385,7 +401,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
             className="text-red-600 focus:text-red-600 focus:bg-red-50"
             onSelect={handleRemove}
           >
-            <Trash2 />
+            <Trash2 aria-hidden="true" />
             Remove
           </DropdownMenuItem>
         </DropdownMenuContent>
@@ -395,8 +411,8 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         kind="file"
-        initialDir={docNameToDialogSeed(docTarget.docName).initialDir}
-        suggestedName={docNameToDialogSeed(docTarget.docName).suggestedName}
+        initialDir={createDialogSeed.initialDir}
+        suggestedName={createDialogSeed.suggestedName}
         description={
           <>
             Create a page for{' '}
