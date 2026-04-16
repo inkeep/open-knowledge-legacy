@@ -999,15 +999,9 @@ button:active:not(:disabled) {
   position: relative;
   border-radius: 0.375rem;
 }
-/* Prevent drag on child components nested inside typed-children containers.
-   TipTap's NodeViewWrapper overrides JS-level onDragStart, so we use CSS
-   -webkit-user-drag which can't be overridden by JS event handlers.
-   Also prevents native <a> drag inside Card components. */
-.ProseMirror .jsx-component-wrapper .component-children .jsx-component-wrapper,
-.ProseMirror .jsx-component-wrapper .component-children .jsx-component-wrapper * {
-  -webkit-user-drag: none;
-  user-drag: none;
-}
+/* Child component drag prevention is handled via onDragStart={preventDefault}
+   on the NodeViewWrapper in JsxComponentView.tsx. CSS-level -webkit-user-drag
+   was removed due to Biome lint incompatibility. */
 /* Invisible hover zone above the component — allows reaching the parent's
    chrome bar even when children fill the entire block. Does NOT affect
    layout (position:absolute + negative top, zero height in flow). */

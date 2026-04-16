@@ -290,30 +290,24 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       </div>
 
       {/* Live React component — renders exactly like production.
-          contentEditable logic:
-          - Self-closing / no-children → false (native behaviors work)
-          - Typed-children container with VALID content → false (constrained editing)
-          - Typed-children container with INVALID content → true (user can fix)
-          - Freeform-children → true (always editable) */}
+          Self-closing / no-children components get contentEditable={false} so
+          native behaviors work (links navigate, etc.). ALL other components
+          stay contentEditable (PM manages the content hole).
+          NOTE: typed-children containers do NOT use contentEditable={false} —
+          PM's hasFocus() walks the ancestor chain and returns false if ANY
+          ancestor has contentEditable='false', which breaks selection tracking,
+          BubbleMenu, and all PM features for descendants. Instead, a
+          filterTransaction plugin (TypedChildrenGuard) rejects unwanted
+          insertions at the PM transaction level. */}
       <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
         <Comp {...primitiveProps}>
           <NodeViewContent
             className={`component-children ${
               !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
             }`}
-            contentEditable={(() => {
-              // Self-closing or no children — never editable
-              if (!descriptor.hasChildren || descriptor.isSelfClosing) return false;
-              // Freeform children — always editable
-              if (!descriptor.emptyChildName) return true;
-              // Typed-children container — editable only if invalid content exists
-              // (so user can fix it), locked when content is valid
-              let hasInvalidChildren = false;
-              node.forEach((child) => {
-                if (child.type.name !== 'jsxComponent') hasInvalidChildren = true;
-              });
-              return hasInvalidChildren;
-            })()}
+            {...(!descriptor.hasChildren || descriptor.isSelfClosing
+              ? { contentEditable: false }
+              : {})}
           />
         </Comp>
       </ComponentErrorBoundary>

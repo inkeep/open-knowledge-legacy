@@ -91,7 +91,14 @@ describe('builtInComponents manifest', () => {
   test('container components have emptyChildName', () => {
     const containers = builtInComponents.filter((m) => m.emptyChildName);
     const names = containers.map((c) => `${c.name}→${c.emptyChildName}`).sort();
-    expect(names).toEqual(['Cards→Card', 'Files→File', 'Steps→Step', 'Tabs→Tab']);
+    expect(names).toEqual([
+      'Accordions→Accordion',
+      'Cards→Card',
+      'Files→File',
+      'Folder→File',
+      'Steps→Step',
+      'Tabs→Tab',
+    ]);
   });
 
   test('Callout has correct enum values for type prop', () => {
