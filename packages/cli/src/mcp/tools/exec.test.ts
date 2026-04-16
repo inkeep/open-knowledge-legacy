@@ -213,6 +213,61 @@ describe('exec — folder-rule flow-through (US-005 / QA-001 / QA-002)', () => {
     expect(files[0].tags).toEqual(['spec', 'wip']); // concat, file last, dedup
   });
 
+  test('ls Referenced files text block renders folder-rule title/description/tags on directory rows', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '# Foo\n');
+
+    const configWithRules: Config = ConfigSchema.parse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: {
+            title: 'Specifications',
+            description: 'Product + technical specs',
+            tags: ['spec', 'wip'],
+          },
+        },
+      ],
+    });
+
+    const result = (await buildExecResult(
+      { command: 'ls .' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: configWithRules },
+    )) as ExecResult;
+
+    const text = result.content[0].text;
+    // Leader should use the folder title, with path in parens
+    expect(text).toContain('**Specifications** (specs/)');
+    // Description rendered
+    expect(text).toContain('Product + technical specs');
+    // Tags rendered in the same format as file entries
+    expect(text).toContain('tags: spec, wip');
+  });
+
+  test('ls Referenced files text block falls back to path label when no folder rule matches', async () => {
+    const project = await bootstrap();
+    const reports = resolve(project, 'reports');
+    mkdirSync(reports, { recursive: true });
+    writeFileSync(resolve(reports, 'report.md'), '# Report\n');
+
+    // Rule exists but does not match the `reports/` folder.
+    const configWithRules: Config = ConfigSchema.parse({
+      folders: [{ match: 'specs/**', frontmatter: { title: 'Specs' } }],
+    });
+
+    const result = (await buildExecResult(
+      { command: 'ls .' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: configWithRules },
+    )) as ExecResult;
+
+    const text = result.content[0].text;
+    // No folder-rule title applied → falls back to path-label format
+    expect(text).toContain('**reports/** (directory)');
+    expect(text).not.toContain('**Specs** (reports/)');
+  });
+
   test('empty folders config behaves identically to no folders (backwards compat QA-006)', async () => {
     const project = await bootstrap();
     const specs = resolve(project, 'specs');

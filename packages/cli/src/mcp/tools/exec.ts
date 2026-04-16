@@ -224,7 +224,13 @@ function isDirectoryMeta(e: EnrichedEntry): e is DirectoryMeta {
 }
 
 function formatDirectoryEntry(d: DirectoryMeta): string {
-  const parts: string[] = [`**${d.path}/** (directory)`];
+  // When a `folders:` rule supplied a title, lead with it like file entries do;
+  // otherwise fall back to the path label. Either way show the path in parens
+  // so agents can always resolve the on-disk location.
+  const leader = d.title ? `**${d.title}** (${d.path}/)` : `**${d.path}/** (directory)`;
+  const parts: string[] = [leader];
+  if (d.description) parts.push(d.description);
+  if (d.tags && d.tags.length > 0) parts.push(`tags: ${d.tags.join(', ')}`);
   const counts: string[] = [];
   counts.push(`${d.recursiveMdCount} md file${d.recursiveMdCount === 1 ? '' : 's'}`);
   if (d.childDirCount > 0) {
