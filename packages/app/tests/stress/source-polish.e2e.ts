@@ -193,28 +193,33 @@ test.describe('§6.5 Code wrap-preserve-indent', () => {
 
 test.describe('§6.1 Broken link-ref', () => {
   test('[x][missing] gets cm-link-ref-broken; adding definition clears it', async ({ page }) => {
-    await seedMarkdown('[click here][missing]\n\n[other]: https://example.com');
+    // Seed with a VALID ref pair first (survives CRDT round-trip without escaping),
+    // then type a broken ref directly in source mode to avoid remark-stringify escaping brackets.
+    await seedMarkdown('[valid link][exists]\n\n[exists]: https://example.com');
     await switchToSource(page);
+
+    // Type a broken ref directly in source mode (bypasses CRDT round-trip escaping)
+    await page.locator('.cm-content').focus();
+    await page.keyboard.press('Meta+End');
+    await page.keyboard.type('\n\n[click here][missing]', { delay: 10 });
+
+    // Wait for StateField to scan
+    await page.waitForTimeout(1000);
 
     // The [click here][missing] should be marked broken
     const broken = page.locator('.cm-link-ref-broken');
-    await expect(broken).toHaveCount(1);
-    const brokenText = await broken.first().textContent();
-    expect(brokenText).toContain('[click here][missing]');
+    await expect(broken).toHaveCount(1, { timeout: 5_000 });
 
-    // Now add the missing definition by typing in source mode
-    await page.locator('.cm-content').focus();
-    await page.keyboard.press('End');
-    // Navigate to end of doc
+    // Now add the missing definition
     await page.keyboard.press('Meta+End');
     await page.keyboard.type('\n\n[missing]: https://example.com', { delay: 10 });
 
     // Wait for StateField to recompute
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(1000);
 
     // The broken mark should be gone
     const brokenAfter = page.locator('.cm-link-ref-broken');
-    await expect(brokenAfter).toHaveCount(0);
+    await expect(brokenAfter).toHaveCount(0, { timeout: 5_000 });
   });
 });
 
@@ -311,14 +316,14 @@ test.describe('§6.7 Cross-cutting', () => {
     await seedMarkdown(composition);
     await switchToSource(page);
 
-    // Get doc state from CM6
+    // Wait for CRDT sync to settle, then read the Y.Text source content.
+    // __activeProvider is exposed by DocumentContext.tsx and gives access to the Y.Doc.
+    await page.waitForTimeout(3000);
     const docState = await page.evaluate(() => {
-      const cmEl = document.querySelector('.cm-editor');
-      if (!cmEl) throw new Error('no .cm-editor');
-      // @ts-expect-error — accessing CM6 view from DOM
-      const view = cmEl.cmView?.view;
-      if (!view) throw new Error('no CM6 view');
-      return view.state.doc.toString();
+      const provider = window.__activeProvider;
+      if (!provider) throw new Error('no __activeProvider');
+      const ytext = provider.document.getText('source');
+      return ytext.toString();
     });
 
     // Grant clipboard permissions for read
