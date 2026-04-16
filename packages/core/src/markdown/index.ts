@@ -183,6 +183,21 @@ export class MarkdownManager {
   }
 }
 
+/**
+ * True when an mdast node is a `paragraph` with no rendered text content —
+ * either no children at all, or only `text` children with empty `value`.
+ *
+ * Used by the `listItem` PM→mdast handler to strip a leading empty paragraph
+ * that PM's `nodeType.createAndFill` synthesized to satisfy `paragraph block*`
+ * when the source mdast had a non-paragraph first child. See R6d / US-011.
+ */
+function isEmptyMdastParagraph(node: MdastNodes): boolean {
+  if (node.type !== 'paragraph') return false;
+  const children = node.children ?? [];
+  if (children.length === 0) return true;
+  return children.every((c) => c.type === 'text' && (c as Text).value === '');
+}
+
 // ──────────────────────────── mdast → PM handlers ────────────────────────────
 //
 // Tier A passthrough + basic Tier B (enough for plain markdown).
@@ -664,10 +679,35 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (n.listItem) {
-    nodeHandlers.listItem = fromPmNode('listItem', (pmNode: PmNode) => ({
-      checked: pmNode.attrs.checked ?? null,
-      spread: pmNode.attrs.spread ?? false,
-    }));
+    // Custom listItem handler: strip a leading empty paragraph that PM's
+    // `createAndFill` synthesized to satisfy the schema's `paragraph block*`
+    // content expression. When the source mdast has a non-paragraph first
+    // child (e.g. `code`, nested `list`, `blockquote`), `toPmNode` calls
+    // `nodeType.createAndFill(attrs, children)` which prepends an empty
+    // paragraph so the PM document validates. On the way back to mdast,
+    // that synthetic paragraph would render as `""` between the marker
+    // and the first real block, and the loose-list separator (`\n\n`)
+    // around it produces "1. \n\n   ```..." — an empty marker line followed
+    // by a blank line, which CommonMark refuses to interpret as list
+    // continuation, so the first real block escapes the listItem on
+    // re-parse (Lists CommonMark example 277 — formerly Lists 25/26).
+    //
+    // Strip when: (1) listItem has more than one child AND (2) the first
+    // child is an empty paragraph (no children OR only empty text nodes).
+    // Don't strip when the listItem is genuinely empty (single empty
+    // paragraph child), because that represents a deliberately empty list
+    // item from input like "1.\n".
+    nodeHandlers.listItem = (pmNode: PmNode, _parent, state) => {
+      const children = state.all(pmNode);
+      const stripped =
+        children.length > 1 && isEmptyMdastParagraph(children[0]) ? children.slice(1) : children;
+      return {
+        type: 'listItem' as const,
+        checked: pmNode.attrs.checked ?? null,
+        spread: pmNode.attrs.spread ?? false,
+        children: stripped,
+      } as ListItem;
+    };
   }
 
   // Table

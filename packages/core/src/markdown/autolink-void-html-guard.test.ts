@@ -209,7 +209,7 @@ describe('R6a: safeText idempotency for §2.4 ambiguous chars', () => {
     });
 
     test(`round-trip stable — escaped "\\${c}"`, () => {
-      const r1 = roundTrip('\\' + c);
+      const r1 = roundTrip(`\\${c}`);
       const r2 = roundTrip(r1);
       expect(r2).toBe(r1);
     });
