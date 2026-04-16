@@ -96,6 +96,17 @@ export {
   safeContentPath,
 } from './persistence.ts';
 export {
+  acquireProcessLock,
+  type LockName,
+  lockFilePath,
+  ProcessLockCollisionError,
+  type ProcessLockHandle,
+  type ProcessLockMetadata,
+  readProcessLock,
+  releaseProcessLock,
+  updateProcessLockPort,
+} from './process-lock.ts';
+export {
   type BlockConflict,
   CONFLICT_MARKER_RE,
   containsConflictMarkers,
