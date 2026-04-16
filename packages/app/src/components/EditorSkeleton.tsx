@@ -1,0 +1,28 @@
+import { Skeleton } from '@/components/ui/skeleton';
+
+/**
+ * Cold-load editor skeleton used as the Suspense fallback in the hybrid
+ * Activity + Suspense render tree. Mirrors the editor content column grid so
+ * the layout does not jump when real content streams in.
+ *
+ * Per spec §9 / §D5 / §F4 / §F13: this only renders on cold load when there is
+ * no prior document content to preserve (warm nav keeps the previous Activity
+ * entry visible during the transition instead of flashing this skeleton).
+ */
+export default function EditorSkeleton() {
+  return (
+    // Reuse the tiptap-editor grid so skeleton lines sit in the same content column
+    <div
+      className="tiptap-editor pt-10"
+      role="status"
+      aria-busy="true"
+      aria-label="Loading document"
+    >
+      <div className="space-y-3">
+        <Skeleton className="h-9 w-2/5 mt-6 mb-5" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-3/4" />
+      </div>
+    </div>
+  );
+}
