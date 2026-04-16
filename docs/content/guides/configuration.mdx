@@ -2,7 +2,6 @@
 title: Configuration
 description: Config schema, YAML hierarchy, environment variables, and CLI flag overrides.
 ---
-
 Open Knowledge uses hierarchical YAML configuration stored in `.open-knowledge/config.yml` files. Both config files are optional -- sensible defaults cover everything.
 
 ## Config hierarchy
@@ -21,15 +20,18 @@ Each layer overrides the previous, from left to right. The merge is a deep merge
 
 ## Schema reference
 
-| Field | Type | Default | Description |
-|-------|------|---------|-------------|
-| `content.dir` | `string` | `"."` | Content directory relative to project root |
-| `content.include` | `string[]` | `["**/*.md"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern. |
-| `content.exclude` | `string[]` | `[]` | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore) |
-| `server.port` | `number` | `3000` | HTTP/WebSocket server port |
-| `server.host` | `string` | `"localhost"` | Server bind address |
-| `persistence.debounceMs` | `number` | `2000` | Quiet period before CRDT changes flush to disk (ms) |
-| `persistence.maxDebounceMs` | `number` | `10000` | Maximum wait before forced flush to disk (ms) |
+| Field                       | Type       | Default                   | Description                                                                                                                                                                                          |
+| --------------------------- | ---------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `content.dir`               | `string`   | `"."`                     | Content directory relative to project root                                                                                                                                                           |
+| `content.include`           | `string[]` | `["**/*.md", "**/*.mdx"]` | Glob patterns for files to include in the document system (relative to `content.dir`). Must contain at least one pattern.                                                                            |
+| `content.exclude`           | `string[]` | `[]`                      | Glob patterns to explicitly exclude, relative to `content.dir` (combined with .gitignore)                                                                                                            |
+| `server.port`               | `number`   | `0`                       | Collab server port. `0` asks the kernel for a free port; the resolved value is written to `server.lock` for MCP discovery. Set an explicit value (e.g. `3000`) to bind a well-known port.            |
+| `server.host`               | `string`   | `"localhost"`             | Server bind address                                                                                                                                                                                  |
+| `server.openOnAgentEdit`    | `boolean`  | `false`                   | When `true`, `ok start` opens the `ok ui` URL in the default browser on the first agent write                                                                                                        |
+| `persistence.debounceMs`    | `number`   | `2000`                    | Quiet period before CRDT changes flush to disk (ms)                                                                                                                                                  |
+| `persistence.maxDebounceMs` | `number`   | `10000`                   | Maximum wait before forced flush to disk (ms)                                                                                                                                                        |
+| `mcp.autoStart`             | `boolean`  | `true`                    | When `true`, `ok mcp` detach-spawns `ok start` as a sibling process if no live `server.lock` is found. Set `false` to force disk-only mode. The env var `OK_MCP_AUTOSTART=0` wins over this setting. |
+| `preview.baseUrl`           | `string?`  | (unset)                   | Override for the `previewUrl` emitted by MCP tools. Takes effect when `ui.lock` is absent; the env var `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` wins over this setting.                                     |
 
 ## Example configs
 
@@ -57,14 +59,14 @@ content:
 
 ## Environment variables
 
-Two environment variables are supported:
+| Variable                          | Overrides                                                                                                                                                               |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                            | `server.port` (for `ok start`); also consumed by `ok ui` as its bind port                                                                                               |
+| `HOST`                            | `server.host`                                                                                                                                                           |
+| `OK_MCP_AUTOSTART`                | Set to `0` to disable `ok mcp`'s auto-spawn of `ok start`. Overrides `mcp.autoStart` in config.                                                                         |
+| `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` | Overrides the `previewUrl` base emitted by every MCP tool. Wins over `ui.lock` discovery and `preview.baseUrl` config. Use for tunnels, CI, or cloud-deployed previews. |
 
-| Variable | Overrides |
-|----------|-----------|
-| `PORT` | `server.port` |
-| `HOST` | `server.host` |
-
-These take precedence over both YAML config files but are overridden by CLI flags.
+Precedence: **CLI flags > environment variables > workspace config > user config > Zod defaults**. A pre-existing live `server.lock` always takes precedence over `OK_MCP_AUTOSTART=0` — the env var only suppresses the spawn path, it doesn't prevent MCP from connecting to a server the user started manually.
 
 ## CLI flags
 
