@@ -29,5 +29,39 @@ export interface GraphData {
 }
 
 export function getGraphNodeTooltipLabel(node: GraphNode): string {
-  return node.kind === 'external' ? node.url : (node.label ?? node.id);
+  if (node.kind === 'external') return node.url;
+
+  const title = node.label ?? node.id;
+  const hasMetadata = node.cluster || node.category || (node.tags && node.tags.length > 0);
+  if (!hasMetadata) return title;
+
+  const lines: string[] = [
+    `<div style="font-weight:600;font-size:13px;margin-bottom:4px">${escapeHtml(title)}</div>`,
+  ];
+
+  if (node.cluster) {
+    lines.push(
+      `<div style="font-size:11px;color:#9ca3af"><span style="opacity:0.7">cluster:</span> ${escapeHtml(node.cluster)}</div>`,
+    );
+  }
+  if (node.category) {
+    lines.push(
+      `<div style="font-size:11px;color:#9ca3af"><span style="opacity:0.7">category:</span> ${escapeHtml(node.category)}</div>`,
+    );
+  }
+  if (node.tags && node.tags.length > 0) {
+    lines.push(
+      `<div style="font-size:11px;color:#9ca3af"><span style="opacity:0.7">tags:</span> ${node.tags.map(escapeHtml).join(', ')}</div>`,
+    );
+  }
+
+  return lines.join('');
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
