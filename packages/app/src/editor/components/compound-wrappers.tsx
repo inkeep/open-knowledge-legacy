@@ -21,7 +21,7 @@
  * imports (full D12 fidelity) — they have no compound context dependency.
  */
 
-import { type ReactNode, useEffect, useRef } from 'react';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 
 // ─── EditorTabs ───────────────────────────────────────────────────────────────
 // Parent wrapper for <Tabs> blocks. Manages active tab state and renders the
@@ -39,14 +39,46 @@ export function EditorTabs({
   defaultIndex?: number;
   children?: ReactNode;
 }) {
-  // Resolve initial items from props or derive from children
-  const tabItems = items ?? [];
-  const defaultValue = escapeValue(tabItems[defaultIndex] ?? tabItems[0] ?? '');
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // Activate the default tab panel on mount — child Tab NodeViews render in
-  // separate portals with data-state="inactive" default. This effect walks
-  // the DOM to set the matching panel active after children mount.
+  // Derive tab items reactively from DOM children — NOT from a one-time
+  // props.items snapshot. This ensures the trigger bar updates when Tabs
+  // are added/removed via "Add Tab" or slash command.
+  const [derivedItems, setDerivedItems] = useState<string[]>(items ?? []);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const deriveFromDOM = () => {
+      const panels = root.querySelectorAll('.editor-tab-content');
+      if (panels.length === 0) return; // children not mounted yet
+      const values = Array.from(panels).map(
+        (p, i) => (p as HTMLElement).getAttribute('data-value') || `tab-${i}`,
+      );
+      setDerivedItems((prev) => {
+        // Only update if the values actually changed (avoid infinite re-render)
+        if (prev.length === values.length && prev.every((v, i) => v === values[i])) return prev;
+        return values;
+      });
+    };
+
+    // Derive after a short delay (children mount asynchronously via TipTap portals)
+    const timeout = setTimeout(deriveFromDOM, 50);
+    // Re-derive on DOM mutations (child add/remove via createChildNode)
+    const observer = new MutationObserver(deriveFromDOM);
+    observer.observe(root, { childList: true, subtree: true });
+
+    return () => {
+      clearTimeout(timeout);
+      observer.disconnect();
+    };
+  }, []);
+
+  const tabItems = derivedItems.length > 0 ? derivedItems : (items ?? []);
+  const defaultValue = escapeValue(tabItems[defaultIndex] ?? tabItems[0] ?? '');
+
+  // Activate the default tab panel on mount
   useEffect(() => {
     const root = rootRef.current;
     if (!root || !defaultValue) return;

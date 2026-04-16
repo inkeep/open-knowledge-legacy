@@ -987,20 +987,88 @@ button:active:not(:disabled) {
   margin-bottom: 0;
 }
 
-/* 7. JSX component block hover/selection outlines (FR-20) */
+/* 7. Component block chrome — all overlays, zero permanent layout shift.
+ * Principle: components render exactly like production. Editor affordances
+ * are hover-revealed overlays (badge+gear, add-child pill, subtle hover tint). */
+
+.ProseMirror .jsx-component-wrapper {
+  position: relative;
+  border-radius: 0.375rem;
+  transition: box-shadow 0.15s;
+}
+
+/* Hover tint — only the DIRECTLY hovered component, not ancestors.
+ * The :has() check prevents parent wrappers from highlighting when a nested
+ * child component is hovered (eliminates the "Russian nesting doll" effect
+ * on Files/Folder/File). */
 .ProseMirror
-.jsx-component-wrapper:hover:not(.is-selected):not(.jsx-component-wrapper--unregistered) {
-  outline: 1px dashed var(--border);
-  outline-offset: 2px;
+.jsx-component-wrapper:hover:not(:has(.component-children .jsx-component-wrapper:hover)) {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent);
 }
+
+/* Selection ring — subtle, only on NodeSelection (keyboard nav) */
 .ProseMirror .jsx-component-wrapper.is-selected {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--ring);
 }
 
-/* 8. Container child insertion buttons (FR-16a) — derived from descriptor.emptyChildName */
+/* Hover-revealed chrome bar (component name + gear icon) — top-right overlay */
+.jsx-component-chrome {
+  position: absolute;
+  top: -22px;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 0.25rem;
+  background: var(--popover);
+  border: 1px solid var(--border);
+  font-size: 0.6875rem;
+  font-family: var(--font-mono);
+  color: var(--muted-foreground);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 10;
+  white-space: nowrap;
+}
+.jsx-component-wrapper:hover > .jsx-component-chrome {
+  opacity: 1;
+  pointer-events: auto;
+}
 
-/* Empty container: prominent call-to-action */
+/* 8. Container child insertion — overlay pill + empty placeholder */
+
+/* "Add child" pill — centered at bottom edge of container, absolute overlay */
+.jsx-add-child-pill {
+  position: absolute;
+  bottom: -10px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.125rem 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--popover);
+  color: var(--muted-foreground);
+  font-size: 0.6875rem;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 10;
+  white-space: nowrap;
+}
+.jsx-component-wrapper:hover > .jsx-add-child-pill {
+  opacity: 1;
+  pointer-events: auto;
+}
+.jsx-add-child-pill:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  border-color: var(--accent);
+}
+
+/* Empty container placeholder — in-flow (it IS the content for empty containers) */
 .jsx-empty-child-placeholder {
   display: flex;
   align-items: center;
@@ -1020,34 +1088,6 @@ button:active:not(:disabled) {
 }
 .jsx-empty-child-placeholder:hover {
   border-color: var(--ring);
-  color: var(--accent-foreground);
-}
-
-/* Non-empty container: subtle "+" that appears on container hover */
-.jsx-add-child-button {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  width: 100%;
-  padding: 0.375rem 0.5rem;
-  margin-top: 0.25rem;
-  border: none;
-  border-radius: 0.25rem;
-  background: transparent;
-  color: var(--muted-foreground);
-  font-size: 0.75rem;
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity 0.15s,
-    background-color 0.15s;
-}
-.jsx-component-wrapper:hover .jsx-add-child-button,
-.jsx-add-child-button:focus-visible {
-  opacity: 1;
-}
-.jsx-add-child-button:hover {
-  background: var(--accent);
   color: var(--accent-foreground);
 }
 
