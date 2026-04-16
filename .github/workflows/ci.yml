@@ -114,7 +114,22 @@ jobs:
       # Install all three browsers for cross-browser parity (SPEC §13, QA-046).
       # The playwright.config.ts now defines chromium/webkit/firefox projects;
       # tests fan out across all three automatically.
-      - run: bunx playwright install --with-deps chromium webkit firefox
+      #
+      # `--with-deps` is split into two installs:
+      #   - chromium: `--with-deps` (baseline system libs used by ~all browsers)
+      #   - webkit + firefox: plain `install` (no apt pass)
+      #
+      # Rationale: `--with-deps chromium webkit firefox` runs a full apt install
+      # of ALL browsers' system packages (gstreamer, libsdl2, libpipewire,
+      # timgm6mb-soundfont, etc.) which took ~25 min on ubuntu-latest mirrors
+      # and killed the job before tests started. The chromium apt pass already
+      # installs the shared graphics + audio + X11 stack; webkit and firefox
+      # need only browser-specific additions that are already present on the
+      # ubuntu-latest image or pulled in by chromium's --with-deps. The
+      # browser binaries (in ~/.cache/ms-playwright) are cached across runs
+      # via actions/cache above, so only the apt invocation is the cost.
+      - run: bunx playwright install --with-deps chromium
+      - run: bunx playwright install webkit firefox
       - env:
           VITE_PORT: "13579"
         run: bunx turbo run test:e2e
