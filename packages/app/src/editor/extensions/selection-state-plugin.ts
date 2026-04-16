@@ -53,6 +53,24 @@ export interface BlockChainEntry {
   readonly pos: number;
 }
 
+/**
+ * INVARIANT: `selectedBlockId` and `ancestorChain` are always in agreement —
+ * either both express "no block selected" (`selectedBlockId === null` AND
+ * `ancestorChain.length === 0`) or both express "block selected"
+ * (`selectedBlockId !== null` AND `ancestorChain[ancestorChain.length - 1]
+ * .bridgeId === selectedBlockId`).
+ *
+ * This invariant is enforced by `deriveBlockSelection` being the SOLE
+ * constructor in this module. Consumers safely guard on either field; both
+ * resolve to the same selected/not-selected state.
+ *
+ * If a second constructor is ever added (e.g. multi-block range selection,
+ * imperative test-harness selection injection), refactor to a discriminated
+ * union (`{ kind: 'none' | 'selected' }`) so the type system enforces the
+ * invariant at the API boundary instead of relying on constructor discipline.
+ * Reviewed in PR #ref's Pass 1; declined as premature in this scope but worth
+ * the lift the moment a second constructor lands.
+ */
 export interface BlockSelection {
   /** bridgeId of the innermost selected jsxComponent, or null if no block selected. */
   readonly selectedBlockId: string | null;

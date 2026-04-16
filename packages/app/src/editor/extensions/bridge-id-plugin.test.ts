@@ -174,3 +174,45 @@ describe('BridgeIdPlugin.apply (doc-change branch)', () => {
     expect(getPluginState(after).posToId.size).toBe(0);
   });
 });
+
+describe('Production unreachability of selection-state-plugin pos-N fallback', () => {
+  // The `pos-${pos}` fallback in selection-state-plugin's `getWrapperBridgeId`
+  // is documented as unreachable in production because BridgeIdPlugin's `init`
+  // assigns b{N} IDs synchronously to every jsxComponent (see init tests above).
+  // This test enforces the unreachability claim — if a future change to
+  // BridgeIdPlugin breaks the init invariant (priority adjustment, async init,
+  // selective initialization), this test catches it before the fallback's
+  // halo-flicker / breadcrumb-key-churn regression silently re-activates.
+  //
+  // Imports `getWrapperBridgeId` from selection-state-plugin so the assertion
+  // is co-located with the actual production call site, not just the
+  // bridge-id-plugin's own posToId map.
+
+  test('every jsxComponent in a freshly-init state resolves to a b{N} ID via getWrapperBridgeId', async () => {
+    const { getWrapperBridgeId } = await import('./selection-state-plugin.ts');
+    const doc = schema.node('doc', null, [
+      jsx('Cards', [jsx('Card', [p('a')])]),
+      jsx('Callout', [p('b')]),
+      jsx('Card'),
+    ]);
+    const state = makeState(doc);
+    // Walk every jsxComponent; assert getWrapperBridgeId returns a b{N} ID,
+    // never the pos-N synthetic fallback.
+    state.doc.descendants((node, pos) => {
+      if (node.type.name !== 'jsxComponent') return;
+      expect(getWrapperBridgeId(state, pos)).toMatch(/^b\d+$/);
+    });
+  });
+
+  test('after a doc-change tx, every jsxComponent still resolves to a b{N} ID', async () => {
+    const { getWrapperBridgeId } = await import('./selection-state-plugin.ts');
+    const doc = schema.node('doc', null, [jsx('Card', [p('x')])]);
+    const initial = makeState(doc);
+    // Insert another component — exercises the doc-change branch.
+    const after = initial.apply(initial.tr.insert(initial.doc.content.size, jsx('Cards')));
+    after.doc.descendants((node, pos) => {
+      if (node.type.name !== 'jsxComponent') return;
+      expect(getWrapperBridgeId(after, pos)).toMatch(/^b\d+$/);
+    });
+  });
+});

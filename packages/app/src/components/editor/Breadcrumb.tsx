@@ -35,7 +35,6 @@
  */
 
 import type { Editor } from '@tiptap/core';
-import { TextSelection } from '@tiptap/pm/state';
 import { ChevronRight } from 'lucide-react';
 import { bridgeIdPluginKey } from '../../editor/extensions/bridge-id-plugin.ts';
 import {
@@ -76,15 +75,30 @@ export function Breadcrumb({ editor }: { editor: Editor | null }) {
 /**
  * Resolve an ancestor entry to a live PM position. Reads the bridge-id-plugin's
  * `posToId` map at click time so collaborative edits between render and click
- * don't target stale positions. Returns the captured `pos` as fallback.
+ * don't target stale positions.
+ *
+ * Return semantics:
+ *   - **number**: live position resolved (production happy path), OR the
+ *     captured `entry.pos` because bridge-id-plugin isn't registered (test
+ *     harness fallback only).
+ *   - **null**: bridge-id-plugin IS registered but the entry's `bridgeId` is
+ *     no longer in `posToId` — most plausibly a remote peer deleted the
+ *     ancestor between render and click. Callers no-op the click; firing
+ *     `setNodeSelection(entry.pos)` would target whatever node now occupies
+ *     that pos (the original stale-pos bug).
  */
-function resolveLivePos(editor: Editor, entry: BlockChainEntry): number {
+function resolveLivePos(editor: Editor, entry: BlockChainEntry): number | null {
   const posToId = bridgeIdPluginKey.getState(editor.state)?.posToId;
+  // No plugin → harness/test environment; the captured pos is the best we
+  // have, and tests don't shift positions between render and click.
   if (!posToId) return entry.pos;
   for (const [livePos, id] of posToId) {
     if (id === entry.bridgeId) return livePos;
   }
-  return entry.pos;
+  // Plugin registered but bridgeId gone — node was deleted. Returning
+  // entry.pos here would re-introduce the stale-pos bug under a strict
+  // subset of conditions (selecting whatever now occupies that offset).
+  return null;
 }
 
 function BreadcrumbContent({
@@ -104,19 +118,31 @@ function BreadcrumbContent({
   return (
     <>
       {/* "Document" anchor — clicking returns selection to the document body
-          (clears block selection). Stamps SELECTION_ORIGIN_META so the plugin
-          classifies the resulting selection as 'programmatic'. */}
+          (clears block selection). Stamps SELECTION_ORIGIN_META on the same
+          tx as the selection change, so the plugin's `computeSelectionApply`
+          reads 'programmatic' in the same apply pass that sees the new
+          selection. Dispatching the meta separately from the selection
+          would be two applies, and a future plugin inserting an
+          interleaving apply could consume the pending origin before the
+          selection change lands. */}
+      {/* TODO(i18n): "Document" is hard-coded English. See parallel TODO
+          on JsxComponentView's groupAriaLabel (same future migration). */}
       <button
         type="button"
         className="opacity-60 hover:opacity-100 hover:text-foreground transition-opacity outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
         onClick={() => {
-          // setTextSelection(0) lands the caret at the doc start, clearing
-          // any NodeSelection. .focus() returns keyboard focus to the editor.
-          const tr = editor.state.tr
-            .setSelection(TextSelection.create(editor.state.doc, 0))
-            .setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic');
-          editor.view.dispatch(tr);
-          editor.view.focus();
+          // Single tx: selection change + origin meta + focus via chain().
+          // `.command({tr})` runs before `.run()` finishes the tx, so setMeta
+          // lands on the same tx as setTextSelection.
+          editor
+            .chain()
+            .focus()
+            .setTextSelection(0)
+            .command(({ tr }) => {
+              tr.setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic');
+              return true;
+            })
+            .run();
         }}
       >
         Document
@@ -161,11 +187,24 @@ function BreadcrumbContent({
                   // between render and click can shift positions; the
                   // bridgeId is stable, the pos is not.
                   const livePos = resolveLivePos(editor, entry.entry);
-                  const tr = editor.state.tr.setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic');
-                  // Use the chain to dispatch the NodeSelection — gives us
-                  // the same focus + scroll behavior as before.
-                  editor.view.dispatch(tr);
-                  editor.chain().focus().setNodeSelection(livePos).run();
+                  // Plugin registered but ancestor disappeared (remote
+                  // delete between render and click) — no-op rather than
+                  // selecting whatever now occupies that pos.
+                  if (livePos === null) return;
+                  // Single tx: NodeSelection + origin meta land together
+                  // so `computeSelectionApply` sees 'programmatic' in the
+                  // same apply pass as the selection change. Two-tx pattern
+                  // (separate setMeta dispatch + chained selection) is
+                  // fragile under future plugin additions.
+                  editor
+                    .chain()
+                    .focus()
+                    .setNodeSelection(livePos)
+                    .command(({ tr }) => {
+                      tr.setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic');
+                      return true;
+                    })
+                    .run();
                 }}
               >
                 {label}
