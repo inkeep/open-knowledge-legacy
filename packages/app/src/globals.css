@@ -1005,10 +1005,10 @@ button:active:not(:disabled) {
 .ProseMirror .jsx-component-wrapper::before {
   content: "";
   position: absolute;
-  top: -24px;
+  top: -12px;
   left: 0;
   right: 0;
-  height: 24px;
+  height: 12px;
   z-index: 9;
 }
 
@@ -1022,7 +1022,7 @@ button:active:not(:disabled) {
 /* Hover-revealed chrome bar (component name + gear icon) — top-right overlay */
 .jsx-component-chrome {
   position: absolute;
-  top: -22px;
+  top: -11px;
   right: 0;
   display: flex;
   align-items: center;
