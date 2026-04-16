@@ -1,5 +1,6 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { createContext, type ReactNode, use, useEffect, useState } from 'react';
+import { createContext, type ReactNode, use, useEffect, useState, useTransition } from 'react';
+import { createOpenDocumentTransition } from './document-transition';
 import { ProviderPool, type SyncState } from './provider-pool';
 
 /**
@@ -26,6 +27,21 @@ export interface DocumentContextValue {
    */
   poolEntries: ReadonlyArray<PoolEntrySnapshot>;
   openDocument: (docName: string) => void;
+  /**
+   * Same as `openDocument` but wrapped in React's `startTransition`. Use this
+   * for navigation flows that should (a) preserve previously-revealed content
+   * during the suspending re-render (SPEC G2) and (b) surface progress via
+   * `isPending` (SPEC G3 — consumed by `NavigationPendingBar`). All
+   * user-initiated and agent-initiated navigation should flow through here;
+   * `openDocument` is retained for non-transition callers (e.g. test setup).
+   */
+  openDocumentTransition: (docName: string) => void;
+  /**
+   * True while a `openDocumentTransition`-initiated navigation is mid-flight,
+   * including the time spent suspending on `syncPromise` inside
+   * `DocumentBoundary`. Drives `NavigationPendingBar`'s 4-tier escalation.
+   */
+  isPending: boolean;
   closeDocument: (docName: string) => void;
   /**
    * Pinned doc — when non-null, agent-driven navigation (SystemDocSubscriber)
@@ -112,6 +128,12 @@ function takeSnapshot(p: ProviderPool): Snapshot {
 export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
+  // `useTransition` (rather than the module-level `startTransition`) is
+  // required so `isPending` is observable to context consumers. The
+  // transition stays "pending" through any suspending re-renders triggered
+  // by the wrapped state updates — exactly what keeps the
+  // `NavigationPendingBar` visible until `syncPromise` resolves.
+  const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     const p = getPool();
@@ -139,17 +161,22 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // React Compiler handles memoization — no manual useMemo/useCallback needed
+  const openDocument = (docName: string) => {
+    const p = getPool();
+    const entry = p.open(docName);
+    if (!entry) return; // reserved doc (e.g. __system__) — pool refused admission
+    p.setActive(docName);
+  };
+  const openDocumentTransition = createOpenDocumentTransition(openDocument, startTransition);
+
   const value: DocumentContextValue = {
     activeDocName: snapshot.activeDocName,
     activeProvider: snapshot.activeProvider,
     syncState: snapshot.syncState,
     poolEntries: snapshot.poolEntries,
-    openDocument: (docName: string) => {
-      const p = getPool();
-      const entry = p.open(docName);
-      if (!entry) return; // reserved doc (e.g. __system__) — pool refused admission
-      p.setActive(docName);
-    },
+    openDocument,
+    openDocumentTransition,
+    isPending,
     closeDocument: (docName: string) => {
       const p = getPool();
       p.close(docName);
@@ -174,4 +201,20 @@ export function useDocumentContext(): DocumentContextValue {
     throw new Error('useDocumentContext must be used within <DocumentProvider />');
   }
   return ctx;
+}
+
+/**
+ * Convenience hook for navigation consumers (`NavigationHandler`,
+ * `DocumentErrorBoundary` retry, sidebar click handlers) that only need the
+ * transition surface and don't care about the rest of the document context.
+ * Returns `{ openDocumentTransition, isPending }` — both come from the parent
+ * `DocumentProvider`'s single `useTransition()` call, so all consumers share
+ * the same pending state.
+ */
+export function useDocumentTransition(): {
+  openDocumentTransition: (docName: string) => void;
+  isPending: boolean;
+} {
+  const { openDocumentTransition, isPending } = useDocumentContext();
+  return { openDocumentTransition, isPending };
 }
