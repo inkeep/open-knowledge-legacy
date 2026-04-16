@@ -471,6 +471,121 @@ test.describe('docs-open — hybrid navigation UX', () => {
       })
       .toBe(0);
   });
+
+  test('F10: source editor path follows same architecture (warm swap preserves cm state)', async ({
+    page,
+  }) => {
+    await seedDocs([
+      { name: 'doc-a', markdown: DOC_A },
+      { name: 'doc-b', markdown: DOC_B },
+    ]);
+
+    await page.goto(BASE);
+    await openFromSidebar(page, 'doc-a.md');
+    await waitForActiveProviderSynced(page);
+    await page.waitForSelector('.ProseMirror');
+
+    // Switch to source mode (Markdown source toggle — same radio selector as
+    // ux-interactions.e2e.ts).
+    await page.getByRole('radio', { name: 'Markdown source' }).click();
+    await page.waitForSelector('.cm-content');
+    await expect(page.locator('.cm-content')).toContainText('Doc A Heading');
+
+    // Nav to doc B (cold mount inside source mode).
+    await openFromSidebar(page, 'doc-b.md');
+    await waitForActiveProviderSynced(page);
+    await expect(page.locator('.cm-content')).toContainText('Doc B Heading');
+
+    // Nav back to doc A — should be Activity-warm. The CodeMirror editor
+    // for doc A should still be in the DOM (just hidden) and its content
+    // should still show "Doc A Heading" when it becomes visible again.
+    await openFromSidebar(page, 'doc-a.md');
+    await waitForActiveProviderSynced(page);
+    await expect(page.locator('.cm-content')).toContainText('Doc A Heading');
+    // Heading "Doc A" specifically — ensures we're not accidentally showing B.
+    await expect(page.locator('.cm-content')).not.toContainText('Doc B Heading');
+  });
+
+  test('F13: a11y attributes present on pending-bar + error-boundary surfaces', async ({
+    page,
+  }) => {
+    await seedDocs([
+      { name: 'doc-a', markdown: DOC_A },
+      { name: 'doc-b', markdown: DOC_B },
+    ]);
+
+    await page.goto(BASE);
+    await openFromSidebar(page, 'doc-a.md');
+    await waitForActiveProviderSynced(page);
+    await page.waitForSelector('.ProseMirror');
+
+    // NavigationPendingBar — catch a13y attrs on a race: the bar renders
+    // transiently during transition; use a MutationObserver to snapshot its
+    // attributes if/when it appears.
+    await page.evaluate(() => {
+      window.__f13BarAttrs = null;
+      const observer = new MutationObserver(() => {
+        const bar = document.querySelector('[data-slot="navigation-pending-bar"]');
+        if (bar && !window.__f13BarAttrs) {
+          window.__f13BarAttrs = {
+            role: bar.getAttribute('role'),
+            ariaLive: bar.getAttribute('aria-live'),
+            ariaHidden: bar.getAttribute('aria-hidden'),
+          };
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      window.__f13ObserverCleanup = () => observer.disconnect();
+    });
+
+    await openFromSidebar(page, 'doc-b.md');
+    await waitForActiveProviderSynced(page);
+    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading');
+    await page.evaluate(() => window.__f13ObserverCleanup?.());
+
+    const barAttrs = await page.evaluate(() => window.__f13BarAttrs);
+    expect(barAttrs).not.toBeNull();
+    expect(barAttrs?.role).toBe('status');
+    expect(barAttrs?.ariaLive).toBe('polite');
+    // aria-hidden is 'false' when mounted (per spec §D7 + NavigationPendingBar.tsx).
+    expect(barAttrs?.ariaHidden).toBe('false');
+
+    // Error boundary a11y — force an error on a new nav to observe role=alert.
+    await page.evaluate(() => {
+      const tryReject = () => {
+        const ok = window.__test_rejectSyncPromise?.('doc-a', 'timeout');
+        if (!ok) setTimeout(tryReject, 10);
+      };
+      // We nav back to doc-a, whose syncPromise cache entry won't exist
+      // (already resolved + cleared). To force an error on re-nav we need
+      // the boundary to create a fresh entry which we then reject. But
+      // warm-Activity nav bypasses Suspense (no fresh entry). So: we nav
+      // to a doc NOT in pool. Use an always-pending fetch to "newly
+      // discovered" doc-c (seeded below).
+      setTimeout(tryReject, 50);
+    });
+
+    // Trigger error-boundary via a fresh nav to a seeded-but-unpooled doc
+    // — after nav, force-reject races against sync. For portability we
+    // just scope the assertion to role=alert IF the error boundary
+    // renders, since F5/F6 already verify the retry paths deterministically.
+    // Here we just confirm the role/aria contract on the fallback.
+    await createPage('doc-c.md');
+    await replaceDoc('doc-c', DOC_C);
+    await page.evaluate(() => {
+      const tryReject = () => {
+        const ok = window.__test_rejectSyncPromise?.('doc-c', 'timeout');
+        if (!ok) setTimeout(tryReject, 10);
+      };
+      setTimeout(tryReject, 50);
+    });
+    await openFromSidebar(page, 'doc-c.md');
+
+    const errorAlert = page.locator('[data-slot="document-error-boundary"]');
+    await errorAlert.waitFor({ state: 'visible', timeout: 10_000 });
+    await expect(errorAlert).toHaveAttribute('role', 'alert');
+    await expect(errorAlert).toHaveAttribute('aria-labelledby', 'document-error-title');
+  });
 });
 
 // Global type augmentation for the test-only window properties used above.
@@ -484,5 +599,11 @@ declare global {
     __f3ObserverCleanup?: () => void;
     __f4SkeletonSightings?: Array<{ tag: string; found: boolean; t: number }>;
     __f4ObserverCleanup?: () => void;
+    __f13BarAttrs?: {
+      role: string | null;
+      ariaLive: string | null;
+      ariaHidden: string | null;
+    } | null;
+    __f13ObserverCleanup?: () => void;
   }
 }
