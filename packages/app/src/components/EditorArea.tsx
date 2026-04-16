@@ -1,33 +1,20 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
 import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { useDocumentContext } from '@/editor/DocumentContext';
-import { SourceEditor } from '@/editor/SourceEditor';
-import { TiptapEditor } from '@/editor/TiptapEditor';
+import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
+import DocumentErrorBoundary from './DocumentErrorBoundary';
+import EditorActivityPool from './EditorActivityPool';
 import type { EditorMode } from './EditorPane';
-
-function EditorSkeleton() {
-  return (
-    // Reuse the tiptap-editor grid so skeleton lines sit in the same content column
-    <div className="tiptap-editor pt-10">
-      <div className="space-y-3">
-        <Skeleton className="h-9 w-2/5 mt-6 mb-5" />
-        <Skeleton className="h-4 w-full" />
-        <Skeleton className="h-4 w-3/4" />
-      </div>
-    </div>
-  );
-}
+import EditorSkeleton from './EditorSkeleton';
 
 interface EditorAreaProps {
   editorMode: EditorMode;
@@ -37,12 +24,29 @@ interface EditorAreaProps {
 }
 
 export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
-  const { activeDocName, activeProvider, syncState } = useDocumentContext();
+  const { activeDocName, activeProvider } = useDocumentContext();
+  const { openDocumentTransition } = useDocumentTransition();
   const { pages, loading } = usePageList();
   const isNewDoc = !loading && !!activeDocName && !pages.has(activeDocName);
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Track the previously-active docName for DocumentErrorBoundary's
+  // "Back to previous document" affordance. Updated AFTER render (effect) so
+  // the *current* render still sees the prior value — during an error, the
+  // user sees "Back to <previous>" where <previous> is the last successfully
+  // navigated-to doc, not the doc that just errored.
+  const previousDocNameRef = useRef<string | null>(null);
+  const [previousDocName, setPreviousDocName] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeDocName && activeDocName !== previousDocNameRef.current) {
+      // Capture prior ref value, then update ref + state for the next render.
+      const prior = previousDocNameRef.current;
+      previousDocNameRef.current = activeDocName;
+      setPreviousDocName(prior);
+    }
+  }, [activeDocName]);
 
   // FUTURE: The diff is a snapshot fetched once. If the document changes while
   // the user is in diff mode (e.g., agent writes), the diff view becomes stale.
@@ -153,29 +157,25 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
                 />
               )}
 
-              {/* CSS-based show/hide — display:none keeps DOM alive without triggering
-                  React's effect lifecycle, so both editors survive mode switches. */}
+              {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
+                  Outer display:none keeps the editor DOM alive when in diff mode.
+                  Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
+                  inner display:none toggle) is preserved inside EditorActivityPool
+                  per spec §9 + audit A2. */}
               <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
-                {syncState === 'connecting' ? (
-                  <EditorSkeleton />
-                ) : (
-                  <>
-                    <div className={isSourceMode ? 'h-full' : 'hidden'}>
-                      <SourceEditor
-                        ytext={activeProvider.document.getText('source')}
-                        provider={activeProvider}
-                        placeholder={editorPlaceholder}
-                      />
-                    </div>
-                    <div className={isSourceMode ? 'hidden' : 'h-full'}>
-                      <TiptapEditor
-                        key={`${activeDocName}-${String(isNewDoc)}`}
-                        provider={activeProvider}
-                        placeholder={editorPlaceholder}
-                      />
-                    </div>
-                  </>
-                )}
+                <DocumentErrorBoundary
+                  activeDocName={activeDocName}
+                  previousDocName={previousDocName ?? undefined}
+                  onNavigateBack={(prev) => openDocumentTransition(prev)}
+                >
+                  <Suspense fallback={<EditorSkeleton />}>
+                    <EditorActivityPool
+                      activeDocName={activeDocName}
+                      isSourceMode={isSourceMode}
+                      editorPlaceholder={editorPlaceholder}
+                    />
+                  </Suspense>
+                </DocumentErrorBoundary>
               </div>
             </div>
             <div className="absolute top-2 right-2 z-10">
