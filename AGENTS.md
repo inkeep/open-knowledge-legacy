@@ -210,6 +210,7 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 | GET    | `/api/metrics/parse-health`   | Parse health counters (total, fallback, degraded blocks per doc)          |
 | GET    | `/api/rescue`                 | List rescue buffers (dirty docs from deleted/branch-switched files)       |
 | GET    | `/api/rescue/:docName`        | Retrieve a specific rescue buffer (text/markdown)                         |
+| GET    | `/api/link-graph`             | Backlink graph with frontmatter metadata (`cluster`, `category`, `tags` on doc nodes) |
 
 ### Key files
 
@@ -226,7 +227,8 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/metrics.ts` — in-memory counters: reconcile, conflict, batch, upstreamImport, rescueBuffer, branchSwitch, park, serverObserverFiresA/B
 - `src/external-change.ts` — `applyExternalChange()` (throwing) + `createExternalChangeHandler()` (error-swallowing wrapper); unified disk→CRDT bridge for both CLI and dev plugin
 - `src/agent-sessions.ts` — `AgentSessionManager` class
-- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, and metrics endpoints
+- `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
+- `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, and metrics endpoints
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
 - `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline + 50ms debounce via injected `Scheduler`
 - `src/server-observer-extension.ts` — `createServerObserverExtension()`; Hocuspocus extension wiring via `openDirectConnection` per-document at `afterLoadDocument`, cleanup at `afterUnloadDocument`
@@ -330,6 +332,11 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 - `src/components/FileSidebar.tsx` — Sidebar shell; header `+` dropdown opens `NewItemDialog` for file/folder creation
 - `src/components/FileTree.tsx` — Tree rendering; folder-row "New file here" / "New folder here" context-menu entries, empty-state "Create your first page" CTA, subscribes to `documents-events` for immediate post-create refresh
 - `src/components/NewItemDialog.tsx` — Unified file/folder creation dialog (`kind: 'file' | 'folder'`); shared by header `+`, row context menu, empty-state CTA, `Cmd/Ctrl+Alt+N` shortcut, and broken wiki-link flow
+- `src/components/GraphView.tsx` — Force-directed graph visualization (`react-force-graph-2d`); cluster-based node coloring, metadata tooltips
+- `src/components/GraphPanel.tsx` — Graph controls shell; renders `GraphLegend` in fullscreen Explore mode
+- `src/components/GraphLegend.tsx` — Cluster color legend (fullscreen Explore only; max 10 entries)
+- `src/components/graph-colors.ts` — Deterministic hash-to-color mapping for cluster names (16-color palette, theme-aware)
+- `src/components/graph-view-utils.ts` — `DocGraphNode` type, tooltip HTML generation, graph data helpers
 - `src/presence/PresenceBar.tsx` — Presence bar component
 - `src/presence/AgentUndoButton.tsx` — Undo agent edit button
 
