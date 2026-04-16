@@ -29,6 +29,7 @@ import {
   AGENT_WRITE_ORIGIN,
   createServer,
   FILE_WATCHER_ORIGIN,
+  OBSERVER_SYNC_ORIGIN,
   ROLLBACK_ORIGIN,
   type ServerInstance,
   type ServerOptions,
@@ -76,14 +77,31 @@ export interface TestServer {
 export interface CreateTestServerOptions {
   debounce?: ServerOptions['debounce'];
   maxDebounce?: ServerOptions['maxDebounce'];
+  /** Reuse an existing content directory (for server-restart tests that need
+   *  persistence to load canonical state written by a prior test-server instance).
+   *  When provided, the caller owns directory lifecycle — cleanup() will not
+   *  rm the directory. Pair with `keepContentDir: true` across all servers
+   *  sharing this directory. */
+  contentDir?: string;
+  /** When true, `cleanup()` skips the `rmSync(contentDir)` so the directory
+   *  survives for a subsequent test-server instance. Defaults to false
+   *  (random-tmpdir behavior preserved). */
+  keepContentDir?: boolean;
 }
 
 export async function createTestServer(options: CreateTestServerOptions = {}): Promise<TestServer> {
   // realpathSync resolves macOS /var → /private/var symlink so that
   // @parcel/watcher event paths match the contentDir used by pathToDocName.
-  const contentDir = realpathSync(mkdtempSync(join(tmpdir(), 'ok-test-')));
-  // Ensure test-doc.md exists (persistence expects it for initial load)
-  writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
+  const contentDir =
+    options.contentDir !== undefined
+      ? realpathSync(options.contentDir)
+      : realpathSync(mkdtempSync(join(tmpdir(), 'ok-test-')));
+  // Ensure test-doc.md exists (persistence expects it for initial load).
+  // On restart with pre-existing contentDir, the file is already present and
+  // overwriting with '' would wipe the canonical state we're trying to reload.
+  if (options.contentDir === undefined) {
+    writeFileSync(join(contentDir, 'test-doc.md'), '', 'utf-8');
+  }
 
   const port = await getFreePort();
   const srv = createServer({
@@ -103,13 +121,23 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
   const httpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
     if (url?.startsWith('/api/')) {
-      // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
-      srv.hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
-        if (!res.writableEnded) {
-          res.writeHead(500);
-          res.end('Internal server error');
-        }
-      });
+      srv.hocuspocus
+        // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
+        .hooks('onRequest', { request: req, response: res } as any)
+        .then(() => {
+          if (res.writableEnded) return;
+          // Unhandled /api/* route — 404 JSON. Matches production CLI and
+          // dev-plugin behavior.
+          res.statusCode = 404;
+          res.setHeader('Content-Type', 'application/json');
+          res.end(JSON.stringify({ error: 'API route not found', path: url }));
+        })
+        .catch(() => {
+          if (!res.writableEnded) {
+            res.writeHead(500);
+            res.end('Internal server error');
+          }
+        });
       return;
     }
     res.writeHead(404);
@@ -151,7 +179,9 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
       await srv.destroy();
       wss.close();
       await new Promise<void>((resolve) => httpServer.close(() => resolve()));
-      rmSync(contentDir, { recursive: true, force: true });
+      if (!options.keepContentDir) {
+        rmSync(contentDir, { recursive: true, force: true });
+      }
     },
   };
 }
@@ -502,6 +532,7 @@ const BRIDGE_ENFORCING_ORIGINS: Set<LocalTransactionOrigin> = new Set([
   AGENT_WRITE_ORIGIN,
   FILE_WATCHER_ORIGIN,
   ROLLBACK_ORIGIN,
+  OBSERVER_SYNC_ORIGIN,
 ]);
 
 export interface InvariantViolation {

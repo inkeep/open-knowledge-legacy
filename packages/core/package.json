@@ -28,6 +28,7 @@
     "@tiptap/extension-table": "^3.22.3",
     "@tiptap/pm": "^3.22.3",
     "@tiptap/starter-kit": "^3.22.3",
+    "diff-match-patch": "^1.0.5",
     "mdast-util-from-markdown": "^2.0.3",
     "mdast-util-mdx": "3.0.0",
     "mdast-util-mdx-expression": "^2.0.1",
@@ -51,6 +52,7 @@
     "test": "bun test"
   },
   "devDependencies": {
+    "@types/diff-match-patch": "^1.0.36",
     "@types/mdast": "^4.0.4",
     "@types/unist": "^3.0.3",
     "typescript": "^5.9.3"

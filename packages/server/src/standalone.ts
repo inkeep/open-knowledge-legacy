@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import { prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 import { BacklinkIndex } from './backlink-index.ts';
@@ -15,7 +16,7 @@ import { type HeadWatcherHandle, startHeadWatcher } from './head-watcher.ts';
 import { createLiveDerivedIndexExtension } from './live-derived-index.ts';
 import { getLogger } from './logger.ts';
 import { recoverPendingManagedRename } from './managed-rename-journal.ts';
-import { mdManager } from './md-manager.ts';
+import { mdManager, schema } from './md-manager.ts';
 import {
   incrementBatch,
   incrementBranchSwitch,
@@ -39,6 +40,7 @@ import {
 } from './persistence.ts';
 import { reconcile } from './reconciliation.ts';
 import { acquireServerLock, releaseServerLock } from './server-lock.ts';
+import { createServerObserverExtension } from './server-observer-extension.ts';
 import {
   commitUpstreamImport,
   destroyShadowRepo,
@@ -84,12 +86,19 @@ export interface ServerOptions {
    * could take more than 10s.
    */
   destroyTimeoutMs?: number;
+  /**
+   * Optional. Called after every successful agent write (write_document /
+   * edit_document) via the MCP API. The CLI uses this to open the browser
+   * on the first agent edit per session; consumers that don't care can omit.
+   */
+  onAgentWrite?: () => void;
 }
 
 export interface ServerInstance {
   hocuspocus: Hocuspocus;
   sessionManager: AgentSessionManager;
   cc1Broadcaster: CC1Broadcaster;
+  agentFocusBroadcaster: AgentFocusBroadcaster;
   contentFilter: ContentFilter;
   destroy: () => Promise<void>;
   /** Resolves when async init (shadow repo, file watcher subscription) is complete. */
@@ -148,6 +157,7 @@ export function createServer(options: ServerOptions): ServerInstance {
   let hocuspocus: Hocuspocus;
   let sessionManager: AgentSessionManager;
   let cc1Broadcaster: CC1Broadcaster | null = null;
+  let agentFocusBroadcaster: AgentFocusBroadcaster | null = null;
 
   function signalChannel(channel: 'files' | 'backlinks' | 'graph'): void {
     cc1Broadcaster?.signal(channel);
@@ -184,6 +194,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       extensions: [persistence.extension],
     });
     cc1Broadcaster = new CC1Broadcaster(hocuspocus);
+    agentFocusBroadcaster = new AgentFocusBroadcaster(hocuspocus);
 
     sessionManager = new AgentSessionManager(hocuspocus);
     const liveDerivedIndexExtension = createLiveDerivedIndexExtension({
@@ -205,8 +216,12 @@ export function createServer(options: ServerOptions): ServerInstance {
       contentRoot,
       backlinkIndex,
       signalChannel,
+      agentFocusBroadcaster,
+      onAgentWrite: options.onAgentWrite,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
+
+    hocuspocus.configuration.extensions.push(createServerObserverExtension({ mdManager, schema }));
   } catch (err) {
     releaseServerLock(lockDir);
     throw err;
@@ -1118,6 +1133,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     hocuspocus,
     sessionManager,
     cc1Broadcaster,
+    agentFocusBroadcaster,
     contentFilter,
     destroy,
     ready,

@@ -55,6 +55,24 @@ export function startCommand(getConfig: () => Config): Command {
         log.info({ contentDir }, 'Created content directory');
       }
 
+      // First-agent-edit auto-open. `localUrl` is only known after listen(),
+      // so we capture a setter here and let the onAgentWrite callback fire
+      // once the URL has been assigned. The `once` flag debounces to a single
+      // browser open per server session.
+      let agentEditUrl: string | null = null;
+      let agentEditOpened = false;
+      const onAgentWrite = config.server.openOnAgentEdit
+        ? () => {
+            if (agentEditOpened || !agentEditUrl) return;
+            agentEditOpened = true;
+            import('../utils/open-browser.ts')
+              .then(({ openBrowser }) => openBrowser(agentEditUrl as string))
+              .catch(() => {
+                // openBrowser already logs a hint on failure; URL is in the banner.
+              });
+          }
+        : undefined;
+
       const { hocuspocus, contentFilter, destroy, ready, degraded, lockDir } = createServer({
         contentDir,
         projectDir: cwd,
@@ -66,6 +84,7 @@ export function startCommand(getConfig: () => Config): Command {
         maxDebounce: config.persistence.maxDebounceMs,
         includePatterns: config.content.include,
         excludePatterns: config.content.exclude,
+        onAgentWrite,
       });
 
       // Graceful shutdown — idempotent, fires `destroy()` exactly once even
@@ -117,16 +136,29 @@ export function startCommand(getConfig: () => Config): Command {
 
       // Create HTTP server and wire up Hocuspocus
       const httpServer = createHttpServer((req, res) => {
-        // Priority 1: API routes via Hocuspocus onRequest extensions
+        // Priority 1: API routes via Hocuspocus onRequest extensions.
+        // Unknown `/api/*` routes must return 404 JSON, NOT fall through to
+        // static/SPA (which would return index.html and confuse API clients
+        // like MCP stdio). Await the hook and check writableEnded; if no
+        // handler consumed the request, emit 404 JSON explicitly.
         const url = req.url?.split('?')[0];
         if (url?.startsWith('/api/')) {
-          // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
-          hocuspocus.hooks('onRequest', { request: req, response: res } as any).catch(() => {
-            if (!res.writableEnded) {
-              res.writeHead(500);
-              res.end('Internal server error');
-            }
-          });
+          hocuspocus
+            // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
+            .hooks('onRequest', { request: req, response: res } as any)
+            .then(() => {
+              if (res.writableEnded) return;
+              // Unhandled /api/* route — 404 JSON.
+              res.statusCode = 404;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(JSON.stringify({ error: 'API route not found', path: url }));
+            })
+            .catch(() => {
+              if (!res.writableEnded) {
+                res.writeHead(500);
+                res.end('Internal server error');
+              }
+            });
           return;
         }
 
@@ -194,6 +226,7 @@ export function startCommand(getConfig: () => Config): Command {
         updateServerLockPort(lockDir, realPort);
 
         const localUrl = `http://${config.server.host}:${realPort}`;
+        agentEditUrl = localUrl;
         const networkUrl =
           config.server.host === '0.0.0.0' || config.server.host === '::'
             ? `http://0.0.0.0:${realPort}`

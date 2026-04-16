@@ -69,6 +69,9 @@ const WIKI_EXCLUDE_DIRS: readonly string[] = [
   '.parcel-cache',
   '.vercel',
   OK_DIR,
+  // Worktree snapshots + plugin cache duplicate the main repo's content,
+  // producing N× hits for any search. Never wiki content.
+  '.claude',
 ];
 
 /**

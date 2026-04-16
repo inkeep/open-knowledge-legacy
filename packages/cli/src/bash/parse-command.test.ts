@@ -139,6 +139,7 @@ describe('augmentStagesWithExcludes — grep', () => {
     const stages = augmentStagesWithExcludes(parse('grep -rn oauth .'));
     expect(stages[0].args).toContain('--exclude-dir=node_modules');
     expect(stages[0].args).toContain('--exclude-dir=.git');
+    expect(stages[0].args).toContain('--exclude-dir=.claude');
     expect(stages[0].args.indexOf('--exclude-dir=node_modules')).toBeGreaterThan(0);
   });
 

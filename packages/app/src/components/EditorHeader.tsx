@@ -1,13 +1,14 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { ArrowDownToLine, Columns2, History, Rows2 } from 'lucide-react';
+import { ArrowDownToLine, Columns2, History, Pin, PinOff, Rows2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { PresenceBar } from '@/presence/PresenceBar';
+import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
@@ -44,9 +45,19 @@ export function EditorHeader({
   diffLayout,
   onDiffLayoutChange,
 }: EditorHeaderProps) {
-  const { activeDocName } = useDocumentContext();
+  const { activeDocName, activeProvider, pinnedDoc, pin, unpin } = useDocumentContext();
+  const syncStatus = useSyncStatus(activeProvider);
+  const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
+  const sourceDisabled = !activeDocName || !isConnected;
 
   const displayName = activeDocName ? `${activeDocName}.md` : '';
+  const isPinned = pinnedDoc !== null;
+
+  function togglePin() {
+    if (!activeDocName) return;
+    if (isPinned) unpin();
+    else pin(activeDocName);
+  }
   const isDiffMode = editorMode === 'diff';
   const [confirmingRestore, setConfirmingRestore] = useState(false);
 
@@ -66,6 +77,36 @@ export function EditorHeader({
         <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
         <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
+        {activeDocName && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 shrink-0 text-muted-foreground"
+                onClick={togglePin}
+                aria-label={
+                  isPinned
+                    ? 'Unpin — resume following agent'
+                    : 'Pin this doc — stop following agent'
+                }
+                aria-pressed={isPinned}
+                data-pinned={isPinned ? 'true' : 'false'}
+              >
+                {isPinned ? (
+                  <Pin className="size-4 text-foreground" fill="currentColor" />
+                ) : (
+                  <PinOff className="size-4" />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              {isPinned
+                ? 'Pinned — click to resume following agent navigation'
+                : 'Pin to stay on this doc — browser won’t auto-navigate to the agent’s current focus'}
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       {/* Normal editing mode: Visual/Markdown toggle */}
@@ -87,10 +128,27 @@ export function EditorHeader({
             <Textbox className="size-4 text-muted-foreground" />
             Visual
           </ToggleGroupItem>
-          <ToggleGroupItem value="source" aria-label="Markdown source" className="gap-1.5 text-xs">
-            <Markdown className="size-4 text-muted-foreground" />
-            Markdown
-          </ToggleGroupItem>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span tabIndex={sourceDisabled ? 0 : undefined}>
+                <ToggleGroupItem
+                  value="source"
+                  aria-label="Markdown source"
+                  className="gap-1.5 text-xs"
+                  disabled={sourceDisabled}
+                >
+                  <Markdown className="size-4 text-muted-foreground" />
+                  Markdown
+                </ToggleGroupItem>
+              </span>
+            </TooltipTrigger>
+            {sourceDisabled && !activeDocName ? null : sourceDisabled ? (
+              <TooltipContent>
+                Source mode requires a live connection — your edits are saved and will appear when
+                you reconnect.
+              </TooltipContent>
+            ) : null}
+          </Tooltip>
         </ToggleGroup>
       )}
 
@@ -172,21 +230,19 @@ export function EditorHeader({
           </Button>
         )}
         {activeDocName && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Document timeline"
-                  onClick={onTimelineToggle}
-                >
-                  <History className="size-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Document timeline</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Document timeline"
+                onClick={onTimelineToggle}
+              >
+                <History className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Document timeline</TooltipContent>
+          </Tooltip>
         )}
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
