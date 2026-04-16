@@ -25,7 +25,7 @@ import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
-  applyByPrefixSuffix,
+  applyFastDiff,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -768,7 +768,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Apply rewrite via XmlFragment-authoritative pattern (AGENTS.md precedent #12;
       // replaces the deleted syncTextToFragment helper). Parse new markdown →
       // updateYFragment (preserves user-content Items at matching positions) →
-      // mirror Y.Text via applyByPrefixSuffix (minimal CRDT mutation).
+      // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
       const { body } = stripFrontmatter(result.markdown);
       const parsedJson = mdManager.parseWithFallback(body);
       const pmNode = schema.nodeFromJSON(parsedJson);
@@ -776,7 +776,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         mapping: new Map(),
         isOMark: new Map(),
       });
-      applyByPrefixSuffix(ytext, currentText, result.markdown);
+      applyFastDiff(ytext, currentText, result.markdown);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }
@@ -906,6 +906,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
+  const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
+  const AGENT_NAME_MAX_LEN = 128;
+
   /** Extract agent identity fields shared across the three write endpoints. */
   function extractAgentIdentity(body: Record<string, unknown>): {
     rawAgentId: string | undefined;
@@ -914,15 +917,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     colorSeed: string;
     clientName: string | undefined;
   } {
-    const rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
+    let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
+    if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
+      rawAgentId = undefined;
+    }
     const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
-    const agentName = typeof body.agentName === 'string' ? body.agentName : 'Claude';
-    const clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
+    const agentName =
+      typeof body.agentName === 'string'
+        ? body.agentName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '')
+        : 'Claude';
+    let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
+    if (clientName !== undefined) {
+      clientName = clientName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '');
+    }
     // colorSeed must match what getSession() uses for presence bar color consistency.
     // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
     const colorSeed =
       typeof body.colorSeed === 'string' && body.colorSeed.length > 0
-        ? body.colorSeed
+        ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
         : (rawAgentId ?? agentId);
     return { rawAgentId, agentId, agentName, colorSeed, clientName };
   }
