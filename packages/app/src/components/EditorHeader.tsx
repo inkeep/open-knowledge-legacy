@@ -86,7 +86,7 @@ export function EditorHeader({
             <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
           </TooltipTrigger>
           <TooltipContent>
-            {sidebarState === 'expanded' ? 'Hide Panel' : 'Show Panel'}
+            {sidebarState === 'expanded' ? 'Hide Files' : 'Show Files'}
           </TooltipContent>
         </Tooltip>
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />

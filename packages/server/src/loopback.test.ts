@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { isLoopbackAddress } from './loopback';
+import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback';
 
 describe('isLoopbackAddress', () => {
   test('accepts classic IPv4 loopback', () => {
@@ -54,5 +54,64 @@ describe('isLoopbackAddress', () => {
     // something with a `127` substring that isn't a dotted IPv4 address.
     expect(isLoopbackAddress('127')).toBe(false);
     expect(isLoopbackAddress('1270.0.0.1')).toBe(false);
+  });
+});
+
+describe('isAllowedWorkspaceHostHeader', () => {
+  test('accepts localhost with and without port', () => {
+    expect(isAllowedWorkspaceHostHeader('localhost')).toBe(true);
+    expect(isAllowedWorkspaceHostHeader('localhost:5173')).toBe(true);
+    expect(isAllowedWorkspaceHostHeader('localhost:65535')).toBe(true);
+  });
+
+  test('accepts 127.0.0.0/8 block with and without port', () => {
+    expect(isAllowedWorkspaceHostHeader('127.0.0.1')).toBe(true);
+    expect(isAllowedWorkspaceHostHeader('127.0.0.1:5173')).toBe(true);
+    expect(isAllowedWorkspaceHostHeader('127.1.2.3:8080')).toBe(true);
+    expect(isAllowedWorkspaceHostHeader('127.255.255.254')).toBe(true);
+  });
+
+  test('accepts bracketed IPv6 loopback with and without port', () => {
+    expect(isAllowedWorkspaceHostHeader('[::1]')).toBe(true);
+    expect(isAllowedWorkspaceHostHeader('[::1]:5173')).toBe(true);
+  });
+
+  test('rejects undefined or empty header', () => {
+    expect(isAllowedWorkspaceHostHeader(undefined)).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('')).toBe(false);
+  });
+
+  test('rejects attacker-controlled rebound hostnames', () => {
+    // DNS-rebinding scenario: page from attacker.com rebinds to 127.0.0.1.
+    // The TCP peer is loopback, but the Host header names the attacker.
+    expect(isAllowedWorkspaceHostHeader('attacker.com')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('attacker.com:5173')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('evil.localhost')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('localhost.attacker.com')).toBe(false);
+  });
+
+  test('rejects LAN / public IPv4 addresses in Host header', () => {
+    expect(isAllowedWorkspaceHostHeader('192.168.1.1')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('10.0.0.1:5173')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('8.8.8.8')).toBe(false);
+  });
+
+  test('rejects non-loopback IPv6 and malformed brackets', () => {
+    expect(isAllowedWorkspaceHostHeader('[fe80::1]')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('[2001:db8::1]:5173')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('::1')).toBe(false); // unbracketed
+    expect(isAllowedWorkspaceHostHeader('[::1')).toBe(false); // missing close
+    expect(isAllowedWorkspaceHostHeader('[::1]foo')).toBe(false); // trailing junk
+  });
+
+  test('rejects 127-substring hostnames that are not in 127.0.0.0/8', () => {
+    expect(isAllowedWorkspaceHostHeader('127')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('1270.0.0.1')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('127.0.0')).toBe(false);
+  });
+
+  test('rejects non-numeric port segments', () => {
+    expect(isAllowedWorkspaceHostHeader('localhost:abc')).toBe(false);
+    expect(isAllowedWorkspaceHostHeader('127.0.0.1:')).toBe(false);
   });
 });

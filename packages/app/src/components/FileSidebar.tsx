@@ -2,7 +2,12 @@ import { FolderPlus, FoldVertical, ListCollapse, SquarePen, UnfoldVertical } fro
 import { useRef } from 'react';
 import { FileTree, type FileTreeHandle } from '@/components/FileTree';
 import { Button } from '@/components/ui/button';
-import { HoverCardContent, HoverCardRoot, HoverCardTrigger } from '@/components/ui/hover-card';
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Sidebar,
   SidebarContent,
@@ -29,43 +34,38 @@ export function FileSidebar() {
               </span>
               <div className="flex items-center gap-1">
                 {/*
-                 * Expand/Collapse-All uses HoverCard (not DropdownMenu) because
-                 * Radix's DropdownMenu has no prescribed hover-open API
-                 * (shadcn-ui#2118); emulating it with controlled state + manual
-                 * mouseenter/leave handlers produces a trigger↔content event
-                 * race that flickers open/closed. HoverCard is the Radix-native
-                 * primitive for hover-reveal floating content and handles the
-                 * bridge internally via `openDelay`/`closeDelay`. Trade-off:
-                 * children are buttons, not role="menuitem" — acceptable for a
-                 * 2-item affordance where Tab navigates fine.
+                 * Expand/Collapse-All uses DropdownMenu (click-to-open). The
+                 * earlier hover-to-open HoverCard shape was unreachable from
+                 * keyboard and touch: Radix HoverCard's content root forcibly
+                 * sets `tabindex="-1"` on every tabbable descendant
+                 * (@radix-ui/react-hover-card@dist/index.mjs:172-177), and
+                 * hover cannot be triggered from keyboard/AT/touch at all. A
+                 * DropdownMenu opens on click/Enter/Space, routes arrow-key
+                 * focus between items, and is the shadcn-standard pattern
+                 * for toolbar menus.
                  */}
-                <HoverCardRoot openDelay={80} closeDelay={150}>
-                  <HoverCardTrigger asChild>
-                    <Button variant="ghost" size="icon" aria-label="Tree view options">
-                      <ListCollapse aria-hidden="true" />
-                    </Button>
-                  </HoverCardTrigger>
-                  <HoverCardContent align="end" className="flex w-auto flex-col gap-0.5 p-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="justify-start gap-2 px-2 font-normal"
-                      onClick={() => fileTreeRef.current?.expandAll()}
-                    >
-                      <UnfoldVertical aria-hidden="true" className="size-4" />
+                <DropdownMenuRoot>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" aria-label="Tree view options">
+                          <ListCollapse aria-hidden="true" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                    </TooltipTrigger>
+                    <TooltipContent>Tree view options</TooltipContent>
+                  </Tooltip>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onSelect={() => fileTreeRef.current?.expandAll()}>
+                      <UnfoldVertical aria-hidden="true" />
                       Expand All
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="justify-start gap-2 px-2 font-normal"
-                      onClick={() => fileTreeRef.current?.collapseAll()}
-                    >
-                      <FoldVertical aria-hidden="true" className="size-4" />
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => fileTreeRef.current?.collapseAll()}>
+                      <FoldVertical aria-hidden="true" />
                       Collapse All
-                    </Button>
-                  </HoverCardContent>
-                </HoverCardRoot>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenuRoot>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button

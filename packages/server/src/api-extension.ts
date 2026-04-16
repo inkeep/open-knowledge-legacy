@@ -62,7 +62,7 @@ import {
   updateFileIndex,
 } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
-import { isLoopbackAddress } from './loopback.ts';
+import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
   createManagedRenameRecoveryJournal,
   type ManagedRenameSnapshot,
@@ -2093,11 +2093,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (req.method !== 'GET') {
-      res.writeHead(405);
-      res.end('Method not allowed');
-      return;
-    }
+    // Authorization runs BEFORE method dispatch: reversing the order turns the
+    // method check into a fingerprinting oracle for unauth callers (GET → 403,
+    // POST → 405 discloses the verb the endpoint expects). See OWASP ASVS 4.0
+    // V4.1.1 — "perform access control on every request."
+    //
     // Loopback-only: this endpoint discloses the absolute host filesystem path
     // (including home directory / username). That's fine for the local-editing
     // use case the rest of the API is designed for, but if the user configures
@@ -2105,8 +2105,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // want to leak the host shape over the network or to cross-origin fetches.
     // All loopback clients (including requests from a browser on the same
     // machine) pass — connections from other interfaces are refused.
+    //
+    // DNS-rebinding defense: `req.socket.remoteAddress` will read `127.0.0.1`
+    // for any request that reached the socket via loopback, including requests
+    // triggered by a malicious page that rebinds its hostname to `127.0.0.1`.
+    // The Host-header allowlist below enforces that the caller actually spoke
+    // to us via `localhost` / `127.0.0.1` / `[::1]`, matching the mitigation
+    // in the Ethereum/geth JSON-RPC lineage. Same-origin fetches from the
+    // editor app pass; cross-origin rebinding attempts are refused.
     if (!isLoopbackAddress(req.socket.remoteAddress)) {
-      json(res, 403, { ok: false, error: 'Loopback-only endpoint' });
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'method-not-allowed' });
       return;
     }
     // Absolute, canonical contentDir so the client can build full filesystem

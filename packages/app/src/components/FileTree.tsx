@@ -1,4 +1,5 @@
 import {
+  Bot,
   ChevronRight,
   Copy,
   File,
@@ -8,7 +9,6 @@ import {
   FoldVertical,
   Link2,
   Pencil,
-  Sparkles,
   SquarePen,
   Trash2,
   UnfoldVertical,
@@ -116,6 +116,11 @@ async function copyToClipboard(text: string, label: string): Promise<void> {
  * `.claude/skills/**`, `.agents/skills/**`). Basename match is case-insensitive
  * so `agents.md`, `Claude.md`, etc. all surface the badge. `TreeNode.name` is
  * already extension-less by construction.
+ *
+ * The badge icon is `Bot`, not `Sparkles` — `Sparkles` is already the live-
+ * agent-presence fallback in `PresenceBar.tsx` (`AgentIcon` default case). Two
+ * separate meanings on the same glyph ("this file is an agent config" vs. "an
+ * agent is editing right now") would be ambiguous in the sidebar chrome.
  */
 const AGENT_FILE_NAMES = new Set(['agents', 'agent', 'claude', 'skill']);
 
@@ -314,7 +319,7 @@ const FileTreeNode: FC<{
        * rows render these badges as bright sidebar-accent-foreground while root
        * rows render them as muted-foreground/50.
        */}
-      {showAgentBadge && <Sparkles className="size-3.5 shrink-0 text-muted-foreground/50!" />}
+      {showAgentBadge && <Bot className="size-3.5 shrink-0 text-muted-foreground/50!" />}
       {showSymlink && <Link2 className="size-3.5 shrink-0 text-muted-foreground/50!" />}
     </>
   );
@@ -468,12 +473,12 @@ const FileTreeNode: FC<{
               }
             }}
           >
-            <Pencil />
+            <Pencil aria-hidden="true" />
             Rename
           </ContextMenuItem>
           <ContextMenuSub>
             <ContextMenuSubTrigger>
-              <Copy />
+              <Copy aria-hidden="true" />
               Copy Path
             </ContextMenuSubTrigger>
             <ContextMenuSubContent>
@@ -508,7 +513,7 @@ const FileTreeNode: FC<{
               if (!anyActionBusy) onDelete(target);
             }}
           >
-            <Trash2 />
+            <Trash2 aria-hidden="true" />
             Delete
           </ContextMenuItem>
         </ContextMenuContent>
