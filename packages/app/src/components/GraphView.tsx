@@ -426,6 +426,7 @@ export function GraphView({
   activeDocName,
   selectedNodeId = null,
   isFullscreen = false,
+  showUrlNodes = true,
   className = '',
   docClickBehavior = 'navigate',
   onSelectNode,
@@ -436,6 +437,7 @@ export function GraphView({
   activeDocName: string;
   selectedNodeId?: string | null;
   isFullscreen?: boolean;
+  showUrlNodes?: boolean;
   className?: string;
   docClickBehavior?: GraphDocClickBehavior;
   onSelectNode?: (selection: GraphNodeSelection) => void;
@@ -557,14 +559,46 @@ export function GraphView({
   // Fullscreen shows the whole project graph, so it intentionally uses a tighter
   // label budget than the docked 2-hop neighborhood view to avoid flooding.
   const maxVisibleLabels = isFullscreen ? 10 : 18;
-  const layoutNodes = graphData.nodes as GraphLabelLayoutNode[];
-  const layoutLinks = graphData.links as GraphLabelLayoutLink[];
-  const labelDescriptors = buildGraphLabelDescriptors(graphData.nodes);
+
+  const externalNodeIds = showUrlNodes
+    ? null
+    : new Set(graphData.nodes.filter((n) => n.kind === 'external').map((n) => n.id));
+  const displayNodes = externalNodeIds
+    ? graphData.nodes.filter((n) => n.kind !== 'external')
+    : graphData.nodes;
+  const displayLinks = externalNodeIds
+    ? graphData.links.filter((l) => {
+        // force-graph mutates source/target from string IDs to node object refs after the
+        // first simulation tick, so we must handle both forms when checking for external nodes.
+        const src = l.source as unknown;
+        const tgt = l.target as unknown;
+        const srcId =
+          typeof src === 'string'
+            ? src
+            : src !== null && typeof src === 'object' && 'id' in src
+              ? String((src as { id: unknown }).id)
+              : '';
+        const tgtId =
+          typeof tgt === 'string'
+            ? tgt
+            : tgt !== null && typeof tgt === 'object' && 'id' in tgt
+              ? String((tgt as { id: unknown }).id)
+              : '';
+        return !externalNodeIds.has(srcId) && !externalNodeIds.has(tgtId);
+      })
+    : graphData.links;
+  const displayData: GraphData = externalNodeIds
+    ? { nodes: displayNodes, links: displayLinks }
+    : graphData;
+
+  const layoutNodes = displayData.nodes as GraphLabelLayoutNode[];
+  const layoutLinks = displayData.links as GraphLabelLayoutLink[];
+  const labelDescriptors = buildGraphLabelDescriptors(displayData.nodes);
   const focusKey = `${activeDocName}|${focusZoom}|${graphSig.nodes}|${graphSig.links}`;
 
   useEffect(() => {
-    onStatsChange?.(graphData.nodes.length, graphData.links.length, loading);
-  }, [graphData, loading, onStatsChange]);
+    onStatsChange?.(displayData.nodes.length, displayData.links.length, loading);
+  }, [displayData, loading, onStatsChange]);
 
   useEffect(() => {
     if (!onClustersChange) return;
@@ -603,7 +637,7 @@ export function GraphView({
 
     const harness = {
       clickDoc(docName: string) {
-        const node = graphData.nodes.find(
+        const node = displayData.nodes.find(
           (candidate): candidate is GraphNode & { kind: 'doc' } =>
             candidate.kind === 'doc' && candidate.docName === docName,
         );
@@ -621,7 +655,7 @@ export function GraphView({
         return true;
       },
       clickExternal(url: string) {
-        const node = graphData.nodes.find(
+        const node = displayData.nodes.find(
           (candidate): candidate is GraphNode & { kind: 'external' } =>
             candidate.kind === 'external' && candidate.url === url,
         );
@@ -634,7 +668,7 @@ export function GraphView({
         return true;
       },
       getNodeVisualState(docName: string) {
-        const node = graphData.nodes.find(
+        const node = displayData.nodes.find(
           (candidate): candidate is GraphNode & { kind: 'doc' } =>
             candidate.kind === 'doc' && candidate.docName === docName,
         );
@@ -648,7 +682,7 @@ export function GraphView({
         const fg = fgRef.current;
         if (!fg) return null;
 
-        const node = graphData.nodes.find(
+        const node = displayData.nodes.find(
           (candidate): candidate is NodeObject<GraphNode> =>
             ('docName' in candidate && candidate.docName === nodeKey) ||
             ('url' in candidate && candidate.url === nodeKey) ||
@@ -684,14 +718,14 @@ export function GraphView({
         const fg = fgRef.current;
         if (!fg) return null;
 
-        const link = (graphData.links as LinkObject<GraphNode, GraphLink>[]).find((candidate) => {
+        const link = (displayData.links as LinkObject<GraphNode, GraphLink>[]).find((candidate) => {
           const source = getGraphLinkEndpointDocName({
             endpoint: candidate.source,
-            nodes: graphData.nodes,
+            nodes: displayData.nodes,
           });
           const target = getGraphLinkEndpointDocName({
             endpoint: candidate.target,
-            nodes: graphData.nodes,
+            nodes: displayData.nodes,
           });
           return source === sourceDocName && target === targetDocName;
         });
@@ -747,8 +781,8 @@ export function GraphView({
   }, [
     activeDocName,
     docClickBehavior,
-    graphData.links,
-    graphData.nodes,
+    displayData.links,
+    displayData.nodes,
     onBackgroundClick,
     onSelectNode,
     selectedNodeId,
@@ -785,7 +819,7 @@ export function GraphView({
             const node = getGraphNodeAtPoint({
               point,
               fg,
-              nodes: graphData.nodes,
+              nodes: displayData.nodes,
               activeDocName,
               selectedNodeId,
             });
@@ -796,7 +830,7 @@ export function GraphView({
               isGraphLinkAtPoint({
                 point,
                 fg,
-                links: graphData.links,
+                links: displayData.links,
               })
             ) {
               return { kind: 'link' } satisfies GraphPointerTarget;
@@ -832,7 +866,7 @@ export function GraphView({
     >
       {error ? (
         <p className="p-4 text-sm text-destructive">{error}</p>
-      ) : graphData.nodes.length === 0 && !loading ? (
+      ) : displayData.nodes.length === 0 && !loading ? (
         <p className="p-4 text-sm text-muted-foreground">
           No links yet. Add wiki links or markdown links to build a graph.
         </p>
@@ -844,7 +878,7 @@ export function GraphView({
         >
           <ForceGraph2D
             ref={fgRef}
-            graphData={graphData}
+            graphData={displayData}
             cooldownTicks={150}
             onEngineTick={() => {
               focusStateRef.current = maybeFocusActiveGraphNode({

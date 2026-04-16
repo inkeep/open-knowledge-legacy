@@ -1,6 +1,6 @@
 import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, CheckCircle2, Maximize2, Minimize2 } from 'lucide-react';
+import { ArrowUpRight, CheckCircle2, Globe, Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { GraphLegend } from '@/components/GraphLegend';
 import { GraphView } from '@/components/GraphView';
@@ -19,9 +19,35 @@ import {
   PanelTitle,
 } from '@/components/ui/panel';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { hashFromDocName } from '@/lib/doc-hash';
 
 const FULLSCREEN_HUB_LIMIT = 50;
+
+const GRAPH_URL_NODES_DOCKED_KEY = 'ok-graph-docked-url-nodes-v1';
+const GRAPH_URL_NODES_FULLSCREEN_KEY = 'ok-graph-fullscreen-url-nodes-v1';
+
+function loadBoolPref(key: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(key) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+function saveBoolPref(key: string, value: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (value) {
+      window.localStorage.setItem(key, 'true');
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // quota exceeded / private mode — ignore, stays in-memory
+  }
+}
 
 type FullscreenGraphMode = 'explore' | 'orphans' | 'hubs';
 
@@ -272,6 +298,12 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const [selectedNode, setSelectedNode] = useState<GraphNodeSelection | null>(null);
   const [stats, setStats] = useState<{ nodes: number; links: number } | null>(null);
   const [clusters, setClusters] = useState<string[]>([]);
+  const [showUrlNodesDocked, setShowUrlNodesDocked] = useState(() =>
+    loadBoolPref(GRAPH_URL_NODES_DOCKED_KEY),
+  );
+  const [showUrlNodesFull, setShowUrlNodesFull] = useState(() =>
+    loadBoolPref(GRAPH_URL_NODES_FULLSCREEN_KEY),
+  );
 
   useEffect(() => {
     const sync = () => setIsFullscreen(getFullscreenElement() === panelRef.current);
@@ -282,6 +314,14 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
       document.removeEventListener('webkitfullscreenchange', sync);
     };
   }, []);
+
+  useEffect(() => {
+    saveBoolPref(GRAPH_URL_NODES_DOCKED_KEY, showUrlNodesDocked);
+  }, [showUrlNodesDocked]);
+
+  useEffect(() => {
+    saveBoolPref(GRAPH_URL_NODES_FULLSCREEN_KEY, showUrlNodesFull);
+  }, [showUrlNodesFull]);
 
   useEffect(() => {
     if (!isFullscreen && selectedNode !== null) {
@@ -296,6 +336,8 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   }, [fullscreenMode, selectedNode]);
 
   const activeMode = isFullscreen ? fullscreenMode : 'explore';
+  const showUrlNodes = isFullscreen ? showUrlNodesFull : showUrlNodesDocked;
+  const setShowUrlNodes = isFullscreen ? setShowUrlNodesFull : setShowUrlNodesDocked;
   const selectedNodeState =
     selectedNode === null
       ? null
@@ -378,15 +420,57 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
             </ToggleGroup>
           ) : null}
           <div className="flex items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground hover:text-foreground hover:bg-accent"
-              aria-label={isFullscreen ? 'Exit fullscreen' : 'Full screen'}
-              onClick={() => void toggleFullscreen(panelRef.current)}
-            >
-              {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-            </Button>
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground hover:text-foreground hover:bg-accent"
+                  aria-label={showUrlNodes ? 'Hide external URL nodes' : 'Show external URL nodes'}
+                  aria-pressed={showUrlNodes}
+                  onClick={() => setShowUrlNodes((prev) => !prev)}
+                >
+                  <Globe
+                    className={
+                      showUrlNodes
+                        ? 'size-4 text-sidebar-accent-foreground'
+                        : 'size-4 text-muted-foreground'
+                    }
+                  />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent
+                side="bottom"
+                sideOffset={8}
+                className={isFullscreen ? 'z-[9999]' : undefined}
+              >
+                {showUrlNodes ? 'Hide external URL nodes' : 'Show external URL nodes'}
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip delayDuration={0}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground hover:text-foreground hover:bg-accent"
+                  aria-label={isFullscreen ? 'Exit fullscreen' : 'Full screen'}
+                  onClick={() => void toggleFullscreen(panelRef.current)}
+                >
+                  {isFullscreen ? (
+                    <Minimize2 className="size-4" />
+                  ) : (
+                    <Maximize2 className="size-4" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent
+                side="bottom"
+                sideOffset={8}
+                className={isFullscreen ? 'z-[9999]' : undefined}
+              >
+                {isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+              </TooltipContent>
+            </Tooltip>
           </div>
         </div>
       </PanelHeader>
@@ -396,6 +480,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
             activeDocName={activeDocName}
             selectedNodeId={isFullscreen ? (selectedNode?.id ?? null) : null}
             isFullscreen={isFullscreen}
+            showUrlNodes={showUrlNodes}
             className="h-full min-h-0"
             docClickBehavior={isFullscreen ? 'select' : 'navigate'}
             onSelectNode={isFullscreen ? setSelectedNode : undefined}
