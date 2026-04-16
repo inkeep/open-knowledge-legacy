@@ -32,6 +32,14 @@ Each layer overrides the previous, from left to right. The merge is a deep merge
 | `persistence.maxDebounceMs` | `number`   | `10000`                   | Maximum wait before forced flush to disk (ms)                                                                                                                                                        |
 | `mcp.autoStart`             | `boolean`  | `true`                    | When `true`, `ok mcp` detach-spawns `ok start` as a sibling process if no live `server.lock` is found. Set `false` to force disk-only mode. The env var `OK_MCP_AUTOSTART=0` wins over this setting. |
 | `preview.baseUrl`           | `string?`  | (unset)                   | Override for the `previewUrl` emitted by MCP tools. Takes effect when `ui.lock` is absent; the env var `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` wins over this setting.                                     |
+| `sync.enabled`              | `boolean?` | auto-detect               | Enable/disable GitHub sync. Auto-detected from git remote presence when omitted.                                                                                                                     |
+| `sync.pullIntervalSeconds`  | `number`   | `30`                      | Seconds between fetch/pull cycles. +/-15% jitter applied per cycle.                                                                                                                                   |
+| `sync.pushIntervalSeconds`  | `number`   | `60`                      | Seconds between push cycles. +/-15% jitter applied per cycle.                                                                                                                                         |
+| `sync.autoCommit`           | `boolean`  | `true`                    | Automatically commit content changes at L2 flush                                                                                                                                                     |
+| `sync.autoPush`             | `boolean`  | `true`                    | Automatically push after each commit                                                                                                                                                                 |
+| `sync.autoPull`             | `boolean`  | `true`                    | Automatically pull remote changes each cycle                                                                                                                                                         |
+| `sync.commitMessage`        | `string`   | `"auto"`                  | Commit message for auto-commits. `"auto"` uses `WIP auto-save <timestamp>`.                                                                                                                           |
+| `github.oauthAppClientId`   | `string`   | `"Ov23li..."`             | OAuth App client ID for Device Flow. Override for forks or custom OAuth Apps.                                                                                                                         |
 
 ## Built-in directory skips
 
@@ -70,6 +78,21 @@ content:
 </Tab>
 </Tabs>
 
+### Sync configuration
+
+Projects with a git remote auto-enable sync. Override the defaults to tune sync behavior or disable it entirely:
+
+```yaml title=".open-knowledge/config.yml"
+sync:
+  pullIntervalSeconds: 60    # slower fetch cycle
+  pushIntervalSeconds: 120   # less frequent pushes
+  autoCommit: true
+  autoPush: true
+  autoPull: true
+```
+
+Set `sync.enabled: false` to disable sync for a project even when a remote exists. See [GitHub Sync](/guides/github-sync) for the full sync guide.
+
 ## Environment variables
 
 | Variable                          | Overrides                                                                                                                                                               |
@@ -78,6 +101,7 @@ content:
 | `HOST`                            | `server.host`                                                                                                                                                           |
 | `OK_MCP_AUTOSTART`                | Set to `0` to disable `ok mcp`'s auto-spawn of `ok start`. Overrides `mcp.autoStart` in config.                                                                         |
 | `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` | Overrides the `previewUrl` base emitted by every MCP tool. Wins over `ui.lock` discovery and `preview.baseUrl` config. Use for tunnels, CI, or cloud-deployed previews. |
+| `OPEN_KNOWLEDGE_GITHUB_CLIENT_ID` | `github.oauthAppClientId` — override the OAuth App client ID used for Device Flow                                                                                        |
 
 Precedence: **CLI flags > environment variables > workspace config > user config > Zod defaults**. A pre-existing live `server.lock` always takes precedence over `OK_MCP_AUTOSTART=0` — the env var only suppresses the spawn path, it doesn't prevent MCP from connecting to a server the user started manually.
 

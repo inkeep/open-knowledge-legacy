@@ -3,6 +3,7 @@ import { runDeviceFlow } from '../../auth/device-flow.ts';
 import type { TokenStore } from '../../auth/token-store.ts';
 import { getOAuthClientId } from '../../github/app-config.ts';
 import type { Config } from '../../index.ts';
+import { validateGitHubHost } from './validate-host.ts';
 
 export interface LoginOptions {
   host: string;
@@ -27,6 +28,7 @@ export async function runLogin(
 ): Promise<void> {
   const clientId = getOAuthClientId(config);
   const { host, json } = opts;
+  validateGitHubHost(host);
 
   if (!json) {
     process.stderr.write(`Logging in to ${host}…\n`);
@@ -99,7 +101,7 @@ export function loginCommand(
 ): Command {
   return new Command('login')
     .description('Authenticate with GitHub via Device Flow')
-    .option('--host <host>', 'GitHub hostname', 'github.com')
+    .option('--host <host>', 'GitHub or GitHub Enterprise hostname', 'github.com')
     .option('--json', 'Output JSONL progress events', false)
     .action(async (opts: LoginOptions) => {
       const store = await getTokenStore();

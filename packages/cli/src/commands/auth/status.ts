@@ -1,6 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import { Command } from 'commander';
 import type { TokenStore } from '../../auth/token-store.ts';
+import { validateGitHubHost } from './validate-host.ts';
 
 export interface StatusOptions {
   host: string;
@@ -9,6 +10,7 @@ export interface StatusOptions {
 
 export async function runStatus(opts: StatusOptions, tokenStore: TokenStore): Promise<void> {
   const { host, json } = opts;
+  validateGitHubHost(host);
   const entry = await tokenStore.get(host);
 
   if (entry == null) {
@@ -55,7 +57,7 @@ export async function runStatus(opts: StatusOptions, tokenStore: TokenStore): Pr
 export function statusCommand(getTokenStore: () => Promise<TokenStore>): Command {
   return new Command('status')
     .description('Show authentication status')
-    .option('--host <host>', 'GitHub hostname', 'github.com')
+    .option('--host <host>', 'GitHub or GitHub Enterprise hostname', 'github.com')
     .option('--json', 'Output JSON', false)
     .action(async (opts: StatusOptions) => {
       await runStatus(opts, await getTokenStore());

@@ -1,0 +1,218 @@
+---
+title: CLI reference
+description: Complete reference for the open-knowledge command-line interface.
+---
+
+The `@inkeep/open-knowledge` CLI is the primary interface for managing projects, authentication, and sync.
+
+```bash
+npx @inkeep/open-knowledge <command> [options]
+```
+
+Global options available on all commands:
+
+| Option | Description |
+|--------|-------------|
+| `--cwd <path>` | Working directory |
+| `--log-level <level>` | Log level (default: `info`) |
+| `--no-color` | Disable color output |
+| `--color` | Force color output |
+| `--version` | Print version |
+
+## `start`
+
+Start the collaborative editor server. This is the default command when no subcommand is specified.
+
+```bash
+npx @inkeep/open-knowledge start [options]
+npx @inkeep/open-knowledge              # equivalent
+```
+
+| Option | Description |
+|--------|-------------|
+| `--port <port>` | Server port (overrides config) |
+| `--host <host>` | Bind address (overrides config) |
+| `--open` | Open the editor in your default browser |
+| `--content-dir <path>` | Content directory to serve |
+
+The server binds to `localhost:3000` by default. Only one server can run per content directory -- a second attempt fails with a lock collision error.
+
+## `init`
+
+Scaffold the `.open-knowledge/` directory and register the MCP server in `.mcp.json`.
+
+```bash
+npx @inkeep/open-knowledge init [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Overwrite existing `.mcp.json` entry |
+| `--no-mcp` | Skip writing `.mcp.json` |
+
+The command is idempotent -- safe to run again without side effects.
+
+## `clone`
+
+Clone a git repository, scaffold `.open-knowledge/`, and start the editor.
+
+```bash
+npx @inkeep/open-knowledge clone <url> [dir] [options]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `url` | Repository URL or `owner/repo` shorthand |
+| `dir` | Target directory (default: `./<repo-name>`) |
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Output JSONL progress events (for editor subprocess relay) |
+
+Accepted URL formats:
+- `https://github.com/owner/repo`
+- `git@github.com:owner/repo.git`
+- `ssh://git@github.com/owner/repo`
+- `owner/repo` (expands to `https://github.com/owner/repo`)
+
+In terminal mode, clone chains into `start` after completion. In `--json` mode, it emits JSONL and exits (the editor spawns the server separately).
+
+## `auth`
+
+Manage GitHub authentication. Six subcommands:
+
+### `auth login`
+
+Sign in via GitHub's Device Flow (OAuth).
+
+```bash
+npx @inkeep/open-knowledge auth login [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | GitHub hostname (default: `github.com`) |
+| `--json` | Output JSON events |
+
+### `auth status`
+
+Check authentication status for a host.
+
+```bash
+npx @inkeep/open-knowledge auth status [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | GitHub hostname (default: `github.com`) |
+| `--json` | Output JSON |
+
+Exits with code 1 if not authenticated.
+
+### `auth repos`
+
+List repositories accessible with the current token.
+
+```bash
+npx @inkeep/open-knowledge auth repos [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | GitHub hostname (default: `github.com`) |
+| `--json` | Output JSON |
+
+### `auth signout`
+
+Remove the stored token for a host.
+
+```bash
+npx @inkeep/open-knowledge auth signout [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | GitHub hostname (default: `github.com`) |
+
+### `auth pat`
+
+Validate and store a Personal Access Token.
+
+```bash
+npx @inkeep/open-knowledge auth pat [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | GitHub hostname (default: `github.com`) |
+| `--json` | Output JSON |
+
+The token is read interactively from stdin.
+
+### `auth git-credential`
+
+Git credential helper that reads stored tokens. Not intended for direct use -- invoked by git via the `-c credential.helper` flag.
+
+```bash
+npx @inkeep/open-knowledge auth git-credential get
+```
+
+Reads the git credential-helper protocol from stdin and outputs stored credentials for the requested host.
+
+## `sync`
+
+Commit local changes, pull from remote, and push to remote.
+
+```bash
+npx @inkeep/open-knowledge sync [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Output JSONL progress events |
+
+Discovers a running server via `server.lock` and delegates to its sync engine. Falls back to direct simple-git operations when no server is running.
+
+## `push`
+
+Push local commits to the remote.
+
+```bash
+npx @inkeep/open-knowledge push [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Output JSONL progress events |
+
+## `pull`
+
+Pull changes from the remote.
+
+```bash
+npx @inkeep/open-knowledge pull [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Output JSONL progress events |
+
+## `mcp`
+
+Start the MCP stdio server for AI agent integration.
+
+```bash
+npx @inkeep/open-knowledge mcp [options]
+```
+
+The MCP server auto-discovers a running editor via `server.lock`. When no editor is running, it operates in disk-only mode. See [MCP integration](/guides/mcp-integration) for details.
+
+## `preview`
+
+Show which files the content filter will track, without starting the server.
+
+```bash
+npx @inkeep/open-knowledge preview
+```
+
+Prints the file count, applied include/exclude patterns, and a sample of matched paths.

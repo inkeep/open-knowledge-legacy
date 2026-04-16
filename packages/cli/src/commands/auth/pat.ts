@@ -2,6 +2,7 @@ import password from '@inquirer/password';
 import { Octokit } from '@octokit/rest';
 import { Command } from 'commander';
 import type { TokenStore } from '../../auth/token-store.ts';
+import { validateGitHubHost } from './validate-host.ts';
 
 export interface PatOptions {
   host: string;
@@ -14,6 +15,7 @@ export async function runPat(
   readToken?: () => Promise<string>,
 ): Promise<void> {
   const { host, json } = opts;
+  validateGitHubHost(host);
 
   const getToken = readToken ?? (() => password({ message: 'Enter PAT:' }));
 
@@ -51,7 +53,7 @@ export async function runPat(
 export function patCommand(getTokenStore: () => Promise<TokenStore>): Command {
   return new Command('pat')
     .description('Store a Personal Access Token')
-    .option('--host <host>', 'GitHub hostname', 'github.com')
+    .option('--host <host>', 'GitHub or GitHub Enterprise hostname', 'github.com')
     .option('--json', 'Output JSON', false)
     .action(async (opts: PatOptions) => {
       await runPat(opts, await getTokenStore());

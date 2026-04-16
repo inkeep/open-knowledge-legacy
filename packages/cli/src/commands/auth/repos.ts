@@ -1,6 +1,7 @@
 import { Octokit } from '@octokit/rest';
 import { Command } from 'commander';
 import type { TokenStore } from '../../auth/token-store.ts';
+import { validateGitHubHost } from './validate-host.ts';
 
 export interface ReposOptions {
   host: string;
@@ -9,12 +10,14 @@ export interface ReposOptions {
 
 export async function runRepos(opts: ReposOptions, tokenStore: TokenStore): Promise<void> {
   const { host, json } = opts;
+  validateGitHubHost(host);
   const entry = await tokenStore.get(host);
   if (entry == null) {
     process.stderr.write(`Not logged in to ${host}\n`);
     process.exit(1);
   }
 
+  // Fallback for github enterprise instances
   const baseUrl = host === 'github.com' ? undefined : `https://${host}/api/v3`;
   const octokit = new Octokit({ auth: entry.token, ...(baseUrl ? { baseUrl } : {}) });
 
@@ -40,7 +43,7 @@ export async function runRepos(opts: ReposOptions, tokenStore: TokenStore): Prom
 export function reposCommand(getTokenStore: () => Promise<TokenStore>): Command {
   return new Command('repos')
     .description('List accessible repositories')
-    .option('--host <host>', 'GitHub hostname', 'github.com')
+    .option('--host <host>', 'GitHub or GitHub Enterprise hostname', 'github.com')
     .option('--json', 'Output JSON', false)
     .action(async (opts: ReposOptions) => {
       await runRepos(opts, await getTokenStore());

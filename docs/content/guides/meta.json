@@ -3,7 +3,9 @@
   "icon": "LuBookText",
   "pages": [
     "getting-started",
+    "github-sync",
     "configuration",
+    "cli-reference",
     "mcp-integration",
     "content-filtering",
     "timeline",

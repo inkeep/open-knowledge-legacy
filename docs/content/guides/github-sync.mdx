@@ -1,0 +1,183 @@
+---
+title: GitHub Sync
+description: Clone repos from GitHub, auto-sync changes with your team, and resolve conflicts -- all without touching the terminal.
+---
+
+Open Knowledge can clone a GitHub repository, keep it in sync with the remote, and surface conflicts when they arise. For non-developers, everything works through the editor UI. Developers also have CLI commands and configuration overrides.
+
+## Clone a repository
+
+### From the editor
+
+When no project is loaded, the editor shows three options: **Clone from GitHub**, **Open folder on disk**, and **Start fresh**. You can also open the clone dialog from the overflow menu when a project is already loaded.
+
+1. Paste a GitHub URL (e.g. `https://github.com/company/docs`) or an `owner/repo` shorthand.
+2. Choose a local directory (defaults to `~/Documents/<repo-name>`).
+3. Click **Clone**. A toast shows real-time progress.
+4. After cloning completes, a new server starts on the cloned directory and the editor opens it.
+
+For private repos, the dialog prompts you to sign in to GitHub. See [Authentication](#authentication) below.
+
+### From the CLI
+
+```bash
+npx @inkeep/open-knowledge clone https://github.com/company/docs
+npx @inkeep/open-knowledge clone company/docs ./local-path
+```
+
+The `clone` command clones the repository, scaffolds `.open-knowledge/` via `init`, and starts the editor. Pass `--json` for machine-readable JSONL progress output (used by the editor's subprocess relay).
+
+<Callout type="info">
+The target directory must be empty or non-existent. The CLI rejects non-empty directories to prevent accidental overwrites.
+</Callout>
+
+## Authentication
+
+Open Knowledge uses a three-tier authentication model. The system tries each tier in order and uses the first that succeeds.
+
+### Tier A: `gh` CLI delegation
+
+If you have the [GitHub CLI](https://cli.github.com/) installed and authenticated, Open Knowledge reuses its session automatically. No additional sign-in required.
+
+### Tier B: Device Flow (OAuth)
+
+For users without `gh`, the editor opens a sign-in flow:
+
+1. A modal shows a one-time code (auto-copied to your clipboard).
+2. Your browser opens `github.com/login/device`.
+3. Paste the code and authorize Open Knowledge.
+4. The modal detects approval and stores the token in your OS keychain.
+
+This is the default sign-in method for non-developers.
+
+### Tier C: Personal Access Token
+
+For environments where Device Flow is unavailable (GitHub Enterprise Server, headless CI), paste a Personal Access Token directly:
+
+```bash
+npx @inkeep/open-knowledge auth pat --host github.com
+```
+
+<Callout type="info" title="Read-only access">
+For read-only access, create a fine-grained PAT with the `Contents: Read` permission. The OAuth Device Flow requests the `repo` scope, which grants read and write access -- GitHub's classic OAuth has no read-only scope.
+</Callout>
+
+### Token storage
+
+Tokens are stored in your OS keychain via `@napi-rs/keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). If the keychain is unavailable, tokens fall back to `~/.open-knowledge/auth.yml` with `0600` permissions.
+
+### Managing authentication
+
+```bash
+npx @inkeep/open-knowledge auth status             # Check current auth state
+npx @inkeep/open-knowledge auth login              # Sign in via Device Flow
+npx @inkeep/open-knowledge auth repos              # List accessible repositories
+npx @inkeep/open-knowledge auth signout             # Remove stored token
+npx @inkeep/open-knowledge auth pat                 # Store a personal access token
+```
+
+All auth commands accept `--host <hostname>` (default: `github.com`) and `--json` for machine-readable output.
+
+## How auto-sync works
+
+When a project has a git remote and `sync.enabled` is not set to `false`, the server starts a background sync engine on startup.
+
+### Sync cycle
+
+The engine runs two independent timers:
+
+- **Pull cycle** (default: every 30 seconds): fetches from origin, merges if behind and no conflicts exist.
+- **Push cycle** (default: every 60 seconds): pushes local commits to origin.
+
+Both intervals apply +/-15% jitter to prevent thundering-herd effects when multiple editors restart simultaneously. Timers use chained `setTimeout` (not `setInterval`), so cycles never overlap -- the next timer starts only after the current operation completes.
+
+### What gets committed
+
+Auto-commits happen at the same cadence as the shadow repo's Layer 2 persistence (30-second idle debounce). The commit message defaults to `WIP auto-save <ISO timestamp>`. Only files matching your content filter (`.md` and `.mdx` by default) are included in auto-commits.
+
+### Status badge
+
+The editor header shows a sync status badge with these states:
+
+| State | Icon | Meaning |
+|-------|------|---------|
+| Synced | Green check | Up to date with remote |
+| Syncing | Spinner | Fetch, pull, or push in progress |
+| Ahead N | Upload icon | N commits ahead of remote |
+| Behind N | Download icon | N commits behind remote |
+| Conflict | Orange warning | Merge conflict detected -- click to resolve |
+| Offline | Grey cloud | Network unreachable -- changes saved locally |
+| Auth error | Red icon | Token expired or revoked -- sign in again |
+| Disabled | Grey icon | Sync disabled (protected branch or config) |
+
+Click the badge to see details: last sync time, ahead/behind counts, and action buttons (Retry, Sign in).
+
+### Offline behavior
+
+When the network is unavailable, edits continue saving to disk and the shadow repo locally. The sync engine retries with exponential backoff (5 minutes after 3 failures, 15 minutes after 5, 60 minutes after 8). When connectivity returns, queued commits push automatically.
+
+### Branch behavior
+
+Sync follows whatever branch `HEAD` points to. If you check out `feature/docs` externally, sync pushes to `origin/feature/docs`. On detached HEAD, sync pauses with a tooltip explaining why.
+
+## Resolving conflicts
+
+When a merge produces conflicts, sync pauses and the badge turns orange.
+
+1. A banner appears at the top of the editor: "N page(s) have conflicting changes from your team."
+2. Click **Review and resolve** to open the conflict resolver side sheet.
+3. For each conflicted file, choose:
+   - **Keep my version** -- discard the remote changes for this file.
+   - **Keep team's version** -- discard your local changes for this file.
+   - **Resolve manually** -- opens a side-by-side diff view with per-hunk Accept/Reject controls.
+4. After resolving all files, the merge completes and sync resumes automatically.
+
+<Callout type="info">
+Raw merge conflict markers (`<<<<<<<`) never appear in the editor. The conflict resolver handles everything through a visual interface.
+</Callout>
+
+## Configuration
+
+Sync behavior is controlled via `.open-knowledge/config.yml`. See the [Configuration](/guides/configuration) guide for the full schema.
+
+```yaml title=".open-knowledge/config.yml"
+sync:
+  enabled: true              # auto-detected from remote; set false to disable
+  pullIntervalSeconds: 30    # seconds between fetch/pull cycles
+  pushIntervalSeconds: 60    # seconds between push cycles
+  autoCommit: true           # commit local changes automatically
+  autoPush: true             # push after each commit
+  autoPull: true             # pull remote changes each cycle
+  commitMessage: "auto"      # "auto" or a custom template string
+```
+
+### Disabling sync
+
+Set `sync.enabled: false` in your workspace config to disable sync for a specific project. The server still detects the remote but does not start the sync engine.
+
+Sync also disables automatically when a push is rejected due to branch protection. A toast explains the reason and `sync.enabled` is written to `false` in the workspace config.
+
+## Git identity
+
+Auto-commits use your git identity (`user.name` and `user.email` from git config). If these are not set when sync first attempts a commit, Open Knowledge resolves them in order:
+
+1. Repo-local git config (`git config --local`)
+2. Global git config (`git config --global`)
+3. Derived from your GitHub auth (name and email from Device Flow sign-in)
+4. Prompted via the editor -- a dialog asks for your name and email, which are written to repo-local git config.
+
+## Protected branches
+
+If the remote branch has protection rules (requires pull requests, status checks, etc.), the push is rejected. Sync disables for that project with a toast explaining the situation. To contribute to a protected branch, use the git CLI to create a branch and open a pull request.
+
+## CLI sync commands
+
+For developers and scripts, three CLI commands provide direct control:
+
+```bash
+npx @inkeep/open-knowledge sync    # commit + pull + push
+npx @inkeep/open-knowledge push    # push only
+npx @inkeep/open-knowledge pull    # pull only
+```
+
+These commands discover a running server via `server.lock` and delegate to its sync engine. If no server is running, they fall back to direct simple-git operations. All three accept `--json` for machine-readable output.

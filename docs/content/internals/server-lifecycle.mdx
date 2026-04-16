@@ -24,8 +24,11 @@ createServer(options)          ← synchronous, returns ServerInstance
   ├─ API extension             ← immediate (HTTP routes registered)
   └─ ready = initAsync()       ← async background init
        ├─ Shadow repo init     ← git plumbing (~50-200ms)
+       ├─ HEAD-drift check     ← compare last-known-head vs current HEAD;
+       │                         commitUpstreamImport() if diverged
        ├─ File watcher start   ← @parcel/watcher subscribe
-       └─ HEAD watcher start   ← @parcel/watcher subscribe on .git/ (if .git/ exists)
+       ├─ HEAD watcher start   ← @parcel/watcher subscribe on .git/ (if .git/ exists)
+       └─ SyncEngine start     ← remote detection → auto-sync timers (if remote exists)
 ```
 
 The lock is written with `port: 0` as a "starting, not yet bound" sentinel. The CLI (`packages/cli/src/commands/start.ts`) and the Vite dev plugin (`packages/app/src/server/hocuspocus-plugin.ts`) both call `updateServerLockPort(lockDir, realPort)` after `http.listen()` resolves so downstream tools (MCP, external clients) can read the actual port from the lock file.
@@ -45,7 +48,8 @@ destroy()
   ├─ Phase 2: Drain sessions   ← AgentSessionManager.closeAll()
   ├─ Phase 3: L1 flush         ← flushAllStoresAndWait() — Y.Doc → markdown → disk
   ├─ Phase 4: L2 flush         ← flushPendingGitCommit() + waitForPendingCommits() — disk → git
-  ├─ Phase 5: Shadow release   ← destroyShadowRepo() — always runs
+  ├─ Phase 4.5: SyncEngine     ← syncEngine.destroy() — persists state to sync-state.json
+  ├─ Phase 5: Shadow release   ← write last-known-head + destroyShadowRepo() — always runs
   └─ Phase 6: Server lock      ← releaseServerLock() — LAST, in finally block
 ```
 
