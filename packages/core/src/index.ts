@@ -94,6 +94,14 @@ export type {
 // Utils
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export {
+  type ChunkedInsertOptions,
+  chunkedYTextInsert,
+  DEFAULT_CHUNK_SIZE_BYTES,
+  DEFAULT_CHUNK_THRESHOLD_BYTES,
+  type InsertableYDoc,
+  type InsertableYText,
+} from './utils/chunked-insert.ts';
+export {
   AGENT_COLORS,
   AGENT_ICON_COLORS,
   colorFromSeed,
