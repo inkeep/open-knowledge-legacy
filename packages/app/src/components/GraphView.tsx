@@ -168,6 +168,31 @@ function drawGraphLabelPlacements({
     ctx.fillText(placement.text, placement.textX, placement.textY);
   }
 }
+
+function applyGraphNodeClick({
+  node,
+  docClickBehavior,
+  onSelectDoc,
+}: {
+  node: GraphNode;
+  docClickBehavior: GraphDocClickBehavior;
+  onSelectDoc?: (selection: GraphDocSelection) => void;
+}): void {
+  const action = resolveGraphNodeClickAction(node, docClickBehavior);
+
+  if (action.kind === 'external') {
+    window.open(action.url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+
+  if (action.kind === 'navigate') {
+    window.location.assign(action.hash);
+    return;
+  }
+
+  onSelectDoc?.(action.selection);
+}
+
 export function GraphView({
   activeDocName,
   selectedDocName = null,
@@ -329,6 +354,56 @@ export function GraphView({
     });
     return () => window.cancelAnimationFrame(animationFrame);
   }, [focusKey, activeDocName, focusZoom, graphData.nodes]);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+
+    const harness = {
+      clickDoc(docName: string) {
+        const node = graphData.nodes.find(
+          (candidate): candidate is GraphNode & { kind: 'doc' } =>
+            candidate.kind === 'doc' && candidate.docName === docName,
+        );
+        if (!node) return false;
+        applyGraphNodeClick({
+          node,
+          docClickBehavior,
+          onSelectDoc,
+        });
+        return true;
+      },
+      clickBackground() {
+        if (!onBackgroundClick) return false;
+        onBackgroundClick();
+        return true;
+      },
+      getNodeVisualState(docName: string) {
+        const node = graphData.nodes.find(
+          (candidate): candidate is GraphNode & { kind: 'doc' } =>
+            candidate.kind === 'doc' && candidate.docName === docName,
+        );
+        if (!node) return null;
+        return getGraphNodeVisualState(node, {
+          activeDocName,
+          selectedDocName,
+        });
+      },
+    };
+
+    window.__graphHarness = harness;
+    return () => {
+      if (window.__graphHarness === harness) {
+        delete window.__graphHarness;
+      }
+    };
+  }, [
+    activeDocName,
+    docClickBehavior,
+    graphData.nodes,
+    onBackgroundClick,
+    onSelectDoc,
+    selectedDocName,
+  ]);
 
   return (
     <div ref={containerRef} className={cn('min-h-0 overflow-hidden', className)}>
@@ -495,19 +570,11 @@ export function GraphView({
             linkDirectionalArrowRelPos={1}
             linkWidth={1}
             onNodeClick={(node: NodeObject<GraphNode>) => {
-              const action = resolveGraphNodeClickAction(node, docClickBehavior);
-
-              if (action.kind === 'external') {
-                window.open(action.url, '_blank', 'noopener,noreferrer');
-                return;
-              }
-
-              if (action.kind === 'navigate') {
-                window.location.assign(action.hash);
-                return;
-              }
-
-              onSelectDoc?.(action.selection);
+              applyGraphNodeClick({
+                node,
+                docClickBehavior,
+                onSelectDoc,
+              });
             }}
             onBackgroundClick={onBackgroundClick}
           />
