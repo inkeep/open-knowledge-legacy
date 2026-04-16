@@ -133,7 +133,7 @@ export function EditorHeader({
       </div>
 
       {/* Normal editing mode: Visual/Markdown toggle */}
-      {!isDiffMode && (
+      {!isDiffMode && activeDocName && (
         <ToggleGroup
           type="single"
           value={editorMode === 'source' ? 'source' : 'visual'}
