@@ -1,9 +1,13 @@
 import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { useQuery } from '@tanstack/react-query';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { ArrowUpRight, CheckCircle2, Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { GraphLegend } from '@/components/GraphLegend';
 import { GraphView } from '@/components/GraphView';
+import {
+  type GraphNodeSelection,
+  getHashForGraphDocSelection,
+} from '@/components/graph-view-utils';
 import { Button } from '@/components/ui/button';
 import {
   Panel,
@@ -74,6 +78,19 @@ async function fetchHubs(limit: number): Promise<HubEntry[]> {
 
 function navigateToDoc(docName: string) {
   window.location.assign(hashFromDocName(docName));
+}
+
+async function exitFullscreen(): Promise<void> {
+  if (!getFullscreenElement()) return;
+
+  try {
+    await (document.exitFullscreen?.() ??
+      (
+        document as Document & { webkitExitFullscreen?: () => Promise<void> }
+      ).webkitExitFullscreen?.());
+  } catch {
+    // User gesture / permission / unsupported
+  }
 }
 
 function getOrphanDescription(mode: OrphanMode): string {
@@ -235,10 +252,7 @@ async function toggleFullscreen(el: HTMLElement | null): Promise<void> {
   if (!el) return;
   try {
     if (getFullscreenElement()) {
-      await (document.exitFullscreen?.() ??
-        (
-          document as Document & { webkitExitFullscreen?: () => Promise<void> }
-        ).webkitExitFullscreen?.());
+      await exitFullscreen();
     } else {
       await (el.requestFullscreen?.() ??
         (
@@ -255,6 +269,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenMode, setFullscreenMode] = useState<FullscreenGraphMode>('explore');
   const [orphanMode, setOrphanMode] = useState<OrphanMode>('both');
+  const [selectedNode, setSelectedNode] = useState<GraphNodeSelection | null>(null);
   const [stats, setStats] = useState<{ nodes: number; links: number } | null>(null);
   const [clusters, setClusters] = useState<string[]>([]);
 
@@ -268,7 +283,66 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isFullscreen && selectedNode !== null) {
+      setSelectedNode(null);
+    }
+  }, [isFullscreen, selectedNode]);
+
+  useEffect(() => {
+    if (fullscreenMode !== 'explore' && selectedNode !== null) {
+      setSelectedNode(null);
+    }
+  }, [fullscreenMode, selectedNode]);
+
   const activeMode = isFullscreen ? fullscreenMode : 'explore';
+  const selectedNodeState =
+    selectedNode === null
+      ? null
+      : selectedNode.kind === 'doc' && selectedNode.docName === activeDocName
+        ? {
+            eyebrow: 'Already open',
+            description:
+              'This document is already active in the editor. Use Open to leave fullscreen.',
+            Icon: CheckCircle2,
+            actionLabel: 'Open',
+            secondaryLabel: selectedNode.docName,
+            onAction: () => {
+              const hash = getHashForGraphDocSelection(selectedNode);
+
+              void (async () => {
+                await exitFullscreen();
+                window.location.assign(hash);
+              })();
+            },
+          }
+        : selectedNode.kind === 'doc'
+          ? {
+              eyebrow: 'Selected in graph',
+              description: 'Open this document in the editor and leave fullscreen.',
+              Icon: ArrowUpRight,
+              actionLabel: 'Open',
+              secondaryLabel: selectedNode.docName,
+              onAction: () => {
+                const hash = getHashForGraphDocSelection(selectedNode);
+
+                void (async () => {
+                  await exitFullscreen();
+                  window.location.assign(hash);
+                })();
+              },
+            }
+          : {
+              eyebrow: 'Selected in graph',
+              description: 'Open this link in a new tab and leave fullscreen.',
+              Icon: ArrowUpRight,
+              actionLabel: 'Open link',
+              secondaryLabel: selectedNode.url,
+              onAction: () => {
+                window.open(selectedNode.url, '_blank', 'noopener,noreferrer');
+                void exitFullscreen();
+              },
+            };
 
   return (
     <Panel ref={panelRef} className={isFullscreen ? 'min-h-[100dvh] bg-background' : undefined}>
@@ -317,11 +391,23 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
         </div>
       </PanelHeader>
       {activeMode === 'explore' ? (
-        <div className="relative min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1 flex-col">
           <GraphView
             activeDocName={activeDocName}
+            selectedNodeId={isFullscreen ? (selectedNode?.id ?? null) : null}
             isFullscreen={isFullscreen}
             className="h-full min-h-0"
+            docClickBehavior={isFullscreen ? 'select' : 'navigate'}
+            onSelectNode={isFullscreen ? setSelectedNode : undefined}
+            onBackgroundClick={
+              isFullscreen
+                ? () => {
+                    if (selectedNode !== null) {
+                      setSelectedNode(null);
+                    }
+                  }
+                : undefined
+            }
             onStatsChange={(nodes, links, loading) => {
               if (loading) {
                 setStats(null);
@@ -332,6 +418,35 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
             onClustersChange={isFullscreen ? setClusters : undefined}
           />
           {isFullscreen && <GraphLegend clusters={clusters} />}
+          {isFullscreen &&
+          activeMode === 'explore' &&
+          selectedNode !== null &&
+          selectedNodeState ? (
+            <div className="pointer-events-none absolute inset-x-4 top-4 z-10 flex justify-center">
+              <div
+                role="status"
+                aria-label="Selected graph item"
+                className="pointer-events-auto flex w-full max-w-2xl items-center gap-3 rounded-xl border border-border/70 bg-background/95 px-4 py-3 text-sm shadow-lg backdrop-blur supports-[backdrop-filter]:bg-background/85"
+              >
+                <selectedNodeState.Icon className="size-4 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    {selectedNodeState.eyebrow}
+                  </div>
+                  <div className="truncate font-medium text-foreground">{selectedNode.label}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {selectedNodeState.secondaryLabel}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {selectedNodeState.description}
+                  </div>
+                </div>
+                <Button size="sm" className="shrink-0" onClick={selectedNodeState.onAction}>
+                  {selectedNodeState.actionLabel}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
       {isFullscreen && activeMode === 'orphans' ? (
