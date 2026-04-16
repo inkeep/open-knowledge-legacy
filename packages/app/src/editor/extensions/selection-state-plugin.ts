@@ -427,11 +427,17 @@ function scheduleRefresh(editor: Editor): void {
   // The dragstart/dragend may fire during PM's internal event processing.
   // Deferring to the next microtask ensures we don't dispatch mid-tr.
   queueMicrotask(() => {
+    // Pre-check inside the microtask (not before enqueue): destruction can
+    // happen between enqueue and execution. Matches the TipTap community
+    // idiom for extensions that dispatch async (ueberdosis/tiptap#3798).
+    if (editor.isDestroyed) return;
     try {
       const tr = editor.state.tr.setMeta(SELECTION_REFRESH_META_KEY, true);
       editor.view.dispatch(tr);
     } catch {
-      // Editor torn down between queueMicrotask and dispatch — safe to ignore.
+      // Defense-in-depth for the race window between `isDestroyed` check
+      // and `dispatch` execution — both can be straddled by a final
+      // teardown on the event loop.
     }
   });
 }
