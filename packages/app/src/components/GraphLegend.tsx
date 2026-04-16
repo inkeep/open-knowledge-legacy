@@ -18,6 +18,9 @@ export function GraphLegend({ clusters }: { clusters: string[] }) {
         isDark ? 'bg-black/70 text-gray-200' : 'bg-white/80 text-gray-800 ring-1 ring-black/5'
       }`}
     >
+      <div className={`font-medium mb-1.5 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+        Clusters
+      </div>
       {visible.map((cluster) => (
         <div key={cluster} className="flex items-center gap-2">
           <span
