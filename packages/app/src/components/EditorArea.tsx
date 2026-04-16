@@ -6,6 +6,7 @@ import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { SourceEditor } from '@/editor/SourceEditor';
@@ -13,6 +14,19 @@ import { TiptapEditor } from '@/editor/TiptapEditor';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
 import type { EditorMode } from './EditorPane';
+
+function EditorSkeleton() {
+  return (
+    // Reuse the tiptap-editor grid so skeleton lines sit in the same content column
+    <div className="tiptap-editor pt-10">
+      <div className="space-y-3">
+        <Skeleton className="h-9 w-2/5 mt-6 mb-5" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-3/4" />
+      </div>
+    </div>
+  );
+}
 
 interface EditorAreaProps {
   editorMode: EditorMode;
@@ -22,7 +36,7 @@ interface EditorAreaProps {
 }
 
 export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
-  const { activeDocName, activeProvider } = useDocumentContext();
+  const { activeDocName, activeProvider, syncState } = useDocumentContext();
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -137,16 +151,22 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
 
               {/* CSS-based show/hide — display:none keeps DOM alive without triggering
                   React's effect lifecycle, so both editors survive mode switches. */}
-              <div style={{ display: isDiffMode ? 'none' : undefined }}>
-                <div className={isSourceMode ? 'h-full' : 'hidden'}>
-                  <SourceEditor
-                    ytext={activeProvider.document.getText('source')}
-                    provider={activeProvider}
-                  />
-                </div>
-                <div className={isSourceMode ? 'hidden' : 'h-full'}>
-                  <TiptapEditor key={activeDocName} provider={activeProvider} />
-                </div>
+              <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+                {syncState === 'connecting' ? (
+                  <EditorSkeleton />
+                ) : (
+                  <>
+                    <div className={isSourceMode ? 'h-full' : 'hidden'}>
+                      <SourceEditor
+                        ytext={activeProvider.document.getText('source')}
+                        provider={activeProvider}
+                      />
+                    </div>
+                    <div className={isSourceMode ? 'hidden' : 'h-full'}>
+                      <TiptapEditor key={activeDocName} provider={activeProvider} />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             <div className="absolute top-2 right-2 z-10">
