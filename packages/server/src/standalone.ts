@@ -3,6 +3,7 @@ import { dirname, resolve } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import { prependFrontmatter } from '@inkeep/open-knowledge-core';
 import { yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
+import simpleGit from 'simple-git';
 import { AgentFocusBroadcaster } from './agent-focus.ts';
 import { AgentSessionManager } from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
@@ -776,6 +777,21 @@ export function createServer(options: ServerOptions): ServerInstance {
         } finally {
           // Phase 5: shadow repo release — ALWAYS runs
           if (shadowRef.current) {
+            // Persist current HEAD before releasing shadow lock (FR11)
+            try {
+              const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 5_000 } });
+              const currentHead = (await projectGit.revparse('HEAD')).trim();
+              if (currentHead) {
+                writeFileSync(
+                  resolve(shadowRef.current.gitDir, 'last-known-head'),
+                  currentHead,
+                  'utf-8',
+                );
+              }
+            } catch {
+              // Fresh repo with no commits, or git not available — skip silently
+            }
+
             try {
               destroyShadowRepo(shadowRef.current);
             } catch (err) {
@@ -858,6 +874,77 @@ export function createServer(options: ServerOptions): ServerInstance {
         } else {
           log.error({ err: e }, '[server] shadow repo check failed (transient?)');
         }
+      }
+    }
+
+    // HEAD-drift check (FR11): detect git operations that occurred while offline
+    // Compare stored last-known-head against current HEAD SHA and import if diverged
+    if (shadowRef.current) {
+      try {
+        const lastKnownHeadPath = resolve(shadowRef.current.gitDir, 'last-known-head');
+
+        // Read last persisted HEAD SHA
+        let lastKnownHead: string | null = null;
+        try {
+          lastKnownHead = readFileSync(lastKnownHeadPath, 'utf-8').trim() || null;
+        } catch {
+          // File doesn't exist yet — first run
+        }
+
+        // Read current HEAD SHA from project repo
+        let currentHead: string | null = null;
+        try {
+          const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
+          currentHead = (await projectGit.revparse('HEAD')).trim() || null;
+        } catch {
+          // Fresh repo with no commits — skip drift check
+        }
+
+        if (currentHead !== null) {
+          if (currentHead !== lastKnownHead) {
+            // Drift detected (includes null → SHA for fresh clone T0 case)
+            let branch = 'main';
+            try {
+              const projectGit = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
+              const b = (await projectGit.raw('rev-parse', '--abbrev-ref', 'HEAD')).trim();
+              if (b && b !== 'HEAD') branch = b;
+            } catch {
+              // Detached HEAD or error — fallback to 'main'
+            }
+
+            log.info(
+              { lastKnownHead, currentHead, branch },
+              `[head-drift] lastKnownHead=${lastKnownHead ?? 'null'}, currentHead=${currentHead}, action=import`,
+            );
+
+            try {
+              await commitUpstreamImport(
+                shadowRef.current,
+                contentRoot ?? '',
+                lastKnownHead,
+                currentHead,
+                branch,
+              );
+              incrementUpstreamImport();
+            } catch (e) {
+              log.warn({ err: e }, '[head-drift] commitUpstreamImport failed — continuing');
+            }
+          } else {
+            log.info(
+              { currentHead },
+              `[head-drift] lastKnownHead=${lastKnownHead ?? 'null'}, currentHead=${currentHead}, action=noop`,
+            );
+          }
+
+          // Always persist current HEAD so next startup has an accurate baseline
+          try {
+            writeFileSync(lastKnownHeadPath, currentHead, 'utf-8');
+          } catch (e) {
+            log.warn({ err: e }, '[head-drift] failed to write last-known-head');
+          }
+        }
+      } catch (e) {
+        log.warn({ err: e }, '[head-drift] check failed — continuing');
       }
     }
 
