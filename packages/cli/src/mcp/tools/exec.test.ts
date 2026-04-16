@@ -194,6 +194,102 @@ describe('exec — happy path', () => {
   });
 });
 
+describe('exec — stdout provenance headers', () => {
+  test('`ls <dir>/` prepends `<dir>/:` header to stdout', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '# Auth\n');
+
+    const result = (await buildExecResult(
+      { command: 'ls articles/' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('articles/:\n')).toBe(true);
+    expect(result.content[0].text).toContain('articles/:\n');
+  });
+
+  test('`ls .` emits no header (no explicit subject dir)', async () => {
+    const project = await bootstrap();
+    writeFileSync(resolve(project, 'top.md'), '# Top\n');
+
+    const result = (await buildExecResult(
+      { command: 'ls .' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('./:')).toBe(false);
+    expect(s.stdout?.startsWith('.:')).toBe(false);
+  });
+
+  test('`cat <file.md>` prepends `==> <file> <==` header to stdout', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '# Auth\n\nBody\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat articles/auth.md' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('==> articles/auth.md <==\n')).toBe(true);
+  });
+
+  test('`cat a.md b.md` prepends one `==> <path> <==` per file', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'a.md'), 'A\n');
+    writeFileSync(resolve(contentDir, 'b.md'), 'B\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat articles/a.md articles/b.md' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout).toContain('==> articles/a.md <==');
+    expect(s.stdout).toContain('==> articles/b.md <==');
+  });
+
+  test('`head <file.md>` prepends file header AND enriches the file', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody\n');
+
+    const result = (await buildExecResult(
+      { command: 'head -5 articles/auth.md' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('==> articles/auth.md <==\n')).toBe(true);
+    const files = fileEntries(s);
+    expect(files.some((f) => f.path === 'articles/auth.md')).toBe(true);
+  });
+
+  test('`cat X | head -5` — cat header wins, head is a trimmer', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), 'line 1\nline 2\nline 3\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat articles/auth.md | head -2' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('==> articles/auth.md <==\n')).toBe(true);
+  });
+});
+
 describe('exec — folder-rule flow-through (US-005 / QA-001 / QA-002)', () => {
   test('ls on a folder with a matching rule surfaces folder fields (QA-001)', async () => {
     const project = await bootstrap();

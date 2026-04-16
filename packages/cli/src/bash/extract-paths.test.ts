@@ -67,6 +67,26 @@ describe('extractReferencedPaths — grep', () => {
   });
 });
 
+describe('extractReferencedPaths — head/tail as conditional producer', () => {
+  test('`head file.md` extracts the file arg like cat', () => {
+    const paths = extractReferencedPaths('first ten lines...\n', [stage('head', '-5', 'auth.md')]);
+    expect(paths).toEqual(['auth.md']);
+  });
+
+  test('`tail file.md` extracts the file arg like cat', () => {
+    const paths = extractReferencedPaths('last ten lines...\n', [stage('tail', '-5', 'auth.md')]);
+    expect(paths).toEqual(['auth.md']);
+  });
+
+  test('`cat X | head -5` keeps cat as producer (head has no file arg)', () => {
+    const paths = extractReferencedPaths('5 lines of X...\n', [
+      stage('cat', 'articles/auth.md'),
+      stage('head', '-5'),
+    ]);
+    expect(paths).toEqual(['articles/auth.md']);
+  });
+});
+
 describe('extractReferencedPaths — find', () => {
   test('each stdout line is a path', () => {
     const stdout = 'articles/auth.md\narticles/oauth.md\n';

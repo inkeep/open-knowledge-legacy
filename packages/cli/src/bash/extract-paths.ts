@@ -3,11 +3,12 @@
  * handler can enrich each one.
  *
  * Strategy per D8 / FR14:
- *   1. Find the last "path-producer" stage (cat, ls, grep, find) walking
- *      backwards through stages — later commands like head/tail/sort
- *      simply pass paths through.
+ *   1. Find the last "path-producer" stage walking backwards through stages.
+ *      Base producers (cat, ls, grep, find) always qualify. `head` and
+ *      `tail` qualify conditionally — only when given a file arg directly
+ *      (`head file.md`), not when used as pipe trimmers (`grep ... | head -5`).
  *   2. Apply that stage's extraction rule:
- *        - `cat` → paths come from ARGS (stdout is file contents, not paths)
+ *        - `cat`, `head <file>`, `tail <file>` → paths from ARGS (stdout is contents)
  *        - `ls`  → each stdout line is a path (prefixed with the arg dir
  *                  if one was supplied)
  *        - `grep -rn` → `path:line:text` lines; split on first colon
@@ -104,6 +105,17 @@ function extractFromFind(stdout: string): string[] {
   return out;
 }
 
+function extractFromHeadTail(stage: Stage): string[] {
+  // Like cat: when head/tail is given a file arg, paths come from ARGV.
+  return nonFlagArgs(argsOf(stage)).filter(isWikiPath);
+}
+
+function headTailActsAsProducer(stage: Stage): boolean {
+  // head/tail only qualify as producers when invoked with a file arg.
+  // `cat x | head -5` keeps head as a trimmer and falls through to cat.
+  return nonFlagArgs(argsOf(stage)).length > 0;
+}
+
 function fallback(stdout: string): string[] {
   const out: string[] = [];
   const matches = stdout.matchAll(PATH_FALLBACK_RE);
@@ -116,11 +128,17 @@ function fallback(stdout: string): string[] {
  * stages that produced it.
  */
 export function extractReferencedPaths(stdout: string, stages: Stage[]): string[] {
-  // Find the last producer stage.
+  // Find the last producer stage. head/tail qualify only when given a file
+  // arg — otherwise they're pipe trimmers and we should keep walking.
   let producer: Stage | null = null;
   for (let i = stages.length - 1; i >= 0; i--) {
-    if (PRODUCER_COMMANDS.has(stages[i].command)) {
-      producer = stages[i];
+    const s = stages[i];
+    if (PRODUCER_COMMANDS.has(s.command)) {
+      producer = s;
+      break;
+    }
+    if ((s.command === 'head' || s.command === 'tail') && headTailActsAsProducer(s)) {
+      producer = s;
       break;
     }
   }
@@ -141,6 +159,10 @@ export function extractReferencedPaths(stdout: string, stages: Stage[]): string[
         break;
       case 'find':
         raw = extractFromFind(stdout);
+        break;
+      case 'head':
+      case 'tail':
+        raw = extractFromHeadTail(producer);
         break;
       default:
         raw = fallback(stdout);

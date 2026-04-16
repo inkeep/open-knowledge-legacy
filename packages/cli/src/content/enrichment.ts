@@ -209,7 +209,7 @@ const FrontmatterSchema = z.object({
   tags: z.array(z.string()).default([]),
 });
 
-function pathToDocName(relPath: string): string {
+export function pathToDocName(relPath: string): string {
   return relPath.replace(/\.md$/, '').replace(/\.mdx$/, '');
 }
 
@@ -260,6 +260,31 @@ async function fetchBacklinks(
     });
   }
   return entries;
+}
+
+/**
+ * Bulk backlink-count fetch for slim-enrichment callers (multi-path ls/grep/
+ * find/multi-cat). One HTTP call covers all paths — no N-amplification.
+ * Returns `null` when no serverUrl or the request fails; returns a
+ * `Map<docName, number>` on success (missing docNames ⇒ not in the map).
+ *
+ * See `/api/backlink-counts` in `api-extension.ts`.
+ */
+export async function fetchBacklinkCountsBatch(
+  serverUrl: string | undefined,
+  docNames: string[],
+): Promise<Map<string, number> | null> {
+  if (!serverUrl || docNames.length === 0) return null;
+  const unique = [...new Set(docNames)];
+  const param = encodeURIComponent(unique.join(','));
+  const result = await httpGet(serverUrl, `/api/backlink-counts?docNames=${param}`);
+  if (!result.ok) return null;
+  const counts = (result.counts ?? {}) as Record<string, unknown>;
+  const out = new Map<string, number>();
+  for (const [name, val] of Object.entries(counts)) {
+    if (typeof val === 'number' && Number.isFinite(val)) out.set(name, val);
+  }
+  return out;
 }
 
 async function fetchForwardLinks(
