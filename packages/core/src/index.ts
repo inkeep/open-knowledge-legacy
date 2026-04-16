@@ -88,6 +88,7 @@ export type {
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export {
   AGENT_COLORS,
+  AGENT_ICON_COLORS,
   colorFromSeed,
   deriveIconColor,
   generateRandomColor,

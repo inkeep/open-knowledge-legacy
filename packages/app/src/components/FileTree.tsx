@@ -219,8 +219,18 @@ const FileTreeNode: FC<{
 
   const fileContent = (
     <>
-      <IconToUse className="size-4 shrink-0" stroke="var(--color-muted-foreground)" />
-      <span className="min-w-0 flex-1 truncate text-sm text-sidebar-foreground/70">
+      <IconToUse
+        className="size-4 shrink-0"
+        stroke={
+          isActive ? 'var(--color-sidebar-accent-foreground)' : 'var(--color-muted-foreground)'
+        }
+      />
+      <span
+        className={cn(
+          'min-w-0 flex-1 truncate text-sm',
+          isActive ? 'text-sidebar-accent-foreground' : 'text-sidebar-foreground/70',
+        )}
+      >
         {node.name}
         {isFile && '.md'}
       </span>
