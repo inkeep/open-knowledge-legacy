@@ -25,21 +25,8 @@
 
 import type { Editor } from '@tiptap/core';
 import { ChevronRight } from 'lucide-react';
-import type { BlockChainEntry } from '../../editor/extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../../editor/hooks/use-block-selection.ts';
-import { getDescriptor } from '../../editor/registry/index.ts';
-
-/** Resolve the human label for an ancestor entry.
- *
- *  Prefers the registered descriptor's `displayName`, falls back to
- *  descriptor `name`, and finally to the entry's own `componentName` when
- *  the descriptor is the wildcard — in that case the registered
- *  `displayName`/`name` are both `'*'`, which is a useless trail label. */
-function entryLabel(entry: BlockChainEntry): string {
-  const descriptor = getDescriptor(entry.componentName);
-  if (descriptor.name === '*') return entry.componentName;
-  return descriptor.displayName ?? descriptor.name;
-}
+import { getEntryLabel } from '../../editor/selection/entry-label.ts';
 
 export function Breadcrumb({ editor }: { editor: Editor | null }) {
   const blockSelection = useBlockSelection(editor);
@@ -47,13 +34,15 @@ export function Breadcrumb({ editor }: { editor: Editor | null }) {
 
   // Render the container unconditionally — `min-h-[28px]` reserves the
   // footer height so selecting / deselecting never shifts the editor body.
-  // When no block is selected, the nav is empty but not display:none (the
-  // reserved space is the point).
+  // When no block is selected, the nav is empty with no visual border; the
+  // space is held but the divider line stays invisible until a selection
+  // exists, matching the pre-fix "footer appears only with content" intent
+  // without the layout-shift pump.
   return (
     <nav
       aria-label="Block ancestor navigation"
       aria-hidden={hasSelection ? undefined : 'true'}
-      className="jsx-component-breadcrumb flex items-center gap-1 min-h-[28px] px-3 py-1.5 text-xs font-mono text-muted-foreground border-t border-border"
+      className={`jsx-component-breadcrumb flex items-center gap-1 min-h-[28px] px-3 py-1.5 text-xs font-mono text-muted-foreground ${hasSelection ? 'border-t border-border' : ''}`}
     >
       {hasSelection && blockSelection ? (
         <BreadcrumbContent editor={editor as Editor} blockSelection={blockSelection} />
@@ -77,7 +66,7 @@ function BreadcrumbContent({
         Document
       </span>
       {ancestorChain.map((entry, index) => {
-        const label = entryLabel(entry);
+        const label = getEntryLabel(entry);
         const isInnermost = entry.bridgeId === selectedBlockId;
 
         return (

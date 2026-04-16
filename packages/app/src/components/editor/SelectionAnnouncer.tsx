@@ -24,9 +24,8 @@
 
 import type { Editor } from '@tiptap/core';
 import { useEffect, useRef } from 'react';
-import type { BlockChainEntry } from '../../editor/extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../../editor/hooks/use-block-selection.ts';
-import { getDescriptor } from '../../editor/registry/index.ts';
+import { getEntryLabel } from '../../editor/selection/entry-label.ts';
 
 const ANNOUNCE_DEBOUNCE_MS = 200;
 
@@ -77,26 +76,13 @@ export function SelectionAnnouncer({ editor }: { editor: Editor | null }) {
 }
 
 /**
- * Resolve the announce-label for a BlockChainEntry. Prefers the registered
- * descriptor's `displayName`, falls back to descriptor `name`, and finally to
- * the entry's own `componentName` (the string the user actually authored) —
- * the last case covers unregistered components that resolve to the wildcard
- * `'*'` descriptor, where neither `displayName` nor `name` carries useful
- * text. Appends " (unregistered)" in the wildcard case so AT users
- * understand why the label is unfamiliar.
- */
-function entryLabel(entry: BlockChainEntry): string {
-  const descriptor = getDescriptor(entry.componentName);
-  if (descriptor.name === '*') {
-    return `${entry.componentName} (unregistered)`;
-  }
-  return descriptor.displayName ?? descriptor.name;
-}
-
-/**
  * Format the aria-live message for the current selection. Separated out so
  * the formatting logic is pure and the useEffect stays focused on lifecycle.
  * Exported for unit testing.
+ *
+ * AT announcements pass `{ unregisteredSuffix: true }` so screen-reader users
+ * understand why an unfamiliar label appears (the component resolved to the
+ * wildcard descriptor).
  */
 export function formatSelectionMessage(
   editor: Editor,
@@ -108,14 +94,14 @@ export function formatSelectionMessage(
 
   const chain = blockSelection.ancestorChain;
   const innermost = chain[chain.length - 1];
-  const innermostLabel = entryLabel(innermost);
+  const innermostLabel = getEntryLabel(innermost, { unregisteredSuffix: true });
 
   if (chain.length === 1) {
     return `Selected: ${innermostLabel}`;
   }
 
   const parent = chain[chain.length - 2];
-  const parentLabel = entryLabel(parent);
+  const parentLabel = getEntryLabel(parent, { unregisteredSuffix: true });
 
   // Compute the selected wrapper's index within its parent's children via
   // PM position resolution. If the resolve fails (doc shifted mid-tick), we

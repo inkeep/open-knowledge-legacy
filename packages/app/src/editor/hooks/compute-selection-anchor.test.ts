@@ -99,19 +99,19 @@ function makeRect(x: number, y: number, w: number, h: number): DOMRect {
   } as DOMRect;
 }
 
+/**
+ * Plain duck-typed mock of the surface `computeSelectionAnchor` calls on
+ * DOM nodes (only `getBoundingClientRect`). Pure object — no reliance on
+ * `globalThis.document` or any DOM shim — so these tests run in Bun's
+ * native test env without jsdom/happy-dom.
+ *
+ * The hook only consumes `getBoundingClientRect()` from `view.nodeDOM(pos)`,
+ * so anything shaped like `{ getBoundingClientRect }` is indistinguishable
+ * from a real `HTMLElement` from the hook's perspective (verified at
+ * compute-selection-anchor.ts:123 "Duck-type the returned value").
+ */
 function makeHTMLElement(rect: DOMRect): HTMLElement {
-  // Bun's test env may or may not have a DOM shim. Use `document` when
-  // available; otherwise skip the test.
-  const hasDocument = typeof globalThis.document !== 'undefined';
-  if (hasDocument) {
-    const el = globalThis.document.createElement('div');
-    Object.defineProperty(el, 'getBoundingClientRect', {
-      value: () => rect,
-      writable: true,
-    });
-    return el;
-  }
-  throw new Error('NO_DOM_AVAILABLE');
+  return { getBoundingClientRect: () => rect } as unknown as HTMLElement;
 }
 
 const EMPTY_SELECTION: BlockSelection = {
@@ -143,14 +143,7 @@ describe('computeSelectionAnchor', () => {
   });
 
   test('returns virtual element when NodeSelection and DOM resolves', () => {
-    // Skip if we can't build an HTMLElement (no DOM shim in test env).
-    let el: HTMLElement;
-    try {
-      el = makeHTMLElement(makeRect(100, 200, 300, 40));
-    } catch {
-      // No DOM — exercise the fallback path only.
-      return;
-    }
+    const el = makeHTMLElement(makeRect(100, 200, 300, 40));
 
     const doc = schema.node('doc', null, [jsx('Card', [p('body')])]);
     const state = EditorState.create({
@@ -176,12 +169,7 @@ describe('computeSelectionAnchor', () => {
   });
 
   test('getClientRects returns single-element [rect] array', () => {
-    let el: HTMLElement;
-    try {
-      el = makeHTMLElement(makeRect(10, 20, 30, 40));
-    } catch {
-      return;
-    }
+    const el = makeHTMLElement(makeRect(10, 20, 30, 40));
     const doc = schema.node('doc', null, [jsx('Card')]);
     const state = EditorState.create({ doc, selection: NodeSelection.create(doc, 0) });
     const view = makeMockView(state, {
@@ -199,12 +187,7 @@ describe('computeSelectionAnchor', () => {
   });
 
   test('contextElement references view.dom for autoUpdate scroll discovery', () => {
-    let el: HTMLElement;
-    try {
-      el = makeHTMLElement(makeRect(0, 0, 0, 0));
-    } catch {
-      return;
-    }
+    const el = makeHTMLElement(makeRect(0, 0, 0, 0));
     const doc = schema.node('doc', null, [jsx('Card')]);
     const state = EditorState.create({ doc, selection: NodeSelection.create(doc, 0) });
     const view = makeMockView(state, {
