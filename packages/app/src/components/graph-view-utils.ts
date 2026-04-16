@@ -4,6 +4,9 @@ export interface DocGraphNode {
   label: string;
   docName: string;
   anchor: string | null;
+  cluster?: string | null;
+  category?: string | null;
+  tags?: string[] | null;
 }
 
 export interface ExternalGraphNode {

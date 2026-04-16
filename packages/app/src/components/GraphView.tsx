@@ -4,6 +4,7 @@ import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-for
 import { hashFromDocName } from '@/lib/doc-hash';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import { clusterColor } from './graph-colors';
 import {
   type GraphLabelLayoutLink,
   type GraphLabelLayoutNode,
@@ -385,13 +386,18 @@ export function GraphView({
               const isActive = node.kind === 'doc' && node.docName === activeDocName;
               const nodeRadius = isActive ? 8 : 5;
 
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
-              ctx.fillStyle = isActive
+              const docCluster = node.kind === 'doc' ? node.cluster : undefined;
+              const fillColor = isActive
                 ? activeNodeColor
                 : node.kind === 'external'
                   ? externalNodeColor
-                  : defaultNodeColor;
+                  : docCluster
+                    ? clusterColor(docCluster, isDark)
+                    : defaultNodeColor;
+
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
+              ctx.fillStyle = fillColor;
               ctx.fill();
 
               if (isActive) {
