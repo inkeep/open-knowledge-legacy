@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { GraphView } from '@/components/GraphView';
+import type { GraphDocSelection } from '@/components/graph-view-utils';
 import { Button } from '@/components/ui/button';
 import {
   Panel,
@@ -254,6 +255,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [fullscreenMode, setFullscreenMode] = useState<FullscreenGraphMode>('explore');
   const [orphanMode, setOrphanMode] = useState<OrphanMode>('both');
+  const [selectedNode, setSelectedNode] = useState<GraphDocSelection | null>(null);
   const [stats, setStats] = useState<{ nodes: number; links: number } | null>(null);
 
   useEffect(() => {
@@ -265,6 +267,18 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
       document.removeEventListener('webkitfullscreenchange', sync);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isFullscreen && selectedNode !== null) {
+      setSelectedNode(null);
+    }
+  }, [isFullscreen, selectedNode]);
+
+  useEffect(() => {
+    if (fullscreenMode !== 'explore' && selectedNode !== null) {
+      setSelectedNode(null);
+    }
+  }, [fullscreenMode, selectedNode]);
 
   const activeMode = isFullscreen ? fullscreenMode : 'explore';
 
@@ -319,6 +333,17 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
           activeDocName={activeDocName}
           isFullscreen={isFullscreen}
           className="min-h-0 flex-1"
+          docClickBehavior={isFullscreen ? 'select' : 'navigate'}
+          onSelectDoc={isFullscreen ? setSelectedNode : undefined}
+          onBackgroundClick={
+            isFullscreen
+              ? () => {
+                  if (selectedNode !== null) {
+                    setSelectedNode(null);
+                  }
+                }
+              : undefined
+          }
           onStatsChange={(nodes, links, loading) => {
             if (loading) {
               setStats(null);

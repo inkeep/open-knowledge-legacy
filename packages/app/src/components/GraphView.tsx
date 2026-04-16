@@ -1,7 +1,6 @@
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-force-graph-2d';
-import { hashFromDocName } from '@/lib/doc-hash';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 import {
@@ -13,9 +12,12 @@ import {
 import { buildGraphLabelDescriptors } from './graph-label-utils';
 import {
   type GraphData,
+  type GraphDocClickBehavior,
+  type GraphDocSelection,
   type GraphLink,
   type GraphNode,
   getGraphNodeTooltipLabel,
+  resolveGraphNodeClickAction,
 } from './graph-view-utils';
 
 interface LinkGraphResponse {
@@ -169,11 +171,17 @@ export function GraphView({
   activeDocName,
   isFullscreen = false,
   className = '',
+  docClickBehavior = 'navigate',
+  onSelectDoc,
+  onBackgroundClick,
   onStatsChange,
 }: {
   activeDocName: string;
   isFullscreen?: boolean;
   className?: string;
+  docClickBehavior?: GraphDocClickBehavior;
+  onSelectDoc?: (selection: GraphDocSelection) => void;
+  onBackgroundClick?: () => void;
   onStatsChange?: (nodes: number, links: number, loading: boolean) => void;
 }) {
   // force-graph mutates the objects it receives in-place during layout, so we compare
@@ -443,14 +451,21 @@ export function GraphView({
             linkDirectionalArrowRelPos={1}
             linkWidth={1}
             onNodeClick={(node: NodeObject<GraphNode>) => {
-              if (node.kind === 'external') {
-                window.open(node.url, '_blank', 'noopener,noreferrer');
+              const action = resolveGraphNodeClickAction(node, docClickBehavior);
+
+              if (action.kind === 'external') {
+                window.open(action.url, '_blank', 'noopener,noreferrer');
                 return;
               }
-              if (node.docName) {
-                window.location.assign(hashFromDocName(node.docName, node.anchor ?? null));
+
+              if (action.kind === 'navigate') {
+                window.location.assign(action.hash);
+                return;
               }
+
+              onSelectDoc?.(action.selection);
             }}
+            onBackgroundClick={onBackgroundClick}
           />
         </div>
       )}
