@@ -1,5 +1,7 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createContext, type ReactNode, use, useEffect, useState, useTransition } from 'react';
+import type { ResolvedNavigationTarget } from '@/components/navigation-targets';
+import { docNameForNavigationTarget } from '@/components/navigation-targets';
 import { createOpenDocumentTransition } from './document-transition';
 import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
@@ -17,6 +19,7 @@ export interface PoolEntrySnapshot {
 }
 
 export interface DocumentContextValue {
+  activeTarget: ResolvedNavigationTarget | null;
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
   syncState: SyncState;
@@ -38,9 +41,30 @@ export interface DocumentContextValue {
    */
   openDocumentTransition: (docName: string) => void;
   /**
-   * True while a `openDocumentTransition`-initiated navigation is mid-flight,
-   * including the time spent suspending on `syncPromise` inside
-   * `DocumentBoundary`. Drives `NavigationPendingBar`'s 4-tier escalation.
+   * Set the active navigation target (doc / folder-index / folder / missing)
+   * per the folder-aware resolver introduced in PR #175. For a `doc` target
+   * this opens/activates the pooled provider; for `folder` it clears the
+   * active doc so `EditorArea` renders `<FolderOverview>`; for `missing` it
+   * sets the new-doc intent and opens the pooled provider.
+   */
+  openTarget: (target: ResolvedNavigationTarget) => void;
+  /**
+   * Same as `openTarget` but wrapped in React's `startTransition`. This is
+   * the canonical hash-driven nav path (`NavigationHandler` in `App.tsx`)
+   * so the transition surfaces the `isPending` state that drives
+   * `NavigationPendingBar` AND keeps the previously-revealed subtree visible
+   * during the suspending re-render (SPEC G2+G3). `openTarget` is retained
+   * for non-transition callers (tests, direct agent actions).
+   */
+  openTargetTransition: (target: ResolvedNavigationTarget) => void;
+  clearTarget: () => void;
+  /**
+   * True while a transition-wrapped navigation is mid-flight, including the
+   * time spent suspending on `syncPromise` inside `DocumentBoundary`. Shared
+   * across `openDocumentTransition` and `openTargetTransition` — a single
+   * `useTransition()` at the provider level, so every consumer of
+   * `useDocumentTransition()` sees the same pending state. Drives
+   * `NavigationPendingBar`'s 4-tier escalation.
    */
   isPending: boolean;
   closeDocument: (docName: string) => void;
@@ -159,6 +183,7 @@ function takeSnapshot(p: ProviderPool): Snapshot {
 
 export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
+  const [activeTarget, setActiveTarget] = useState<ResolvedNavigationTarget | null>(null);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
   // `useTransition` (rather than the module-level `startTransition`) is
   // required so `isPending` is observable to context consumers. The
@@ -226,20 +251,52 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     const entry = p.open(docName);
     if (!entry) return; // reserved doc (e.g. __system__) — pool refused admission
     p.setActive(docName);
+    // Set a doc-kind ResolvedNavigationTarget so downstream consumers
+    // (EditorArea's isNewDoc, EditorPane's folder-mode effect) stay in sync.
+    // openTarget() is the canonical path for folder/missing kinds; openDocument
+    // stays as a direct-doc affordance for non-resolver callers (tests, etc.).
+    setActiveTarget({ kind: 'doc', target: docName, docName });
   };
   const openDocumentTransition = createOpenDocumentTransition(openDocument, startTransition);
 
+  const openTarget = (target: ResolvedNavigationTarget) => {
+    const p = getPool();
+    const docName = docNameForNavigationTarget(target);
+    if (docName) {
+      p.open(docName);
+      p.setActive(docName);
+    } else {
+      p.clearActive();
+    }
+    setActiveTarget(target);
+  };
+  const openTargetTransition = (target: ResolvedNavigationTarget) => {
+    startTransition(() => openTarget(target));
+  };
+
   const value: DocumentContextValue = {
+    activeTarget,
     activeDocName: snapshot.activeDocName,
     activeProvider: snapshot.activeProvider,
     syncState: snapshot.syncState,
     poolEntries: snapshot.poolEntries,
     openDocument,
     openDocumentTransition,
+    openTarget,
+    openTargetTransition,
+    clearTarget: () => {
+      const p = getPool();
+      p.clearActive();
+      setActiveTarget(null);
+    },
     isPending,
     closeDocument: (docName: string) => {
       const p = getPool();
       p.close(docName);
+      setActiveTarget((current) => {
+        if (!current) return current;
+        return docNameForNavigationTarget(current) === docName ? null : current;
+      });
     },
     recycleDocument: (docName: string) => {
       const p = getPool();
@@ -271,16 +328,19 @@ export function useDocumentContext(): DocumentContextValue {
  * Convenience hook for navigation consumers (`NavigationHandler`,
  * `DocumentErrorBoundary` retry, sidebar click handlers) that only need the
  * transition surface and don't care about the rest of the document context.
- * Returns `{ openDocumentTransition, isPending }` — both come from the parent
- * `DocumentProvider`'s single `useTransition()` call, so all consumers share
- * the same pending state.
+ * Returns `{ openDocumentTransition, openTargetTransition, isPending }` — all
+ * three come from the parent `DocumentProvider`'s single `useTransition()`
+ * call, so every consumer sees the same pending state. `openDocumentTransition`
+ * is the doc-by-name path; `openTargetTransition` is the folder-aware resolver
+ * path (hash-driven nav via `NavigationHandler`).
  */
 export function useDocumentTransition(): {
   openDocumentTransition: (docName: string) => void;
+  openTargetTransition: (target: ResolvedNavigationTarget) => void;
   isPending: boolean;
 } {
-  const { openDocumentTransition, isPending } = useDocumentContext();
-  return { openDocumentTransition, isPending };
+  const { openDocumentTransition, openTargetTransition, isPending } = useDocumentContext();
+  return { openDocumentTransition, openTargetTransition, isPending };
 }
 
 // Vite HMR dispose — when this module is hot-replaced in dev, tear down the

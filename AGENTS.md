@@ -36,6 +36,20 @@ cd packages/<pkg> && bun test           # Unit tests per package
 
 `bun run check`** is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is \\<50ms.
 
+### CI tier structure
+
+Three CI tiers, calibrated against measured baselines (US-016 / SPEC R9). Turbo tasks in `turbo.json` are the canonical task list; workflow files in `.github/workflows/` dispatch them.
+
+| Tier | Cadence | Workflow | Scope | Budget |
+| ---- | ------- | -------- | ----- | ------ |
+| 1    | Every PR + push to `main` | `.github/workflows/ci.yml` | lint, typecheck, unit, integration, conversion, fidelity (1K PBT samples), stress (server-authoritative), bridge fuzz (default seeds) | 15 min (p95 warm local baseline ≈ 2m30s; runners ≈ 2× slower; 1.5× headroom) |
+| 2    | Nightly (06:17 UTC) + `workflow_dispatch` | `.github/workflows/nightly.yml` | deep fuzz (`STRESS_FUZZ_NIGHTLY=1`), full stress, perf regression gate (`test:perf:regression`), parse-health gate (`test:health`), `parseWithFallback` perf bound (`test:perf:fallback`) | 30 min per job |
+| 3    | Weekly (Sunday 04:23 UTC) + `workflow_dispatch` | `.github/workflows/weekly.yml` | elevated-sample PBT (`STRESS_FIDELITY=1` → 10K fast-check runs), elevated-seed bridge fuzz, perf-trend benchmark artifact upload | 60 min |
+
+**Where to add a new test.** Tier 1 if it enforces a correctness invariant that must hold on every PR. Tier 2 if it's a perf / health regression gate, a deep fuzz, or any signal that needs stable multi-run variance to avoid flake. Tier 3 if it's an elevated-sample PBT (10K+ fast-check runs), a multi-minute stress scenario, or a trend artifact the team reviews weekly. Off-minute cron slots (`:17`, `:23`) are deliberate to avoid GHA scheduling contention.
+
+**Perf gate calibration.** Threshold is `max(2× p99 variance, 10% absolute floor)` per block size. Baseline lives in `packages/core/tests/perf/baseline.json`. Synthetic-regression tests in `tests/perf/regression-gate.test.ts` prove the gate fires on injected slowdown.
+
 ### Agent simulator (requires dev server running)
 
 ```bash
@@ -81,7 +95,10 @@ These are patterns that ALL work in the repo should follow. Established during t
     (d) **Example-based coverage is a floor, not a ceiling.** A multi-client convergence fuzzer (`bridge-convergence.fuzz.test.ts`) samples the continuous race space that hand-written scenarios cannot enumerate. D18 coverage gate ensures new bridge surfaces extend the fuzzer's op set. Replay via `STRESS_FUZZ_SEED=<n>`.
     Applies to all future bridge work. When a new bridge write surface is added (e.g., V0-14 agent-undo), the D18 coverage gate fails CI until a corresponding fuzzer op kind is added. Cross-references precedent #11 (minimize CRDT mutation), #12 (XmlFragment-authoritative).
 14. **Cross-CRDT sync is single-writer, server-side.** Bidirectional observer pairs between Y.XmlFragment and Y.Text must run exclusively on the server. Client-side observer callbacks for cross-CRDT sync do not write the derived CRDT — the write paths are removed, not gated (a flag would be ceremony in a monorepo with atomic client+server deploy). Local-only observer firings (user CodeMirror edit → writes Y.Text directly; user TipTap edit → writes Y.XmlFragment directly) still run client-side because the client is the sole writer for that local edit's source CRDT; the server then mirrors to the derived CRDT. Why: client-side multi-writer bridges interleave at the CRDT protocol layer, producing duplication under concurrent edits (see `specs/2026-04-15-server-authoritative-observer-bridge/`). Applies to all dual-CRDT bridge work.
-15. **Hybrid Activity + Suspense + `use(promise)` for subscription-source async primitives.** Five sub-principles, narrow scope:
+15. **Idempotent micromark-extension attachers.** Any remark plugin whose attacher mutates `this.data().micromarkExtensions` (or similar unified `data()` arrays) MUST check-before-push using a module-level singleton extension value — e.g. `const ext = {...}; if (!list.includes(ext)) list.push(ext);`. Rationale: processor caching (precedent-driven, enforced by `createParseProcessor` / `createSerializeProcessor` in `pipeline.ts`) means one processor serves many `parse()` calls; re-running a naive attacher accumulates duplicate extensions and produces divergent tokenization over the processor's lifetime. `remarkMdxAgnostic` (`remark-mdx-agnostic.ts`) and `remarkWikiLink` (`wiki-link-micromark.ts`) both implement this pattern. Evidence: `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md` §R16. Applies to every future remark plugin that touches `data().micromarkExtensions`, `data().fromMarkdownExtensions`, or `data().toMarkdownExtensions`.
+16. **Phase-ordered visitor dispatchers when passes consume each other's output.** When multiple mdast transformations depend on each other — e.g. pass N regex-matches on characters pass N-1 restores — the dispatcher MUST be split along the dependency boundary. Merging all passes into a single same-node visitor is wrong when an earlier pass's output is the later pass's input. The concrete template is `pipeline.ts`'s two-phase post-parse walker: Phase A (`restoreFromMdx`) restores PUA sentinels to literal chars as its own visitor pass; Phase B (`mergedPostParseWalkerPlugin`) runs the remaining four passes inside a single `unist-util-visit` callback with explicit intra-phase ordering (pass-5 first with `SKIP`, then pass-2, then pass-4; pass-3 runs as a tree-level pre-step). Rationale: `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md` §R17 enumerates why a single-visitor merge was impossible. When adding a new post-parse pass, decide up front whether it reads outputs of existing passes — if yes, it joins Phase B's internal ordering; if it produces outputs a later phase consumes, it becomes a new standalone phase.
+17. **Byte-for-byte equivalence validators gate high-risk refactors.** When a refactor must preserve observable behavior exactly (e.g. merging five visitor passes into two, replacing a library algorithm via patch, restructuring a handler table), commit a one-time mdast / AST / output diff validator that runs across the full fixture corpus and asserts byte-identical output against the pre-refactor baseline. The validator lives in `evidence/` (or equivalent), ships alongside the refactor, and is deleted once the refactor ships green — it is a ratchet, not a regression test. Template: US-007's `r17-mdast-equivalence.md` validator covered 714 fixtures across the seven-subdirectory corpus and was removed after US-008 merged the walker. Applies to any refactor where review reading alone cannot confirm equivalence. Cross-references precedent #13(d) (example-based coverage is a floor, not a ceiling) — the equivalence validator IS the floor for refactor correctness.
+18. **Hybrid Activity + Suspense + `use(promise)` for subscription-source async primitives.** Five sub-principles, narrow scope:
     (a) **Semantic boundary — subscribe-once vs fetch/refetch.** This precedent covers React-land async that resolves via a **one-shot event** from a long-lived subscription source: HocuspocusProvider `'synced'`, a CRDT snapshot settling, a file-watcher's first emission, a WebSocket handshake. It does NOT cover HTTP fetch/refetch — TanStack Query remains canonical for `useQuery`/`useSuspenseQuery`-shaped data where caching, invalidation policy, retries, pagination, or mutations are load-bearing (see SPEC.md §10 D2 + TkDodo's positioning of `use()` vs TanStack Query in "[React 19 and Suspense: A Drama in 3 Acts](https://tkdodo.eu/blog/react-19-and-suspense-a-drama-in-3-acts)"). Future contributors: if the resolution lifecycle reduces to "wait for one event, then render," this is the right pattern. If you need re-fetch on focus, stale-while-revalidate, or typed cache keys with dependencies, use TanStack Query.
     (b) **Hybrid Activity-for-warm + Suspense-gated-cold.** For each pooled subscription, render one React subtree wrapped in `<Activity mode={isActive ? 'visible' : 'hidden'}>`. Navigation between already-pooled items becomes a visibility flip — scroll position, cursor, editor undo history, and any other subtree state survive. First-visit to an unpooled item (or revisit to a pooled-but-not-Activity-mounted one) goes through `<Suspense fallback>` gated on `use(subscriptionPromise(key))`. `startTransition` around the navigation state-update keeps the previously-revealed subtree visible through the suspending re-render (SPEC G2 content-continuity). TipTap closed [`ueberdosis/tiptap#5761`](https://github.com/ueberdosis/tiptap/issues/5761) with maintainer @janthurau confirming editor hot-swap is unsupported, which rules out "one editor, swap the ydoc" and motivates per-Activity-entry editor+provider+ydoc triples.
     (c) **Bounded Activity-mount count, decoupled from the pool size.** Y.js observers (`setupObservers` bridges, awareness listeners, CRDT update handlers) are NOT React effects. They do not pause when Activity flips to `hidden` — a hidden Activity subtree with a pooled provider still processes every remote-peer update at full CPU cost. The fix is an explicit mount-count bound (`ACTIVITY_MOUNT_LIMIT = 3` in `packages/app/src/components/EditorActivityPool.tsx`) that is **separate from the pool-size bound** (`MAX_POOL = 10` in `provider-pool.ts`). The pool keeps warm providers for fast Suspense-gated remount; the Activity-mount list keeps only the most-recently-active N subtrees alive for state preservation. Revisiting a pool-resident-but-not-Activity-mounted item performs a fresh Suspense remount that resolves immediately because `hasSynced=true` (cold mount, warm content).
@@ -296,9 +313,9 @@ Cross-CRDT sync (server-authoritative — precedent #14):
 Client observers maintain baselines only — cross-CRDT write paths deleted.
 ```
 
-#### Hybrid Activity + Suspense render tree (precedent #15)
+#### Hybrid Activity + Suspense render tree (precedent #18)
 
-Document-open UX is built on React 19.2's `<Activity>`, Suspense, `use(promise)`, `startTransition`, and `react-error-boundary` composed per precedent #15. The render tree for `EditorArea` is:
+Document-open UX is built on React 19.2's `<Activity>`, Suspense, `use(promise)`, `startTransition`, and `react-error-boundary` composed per precedent #18. The render tree for `EditorArea` is:
 
 ```
 <DocumentErrorBoundary>          ← react-error-boundary, resetKeys={[activeDocName]}
@@ -319,7 +336,7 @@ Document-open UX is built on React 19.2's `<Activity>`, Suspense, `use(promise)`
 
 Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wraps `openDocument` in `startTransition` — React keeps the previously-visible Activity entry rendered while the next one's `syncPromise` suspends, delivering content-continuity (SPEC G2). `NavigationPendingBar` (rendered in `packages/app/src/components/EditorPane.tsx` immediately under `EditorHeader`, gated on `isPending` from the shared `useTransition()`) escalates through 4 visual tiers (0–5s subtle, 5–15s visible + "Loading doc…", 15–25s "taking longer", 25–30s "Try again?") before `sync-promise.ts` hard-rejects at 30s and the ErrorBoundary takes over.
 
-`ACTIVITY_MOUNT_LIMIT = 3` is intentionally smaller than `MAX_POOL = 10` because Y.js observers do not pause in Activity hidden mode — bounding mounted editors caps observer-CPU cost regardless of pool size. Pool-resident-but-not-mounted docs keep their warm provider for fast Suspense-gated remount (cold mount, warm content — `hasSynced=true` so `syncPromise` resolves immediately). See `packages/app/src/components/EditorActivityPool.tsx` and precedent #15(c).
+`ACTIVITY_MOUNT_LIMIT = 3` is intentionally smaller than `MAX_POOL = 10` because Y.js observers do not pause in Activity hidden mode — bounding mounted editors caps observer-CPU cost regardless of pool size. Pool-resident-but-not-mounted docs keep their warm provider for fast Suspense-gated remount (cold mount, warm content — `hasSynced=true` so `syncPromise` resolves immediately). See `packages/app/src/components/EditorActivityPool.tsx` and precedent #18(c).
 
 ### Presence & awareness
 
@@ -343,22 +360,33 @@ Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
 The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173. The plugin participates in the same `server.lock` as the published CLI, so `bun run dev` and `open-knowledge start` against the same content directory are mutually exclusive — the second invocation fails fast with `ServerLockCollisionError`.
 
+### Source-view minimal polish
+
+Small set of always-on CM6 decorations for source mode: broken-link squiggly (wikilinks + link-refs), strikethrough rendering, list hanging-indent on wrap, and code wrap-preserve-indent. Tables get structure/layout classes (hanging indent only) — no background, no border, no cell bands, no font-size/line-height change. No heading/blockquote/frontmatter decorations.
+
+- `src/editor/source-polish/` — ViewPlugin (viewport-scoped lezer walk for strikethrough, list, fenced-code, and table decorations) + StateField (doc-wide cross-scan for broken link-ref detection; skips matches inside `FencedCode`/`CodeBlock`/`InlineCode` via the Lezer tree)
+- `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting (~12 languages, lazy-loaded per block; NOT `@codemirror/language-data`)
+- Broken-wikilink detection lives in `src/editor/plugins/wiki-link-source.ts` (extends the existing plugin's `pagesCache` check), not in `source-polish/`
+- CSS: all `.cm-*` classes in `globals.css` under the `/* Source-view minimal polish */` comment block
+
 ### Key files
 
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
-- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
+- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next; wires `createSourcePolishExtension()` + `codeLanguages` allowlist + GFM
 - `src/editor/observers.ts` — Client-side observer baseline tracking (cross-CRDT write paths deleted; writes are server-authoritative per precedent #14)
 - `src/editor/provider-pool.ts` — LRU-bounded HocuspocusProvider pool (`MAX_POOL = 10`); sets client-side `forceSyncInterval: 5000` (SPEC D8, secondary defense against `synced`-never-fires; primary safety net is the 30s `syncPromise` timeout); emits pool-change notifications consumed by `DocumentContext`; invalidates `syncPromise` cache entries on provider destroy/recycle
-- `src/editor/sync-promise.ts` — Subscription-source async primitive (precedent #15(d)); module-level `Map<docName, CacheEntry>` cache; bridges HocuspocusProvider `'synced'` to `use(promise)`; 30s timeout → `SyncTimeoutError`, pre-sync close → `PreSyncDisconnectError`; `invalidateSyncPromise(docName)` tears down without rejecting (called by `provider-pool` on destroy/recycle and by retry); reserved `DocumentNotFoundError` for future use
-- `src/editor/document-transition.ts` — Pure `createOpenDocumentTransition(openDocument, startTransition)` helper — wraps `openDocument` calls in a React transition so the previously-revealed subtree stays visible through the suspending re-render (precedent #15(f))
+- `src/editor/sync-promise.ts` — Subscription-source async primitive (precedent #18(d)); module-level `Map<docName, CacheEntry>` cache; bridges HocuspocusProvider `'synced'` to `use(promise)`; 30s timeout → `SyncTimeoutError`, pre-sync close → `PreSyncDisconnectError`; `invalidateSyncPromise(docName)` tears down without rejecting (called by `provider-pool` on destroy/recycle and by retry); reserved `DocumentNotFoundError` for future use
+- `src/editor/document-transition.ts` — Pure `createOpenDocumentTransition(openDocument, startTransition)` helper — wraps `openDocument` calls in a React transition so the previously-revealed subtree stays visible through the suspending re-render (precedent #18(f))
 - `src/editor/navigation-retry.ts` — Pure `createNavigationRetryHandler({ invalidateSyncPromise, openDocumentTransition, getActiveDocName })` — composes the two-step retry contract (invalidate cached promise, then re-enter via transition) consumed by `NavigationPendingBar` tier-3 "Try again?"
 - `src/editor/is-system-doc.ts` — Client-side mirror of the server's `cc1-broadcast.ts:isSystemDoc` check; `ProviderPool.open` and `EditorActivityPool` both filter via this helper (SPEC DX7 defense-in-depth)
 - `src/editor/DocumentContext.tsx` — React context owning the `ProviderPool` singleton; exposes `openDocument`, `openDocumentTransition` (transition-wrapped), `isPending` (single shared `useTransition()` so every consumer of `useDocumentTransition()` sees the same pending state), `poolEntries` (MRU-sorted read-only snapshots), and `pinnedDoc`/`pin`/`unpin` for agent-nav suppression
-- `src/components/DocumentBoundary.tsx` — Deliberately tiny Suspense-unwrap bridge (`use(syncPromise(docName, provider))` then render children); placed inside each `<Activity>` entry; see precedent #15(d)
-- `src/components/DocumentErrorBoundary.tsx` — `react-error-boundary` wrapper with `FallbackComponent` + `resetKeys={[activeDocName]}` + `onReset` that invalidates the cached promise before state clears (retry ordering is load-bearing per precedent #15(e)). Maps thrown values to error copy via the exported pure `errorCopy(error)` function; renders "Try again" primary + "Back to previous document" secondary affordances
-- `src/components/EditorActivityPool.tsx` — Renders one `<Activity>` per most-recently-active doc up to `ACTIVITY_MOUNT_LIMIT = 3` (decoupled from `MAX_POOL = 10` per precedent #15(c)); exports the pure `computeActivityMountList(entries, activeDocName, limit)` helper (active doc always force-included, system docs filtered). Preserves the dual-editor concurrent-mount pattern (SourceEditor + TiptapEditor with `display:none` toggle) so mode swap doesn't re-run editor effects
+- `src/components/DocumentBoundary.tsx` — Deliberately tiny Suspense-unwrap bridge (`use(syncPromise(docName, provider))` then render children); placed inside each `<Activity>` entry; see precedent #18(d)
+- `src/components/DocumentErrorBoundary.tsx` — `react-error-boundary` wrapper with `FallbackComponent` + `resetKeys={[activeDocName]}` + `onReset` that invalidates the cached promise before state clears (retry ordering is load-bearing per precedent #18(e)). Maps thrown values to error copy via the exported pure `errorCopy(error)` function; renders "Try again" primary + "Back to previous document" secondary affordances
+- `src/components/EditorActivityPool.tsx` — Renders one `<Activity>` per most-recently-active doc up to `ACTIVITY_MOUNT_LIMIT = 3` (decoupled from `MAX_POOL = 10` per precedent #18(c)); exports the pure `computeActivityMountList(entries, activeDocName, limit)` helper (active doc always force-included, system docs filtered). Preserves the dual-editor concurrent-mount pattern (SourceEditor + TiptapEditor with `display:none` toggle) so mode swap doesn't re-run editor effects
 - `src/components/EditorSkeleton.tsx` — Suspense fallback rendered only on cold load when no prior Activity entry is visible; `role="status"` `aria-busy="true"`. Extracted from the inline definition previously at `EditorArea.tsx`
 - `src/components/NavigationPendingBar.tsx` — 4-tier escalating progress indicator (0–5s subtle strip → 5–15s visible + "Loading doc…" → 15–25s "taking longer" text → 25–30s "Try again?" button). Injectable `clock` for deterministic unit tests; exports the pure `computeTier(elapsedMs)` mapping. `role="status"` `aria-live="polite"` per SPEC DX5/F13
+- `src/editor/source-polish/` — source-view decorations (ViewPlugin + StateField + unit tests)
+- `src/editor/markdown-code-languages.ts` — fenced-code syntax highlighting allowlist
 - `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
 - `src/components/FileSidebar.tsx` — Sidebar shell; header `+` dropdown opens `NewItemDialog` for file/folder creation
 - `src/components/FileTree.tsx` — Tree rendering; folder-row "New file here" / "New folder here" context-menu entries, empty-state "Create your first page" CTA, subscribes to `documents-events` for immediate post-create refresh
@@ -481,11 +509,11 @@ All transaction origins are `LocalTransactionOrigin` **object references** (prec
 | ----------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | A           | Unit (client baseline)                                            | `packages/app/src/editor/observers.test.ts` (client cross-CRDT write paths deleted per precedent #14; server owns them. Old Layer A stress shards `observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` and Layer D `observers.fuzz.test.ts` were deleted because they tested removed code paths.) | `bun run test` (unit) |
 | B           | HTTP + server-side CRDT                                           | `packages/app/tests/stress/stress-api.ts`                                                                   | `bun run tests/stress/stress-api.ts` (needs dev server)    |
-| C           | Playwright E2E                                                    | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`, `tests/stress/docs-open.e2e.ts` (hybrid-render nav: F1-F11+F13, precedent #15) | `bunx playwright test`                                     |
+| C           | Playwright E2E                                                    | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`, `tests/stress/docs-open.e2e.ts` (hybrid-render nav: F1-F11+F13, precedent #18) | `bunx playwright test`                                     |
 | D           | Multi-client convergence fuzz                                     | `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`                                                 | `bun run test:fuzz:bridge` or `STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts` |
 | Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`              | `bun run test`                                             |
 | Stress      | 5-client × 30s mixed edits with convergence timing                | `packages/app/tests/stress/server-authoritative-stress.test.ts`                                             | `bun run test:stress:server-authoritative`                 |
-| Fidelity    | PBT invariants (I1-I7) + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
+| Fidelity    | PBT invariants (I1-I10) + 6 handler-specific PBTs + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
 
 ### Tier 1 integration harness
 
@@ -627,8 +655,8 @@ No environment variables must be set by hand for any of these scenarios.
 - **STOP:** Don't bypass `writeTracker` or `skipStoreHooks`. The write tracker prevents self-write feedback loops between persistence and file watcher. `skipStoreHooks` prevents persistence from re-saving a file we just loaded.
 - **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. `server-observer-extension.ts` short-circuits on `isSystemDoc()` in `afterLoadDocument`. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
 - **STOP:** Server-side observer cross-CRDT writes MUST use `OBSERVER_SYNC_ORIGIN`. Do not re-add client-side cross-CRDT write paths in `observers.ts` (deleted code under precedent #14). See Mutation G in `specs/2026-04-15-server-authoritative-observer-bridge/meta/mutation-validation.md`.
-- **STOP:** Do not add Y.js observers, CRDT-update handlers, or awareness listeners inside an `<Activity>` subtree without accounting for hidden-mode CPU cost. Y.js observers are NOT React effects and do NOT pause when Activity flips to `hidden` — a hidden Activity entry with a live provider still processes every remote-peer update at full cost. If the cost matters (multi-client collaboration, large docs, remote Hocuspocus), bound the Activity-mount count explicitly via an `ACTIVITY_MOUNT_LIMIT`-style derivation (precedent #15(c); reference: `EditorActivityPool.computeActivityMountList`). For truly per-document observers, prefer wiring them off the pool (which is bounded independently) rather than off the editor component's mount lifecycle.
-- **STOP:** Do not replace the hybrid render tree (`DocumentErrorBoundary` → `Suspense` → `EditorActivityPool` → `Activity` → `DocumentBoundary`) with a pure key-based remount pattern (e.g. `<Editor key={activeDocName} />`). The hybrid is load-bearing for the flash-free content-continuity UX delivered by SPEC G1-G2-G5 and precedent #15(b). If you need to add a new write surface, wrap it in its own `DocumentBoundary` (Suspense-ready) rather than short-circuiting the tree. See `packages/app/src/components/EditorArea.tsx` for the canonical shape.
+- **STOP:** Do not add Y.js observers, CRDT-update handlers, or awareness listeners inside an `<Activity>` subtree without accounting for hidden-mode CPU cost. Y.js observers are NOT React effects and do NOT pause when Activity flips to `hidden` — a hidden Activity entry with a live provider still processes every remote-peer update at full cost. If the cost matters (multi-client collaboration, large docs, remote Hocuspocus), bound the Activity-mount count explicitly via an `ACTIVITY_MOUNT_LIMIT`-style derivation (precedent #18(c); reference: `EditorActivityPool.computeActivityMountList`). For truly per-document observers, prefer wiring them off the pool (which is bounded independently) rather than off the editor component's mount lifecycle.
+- **STOP:** Do not replace the hybrid render tree (`DocumentErrorBoundary` → `Suspense` → `EditorActivityPool` → `Activity` → `DocumentBoundary`) with a pure key-based remount pattern (e.g. `<Editor key={activeDocName} />`). The hybrid is load-bearing for the flash-free content-continuity UX delivered by SPEC G1-G2-G5 and precedent #18(b). If you need to add a new write surface, wrap it in its own `DocumentBoundary` (Suspense-ready) rather than short-circuiting the tree. See `packages/app/src/components/EditorArea.tsx` for the canonical shape.
 - **STOP (V0-14 agent-undo, future spec):** V0-14's `applyAgentUndo` handler is a NEW server-side write surface and MUST satisfy all of the following simultaneously:
   1. **Use the XmlFragment-authoritative composition pattern** from `applyAgentMarkdownWrite` (precedent #10, #12) — never rebuild XmlFragment from Y.Text (Bug-A/Bug-D anti-pattern).
   2. **Fire under a new `LocalTransactionOrigin` object-ref** (e.g. `AGENT_UNDO_ORIGIN`) distinct from `OBSERVER_SYNC_ORIGIN` and `AGENT_WRITE_ORIGIN` (precedent #1). Server Observer A/B already early-exit on the `AGENT_WRITE_ORIGIN` paired-write path; V0-14 inherits that behavior only if the new origin is similarly added to the origin-guard truth table in `server-observers.ts` with the "already-in-sync early-exit" classification.
@@ -645,8 +673,20 @@ No environment variables must be set by hand for any of these scenarios.
 - **WARN:** Server Observer A's `lastSyncedXmlMd` (in `server-observers.ts`) must be refreshed on ALL XmlFragment changes, not just user edits. A stale baseline produces incorrect diffs that destroy content.
 - **WARN:** Layer A tests use `transaction.local=true`. This does NOT exercise the same code path as production where WebSocket updates arrive with `transaction.local=false`.
 - **WARN:** `hocuspocus.configure({ extensions: [...] })` REPLACES the extensions array (object spread). Use `hocuspocus.configuration.extensions.push()` to add extensions without losing existing ones.
-- **WARN:** TipTap's `editor.view` is a throwing proxy before the ProseMirror mount completes — touching `editor.view.dom` during the recycle→remount race (provider pool recycle, Activity mode flip cold path, etc.) crashes the nearest ErrorBoundary with an opaque "Unknown error". Use `editor.editorView` (non-throwing alternative) to check mount state, and subscribe to the `'create'` event before accessing `view.dom`. See `packages/app/src/editor/TiptapEditor.tsx` for the reference pattern (fixed alongside the hybrid-render precedent #15).
-- **WARN:** React 19.2 `<Activity mode="hidden">` unmounts the hidden subtree's DOM. A scroll container that wraps multiple Activity mounts will lose `scrollTop` on every mode flip because `scrollHeight` collapses and the browser auto-clamps. **Each Activity mount must own its own scroll container** (see `EditorActivityPool.tsx` + `ScrollPreservingContainer` — capture `scrollTop` via a scroll listener, restore via a layout effect + `ResizeObserver` retrying until tall enough). `<Activity>` preserves React state; per-mount scroll containers preserve DOM scroll state. Precedent #15 covers this invariant for any future subscription-source Activity pool.
+- **WARN:** TipTap's `editor.view` is a throwing proxy before the ProseMirror mount completes — touching `editor.view.dom` during the recycle→remount race (provider pool recycle, Activity mode flip cold path, etc.) crashes the nearest ErrorBoundary with an opaque "Unknown error". Use `editor.editorView` (non-throwing alternative) to check mount state, and subscribe to the `'create'` event before accessing `view.dom`. See `packages/app/src/editor/TiptapEditor.tsx` for the reference pattern (fixed alongside the hybrid-render precedent #18).
+- **WARN:** React 19.2 `<Activity mode="hidden">` unmounts the hidden subtree's DOM. A scroll container that wraps multiple Activity mounts will lose `scrollTop` on every mode flip because `scrollHeight` collapses and the browser auto-clamps. **Each Activity mount must own its own scroll container** (see `EditorActivityPool.tsx` + `ScrollPreservingContainer` — capture `scrollTop` via a scroll listener, restore via a layout effect + `ResizeObserver` retrying until tall enough). `<Activity>` preserves React state; per-mount scroll containers preserve DOM scroll state. Precedent #18 covers this invariant for any future subscription-source Activity pool.
+- **WARN:** Never narrow a PM mark's `excludes` field. Precedent #9 (schema is add-only forever) covers mark attrs — `excludes` is part of that contract. US-017 deliberately widened the `Code` mark by replacing `@tiptap/extension-code`'s `excludes: '_'` with `excludes: ''` via `CodeMarkFidelity` (`packages/core/src/extensions/code-mark-fidelity.ts`). This lets emphasis/strong coexist with inline code per CommonMark (e.g. `*a \`*\`*`) and is load-bearing for Emphasis + Backslash idempotence. Reverting to `excludes: '_'` — including via a Tiptap upgrade that reinstates the upstream default — would reintroduce those idempotence failures AND narrow the schema in the precedent #9 sense. If a future change needs different co-exclusion behavior, widen further; do not narrow.
+
+### CM6 footgun: do NOT gate syntax-tree reads on `syntaxTreeAvailable()`
+
+`syntaxTreeAvailable(state, pos)` from `@codemirror/language` reflects the *deepest pending sublanguage*, not the outer markdown tree. When a fenced-code block declares a language (e.g. ` ```typescript `), CM6 lazy-loads `@codemirror/lang-javascript`; during that load, `syntaxTreeAvailable()` returns `false` — but the outer markdown tree (with `FencedCode`, `Blockquote`, `Table`, ListItem nodes) is already complete. Early-returning `Decoration.none` on that gate silently disables every decoration the moment any known-language code block enters the viewport, and the disable sticks for the doc's lifetime.
+
+Instead, use the appropriate rebuild strategy for your plugin type:
+
+- **ViewPlugin:** detect tree mutation via `syntaxTree(update.startState) !== syntaxTree(update.state)` in `update()`, so decorations reattach when a later parse advance lands. See `packages/app/src/editor/source-polish/view-plugin.ts`.
+- **StateField:** early-return on `!tr.docChanged` to avoid re-scanning on cursor moves, focus, and scroll; the outer markdown tree is always complete when a `docChanged` transaction arrives. See `packages/app/src/editor/source-polish/broken-ref-field.ts`.
+
+Both patterns skip `syntaxTreeAvailable()`. We hit this during the source-view polish implementation — the initial impl gated on it, observed the silent disable on any fenced code, and switched to the tree-mutation / docChanged guards above.
 
 ### Logging conventions
 
@@ -705,17 +745,23 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 
 **Storage never sanitizes; render-time layers do.** Raw HTML, backslash escapes, and all literal characters pass through the storage layer unchanged. XSS mitigation is a render-layer concern (DOMPurify in docs site, not in the CRDT/persistence pipeline).
 
-### Seven fidelity invariants
+### Fidelity invariants (I1-I10 active, I11 pending)
 
-| ID | Invariant                  | Description                                                        |
-| -- | -------------------------- | ------------------------------------------------------------------ |
-| I1 | Identity                   | `serialize(parse(md)) === md` for supported constructs             |
-| I2 | Character preservation     | Every literal char in input appears in output — no entity encoding |
-| I3 | Normalization canonicality | `f(f(x)) === f(x)` — double round-trip equals single round-trip    |
-| I4 | Idempotence                | `serialize(parse(X))` applied twice produces identical output      |
-| I5 | Layer A === Layer B        | mdManager path and Y.Doc path produce the same output              |
-| I6 | Multi-client preservation  | Content survives Y.Doc state sync between clients                  |
-| I7 | Cross-path consistency     | All write paths produce equivalent serialized output               |
+| ID  | Invariant                   | Description                                                                                         |
+| --- | --------------------------- | --------------------------------------------------------------------------------------------------- |
+| I1  | Identity                    | `serialize(parse(md)) === md` for supported constructs                                              |
+| I2  | Character preservation      | Every literal char in input appears in output — no entity encoding                                  |
+| I3  | Normalization canonicality  | `f(f(x)) === f(x)` — double round-trip equals single round-trip                                     |
+| I4  | Idempotence                 | `serialize(parse(X))` applied twice produces identical output                                       |
+| I5  | Layer A === Layer B         | mdManager path and Y.Doc path produce the same output                                               |
+| I6  | Multi-client preservation   | Content survives Y.Doc state sync between clients                                                   |
+| I7  | Cross-path consistency      | All write paths produce equivalent serialized output                                                |
+| I8  | Crash resistance            | `parse()` never throws non-SyntaxError on fuzzed input; `SyntaxError` allowed only for matched `{…}` with non-JS content |
+| I9  | Guard completeness          | After `protectFromMdx`, remark-mdx never encounters an unmatched `<` or unclosed `{` that crashes  |
+| I10 | Structural crash resistance | Nested / truncated / interleaved constructs (dangerous chars inside marks, half-typed JSX, etc.) parse without unexpected errors |
+| I11 | rawMdxFallback coverage     | Pending — introduced by the tolerant-parsing spec (`specs/2026-04-13-mdx-tolerant-parsing/`); activates when that spec merges |
+
+PBT invariants live in `packages/app/tests/fidelity/invariant-i{1..10}.test.ts`. US-014 added six handler-specific PBTs alongside them — `invariant-emphasis-cumulation.test.ts`, `invariant-backslash-idempotence.test.ts`, `invariant-list-nesting.test.ts`, `invariant-html-block-edge.test.ts`, `invariant-link-edge.test.ts`, `invariant-image-edge.test.ts` — targeting the specific bug shapes characterized in `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/r6-failure-modes.md`.
 
 ### Irreducible gaps (by design)
 
@@ -733,9 +779,9 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 
 ### Markdown pipeline dependency discipline
 
-- `@handlewithcare/remark-prosemirror` pinned to exact version `0.1.5` (no caret). A `bun patch` in `patches/` applies PR #3 fix (empty-text-node + NBSP whitespace preservation)
+- `@handlewithcare/remark-prosemirror` pinned to exact version `0.1.5` (no caret). A `bun patch` in `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch` carries two coupled fixes: (a) PR #3 (empty-text-node + NBSP whitespace preservation); (b) US-017 replacement of `hydrateMarks` with an outside-in greedy nesting algorithm. The upstream partition-by-`marks[0]` strategy loses nested emphasis+strong shape when spans share one mark — the replacement walks marks outside-in so `[a[E], b[code]]`-style spans reconstruct faithfully. Patches are coupled; re-port them together on any upstream bump.
 - MDX agnostic pair (`mdast-util-mdx`, `micromark-extension-mdx`) pinned as a coupled unit — bump together. `micromark-extension-mdx` (agnostic mode, no acorn) replaced `micromark-extension-mdxjs` (strict mode)
-- **Upgrade protocol:** Before bumping any dependency, re-run the 118-case fidelity probe (`tech-probes/r1-preflight-gate/`) and full invariant suite (`bun run test:fidelity`). Verify the remark-prosemirror patch still applies cleanly
+- **Upgrade protocol:** Before bumping any dependency, re-run the 118-case fidelity probe (`tech-probes/r1-preflight-gate/`) and full invariant suite (`bun run test:fidelity`). Verify both remark-prosemirror patch hunks still apply cleanly
 - Failed patch surfaces at install time (fail-loud via `patchedDependencies`)
 - **Pre-flight probe baseline:** 97/118 whitespace-only, 13/13 P0 entity/escape — see `tech-probes/r1-preflight-gate/REPORT.md`
 
@@ -746,10 +792,17 @@ The markdown pipeline uses `unified + remark` for parsing and serialization, wit
 **Parse direction:**
 
 ```
+[R23 protectFromMdx pre-pass on source bytes]
+  ↓
 remark-parse → remark-frontmatter → remarkMdxAgnostic →
-remark-gfm → wiki-link micromark ext → [R23 autolink/void-HTML guard] →
-position-slice walker → remarkProseMirror (handlers map mdast → PM JSON)
+remark-gfm → remarkWikiLink →
+restoreFromMdx (Phase A) →
+mergedPostParseWalkerPlugin (Phase B: autolink-promotion +
+  doc-start-thematic-fix + position-slice + unknown-mdast-guard) →
+ensureNonEmptyDoc → remarkProseMirror (handlers map mdast → PM JSON)
 ```
+
+Post-parse tree traversal is **two phases** (reduced from five by US-007/US-008, gated by the US-007 byte-for-byte mdast-equivalence validator): Phase A is a standalone visitor that restores PUA sentinels to literal `<`, `>`, `:`, `@`, `{` in text/URL/title/alt fields; Phase B is a single `unist-util-visit` dispatcher that merges the four remaining passes, internally ordering pass-5 (unknown-mdast guard, with `SKIP`) → pass-2 (autolink promotion) → pass-4 (position slice). Pass-3 (doc-start thematic fix) runs once as a tree-level pre-step before the visit. Phase A stays separate because Phase B's autolink regex requires the literal characters that Phase A restores.
 
 **Serialize direction:**
 
@@ -757,28 +810,35 @@ position-slice walker → remarkProseMirror (handlers map mdast → PM JSON)
 fromProseMirror (PM JSON → mdast) → remark-stringify + custom mdast-util-to-markdown handlers
 ```
 
+**Processor caching (US-006).** `MarkdownManager` builds one parse processor and one serialize processor at construction via `createParseProcessor` / `createSerializeProcessor`, then reuses them across every `parse()` / `serialize()` call. `remarkMdxAgnostic` and `remarkWikiLink` push to `data().micromarkExtensions`; their attachers are idempotent under re-entry via module-level singleton extension values.
+
 **Handler tiers:**
 
 - **Tier A (passthrough):** root, paragraph, text, blockquote, table/row/cell, image, inlineCode, delete
 - **Tier B (fidelity):** emphasis, strong, heading, code, thematicBreak, break, list, listItem — reads `node.data.*` from position-slice walker
 - **Tier C (custom):** link/linkReference, definition (R12 override), html, MDX nodes, wikiLink
 
-**Position-slice walker** (`position-slice.ts`): runs after all syntax extensions produce mdast, slices original source at `node.position.start.offset` to recover authoring-form delimiters (emphasis `*`/`_`, fence char, bullet marker, etc.). Attaches `node.data.sourceDelimiter`, `node.data.sourceFenceChar`, etc.
+**Position-slice walker** (`position-slice.ts`): runs as pass-4 inside Phase B's merged dispatcher. Slices original source at `node.position.start.offset` to recover authoring-form delimiters (emphasis `*`/`_`, fence char, bullet marker, etc.). Attaches `node.data.sourceDelimiter`, `node.data.sourceFenceChar`, etc.
 
 **D20 escapeMark:** PM-level mark applied to text runs whose source contained a backslash escape of a structurally-ambiguous char (`\#`, `\*`, `\_`, etc. per CommonMark §2.4). Position-slice walker tags, serialization handler re-emits the backslash.
 
 **Key files:**
 
-- `packages/core/src/markdown/pipeline.ts` — unified pipeline factory
-- `packages/core/src/markdown/index.ts` — MarkdownManager wrapper (parse/serialize)
+- `packages/core/src/markdown/pipeline.ts` — unified pipeline factory (`createParseProcessor`, `createSerializeProcessor`, `parseMd`, `serializeMd`, `ensureNonEmptyDoc`)
+- `packages/core/src/markdown/index.ts` — MarkdownManager wrapper (parse/serialize, processor caching)
 - `packages/core/src/markdown/handlers.ts` → `index.ts` — mdast→PM + PM→mdast handler tables
 - `packages/core/src/markdown/to-markdown-handlers.ts` — fidelity-aware serialization overrides
-- `packages/core/src/markdown/position-slice.ts` — source-form recovery walker
+- `packages/core/src/markdown/merged-walker.ts` — Phase B merged dispatcher (autolink promotion + doc-start thematic fix + position slice + unknown-mdast guard)
+- `packages/core/src/markdown/position-slice.ts` — source-form recovery (pass-4 inside merged-walker)
+- `packages/core/src/markdown/autolink-promotion.ts` — `<scheme:uri>` text → semantic link (pass-2)
+- `packages/core/src/markdown/doc-start-thematic-fix.ts` — root-position empty yaml → thematicBreak (pass-3 pre-step)
+- `packages/core/src/markdown/unknown-mdast-guard.ts` — unknown mdast type → rawMdxFallbackMdast (pass-5)
 - `packages/core/src/markdown/wiki-link-micromark.ts` — micromark tokenizer for `[[Page]]` syntax
-- `packages/core/src/markdown/autolink-void-html-guard.ts` — R23 regression fix
-- `packages/core/src/markdown/remark-mdx-agnostic.ts` — Agnostic MDX mode (no acorn validation)
-- `packages/core/src/markdown/parse-with-fallback.ts` — Block-level split-then-rejoin fallback for crash-class MDX
+- `packages/core/src/markdown/autolink-void-html-guard.ts` — R23 guard (pre-pass `protectFromMdx` + Phase A `restoreFromMdx`); pre-indexed offset maps + binary search per US-005
+- `packages/core/src/markdown/remark-mdx-agnostic.ts` — agnostic MDX mode (no acorn validation)
+- `packages/core/src/markdown/parse-with-fallback.ts` — block-level split-then-rejoin fallback for crash-class MDX
 - `packages/core/src/markdown/mdast-augmentation.ts` — TypeScript type augmentation for custom mdast types
+- `packages/core/src/markdown/fixtures/` — canonical fixture corpus (`commonmark`, `gfm`, `mdx`, `wiki-links`, `frontmatter`, `ng-pinned`, `perf`) with typed loader helpers in `fixtures/index.ts`
 
 **Schema names (mdast-canonical, D16/D17):** `strong` (not bold), `emphasis` (not italic), `thematicBreak` (not horizontalRule). Unified `list` + `listItem` (not separate bulletList/orderedList/listItem).
 

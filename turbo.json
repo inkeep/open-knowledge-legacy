@@ -69,12 +69,81 @@
         "tests/fidelity/**/*.json",
         "src/editor/**/*.ts",
         "../core/src/**/*.ts",
+        "../core/src/markdown/fixtures/**/*.json",
         "../../patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch"
       ]
     },
     "test:e2e": {
       "dependsOn": ["^build"],
       "cache": false
+    },
+    "test:perf:bench": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "src/markdown/**/*.ts",
+        "src/markdown/fixtures/perf/*.md",
+        "tests/perf/markdown-bench.test.ts"
+      ],
+      "env": ["RUN_BENCH", "BENCH_RUNNER_CLASS"]
+    },
+    "test:perf:fallback": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "src/markdown/**/*.ts",
+        "src/markdown/fixtures/perf/*.md",
+        "src/markdown/parse-with-fallback.test.ts"
+      ],
+      "env": ["RUN_BENCH"]
+    },
+    "test:perf:r15-guard": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "src/markdown/autolink-void-html-guard.ts",
+        "src/markdown/autolink-void-html-guard.perf.test.ts"
+      ],
+      "env": ["RUN_BENCH"]
+    },
+    "test:perf:regression:unit": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": ["tests/perf/regression-gate.ts", "tests/perf/regression-gate.test.ts"]
+    },
+    "test:perf:regression": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "src/markdown/**/*.ts",
+        "src/markdown/fixtures/perf/*.md",
+        "tests/perf/markdown-bench.test.ts",
+        "tests/perf/regression-gate.ts",
+        "tests/perf/run-regression-gate.ts",
+        "tests/perf/baseline.json"
+      ],
+      "env": ["RUN_BENCH", "BENCH_RUNNER_CLASS"]
+    },
+    "test:health:unit": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/metrics/parse-health.ts",
+        "src/markdown/**/*.ts",
+        "tests/health/parse-health-gate.ts",
+        "tests/health/parse-health-gate.test.ts"
+      ]
+    },
+    "test:health": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/metrics/parse-health.ts",
+        "src/markdown/**/*.ts",
+        "src/markdown/fixtures/**",
+        "tests/health/parse-health-gate.ts",
+        "tests/health/baseline.json"
+      ]
     }
   }
 }

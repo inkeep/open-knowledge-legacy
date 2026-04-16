@@ -4,7 +4,7 @@ import { PanelRightClose, PanelRightOpen } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
-import { usePageList } from '@/components/PageListContext';
+import { FolderOverview } from '@/components/FolderOverview';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -23,10 +23,9 @@ interface EditorAreaProps {
 }
 
 export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
-  const { activeDocName, activeProvider, recycleDocument } = useDocumentContext();
+  const { activeDocName, activeProvider, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
-  const { pages, loading } = usePageList();
-  const isNewDoc = !loading && !!activeDocName && !pages.has(activeDocName);
+  const isNewDoc = activeTarget?.kind === 'missing';
   const editorPlaceholder = isNewDoc ? 'Start writing to create this page\u2026' : undefined;
   const panelRef = usePanelRef();
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -115,6 +114,10 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
       cancelled = true;
     };
   }, [previewEntry?.sha, activeDocName, activeProvider, onNoDiff]);
+
+  if (activeTarget?.kind === 'folder') {
+    return <FolderOverview folderPath={activeTarget.folderPath} />;
+  }
 
   if (!activeProvider || !activeDocName) {
     return (

@@ -7,6 +7,7 @@
 import { describe, expect, test } from 'bun:test';
 import { sharedExtensions } from '../extensions/shared.ts';
 import { MarkdownManager } from './index.ts';
+import { formatLinkUrl } from './to-markdown-handlers.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
@@ -105,6 +106,114 @@ describe('to-markdown: text handler (NG5 fidelity)', () => {
 describe('to-markdown: link URL preservation', () => {
   test('URL with & survives round-trip', () => {
     const md = '[link](https://example.com?a=1&b=2)\n';
+    expect(roundTrip(md)).toBe(md);
+  });
+});
+
+// US-010 (R6b/c): URL handler parity for links + images.
+// Root cause + fix rationale: see evidence/r6-failure-modes.md (Findings 5+6)
+// and the formatLinkUrl docblock in to-markdown-handlers.ts.
+describe('to-markdown: formatLinkUrl unit', () => {
+  test('empty URL → empty', () => {
+    expect(formatLinkUrl('')).toBe('');
+  });
+
+  test('plain URL without special chars → verbatim', () => {
+    expect(formatLinkUrl('https://example.com/path')).toBe('https://example.com/path');
+  });
+
+  test('URL with balanced parens → verbatim', () => {
+    expect(formatLinkUrl('http://example.com/(paren)')).toBe('http://example.com/(paren)');
+  });
+
+  test('URL with deeply nested balanced parens → verbatim', () => {
+    expect(formatLinkUrl('a((b)(c))d')).toBe('a((b)(c))d');
+  });
+
+  test('URL with unbalanced opening parens → escape all parens', () => {
+    expect(formatLinkUrl('foo(and(bar)')).toBe('foo\\(and\\(bar\\)');
+  });
+
+  test('URL with unbalanced closing paren → escape all parens', () => {
+    // depth goes negative → unbalanced
+    expect(formatLinkUrl('a)b')).toBe('a\\)b');
+  });
+
+  test('URL with literal angle chars + balanced parens → verbatim', () => {
+    // Literal `<` / `>` in URL value survive R23 round-trip (PUA substitute
+    // → restoreFromMdx puts them back). Verbatim output keeps the cycle stable.
+    expect(formatLinkUrl('<url>')).toBe('<url>');
+    expect(formatLinkUrl('foo<bar')).toBe('foo<bar');
+    expect(formatLinkUrl('foo>bar')).toBe('foo>bar');
+  });
+
+  test('URL with backslash but balanced parens → verbatim', () => {
+    expect(formatLinkUrl('foo\\bar')).toBe('foo\\bar');
+  });
+
+  test('URL with backslash AND unbalanced parens → escape backslash too', () => {
+    // Doubling pre-existing backslashes prevents them combining with
+    // the inserted escape backslashes on re-parse.
+    expect(formatLinkUrl('foo\\(bar')).toBe('foo\\\\\\(bar');
+  });
+});
+
+describe('to-markdown: link handler URL parity (US-010 R6b)', () => {
+  test('link with unbalanced escaped parens round-trips byte-identically', () => {
+    // CommonMark example 475 — was 1.1% of Links section idempotence failure
+    const md = '[link](foo\\(and\\(bar\\))\n';
+    expect(roundTrip(md)).toBe(md);
+    // Idempotence: r2 == r1
+    expect(roundTrip(roundTrip(md))).toBe(roundTrip(md));
+  });
+
+  test('link with balanced parens preserves verbatim', () => {
+    const md = '[link](http://example.com/(paren))\n';
+    expect(roundTrip(md)).toBe(md);
+  });
+
+  test('link with literal angle chars in URL value', () => {
+    // R23 PUA round-trip: input `<url>` → URL value `<url>` (literal angles)
+    // → output `<url>` → R23 PUA → URL value `<url>`. Stable.
+    const md = '[link](<url>)\n';
+    expect(roundTrip(md)).toBe(md);
+    expect(roundTrip(roundTrip(md))).toBe(roundTrip(md));
+  });
+
+  test('autolink form (sourceStyle=autolink) preserved as <url>', () => {
+    // autolink-promotion.ts attaches data.sourceStyle='autolink' so the link
+    // handler short-circuits; formatLinkUrl is not called for autolinks.
+    const md = '<https://example.com>\n';
+    expect(roundTrip(md)).toBe(md);
+  });
+});
+
+describe('to-markdown: image handler URL parity (US-010 R6c)', () => {
+  test('image with angle-bracket URL form round-trips byte-identically', () => {
+    // CommonMark example 557 — was 4.5% of Images section idempotence failure
+    const md = '![foo](<url>)\n';
+    expect(roundTrip(md)).toBe(md);
+    // Idempotence: r2 == r1
+    expect(roundTrip(roundTrip(md))).toBe(roundTrip(md));
+  });
+
+  test('plain image URL round-trips verbatim', () => {
+    const md = '![alt](http://example.com/img.png)\n';
+    expect(roundTrip(md)).toBe(md);
+  });
+
+  test('image URL with balanced parens preserves verbatim', () => {
+    const md = '![alt](http://example.com/(image).png)\n';
+    expect(roundTrip(md)).toBe(md);
+  });
+
+  test('image with title preserves title quoting', () => {
+    const md = '![alt](http://example.com/img.png "title")\n';
+    expect(roundTrip(md)).toBe(md);
+  });
+
+  test('image with empty alt round-trips', () => {
+    const md = '![](http://example.com/img.png)\n';
     expect(roundTrip(md)).toBe(md);
   });
 });

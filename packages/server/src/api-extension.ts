@@ -548,7 +548,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           message: `This doc has no backlinks yet. To make it discoverable, consider linking from a parent hub doc (index/overview files in the folder tree): ${wikiLinks}.`,
         },
       ];
-    } catch {
+    } catch (err) {
+      console.warn('[orphan-hint] computeOrphanHints failed:', err);
       return undefined;
     }
   }
@@ -1553,7 +1554,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
-        if (!notFound) recordContributor(docName, agentId, agentName, colorSeed);
+        if (!notFound && !staleTarget) recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }

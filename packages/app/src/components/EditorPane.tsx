@@ -35,7 +35,7 @@ export function EditorPane() {
     };
   }, []);
 
-  const { activeDocName, recycleDocument } = useDocumentContext();
+  const { activeDocName, activeTarget, recycleDocument } = useDocumentContext();
   const { openDocumentTransition, isPending } = useDocumentTransition();
 
   // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again"
@@ -84,6 +84,15 @@ export function EditorPane() {
     window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, []);
+
+  useEffect(() => {
+    if (activeTarget?.kind !== 'folder') return;
+    setPreviewEntry(null);
+    setTimelineOpen(false);
+    if (editorMode === 'diff') {
+      setEditorMode(modeBeforeDiffRef.current);
+    }
+  }, [activeTarget, editorMode]);
 
   function handleModeChange(mode: 'wysiwyg' | 'source') {
     setEditorMode(mode);
