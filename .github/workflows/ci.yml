@@ -76,7 +76,14 @@ jobs:
 
   playwright:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Three browser projects (chromium + webkit + firefox) × 5 E2E files.
+    # Single-browser baseline was ~6 min; 3-browser is ~15-18 min in
+    # practice. 25 min gives ~50% headroom for slower runners. The
+    # test:e2e script still serializes browsers per file (via the `&&`
+    # chain), so there's no parallelism to tune — the total runtime is
+    # additive. Previous 10-min cap hit timeout-kill mid-test on
+    # commit 3be3dc4f after Act-5 (QA-046) enabled cross-browser.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       # Node 22+ is required here because Vite's config loader writes the
