@@ -112,6 +112,35 @@ function walk(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
+/**
+ * Enumerate every directory under `root` matching `/^fixtures?$/`, skipping
+ * build / vendor dirs. Used by the positive-assertion walk below so that
+ * ANY new fixture directory outside the canonical location fails the guard,
+ * not just known-legacy paths.
+ */
+function findFixtureDirs(root: string, acc: string[] = []): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(root);
+  } catch {
+    return acc;
+  }
+  for (const entry of entries) {
+    if (WALK_SKIP_DIRS.has(entry)) continue;
+    const full = join(root, entry);
+    let stat: ReturnType<typeof statSync>;
+    try {
+      stat = statSync(full);
+    } catch {
+      continue;
+    }
+    if (!stat.isDirectory()) continue;
+    if (/^fixtures?$/.test(entry)) acc.push(full);
+    findFixtureDirs(full, acc);
+  }
+  return acc;
+}
+
 describe('fixture isolation (US-001 / R8)', () => {
   test('legacy fixture locations are removed', () => {
     for (const legacy of LEGACY_FIXTURE_LOCATIONS) {
@@ -131,6 +160,23 @@ describe('fixture isolation (US-001 / R8)', () => {
     expect(existsSync(join(FIXTURES_ROOT, 'gfm', 'examples.json'))).toBe(true);
     expect(existsSync(join(FIXTURES_ROOT, 'mdx', 'crash-taxonomy.json'))).toBe(true);
     expect(existsSync(join(FIXTURES_ROOT, 'perf', 'large-realistic.md'))).toBe(true);
+  });
+
+  test('no fixture directory exists outside the canonical location', () => {
+    // Positive-assertion walk: the stated goal of this file is "fixtures
+    // live only in the canonical location." A signature-based scan catches
+    // duplication of *existing* corpora; this walk catches *any new* fixture
+    // directory (e.g. `packages/app/tests/integration/fixtures/`) that the
+    // signature list doesn't enumerate.
+    const allFixtureDirs = findFixtureDirs(PACKAGES_DIR);
+    const offenders = allFixtureDirs.filter((d) => d !== FIXTURES_ROOT);
+    if (offenders.length > 0) {
+      throw new Error(
+        `Fixture directories found outside the canonical location ` +
+          `(${relative(REPO_ROOT, FIXTURES_ROOT)}):\n  - ` +
+          offenders.map((d) => relative(REPO_ROOT, d)).join('\n  - '),
+      );
+    }
   });
 
   test('no source file references legacy fixture paths', () => {
