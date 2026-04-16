@@ -95,3 +95,15 @@ export function resolveNavigationTarget(
     target: normalizedTarget,
   };
 }
+
+export function docNameForNavigationTarget(target: ResolvedNavigationTarget): string | null {
+  switch (target.kind) {
+    case 'doc':
+    case 'folder-index':
+      return target.docName;
+    case 'missing':
+      return target.target;
+    case 'folder':
+      return null;
+  }
+}

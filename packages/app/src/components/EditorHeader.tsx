@@ -1,7 +1,6 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { Clock, Columns2, Pin, PinOff, Rows2, Save } from 'lucide-react';
+import { Clock, Columns2, FolderOpen, Pin, PinOff, Rows2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
@@ -46,14 +45,18 @@ export function EditorHeader({
   diffLayout,
   onDiffLayoutChange,
 }: EditorHeaderProps) {
-  const { activeDocName, activeProvider, pinnedDoc, pin, unpin } = useDocumentContext();
+  const { activeDocName, activeProvider, activeTarget, pinnedDoc, pin, unpin } =
+    useDocumentContext();
   const syncStatus = useSyncStatus(activeProvider);
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
-  const { pages, loading } = usePageList();
-  const isNewDoc = !loading && !!activeDocName && !pages.has(activeDocName);
-
-  const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
+  const isFolderTarget = activeTarget?.kind === 'folder';
+  const isNewDoc = activeTarget?.kind === 'missing';
+  const displayName = isFolderTarget
+    ? `${activeTarget.folderPath}/`
+    : activeDocName
+      ? `${activeDocName}.md`
+      : 'No document';
   const isPinned = pinnedDoc !== null;
 
   function togglePin() {
@@ -79,7 +82,14 @@ export function EditorHeader({
       <div className="flex flex-1 items-center gap-1 px-3 min-w-0">
         <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
-        <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
+        {isFolderTarget ? (
+          <span className="inline-flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+            <FolderOpen className="size-4 shrink-0" />
+            <span className="truncate">{displayName}</span>
+          </span>
+        ) : (
+          <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
+        )}
         {activeDocName && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -113,6 +123,11 @@ export function EditorHeader({
         {isNewDoc && (
           <span className="ml-1.5 shrink-0 rounded border border-dashed border-blue-400/50 px-1.5 py-0.5 text-xs text-blue-500 dark:border-blue-400/40 dark:text-blue-400">
             New file
+          </span>
+        )}
+        {isFolderTarget && (
+          <span className="ml-1.5 shrink-0 rounded border border-dashed border-emerald-400/50 px-1.5 py-0.5 text-xs text-emerald-600 dark:border-emerald-400/40 dark:text-emerald-400">
+            Folder overview
           </span>
         )}
       </div>
@@ -242,6 +257,7 @@ export function EditorHeader({
           size="icon-sm"
           aria-label="Open timeline"
           onClick={onTimelineToggle}
+          disabled={!activeDocName}
         >
           <Clock className="size-4" />
         </Button>

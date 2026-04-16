@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { deriveKnownFolderPaths, resolveNavigationTarget } from './navigation-targets';
+import {
+  deriveKnownFolderPaths,
+  docNameForNavigationTarget,
+  resolveNavigationTarget,
+} from './navigation-targets';
 
 describe('deriveKnownFolderPaths', () => {
   test('derives ancestor folders from admitted doc names', () => {
@@ -73,5 +77,36 @@ describe('resolveNavigationTarget', () => {
       kind: 'missing',
       target: 'reports',
     });
+  });
+});
+
+describe('docNameForNavigationTarget', () => {
+  test('returns null for folder targets so folder navigation stays doc-free', () => {
+    expect(
+      docNameForNavigationTarget({
+        kind: 'folder',
+        target: 'reports',
+        folderPath: 'reports',
+      }),
+    ).toBeNull();
+  });
+
+  test('returns the editable doc name for live and missing targets', () => {
+    expect(
+      docNameForNavigationTarget({
+        kind: 'folder-index',
+        target: 'reports',
+        folderPath: 'reports',
+        docName: 'reports/index',
+        noteKind: 'canonical-index',
+      }),
+    ).toBe('reports/index');
+
+    expect(
+      docNameForNavigationTarget({
+        kind: 'missing',
+        target: 'reports/new-note',
+      }),
+    ).toBe('reports/new-note');
   });
 });
