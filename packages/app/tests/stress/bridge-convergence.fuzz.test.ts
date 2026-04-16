@@ -45,6 +45,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { chunkedYTextInsert } from '@inkeep/open-knowledge-core';
 import { AGENT_WRITE_ORIGIN, applyExternalChange } from '@inkeep/open-knowledge-server';
 import * as Y from 'yjs';
 
@@ -85,7 +86,7 @@ function createPRNG(seed: number) {
 
 type Rng = ReturnType<typeof createPRNG>;
 
-// ─── Op type union (v1 — 8 kinds backed by spec-shipped primitives) ───
+// ─── Op type union (9 kinds backed by spec-shipped primitives) ───
 
 type Op =
   | { kind: 'wysiwyg-type'; clientIdx: number; text: string; marker: string }
@@ -98,6 +99,18 @@ type Op =
     }
   | { kind: 'agent-patch'; find: string; replace: string; marker: string }
   | { kind: 'external-change'; newContent: string; marker: string }
+  | {
+      // FR-21 chunked Source paste. Large payload (>500KB threshold) split
+      // into 50KB chunks with requestAnimationFrame yields between chunks.
+      // The Y.RelativePosition-based `resolveOffset` maintains anchor
+      // correctness through concurrent peer insertions/deletions that land
+      // between chunks — this is the invariant QA-045 exercises under the
+      // fuzzer's randomized op interleaving.
+      kind: 'chunked-source-paste';
+      clientIdx: number;
+      text: string;
+      marker: string;
+    }
   | { kind: 'sync-pause'; clientIdx: number }
   | { kind: 'sync-resume'; clientIdx: number }
   | { kind: 'wait'; ms: number };
@@ -171,6 +184,21 @@ function generateOps(rng: Rng, clientCount: number, opCount: number): Op[] {
       const stabilized = mdManager.serialize(mdManager.parse(content));
       ops.push({ kind: 'external-change', newContent: stabilized, marker });
       ops.push({ kind: 'wait', ms: 500 });
+    } else if (roll < 0.74) {
+      // chunked-source-paste (3%): FR-21 large-paste exercise. Payload
+      // above threshold (600KB) so chunkedYTextInsert takes the chunked
+      // path with rAF yields; subsequent ops interleave peer activity
+      // during the chunked writes to exercise the Y.RelativePosition
+      // anchor-preservation invariant (QA-045). 3% is sparse enough to
+      // keep per-seed runtime bounded while hitting the scenario multiple
+      // times across the default 25-seed runs.
+      const marker = `M${markerIdx++}-chunked-${randomShortText(rng)}`;
+      // 600KB payload: marker prefix + repeated filler, ensuring total
+      // exceeds DEFAULT_CHUNK_THRESHOLD_BYTES (500KB).
+      const filler = 'lorem ipsum dolor sit amet '.repeat(25000);
+      const text = `${marker}\n\n${filler}\n`;
+      ops.push({ kind: 'chunked-source-paste', clientIdx, text, marker });
+      ops.push({ kind: 'wait', ms: 500 });
     } else if (roll < 0.83) {
       // sync-pause
       if (paused.size < clientCount - 1) {
@@ -232,6 +260,34 @@ async function applyOp(
       client.doc.transact(() => {
         client.ytext.insert(client.ytext.length, `\n\n${op.text}\n`);
       });
+      break;
+    }
+    case 'chunked-source-paste': {
+      const client = clients[op.clientIdx];
+      if (!client) return;
+      // Anchor at current doc end. Capture a Y.RelativePosition so concurrent
+      // peer inserts/deletes between chunks don't shift our target offset —
+      // this mirrors source-clipboard.ts:279-294 production behavior.
+      const anchorIndex = client.ytext.length;
+      const relPos = Y.createRelativePositionFromTypeIndex(client.ytext, anchorIndex);
+      try {
+        await chunkedYTextInsert(client.doc, client.ytext, anchorIndex, op.text, {
+          // Short setTimeout yield — default `requestAnimationFrame` is not
+          // available in Node test runtime; 0ms setTimeout still yields the
+          // task queue, letting other fuzzer ops interleave.
+          yieldFn: () => new Promise((r) => setTimeout(r, 0)),
+          resolveOffset: (n: number) => {
+            const abs = Y.createAbsolutePositionFromRelativePosition(relPos, client.doc);
+            return abs?.index ?? n;
+          },
+        });
+      } catch {
+        // ChunkedInsertError is a valid outcome under concurrent-peer pressure
+        // (e.g., peer deletion shrinks the doc below our anchor). The oracles
+        // still verify bridge-invariant + convergence post-settle; marker
+        // preservation is best-effort for this op (the partial-progress
+        // rollback path is unit-tested in source-clipboard-recovery.test.ts).
+      }
       break;
     }
     case 'agent-write': {
@@ -378,6 +434,7 @@ const ALL_OP_KINDS = [
   'agent-write',
   'agent-patch',
   'external-change',
+  'chunked-source-paste',
   'sync-pause',
   'sync-resume',
   'wait',
@@ -390,6 +447,11 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
   'observer-a-sync': ['wysiwyg-type'],
   'observer-b-sync': ['source-type'],
   'file-watcher': ['external-change'],
+  // FR-21 chunked Source paste: same W2 write surface as source-type, but a
+  // distinct *insertion strategy* (chunked + rAF-yielded + Y.RelativePosition
+  // anchor preservation). Precedent #13(d) spirit: coverage gate should catch
+  // a regression that removes the chunked op without replacement.
+  'chunked-source-paste': ['chunked-source-paste'],
   rollback: ['agent-write', 'agent-patch'],
 };
 
