@@ -1102,7 +1102,10 @@ button:active:not(:disabled) {
 /* Compositor-safe fade — only animate when motion is welcome. */
 @media (prefers-reduced-motion: no-preference) {
   .ProseMirror .jsx-component-wrapper::after {
-    transition: opacity 180ms ease-out;
+    /* Use the repo's custom easing token (defined ~L32) — matches the
+       Emil Kowalski "strong ease-out" used by every other interactive
+       transition in this file (7 usages incl. Popover, Callout). */
+    transition: opacity 180ms var(--ease-out-strong);
   }
 }
 

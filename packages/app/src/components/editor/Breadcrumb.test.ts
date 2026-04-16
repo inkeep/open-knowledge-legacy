@@ -1,20 +1,35 @@
 /**
- * computeVisibleEntries unit tests — pure helper for breadcrumb head-truncation.
+ * Breadcrumb unit tests — pure helpers only (bun:test, no DOM/React).
  *
- * Covers the branching matrix around MAX_VISIBLE_SEGMENTS (=4):
- *   - ≤ limit → passthrough (all entries kept, no ellipsis)
- *   - = limit exactly → passthrough (boundary case)
- *   - > limit → [head, ellipsis, ...last-two] with correct hiddenCount
- *   - large chain → hiddenCount reflects every skipped middle entry
- *   - empty chain → empty output
+ * Covers two co-located helpers exported from `Breadcrumb.tsx`:
+ *
+ *   1. `computeVisibleEntries` — head-truncation against
+ *      MAX_VISIBLE_SEGMENTS (=4). Branching matrix: ≤ limit passthrough,
+ *      = limit boundary, > limit → [head, ellipsis, ...tail×2], deep chain
+ *      hiddenCount invariant, empty chain.
+ *
+ *   2. `resolveLivePos` — bridge-id-aware live-pos resolver. Three branches:
+ *      (a) plugin not registered (harness env) → return `entry.pos` fallback;
+ *      (b) plugin registered AND bridgeId present in posToId → return live
+ *      pos (the happy path, shifts under collaborative edits);
+ *      (c) plugin registered AND bridgeId absent from posToId → return null
+ *      (remote peer deleted the ancestor between render and click).
+ *
+ *   Branch (c) is the defensive path that prevents the original stale-pos
+ *   bug. Without this test a refactor that flipped it to `return entry.pos`
+ *   would silently pass, because E2E tests don't cover remote-delete races.
  *
  * Follows the `entry-label.test.ts` precedent for testing pure selection
  * helpers (bun:test, factory fns for fixtures, no DOM).
  */
 
 import { describe, expect, test } from 'bun:test';
+import type { Editor } from '@tiptap/core';
+import { Schema } from '@tiptap/pm/model';
+import { EditorState, Plugin } from '@tiptap/pm/state';
+import { bridgeIdPluginKey } from '../../editor/extensions/bridge-id-plugin.ts';
 import type { BlockChainEntry } from '../../editor/extensions/selection-state-plugin.ts';
-import { computeVisibleEntries } from './Breadcrumb.tsx';
+import { computeVisibleEntries, resolveLivePos } from './Breadcrumb.tsx';
 
 /** Fixture factory — every field is distinct so assertions can identify
  *  which entry survived truncation. */
@@ -85,5 +100,89 @@ describe('computeVisibleEntries', () => {
       if (!ellipsis || ellipsis.kind !== 'ellipsis') throw new Error('missing ellipsis');
       expect(ellipsis.hiddenCount).toBe(n - 3);
     }
+  });
+});
+
+// ── resolveLivePos — bridgeId-aware live-pos resolver ────────────────────
+
+/** Minimal schema — just needs a doc + block to instantiate EditorState. */
+const schema = new Schema({
+  nodes: {
+    doc: { content: 'block+' },
+    paragraph: { group: 'block', content: 'text*' },
+    text: {},
+  },
+});
+
+/** Build an EditorState with `bridgeIdPluginKey` registered and a specific
+ *  `posToId` map. If `posToId` is null, the plugin isn't registered —
+ *  simulating a harness/test env that doesn't include bridge-id-plugin.
+ *
+ *  Returns something that type-checks as `Editor` through the narrow API
+ *  `resolveLivePos` uses (`editor.state`). Avoids spinning up TipTap proper
+ *  — unit tests for pure helpers should not require a browser-only
+ *  rendering stack. */
+function buildEditor(posToId: Map<number, string> | null): Editor {
+  const plugins: Plugin[] = [];
+  if (posToId !== null) {
+    plugins.push(
+      new Plugin({
+        key: bridgeIdPluginKey,
+        state: {
+          init: () => ({
+            yElementToId: new WeakMap(),
+            posToId,
+            counter: 0,
+          }),
+          apply: (_tr, value) => value,
+        },
+      }),
+    );
+  }
+  const state = EditorState.create({
+    schema,
+    doc: schema.node('doc', null, [schema.node('paragraph')]),
+    plugins,
+  });
+  return { state } as unknown as Editor;
+}
+
+describe('resolveLivePos', () => {
+  const entry: BlockChainEntry = { bridgeId: 'b1', componentName: 'Card', pos: 10 };
+
+  test('plugin not registered → returns entry.pos (harness fallback)', () => {
+    // Test env without bridge-id-plugin (e.g. `bridge-matrix.test.ts`
+    // harness). Return captured pos so tests can still exercise
+    // breadcrumb click handlers without wiring the full plugin stack.
+    const editor = buildEditor(null);
+    expect(resolveLivePos(editor, entry)).toBe(10);
+  });
+
+  test('plugin registered, bridgeId present at same pos → returns live pos', () => {
+    // No collaborative drift — live pos matches captured pos.
+    const editor = buildEditor(new Map([[10, 'b1']]));
+    expect(resolveLivePos(editor, entry)).toBe(10);
+  });
+
+  test('plugin registered, bridgeId present at shifted pos → returns the live pos', () => {
+    // Collaborative edit shifted the block — bridgeId is stable, pos moved.
+    // Resolution must use the live pos (42), not the captured pos (10).
+    const editor = buildEditor(new Map([[42, 'b1']]));
+    expect(resolveLivePos(editor, entry)).toBe(42);
+  });
+
+  test('plugin registered, bridgeId absent → returns null (remote-delete guard)', () => {
+    // Remote peer deleted the ancestor between render and click. Returning
+    // entry.pos here would select whatever node now occupies offset 10 —
+    // the exact stale-pos bug resolveLivePos exists to prevent.
+    const editor = buildEditor(new Map([[10, 'other-bridge-id']]));
+    expect(resolveLivePos(editor, entry)).toBeNull();
+  });
+
+  test('plugin registered with empty posToId → returns null', () => {
+    // Boundary case — plugin wired but doc has no jsxComponents indexed.
+    // Same defensive behavior as the remote-delete case.
+    const editor = buildEditor(new Map());
+    expect(resolveLivePos(editor, entry)).toBeNull();
   });
 });

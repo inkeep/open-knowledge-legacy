@@ -16,6 +16,7 @@ import {
   computeSelectionApply,
   deriveAncestorChain,
   deriveBlockSelection,
+  isBlockNavigationKey,
   type PluginRuntime,
   SELECTION_ORIGIN_META_KEY,
   selectionStatePluginKey,
@@ -341,5 +342,41 @@ describe('BlockSelection shape invariants', () => {
     const state = makeStateFromDoc(doc);
     const sel = selectionStatePluginKey.getState(state);
     expect(sel?.isDragging).toBe(false);
+  });
+});
+
+// ── isBlockNavigationKey — the origin-classification key list ────────────
+// Exported so this table can assert every key we tag as 'keyboard' origin.
+// The keydown handler itself is exercised only by E2E (ArrowDown in S1);
+// this table guards against silent regressions if someone trims the list
+// (e.g. drops Home/End/PageUp/PageDown for being "not arrows").
+describe('isBlockNavigationKey', () => {
+  test.each([
+    'ArrowUp',
+    'ArrowDown',
+    'ArrowLeft',
+    'ArrowRight',
+    'Tab',
+    'Escape',
+    'Enter',
+    'Home',
+    'End',
+    'PageUp',
+    'PageDown',
+  ])('returns true for navigation key %s', (key) => {
+    expect(isBlockNavigationKey(key)).toBe(true);
+  });
+
+  test.each([
+    'a',
+    '1',
+    ' ',
+    'Shift',
+    'Control',
+    'Meta',
+    'F1',
+    '',
+  ])('returns false for non-navigation key %p', (key) => {
+    expect(isBlockNavigationKey(key)).toBe(false);
   });
 });

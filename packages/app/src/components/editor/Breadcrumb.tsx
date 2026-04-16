@@ -90,7 +90,7 @@ export function Breadcrumb({ editor }: { editor: Editor | null }) {
  *     `setNodeSelection(entry.pos)` would target whatever node now occupies
  *     that pos (the original stale-pos bug).
  */
-function resolveLivePos(editor: Editor, entry: BlockChainEntry): number | null {
+export function resolveLivePos(editor: Editor, entry: BlockChainEntry): number | null {
   const posToId = bridgeIdPluginKey.getState(editor.state)?.posToId;
   // No plugin → harness/test environment; the captured pos is the best we
   // have, and tests don't shift positions between render and click.

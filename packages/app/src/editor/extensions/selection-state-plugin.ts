@@ -107,7 +107,7 @@ const SELECTION_REFRESH_META_KEY = 'selectionStatePlugin/refresh';
 
 // ── PluginKey + imperative API ───────────────────────────────────────────
 
-export const selectionStatePluginKey = new PluginKey<BlockSelection>('blockSelectionState');
+export const selectionStatePluginKey = new PluginKey<BlockSelection>('selectionState');
 
 const EMPTY_SELECTION: BlockSelection = {
   selectedBlockId: null,
@@ -391,7 +391,13 @@ export const SelectionStatePlugin = Extension.create({
   },
 });
 
-function isBlockNavigationKey(key: string): boolean {
+/** Exported pure helper — exported so `selection-state-plugin.test.ts` can
+ *  assert the full key list without exercising the keydown handler. The
+ *  branching here determines which keys tag the pending origin as
+ *  `'keyboard'`; a future refactor that drops e.g. PageUp/PageDown would
+ *  regress origin classification silently, and the E2E test only exercises
+ *  ArrowDown. */
+export function isBlockNavigationKey(key: string): boolean {
   return (
     key === 'ArrowUp' ||
     key === 'ArrowDown' ||

@@ -32,7 +32,7 @@ import type { Editor } from '@tiptap/core';
 import type { CSSProperties } from 'react';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { BlockSelection } from '../extensions/selection-state-plugin.ts';
-import { computeSelectionAnchor } from './compute-selection-anchor.ts';
+import { computeSelectionAnchor } from '../selection/compute-selection-anchor.ts';
 import { useBlockSelection } from './use-block-selection.ts';
 
 export interface UseSelectionAnchoredPopoverOptions {
