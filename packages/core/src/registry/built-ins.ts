@@ -367,7 +367,8 @@ export const builtInComponents: JsxComponentMeta[] = [
   },
   {
     name: 'Card',
-    hasChildren: true,
+    hasChildren: false,
+    isSelfClosing: true,
     props: cardProps,
     icon: 'SquareMousePointer',
     category: 'content',
@@ -492,7 +493,8 @@ export const builtInComponents: JsxComponentMeta[] = [
   // Media
   {
     name: 'ImageZoom',
-    hasChildren: true,
+    hasChildren: false,
+    isSelfClosing: true,
     props: imageZoomProps,
     icon: 'ZoomIn',
     category: 'media',
