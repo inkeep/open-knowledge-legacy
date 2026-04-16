@@ -2,10 +2,29 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
 import { ProviderPool, type SyncState } from './provider-pool';
 
+/**
+ * Read-only projection of a `PoolEntry` — exposes the fields downstream React
+ * components need without leaking the mutable pool internals (observerCleanup,
+ * pendingRecycleTimer, tearingDown). Sorted by `lastAccessedAt` descending so
+ * consumers like `EditorActivityPool` can apply LRU bounding without re-sorting.
+ */
+export interface PoolEntrySnapshot {
+  docName: string;
+  provider: HocuspocusProvider;
+  lastAccessedAt: number;
+}
+
 export interface DocumentContextValue {
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
   syncState: SyncState;
+  /**
+   * All currently-pooled docs, sorted by `lastAccessedAt` descending (MRU first).
+   * Drives `EditorActivityPool`'s ACTIVITY_MOUNT_LIMIT-bounded Activity rendering.
+   * System docs (CC1 `__system__`) are filtered at pool admission so they never
+   * appear here (see SPEC.md §10 DX7).
+   */
+  poolEntries: ReadonlyArray<PoolEntrySnapshot>;
   openDocument: (docName: string) => void;
   closeDocument: (docName: string) => void;
   /**
@@ -58,20 +77,35 @@ interface Snapshot {
   activeDocName: string | null;
   activeProvider: HocuspocusProvider | null;
   syncState: SyncState;
+  poolEntries: ReadonlyArray<PoolEntrySnapshot>;
 }
 
 const EMPTY_SNAPSHOT: Snapshot = {
   activeDocName: null,
   activeProvider: null,
   syncState: 'connecting',
+  poolEntries: [],
 };
 
 function takeSnapshot(p: ProviderPool): Snapshot {
   const active = p.getActive();
+  // Project mutable pool entries to immutable read-only snapshots, sorted MRU-first.
+  // The sort lives here (not in ProviderPool) so the pool stays a plain LRU map and
+  // doesn't need to know about React-side ordering preferences.
+  const poolEntries: PoolEntrySnapshot[] = [];
+  for (const entry of p.entries.values()) {
+    poolEntries.push({
+      docName: entry.docName,
+      provider: entry.provider,
+      lastAccessedAt: entry.lastAccessedAt,
+    });
+  }
+  poolEntries.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
   return {
     activeDocName: p.getActiveDocName(),
     activeProvider: active?.provider ?? null,
     syncState: active?.syncState ?? 'connecting',
+    poolEntries,
   };
 }
 
@@ -109,6 +143,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     activeDocName: snapshot.activeDocName,
     activeProvider: snapshot.activeProvider,
     syncState: snapshot.syncState,
+    poolEntries: snapshot.poolEntries,
     openDocument: (docName: string) => {
       const p = getPool();
       const entry = p.open(docName);
