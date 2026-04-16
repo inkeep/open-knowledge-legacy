@@ -54,6 +54,7 @@ import { readServerLock } from './server-lock.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
+import simpleGit from 'simple-git';
 import {
   type BacklinkIndex,
   type GraphNode as IndexedGraphNode,
@@ -465,6 +466,14 @@ export interface ApiExtensionOptions {
    *          ['open-knowledge'] in production.
    */
   localOpCliArgs?: string[];
+  /**
+   * Path to the project's parent git working tree (i.e. the repo root, not the
+   * shadow git dir). When provided, `POST /api/save-version` and
+   * `POST /api/rollback` create an additional commit + `ok/v<N>` tag in the
+   * parent git repository to make checkpoints and restores team-visible.
+   * Parent-git operations are serialized through `parentGitMutex`.
+   */
+  projectDir?: string;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -542,10 +551,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     onAgentWrite,
     getSyncEngine,
     localOpCliArgs = ['open-knowledge'],
+    projectDir,
   } = options;
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
   const localOpGuard = createConcurrencyGuard();
+
+  // Parent-git mutex: serializes checkpoint and rollback commits in the
+  // project's own git repository so they don't race with SyncEngine pushes.
+  let parentGitLock: Promise<void> = Promise.resolve();
+  function withParentGitMutex<T>(fn: () => Promise<T>): Promise<T> {
+    const result = parentGitLock.then(fn);
+    // Detach error so a failed run doesn't leave the mutex locked forever
+    parentGitLock = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -1816,9 +1839,10 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      // Parse optional writers from body
+      // Parse optional writers + message from body
       const SAFE_ID_RE = /^[a-zA-Z0-9_-]+$/;
       let writers: WriterIdentity[] = [];
+      let userMessage: string | undefined;
       if (rawBody.length > 0) {
         let body: Record<string, unknown>;
         try {
@@ -1826,6 +1850,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         } catch {
           json(res, 400, { ok: false, error: 'Invalid JSON' });
           return;
+        }
+        if (typeof body.message === 'string' && body.message.trim()) {
+          userMessage = body.message.replace(/[\r\n]/g, ' ').slice(0, 256);
         }
         if (Array.isArray(body.writers)) {
           writers = (body.writers as Array<Record<string, string>>).map((w) => {
@@ -1854,9 +1881,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
       console.log(`[shadow] checkpoint ${result.checkpointRef}`);
 
+      // Parent-git commit + ok/v<N> tag (non-fatal if project git unavailable)
+      let versionTag: string | undefined;
+      if (projectDir) {
+        try {
+          versionTag = await withParentGitMutex(async () => {
+            const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+            // Count existing ok/v* tags to derive N
+            const existing = await pg.tags(['--list', 'ok/v*']);
+            const n = existing.all.length + 1;
+            const tag = `ok/v${n}`;
+            const autoMsg = userMessage ?? `Checkpoint v${n}`;
+            // Stage content changes and create commit (allow-empty so a tag always lands)
+            const gitPathspec = resolvedContentRoot || '.';
+            await pg.add(gitPathspec);
+            await pg.commit(autoMsg, { '--allow-empty': null });
+            await pg.addTag(tag);
+            console.log(`[checkpoint] parent-git commit + tag ${tag}`);
+            return tag;
+          });
+        } catch (e) {
+          console.warn('[checkpoint] parent-git commit failed (non-fatal):', e);
+        }
+      }
+
       json(res, 200, {
         ok: true,
         checkpointRef: result.checkpointRef,
+        ...(versionTag ? { versionTag } : {}),
       });
     } catch (e) {
       console.error('[save-version]', e);
@@ -2115,9 +2167,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
 
-    const { docName: rawDocName, commitSha: rawSha } = body as Record<string, unknown>;
+    const {
+      docName: rawDocName,
+      commitSha: rawSha,
+      versionTag: rawVersionTag,
+    } = body as Record<string, unknown>;
     const docName = typeof rawDocName === 'string' ? rawDocName : '';
     const commitSha = typeof rawSha === 'string' ? rawSha : '';
+    const versionTagForRollback = typeof rawVersionTag === 'string' ? rawVersionTag : undefined;
 
     if (!docName) {
       json(res, 400, { ok: false, error: 'docName required' });
@@ -2202,6 +2259,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       console.log(
         `[rollback] docName=${docName} from=${commitSha.slice(0, 8)} duration=${duration}ms`,
       );
+
+      // Parent-git commit for team-visible restore record (non-fatal)
+      if (projectDir) {
+        const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
+        const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
+        const resolvedContentRoot = contentRoot ?? 'content';
+        withParentGitMutex(async () => {
+          const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
+          const gitPathspec = resolvedContentRoot || '.';
+          await pg.add(gitPathspec);
+          await pg.commit(restoreMsg, { '--allow-empty': null });
+          console.log(`[rollback] parent-git commit: ${restoreMsg}`);
+        }).catch((e) => {
+          console.warn('[rollback] parent-git commit failed (non-fatal):', e);
+        });
+      }
 
       json(res, 200, { ok: true, restoredFrom: commitSha, timestamp });
     } catch (e) {

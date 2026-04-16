@@ -1,5 +1,5 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { ArrowDownToLine, Columns2, FolderOpen, History, Pin, PinOff, Rows2 } from 'lucide-react';
+import { Columns2, FolderOpen, History, Pin, PinOff, Rows2, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -8,6 +8,7 @@ import {
   type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
+import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -555,17 +556,21 @@ export function EditorHeader({
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
         {!isDiffMode && activeDocName && (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Save Version"
-            onClick={onSaveVersion}
-            disabled={saving}
-            className="gap-1.5 text-xs text-muted-foreground"
-          >
-            <ArrowDownToLine className="size-3.5" />
-            {saving ? 'Saving…' : 'Save Version'}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Checkpoint version"
+                onClick={onSaveVersion}
+                disabled={saving}
+                className="text-muted-foreground"
+              >
+                <Save className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{saving ? 'Saving…' : 'Checkpoint version'}</TooltipContent>
+          </Tooltip>
         )}
         {activeDocName && (
           <Tooltip>

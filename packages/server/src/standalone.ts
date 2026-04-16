@@ -233,6 +233,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       onAgentWrite: options.onAgentWrite,
       getSyncEngine: () => syncEngine,
       localOpCliArgs,
+      projectDir,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 

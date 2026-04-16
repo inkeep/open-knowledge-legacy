@@ -904,7 +904,7 @@ export async function saveVersion(
       }
     }
 
-    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', 'checkpoint: Save Version'];
+    const checkpointArgs = ['commit-tree', shadowTreeSha, '-m', 'checkpoint: Checkpoint version'];
     for (const p of uniqueParents) {
       checkpointArgs.push('-p', p);
     }
