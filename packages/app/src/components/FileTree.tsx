@@ -22,6 +22,7 @@ import {
   type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
+import { resolveFileTreeSelection } from '@/components/file-tree-selection';
 import {
   buildTree,
   collectFolderPaths,
@@ -53,11 +54,12 @@ import {
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 
-function navigateTo(docName: string) {
-  window.location.hash = `#/${docName}`;
+function navigateTo(targetPath: string) {
+  window.location.hash = hashFromDocName(targetPath);
 }
 
 interface RenamePathResponse {
@@ -147,14 +149,15 @@ function InlineCreateRow({
 
 const FileTreeNode: FC<{
   node: TreeNode;
-  selectedPath: string | null;
+  selectedFilePath: string | null;
+  selectedFolderPath: string | null;
   expandedPaths: Set<string>;
   onToggle: (path: string) => void;
   activeRowRef: (node: HTMLDivElement | null) => void;
   editingPath: string | null;
   editingValue: string;
   busyPath: string | null;
-  onSelect: (docName: string) => void;
+  onNavigate: (targetPath: string) => void;
   onStartRename: (target: FileTreeTarget) => void;
   onEditingValueChange: (value: string) => void;
   onCommitRename: (target: FileTreeTarget) => void;
@@ -167,14 +170,15 @@ const FileTreeNode: FC<{
 }> = ({
   node,
   nested = false,
-  selectedPath,
+  selectedFilePath,
+  selectedFolderPath,
   expandedPaths,
   onToggle,
   activeRowRef,
   editingPath,
   editingValue,
   busyPath,
-  onSelect,
+  onNavigate,
   onStartRename,
   onEditingValueChange,
   onCommitRename,
@@ -194,7 +198,7 @@ const FileTreeNode: FC<{
   const isFile = node.kind === 'file';
   const expanded = !isFile && expandedPaths.has(node.path);
 
-  const isActive = isFile && node.path === selectedPath;
+  const isActive = isFile ? node.path === selectedFilePath : node.path === selectedFolderPath;
   const isEditing = editingPath === node.path;
 
   useEffect(() => {
@@ -288,7 +292,7 @@ const FileTreeNode: FC<{
   ) : isFile ? (
     <ButtonToUse
       isActive={isActive}
-      onClick={() => onSelect(node.path)}
+      onClick={() => onNavigate(node.path)}
       className="cursor-pointer"
       aria-current={isActive ? 'page' : undefined}
     >
@@ -297,16 +301,23 @@ const FileTreeNode: FC<{
   ) : (
     <div>
       <ButtonToUse
+        isActive={isActive}
         className="w-full cursor-pointer pr-8"
-        aria-expanded={expanded}
-        onClick={() => onToggle(node.path)}
+        aria-current={isActive ? 'page' : undefined}
+        onClick={() => onNavigate(node.path)}
       >
         {displayContent}
       </ButtonToUse>
       <SidebarMenuAction
-        className={cn('top-1 pointer-events-none', expanded && 'rotate-90')}
-        aria-hidden
-        tabIndex={-1}
+        type="button"
+        className={cn('top-1', expanded && 'rotate-90')}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${node.name}`}
+        aria-expanded={expanded}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggle(node.path);
+        }}
       >
         <ChevronRight className="size-4 text-muted-foreground/50" />
       </SidebarMenuAction>
@@ -392,14 +403,15 @@ const FileTreeNode: FC<{
             <FileTreeNode
               key={child.path}
               node={child}
-              selectedPath={selectedPath}
+              selectedFilePath={selectedFilePath}
+              selectedFolderPath={selectedFolderPath}
               expandedPaths={expandedPaths}
               onToggle={onToggle}
               activeRowRef={activeRowRef}
               editingPath={editingPath}
               editingValue={editingValue}
               busyPath={busyPath}
-              onSelect={onSelect}
+              onNavigate={onNavigate}
               onStartRename={onStartRename}
               onEditingValueChange={onEditingValueChange}
               onCommitRename={onCommitRename}
@@ -422,7 +434,7 @@ export function FileTree({
 }: {
   createTrigger: { kind: 'file' | 'folder'; parentDir: string; seq: number };
 }) {
-  const { activeDocName, closeDocument } = useDocumentContext();
+  const { activeDocName, activeTarget, closeDocument } = useDocumentContext();
   const { addPage } = usePageList();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -432,7 +444,12 @@ export function FileTree({
   const [busyPath, setBusyPath] = useState<string | null>(null);
   const [userExpanded, setUserExpanded] = useState<Set<string>>(() => new Set());
   const [userCollapsed, setUserCollapsed] = useState<Set<string>>(() => new Set());
-  const [prevActiveDocName, setPrevActiveDocName] = useState(activeDocName);
+  const {
+    selectedFilePath,
+    selectedFolderPath,
+    navigationPath: activeNavigationPath,
+  } = resolveFileTreeSelection(activeTarget, activeDocName);
+  const [prevActiveNavigationPath, setPrevActiveNavigationPath] = useState(activeNavigationPath);
   const [deleteTarget, setDeleteTarget] = useState<FileTreeTarget | null>(null);
   const [creatingItem, setCreatingItem] = useState<{
     kind: 'file' | 'folder';
@@ -443,11 +460,11 @@ export function FileTree({
   const [creatingError, setCreatingError] = useState<string | null>(null);
   const prevCreateSeqRef = useRef(0);
 
-  if (activeDocName !== prevActiveDocName) {
+  if (activeNavigationPath !== prevActiveNavigationPath) {
     // Clear user-collapsed overrides on navigation so ancestors of the new
     // active file are guaranteed to expand. userExpanded is preserved — a user
     // who hand-opened unrelated folders keeps them open.
-    setPrevActiveDocName(activeDocName);
+    setPrevActiveNavigationPath(activeNavigationPath);
     setUserCollapsed(new Set());
   }
 
@@ -740,7 +757,7 @@ export function FileTree({
 
   const treeNodes = documents.length > 0 ? buildTree(documents) : [];
   const folderPaths = collectFolderPaths(treeNodes);
-  const ancestors = computeAncestors(activeDocName);
+  const ancestors = computeAncestors(activeNavigationPath);
 
   // Derive expansion on every render (D4 derive-don't-store):
   //   expandedPaths = (ancestors(activeDocName) ∪ userExpanded) \ userCollapsed
@@ -806,15 +823,16 @@ export function FileTree({
           <FileTreeNode
             key={node.path}
             node={node}
-            selectedPath={activeDocName}
+            selectedFilePath={selectedFilePath}
+            selectedFolderPath={selectedFolderPath}
             expandedPaths={expandedPaths}
             onToggle={handleToggle}
             activeRowRef={activeRowRef}
             editingPath={editingPath}
             editingValue={editingValue}
             busyPath={busyPath}
-            onSelect={(docName) => {
-              navigateTo(docName);
+            onNavigate={(targetPath) => {
+              navigateTo(targetPath);
             }}
             onStartRename={(target) => {
               setEditingPath(target.path);
