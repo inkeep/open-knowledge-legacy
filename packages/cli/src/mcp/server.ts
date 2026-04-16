@@ -124,7 +124,7 @@ When \`write_document\` creates a doc with zero incoming backlinks and a hub can
 Open Knowledge has two metadata surfaces that merge at read time:
 
 1. **Per-file frontmatter** — YAML at the top of each \`.md\` / \`.mdx\`: \`title\` (required), \`description\` (required), \`tags\` (recommended). This is where a file's own identity lives.
-2. **Folder-level defaults via \`.open-knowledge/config.yml\` \`folders:\`** — declare \`title\` / \`description\` / \`tags\` defaults keyed by glob \`match:\`. Rules apply in declaration order; later matches override earlier scalars, and tags concat + dedup across all matching rules. The file's own frontmatter wins per-scalar; folder defaults fill in blanks.
+2. **Folder-level defaults via \`.open-knowledge/config.yml\` \`folders:\`** — declare \`title\` / \`description\` / \`tags\` defaults keyed by glob \`match:\`. Rules apply in declaration order; later matches override earlier scalars. Tags concatenate across ALL matching rules (in declaration order), with file tags appended last, and first-occurrence preserved on dedup. The file's own frontmatter wins per-scalar; folder defaults fill in blanks.
 
 Folder metadata lives in \`config.yml\`, **not** in content files — this is intentionally different from the rejected \`INDEX.md\`-inside-content pattern. The merge happens on every \`exec\` / \`read_document\` / \`search\` call and is never written back to disk.
 

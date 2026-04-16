@@ -10,7 +10,9 @@ export const FolderFrontmatterSchema = z
 
 export const FolderRuleSchema = z
   .object({
-    match: z.string().min(1),
+    match: z
+      .string()
+      .min(1, "`match` must be a non-empty glob pattern (e.g. 'specs/**' or 'reports/*/**')"),
     frontmatter: FolderFrontmatterSchema,
   })
   .strict();

@@ -94,6 +94,15 @@ export interface DirectoryMeta {
   /**
    * Folder tags from matching `folders:` rules (concat + dedup across rules).
    * Absent when no matching rule contributes any tag.
+   *
+   * Note the type divergence from `EnrichedMeta.tags` (which is always
+   * `string[]`, defaulting to `[]`): on `DirectoryMeta`, tags is optional so
+   * that folders without a matching rule have no `tags` key at all — matching
+   * the behavior of `title` and `description` on this type. EnrichedMeta.tags
+   * stays always-present because every file has frontmatter state (even if
+   * empty). Consumers of `EnrichedEntry` must handle both cases:
+   *   file.tags.length       // always safe — array or []
+   *   directory.tags?.length // optional — may be undefined
    */
   tags?: string[];
   /** Number of wiki (.md/.mdx) files directly in this dir (not recursive). */

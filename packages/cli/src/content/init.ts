@@ -146,6 +146,11 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 
 
 # --- Folders: per-folder frontmatter defaults -------------------------------
+#
+# TL;DR glob gotcha: \`**\` is ONLY a multi-segment wildcard when it is a
+# standalone path segment. \`foo-**\` behaves like \`foo-*\` (single segment, NOT
+# descendants). Use \`foo/**\` or \`foo-*/**\` to match descendants.
+#
 # Declare title/description/tags defaults keyed by glob \`match:\`. Rules merge
 # with a file's own frontmatter at read time:
 #   - Per scalar (title, description): the FILE wins when declared; folder
@@ -155,13 +160,12 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 #   - Evaluation is positional — LATER rules in this array override earlier
 #     rules for scalars. Put general rules first, specific rules last.
 #
-# Picomatch globstar nuance:
+# Picomatch glob cheatsheet:
 #   \`match: 'foo'\`         — matches ONLY the folder \`foo\` itself
 #   \`match: 'foo/**'\`      — matches \`foo\` AND all descendants (files + dirs)
 #   \`match: 'foo-*'\`       — matches \`foo-1\`, \`foo-bar\` (single segment)
-#   \`match: 'foo-**'\`      — behaves like \`foo-*\` (NOT multi-segment); \`**\` only
-#                              acts as a multi-segment globstar when it is a
-#                              STANDALONE segment. Use \`foo-*/**\` if you want
+#   \`match: 'foo-**'\`      — behaves like \`foo-*\` (NOT multi-segment); see
+#                              TL;DR above. Use \`foo-*/**\` if you want
 #                              \`foo-X\` plus its descendants.
 #
 # Example:
