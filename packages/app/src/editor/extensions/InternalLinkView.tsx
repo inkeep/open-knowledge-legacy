@@ -8,9 +8,10 @@
 import { type ClassifiedLinkTarget, isExternalHref } from '@inkeep/open-knowledge-core';
 import type { MarkViewProps } from '@tiptap/core';
 import { MarkViewContent } from '@tiptap/react';
-import { CircleAlert, Ellipsis, File, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { CircleAlert, Ellipsis, File, FolderOpen, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
+import { resolveLinkTargetIntent } from '../../components/link-target-intent';
 import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
@@ -23,7 +24,7 @@ import {
 } from '../../components/ui/dropdown-menu';
 import { Input } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../components/ui/tooltip';
-import { docNameToDialogSeed, normalizeDocNameInput } from '../../lib/doc-paths';
+import { normalizeDocNameInput } from '../../lib/doc-paths';
 import { cn } from '../../lib/utils';
 import {
   buildCurrentRelativeMarkdownHref,
@@ -228,7 +229,7 @@ function EditMarkdownLinkDialog({
 export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewProps) {
   const href = (mark.attrs.href as string | null) ?? '';
   const target = classifyCurrentMarkdownHref(href);
-  const { pages, loading } = usePageList();
+  const { folderPaths, pages, loading } = usePageList();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
@@ -293,30 +294,48 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
   }
 
   const docTarget = target;
-  const isResolved = !loading && pages.has(docTarget.docName);
-  const isUnresolved = !loading && !pages.has(docTarget.docName);
+  const linkIntent = resolveLinkTargetIntent(docTarget.docName, {
+    pages,
+    folderPaths,
+  });
+  const isResolved =
+    !loading && linkIntent.kind === 'navigate' && linkIntent.displayState === 'resolved';
+  const isFolder =
+    !loading && linkIntent.kind === 'navigate' && linkIntent.displayState === 'folder';
+  const isUnresolved = !loading && linkIntent.kind === 'create';
 
-  const hashHref = toInternalHashHref(docTarget);
-  const createDialogSeed = docNameToDialogSeed(docTarget.docName);
+  const hashHref = toInternalHashHref({
+    docName: linkIntent.kind === 'navigate' ? linkIntent.hashDocName : docTarget.docName,
+    anchor: docTarget.anchor,
+  });
 
   function handlePrimaryClick(e: React.MouseEvent) {
     e.preventDefault();
-    if (isUnresolved) {
+    if (linkIntent.kind === 'create') {
       setCreateDialogOpen(true);
       return;
     }
     if (shouldOpenInNewTab(e)) {
-      openInternalHashHrefInNewTab(docTarget);
+      openInternalHashHrefInNewTab({
+        docName: linkIntent.hashDocName,
+        anchor: docTarget.anchor,
+      });
       return;
     }
-    navigateToMarkdownTarget(docTarget);
+    window.location.assign(hashHref);
   }
 
   function handleCreated(docName: string) {
     updateAttributes({ href: buildCurrentRelativeMarkdownHref(docName, docTarget.anchor ?? null) });
   }
 
-  const resolutionState = loading ? 'loading' : isResolved ? 'resolved' : 'unresolved';
+  const resolutionState = loading
+    ? 'loading'
+    : isFolder
+      ? 'folder'
+      : isResolved
+        ? 'resolved'
+        : 'unresolved';
 
   return (
     <>
@@ -354,6 +373,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
                   <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
                 )}
                 {isResolved && <File className="size-3.5 shrink-0" aria-hidden="true" />}
+                {isFolder && <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />}
                 {isUnresolved && <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />}
                 <MarkViewContent />
               </a>
@@ -380,7 +400,13 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
             </span>
           </TooltipTrigger>
           <TooltipContent side="top" sideOffset={4}>
-            {isUnresolved ? <div>This page cannot be found.</div> : <LinkTooltipHint href={href} />}
+            {isUnresolved ? (
+              <div>This page cannot be found.</div>
+            ) : isFolder ? (
+              <div>This target is a folder. Open it to create an index note.</div>
+            ) : (
+              <LinkTooltipHint href={href} />
+            )}
           </TooltipContent>
         </Tooltip>
 
@@ -411,8 +437,8 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         kind="file"
-        initialDir={createDialogSeed.initialDir}
-        suggestedName={createDialogSeed.suggestedName}
+        initialDir={linkIntent.kind === 'create' ? linkIntent.initialDir : ''}
+        suggestedName={linkIntent.kind === 'create' ? linkIntent.suggestedName : undefined}
         description={
           <>
             Create a page for{' '}

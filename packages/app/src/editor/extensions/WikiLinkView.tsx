@@ -6,10 +6,11 @@ import {
 } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
-import { CircleAlert, Ellipsis, File, Loader2, Pencil, Trash2 } from 'lucide-react';
+import { CircleAlert, Ellipsis, File, FolderOpen, Loader2, Pencil, Trash2 } from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
 import { defaultInitialDir } from '../../components/file-tree-utils';
+import { resolveLinkTargetIntent } from '../../components/link-target-intent';
 import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
@@ -28,7 +29,11 @@ import { openInternalHashHrefInNewTab, shouldOpenInNewTab } from '../internal-li
 import { LinkTooltipHint } from '../link-tooltip';
 import { ExternalLinkChip } from './ExternalLinkChip';
 import { useHeadings } from './use-headings';
-import { isResolvedWikiLinkTarget, wikiLinkSuggestedFilename } from './wiki-link-helpers';
+import {
+  getWikiLinkResolutionCandidates,
+  isResolvedWikiLinkTarget,
+  wikiLinkSuggestedFilename,
+} from './wiki-link-helpers';
 
 // ── Edit dialog ───────────────────────────────────────────────────────────────
 
@@ -198,18 +203,26 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
   const anchor = normalizeNullableString(node.attrs.anchor);
   const label = getWikiLinkText({ target, alias, anchor });
   const source = renderWikiLink({ target, alias, anchor });
-  const { pages, loading } = usePageList();
+  const { folderPaths, pages, loading } = usePageList();
   const classifiedTarget = classifyWikiLinkTarget(target, anchor);
   const externalTarget = classifiedTarget?.kind === 'external' ? classifiedTarget : null;
+  const linkIntent = resolveLinkTargetIntent(target, {
+    pages,
+    folderPaths,
+    fallbackTargets: getWikiLinkResolutionCandidates(target),
+  });
 
   const resolutionState = externalTarget
     ? 'external'
     : loading && pages.size === 0
       ? 'loading'
-      : isResolvedWikiLinkTarget(target, pages)
-        ? 'resolved'
-        : 'unresolved';
+      : linkIntent.kind === 'create'
+        ? 'unresolved'
+        : linkIntent.displayState === 'folder'
+          ? 'folder'
+          : 'resolved';
   const resolved = resolutionState === 'resolved';
+  const folderResolved = resolutionState === 'folder';
   const unresolved = resolutionState === 'unresolved';
 
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
@@ -221,29 +234,29 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
       window.open(externalTarget.url, '_blank', 'noopener,noreferrer');
       return;
     }
-    if (unresolved) {
+    if (linkIntent.kind === 'create') {
       setCreateDialogOpen(true);
       return;
     }
     if (event && shouldOpenInNewTab(event)) {
-      openInternalHashHrefInNewTab({ docName: target, anchor });
+      openInternalHashHrefInNewTab({ docName: linkIntent.hashDocName, anchor });
       return;
     }
     if (anchor) {
       const hashMatch = window.location.hash.match(/^#\/([^?#/]+)/);
       const currentDoc = hashMatch ? decodeURIComponent(hashMatch[1]) : null;
-      if (currentDoc === target) {
+      if (currentDoc === linkIntent.hashDocName) {
         const el = document.getElementById(anchor);
         if (el) {
           el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          window.location.hash = `#/${target}?anchor=${encodeURIComponent(anchor)}`;
+          window.location.hash = `#/${linkIntent.hashDocName}?anchor=${encodeURIComponent(anchor)}`;
           return;
         }
       }
-      window.location.hash = `#/${target}?anchor=${encodeURIComponent(anchor)}`;
+      window.location.hash = `#/${linkIntent.hashDocName}?anchor=${encodeURIComponent(anchor)}`;
       return;
     }
-    window.location.hash = `#/${target}`;
+    window.location.hash = `#/${linkIntent.hashDocName}`;
   }
 
   function handleCreated(docName: string) {
@@ -347,6 +360,9 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
                     <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden="true" />
                   )}
                   {resolved && <File className="size-3.5 shrink-0" aria-hidden="true" />}
+                  {folderResolved && (
+                    <FolderOpen className="size-3.5 shrink-0" aria-hidden="true" />
+                  )}
                   {unresolved && <CircleAlert className="size-3.5 shrink-0" aria-hidden="true" />}
                   {label}
                 </a>
@@ -379,6 +395,8 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
             <TooltipContent side="top" sideOffset={4}>
               {unresolved ? (
                 <div>This page cannot be found.</div>
+              ) : folderResolved ? (
+                <div>This target is a folder. Open it to create an index note.</div>
               ) : (
                 <LinkTooltipHint href={source} />
               )}
@@ -415,8 +433,16 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}
         kind="file"
-        initialDir={defaultInitialDir(docNameFromHash(window.location.hash) ?? '')}
-        suggestedName={wikiLinkSuggestedFilename(target)}
+        initialDir={
+          linkIntent.kind === 'create'
+            ? linkIntent.initialDir
+            : defaultInitialDir(docNameFromHash(window.location.hash) ?? '')
+        }
+        suggestedName={
+          linkIntent.kind === 'create'
+            ? linkIntent.suggestedName
+            : wikiLinkSuggestedFilename(target)
+        }
         description={
           <>
             Create a page for <span className="font-medium text-foreground">[[{target}]]</span>

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowUpRight, FilePlus2 } from 'lucide-react';
+import { ArrowUpRight, FilePlus2, FolderOpen } from 'lucide-react';
 import { useState } from 'react';
+import { resolveLinkTargetIntent } from '@/components/link-target-intent';
 import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
@@ -13,9 +14,7 @@ import {
   PanelHeader,
   PanelTitle,
 } from '@/components/ui/panel';
-import { isResolvedWikiLinkTarget } from '@/editor/extensions/wiki-link-helpers';
 import { hashFromDocName } from '@/lib/doc-hash';
-import { docNameToDialogSeed } from '@/lib/doc-paths';
 import { cn } from '@/lib/utils';
 
 interface ForwardLinksResponse {
@@ -62,7 +61,7 @@ export function ForwardLinksPanel({
   docName: string;
   className?: string;
 }) {
-  const { pages, loading: pagesLoading } = usePageList();
+  const { folderPaths, pages, loading: pagesLoading } = usePageList();
   const {
     data: links = [],
     isLoading,
@@ -73,18 +72,29 @@ export function ForwardLinksPanel({
     enabled: !pagesLoading && pages.has(docName),
   });
   const [createTarget, setCreateTarget] = useState<DocumentForwardLinkItem | null>(null);
-  const createDialogSeed = createTarget ? docNameToDialogSeed(createTarget.docName) : null;
+  const createDialogIntent =
+    createTarget === null
+      ? null
+      : resolveLinkTargetIntent(createTarget.docName, {
+          pages,
+          folderPaths,
+        });
 
   function handleRowClick(link: ForwardLinkItem) {
     if (link.kind === 'external') {
       window.open(link.url, '_blank', 'noopener,noreferrer');
       return;
     }
-    if (!pagesLoading && !isResolvedWikiLinkTarget(link.docName, pages)) {
+    const linkIntent = resolveLinkTargetIntent(link.docName, {
+      pages,
+      folderPaths,
+    });
+    if (!pagesLoading && linkIntent.kind === 'create') {
       setCreateTarget(link);
       return;
     }
-    window.location.assign(hashFromDocName(link.docName, link.anchor));
+    const hashDocName = linkIntent.kind === 'navigate' ? linkIntent.hashDocName : link.docName;
+    window.location.assign(hashFromDocName(hashDocName, link.anchor));
   }
 
   return (
@@ -104,10 +114,20 @@ export function ForwardLinksPanel({
           ) : (
             <div className="flex flex-col gap-2">
               {links.map((link) => {
+                const linkIntent =
+                  link.kind === 'doc'
+                    ? resolveLinkTargetIntent(link.docName, {
+                        pages,
+                        folderPaths,
+                      })
+                    : null;
                 const unresolved =
+                  link.kind === 'doc' && !pagesLoading && linkIntent?.kind === 'create';
+                const folderTarget =
                   link.kind === 'doc' &&
                   !pagesLoading &&
-                  !isResolvedWikiLinkTarget(link.docName, pages);
+                  linkIntent?.kind === 'navigate' &&
+                  linkIntent.displayState === 'folder';
                 const compactPath =
                   link.kind === 'doc' ? compactForwardLinkPath(link.docName) : link.url;
                 const displayTitle =
@@ -124,6 +144,8 @@ export function ForwardLinksPanel({
                       'h-auto w-full items-start justify-start whitespace-normal px-3 py-2 text-left',
                       unresolved &&
                         'border-amber-300 bg-amber-50/70 text-amber-950 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200 dark:hover:bg-amber-950/35',
+                      folderTarget &&
+                        'border-sky-300 bg-sky-50/70 text-sky-950 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-100 dark:hover:bg-sky-950/35',
                     )}
                     onClick={() => handleRowClick(link)}
                   >
@@ -167,6 +189,12 @@ export function ForwardLinksPanel({
                           <span>Missing page. Click to create.</span>
                         </div>
                       ) : null}
+                      {folderTarget ? (
+                        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-sky-700 dark:text-sky-300">
+                          <FolderOpen className="size-3 shrink-0" aria-hidden="true" />
+                          <span>Folder target. Open overview to create an index note.</span>
+                        </div>
+                      ) : null}
                       {link.snippet ? (
                         <p className="mt-1 break-words text-sm text-muted-foreground">
                           {link.snippet}
@@ -184,8 +212,10 @@ export function ForwardLinksPanel({
       <NewItemDialog
         open={createTarget !== null}
         kind="file"
-        initialDir={createDialogSeed?.initialDir ?? ''}
-        suggestedName={createDialogSeed?.suggestedName}
+        initialDir={createDialogIntent?.kind === 'create' ? createDialogIntent.initialDir : ''}
+        suggestedName={
+          createDialogIntent?.kind === 'create' ? createDialogIntent.suggestedName : undefined
+        }
         onOpenChange={(open: boolean) => {
           if (!open) setCreateTarget(null);
         }}
