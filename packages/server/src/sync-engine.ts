@@ -19,6 +19,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import type { CC1Broadcaster } from './cc1-broadcast.ts';
+import { ConflictStore } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { type ClassifiedError, classifyGitError } from './error-classification.ts';
 import { createGitInstance, withParentLock } from './git-handle.ts';
@@ -145,6 +146,7 @@ export class SyncEngine {
   private pushInFlight = false;
 
   private statePath: string;
+  private conflictStore: ConflictStore;
 
   constructor(options: SyncEngineOptions) {
     this.projectDir = options.projectDir;
@@ -158,6 +160,7 @@ export class SyncEngine {
     this.cc1Broadcaster = options.cc1Broadcaster ?? null;
     this.onStateChange = options.onStateChange;
     this.statePath = resolve(this.contentDir, '.open-knowledge', 'sync-state.json');
+    this.conflictStore = new ConflictStore(this.contentDir, this.projectDir, 'main');
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -271,6 +274,7 @@ export class SyncEngine {
       }
     } else if (this.currentBranch !== branch) {
       this.currentBranch = branch;
+      this.conflictStore.setBranch(branch);
       // Resume from detached if paused for that reason
       if (this.state === 'disabled' && this.pausedReason === 'detached-head') {
         this.pausedReason = undefined;
@@ -408,14 +412,15 @@ export class SyncEngine {
 
     this.pushInFlight = true;
     try {
-      await this.doPushCycle();
+      await this.doPushCycle(1);
     } finally {
       this.pushInFlight = false;
       this.schedulePush(); // chain: schedule next after current completes
     }
   }
 
-  private async doPushCycle(): Promise<void> {
+  /** @param retriesLeft - Max inline fetch+merge+retry attempts on non-fast-forward. */
+  private async doPushCycle(retriesLeft = 0): Promise<void> {
     // Gather content-filtered files that exist on disk (D35: never git add .)
     const contentFiles = this.gatherContentFilesSync();
 
@@ -569,8 +574,33 @@ export class SyncEngine {
       const err = e instanceof Error ? e : new Error(String(e));
       const classified = classifyGitError(err);
       if (classified.class === 'semantic' && classified.subclass === 'non-fast-forward') {
-        // Origin diverged — pull cycle will fetch + merge; retry next push cycle
-        log.info({}, '[sync] push rejected (non-fast-forward) — will retry after next pull');
+        if (retriesLeft > 0) {
+          // Inline fetch + merge + retry (one attempt)
+          log.info({}, '[sync] push rejected (non-fast-forward) — fetching, merging, retrying');
+          const retryHandle = createGitInstance(this.projectDir, {
+            credentialArgs: this.credentialArgs,
+          });
+          try {
+            await retryHandle.git.fetch('origin');
+            await retryHandle.git.merge([`origin/${this.currentBranch}`]);
+          } catch (mergeErr) {
+            const mc = classifyGitError(
+              mergeErr instanceof Error ? mergeErr : new Error(String(mergeErr)),
+            );
+            if (mc.class === 'semantic' && mc.subclass === 'merge-conflict') {
+              await this.handleMergeConflict();
+            } else {
+              this.handleError(mc);
+            }
+            this.scheduleSaveState();
+            return;
+          }
+          // Merge succeeded — retry push once (retriesLeft=0 prevents recursion)
+          await this.doPushCycle(0);
+          return;
+        }
+        // Retry exhausted — let the next pull cycle handle it
+        log.info({}, '[sync] push still rejected after retry — waiting for next pull cycle');
         this.consecutiveFailures++;
         if (this.state === 'pushing') this.transitionTo('idle');
       } else {
@@ -643,9 +673,106 @@ export class SyncEngine {
   // ─── Conflict handling ────────────────────────────────────────────────────
 
   private async handleMergeConflict(): Promise<void> {
-    this.conflictCount++;
-    this.transitionTo('conflict');
-    log.warn({ count: this.conflictCount }, '[sync] merge conflict detected');
+    const handle = createGitInstance(this.projectDir, { credentialArgs: this.credentialArgs });
+
+    // List all conflicted files (those with U status in git's unmerged index)
+    let conflictedFiles: string[] = [];
+    try {
+      const out = (await handle.git.raw(['diff', '--name-only', '--diff-filter=U'])).trim();
+      conflictedFiles = out
+        ? out
+            .split('\n')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [];
+    } catch (e) {
+      log.warn(
+        { err: e },
+        '[sync] failed to list conflicted files — treating all as content conflicts',
+      );
+    }
+
+    // Partition: content files pause sync; non-content files are auto-resolved with theirs
+    const contentConflicts: string[] = [];
+    const nonContentConflicts: string[] = [];
+
+    for (const file of conflictedFiles) {
+      const absPath = join(this.projectDir, file);
+      const contentRelPath = relative(this.contentDir, absPath);
+      if (!contentRelPath.startsWith('..') && !this.contentFilter.isExcluded(contentRelPath)) {
+        contentConflicts.push(file);
+      } else {
+        nonContentConflicts.push(file);
+      }
+    }
+
+    // Auto-resolve non-content files with 'theirs' strategy
+    for (const file of nonContentConflicts) {
+      try {
+        await handle.git.raw(['checkout', '--theirs', '--', file]);
+        await handle.git.raw(['add', '--', file]);
+        log.info({ file }, '[sync] auto-resolved non-content conflict with theirs');
+      } catch (e) {
+        // If auto-resolve fails, escalate to content conflict
+        log.warn({ err: e, file }, '[sync] auto-resolve failed — escalating to content conflict');
+        contentConflicts.push(file);
+      }
+    }
+
+    if (contentConflicts.length > 0) {
+      // Record in ConflictStore
+      for (const file of contentConflicts) {
+        this.conflictStore.addConflict({ file, detectedAt: new Date().toISOString() });
+      }
+      this.conflictCount = this.conflictStore.count();
+
+      // Pause timers — sync resumes only after manual resolution or abort
+      if (this.pullTimer !== null) {
+        clearTimeout(this.pullTimer);
+        this.pullTimer = null;
+      }
+      if (this.pushTimer !== null) {
+        clearTimeout(this.pushTimer);
+        this.pushTimer = null;
+      }
+
+      this.transitionTo('conflict');
+      log.warn(
+        { files: contentConflicts },
+        '[sync] content conflicts — sync paused until resolved',
+      );
+    } else {
+      // All conflicts auto-resolved — complete the merge
+      try {
+        await handle.git.raw(['commit', '--no-edit']);
+        this.lastSyncUtc = new Date().toISOString();
+        this.behind = 0;
+        this.transitionTo('idle');
+        log.info({}, '[sync] all conflicts auto-resolved — merge committed');
+      } catch (e) {
+        log.warn({ err: e }, '[sync] failed to commit after auto-resolving conflicts');
+        this.transitionTo('idle');
+      }
+    }
+  }
+
+  /**
+   * Abort the current merge, clear all recorded conflicts, and pause sync.
+   * Sync remains paused until `trigger()` is called manually.
+   */
+  async abortMerge(): Promise<void> {
+    const handle = createGitInstance(this.projectDir, { credentialArgs: this.credentialArgs });
+    try {
+      await handle.git.raw(['merge', '--abort']);
+      log.info({}, '[sync] merge aborted');
+    } catch (e) {
+      log.warn({ err: e }, '[sync] git merge --abort failed — conflicts.json still cleared');
+    }
+    this.conflictStore.clear();
+    this.conflictCount = 0;
+    // Transition to idle but leave timers cleared — sync paused until manual trigger
+    this.transitionTo('idle');
+    this.scheduleSaveState();
   }
 
   // ─── Error handling ───────────────────────────────────────────────────────
@@ -661,6 +788,7 @@ export class SyncEngine {
       this.transitionTo('auth-error');
       this.pausedReason = 'auth-error';
     } else if (classified.class === 'semantic' && classified.subclass === 'protected-branch') {
+      this.syncEnabled = false; // Disable permanently — user must change branch or permissions
       this.transitionTo('disabled');
       this.pausedReason = 'protected-branch';
     } else if (classified.retryable) {
