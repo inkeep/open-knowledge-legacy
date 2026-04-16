@@ -50,6 +50,8 @@ export interface SyncStatus {
   behind: number;
   consecutiveFailures: number;
   conflictCount: number;
+  /** True when a git remote exists, even if sync is dormant/disabled. */
+  hasRemote: boolean;
   error?: string;
   pausedReason?: string;
 }
@@ -146,6 +148,9 @@ export class SyncEngine {
   private pullInFlight = false;
   private pushInFlight = false;
 
+  /** True once a git remote has been confirmed present. */
+  private hasRemote = false;
+
   private statePath: string;
   private conflictStore: ConflictStore;
 
@@ -186,6 +191,7 @@ export class SyncEngine {
       });
       const remoteOutput = await handle.git.raw('remote', '-v');
       hasRemote = remoteOutput.trim().length > 0;
+      this.hasRemote = hasRemote;
 
       // Also get current branch
       try {
@@ -276,6 +282,7 @@ export class SyncEngine {
       behind: this.behind,
       consecutiveFailures: this.consecutiveFailures,
       conflictCount: this.conflictCount,
+      hasRemote: this.hasRemote,
       error: this.error,
       pausedReason: this.pausedReason,
     };

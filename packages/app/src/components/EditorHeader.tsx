@@ -1,5 +1,5 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { Columns2, FolderOpen, History, Pin, PinOff, Rows2, Save } from 'lucide-react';
+import { Columns2, FolderOpen, GitFork, History, Pin, PinOff, Rows2, Save } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
   buildRenamedNodePath,
@@ -74,6 +74,9 @@ interface EditorHeaderProps {
   onRestore: () => void;
   diffLayout: DiffLayout;
   onDiffLayoutChange: (layout: DiffLayout) => void;
+  onSignIn?: () => void;
+  onOpenConflictResolver?: () => void;
+  onOpenClone?: () => void;
 }
 
 export function EditorHeader({
@@ -89,6 +92,9 @@ export function EditorHeader({
   onRestore,
   diffLayout,
   onDiffLayoutChange,
+  onSignIn,
+  onOpenConflictResolver,
+  onOpenClone,
 }: EditorHeaderProps) {
   const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
     useDocumentContext();
@@ -556,6 +562,22 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
+        {!isDiffMode && onOpenClone && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Clone from GitHub"
+                onClick={onOpenClone}
+                className="text-muted-foreground"
+              >
+                <GitFork className="size-3.5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Clone from GitHub…</TooltipContent>
+          </Tooltip>
+        )}
         {!isDiffMode && activeDocName && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -588,7 +610,7 @@ export function EditorHeader({
             <TooltipContent>Document timeline</TooltipContent>
           </Tooltip>
         )}
-        <SyncStatusBadge />
+        <SyncStatusBadge onSignIn={onSignIn} onOpenConflictResolver={onOpenConflictResolver} />
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
         <ThemeToggle />

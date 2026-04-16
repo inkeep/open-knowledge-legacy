@@ -40,6 +40,9 @@ interface BadgeIconProps {
 function BadgeIcon({ status }: BadgeIconProps) {
   const cls = 'size-3.5';
   switch (status.state) {
+    case 'dormant':
+      // Available: remote exists but sync not yet enabled
+      return <Cloud className={`${cls} text-muted-foreground`} />;
     case 'idle':
       if (status.ahead > 0 || status.behind > 0) {
         return <RefreshCw className={`${cls} text-muted-foreground`} />;
@@ -90,7 +93,7 @@ function badgeLabel(status: GitSyncStatus): string {
 function stateLabel(state: GitSyncStatus['state']): string {
   switch (state) {
     case 'dormant':
-      return 'Auto-sync available';
+      return 'Sync available';
     case 'idle':
       return 'Synced';
     case 'fetching':
@@ -114,9 +117,11 @@ function stateLabel(state: GitSyncStatus['state']): string {
 
 interface PopoverBodyProps {
   status: GitSyncStatus;
+  onSignIn?: () => void;
+  onOpenConflictResolver?: () => void;
 }
 
-function PopoverBody({ status }: PopoverBodyProps) {
+function PopoverBody({ status, onSignIn, onOpenConflictResolver }: PopoverBodyProps) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
@@ -149,24 +154,36 @@ function PopoverBody({ status }: PopoverBodyProps) {
       </div>
 
       <div className="flex flex-wrap gap-1 pt-1">
-        {status.state !== 'dormant' && status.state !== 'disabled' && (
-          <Button variant="outline" size="xs" onClick={() => void triggerSync('sync')}>
-            Sync now
+        {status.state !== 'dormant' &&
+          status.state !== 'disabled' &&
+          status.state !== 'auth-error' && (
+            <Button variant="outline" size="xs" onClick={() => void triggerSync('sync')}>
+              Sync now
+            </Button>
+          )}
+        {status.state === 'dormant' && (
+          <Button variant="outline" size="xs" onClick={onSignIn}>
+            Enable sync
           </Button>
         )}
-        {status.state === 'dormant' && (
-          <Button variant="outline" size="xs" onClick={() => void triggerSync('sync')}>
-            Sync with GitHub
+        {status.state === 'disabled' && (
+          <Button variant="outline" size="xs" onClick={onSignIn}>
+            Enable auto-sync
           </Button>
         )}
         {status.state === 'auth-error' && (
-          <Button variant="outline" size="xs">
+          <Button variant="outline" size="xs" onClick={onSignIn}>
             Sign in
           </Button>
         )}
         {(status.state === 'offline' || status.state === 'conflict') && (
           <Button variant="outline" size="xs" onClick={() => void triggerSync('sync')}>
             Retry
+          </Button>
+        )}
+        {status.state === 'conflict' && onOpenConflictResolver && (
+          <Button variant="outline" size="xs" onClick={onOpenConflictResolver}>
+            Review conflicts
           </Button>
         )}
       </div>
@@ -176,14 +193,21 @@ function PopoverBody({ status }: PopoverBodyProps) {
 
 // ── public component ──────────────────────────────────────────────────────────
 
-export function SyncStatusBadge() {
+export interface SyncStatusBadgeProps {
+  /** Called when "Sign in" is clicked in the auth-error popover or enable-sync prompt. */
+  onSignIn?: () => void;
+  /** Called when "Review conflicts" is clicked in the conflict popover. */
+  onOpenConflictResolver?: () => void;
+}
+
+export function SyncStatusBadge({ onSignIn, onOpenConflictResolver }: SyncStatusBadgeProps = {}) {
   const status = useGitSyncStatus();
 
-  // Nothing to show until status arrives or when truly dormant with no sync context
+  // Nothing to show until status arrives
   if (!status) return null;
 
-  // Hide completely when dormant — no remote configured
-  if (status.state === 'dormant') return null;
+  // Hide when dormant with no remote (truly no git remote)
+  if (status.state === 'dormant' && !status.hasRemote) return null;
 
   const label = badgeLabel(status);
 
@@ -205,7 +229,11 @@ export function SyncStatusBadge() {
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-56 p-3">
-        <PopoverBody status={status} />
+        <PopoverBody
+          status={status}
+          onSignIn={onSignIn}
+          onOpenConflictResolver={onOpenConflictResolver}
+        />
       </PopoverContent>
     </Popover>
   );

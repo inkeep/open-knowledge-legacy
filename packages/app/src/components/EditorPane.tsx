@@ -4,6 +4,9 @@ import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
 import { createNavigationRetryHandler } from '@/editor/navigation-retry';
+import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
+import { AuthModal } from './AuthModal';
+import { CloneDialog } from './CloneDialog';
 import { ConflictBanner } from './ConflictBanner';
 import { ConflictResolver } from './ConflictResolver';
 import type { DiffLayout } from './DiffView';
@@ -23,14 +26,19 @@ export function EditorPane() {
   const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
   const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   const [restoring, setRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const optInToastShownRef = useRef(false);
   /** Remembers which editing mode to restore after exiting diff preview. */
   const modeBeforeDiffRef = useRef<'wysiwyg' | 'source'>('wysiwyg');
+
+  const syncStatus = useGitSyncStatus();
 
   useEffect(() => {
     return () => {
@@ -96,6 +104,22 @@ export function EditorPane() {
       setEditorMode(modeBeforeDiffRef.current);
     }
   }, [activeTarget, editorMode]);
+
+  // Opt-in prompt (D36): show a dismissible toast the first time we detect
+  // a remote exists but sync is dormant (not yet enabled).
+  useEffect(() => {
+    if (!optInToastShownRef.current && syncStatus?.state === 'dormant' && syncStatus.hasRemote) {
+      optInToastShownRef.current = true;
+      toast.info('This project has a GitHub remote.', {
+        description: 'Sign in to enable automatic sync with your team.',
+        duration: 8000,
+        action: {
+          label: 'Sign in',
+          onClick: () => setAuthModalOpen(true),
+        },
+      });
+    }
+  }, [syncStatus?.state, syncStatus?.hasRemote]);
 
   function handleModeChange(mode: 'wysiwyg' | 'source') {
     setEditorMode(mode);
@@ -164,6 +188,9 @@ export function EditorPane() {
         onRestore={handleRestore}
         diffLayout={diffLayout}
         onDiffLayoutChange={setDiffLayout}
+        onSignIn={() => setAuthModalOpen(true)}
+        onOpenConflictResolver={() => setConflictResolverOpen(true)}
+        onOpenClone={() => setCloneDialogOpen(true)}
       />
       <NavigationPendingBar isPending={isPending} onRetry={handleRetry} />
       <EditorArea
@@ -180,6 +207,19 @@ export function EditorPane() {
         selectedSha={previewEntry?.sha}
       />
       <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
+      <AuthModal
+        open={authModalOpen}
+        onOpenChange={setAuthModalOpen}
+        onSuccess={() => setAuthModalOpen(false)}
+      />
+      <CloneDialog
+        open={cloneDialogOpen}
+        onOpenChange={setCloneDialogOpen}
+        onSignIn={() => {
+          setCloneDialogOpen(false);
+          setAuthModalOpen(true);
+        }}
+      />
     </>
   );
 }
