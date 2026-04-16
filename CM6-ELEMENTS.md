@@ -388,11 +388,11 @@ Every source character must be cursor-reachable, `Cmd+A → Cmd+C` byte-identica
 | `packages/app/src/editor/source-polish/broken-ref-field.ts`       | StateField for broken link-ref cross-scan                             |
 | `packages/app/src/editor/source-polish/broken-ref-field.test.ts`  | Unit tests for broken-ref logic                                       |
 | `packages/app/src/editor/source-polish/engine-invariants.test.ts` | Grep guard: no `Decoration.replace` / `atomicRanges` in the submodule |
-| `packages/app/src/editor/source-polish/index.ts`                  | Public `sourcePolishExtensions()` factory                             |
+| `packages/app/src/editor/source-polish/index.ts`                  | Public `createSourcePolishExtension()` factory                        |
 | `packages/app/src/editor/markdown-code-languages.ts`              | \~12-entry `codeLanguages` allowlist (no `@codemirror/language-data`) |
 | `packages/app/src/editor/plugins/wiki-link-source.ts`             | Wikilink detection + `.cm-wiki-link-broken` extension                 |
 | `packages/app/src/globals.css`                                    | CSS (bottom, "Source-view minimal polish" block)                      |
-| `packages/app/tests/stress/source-polish.e2e.ts`                  | Playwright E2E (11 tests covering §6.1–§6.7)                          |
+| `packages/app/tests/stress/source-polish.e2e.ts`                  | Playwright E2E (9 tests covering §6.1–§6.7)                           |
 
 ## Out-of-scope per §3 of the spec
 

@@ -1,5 +1,5 @@
 import { syntaxTree } from '@codemirror/language';
-import type { Extension, Range } from '@codemirror/state';
+import type { EditorState, Extension, Range } from '@codemirror/state';
 import {
   Decoration,
   type DecorationSet,
@@ -27,12 +27,18 @@ function countLeadingIndent(text: string): number {
   return indent;
 }
 
-function buildDecorations(view: EditorView): DecorationSet {
+/** Pure state-based decoration builder. Exported for unit tests — the ViewPlugin
+ * wrapper passes `view.visibleRanges` (viewport-scoped); tests can pass the
+ * whole-doc range to exercise every construct. No `view` dependency → works
+ * in Bun's headless test env without a DOM. */
+export function buildDecorationsForRanges(
+  state: EditorState,
+  ranges: readonly { from: number; to: number }[],
+): DecorationSet {
   const decorations: Range<Decoration>[] = [];
-  const { state } = view;
   const tree = syntaxTree(state);
 
-  for (const { from, to } of view.visibleRanges) {
+  for (const { from, to } of ranges) {
     tree.iterate({
       from,
       to,
@@ -59,7 +65,10 @@ function buildDecorations(view: EditorView): DecorationSet {
           return false;
         }
 
-        // List hanging-indent — apply .cm-list-item to the first line of each ListItem
+        // List hanging-indent — apply .cm-list-item to the first line of each ListItem.
+        // Do NOT `return false` here: nested lists have ListItem descendants, and
+        // inline content (Strikethrough, etc.) lives inside the item's Paragraph —
+        // both need their own handler fires.
         if (node.name === 'ListItem') {
           const line = state.doc.lineAt(node.from);
           const match = LIST_PREFIX_RE.exec(line.text);
@@ -69,7 +78,7 @@ function buildDecorations(view: EditorView): DecorationSet {
             attributes: { style: `--list-hang: ${hang}ch` },
           });
           decorations.push(lineDeco.range(line.from));
-          return false;
+          return;
         }
 
         // Fenced code — wrap-preserve-indent on content lines.
@@ -130,7 +139,7 @@ class SourcePolishViewPlugin {
   decorations: DecorationSet;
 
   constructor(view: EditorView) {
-    this.decorations = buildDecorations(view);
+    this.decorations = buildDecorationsForRanges(view.state, view.visibleRanges);
   }
 
   update(update: ViewUpdate) {
@@ -139,7 +148,7 @@ class SourcePolishViewPlugin {
       update.viewportChanged ||
       syntaxTree(update.startState) !== syntaxTree(update.state)
     ) {
-      this.decorations = buildDecorations(update.view);
+      this.decorations = buildDecorationsForRanges(update.view.state, update.view.visibleRanges);
     }
   }
 }

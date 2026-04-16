@@ -40,7 +40,7 @@ Everything the abandoned `2026-04-14-source-view-polish-engine` spec included ex
 - HTML-block purple tint
 - Task-marker pills (`[ ]` / `[x]` stay as plain bracket text)
 - Code-block line tint, left/top/bottom borders, compact font sizing
-- Table row tint, cell color bands, accent bar, compact sizing, hanging-indent — **tables render as plain paragraph text**
+- Table row tint, cell color bands, accent bar, header top border — **no styling**. Amended mid-branch: table structure/layout (hanging-indent + compactness) IS in scope and was re-added from the prior polish-engine. See §6.6 for what's applied vs explicitly cut.
 - Gutter contrast tweaks, `.cm-gutters` color overrides
 - Any "polish engine" registry, Compartment, or auto-bail mechanism
 - Any dev-mode performance ceiling or reconfigure path
@@ -82,8 +82,10 @@ These carry over from the prior spec and remain non-negotiable:
 5. Short indented lines (no wrap) render with their source leading whitespace visible — the indent structure of the code is readable.
 
 ### 5.5 Author reading a table
-1. Table lines render with the same font, size, and background as the paragraphs around them.
-2. `|`, `---`, column text all visible and addressable. No decoration applied.
+1. Table rows render ~10% smaller than surrounding paragraph text (compactness — more columns fit per visual line).
+2. No row tint, no border, no accent bar — visually reads as plain text apart from the size difference.
+3. When a long row wraps due to narrow viewport, the wrapped continuation aligns under the first cell's content (hanging indent), not under the opening `|`.
+4. `|`, `---`, column text all visible and addressable — no decoration hides or replaces any character.
 
 ## 6. Acceptance criteria
 
@@ -120,10 +122,23 @@ These carry over from the prior spec and remain non-negotiable:
 - AC4 Syntax highlighting continues to work for every language in the existing `codeLanguages` allowlist (the spec does not modify the allowlist).
 - AC5 Cursor walks every char including leading whitespace. Selection is byte-identical.
 
-### 6.6 Tables (negative AC)
-- AC1 Table lines carry NO polish-added class. No `.cm-table-row`, `.cm-table-header`, `.cm-table-cell-band-*`, or equivalent.
-- AC2 Computed background, font-size, font-family, and line-height of a table line matches a plain paragraph line in the same document.
-- AC3 `|` separators, `---` delimiters, and cell content are all visible and addressable.
+### 6.6 Tables (structure/layout only — no styling)
+
+**Amended 2026-04-16** after initial spec shipped tables as a negative-AC. Mid-branch reassessment: the abandoned polish-engine had structural pieces (hanging-indent, compactness) that are independent of its styling pieces (row tint, cell bands, accent bar, header border). Structure/layout is about wrapping behavior; styling is about visual decoration. We re-added structure only.
+
+**IN scope (applied):**
+- AC1 Table content lines carry `.cm-table-row` (body rows) or `.cm-table-header` (header row). The `|---|---|` delimiter row carries `.cm-table-row` (detected as a `TableDelimiter` whose parent is the `Table` container — inline `|` characters inside rows are also `TableDelimiter`s but under `TableRow`/`TableHeader` parents).
+- AC2 Hanging indent: `padding-inline-start: calc(8px + 2ch); text-indent: -2ch`. Wrapped continuation of a long row aligns under the first cell's content, not under the opening `|`.
+- AC3 Compactness: `font-size: 0.9em; line-height: 1.4`. Table lines are ~10% smaller than body paragraph text so more columns fit per visual line.
+
+**OUT of scope (explicitly cut — styling):**
+- AC4 No `background` on table lines. No `.cm-table-cell-band-*`. Computed `background-color` on a table line matches the editor's own (no tint).
+- AC5 No `border-left` accent bar. No `border-top` on header. No `border-bottom`. Computed border widths all `0px`.
+- AC6 No `box-decoration-break: clone` (only meaningful paired with a background; dead code without one).
+- AC7 No per-cell MatchDecorator, no color rotation.
+
+**Addressability (unchanged):**
+- AC8 `|` separators, `---` delimiters, and cell content all visible and addressable.
 
 ### 6.7 Cross-cutting
 - AC1 `bun run check` passes.
@@ -156,13 +171,13 @@ One small file adds all five features. No generic "engine," no registry, no Comp
 
 ```
 packages/app/src/editor/source-polish/
-├── index.ts              — sourcePolishExtensions(): Extension[]
+├── index.ts              — createSourcePolishExtension(): Extension
 ├── view-plugin.ts        — viewport-scoped lezer walk; emits .cm-del, .cm-list-item, .cm-fenced-code-line, .cm-code-language-badge widget
 ├── broken-ref-field.ts   — StateField: doc-wide cross-scan for [text][label] without [label]: url, emits .cm-link-ref-broken
 └── index.test.ts         — unit tests for broken-ref logic
 ```
 
-Wire-up in `SourceEditor.tsx`: append `...sourcePolishExtensions()` to the extensions array.
+Wire-up in `SourceEditor.tsx`: append `createSourcePolishExtension()` to the extensions array.
 
 Broken-wikilink detection is already in `wiki-link-source.ts`; no new module needed — we port the 5-line change that emits `.cm-wiki-link-broken` on cache miss.
 
@@ -263,7 +278,7 @@ Keep tight. The AC list is small; the test list matches.
 | Playwright | ` ``` ` (no language) → no badge | §6.4 AC3 |
 | Playwright | Indented code line → first non-whitespace char x > code-block-left-edge x | §6.5 AC1 |
 | Playwright | Long indented code line → wrapped continuation aligns under indent | §6.5 AC2 |
-| Playwright | Table line → same computed style as adjacent paragraph line | §6.6 AC1–AC2 |
+| Playwright | Table header + row + delimiter get structural classes; computed background = transparent, borders = 0, padding-inline-start > 0 | §6.6 AC1–AC6 |
 | Playwright | Addressability: Cmd+A → Cmd+C === source bytes on a doc containing all five construct types | §6.7 AC1 (cross-cutting invariant) |
 
 No screenshot-diff suite, no `§10.7b`-style capture — the scope is small enough that textual assertions on classes + computed styles suffice.
@@ -273,7 +288,7 @@ No screenshot-diff suite, no `§10.7b`-style capture — the scope is small enou
 - **D1 — LOCKED** — Addressability invariant (cursor-walkable, byte-identical copy, no atomic ranges, no block replacement).
 - **D2 — LOCKED** — Only the five features in §2. Anything else is out of scope.
 - **D3 — LOCKED** — No "engine," no registry, no Compartment, no auto-bail.
-- **D4 — LOCKED** — Tables receive no decoration. Plain paragraph text.
+- **D4 — AMENDED 2026-04-16** — Tables receive structure/layout decorations only (hanging indent + compactness via `.cm-table-row` / `.cm-table-header`). Explicitly NOT styled — no row tint, no accent bar, no cell bands, no `box-decoration-break`. The distinction: structure affects wrapping behavior and information density; styling adds visual decoration. Structure is valuable in source view; styling is noise. Original D4 LOCKED stance was "no decoration at all" — walked back after the "CM6-ELEMENTS reference + live-demo" exercise showed the structural pieces from the prior polish-engine were actually helpful.
 - **D5 — LOCKED** — Code blocks get NO background tint and NO border. Only syntax highlighting (which they have today via `codeLanguages`) and the language badge.
 - **D6 — LOCKED** — Source-indent preservation via `padding-inline-start` only; NEVER apply negative `text-indent`. The prior spec's formulation flattened first-line indent to column 0, which is the failure mode we're fixing.
 - **D7 — LOCKED** — For broken-link coloring, use a specific wavy-red `oklch(55% 0.15 25)`. Do NOT use `var(--color-accent)` for foregrounds anywhere — in shadcn's light theme it resolves to `oklch(0.97)` (near-white background token), making text invisible.

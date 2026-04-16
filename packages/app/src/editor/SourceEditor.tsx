@@ -33,7 +33,7 @@ import { markUserTyping } from './observers';
 import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
 import { createMdLinkSourceExtension } from './plugins/md-link-source';
 import { createWikiLinkSourceExtension } from './plugins/wiki-link-source';
-import { sourcePolishExtensions } from './source-polish';
+import { createSourcePolishExtension } from './source-polish';
 
 interface SourceEditorProps {
   ytext: Y.Text;
@@ -78,7 +78,7 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
         createAgentFlashSourceExtension(provider.document),
         createWikiLinkSourceExtension(),
         createMdLinkSourceExtension(),
-        ...sourcePolishExtensions(),
+        createSourcePolishExtension(),
         themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
         placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
         EditorView.lineWrapping,

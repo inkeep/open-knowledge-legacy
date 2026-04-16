@@ -21,13 +21,13 @@ interface InlineRef {
   label: string;
 }
 
-interface Range01 {
+interface PositionRange {
   from: number;
   to: number;
 }
 
 /** True iff `pos` lies strictly inside any code range. Uses binary search. */
-function inCodeRange(pos: number, codeRanges: Range01[]): boolean {
+function inCodeRange(pos: number, codeRanges: PositionRange[]): boolean {
   let lo = 0;
   let hi = codeRanges.length - 1;
   while (lo <= hi) {
@@ -41,8 +41,8 @@ function inCodeRange(pos: number, codeRanges: Range01[]): boolean {
 }
 
 /** Collect doc-wide code ranges from the Lezer tree. Sorted by `from`. */
-function collectCodeRanges(state: EditorState): Range01[] {
-  const ranges: Range01[] = [];
+function collectCodeRanges(state: EditorState): PositionRange[] {
+  const ranges: PositionRange[] = [];
   const tree = syntaxTree(state);
   tree.iterate({
     enter(node) {

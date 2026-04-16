@@ -322,7 +322,7 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 ### Key files
 
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
-- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next; wires `sourcePolishExtensions()` + `codeLanguages` allowlist + GFM
+- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next; wires `createSourcePolishExtension()` + `codeLanguages` allowlist + GFM
 - `src/editor/observers.ts` — Client-side observer baseline tracking (cross-CRDT write paths deleted; writes are server-authoritative per precedent #14)
 - `src/editor/source-polish/` — source-view decorations (ViewPlugin + StateField + unit tests)
 - `src/editor/markdown-code-languages.ts` — fenced-code syntax highlighting allowlist
@@ -610,6 +610,17 @@ No environment variables must be set by hand for any of these scenarios.
 - **WARN:** Server Observer A's `lastSyncedXmlMd` (in `server-observers.ts`) must be refreshed on ALL XmlFragment changes, not just user edits. A stale baseline produces incorrect diffs that destroy content.
 - **WARN:** Layer A tests use `transaction.local=true`. This does NOT exercise the same code path as production where WebSocket updates arrive with `transaction.local=false`.
 - **WARN:** `hocuspocus.configure({ extensions: [...] })` REPLACES the extensions array (object spread). Use `hocuspocus.configuration.extensions.push()` to add extensions without losing existing ones.
+
+### CM6 footgun: do NOT gate syntax-tree reads on `syntaxTreeAvailable()`
+
+`syntaxTreeAvailable(state, pos)` from `@codemirror/language` reflects the *deepest pending sublanguage*, not the outer markdown tree. When a fenced-code block declares a language (e.g. ` ```typescript `), CM6 lazy-loads `@codemirror/lang-javascript`; during that load, `syntaxTreeAvailable()` returns `false` — but the outer markdown tree (with `FencedCode`, `Blockquote`, `Table`, ListItem nodes) is already complete. Early-returning `Decoration.none` on that gate silently disables every decoration the moment any known-language code block enters the viewport, and the disable sticks for the doc's lifetime.
+
+Instead, use the appropriate rebuild strategy for your plugin type:
+
+- **ViewPlugin:** detect tree mutation via `syntaxTree(update.startState) !== syntaxTree(update.state)` in `update()`, so decorations reattach when a later parse advance lands. See `packages/app/src/editor/source-polish/view-plugin.ts`.
+- **StateField:** early-return on `!tr.docChanged` to avoid re-scanning on cursor moves, focus, and scroll; the outer markdown tree is always complete when a `docChanged` transaction arrives. See `packages/app/src/editor/source-polish/broken-ref-field.ts`.
+
+Both patterns skip `syntaxTreeAvailable()`. We hit this during the source-view polish implementation — the initial impl gated on it, observed the silent disable on any fenced code, and switched to the tree-mutation / docChanged guards above.
 
 ### Logging conventions
 
