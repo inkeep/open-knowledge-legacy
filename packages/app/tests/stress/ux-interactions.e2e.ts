@@ -184,7 +184,11 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
 test('sidebar folder row: clicking anywhere on the row toggles expand/collapse', async ({
   page,
 }) => {
-  const folderRow = page.getByRole('button', { name: 'sidebar-folder' });
+  // `{ exact: true }` disambiguates from the shadcn sidebar-menu-action button
+  // whose aria-label `Expand sidebar-folder` partially matches `sidebar-folder`
+  // under Playwright's default substring-match semantics. Without it the
+  // locator resolves to 2 buttons and strict-mode fails.
+  const folderRow = page.getByRole('button', { name: 'sidebar-folder', exact: true });
   // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
   // EditorHeader's `${activeDocName}.md` label after navigating into the file,
   // causing toHaveCount(0) to fail on collapse even though the sidebar entry is
