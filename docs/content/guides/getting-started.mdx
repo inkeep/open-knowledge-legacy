@@ -30,7 +30,7 @@ When run interactively, `init` prompts you to select which editors you use. Base
 
 1. Scaffolds `.open-knowledge/` with `AGENTS.md`, `config.yml`, and `.gitignore` (no content subdirectories — content lives wherever `config.yml` points, defaulting to the repo root).
 2. Registers the MCP server in each editor's config file (e.g. `.mcp.json` for Claude Code, `.cursor/mcp.json` for Cursor).
-3. Injects the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]]. This is what teaches the agent to use `exec`, `write_document`, and the other tools correctly.
+3. Injects the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]] (VS Code has no standard agent rules file). This is what teaches the agent to use `exec`, `write_document`, and the other tools correctly.
 4. Scaffolds `.claude/launch.json` (Claude Code only) so `preview_start("open-knowledge")` knows how to start the editor.
 5. Prints a content preview showing which files the watcher will track.
 
