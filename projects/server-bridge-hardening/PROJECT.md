@@ -244,5 +244,3 @@ _Populated as investigation surfaces findings. None yet — Phase 1 relied on th
 - `packages/app/src/editor/observers.test.ts:1261` — divergence describe block needing sharpening — anchor for S7
 - `CLAUDE.md` — target for S7 codification paragraphs
 
-
-

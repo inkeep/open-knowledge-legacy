@@ -14,7 +14,6 @@ topics:
   - browser automation comparison
   - ProseMirror testing
 ---
-
 # agent-browser vs Playwright for CRDT Integration Testing
 
 **Purpose:** Determine which browser automation tool is best suited for Tier 2 (browser-based) CRDT integration tests in a dual-representation editor, and whether agent-browser or Peekaboo could complement Playwright for debugging and diagnosis.
@@ -32,6 +31,7 @@ Peekaboo MCP is disqualified for this use case. It is macOS-only, requires Scree
 The division of labor is narrow: Playwright handles everything in the automated test suite (both Tier 1 programmatic tests and Tier 2 browser E2E tests). agent-browser can optionally be used during interactive AI development sessions for quick visual verification, but should not be part of the committed test infrastructure.
 
 **Key Findings:**
+
 - **Playwright is the only tool that can capture console logs and WebSocket frames** during CRDT sync -- essential for diagnosing the Layer C undo timeout
 - **Deterministic execution requires scripted assertions, not AI interpretation** -- Playwright's `page.evaluate()` + `expect()` pattern checks Y.Doc state directly, while agent-browser and Peekaboo rely on visual/accessibility-tree interpretation
 - **CI compatibility is decisive** -- Playwright runs on standard `ubuntu-latest` GitHub Actions runners with zero friction; Peekaboo cannot run in CI at all; agent-browser works but needs additional setup
@@ -42,16 +42,16 @@ The division of labor is narrow: Playwright handles everything in the automated 
 
 ## Research Rubric
 
-| # | Dimension | Depth | Priority |
-|---|-----------|-------|----------|
-| 1 | Console/network capture during reproduction | Deep | P0 |
-| 2 | Deterministic test execution (10/10 reliability) | Deep | P0 |
-| 3 | CI compatibility (GitHub Actions, Linux, headless) | Deep | P0 |
-| 4 | WebSocket inspection (Hocuspocus CRDT sync) | Deep | P0 |
-| 5 | Port isolation and dynamic allocation | Moderate | P0 |
-| 6 | Speed (< 2 min for Tier 2 tests) | Moderate | P1 |
-| 7 | ProseMirror interaction (contenteditable) | Deep | P0 |
-| 8 | Concurrent execution (multiple worktrees) | Moderate | P1 |
+| # | Dimension                                          | Depth    | Priority |
+| - | -------------------------------------------------- | -------- | -------- |
+| 1 | Console/network capture during reproduction        | Deep     | P0       |
+| 2 | Deterministic test execution (10/10 reliability)   | Deep     | P0       |
+| 3 | CI compatibility (GitHub Actions, Linux, headless) | Deep     | P0       |
+| 4 | WebSocket inspection (Hocuspocus CRDT sync)        | Deep     | P0       |
+| 5 | Port isolation and dynamic allocation              | Moderate | P0       |
+| 6 | Speed (< 2 min for Tier 2 tests)                   | Moderate | P1       |
+| 7 | ProseMirror interaction (contenteditable)          | Deep     | P0       |
+| 8 | Concurrent execution (multiple worktrees)          | Moderate | P1       |
 
 **Stance:** Comparative Analysis -- "Which tool should we use for Tier 2 CRDT integration tests?"
 
@@ -78,6 +78,7 @@ agent-browser provides accessibility tree snapshots and annotated screenshots bu
 **Implications:** The Layer C undo timeout (OQ1 in the spec) requires tracing which Y.js sync messages arrive at the browser after `POST /api/agent-undo`, which observer callbacks fire, and whether the ProseMirror transaction re-inserts undone content. Only Playwright can capture this data.
 
 **Decision triggers:**
+
 - If Layer C diagnosis reveals the issue is in ProseMirror rendering (not CRDT sync), Playwright's Trace Viewer becomes essential for inspecting the DOM mutation sequence
 - If the issue is in the WebSocket sync protocol, `page.on('websocket')` frame logging isolates it
 
@@ -90,6 +91,7 @@ agent-browser provides accessibility tree snapshots and annotated screenshots bu
 **Evidence:** [evidence/deterministic-execution.md](evidence/deterministic-execution.md)
 
 CRDT integration tests assert exact document state:
+
 ```typescript
 // This is deterministic -- same input always produces same output
 expect(finalState.ytext).toContain(marker);
@@ -112,15 +114,16 @@ Peekaboo's `analyze` tool sends screenshots to an AI model for question-answerin
 
 **Evidence:** [evidence/ci-compatibility.md](evidence/ci-compatibility.md)
 
-| Tool | GitHub Actions (Linux) | Setup complexity | Headless support |
-|------|----------------------|------------------|------------------|
-| [Playwright](https://playwright.dev/docs/ci) | Official Docker image, `npx playwright install --with-deps` | Minimal | Default mode |
-| [agent-browser](https://github.com/vercel-labs/agent-browser) | Works with headless Chrome, needs explicit config | Moderate | Default mode, [known issues on Linux](https://github.com/vercel-labs/agent-browser/issues/743) |
-| [Peekaboo](https://github.com/steipete/Peekaboo) | Cannot run -- macOS 15+ only, requires display server + permissions | N/A | Not supported |
+| Tool                                                          | GitHub Actions (Linux)                                              | Setup complexity | Headless support                                                                               |
+| ------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------- | ---------------------------------------------------------------------------------------------- |
+| [Playwright](https://playwright.dev/docs/ci)                  | Official Docker image, `npx playwright install --with-deps`         | Minimal          | Default mode                                                                                   |
+| [agent-browser](https://github.com/vercel-labs/agent-browser) | Works with headless Chrome, needs explicit config                   | Moderate         | Default mode, [known issues on Linux](https://github.com/vercel-labs/agent-browser/issues/743) |
+| [Peekaboo](https://github.com/steipete/Peekaboo)              | Cannot run -- macOS 15+ only, requires display server + permissions | N/A              | Not supported                                                                                  |
 
 The project already uses `@playwright/test: ^1.59.1`. The same test files and configuration run identically on `ubuntu-latest` GitHub Actions runners and local macOS development machines.
 
 **Decision triggers:**
+
 - If CI ever moves to macOS self-hosted runners, Peekaboo becomes technically feasible (but still inferior to Playwright for testing)
 - agent-browser's CI story may improve as the tool matures
 
@@ -165,10 +168,10 @@ Neither agent-browser nor Peekaboo provide any WebSocket visibility.
 
 The spec defines two port isolation strategies:
 
-| Tier | Strategy | Mechanism |
-|------|----------|-----------|
-| Tier 1 (programmatic) | `hocuspocus.listen(0)` | OS kernel assigns random port -- guaranteed isolation |
-| Tier 2 (Playwright) | `VITE_PORT` env var + `strictPort: true` + `reuseExistingServer: false` | Explicit port, fail-fast on collision |
+| Tier                  | Strategy                                                                | Mechanism                                             |
+| --------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------- |
+| Tier 1 (programmatic) | `hocuspocus.listen(0)`                                                  | OS kernel assigns random port -- guaranteed isolation |
+| Tier 2 (Playwright)   | `VITE_PORT` env var + `strictPort: true` + `reuseExistingServer: false` | Explicit port, fail-fast on collision                 |
 
 [Playwright 1.57](https://playwright.dev/docs/api/class-testconfig) added `webServer.wait` with named capture groups for dynamic port detection from stdout. However, the spec's approach of pre-allocating a port via env var is simpler and more explicit -- both work.
 
@@ -185,12 +188,14 @@ agent-browser's daemon architecture binds to a configurable port, but has no equ
 **Evidence:** [evidence/websocket-port-speed.md](evidence/websocket-port-speed.md)
 
 Playwright overhead per test:
-- Browser launch (cached, headless): ~1-3s
-- Navigation + initial load: ~1-2s
+
+- Browser launch (cached, headless): \~1-3s
+- Navigation + initial load: \~1-2s
 - Per-assertion: < 100ms (in-process evaluate())
 - With 3-5 Tier 2 tests: < 30s total
 
 agent-browser adds:
+
 - Daemon startup (if not already running): several seconds
 - Accessibility tree snapshot per interaction: variable
 - If AI agent is reasoning: seconds per step (LLM latency)
@@ -233,12 +238,14 @@ The critical distinction for CRDT testing: agent-browser and Peekaboo can type t
 **Evidence:** [evidence/websocket-port-speed.md](evidence/websocket-port-speed.md)
 
 Playwright parallelism:
+
 - `workers: N` in config for test-level parallelism
 - Each worker gets its own browser context and webServer instance
 - Sharding for CI-level parallelism (`--shard=1/3`)
 - The spec's `VITE_PORT` env var approach ensures each worktree's Playwright run uses a different port
 
 agent-browser parallelism:
+
 - Single daemon per port (configurable)
 - Can run multiple browser sessions
 - Less mature model for test isolation
@@ -265,16 +272,16 @@ Peekaboo does not add value for this use case. Everything it does (screenshots, 
 
 ### Summary matrix
 
-| Concern | Playwright | agent-browser | Peekaboo |
-|---------|-----------|---------------|----------|
-| Automated test suite | **Primary tool** | Not suitable | Not suitable |
-| CI execution | First-class | Possible, rougher | Impossible |
-| CRDT state verification | Direct Y.Doc access | No access | No access |
-| Console/WS capture | Full APIs | None | None |
-| ProseMirror typing | Proven patterns | Would work | Would work |
-| Visual debugging (dev) | Trace Viewer, headed mode | Token-efficient snapshots | macOS screenshots |
-| Determinism | 10/10 deterministic | AI non-determinism | AI non-determinism |
-| Maintenance overhead | Already integrated | New dependency | New dependency |
+| Concern                 | Playwright                | agent-browser             | Peekaboo           |
+| ----------------------- | ------------------------- | ------------------------- | ------------------ |
+| Automated test suite    | **Primary tool**          | Not suitable              | Not suitable       |
+| CI execution            | First-class               | Possible, rougher         | Impossible         |
+| CRDT state verification | Direct Y.Doc access       | No access                 | No access          |
+| Console/WS capture      | Full APIs                 | None                      | None               |
+| ProseMirror typing      | Proven patterns           | Would work                | Would work         |
+| Visual debugging (dev)  | Trace Viewer, headed mode | Token-efficient snapshots | macOS screenshots  |
+| Determinism             | 10/10 deterministic       | AI non-determinism        | AI non-determinism |
+| Maintenance overhead    | Already integrated        | New dependency            | New dependency     |
 
 ---
 
@@ -282,7 +289,7 @@ Peekaboo does not add value for this use case. Everything it does (screenshots, 
 
 ### Dimensions Not Fully Covered
 
-- **agent-browser's `snapshot` command for deterministic DOM inspection:** agent-browser provides accessibility tree snapshots that are deterministic (not AI-dependent). In theory, these could be parsed for text content assertions. But this would require building a custom assertion framework on top of agent-browser's output -- far more work than Playwright's built-in `expect()` + `evaluate()`. Not worth investigating further given the clear Playwright advantage.
+- **agent-browser's **`snapshot`** command for deterministic DOM inspection:** agent-browser provides accessibility tree snapshots that are deterministic (not AI-dependent). In theory, these could be parsed for text content assertions. But this would require building a custom assertion framework on top of agent-browser's output -- far more work than Playwright's built-in `expect()` + `evaluate()`. Not worth investigating further given the clear Playwright advantage.
 
 ### Out of Scope (per Rubric)
 
@@ -295,6 +302,7 @@ Peekaboo does not add value for this use case. Everything it does (screenshots, 
 ## References
 
 ### Evidence Files
+
 - [evidence/console-network-capture.md](evidence/console-network-capture.md) - Console log capture, WebSocket interception, trace recording capabilities
 - [evidence/deterministic-execution.md](evidence/deterministic-execution.md) - Determinism analysis: scripted assertions vs AI interpretation
 - [evidence/ci-compatibility.md](evidence/ci-compatibility.md) - GitHub Actions support, Linux headless, system requirements
@@ -303,6 +311,7 @@ Peekaboo does not add value for this use case. Everything it does (screenshots, 
 - [evidence/division-of-labor.md](evidence/division-of-labor.md) - Tool role separation analysis
 
 ### External Sources
+
 - [Playwright Documentation](https://playwright.dev/) - Official docs for test configuration, WebSocket APIs, CI setup
 - [Playwright WebSocketRoute API](https://playwright.dev/docs/api/class-websocketroute) - WebSocket interception and mocking
 - [Playwright v1.57 Release Notes](https://playwright.dev/docs/release-notes) - webServer.wait dynamic port capture feature
@@ -311,6 +320,8 @@ Peekaboo does not add value for this use case. Everything it does (screenshots, 
 - [ProseMirror + Playwright: Why fill() Fails](https://dev.to/builtbyzac/why-playwright-fill-silently-fails-on-prosemirror-editors-and-how-to-fix-it-46bi) - Community guidance on contenteditable testing
 
 ### Related Research
+
 - [reports/ai-browser-testing-tools/](../ai-browser-testing-tools/) - Broader AI browser testing landscape (millionco/expect, Playwright Test Agents, Stagehand, ZeroStep, Meticulous)
 - [reports/browser-mcps-devtools-visual-tooling/](../browser-mcps-devtools-visual-tooling/) - Survey of browser MCP tools including Vercel agent-browser and Playwright MCP
 - [reports/playwright-cli-assessment/](../playwright-cli-assessment/) - Playwright CLI token efficiency analysis
+
