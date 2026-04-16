@@ -1,7 +1,7 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createContext, type ReactNode, use, useEffect, useState, useTransition } from 'react';
 import { createOpenDocumentTransition } from './document-transition';
-import { ProviderPool, type SyncState } from './provider-pool';
+import { MAX_POOL, ProviderPool, type SyncState } from './provider-pool';
 import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
 
 /**
@@ -66,11 +66,30 @@ export interface DocumentContextValue {
 
 const PIN_STORAGE_KEY = 'ok-pin-v1';
 
+/**
+ * Emit a one-time console.warn when localStorage access fails (private mode,
+ * quota exceeded, disabled storage). The silent-swallow itself is correct —
+ * the pin stays in-memory and UX is unaffected within the current tab —
+ * but a single log per session helps diagnose "my pin keeps disappearing
+ * across reloads" reports. Module-scope flag so noise is bounded even when
+ * many writes fail in sequence.
+ */
+let pinPersistWarned = false;
+function warnPinPersistFailureOnce(err: unknown): void {
+  if (pinPersistWarned) return;
+  pinPersistWarned = true;
+  console.warn(
+    '[DocumentContext] localStorage unavailable — pinned doc will not persist across tabs/reloads.',
+    err,
+  );
+}
+
 function loadPinFromStorage(): string | null {
   if (typeof window === 'undefined') return null;
   try {
     return window.localStorage.getItem(PIN_STORAGE_KEY);
-  } catch {
+  } catch (err) {
+    warnPinPersistFailureOnce(err);
     return null;
   }
 }
@@ -80,20 +99,24 @@ function persistPinToStorage(value: string | null): void {
   try {
     if (value === null) window.localStorage.removeItem(PIN_STORAGE_KEY);
     else window.localStorage.setItem(PIN_STORAGE_KEY, value);
-  } catch {
-    // quota exceeded / private mode — ignore silently, pin stays in-memory
+  } catch (err) {
+    // quota exceeded / private mode — pin stays in-memory; warn once for observability
+    warnPinPersistFailureOnce(err);
   }
 }
 
 const DocumentContext = createContext<DocumentContextValue | null>(null);
 
 // Module-level singleton — survives React re-renders and StrictMode double-mount.
-// Same pattern the old singleton HocuspocusProvider used.
+// Same pattern the old singleton HocuspocusProvider used. Under Vite HMR the
+// binding resets on module reload; the `import.meta.hot.dispose` handler at
+// the bottom of this file disposes the previous pool before the new module
+// instance takes over so WebSocket / observer / timer state doesn't leak.
 let pool: ProviderPool | null = null;
 
 function getPool(): ProviderPool {
   if (!pool) {
-    pool = new ProviderPool(10);
+    pool = new ProviderPool(MAX_POOL);
   }
   return pool;
 }
@@ -258,4 +281,33 @@ export function useDocumentTransition(): {
 } {
   const { openDocumentTransition, isPending } = useDocumentContext();
   return { openDocumentTransition, isPending };
+}
+
+// Vite HMR dispose — when this module is hot-replaced in dev, tear down the
+// previous pool + the dev-only `window.__*` hooks so the replacement module
+// instance doesn't see stale providers, WebSockets, observers, timers, or
+// dangling getters bound to the old module's `pool` closure. Without this,
+// editing this file in dev leaks every provider + observer ever created,
+// and Playwright tests reaching for `window.__test_*` after an HMR reload
+// would race the old module's references. Production builds strip this
+// branch entirely (Vite replaces `import.meta.hot` with `undefined` at
+// build time).
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    pool?.dispose();
+    pool = null;
+    pinPersistWarned = false;
+    if (typeof window !== 'undefined') {
+      try {
+        delete (window as { __providerPool?: unknown }).__providerPool;
+        delete (window as { __activeProvider?: unknown }).__activeProvider;
+        delete (window as { __test_rejectSyncPromise?: unknown }).__test_rejectSyncPromise;
+        delete (window as { __test_armPendingRejection?: unknown }).__test_armPendingRejection;
+        delete (window as { __test_closeActiveWebSocket?: unknown }).__test_closeActiveWebSocket;
+      } catch {
+        // `delete` can fail on non-configurable properties in older engines;
+        // acceptable fall-through in a dev-only cleanup path.
+      }
+    }
+  });
 }

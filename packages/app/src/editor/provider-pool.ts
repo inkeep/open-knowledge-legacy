@@ -67,6 +67,24 @@ const RECYCLE_DEBOUNCE_MS = 4_000;
 const FORCE_SYNC_INTERVAL_MS = 5_000;
 
 /**
+ * Default pool capacity. Exported so the single point of truth lives in this
+ * module (the pool that owns the constraint), and so callers that construct
+ * a `ProviderPool` can reference the same name rather than a magic literal.
+ *
+ * Coupled to `ACTIVITY_MOUNT_LIMIT = 3` (exported from `EditorActivityPool.tsx`)
+ * per SPEC.md §10 DX9 / precedent #15(c): `MAX_POOL` bounds how many warm
+ * providers we keep; `ACTIVITY_MOUNT_LIMIT` bounds how many editor subtrees
+ * are Activity-mounted inside those providers. The two constraints are
+ * intentionally independent — pool-resident-but-not-Activity-mounted docs
+ * keep their warm provider (≈5–10 MB) for fast Suspense-gated remount
+ * without paying per-editor memory or observer-CPU cost.
+ *
+ * Changing either constant is an ASK_FIRST boundary (spec §16 / CLAUDE.md
+ * scope). If one moves, audit the other for sympathetic impact.
+ */
+export const MAX_POOL = 10;
+
+/**
  * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.
  * Owns WebSocket connections, survives React re-renders.
  */
@@ -79,7 +97,7 @@ export class ProviderPool {
   private readonly recycleDebounceMs: number;
   private onChange: PoolChangeCallback | null = null;
 
-  constructor(maxSize = 10, wsUrl?: string, recycleDebounceMs?: number) {
+  constructor(maxSize: number = MAX_POOL, wsUrl?: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
     // Match page scheme: ws:// from http dev, wss:// from https (tunnels, reverse proxies).
     this.wsUrl = wsUrl ?? defaultCollabWsUrl();

@@ -28,13 +28,17 @@ import { usePageList } from './PageListContext';
 
 /**
  * Maximum number of editors mounted concurrently inside `<Activity>` boundaries.
- * Decoupled from `ProviderPool.MAX_POOL = 10` per SPEC.md §10 DX9 — pool-resident-
- * but-not-Activity-mounted docs keep their warm provider but skip the per-editor
- * memory + observer-CPU cost. Revisiting one of them performs a Suspense-gated
- * remount with `syncPromise` resolving immediately from `hasSynced=true` (cold
- * mount, warm content).
+ * Decoupled from `MAX_POOL` (exported from `provider-pool.ts`, default 10) per
+ * SPEC.md §10 DX9 / CLAUDE.md precedent #15(c) — pool-resident-but-not-
+ * Activity-mounted docs keep their warm provider (so revisiting is fast via
+ * Suspense-gated remount with `syncPromise` resolving immediately from
+ * `hasSynced=true`) but skip the per-editor memory + observer-CPU cost of
+ * keeping the TipTap + CodeMirror instances alive.
  *
  * 3 covers the "alt-tab between recent docs" pattern dominant for P1/P2 personas.
+ *
+ * Changing either this value or `MAX_POOL` is an ASK_FIRST boundary — they're
+ * coupled by design. If one moves, audit the other for sympathetic impact.
  */
 export const ACTIVITY_MOUNT_LIMIT = 3;
 

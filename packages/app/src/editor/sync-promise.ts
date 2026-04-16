@@ -96,6 +96,79 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 
 /**
+ * Visibility-change handler installed lazily on first pending entry. Browsers
+ * aggressively throttle (and sometimes pause outright) `setTimeout` in
+ * backgrounded tabs — a 30s timer armed before a tab-sleep won't fire at 30s
+ * of wall-clock time, leaving `NavigationPendingBar` stuck at tier 3 with no
+ * rejection arriving to trigger the error boundary. On every flip to
+ * `document.visibilityState === 'visible'`, re-check elapsed time against
+ * every pending entry and reject any that have exceeded the timeout — the
+ * `setTimeout` stays as best-effort scheduler but the visibility handler
+ * makes the timeout deterministic.
+ *
+ * Installed once the first pending entry exists and torn down when the cache
+ * has no pending entries, so the listener never runs when there's nothing to
+ * check. Uses `Date.now()` because it measures real wall-clock time even when
+ * the tab was backgrounded (unlike `performance.now()`, which may freeze in
+ * some engines under background tab throttling).
+ */
+let visibilityHandlerInstalled = false;
+
+function hasPendingEntries(): boolean {
+  for (const entry of cache.values()) {
+    if (!entry.settled) return true;
+  }
+  return false;
+}
+
+function checkTimeoutsOnVisible(): void {
+  if (typeof document === 'undefined') return;
+  if (document.visibilityState !== 'visible') return;
+  __reapTimedOutEntries(Date.now());
+}
+
+/**
+ * Test-only: pure timeout-reaping for a given wall-clock `now`. Visible to
+ * unit tests so the visibility-restore path can be verified without a DOM
+ * (Bun's test env does not expose `document`). Production call path is
+ * `checkTimeoutsOnVisible` which wraps this with the DOM-gate.
+ *
+ * Returns the number of entries rejected — tests assert on the count.
+ */
+export function __reapTimedOutEntries(now: number): number {
+  let rejected = 0;
+  for (const [docName, entry] of cache) {
+    if (entry.settled) continue;
+    const elapsed = now - entry.createdAt;
+    if (elapsed < SYNC_TIMEOUT_MS) continue;
+    entry.settled = true;
+    const error = new SyncTimeoutError(docName, elapsed);
+    console.warn(
+      `[syncPromise] ${docName} rejected on visibility restore (${elapsed}ms elapsed, tab-sleep recovered): ${error.message}`,
+    );
+    detach(entry);
+    entry.reject(error);
+    rejected += 1;
+  }
+  if (!hasPendingEntries()) uninstallVisibilityHandler();
+  return rejected;
+}
+
+function installVisibilityHandler(): void {
+  if (visibilityHandlerInstalled) return;
+  if (typeof document === 'undefined') return;
+  document.addEventListener('visibilitychange', checkTimeoutsOnVisible);
+  visibilityHandlerInstalled = true;
+}
+
+function uninstallVisibilityHandler(): void {
+  if (!visibilityHandlerInstalled) return;
+  if (typeof document === 'undefined') return;
+  document.removeEventListener('visibilitychange', checkTimeoutsOnVisible);
+  visibilityHandlerInstalled = false;
+}
+
+/**
  * Test-only armed-rejection map. When `__test_armPendingRejection(docName, kind)`
  * is called, the next `syncPromise(docName, provider)` creation path checks
  * this map and rejects the freshly-created promise immediately with the armed
@@ -219,6 +292,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     const elapsed = Date.now() - entry.createdAt;
     console.log(`[syncPromise] ${docName} resolved in ${elapsed}ms`);
     detach(entry);
+    if (!hasPendingEntries()) uninstallVisibilityHandler();
     // Keep entry in cache — see lifecycle docstring above.
     entry.resolve();
   };
@@ -230,6 +304,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     const error = new PreSyncDisconnectError(docName);
     console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
     detach(entry);
+    if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.reject(error);
   };
 
@@ -241,6 +316,7 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     const error = new SyncTimeoutError(docName, elapsed);
     console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
     detach(entry);
+    if (!hasPendingEntries()) uninstallVisibilityHandler();
     entry.reject(error);
   }, SYNC_TIMEOUT_MS);
 
@@ -265,6 +341,10 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
   cache.set(docName, entry);
   provider.on('synced', onSynced);
   provider.on('close', onClose);
+
+  // Arm visibility-change watchdog so a tab-sleep that throttles setTimeout
+  // doesn't leave this entry stuck as a non-terminating pending promise.
+  installVisibilityHandler();
 
   return promise;
 }
@@ -361,6 +441,7 @@ export function invalidateSyncPromise(docName: string): void {
   entry.settled = true;
   detach(entry);
   cache.delete(docName);
+  if (!hasPendingEntries()) uninstallVisibilityHandler();
 }
 
 /**
@@ -381,6 +462,7 @@ export function rejectSyncPromise(docName: string, error: Error): boolean {
   entry.settled = true;
   console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
   detach(entry);
+  if (!hasPendingEntries()) uninstallVisibilityHandler();
   entry.reject(error);
   return true;
 }
@@ -397,6 +479,7 @@ export function __resetSyncPromiseCache(): void {
   }
   cache.clear();
   armedRejections.clear();
+  uninstallVisibilityHandler();
 }
 
 /**
@@ -452,6 +535,7 @@ export function __rejectSyncPromise(
       : new PreSyncDisconnectError(docName);
   console.warn(`[syncPromise] ${docName} force-rejected (test hook): ${error.message}`);
   detach(entry);
+  if (!hasPendingEntries()) uninstallVisibilityHandler();
   // Entry stays in cache (post-settle sentinel) — see syncPromise lifecycle docstring.
   entry.reject(error);
   return true;

@@ -20,6 +20,7 @@
  * (node_modules/react-error-boundary/dist/react-error-boundary.cjs).
  */
 
+import { useEffect, useRef } from 'react';
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
 import { Button } from '@/components/ui/button';
 import {
@@ -63,18 +64,25 @@ function errorDocName(error: unknown): string | null {
  * Map a thrown value to user-facing copy. Pure — unit-testable without a
  * DOM. Kept separate from the React surface so the taxonomy can evolve
  * without touching rendering code.
+ *
+ * Copy discipline: the user-facing vocabulary is "load"/"loading", not
+ * "sync"/"syncing". "Sync" is internal jargon (Y.js/Hocuspocus); the product
+ * is a document editor where the user mental model is always "opening a
+ * document." NavigationPendingBar uses the same vocabulary ("Loading…" /
+ * "Still loading…") so the progression from pending-bar to error-boundary
+ * stays in one voice.
  */
 export function errorCopy(error: unknown): ErrorCopy {
   if (error instanceof SyncTimeoutError) {
     return {
-      title: 'Sync timed out',
-      summary: `Could not sync "${error.docName}" within the timeout. Check your connection and try again.`,
+      title: "Couldn't load document",
+      summary: `"${error.docName}" took too long to load. Check your connection and try again.`,
     };
   }
   if (error instanceof PreSyncDisconnectError) {
     return {
       title: 'Connection dropped',
-      summary: `Lost connection before "${error.docName}" finished syncing.`,
+      summary: `Lost connection while loading "${error.docName}".`,
     };
   }
   if (error instanceof DocumentNotFoundError) {
@@ -112,6 +120,16 @@ function DocumentErrorFallback({
 }: DocumentErrorFallbackProps) {
   const { title, summary } = errorCopy(error);
   const canGoBack = !!previousDocName && !!onNavigateBack;
+  const retryRef = useRef<HTMLButtonElement>(null);
+
+  // Move focus to the primary "Try again" action when the fallback mounts so
+  // keyboard and screen-reader users land on the recovery affordance without
+  // tabbing through the page. WCAG 2.4.3 focus-order guidance for full-surface
+  // error states. Paired with role="alert" so AT announces the error context
+  // before the focus lands on the button.
+  useEffect(() => {
+    retryRef.current?.focus();
+  }, []);
 
   return (
     <div
@@ -126,7 +144,7 @@ function DocumentErrorFallback({
       </h2>
       <p className="max-w-md text-sm text-muted-foreground">{summary}</p>
       <div className="mt-2 flex gap-2">
-        <Button variant="default" onClick={resetErrorBoundary}>
+        <Button ref={retryRef} variant="default" onClick={resetErrorBoundary}>
           Try again
         </Button>
         {canGoBack ? (
@@ -170,13 +188,17 @@ export interface DocumentErrorBoundaryProps {
   onNavigateBack?: (previousDocName: string) => void;
   /**
    * Called on imperative "Try again" — destroy + recreate the pool entry so
-   * the next sync attempt runs against a fresh provider. Without this, a
-   * `BridgeSetupError`-failed entry would remain in the pool and the retry
-   * would resolve immediately via the warm-path (the broken provider has
-   * `synced=true` from the original sync) without re-running `setupObservers`,
-   * leaving the user with a non-functional editor and no further error UI.
+   * the next sync attempt runs against a fresh provider. REQUIRED (not
+   * optional) because a `BridgeSetupError`-failed entry would otherwise
+   * remain in the pool and the retry would resolve immediately via the
+   * warm-path (the broken provider has `synced=true` from the original sync)
+   * without re-running `setupObservers`, leaving the user with a
+   * non-functional editor and no further error UI. Per CLAUDE.md precedent
+   * #7 ("remove broken capabilities rather than shipping them"), the
+   * known-broken fallback path (invalidate-only) is removed entirely — every
+   * caller must wire recycle or the retry button is not functional.
    */
-  onRecycle?: (docName: string) => void;
+  onRecycle: (docName: string) => void;
   children: React.ReactNode;
 }
 
@@ -187,21 +209,23 @@ export function DocumentErrorBoundary({
   onRecycle,
   children,
 }: DocumentErrorBoundaryProps) {
-  // Bind the contextual props into a FallbackComponent for react-error-boundary.
-  // Defined inline so `activeDocName` / `previousDocName` / `onNavigateBack`
-  // are current on every render — React Compiler handles stability.
-  const FallbackComponent = (props: FallbackProps) => (
-    <DocumentErrorFallback
-      {...props}
-      activeDocName={activeDocName}
-      previousDocName={previousDocName}
-      onNavigateBack={onNavigateBack}
-    />
-  );
-
+  // Use `fallbackRender` (not `FallbackComponent`) so inline closures capturing
+  // `activeDocName` / `previousDocName` / `onNavigateBack` don't create a new
+  // component type on every render. react-error-boundary calls `fallbackRender`
+  // as a function and renders the result directly (no createElement), so there
+  // is no component-identity-churn remount of the fallback subtree. See
+  // node_modules/react-error-boundary/dist/react-error-boundary.cjs:render
+  // (FallbackComponent takes the createElement branch; fallbackRender does not).
   return (
     <ErrorBoundary
-      FallbackComponent={FallbackComponent}
+      fallbackRender={(props) => (
+        <DocumentErrorFallback
+          {...props}
+          activeDocName={activeDocName}
+          previousDocName={previousDocName}
+          onNavigateBack={onNavigateBack}
+        />
+      )}
       resetKeys={[activeDocName]}
       // Fires before the boundary clears state, so the next render re-enters
       // Suspense against a fresh syncPromise.
@@ -222,15 +246,9 @@ export function DocumentErrorBoundary({
           // destroyEntry, and recreates the entry with a fresh provider),
           // so that when the boundary re-renders, `EditorArea` sees the new
           // provider and `DocumentBoundary` calls syncPromise(docName,
-          // freshProvider) → fresh sync attempt. Without recycle, a
-          // BridgeSetupError'd entry would resolve immediately via the
-          // warm-path (broken provider has synced=true) without re-running
-          // setupObservers.
-          if (onRecycle) {
-            onRecycle(activeDocName);
-          } else {
-            invalidateSyncPromise(activeDocName);
-          }
+          // freshProvider) → fresh sync attempt. `onRecycle` is required
+          // (not optional) so this branch is always live — see prop doc.
+          onRecycle(activeDocName);
           console.warn(`[DocumentErrorBoundary] retry recycled ${activeDocName}`);
         } else {
           // resetKeys change (navigated away). The broken doc's entry stays

@@ -38,7 +38,7 @@ export function EditorPane() {
   const { activeDocName, recycleDocument } = useDocumentContext();
   const { openDocumentTransition, isPending } = useDocumentTransition();
 
-  // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again?"
+  // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again"
   // button (spec §D7). Reads `activeDocName` via a thunk at call time so the
   // handler always targets the currently-displayed doc, not a stale capture.
   // `recycleDocument` is the one-shot reset — destroys the broken provider

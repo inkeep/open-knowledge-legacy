@@ -1,6 +1,6 @@
 /**
  * Pure wrapper: composes the retry contract consumed by `NavigationPendingBar`
- * tier 3 "Try again?" (spec §D7) and invoked from the nav-render layer (US-009).
+ * tier 3 "Try again" (spec §D7) and invoked from the nav-render layer (US-009).
  *
  * The retry recycles the pool entry (which destroys + recreates the provider
  * and clears the cached syncPromise via `destroyEntry`'s `invalidateSyncPromise`

@@ -310,10 +310,13 @@ test.describe('docs-open — hybrid navigation UX', () => {
     });
     await openFromSidebar(page, 'doc-b.md');
 
-    // ErrorBoundary fallback should render with role=alert + 'Sync timed out' copy.
+    // ErrorBoundary fallback should render with role=alert + user-facing
+    // "Couldn't load document" copy (precedent #15 error vocabulary; no
+    // internal "sync" jargon — see errorCopy discipline in
+    // DocumentErrorBoundary.tsx).
     const errorAlert = page.locator('[data-slot="document-error-boundary"]');
     await errorAlert.waitFor({ state: 'visible', timeout: 10_000 });
-    await expect(errorAlert).toContainText('Sync timed out');
+    await expect(errorAlert).toContainText("Couldn't load document");
     await expect(errorAlert).toContainText('doc-b');
 
     // Click "Try again" → onReset fires → invalidateSyncPromise → re-enter

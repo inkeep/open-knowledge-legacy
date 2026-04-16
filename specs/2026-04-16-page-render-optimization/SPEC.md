@@ -150,7 +150,7 @@ Net experience: click → old content stays on screen → new content appears in
 | F11 | Must | Rapid sequential navigation is correct | Playwright: click 5 files rapidly; assert final state matches last-clicked doc; no content corruption or lingering pending state. | G1, G2 |
 | F12 | Must | `forceSyncInterval: 200` on client providers | Unit test on `provider-pool.ts`: new provider receives `forceSyncInterval: 200` option. | (D8) |
 | F13 | Must | Accessibility — screen-reader announcement of loading state | Unit test + axe-core: editor container has `aria-busy` attribute flipping correctly; `NavigationPendingBar` has `role="status"` `aria-live="polite"`; error state has `role="alert"`. | G3, G4 |
-| F14 | Should | Architectural pattern is documented as a CLAUDE.md precedent (narrow scope) | CLAUDE.md contains a new Architectural precedent #14 specifically describing **the hybrid Activity+Suspense+use(promise) pattern for subscription-source async primitives (single-event resolution, lifecycle-tied invalidation)** — NOT a generalization to "all async loading." The precedent explicitly calls out the semantic boundary: TanStack Query remains the correct tool for HTTP fetch/refetch; use(promise) is for subscribe-once. This prevents future contributors from misreading the precedent as a mandate to rewrite existing TanStack Query panels. | G6 |
+| F14 | Should | Architectural pattern is documented as a CLAUDE.md precedent (narrow scope) | CLAUDE.md contains a new Architectural precedent #15 (landed as #15 because precedent #14 — server-authoritative cross-CRDT sync — shipped ahead of this work) specifically describing **the hybrid Activity+Suspense+use(promise) pattern for subscription-source async primitives (single-event resolution, lifecycle-tied invalidation)** — NOT a generalization to "all async loading." The precedent explicitly calls out the semantic boundary: TanStack Query remains the correct tool for HTTP fetch/refetch; use(promise) is for subscribe-once. This prevents future contributors from misreading the precedent as a mandate to rewrite existing TanStack Query panels. | G6 |
 | F15 | Should | `syncPromise` cache invalidates on provider destroy/recycle | Unit test: destroy provider → subsequent `syncPromise(docName)` call returns a NEW promise. Same for 4s RECYCLE_DEBOUNCE path. | (D7) |
 | F16 | Should | `<Activity>` state preservation works across StrictMode double-mount in dev | Manual: verify in dev mode with StrictMode that pooled docs retain state on mode flip. Unit test with StrictMode wrapper. | (A7) |
 
@@ -466,7 +466,7 @@ Ship the full hybrid architecture per D1-D8 + DX1-DX7, delivering G1-G6. Single-
 - `packages/app/src/components/EditorArea.tsx` — replace `syncState === 'connecting' ? <EditorSkeleton /> : <editors>` ternary with `<DocumentErrorBoundary><Suspense><EditorActivityPool>...</EditorActivityPool></Suspense></DocumentErrorBoundary>`. Remove inline `EditorSkeleton` definition.
 - `packages/app/src/App.tsx` — consume `useTransition` in nav handler; render `<NavigationPendingBar isPending={...}/>` under `EditorHeader`.
 - `packages/app/package.json` — add `react-error-boundary@^6.0.0`.
-- `CLAUDE.md` — add Architectural precedent #14 for hybrid Activity+Suspense subscription-source pattern.
+- `CLAUDE.md` — add Architectural precedent #15 for hybrid Activity+Suspense subscription-source pattern (precedent #14 — server-authoritative cross-CRDT sync — landed before this work).
 
 **Tests (Playwright E2E):**
 - `docs-open.e2e.ts::warm-nav preserves content atomically` (F1)
@@ -574,10 +574,10 @@ Nick Gomez.
   - `packages/app/src/editor/sync-promise.test.ts` (new)
   - `packages/app/src/components/NavigationPendingBar.test.tsx` (new)
   - `packages/app/src/components/DocumentErrorBoundary.test.tsx` (new)
-  - `CLAUDE.md` (add Architectural precedent #14)
+  - `CLAUDE.md` (add Architectural precedent #15 — #14 was the server-authoritative bridge work that landed first)
 
 - **EXCLUDE:**
-  - Server-side code (`packages/server/`) — except where CLAUDE.md Architectural precedent #14 needs referencing.
+  - Server-side code (`packages/server/`) — except where CLAUDE.md Architectural precedent #15 needs referencing.
   - MCP-related paths.
   - `packages/core/` (CRDT bridge logic, schema).
   - Docs site (`docs/`).

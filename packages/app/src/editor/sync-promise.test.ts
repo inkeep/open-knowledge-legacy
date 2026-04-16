@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
+  __reapTimedOutEntries,
   __resetSyncPromiseCache,
   __syncPromiseCacheSize,
   __syncPromiseSettled,
@@ -494,5 +495,55 @@ describe('__test_armPendingRejection — race-free e2e error-path hook', () => {
     __test_armPendingRejection('doc-leak', 'timeout');
     __resetSyncPromiseCache();
     expect(__test_clearArmedRejection('doc-leak')).toBe(false);
+  });
+});
+
+describe('tab-sleep resilience (__reapTimedOutEntries)', () => {
+  /**
+   * Browser background-tab throttling can stretch the 30s `setTimeout`
+   * indefinitely, so the visibility-change handler is the deterministic
+   * safety net. The handler itself is a thin DOM-gated wrapper around
+   * `__reapTimedOutEntries(now)` — the pure helper we test here. The
+   * wrapper is verified indirectly via the Playwright suite which runs in
+   * a real browser.
+   */
+  test('rejects pending entry when elapsed wall-clock time exceeds timeout', async () => {
+    const p = track(makeProvider('sleepy-doc'));
+    const promise = syncPromise('sleepy-doc', p);
+    const settled = promise.catch((e: unknown) => e);
+
+    const createdAt = Date.now();
+    // Simulate "user tabbed back after a 60s tab-sleep" — wall-clock now is
+    // past the 30s timeout for this entry.
+    const rejected = __reapTimedOutEntries(createdAt + SYNC_TIMEOUT_MS + 1_000);
+
+    expect(rejected).toBe(1);
+    const result = await settled;
+    expect(result).toBeInstanceOf(SyncTimeoutError);
+    expect(__syncPromiseSettled('sleepy-doc')).toBe(true);
+  });
+
+  test('does not reject entries whose elapsed time is within the timeout', () => {
+    const p = track(makeProvider('quick-doc'));
+    const promise = syncPromise('quick-doc', p);
+    promise.catch(() => {}); // Prevent unhandled rejection in teardown
+
+    const rejected = __reapTimedOutEntries(Date.now() + 1_000);
+
+    expect(rejected).toBe(0);
+    expect(__syncPromiseSettled('quick-doc')).toBe(false);
+  });
+
+  test('skips already-settled entries (idempotent re-entrance)', async () => {
+    const p = track(makeProvider('synced-doc'));
+    const promise = syncPromise('synced-doc', p);
+    queueMicrotask(() => p.emit('synced', { state: true }));
+    await promise;
+
+    // Even far in the future, the settled entry stays settled — no double-reject.
+    const rejected = __reapTimedOutEntries(Date.now() + SYNC_TIMEOUT_MS * 2);
+
+    expect(rejected).toBe(0);
+    expect(__syncPromiseSettled('synced-doc')).toBe(true);
   });
 });

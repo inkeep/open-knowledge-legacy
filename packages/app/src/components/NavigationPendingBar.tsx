@@ -4,11 +4,13 @@
  *
  * Visible only while `isPending` is true. Tracks elapsed ms since the flip
  * and escalates through four visual tiers so the user always has feedback
- * proportional to how long sync has taken:
+ * proportional to how long loading has taken. Copy stays in the same
+ * user-vocabulary ("load" / "loading") as DocumentErrorBoundary — never
+ * "sync" / "syncing" (internal jargon):
  *   - Tier 0 (0-5s):    subtle 2px amber strip under the header
- *   - Tier 1 (5-15s):   visible striped strip + "Loading doc…" label
- *   - Tier 2 (15-25s):  above + "Still loading. This is taking longer than usual." text
- *   - Tier 3 (25-30s):  above + inline "Try again?" button (fires `onRetry`)
+ *   - Tier 1 (5-15s):   visible striped strip + "Loading…" label
+ *   - Tier 2 (15-25s):  above + "Still loading. Taking longer than expected." text
+ *   - Tier 3 (25-30s):  above + inline "Try again" button (fires `onRetry`)
  *
  * The 30s mark itself is the hard syncPromise timeout (see `sync-promise.ts`);
  * when it fires, `DocumentErrorBoundary` takes over and this bar unmounts with
@@ -37,7 +39,7 @@ export const TIER_BOUNDARIES_MS = {
   timeout: 30_000,
 } as const;
 
-/** Observable tier — 0 is the subtle strip, 3 is the "Try again?" prompt. */
+/** Observable tier — 0 is the subtle strip, 3 is the "Try again" prompt. */
 export type PendingTier = 0 | 1 | 2 | 3;
 
 /**
@@ -63,7 +65,7 @@ const TICK_MS = 250;
 export interface NavigationPendingBarProps {
   /** True while navigation is mid-transition (typically from `useTransition`). */
   isPending: boolean;
-  /** Called when the user clicks "Try again?" at tier 3. No-op if omitted. */
+  /** Called when the user clicks "Try again" at tier 3. No-op if omitted. */
   onRetry?: () => void;
   /**
    * Monotonic clock for elapsed-time computation. Defaults to `performance.now`.
@@ -117,10 +119,10 @@ export function NavigationPendingBar({
       <div className={cn(stripBaseClass, stripHeightClass, stripAnimClass)} />
       {tier >= 1 ? (
         <div className="pointer-events-auto mt-2 flex items-center gap-3 px-3 text-xs text-muted-foreground">
-          <span className="font-medium">Loading doc…</span>
+          <span className="font-medium">Loading…</span>
           {tier >= 2 ? (
             <span className="max-w-md text-center">
-              Still loading. This is taking longer than usual.
+              Still loading. Taking longer than expected.
             </span>
           ) : null}
           {tier >= 3 ? (
@@ -132,7 +134,7 @@ export function NavigationPendingBar({
               disabled={!onRetry}
               data-slot="navigation-pending-retry"
             >
-              Try again?
+              Try again
             </Button>
           ) : null}
         </div>

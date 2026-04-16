@@ -18,16 +18,18 @@ import {
 import { errorCopy } from './DocumentErrorBoundary';
 
 describe('errorCopy', () => {
-  test('SyncTimeoutError → "Sync timed out" + doc name in summary', () => {
+  test('SyncTimeoutError → "Couldn\'t load document" + doc name in summary', () => {
     const copy = errorCopy(new SyncTimeoutError('docs/guide', 30_000));
-    expect(copy.title).toBe('Sync timed out');
+    expect(copy.title).toBe("Couldn't load document");
     expect(copy.summary).toContain('docs/guide');
+    expect(copy.summary).not.toMatch(/\bsync/i);
   });
 
   test('PreSyncDisconnectError → "Connection dropped" + doc name in summary', () => {
     const copy = errorCopy(new PreSyncDisconnectError('notes/idea'));
     expect(copy.title).toBe('Connection dropped');
     expect(copy.summary).toContain('notes/idea');
+    expect(copy.summary).not.toMatch(/\bsync/i);
   });
 
   test('DocumentNotFoundError → "Document not found" + doc name in summary', () => {
