@@ -290,13 +290,19 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         </button>
       </div>
 
-      {/* Live React component — renders exactly like production */}
+      {/* Live React component — renders exactly like production.
+          Self-closing / no-children components get contentEditable={false} so
+          native behaviors work (links navigate, images click, etc.). Container
+          components keep contentEditable for inline prose editing. */}
       <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
         <Comp {...primitiveProps}>
           <NodeViewContent
             className={`component-children ${
               !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
             }`}
+            {...(!descriptor.hasChildren || descriptor.isSelfClosing
+              ? { contentEditable: false }
+              : {})}
           />
         </Comp>
       </ComponentErrorBoundary>
