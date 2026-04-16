@@ -184,26 +184,31 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
 test('sidebar folder row: clicking anywhere on the row toggles expand/collapse', async ({
   page,
 }) => {
-  // `{ exact: true }` disambiguates from the shadcn sidebar-menu-action button
-  // whose aria-label `Expand sidebar-folder` partially matches `sidebar-folder`
-  // under Playwright's default substring-match semantics. Without it the
-  // locator resolves to 2 buttons and strict-mode fails.
+  // The shadcn sidebar splits a folder row: the main `sidebar-menu-button`
+  // carries the folder name (accessible name `sidebar-folder`) and the
+  // sibling `sidebar-menu-action` chevron button derives an accessible
+  // name of `Expand sidebar-folder` via Playwright's name-combination
+  // heuristic. `exact: true` scopes the click target to the main row
+  // only. The aria-expanded attribute's location drifts with shadcn
+  // upgrades (main button in earlier versions, sibling action button in
+  // later versions), so we use the nested-child visibility as the
+  // canonical expand/collapse indicator — it's a DOM-level consequence
+  // of the state that's stable across shadcn versions and matches what
+  // a user would observe.
   const folderRow = page.getByRole('button', { name: 'sidebar-folder', exact: true });
-  // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
-  // EditorHeader's `${activeDocName}.md` label after navigating into the file,
-  // causing toHaveCount(0) to fail on collapse even though the sidebar entry is
-  // correctly hidden.
+  // Scope to the sidebar — `getByText('nested-doc.md')` would also match
+  // the EditorHeader's `${activeDocName}.md` label after navigating into
+  // the file, causing toHaveCount(0) to fail on collapse even though the
+  // sidebar entry is correctly hidden.
   const sidebar = page.locator('[data-slot="sidebar-container"]');
   const nestedFile = sidebar.getByText('nested-doc.md');
 
-  // Starts collapsed — nested child is not visible, aria-expanded reflects state
+  // Starts collapsed — nested child is not visible
   await expect(folderRow).toBeVisible();
-  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
   await expect(nestedFile).toHaveCount(0);
 
   // Click the label (not the chevron) — the whole row should be the hit target
   await folderRow.click();
-  await expect(folderRow).toHaveAttribute('aria-expanded', 'true');
   await expect(nestedFile).toBeVisible();
 
   // Nested file click still navigates (not shadowed by folder toggle)
@@ -212,7 +217,6 @@ test('sidebar folder row: clicking anywhere on the row toggles expand/collapse',
 
   // Click the row again to collapse
   await folderRow.click();
-  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
   await expect(nestedFile).toHaveCount(0);
 });
 
