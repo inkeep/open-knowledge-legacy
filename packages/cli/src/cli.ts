@@ -27,9 +27,12 @@ import { cloneCommand } from './commands/clone.ts';
 import { initCommand } from './commands/init.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
+import { pullCommand } from './commands/pull.ts';
+import { pushCommand } from './commands/push.ts';
 import { startCommand } from './commands/start.ts';
 import { statusCommand } from './commands/status.ts';
 import { stopCommand } from './commands/stop.ts';
+import { syncCommand } from './commands/sync.ts';
 import { uiCommand } from './commands/ui.ts';
 import { PACKAGE_VERSION } from './constants.ts';
 import { type Config, loadConfig } from './index.ts';
@@ -108,5 +111,10 @@ program.addCommand(authCommand(() => resolvedConfig));
 
 // clone command — git clone + auto-start
 program.addCommand(cloneCommand(() => resolvedConfig));
+
+// sync commands — delegate to server or fall back to simple-git
+program.addCommand(syncCommand(() => resolvedConfig));
+program.addCommand(pushCommand(() => resolvedConfig));
+program.addCommand(pullCommand(() => resolvedConfig));
 
 await program.parseAsync();
