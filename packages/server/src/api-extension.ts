@@ -25,7 +25,7 @@ import { dirname, extname, relative, resolve, sep } from 'node:path';
 import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
-  applyByPrefixSuffix,
+  applyFastDiff,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
@@ -768,7 +768,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       // Apply rewrite via XmlFragment-authoritative pattern (AGENTS.md precedent #12;
       // replaces the deleted syncTextToFragment helper). Parse new markdown →
       // updateYFragment (preserves user-content Items at matching positions) →
-      // mirror Y.Text via applyByPrefixSuffix (minimal CRDT mutation).
+      // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
       const { body } = stripFrontmatter(result.markdown);
       const parsedJson = mdManager.parseWithFallback(body);
       const pmNode = schema.nodeFromJSON(parsedJson);
@@ -776,7 +776,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         mapping: new Map(),
         isOMark: new Map(),
       });
-      applyByPrefixSuffix(ytext, currentText, result.markdown);
+      applyFastDiff(ytext, currentText, result.markdown);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }

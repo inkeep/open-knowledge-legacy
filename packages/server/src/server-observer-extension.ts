@@ -41,29 +41,43 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
       const xmlFragment = doc.getXmlFragment('default');
       const ytext = doc.getText('source');
 
-      try {
-        const unsubscribe = setupServerObservers({
-          doc,
-          xmlFragment,
-          ytext,
-          mdManager: opts.mdManager,
-          schema: opts.schema,
-        });
+      const attach = (): boolean => {
+        try {
+          const unsubscribe = setupServerObservers({
+            doc,
+            xmlFragment,
+            ytext,
+            mdManager: opts.mdManager,
+            schema: opts.schema,
+          });
+          cleanups.set(documentName, unsubscribe);
+          return true;
+        } catch (err) {
+          // Do NOT re-throw: Hocuspocus afterLoadDocument is not try/catch guarded
+          // (unlike onLoadDocument). Re-throwing would break the document setup
+          // pipeline (beforeBroadcastStateless, awareness wiring) for ALL clients.
+          console.error(
+            `[ServerObserverExtension] Failed to attach observers for '${documentName}':`,
+            err,
+          );
+          incrementServerObserverError('a');
+          incrementServerObserverError('b');
+          return false;
+        }
+      };
 
-        cleanups.set(documentName, unsubscribe);
-      } catch (err) {
-        // Do NOT re-throw: Hocuspocus afterLoadDocument is not try/catch guarded
-        // (unlike onLoadDocument). Re-throwing would break the document setup
-        // pipeline (beforeBroadcastStateless, awareness wiring) for ALL clients.
-        // Instead, log + increment error counter so monitoring detects the failure.
-        // The document loads without cross-CRDT sync — WYSIWYG and source mode
-        // will diverge until the document is unloaded and reloaded.
-        console.error(
-          `[ServerObserverExtension] Failed to attach observers for '${documentName}':`,
-          err,
-        );
-        incrementServerObserverError('a');
-        incrementServerObserverError('b');
+      if (!attach()) {
+        // Single delayed retry for transient failures (schema init timing,
+        // temporary resource exhaustion). If the retry also fails, the
+        // document remains degraded — the underlying cause is likely
+        // persistent and requires investigation via error counters.
+        setTimeout(() => {
+          if (cleanups.has(documentName)) return; // already attached (e.g., unload+reload)
+          console.warn(
+            `[ServerObserverExtension] Retrying observer attachment for '${documentName}'`,
+          );
+          attach();
+        }, 5000);
       }
     },
 
