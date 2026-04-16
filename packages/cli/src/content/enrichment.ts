@@ -263,10 +263,20 @@ async function fetchBacklinks(
 }
 
 /**
+ * Chunk size for bulk backlink-count fetches. Keeps each URL comfortably
+ * under typical 8KB HTTP URL limits even with long docNames (e.g. 100 x
+ * ~70-char paths ≈ 7KB after comma-joining and percent-encoding).
+ */
+const BACKLINK_COUNT_CHUNK = 100;
+
+/**
  * Bulk backlink-count fetch for slim-enrichment callers (multi-path ls/grep/
- * find/multi-cat). One HTTP call covers all paths — no N-amplification.
- * Returns `null` when no serverUrl or the request fails; returns a
- * `Map<docName, number>` on success (missing docNames ⇒ not in the map).
+ * find/multi-cat). Batches into chunks of ${BACKLINK_COUNT_CHUNK} to keep
+ * each request URL well under the 8KB limit; chunks fire in parallel so
+ * latency stays close to a single round-trip. Returns `null` when no
+ * serverUrl or every chunk fails; otherwise returns a `Map<docName, number>`
+ * with entries from all successful chunks (partial chunks are merged —
+ * missing docNames ⇒ not in the map).
  *
  * See `/api/backlink-counts` in `api-extension.ts`.
  */
@@ -276,15 +286,28 @@ export async function fetchBacklinkCountsBatch(
 ): Promise<Map<string, number> | null> {
   if (!serverUrl || docNames.length === 0) return null;
   const unique = [...new Set(docNames)];
-  const param = encodeURIComponent(unique.join(','));
-  const result = await httpGet(serverUrl, `/api/backlink-counts?docNames=${param}`);
-  if (!result.ok) return null;
-  const counts = (result.counts ?? {}) as Record<string, unknown>;
-  const out = new Map<string, number>();
-  for (const [name, val] of Object.entries(counts)) {
-    if (typeof val === 'number' && Number.isFinite(val)) out.set(name, val);
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += BACKLINK_COUNT_CHUNK) {
+    chunks.push(unique.slice(i, i + BACKLINK_COUNT_CHUNK));
   }
-  return out;
+  const results = await Promise.all(
+    chunks.map(async (chunk) => {
+      const param = encodeURIComponent(chunk.join(','));
+      const result = await httpGet(serverUrl, `/api/backlink-counts?docNames=${param}`);
+      if (!result.ok) return null;
+      return (result.counts ?? {}) as Record<string, unknown>;
+    }),
+  );
+  const out = new Map<string, number>();
+  let anySuccess = false;
+  for (const chunkResult of results) {
+    if (!chunkResult) continue;
+    anySuccess = true;
+    for (const [name, val] of Object.entries(chunkResult)) {
+      if (typeof val === 'number' && Number.isFinite(val)) out.set(name, val);
+    }
+  }
+  return anySuccess ? out : null;
 }
 
 async function fetchForwardLinks(

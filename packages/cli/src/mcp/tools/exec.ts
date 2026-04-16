@@ -21,7 +21,7 @@
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { extractReferencedPaths } from '../../bash/extract-paths.ts';
+import { argsOf, extractReferencedPaths, nonFlagArgs } from '../../bash/extract-paths.ts';
 import { createBashInstance, execBash, StdoutOverflowError } from '../../bash/index.ts';
 import { diffMtimes, snapshotMtimes } from '../../bash/mtime-scan.ts';
 import {
@@ -58,6 +58,8 @@ export const DESCRIPTION = [
   'Allowlist: cat, ls, grep, find, head, tail, wc, sort, uniq, cut. Pipes (|) work between stages. Redirections, subshells, and writes are rejected.',
   '',
   "cwd: the command runs in the MCP client's first advertised root (the project the user is working in). Pass an explicit absolute `cwd` to run against a different directory. Paths inside the command resolve relative to that cwd; traversal above it is rejected.",
+  '',
+  'Stdout provenance headers (GNU-style): `ls <dir>/` prepends `<dir>/:`, single-file `cat`/`head`/`tail` prepends `==> <path> <==`, so the subject of the command is visible in raw output. Multi-file `cat a b` emits no header — the `enrichedPaths` array still lists every file. `head`/`tail` used as pipe trimmers (no file arg) defer to the upstream producer.',
   '',
   'Examples:',
   '- `exec({ command: "cat articles/auth.md" })` — file contents + full enrichment',
@@ -278,10 +280,10 @@ function formatFileEntry(m: EnrichedMeta): string {
 
 /**
  * Prepend a self-identifying header to stdout so the agent can see the
- * subject of the command (dir for `ls`, file(s) for `cat`/`head`/`tail`)
+ * subject of the command (dir for `ls`, single file for `cat`/`head`/`tail`)
  * directly in the raw output — not only in the enriched `Referenced files`
  * block. Mirrors GNU conventions: `ls -R` uses `<dir>/:` headers, and
- * `head`/`tail` use `==> <path> <==` when given multiple files.
+ * `head`/`tail` use `==> <path> <==`.
  *
  * Walks the stage list backwards like `extractReferencedPaths` so the last
  * subject-identifying stage wins. `head`/`tail` are skipped when used as
@@ -289,6 +291,11 @@ function formatFileEntry(m: EnrichedMeta): string {
  *
  * Gated on the path actually being enriched (present in `dirByPath` /
  * `fileByPath`) — avoids emitting misleading headers for invalid args.
+ *
+ * Multi-file `cat a b` emits no header: we cannot interleave boundaries
+ * into concatenated content (would require re-executing per file), and a
+ * block of headers at the top implies boundaries that don't exist. The
+ * `enrichedPaths` entries still list every file read.
  */
 function buildStdoutProvenance(
   stages: Stage[],
@@ -299,19 +306,18 @@ function buildStdoutProvenance(
   for (let i = stages.length - 1; i >= 0; i--) {
     const s = stages[i];
     const cmd = s.command;
-    const pathArgs = s.args.slice(1).filter((a) => !a.startsWith('-'));
     if (cmd === 'ls' || cmd === 'cat') {
       stage = s;
       break;
     }
-    if ((cmd === 'head' || cmd === 'tail') && pathArgs.length > 0) {
+    if ((cmd === 'head' || cmd === 'tail') && nonFlagArgs(argsOf(s)).length > 0) {
       stage = s;
       break;
     }
   }
   if (!stage) return '';
 
-  const pathArgs = stage.args.slice(1).filter((a) => !a.startsWith('-'));
+  const pathArgs = nonFlagArgs(argsOf(stage));
 
   if (stage.command === 'ls') {
     const dirArg = pathArgs[pathArgs.length - 1];
@@ -323,13 +329,11 @@ function buildStdoutProvenance(
     return `${n}/:\n`;
   }
 
-  // cat / head / tail with file args: emit `==> <path> <==` per file.
-  // For multi-file cat, we can't interleave boundaries into concatenated
-  // content (would require re-execution), so all headers sit at the top
-  // as a provenance block — the agent at least sees what was read.
+  // cat / head / tail: emit `==> <path> <==` only for single-file reads.
+  // Multi-file → no header (see JSDoc above — can't interleave boundaries).
   const wikiFiles = pathArgs.filter((p) => /\.(md|mdx)$/.test(p) && fileByPath.has(p));
-  if (wikiFiles.length === 0) return '';
-  return `${wikiFiles.map((p) => `==> ${p} <==`).join('\n')}\n`;
+  if (wikiFiles.length !== 1) return '';
+  return `==> ${wikiFiles[0]} <==\n`;
 }
 
 function formatEnrichedBlock(enriched: EnrichedEntry[]): string {

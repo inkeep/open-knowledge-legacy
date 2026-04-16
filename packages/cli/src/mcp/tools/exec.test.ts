@@ -240,7 +240,7 @@ describe('exec — stdout provenance headers', () => {
     expect(s.stdout?.startsWith('==> articles/auth.md <==\n')).toBe(true);
   });
 
-  test('`cat a.md b.md` prepends one `==> <path> <==` per file', async () => {
+  test('multi-file `cat a.md b.md` emits no header (would imply false boundaries)', async () => {
     const project = await bootstrap();
     const contentDir = resolve(project, 'articles');
     mkdirSync(contentDir, { recursive: true });
@@ -253,8 +253,10 @@ describe('exec — stdout provenance headers', () => {
     )) as ExecResult;
 
     const s = structured(result);
-    expect(s.stdout).toContain('==> articles/a.md <==');
-    expect(s.stdout).toContain('==> articles/b.md <==');
+    expect(s.stdout).not.toContain('==>');
+    // enrichedPaths still lists every file read, so provenance is preserved.
+    const files = fileEntries(s);
+    expect(files.map((f) => f.path).sort()).toEqual(['articles/a.md', 'articles/b.md']);
   });
 
   test('`head <file.md>` prepends file header AND enriches the file', async () => {

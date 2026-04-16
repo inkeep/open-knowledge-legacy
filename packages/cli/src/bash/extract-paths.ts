@@ -46,11 +46,13 @@ function normalize(p: string): string {
   return out;
 }
 
-function argsOf(stage: Stage): string[] {
-  return stage.args.slice(1); // drop command token
+/** Stage args minus the leading command token. */
+export function argsOf(stage: Stage): string[] {
+  return stage.args.slice(1);
 }
 
-function nonFlagArgs(args: string[]): string[] {
+/** Drop flags (anything starting with `-`). */
+export function nonFlagArgs(args: string[]): string[] {
   return args.filter((a) => !a.startsWith('-'));
 }
 
