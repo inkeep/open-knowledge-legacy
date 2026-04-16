@@ -21,7 +21,7 @@
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import { extractReferencedPaths } from '../../bash/extract-paths.ts';
+import { argsOf, extractReferencedPaths, nonFlagArgs } from '../../bash/extract-paths.ts';
 import { createBashInstance, execBash, StdoutOverflowError } from '../../bash/index.ts';
 import { diffMtimes, snapshotMtimes } from '../../bash/mtime-scan.ts';
 import {
@@ -38,6 +38,8 @@ import {
   type EnrichedMeta,
   enrichDirectory,
   enrichPath,
+  fetchBacklinkCountsBatch,
+  pathToDocName,
 } from '../../content/enrichment.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import { resolveServerUrl, textPlusStructured } from './shared.ts';
@@ -56,6 +58,8 @@ export const DESCRIPTION = [
   'Allowlist: cat, ls, grep, find, head, tail, wc, sort, uniq, cut. Pipes (|) work between stages. Redirections, subshells, and writes are rejected.',
   '',
   "cwd: the command runs in the MCP client's first advertised root (the project the user is working in). Pass an explicit absolute `cwd` to run against a different directory. Paths inside the command resolve relative to that cwd; traversal above it is rejected.",
+  '',
+  'Stdout provenance headers (GNU-style): `ls <dir>/` prepends `<dir>/:`, single-file `cat`/`head`/`tail` prepends `==> <path> <==`, so the subject of the command is visible in raw output. Multi-file `cat a b` emits no header — the `enrichedPaths` array still lists every file. `head`/`tail` used as pipe trimmers (no file arg) defer to the upstream producer.',
   '',
   'Examples:',
   '- `exec({ command: "cat articles/auth.md" })` — file contents + full enrichment',
@@ -274,6 +278,64 @@ function formatFileEntry(m: EnrichedMeta): string {
   return `- ${parts.join(' — ')}`;
 }
 
+/**
+ * Prepend a self-identifying header to stdout so the agent can see the
+ * subject of the command (dir for `ls`, single file for `cat`/`head`/`tail`)
+ * directly in the raw output — not only in the enriched `Referenced files`
+ * block. Mirrors GNU conventions: `ls -R` uses `<dir>/:` headers, and
+ * `head`/`tail` use `==> <path> <==`.
+ *
+ * Walks the stage list backwards like `extractReferencedPaths` so the last
+ * subject-identifying stage wins. `head`/`tail` are skipped when used as
+ * pipe trimmers (no file arg) so upstream `cat` / `ls` headers survive.
+ *
+ * Gated on the path actually being enriched (present in `dirByPath` /
+ * `fileByPath`) — avoids emitting misleading headers for invalid args.
+ *
+ * Multi-file `cat a b` emits no header: we cannot interleave boundaries
+ * into concatenated content (would require re-executing per file), and a
+ * block of headers at the top implies boundaries that don't exist. The
+ * `enrichedPaths` entries still list every file read.
+ */
+function buildStdoutProvenance(
+  stages: Stage[],
+  dirByPath: Map<string, DirectoryMeta>,
+  fileByPath: Map<string, EnrichedMeta>,
+): string {
+  let stage: Stage | null = null;
+  for (let i = stages.length - 1; i >= 0; i--) {
+    const s = stages[i];
+    const cmd = s.command;
+    if (cmd === 'ls' || cmd === 'cat') {
+      stage = s;
+      break;
+    }
+    if ((cmd === 'head' || cmd === 'tail') && nonFlagArgs(argsOf(s)).length > 0) {
+      stage = s;
+      break;
+    }
+  }
+  if (!stage) return '';
+
+  const pathArgs = nonFlagArgs(argsOf(stage));
+
+  if (stage.command === 'ls') {
+    const dirArg = pathArgs[pathArgs.length - 1];
+    if (!dirArg || dirArg === '.') return '';
+    let n = dirArg.replace(/\/+/g, '/');
+    if (n.startsWith('./')) n = n.slice(2);
+    if (n.endsWith('/')) n = n.slice(0, -1);
+    if (!n || !dirByPath.has(n)) return '';
+    return `${n}/:\n`;
+  }
+
+  // cat / head / tail: emit `==> <path> <==` only for single-file reads.
+  // Multi-file → no header (see JSDoc above — can't interleave boundaries).
+  const wikiFiles = pathArgs.filter((p) => /\.(md|mdx)$/.test(p) && fileByPath.has(p));
+  if (wikiFiles.length !== 1) return '';
+  return `==> ${wikiFiles[0]} <==\n`;
+}
+
 function formatEnrichedBlock(enriched: EnrichedEntry[]): string {
   if (enriched.length === 0) return '';
   const lines: string[] = ['', '### Referenced files', ''];
@@ -418,6 +480,19 @@ export async function buildExecResult(
       ),
     ),
   );
+  // Backfill backlinkCount on slim entries via one batched server call so
+  // multi-path listings (ls/grep/find/multi-cat) get connection-density
+  // without N-amplifying /api/backlinks. Single-path rich cat already has it.
+  if (!isSinglePathCat && resolvedServerUrl && fileEnriched.length > 0) {
+    const docNames = fileEnriched.map((f) => pathToDocName(f.path));
+    const counts = await fetchBacklinkCountsBatch(resolvedServerUrl, docNames).catch(() => null);
+    if (counts) {
+      for (const f of fileEnriched) {
+        const c = counts.get(pathToDocName(f.path));
+        if (typeof c === 'number') f.backlinkCount = c;
+      }
+    }
+  }
   // Preserve stdout order: walk `paths` and pick up the matching entry.
   const fileByPath = new Map(fileEnriched.map((e) => [e.path, e]));
   const dirByPath = new Map(dirEnriched.map((e) => [e.path, e]));
@@ -449,7 +524,8 @@ export async function buildExecResult(
   }
 
   const bannerText = banners.length > 0 ? `${banners.join('\n')}\n\n` : '';
-  const stdoutText = capped.text;
+  const provenance = buildStdoutProvenance(stages, dirByPath, fileByPath);
+  const stdoutText = provenance + capped.text;
   const enrichmentBlock = formatEnrichedBlock(enriched);
   const content = `${bannerText}${stdoutText}${enrichmentBlock}`;
 
