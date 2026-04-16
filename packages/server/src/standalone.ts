@@ -95,6 +95,13 @@ export interface ServerOptions {
    * on the first agent edit per session; consumers that don't care can omit.
    */
   onAgentWrite?: () => void;
+  /**
+   * CLI argv prefix for /api/local-op/* relay endpoints.
+   * Defaults to ['open-knowledge'] (CLI on PATH).
+   * Pass [process.execPath, process.argv[1]] from start.ts to use the exact
+   * runtime that launched this server — necessary in dev (bun + .ts entry).
+   */
+  localOpCliArgs?: string[];
 }
 
 export interface ServerInstance {
@@ -140,6 +147,7 @@ export function createServer(options: ServerOptions): ServerInstance {
     includePatterns = ['**/*.md', '**/*.mdx'],
     excludePatterns = [],
     destroyTimeoutMs = 10_000,
+    localOpCliArgs,
   } = options;
 
   const log = getLogger('server');
@@ -224,6 +232,7 @@ export function createServer(options: ServerOptions): ServerInstance {
       agentFocusBroadcaster,
       onAgentWrite: options.onAgentWrite,
       getSyncEngine: () => syncEngine,
+      localOpCliArgs,
     });
     hocuspocus.configuration.extensions.push(apiExtension);
 

@@ -5,6 +5,7 @@
  * the standalone Server and the Vite dev plugin.
  */
 
+import { spawn } from 'node:child_process';
 import {
   closeSync,
   existsSync,
@@ -49,6 +50,7 @@ import {
   type FrontmatterMetadata,
   parseFrontmatterMetadata,
 } from './page-identity.ts';
+import { readServerLock } from './server-lock.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
@@ -66,6 +68,12 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import {
+  checkLocalOpSecurity,
+  createConcurrencyGuard,
+  isAllowedGitUrl,
+  isSafeLocalPath,
+} from './local-op-security.ts';
 import { getLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
@@ -447,6 +455,16 @@ export interface ApiExtensionOptions {
    * no remote was detected). Called per-request so it always reflects current state.
    */
   getSyncEngine?: () => SyncEngine | null;
+  /**
+   * CLI argv prefix used to spawn subprocesses for /api/local-op/* relay endpoints.
+   * Defaults to ['open-knowledge'] (assumes CLI is on PATH).
+   * Pass [process.execPath, process.argv[1]] from the CLI start command to use
+   * the exact runtime that started this server.
+   *
+   * Example: ['bun', '/path/to/packages/cli/src/cli.ts'] in dev,
+   *          ['open-knowledge'] in production.
+   */
+  localOpCliArgs?: string[];
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -523,7 +541,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     agentFocusBroadcaster,
     onAgentWrite,
     getSyncEngine,
+    localOpCliArgs = ['open-knowledge'],
   } = options;
+
+  // Concurrency guard: at most 1 in-flight request per local-op endpoint
+  const localOpGuard = createConcurrencyGuard();
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -2993,6 +3015,227 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── Local-op relay endpoints (/api/local-op/*) ─────────────────────────────
+  // FR18: loopback + origin + path safety + URL allowlist + concurrency=1 + 10-min timeout
+
+  const LOCAL_OP_CLONE_KEY = '/api/local-op/clone';
+  const LOCAL_OP_OPEN_KEY = '/api/local-op/open';
+  /** Wall-clock timeout for clone subprocess (10 min). */
+  const LOCAL_OP_TIMEOUT_MS = 10 * 60 * 1000;
+  /** Max time to wait for a spawned server's lock file to show a port > 0. */
+  const LOCAL_OP_OPEN_TIMEOUT_MS = 45_000;
+
+  /**
+   * POST /api/local-op/clone
+   *
+   * Body: { url: string, dir: string }
+   * Spawns: open-knowledge clone --json --dir <dir> <url>
+   * Streams: NDJSON lines via chunked HTTP.
+   */
+  async function handleLocalOpClone(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    // Parse request body
+    let url: string;
+    let dir: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { url?: unknown; dir?: unknown };
+      if (typeof parsed.url !== 'string' || !parsed.url) {
+        json(res, 400, { ok: false, error: 'Missing or invalid url' });
+        return;
+      }
+      if (typeof parsed.dir !== 'string' || !parsed.dir) {
+        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
+        return;
+      }
+      url = parsed.url;
+      dir = parsed.dir;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    // Security: URL protocol allowlist
+    if (!isAllowedGitUrl(url)) {
+      json(res, 400, { ok: false, error: 'URL protocol not allowed' });
+      return;
+    }
+
+    // Security: dir must be within user home dir (no traversal)
+    if (!isSafeLocalPath(dir)) {
+      json(res, 400, {
+        ok: false,
+        error: 'dir must be within the user home directory',
+      });
+      return;
+    }
+
+    // Concurrency guard: reject concurrent requests to this endpoint
+    if (!localOpGuard.tryAcquire(LOCAL_OP_CLONE_KEY)) {
+      json(res, 429, { ok: false, error: 'A clone operation is already in progress' });
+      return;
+    }
+
+    // Start chunked NDJSON response
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'clone', '--json', '--dir', dir, url];
+
+    let timedOut = false;
+    let settled = false;
+
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    // Stream stdout (NDJSON lines from `clone --json`)
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (!res.writableEnded) res.write(chunk);
+    });
+
+    // Log stderr (progress / errors) but don't stream to client
+    child.stderr.on('data', (chunk: Buffer) => {
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/clone] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (timedOut && !res.writableEnded) {
+          res.write(
+            `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
+          );
+        } else if (code !== 0 && !res.writableEnded) {
+          res.write(
+            `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}` })}\n`,
+          );
+        }
+        res.end();
+      }
+      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+    });
+  }
+
+  /**
+   * POST /api/local-op/open
+   *
+   * Body: { dir: string }
+   * Spawns: open-knowledge start --content-dir <dir> (detached, unref'd)
+   * Polls <dir>/.open-knowledge/server.lock until port > 0 appears.
+   * Returns: { port: number }
+   */
+  async function handleLocalOpOpen(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let dir: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { dir?: unknown };
+      if (typeof parsed.dir !== 'string' || !parsed.dir) {
+        json(res, 400, { ok: false, error: 'Missing or invalid dir' });
+        return;
+      }
+      dir = parsed.dir;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    // Security: dir must be within user home dir
+    if (!isSafeLocalPath(dir)) {
+      json(res, 400, {
+        ok: false,
+        error: 'dir must be within the user home directory',
+      });
+      return;
+    }
+
+    // Concurrency guard
+    if (!localOpGuard.tryAcquire(LOCAL_OP_OPEN_KEY)) {
+      json(res, 429, { ok: false, error: 'A server-open operation is already in progress' });
+      return;
+    }
+
+    try {
+      const lockDir = resolve(dir, '.open-knowledge');
+
+      // Check if a live server is already running in that dir
+      const existing = readServerLock(lockDir);
+      if (existing && existing.port > 0) {
+        json(res, 200, { port: existing.port });
+        return;
+      }
+
+      // Spawn the server as a detached background process
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'start', '--content-dir', dir];
+
+      const child = spawn(cmd, spawnArgs, {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env },
+      });
+      child.unref();
+
+      // Poll for the server lock file to appear with a real port
+      const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
+      let port = 0;
+      while (Date.now() < deadline) {
+        await new Promise<void>((r) => setTimeout(r, 500));
+        const lock = readServerLock(lockDir);
+        if (lock && lock.port > 0) {
+          port = lock.port;
+          break;
+        }
+      }
+
+      if (port > 0) {
+        json(res, 200, { port });
+      } else {
+        json(res, 504, {
+          ok: false,
+          error: 'Server did not start within the expected time',
+        });
+      }
+    } finally {
+      localOpGuard.release(LOCAL_OP_OPEN_KEY);
+    }
+  }
+
   // ─── Security helpers for sync endpoints ────────────────────────────────────
 
   function isLoopback(req: IncomingMessage): boolean {
@@ -3158,6 +3401,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/sync/trigger': handleSyncTrigger,
     '/api/sync/conflicts': handleSyncConflicts,
     '/api/sync/resolve-conflict': handleSyncResolveConflict,
+    '/api/local-op/clone': handleLocalOpClone,
+    '/api/local-op/open': handleLocalOpOpen,
   };
 
   if (enableTestRoutes) {

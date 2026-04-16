@@ -331,6 +331,9 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
     includePatterns: config.content.include,
     excludePatterns: config.content.exclude,
     onAgentWrite,
+    // Pass the exact runtime that started this server so /api/local-op/* can
+    // spawn additional CLI processes without needing open-knowledge on PATH.
+    localOpCliArgs: [process.execPath, process.argv[1]],
   });
 
   // Auto-spawn the UI sibling when none is running. Greenfield: we don't try
