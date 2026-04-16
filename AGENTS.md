@@ -310,11 +310,22 @@ Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
 The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173. The plugin participates in the same `server.lock` as the published CLI, so `bun run dev` and `open-knowledge start` against the same content directory are mutually exclusive — the second invocation fails fast with `ServerLockCollisionError`.
 
+### Source-view minimal polish
+
+Small set of always-on CM6 decorations for source mode: broken-link squiggly (wikilinks + link-refs), strikethrough rendering, list hanging-indent on wrap, code-block language badge, and code wrap-preserve-indent. No background tints, no borders, no heading/blockquote/table/frontmatter decorations. Tables render as plain paragraph text.
+
+- `src/editor/source-polish/` — ViewPlugin (viewport-scoped lezer walk for strikethrough, list, fenced-code decorations + language badge widget) + StateField (doc-wide cross-scan for broken link-ref detection)
+- `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting (~12 languages, lazy-loaded per block; NOT `@codemirror/language-data`)
+- Broken-wikilink detection lives in `src/editor/plugins/wiki-link-source.ts` (extends the existing plugin's `pagesCache` check), not in `source-polish/`
+- CSS: all `.cm-*` classes in `globals.css` under the `/* Source-view minimal polish */` comment block
+
 ### Key files
 
 - `src/editor/TiptapEditor.tsx` — WYSIWYG editor, HocuspocusProvider
-- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next
+- `src/editor/SourceEditor.tsx` — CodeMirror 6 with y-codemirror.next; wires `sourcePolishExtensions()` + `codeLanguages` allowlist + GFM
 - `src/editor/observers.ts` — Client-side observer baseline tracking (cross-CRDT write paths deleted; writes are server-authoritative per precedent #14)
+- `src/editor/source-polish/` — source-view decorations (ViewPlugin + StateField + unit tests)
+- `src/editor/markdown-code-languages.ts` — fenced-code syntax highlighting allowlist
 - `src/components/ThemeToggle.tsx` — Dark/light/system theme toggle
 - `src/components/FileSidebar.tsx` — Sidebar shell; header `+` dropdown opens `NewItemDialog` for file/folder creation
 - `src/components/FileTree.tsx` — Tree rendering; folder-row "New file here" / "New folder here" context-menu entries, empty-state "Create your first page" CTA, subscribes to `documents-events` for immediate post-create refresh
