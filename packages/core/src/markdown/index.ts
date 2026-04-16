@@ -708,17 +708,25 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // Wiki-link → emit as raw HTML to preserve [[...]] syntax on serialize
+  // Wiki-link → first-class `wikiLink` mdast type per D7 / US-004.
+  // - `data.{target,anchor,alias}` drives markdown emission via the
+  //   wikiLinkHandler registered through remarkWikiLink in pipeline.ts.
+  // - `children: [{type:'text',value:label}]` and mirrored `value` drive
+  //   the mdast→hast HTML emission (US-007).
+  // Replaces the earlier `{type:'html',value:'[[...]]'}` passthrough — the
+  // "type lie" D7 is locked to fix under strict greenfield.
   if (n.wikiLink) {
     nodeHandlers.wikiLink = (pmNode: PmNode) => {
-      const target = pmNode.attrs.target ?? '';
-      const anchor = pmNode.attrs.anchor;
-      const alias = pmNode.attrs.alias;
-      let text = `[[${target}`;
-      if (anchor) text += `#${anchor}`;
-      if (alias) text += `|${alias}`;
-      text += ']]';
-      return { type: 'html' as const, value: text };
+      const target: string = pmNode.attrs.target ?? '';
+      const anchor: string | null = pmNode.attrs.anchor ?? null;
+      const alias: string | null = pmNode.attrs.alias ?? null;
+      const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+      return {
+        type: 'wikiLink' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
     };
   }
 

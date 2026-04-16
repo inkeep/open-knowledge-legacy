@@ -146,6 +146,11 @@ export function serializeMd(doc: PmNode, opts: PipelineOptions): string {
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkGfm)
     .use(remarkMdxAgnostic)
+    // remarkWikiLink registers mdast-util-to-markdown handlers for the
+    // `wikiLink` mdast type (see wiki-link-micromark.ts:wikiLinkToMarkdown).
+    // Required now that PM→mdast (index.ts) emits first-class wikiLink nodes
+    // instead of `{type:'html'}` passthrough (D7 / US-004).
+    .use(remarkWikiLink)
     .use(remarkStringify, {
       bullet: '-',
       fences: true,

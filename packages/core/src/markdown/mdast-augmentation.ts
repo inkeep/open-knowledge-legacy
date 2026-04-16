@@ -12,9 +12,17 @@ export type { Nodes, Parent, Root } from 'mdast';
 
 import type { Position } from 'unist';
 
-// Wiki-link mdast node (produced by our micromark extension in US-006).
-// Runtime shape: target/alias/anchor live under `data`, matching
-// the mdast-util-from-markdown enter/exit handlers in wiki-link-micromark.ts.
+// Wiki-link mdast node. Shape per D7 (full first-class promotion, US-004):
+// - `data.target/alias/anchor` drive the markdown `[[...]]` serialization via
+//   wiki-link-micromark.ts's `wikiLinkHandler`.
+// - `children: [{type:'text', value:label}]` feed the mdast-to-hast custom
+//   handler (US-007) so clipboard HTML renders a visible `<a>label</a>`.
+// - `value` carries the same display label for code that reads it directly
+//   (e.g. remark-prosemirror mdast→PM handlers) and preserves backward
+//   compatibility with callers that existed before US-004.
+// `children` is required in the type so downstream consumers can rely on
+// it, but the micromark `exitWikiLink` compile step assembles it from
+// `data`-derived label text, so producers never synthesise it by hand.
 export interface WikiLinkMdast {
   type: 'wikiLink';
   value: string;
@@ -24,6 +32,7 @@ export interface WikiLinkMdast {
     anchor: string | null;
     [key: string]: unknown;
   };
+  children: Array<{ type: 'text'; value: string }>;
   position?: Position;
 }
 
