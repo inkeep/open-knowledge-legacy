@@ -8,8 +8,16 @@
  * US-016: State persistence + restart recovery.
  */
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import {
+  type Dirent,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, relative, resolve } from 'node:path';
 import type { CC1Broadcaster } from './cc1-broadcast.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { type ClassifiedError, classifyGitError } from './error-classification.ts';
@@ -42,6 +50,14 @@ export interface SyncStatus {
   conflictCount: number;
   error?: string;
   pausedReason?: string;
+}
+
+/** A single content-scoped file entry used during push-cycle tree building. */
+interface ContentFileEntry {
+  /** Path relative to contentDir — used for commit messages. */
+  contentRelPath: string;
+  /** Path relative to projectDir (git root) — used for git add/rm commands. */
+  projectRelPath: string;
 }
 
 /** Persisted state (sync-state.json). */
@@ -400,66 +416,228 @@ export class SyncEngine {
   }
 
   private async doPushCycle(): Promise<void> {
-    const handle = createGitInstance(this.projectDir, {
-      credentialArgs: this.credentialArgs,
-    });
+    // Gather content-filtered files that exist on disk (D35: never git add .)
+    const contentFiles = this.gatherContentFilesSync();
 
-    // Check if ahead
-    let ahead = 0;
-    try {
-      const status = await handle.git.status();
-      ahead = status.ahead;
-      this.ahead = ahead;
-    } catch (e) {
-      this.handleError(classifyGitError(e instanceof Error ? e : new Error(String(e))));
-      return;
-    }
-
-    if (ahead === 0) return; // Nothing to push
+    // Temp index file for GIT_INDEX_FILE isolation (D32 / D33)
+    const tmpIndexPath = join(tmpdir(), `ok-sync-idx-${process.pid}-${Date.now()}.idx`);
+    let commitSha: string | null = null;
 
     this.transitionTo('pushing');
+
     try {
-      // Check if branch has upstream; if not, set it
-      let pushArgs: string[] = [];
-      try {
-        await handle.git.raw('rev-parse', '--abbrev-ref', `${this.currentBranch}@{u}`);
-      } catch {
-        // No upstream — use -u to set it
-        pushArgs = ['--set-upstream', 'origin', this.currentBranch];
-      }
+      await withParentLock(async () => {
+        // Create handle with isolated index so we never disturb the user's real index
+        const handle = createGitInstance(this.projectDir, {
+          credentialArgs: this.credentialArgs,
+          gitIndexFile: tmpIndexPath,
+        });
 
-      if (pushArgs.length > 0) {
-        await withParentLock(() => handle.git.push(pushArgs[0], pushArgs[1], [pushArgs[2] ?? '']));
-      } else {
-        await withParentLock(() => handle.git.push());
-      }
-
-      this.lastPushedSha = (await handle.git.revparse('HEAD')).trim();
-      this.lastSyncUtc = new Date().toISOString();
-      this.ahead = 0;
-      this.transitionTo('idle');
-    } catch (e) {
-      const classified = classifyGitError(e instanceof Error ? e : new Error(String(e)));
-      if (classified.class === 'semantic' && classified.subclass === 'non-fast-forward') {
-        // Rejected: fetch + merge + retry
-        log.info({}, '[sync] push rejected non-fast-forward — fetching and retrying');
+        // ── 1. Get current HEAD SHA ────────────────────────────────────────────
+        let headSha: string;
         try {
-          await handle.git.fetch('origin');
-          await handle.git.merge([`origin/${this.currentBranch}`]);
-          await withParentLock(() => handle.git.push());
-          this.lastPushedSha = (await handle.git.revparse('HEAD')).trim();
-          this.lastSyncUtc = new Date().toISOString();
-          this.ahead = 0;
-          this.transitionTo('idle');
-        } catch (e2) {
-          this.handleError(classifyGitError(e2 instanceof Error ? e2 : new Error(String(e2))));
+          headSha = (await handle.git.revparse('HEAD')).trim();
+        } catch (e) {
+          this.handleError(classifyGitError(e instanceof Error ? e : new Error(String(e))));
+          return; // early exit from lock
         }
+
+        // ── 2. Seed isolated index from HEAD tree ──────────────────────────────
+        await handle.git.raw(['read-tree', headSha]);
+
+        // ── 3. Identify deleted content files (in HEAD but no longer on disk) ──
+        const headContentSet = new Set<string>(); // projectDir-relative paths
+        try {
+          const lsOut = (await handle.git.raw(['ls-tree', '-r', '--name-only', headSha])).trim();
+          for (const line of lsOut ? lsOut.split('\n') : []) {
+            const projRelPath = line.trim();
+            if (!projRelPath) continue;
+            const absPath = join(this.projectDir, projRelPath);
+            const contentRelPath = relative(this.contentDir, absPath);
+            if (
+              !contentRelPath.startsWith('..') &&
+              !this.contentFilter.isExcluded(contentRelPath)
+            ) {
+              headContentSet.add(projRelPath);
+            }
+          }
+        } catch {
+          // Non-fatal: proceed without deletion tracking
+        }
+
+        // ── 4. Stage working-tree content files into isolated index ────────────
+        if (contentFiles.length > 0) {
+          const BATCH = 100; // avoid ARG_MAX
+          for (let i = 0; i < contentFiles.length; i += BATCH) {
+            const batch = contentFiles.slice(i, i + BATCH).map((f) => f.projectRelPath);
+            await handle.git.raw(['add', '--', ...batch]);
+          }
+        }
+
+        // ── 5. Remove deleted content files from isolated index ────────────────
+        const onDiskSet = new Set(contentFiles.map((f) => f.projectRelPath));
+        const deleted = [...headContentSet].filter((f) => !onDiskSet.has(f));
+        if (deleted.length > 0) {
+          await handle.git.raw(['rm', '--cached', '--', ...deleted]);
+        }
+
+        // ── 6. Write the tree from the isolated index ──────────────────────────
+        const newTreeSha = (await handle.git.raw(['write-tree'])).trim();
+
+        // ── 7. Skip if tree is identical to what was last pushed (D33 diff) ────
+        if (this.lastPushedSha) {
+          let prevTreeSha = '';
+          try {
+            prevTreeSha = (
+              await handle.git.raw(['rev-parse', `${this.lastPushedSha}^{tree}`])
+            ).trim();
+          } catch {
+            // lastPushedSha may no longer exist — treat as changed
+          }
+          if (prevTreeSha && prevTreeSha === newTreeSha) {
+            this.transitionTo('idle');
+            return; // nothing to push
+          }
+        }
+
+        // ── 8. Build commit message ────────────────────────────────────────────
+        const message = this.buildCommitMessage(contentFiles.map((f) => f.contentRelPath));
+
+        // ── 9. Author identity from git config (D29) ───────────────────────────
+        let authorName = '';
+        let authorEmail = '';
+        try {
+          authorName = (await handle.git.raw(['config', 'user.name'])).trim();
+        } catch {}
+        try {
+          authorEmail = (await handle.git.raw(['config', 'user.email'])).trim();
+        } catch {}
+        if (!authorName) authorName = 'Open Knowledge';
+        if (!authorEmail) authorEmail = 'sync@open-knowledge.local';
+
+        // Set author/committer env vars on the handle for commit-tree
+        handle.git.env({
+          GIT_AUTHOR_NAME: authorName,
+          GIT_AUTHOR_EMAIL: authorEmail,
+          GIT_COMMITTER_NAME: authorName,
+          GIT_COMMITTER_EMAIL: authorEmail,
+        });
+
+        // ── 10. Create squash commit (one parent per push cycle — D33) ─────────
+        const newCommitSha = (
+          await handle.git.raw(['commit-tree', newTreeSha, '-p', headSha, '-m', message])
+        ).trim();
+
+        if (!newCommitSha) {
+          this.transitionTo('idle');
+          return;
+        }
+
+        // ── 11. Update branch ref atomically (CAS: old=headSha prevents races) ─
+        await handle.git.raw([
+          'update-ref',
+          `refs/heads/${this.currentBranch}`,
+          newCommitSha,
+          headSha,
+        ]);
+
+        // ── 12. Push — set upstream if branch has none ─────────────────────────
+        let hasUpstream = false;
+        try {
+          await handle.git.raw(['rev-parse', '--abbrev-ref', `${this.currentBranch}@{u}`]);
+          hasUpstream = true;
+        } catch {}
+
+        if (hasUpstream) {
+          await handle.git.raw(['push', 'origin', this.currentBranch]);
+        } else {
+          await handle.git.raw(['push', '--set-upstream', 'origin', this.currentBranch]);
+        }
+
+        commitSha = newCommitSha;
+      });
+
+      if (commitSha) {
+        this.lastPushedSha = commitSha;
+        this.lastSyncUtc = new Date().toISOString();
+        this.ahead = 0;
+        if (this.state === 'pushing') {
+          this.transitionTo('idle');
+        }
+      }
+    } catch (e) {
+      const err = e instanceof Error ? e : new Error(String(e));
+      const classified = classifyGitError(err);
+      if (classified.class === 'semantic' && classified.subclass === 'non-fast-forward') {
+        // Origin diverged — pull cycle will fetch + merge; retry next push cycle
+        log.info({}, '[sync] push rejected (non-fast-forward) — will retry after next pull');
+        this.consecutiveFailures++;
+        if (this.state === 'pushing') this.transitionTo('idle');
       } else {
         this.handleError(classified);
       }
+    } finally {
+      // Always clean up the temporary index file
+      try {
+        unlinkSync(tmpIndexPath);
+      } catch {}
     }
 
     this.scheduleSaveState();
+  }
+
+  // ─── Push cycle helpers ───────────────────────────────────────────────────
+
+  /**
+   * Recursively walk contentDir and return all files that pass ContentFilter.
+   * Uses synchronous FS because this runs under the parentGitMutex.
+   */
+  private gatherContentFilesSync(): ContentFileEntry[] {
+    const results: ContentFileEntry[] = [];
+
+    const walk = (dir: string) => {
+      let entries: Dirent[];
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const fullPath = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          // Skip git internals and open-knowledge config dir
+          if (entry.name === '.git' || entry.name === '.open-knowledge') continue;
+          walk(fullPath);
+        } else if (entry.isFile()) {
+          const contentRelPath = relative(this.contentDir, fullPath);
+          // Only include files inside contentDir that pass the filter
+          if (!contentRelPath.startsWith('..') && !this.contentFilter.isExcluded(contentRelPath)) {
+            const projectRelPath = relative(this.projectDir, fullPath);
+            results.push({ contentRelPath, projectRelPath });
+          }
+        }
+      }
+    };
+
+    if (existsSync(this.contentDir)) {
+      walk(this.contentDir);
+    }
+    return results;
+  }
+
+  /**
+   * Build the auto-save commit message.
+   * ≤3 files: "Auto-save: Updated a.md, b.md"
+   * >3 files: "Auto-save: N files changed"
+   */
+  private buildCommitMessage(contentRelPaths: string[]): string {
+    if (contentRelPaths.length === 0) {
+      return 'Auto-save: changes saved';
+    }
+    if (contentRelPaths.length <= 3) {
+      return `Auto-save: Updated ${contentRelPaths.join(', ')}`;
+    }
+    return `Auto-save: ${contentRelPaths.length} files changed`;
   }
 
   // ─── Conflict handling ────────────────────────────────────────────────────
