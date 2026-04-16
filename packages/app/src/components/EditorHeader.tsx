@@ -24,6 +24,7 @@ import type { DiffLayout } from './DiffView';
 import type { EditorMode } from './EditorPane';
 import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
+import { SyncStatusBadge } from './SyncStatusBadge';
 import { ThemeToggle } from './ThemeToggle';
 import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 
@@ -587,6 +588,7 @@ export function EditorHeader({
             <TooltipContent>Document timeline</TooltipContent>
           </Tooltip>
         )}
+        <SyncStatusBadge />
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
         <ThemeToggle />
