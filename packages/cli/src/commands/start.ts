@@ -131,8 +131,11 @@ export function startCommand(getConfig: () => Config): Command {
         log.warn({}, 'No React app assets found — browser UI will not be available');
       }
 
-      // Filter-aware asset serving over contentDir (D9)
-      const contentSirv = sirv(contentDir, { dotfiles: false });
+      // Filter-aware asset serving over contentDir (D9).
+      // dev:true serves files on-demand via fs.stat instead of pre-scanning with
+      // totalist — required for repos whose contentDir contains pnpm node_modules
+      // with broken symlinks that crash totalist's sync walk at initialization.
+      const contentSirv = sirv(contentDir, { dotfiles: false, dev: true });
 
       // Create HTTP server and wire up Hocuspocus
       const httpServer = createHttpServer((req, res) => {
