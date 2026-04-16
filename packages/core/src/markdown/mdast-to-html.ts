@@ -51,6 +51,7 @@ import { type Plugin, unified } from 'unified';
 import { visit } from 'unist-util-visit';
 import { customNodeHandlers } from './mdast-to-hast-handlers.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
+import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 const SAFE_URL_SCHEME = /^(https?:|mailto:|tel:|ftp:|sms:|\/|#|\?|\.\/|\.\.\/)/i;
 
@@ -157,6 +158,13 @@ export function markdownToHtml(md: string): string {
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkMdxAgnostic)
     .use(remarkGfm)
+    // wiki-link micromark MUST be registered so `[[Target#anchor|Alias]]` in
+    // the markdown string gets parsed into first-class `wikiLink` mdast nodes
+    // that `customNodeHandlers` can then render as `<a class="wiki-link">`.
+    // Without this, Source copy + WYSIWYG copy (which both route through
+    // `markdownToHtml`) emit literal `[[...]]` text and lose wiki-link
+    // fidelity in the outbound text/html payload.
+    .use(remarkWikiLink)
     .use(remarkRehype, { handlers: customNodeHandlers })
     .use(rehypeSanitizeUrls)
     .use(rehypeStringify);
