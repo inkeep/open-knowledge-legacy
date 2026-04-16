@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { acquireServerLock, updateServerLockPort } from '@inkeep/open-knowledge-server';
+import { acquireUiLock, updateUiLockPort } from '@inkeep/open-knowledge-server';
 import type { Config } from '../../config/schema.ts';
 import { OK_DIR } from '../../constants.ts';
 import { resolvePreviewUrl } from './preview-url.ts';
@@ -42,8 +42,8 @@ afterEach(async () => {
 describe('resolvePreviewUrl — priority', () => {
   test('env wins over lock and config', () => {
     process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    updateServerLockPort(lockDir, 5173);
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateUiLockPort(lockDir, 5173);
     const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://config.example' } };
 
     const result = resolvePreviewUrl('docs/a', { config, lockDir });
@@ -52,8 +52,8 @@ describe('resolvePreviewUrl — priority', () => {
   });
 
   test('lock wins over config when env absent', () => {
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    updateServerLockPort(lockDir, 5173);
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateUiLockPort(lockDir, 5173);
     const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://wiki.acme.com' } };
 
     const result = resolvePreviewUrl('docs/a', { config, lockDir });
@@ -77,7 +77,7 @@ describe('resolvePreviewUrl — priority', () => {
 
 describe('resolvePreviewUrl — lock branch edge cases', () => {
   test('lock with port=0 falls through to config', () => {
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
     const config = { ...BASE_CONFIG, preview: { baseUrl: 'https://x.example' } };
 
     const result = resolvePreviewUrl('docs/a', { config, lockDir });
@@ -86,8 +86,8 @@ describe('resolvePreviewUrl — lock branch edge cases', () => {
   });
 
   test('lock always uses localhost, ignores hostname field', () => {
-    acquireServerLock(lockDir, { port: 0, worktreeRoot: tmpDir });
-    updateServerLockPort(lockDir, 4242);
+    acquireUiLock(lockDir, { port: 0, worktreeRoot: tmpDir });
+    updateUiLockPort(lockDir, 4242);
 
     const result = resolvePreviewUrl('docs/a', { config: BASE_CONFIG, lockDir });
 

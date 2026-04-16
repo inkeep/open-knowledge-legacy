@@ -1,10 +1,14 @@
 /**
  * Resolve a browser-reachable URL for a given wiki docName, priority:
- *   env (OPEN_KNOWLEDGE_PREVIEW_BASE_URL) → lock (server.lock) → config (preview.baseUrl)
+ *   env (OPEN_KNOWLEDGE_PREVIEW_BASE_URL) → lock (ui.lock) → config (preview.baseUrl)
  *
  * Env wins so per-shell overrides (tunnels, CI) are explicit. Lock wins over
  * config so a local checkout of a cloud-deployed repo resolves to the running
- * local server, not the prod URL checked into `.open-knowledge/config.yml`.
+ * local UI, not the prod URL checked into `.open-knowledge/config.yml`.
+ *
+ * The lock branch reads `ui.lock` (the `ok ui` process), not `server.lock`
+ * (the `ok start` collab process), because preview URLs must point at the
+ * React app — that's what the preview pane renders. See SPEC.md FR-2.4, D-015.
  *
  * URL shape: `{baseUrl}/#/{docName}` with per-segment encodeURIComponent.
  * Matches the hash-route parser in `packages/app/src/lib/doc-hash.ts`.
@@ -12,7 +16,7 @@
  * Returns null (never throws) when no source resolves. Malformed env/config
  * URLs fall through to the next source.
  */
-import { readServerLock } from '@inkeep/open-knowledge-server';
+import { readUiLock } from '@inkeep/open-knowledge-server';
 import type { Config } from '../../config/schema.ts';
 
 export type PreviewUrlSource = 'env' | 'lock' | 'config';
@@ -62,9 +66,10 @@ export function resolvePreviewUrl(
   }
 
   // 2. lock (always uses localhost — lock.hostname is the OS hostname, not
-  //    browser-reachable; see SPEC.md D9)
+  //    browser-reachable; see SPEC.md D9). Reads ui.lock (the React app) per
+  //    FR-2.4; server.lock points at collab-only in the post-split lifecycle.
   try {
-    const lock = readServerLock(ctx.lockDir);
+    const lock = readUiLock(ctx.lockDir);
     if (lock && lock.port > 0) {
       return {
         url: `http://localhost:${lock.port}${hash}`,
@@ -76,7 +81,7 @@ export function resolvePreviewUrl(
     // but surface the error for operators debugging "why won't the preview
     // URL resolve?" — otherwise this path is invisible.
     process.stderr.write(
-      `[preview-url] readServerLock failed at ${ctx.lockDir}, falling through to config: ${err instanceof Error ? err.message : String(err)}\n`,
+      `[preview-url] readUiLock failed at ${ctx.lockDir}, falling through to config: ${err instanceof Error ? err.message : String(err)}\n`,
     );
   }
 
