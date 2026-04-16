@@ -1065,11 +1065,12 @@ button:active:not(:disabled) {
 .jsx-add-child-pill {
   position: absolute;
   bottom: -10px;
-  left: 1rem;
-  padding: 0.125rem 0.75rem;
-  border-radius: 9999px;
-  border: 1px solid var(--border);
-  background: var(--popover);
+  left: 0;
+  right: 0;
+  text-align: center;
+  padding: 0.125rem 0;
+  border: none;
+  background: transparent;
   color: var(--muted-foreground);
   font-size: 0.6875rem;
   cursor: pointer;
@@ -1077,13 +1078,20 @@ button:active:not(:disabled) {
   pointer-events: none;
   transition: opacity 0.15s;
   z-index: 10;
+}
+.jsx-add-child-pill > span {
+  display: inline-block;
+  padding: 0.125rem 0.75rem;
+  border-radius: 9999px;
+  border: 1px solid var(--border);
+  background: var(--popover);
   white-space: nowrap;
 }
 .jsx-component-wrapper:hover > .jsx-add-child-pill {
   opacity: 1;
   pointer-events: auto;
 }
-.jsx-add-child-pill:hover {
+.jsx-add-child-pill:hover > span {
   background: var(--accent);
   color: var(--accent-foreground);
   border-color: var(--accent);

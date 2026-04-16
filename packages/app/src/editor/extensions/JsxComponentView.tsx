@@ -100,6 +100,20 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
   const pos = typeof getPos === 'function' ? getPos() : undefined;
 
+  // Check if this block is a child of another jsxComponent (e.g., Card inside Cards).
+  // Used to show up/down arrows only for children (top-level blocks use the SideMenu drag handle).
+  let isChildOfComponent = false;
+  try {
+    if (pos !== undefined) {
+      const $pos = editor.state.doc.resolve(pos);
+      if ($pos.depth > 0) {
+        isChildOfComponent = $pos.parent.type.name === 'jsxComponent';
+      }
+    }
+  } catch {
+    // Position resolution can fail during teardown
+  }
+
   const hasEditableProps = descriptor.props.some(
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
   );
@@ -167,53 +181,56 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         contentEditable={false}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Move up */}
-        <button
-          type="button"
-          className="jsx-chrome-btn"
-          aria-label="Move up"
-          onClick={() => {
-            if (typeof pos !== 'number') return;
-            const $p = editor.state.doc.resolve(pos);
-            const idx = $p.index($p.depth);
-            if (idx === 0) return;
-            const parent = $p.node($p.depth);
-            const prev = parent.child(idx - 1);
-            const from = pos - prev.nodeSize;
-            const to = pos + node.nodeSize;
-            const tr = editor.state.tr;
-            const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-            const pre = editor.state.doc.slice(from, pos);
-            tr.replaceWith(from, to, cur.content.append(pre.content));
-            editor.view.dispatch(tr.scrollIntoView());
-          }}
-        >
-          <ChevronUp size={12} />
-        </button>
+        {/* Move up/down — only for children inside containers (top-level uses SideMenu drag) */}
+        {isChildOfComponent && (
+          <button
+            type="button"
+            className="jsx-chrome-btn"
+            aria-label="Move up"
+            onClick={() => {
+              if (typeof pos !== 'number') return;
+              const $p = editor.state.doc.resolve(pos);
+              const idx = $p.index($p.depth);
+              if (idx === 0) return;
+              const parent = $p.node($p.depth);
+              const prev = parent.child(idx - 1);
+              const from = pos - prev.nodeSize;
+              const to = pos + node.nodeSize;
+              const tr = editor.state.tr;
+              const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+              const pre = editor.state.doc.slice(from, pos);
+              tr.replaceWith(from, to, cur.content.append(pre.content));
+              editor.view.dispatch(tr.scrollIntoView());
+            }}
+          >
+            <ChevronUp size={12} />
+          </button>
+        )}
 
-        {/* Move down */}
-        <button
-          type="button"
-          className="jsx-chrome-btn"
-          aria-label="Move down"
-          onClick={() => {
-            if (typeof pos !== 'number') return;
-            const $p = editor.state.doc.resolve(pos);
-            const idx = $p.index($p.depth);
-            const parent = $p.node($p.depth);
-            if (idx >= parent.childCount - 1) return;
-            const next = parent.child(idx + 1);
-            const from = pos;
-            const to = pos + node.nodeSize + next.nodeSize;
-            const tr = editor.state.tr;
-            const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-            const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
-            tr.replaceWith(from, to, nxt.content.append(cur.content));
-            editor.view.dispatch(tr.scrollIntoView());
-          }}
-        >
-          <ChevronDown size={12} />
-        </button>
+        {isChildOfComponent && (
+          <button
+            type="button"
+            className="jsx-chrome-btn"
+            aria-label="Move down"
+            onClick={() => {
+              if (typeof pos !== 'number') return;
+              const $p = editor.state.doc.resolve(pos);
+              const idx = $p.index($p.depth);
+              const parent = $p.node($p.depth);
+              if (idx >= parent.childCount - 1) return;
+              const next = parent.child(idx + 1);
+              const from = pos;
+              const to = pos + node.nodeSize + next.nodeSize;
+              const tr = editor.state.tr;
+              const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+              const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
+              tr.replaceWith(from, to, nxt.content.append(cur.content));
+              editor.view.dispatch(tr.scrollIntoView());
+            }}
+          >
+            <ChevronDown size={12} />
+          </button>
+        )}
 
         {/* Settings → Popover PropPanel (only if editable props) */}
         {hasEditableProps && (
@@ -290,9 +307,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             editor.chain().focus().insertContentAt(insertChildAt(), childJSON).run();
           }}
         >
-          {node.childCount === 0
-            ? `Click to add a ${(descriptor.emptyChildName as string).toLowerCase()}`
-            : `+ Add ${descriptor.emptyChildName}`}
+          <span>
+            {node.childCount === 0
+              ? `Click to add a ${(descriptor.emptyChildName as string).toLowerCase()}`
+              : `+ Add ${descriptor.emptyChildName}`}
+          </span>
         </button>
       )}
     </NodeViewWrapper>
