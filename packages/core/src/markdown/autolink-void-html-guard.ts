@@ -307,12 +307,26 @@ export function protectFromMdx(source: string): string {
   // — treat all open braces as unmatched because remark-parse processes
   // block structure BEFORE remark-mdx processes expressions.
   //
-  // Block boundaries that split expressions:
-  //   - Blank lines (\n\n) — paragraph breaks
-  //   - \n> — blockquote markers (remark-parse claims > as block syntax)
+  // Escape discipline (US-009, R6a): `{` preceded by an odd number of
+  // backslashes is a CommonMark §2.4 escape — the brace is already
+  // neutralized from remark-mdx's expression parser, so PUA-protecting
+  // it would DEFEAT the escape semantics: remark-parse would see
+  // `\<PUA>` and keep the backslash as literal text (since `<PUA>` is
+  // not in §2.4's escapable set), producing text value `\{` on restore.
+  // That text value then re-escapes on serialize to `\\\{`, growing 2
+  // backslashes per round-trip (safeText non-idempotence). Skipping the
+  // stack operations for escaped braces lets remark-parse apply the
+  // escape naturally; position-slice then tags `data.escapedChars` and
+  // the text handler re-emits `\{` on serialize. Idempotent.
+  //
+  // Symmetry note: `}` with odd preceding backslashes is similarly
+  // skipped — an escaped `}` can't close an expression, so counting it
+  // as a matched close would spuriously "pair" an earlier unmatched `{`,
+  // bypassing protection and handing the unclosed expression to
+  // remark-mdx (crash).
   //
   // This correctly handles `{{`, `{{{`, `{a{b}`, `{\n\n}text`,
-  // `a{\n>}` (blockquote splits expression), etc.
+  // `a{\n>}` (blockquote splits expression), `\{`, `\}`, `\{a}`, etc.
   {
     const unmatchedPositions: number[] = [];
     const stack: number[] = [];
@@ -329,10 +343,14 @@ export function protectFromMdx(source: string): string {
           continue;
         }
       }
-      if (result[i] === '{') {
-        stack.push(i);
-      } else if (result[i] === '}') {
-        if (stack.length > 0) stack.pop(); // matched pair within same block
+      if (result[i] === '{' || result[i] === '}') {
+        // Count preceding backslashes; odd count means this brace is
+        // CommonMark-escaped and remark-parse will consume the escape.
+        let bs = 0;
+        for (let j = i - 1; j >= 0 && result[j] === '\\'; j--) bs++;
+        if (bs % 2 === 1) continue; // escaped — skip stack operations
+        if (result[i] === '{') stack.push(i);
+        else if (stack.length > 0) stack.pop(); // matched pair within same block
       }
     }
     // Any remaining at EOF are also unmatched

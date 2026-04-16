@@ -17,6 +17,50 @@ Closes the 3 "(Specific failure TBD during Iterate phase)" entries from `commonm
 2. **Backslash escapes** — cumulative escaping. Example: `\*not emphasized*` accumulates escape characters each round-trip.
 3. **Lists** — nested code block handling. `1. ` with nested code: first round normalizes nesting, second round destroys structure.
 
+### Correction (US-009 iteration, 2026-04-16): Emphasis 1-3 root cause is NOT escape-cumulation
+
+Double-round-trip probe on the 5 failing Emphasis examples + direct mdast inspection via `MarkdownManager.parse` revealed that the r1 → r2 instability of `***foo* bar**`-class inputs is NOT a safeText escape issue. It is a **structural loss in the PM → mdast mark-hydration algorithm** in `@handlewithcare/remark-prosemirror`.
+
+**Trace for `***foo* bar**`:**
+- Original mdast: `strong([emphasis([text "foo"]), text " bar"])` — strong wraps both; emphasis wraps only "foo".
+- PM representation (schema-normalized): span "foo" with marks `[emphasis, strong]` + span " bar" with marks `[strong]`.
+- PM → mdast via `hydrateMarks` (library internal `mdast-util-from-prosemirror.js`): partitions by `marks[0]`. Span "foo" has `emphasis` first, span " bar" has `strong` first → **different partitions** → wraps individually:
+  - Partition 1: `emphasis(strong([text "foo"]))` (inside-out because emphasis is at `marks[0]`)
+  - Partition 2: `strong([text " bar"])`
+- Sibling emission: `[emphasis(strong("foo")), strong(" bar")]` — structurally different from original.
+- Serialize: `***foo***` + `** bar**` = `***foo***** bar**`. 5 consecutive asterisks between "foo" and " bar" become a flanking-delimiter ambiguity on re-parse, which then parses as `[emphasis(strong("foo")), text("** bar**")]`, and the literal `**` in text re-serializes as `\*\*`. Hence r2 = `***foo***\*\* bar\*\*`.
+
+**Why mark reorder doesn't fix it:** ProseMirror Schema normalizes mark order per `sharedExtensions` registration order (emphasis before strong), so setting `[strong, emphasis]` in PM JSON is silently renormalized to `[emphasis, strong]` on `Node.fromJSON`. There is no static order that works for both `***foo***` (strong-outer) and `*foo**bar**baz*` (emphasis-outer) cases — the "outerness" is context-dependent (who shares the mark with adjacent spans).
+
+**Proper fix (out of US-009 / R6a scope):** Replace `fromProseMirror`'s mark hydration with an **outside-in greedy algorithm**:
+```
+build(spans):
+  shared = intersect(span.marks for span in spans)
+  if shared.length > 0:
+    m = shared[0]
+    stripped = spans.map(s => remove m from s.marks)
+    return [wrap(m, build(stripped))]
+  else partition into adjacent groups with any shared mark, recurse each.
+```
+For `["foo"[E,S], " bar"[S]]`: intersect = `[S]`, peel strong → `["foo"[E], " bar"[]]` → different groups → emphasis("foo") and text(" bar") → wrap strong → `strong([emphasis("foo"), text(" bar")])`. **Byte-identical to original mdast.**
+
+Scope: this is 200-500 LOC + extensive PBT coverage. Proper story owner: a new R-item (follow-up) covering "PM mark hydration algorithm." Requires coordinated schema/handler audit.
+
+### Correction (US-009 iteration): Emphasis cases 4-5 root cause is mark-exclusion (schema)
+
+Examples: `*a \`*\`*`, `_a \`_\`_`. Original mdast: `emphasis([text "a ", inlineCode "*"])` — emphasis wraps both the text and the inline code. But ProseMirror's default `Code` mark (`@tiptap/extension-code`) declares `excludes: '_'` (excludes ALL other marks on the same text span). So the "*" span can only have the `code` mark — NOT emphasis. On PM → mdast, the spans are `["a "[emphasis], "*"[code]]` and the algorithm can't recover the original coverage: result is `[emphasis("a "), inlineCode("*")]` (siblings). Serialize: `*a *` + `` `*` `` = `*a *\`*\``; re-parse keeps the emphasis structure lost; r2 re-escapes `*` chars in text.
+
+**Proper fix (out of US-009 / R6a scope):** Remove `excludes: '_'` from the Code mark extension (widening per precedent #9, arguably allowed, but needs editor-render audit: italic-within-code rendering implications). Combine with outside-in mark hydration above.
+
+### US-009 resolution
+
+US-009's specified fix (`safeText(safeText(x)) === safeText(x)`) was implementable, and DID fix Finding 4 (HTML blocks CDATA) in full. The remaining Emphasis 1-5 failures and Backslash Example 1 (context-sensitive mdast-util-to-markdown escape state) and Example 2 (HTML entity decode — NG5-adjacent) are **not safeText bugs** — the evidence file's prior framing was incorrect. Actual per-section R6a deltas:
+- HTML blocks: 43/44 → 44/44 ✓ (US-009 success)
+- Emphasis: 127/132 → 127/132 (blocked on structural PM mark hydration + Code mark exclusion)
+- Backslash: 11/13 → 11/13 (blocked on mdast-util-to-markdown context sensitivity + HTML entity decode)
+
+The safeText idempotency invariant is now empirically satisfied for all AC-listed §2.4 chars (backslash, *, _, #, <, >, {, }) via the R23 escape-aware brace-stack change (`autolink-void-html-guard.ts:protectFromMdx`). Locked in via `autolink-void-html-guard.test.ts` idempotency suite (21 new tests).
+
 ## Newly characterized (this evidence)
 
 ### 4. HTML blocks — CDATA fallthrough + safeText over-escaping

@@ -182,3 +182,94 @@ describe('R23 guard: exhaustive < context coverage', () => {
     });
   }
 });
+
+/**
+ * US-009 / R6a — safeText escape idempotency for CommonMark §2.4 punctuation.
+ *
+ * Root cause (discovered during /implement): the R23 brace protector
+ * PUA-substituted `{` unconditionally, including backslash-escaped braces.
+ * remark-parse then couldn't consume the `\<PUA>` escape (PUA isn't in §2.4),
+ * leaving text value `\{` on restore. mdast-util-to-markdown escaped BOTH
+ * chars → `\\\{`, accumulating +2 backslashes per round-trip. The guard now
+ * skips stack operations for `{`/`}` with odd preceding backslashes, letting
+ * remark-parse handle the escape naturally; position-slice tags escapedChars;
+ * the text handler re-emits `\{` on serialize. Idempotent.
+ *
+ * Closes HTML blocks CDATA idempotence (§8.3 CommonMark — blocks type 4
+ * where `<![CDATA[` falls through to text and inline braces surface).
+ */
+describe('R6a: safeText idempotency for §2.4 ambiguous chars', () => {
+  const CHARS_AC = ['\\', '*', '_', '#', '<', '>', '{', '}'];
+
+  for (const c of CHARS_AC) {
+    test(`round-trip stable — bare "${c}"`, () => {
+      const r1 = roundTrip(c);
+      const r2 = roundTrip(r1);
+      expect(r2).toBe(r1);
+    });
+
+    test(`round-trip stable — escaped "\\${c}"`, () => {
+      const r1 = roundTrip('\\' + c);
+      const r2 = roundTrip(r1);
+      expect(r2).toBe(r1);
+    });
+  }
+
+  test('double-escape stable (5 rounds) — "\\{"', () => {
+    let s = '\\{';
+    const outputs: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      s = roundTrip(s);
+      outputs.push(s);
+    }
+    // After the first round we must reach a fixed point.
+    expect(new Set(outputs).size).toBe(1);
+  });
+
+  test('double-escape stable (5 rounds) — "\\\\{"', () => {
+    let s = '\\\\{';
+    const outputs: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      s = roundTrip(s);
+      outputs.push(s);
+    }
+    expect(new Set(outputs).size).toBe(1);
+  });
+
+  test('CDATA-shaped HTML block idempotent (R6 Finding 4)', () => {
+    const cdata =
+      '<![CDATA[\nfunction matchwo(a,b)\n{\n  if (a < b && a < 0) then {\n    return 1;\n\n  } else {\n\n    return 0;\n  }\n}\n]]>\nokay\n';
+    const r1 = roundTrip(cdata);
+    const r2 = roundTrip(r1);
+    expect(r2).toBe(r1);
+    // A braces' escape-count should not grow between rounds.
+    const countBs = (s: string) => (s.match(/\\\\/g) ?? []).length;
+    expect(countBs(r2)).toBe(countBs(r1));
+  });
+
+  test('escaped brace in MDX-adjacent context preserves escape', () => {
+    // `\{expression}` — the escape means remark-mdx must not see
+    // `{expression}` as an expression. After R23 skip-escaped-brace,
+    // the first `{` is escaped and `}` is unpaired → no expression formed.
+    const md = 'prose \\{expression}\n';
+    const r1 = roundTrip(md);
+    const r2 = roundTrip(r1);
+    expect(r2).toBe(r1);
+    // The escaped brace remains backslash-escaped (not PUA-leaked).
+    expect(r1).toContain('\\{');
+  });
+
+  test('unmatched brace still protected (no crash) — fix does not regress R23', () => {
+    // Unescaped unmatched `{` must still crash-protect via PUA sentinel.
+    expect(() => mdManager.parse('prose {unclosed\n')).not.toThrow();
+    expect(() => mdManager.parse('unclosed}\nprose\n')).not.toThrow();
+    expect(() => mdManager.parse('{nested {unclosed\n')).not.toThrow();
+  });
+
+  test('literal backslash before matched pair is still a literal', () => {
+    // `\\{a}` — the `\\` is the escape for backslash (producing literal `\`),
+    // then `{a}` is a balanced expression. Don't accidentally treat `\\{` as
+    // an escaped brace.
+    expect(() => mdManager.parse('\\\\{a}\n')).not.toThrow();
+  });
+});
