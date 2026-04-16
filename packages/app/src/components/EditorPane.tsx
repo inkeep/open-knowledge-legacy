@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
 import { createNavigationRetryHandler } from '@/editor/navigation-retry';
+import { ConflictBanner } from './ConflictBanner';
+import { ConflictResolver } from './ConflictResolver';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
@@ -20,6 +22,7 @@ export type EditorMode = 'wysiwyg' | 'source' | 'diff';
 export function EditorPane() {
   const [editorMode, setEditorMode] = useState<EditorMode>('wysiwyg');
   const [timelineOpen, setTimelineOpen] = useState(false);
+  const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
   const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
   const [restoring, setRestoring] = useState(false);
@@ -147,6 +150,7 @@ export function EditorPane() {
 
   return (
     <>
+      <ConflictBanner onOpenResolver={() => setConflictResolverOpen(true)} />
       <EditorHeader
         editorMode={editorMode}
         onModeChange={handleModeChange}
@@ -175,6 +179,7 @@ export function EditorPane() {
         onEntrySelect={handleEntrySelect}
         selectedSha={previewEntry?.sha}
       />
+      <ConflictResolver open={conflictResolverOpen} onOpenChange={setConflictResolverOpen} />
     </>
   );
 }
