@@ -6,7 +6,7 @@ import { loadConfig } from '../config/loader.ts';
 import { OK_DIR } from '../constants.ts';
 import { previewContent } from '../content/preview.ts';
 import { ALL_EDITOR_IDS } from './editors.ts';
-import { formatInitResult, runInit } from './init.ts';
+import { detectInstalledEditors, formatInitResult, runInit } from './init.ts';
 
 describe('runInit', () => {
   let testDir: string;
@@ -571,5 +571,90 @@ describe('runInit', () => {
       expect(output).toContain('Content:');
       expect(output).toContain(`Found ${preview.totalCount} markdown files`);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// detectInstalledEditors — US-013 / FR-3.1 / D-013
+// ---------------------------------------------------------------------------
+
+describe('detectInstalledEditors', () => {
+  let testDir: string;
+  let fakeHome: string;
+
+  beforeEach(() => {
+    testDir = resolve(
+      tmpdir(),
+      `detect-editors-test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testDir, { recursive: true });
+    fakeHome = join(testDir, 'fakehome');
+    mkdirSync(fakeHome, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testDir, { recursive: true, force: true });
+  });
+
+  it('always detects Claude because its config dir is cwd itself', () => {
+    // No sibling dirs created; Claude's configPath is <cwd>/.mcp.json → dirname is cwd → exists
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('claude');
+  });
+
+  it('detects Cursor when .cursor/ exists', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('cursor');
+  });
+
+  it('does NOT detect Cursor when .cursor/ is absent', () => {
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).not.toContain('cursor');
+  });
+
+  it('detects VS Code when .vscode/ exists', () => {
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('vscode');
+  });
+
+  it('detects Windsurf when ~/.codeium/windsurf/ exists (via home override)', () => {
+    mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toContain('windsurf');
+  });
+
+  it('does NOT detect Windsurf when ~/.codeium/windsurf/ is absent', () => {
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).not.toContain('windsurf');
+  });
+
+  it('returns all four when all editor config dirs exist', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    mkdirSync(join(fakeHome, '.codeium', 'windsurf'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    expect(detected).toEqual(expect.arrayContaining([...ALL_EDITOR_IDS]));
+    expect(detected).toHaveLength(4);
+  });
+
+  it('preserves EDITOR_TARGETS ordering in return value', () => {
+    mkdirSync(join(testDir, '.cursor'), { recursive: true });
+    mkdirSync(join(testDir, '.vscode'), { recursive: true });
+    const detected = detectInstalledEditors(testDir, fakeHome);
+    // Order comes from ALL_EDITOR_IDS = ['claude', 'cursor', 'vscode', 'windsurf']
+    expect(detected).toEqual(['claude', 'cursor', 'vscode']);
+  });
+
+  it('returns empty list when the cwd itself does not exist (zero-detected edge case)', () => {
+    // Synthesizes the "zero detected" non-TTY fallback path that exit 1s.
+    // In real filesystems, cwd always exists (so Claude is always detected),
+    // but with a synthetic nonexistent cwd + home, every editor's dirname
+    // misses → no detections.
+    const missingCwd = join(testDir, 'does-not-exist');
+    const missingHome = join(testDir, 'also-not-here');
+    const detected = detectInstalledEditors(missingCwd, missingHome);
+    expect(detected).toEqual([]);
   });
 });

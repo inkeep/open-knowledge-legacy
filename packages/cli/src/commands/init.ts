@@ -501,6 +501,29 @@ function parseEditorFlag(value: string): EditorId[] {
   return ids;
 }
 
+/**
+ * Detect every editor whose MCP config directory already exists. The parent
+ * directory of each editor's `configPath` is the probe location so an empty
+ * editor install (no `mcp.json` yet) still counts as detected. Covers both
+ * project-scoped editors (Claude `.mcp.json` sibling, Cursor `.cursor/`, VS
+ * Code `.vscode/`) and Windsurf's user-global `~/.codeium/windsurf/`.
+ *
+ * Used by the Commander action to default to all detected editors in both
+ * TTY (pre-select) and non-TTY (fallback) branches — US-013 / FR-3.1 /
+ * D-013.
+ */
+export function detectInstalledEditors(cwd: string, home?: string): EditorId[] {
+  const detected: EditorId[] = [];
+  for (const id of ALL_EDITOR_IDS) {
+    const target = EDITOR_TARGETS[id];
+    const configPath = target.configPath(cwd, home);
+    if (existsSync(dirname(configPath))) {
+      detected.push(id);
+    }
+  }
+  return detected;
+}
+
 export function initCommand(): Command {
   return new Command('init')
     .description(
@@ -511,7 +534,7 @@ export function initCommand(): Command {
     .option('--force', 'Overwrite existing open-knowledge MCP entries (default: skip)')
     .option(
       '--editor <editors>',
-      'Target editor(s): claude, cursor, vscode, windsurf, all (comma-separated)',
+      'Target editor(s): claude, cursor, vscode, windsurf, all (comma-separated) — default: all detected editors (non-TTY) / preselects detected editors (TTY)',
     )
     .action(async (opts: { mcp?: boolean; force?: boolean; editor?: string }) => {
       const cwd = process.cwd();
@@ -528,8 +551,18 @@ export function initCommand(): Command {
           return;
         }
       } else if (opts.mcp !== false && process.stdin.isTTY) {
-        // Interactive prompt
+        // Interactive prompt — pre-select every detected editor regardless of
+        // scope. Empty detection set shows all four unselected alongside a
+        // hint (D-019) so the user can still pick manually or cancel and use
+        // --editor.
         const { multiselect, isCancel } = await import('@clack/prompts');
+
+        const detected = new Set(detectInstalledEditors(cwd));
+        if (detected.size === 0) {
+          process.stdout.write(
+            'No MCP-capable editors detected — select manually, or cancel and use --editor <all|claude|cursor|vscode|windsurf>.\n',
+          );
+        }
 
         const editorChoices = ALL_EDITOR_IDS.map((id) => {
           const target = EDITOR_TARGETS[id];
@@ -537,14 +570,11 @@ export function initCommand(): Command {
             target.scope === 'global'
               ? target.configPath(cwd).replace(/^\/Users\/[^/]+/, '~')
               : relative(cwd, target.configPath(cwd));
-          // Pre-select editors whose config directory already exists
-          const dirExists =
-            target.scope === 'project' && existsSync(dirname(target.configPath(cwd)));
           return {
             value: id,
             label: target.label,
             hint,
-            initialValue: dirExists || id === 'claude',
+            initialValue: detected.has(id),
           };
         });
 
@@ -561,8 +591,16 @@ export function initCommand(): Command {
 
         editors = selected as EditorId[];
       } else {
-        // Non-interactive fallback
-        editors = ['claude'];
+        // Non-interactive fallback — default to every detected editor.
+        // Zero detected: exit 1 with a helpful hint (D-019).
+        editors = detectInstalledEditors(cwd);
+        if (editors.length === 0) {
+          process.stderr.write(
+            'No MCP-capable editors detected. Use --editor <all|claude|cursor|vscode|windsurf> to force.\n',
+          );
+          process.exitCode = 1;
+          return;
+        }
       }
 
       const result = runInit({
