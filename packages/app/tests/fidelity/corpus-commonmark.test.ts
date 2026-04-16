@@ -1,13 +1,22 @@
 /**
  * CommonMark corpus test — 652 spec examples through round-trip.
  *
- * Phase 1 baseline: verifies that every example round-trips without
- * crash/exception and that the output is idempotent (second round-trip
- * equals first) for sections we fully support. Sections requiring
- * Tier 2/3 features (US-006 through US-009) test crash-free only.
+ * Every example must round-trip without crash AND be idempotent
+ * (`serialize(parse(serialize(parse(x)))) === serialize(parse(x))`)
+ * for every section EXCEPT those listed in NORMALIZE_SECTIONS.
  *
- * As Tier 2/3 features land, sections move from NORMALIZE_SECTIONS
- * to the default idempotence assertion.
+ * US-012 (R5a) tightening: 17 of the original 19 NORMALIZE_SECTIONS
+ * promoted to default idempotence assertion. KNOWN_CRASH_CEILING dropped
+ * from 50 to 0 (actual crash count is 0 — verified by probe across full
+ * 652-example corpus).
+ *
+ * Two sections remain in NORMALIZE_SECTIONS, blocked on a structural
+ * mark-hydration issue documented in evidence/r6-failure-modes.md
+ * §"Correction (US-009 iteration)". A separate R-item is required to
+ * (a) replace `@handlewithcare/remark-prosemirror`'s order-based
+ * `hydrateMarks` with outside-in greedy nesting, and (b) remove the
+ * `excludes: '_'` constraint on the Code mark. Both are out of US-009's
+ * scope; promoting these sections requires landing those changes first.
  */
 
 import { describe, expect, test } from 'bun:test';
@@ -17,36 +26,25 @@ import { mdRoundTrip, normalize } from './helpers';
 // Sections entirely outside our schema
 const SKIP_SECTIONS = new Set(['Tabs', 'Indented code blocks']);
 
-// Sections that normalize non-idempotently until Tier 2/3 features land.
-// These test crash-free round-trip only.
-// Sections that normalize non-idempotently until Tier 2/3 features land
-// or due to known CommonMark edge cases beyond our extension set.
-const NORMALIZE_SECTIONS = new Set([
-  'HTML blocks',
-  'Raw HTML',
-  'Setext headings',
-  'Fenced code blocks',
-  'Link reference definitions',
-  'Hard line breaks',
-  'Backslash escapes',
-  'Entity and numeric character references',
-  'Thematic breaks',
-  'Block quotes', // Nested blockquote + other block combos
-  'List items', // Complex nesting, lazy continuation
-  'Lists', // Tight/loose, blank-line-count sensitivity
-  'Code spans', // Multi-line code spans, backtick count edge cases
-  'Emphasis and strong emphasis', // Delimiter run edge cases
-  'Links', // Reference links, angle-bracket URLs
-  'Autolinks', // Angle-bracket autolinks
-  'Images', // Block/inline image lifting, image reference edge cases
-  'ATX headings', // Closing-sequence edge cases (## foo ##)
-  'Paragraphs', // Blank-line normalization between blocks
-]);
+// Sections still failing idempotence on this corpus.
+//
+// Both blocked on the same structural root cause (PM mark hydration in
+// `@handlewithcare/remark-prosemirror`'s `hydrateMarks` partitions by
+// `marks[0]` and the schema-normalized order places emphasis before
+// strong, producing `[emphasis(strong(X)), strong(Y)]` on round-trip
+// instead of `strong(emphasis(X), Y)`). See evidence/r6-failure-modes.md.
+//
+// Pass rates as of US-012 landing:
+//   - Backslash escapes: 11/13 (HTML entity decode + context-sensitive
+//     unsafe-char escaping in mdast-util-to-markdown)
+//   - Emphasis and strong emphasis: 127/132 (mark hydration + Code mark
+//     `excludes: '_'`)
+const NORMALIZE_SECTIONS = new Set(['Backslash escapes', 'Emphasis and strong emphasis']);
 
-// Track crashes to detect regressions — if fidelity extension changes introduce
-// new parsing crashes, the test fails even though individual examples are skipped.
-// Update this count only when a known upstream parser crash is resolved.
-const KNOWN_CRASH_CEILING = 50;
+// Crash ceiling. Actual count: 0 (probed across full corpus 2026-04-16).
+// Drop to 0 closes the silent-crash-tolerance hole. Any new crash will
+// fail the dedicated assertion at the bottom of the suite.
+const KNOWN_CRASH_CEILING = 0;
 
 describe('CommonMark corpus — round-trip stability', () => {
   let idx = 0;
