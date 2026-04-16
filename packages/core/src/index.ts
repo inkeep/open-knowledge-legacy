@@ -40,6 +40,11 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+export {
+  cleanupPlugins as htmlToMdastCleanupPlugins,
+  type HtmlToMdastOptions,
+  htmlToMdast,
+} from './markdown/html-to-mdast.ts';
 export { MarkdownManager } from './markdown/index.ts';
 export {
   getParseHealth,
