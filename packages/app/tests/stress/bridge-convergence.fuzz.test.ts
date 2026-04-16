@@ -704,9 +704,18 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
         // For each expected marker, compute the SET of acceptable final
         // lines: always the pre-patch form; plus every post-patch form
         // obtained by applying ONE patch's find→replace at its
-        // first-matching position in the pre-patch line. (Compound
-        // patch-of-patch-of-patch application is rare under 12 ops/seed
-        // and its prefix is still guarded by oracle (d).)
+        // first-matching position in the pre-patch line.
+        //
+        // At the fuzzer's 8% agent-patch rate × 12 ops/seed, P(≥2 patches
+        // per seed) is ~25% (Poisson, λ=0.96) — not rare in aggregate. The
+        // edge case we're skipping is the NARROWER "≥2 patches BOTH hit
+        // the same marker": both patches' `find` WORDS must land in the
+        // same content line, which is much less likely given the WORDS
+        // pool of 8 items × independent random draws. If that case ever
+        // produces a false-positive in practice, oracle (d)'s prefix
+        // guarantee still holds and the snapshot file at
+        // /tmp/bridge-conv-fuzz-<seed>/ exposes the diverged state for
+        // deterministic replay.
         const acceptableForPrefix = new Map<string, Set<string>>();
         for (const [prefix, preLine] of preMarkerLines) {
           const accepts = new Set<string>([preLine]);
