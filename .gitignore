@@ -59,3 +59,4 @@ blob-report/
 packages/core/tests/perf/results.*.json
 
 /test-doc.md
+.openknowledge/

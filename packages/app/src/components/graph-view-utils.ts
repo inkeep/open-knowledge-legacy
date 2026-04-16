@@ -6,6 +6,9 @@ export interface DocGraphNode {
   label: string;
   docName: string;
   anchor: string | null;
+  cluster?: string | null;
+  category?: string | null;
+  tags?: string[] | null;
 }
 
 export interface ExternalGraphNode {
@@ -55,7 +58,41 @@ export type GraphNodeClickAction =
   | { kind: 'select'; selection: GraphNodeSelection };
 
 export function getGraphNodeTooltipLabel(node: GraphNode): string {
-  return node.kind === 'external' ? node.url : (node.label ?? node.id);
+  if (node.kind === 'external') return node.url;
+
+  const title = node.label ?? node.id;
+  const hasMetadata = node.cluster || node.category || (node.tags && node.tags.length > 0);
+  if (!hasMetadata) return title;
+
+  const lines: string[] = [
+    `<div style="font-weight:600;font-size:14px;color:#f1f5f9;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid rgba(148,163,184,0.3)">${escapeHtml(title)}</div>`,
+  ];
+
+  if (node.cluster) {
+    lines.push(
+      `<div style="font-size:12.5px;color:#f1f5f9;margin-bottom:2px"><span style="color:#cbd5e1">cluster:</span> ${escapeHtml(node.cluster)}</div>`,
+    );
+  }
+  if (node.category) {
+    lines.push(
+      `<div style="font-size:12.5px;color:#f1f5f9;margin-bottom:2px"><span style="color:#cbd5e1">category:</span> ${escapeHtml(node.category)}</div>`,
+    );
+  }
+  if (node.tags && node.tags.length > 0) {
+    lines.push(
+      `<div style="font-size:12.5px;color:#f1f5f9"><span style="color:#cbd5e1">tags:</span> ${node.tags.map(escapeHtml).join(', ')}</div>`,
+    );
+  }
+
+  return lines.join('');
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 export function getGraphNodeVisualState(
