@@ -239,7 +239,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
         {/* Settings → Popover PropPanel (only if editable props) */}
         {hasEditableProps && (
-          <Popover>
+          <Popover defaultOpen={selected}>
             <PopoverTrigger asChild>
               <button
                 type="button"
