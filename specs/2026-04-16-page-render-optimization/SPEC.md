@@ -29,7 +29,7 @@ First-ever visits to a document and repeat visits are treated identically, even 
 - **Transition:** `openDocument(docName)` wrapped in `startTransition` — React keeps the previous doc's rendered output visible while the next entry's promise is pending.
 - **Error:** `react-error-boundary@^6.0.0` wraps the Suspense boundary, giving sync failures a recoverable "try again" UX.
 - **Progress:** A `NavigationPendingBar` shows an escalating indicator (subtle → visible → "taking longer than usual" → "Try again?") tied to `isPending`, timing out at 30s.
-- **Defense-in-depth:** Client-side `forceSyncInterval: 200` on `HocuspocusProvider` mitigates the documented `synced`-never-fires edge cases.
+- **Defense-in-depth:** Client-side `forceSyncInterval: 5000` on `HocuspocusProvider` mitigates the documented `synced`-never-fires edge cases.
 
 Net experience: click → old content stays on screen → new content appears in one atomic swap when ready → sync failures are visible and recoverable.
 
@@ -148,7 +148,7 @@ Net experience: click → old content stays on screen → new content appears in
 | F9 | Must | Escalating progress indicator — 4 tiers | Unit test on `NavigationPendingBar`: at t=0s strip hidden; 0-5s subtle strip visible; 5-15s visible indicator; 15-25s "taking longer" text; 25-30s "Try again?" prompt; 30s timeout → error boundary. | G3, G4 |
 | F10 | Must | Source editor (CodeMirror) path follows same architecture | Same acceptance criteria as F1-F4 applied to `isSourceMode === true`. | G1, G5, G6 |
 | F11 | Must | Rapid sequential navigation is correct | Playwright: click 5 files rapidly; assert final state matches last-clicked doc; no content corruption or lingering pending state. | G1, G2 |
-| F12 | Must | `forceSyncInterval: 200` on client providers | Unit test on `provider-pool.ts`: new provider receives `forceSyncInterval: 200` option. | (D8) |
+| F12 | Must | `forceSyncInterval: 5000` on client providers | Unit test on `provider-pool.ts`: new provider receives `forceSyncInterval: 5000` option. | (D8) |
 | F13 | Must | Accessibility — screen-reader announcement of loading state | Unit test + axe-core: editor container has `aria-busy` attribute flipping correctly; `NavigationPendingBar` has `role="status"` `aria-live="polite"`; error state has `role="alert"`. | G3, G4 |
 | F14 | Should | Architectural pattern is documented as a CLAUDE.md precedent (narrow scope) | CLAUDE.md contains a new Architectural precedent #15 (landed as #15 because precedent #14 — server-authoritative cross-CRDT sync — shipped ahead of this work) specifically describing **the hybrid Activity+Suspense+use(promise) pattern for subscription-source async primitives (single-event resolution, lifecycle-tied invalidation)** — NOT a generalization to "all async loading." The precedent explicitly calls out the semantic boundary: TanStack Query remains the correct tool for HTTP fetch/refetch; use(promise) is for subscribe-once. This prevents future contributors from misreading the precedent as a mandate to rewrite existing TanStack Query panels. | G6 |
 | F15 | Should | `syncPromise` cache invalidates on provider destroy/recycle | Unit test: destroy provider → subsequent `syncPromise(docName)` call returns a NEW promise. Same for 4s RECYCLE_DEBOUNCE path. | (D7) |
@@ -157,7 +157,7 @@ Net experience: click → old content stays on screen → new content appears in
 ### Non-functional requirements
 
 - **Performance:** Warm-nav perceived latency <100ms click-to-content-swap. Cold-nav pending-feedback visible within 100ms of click. 30s hard sync timeout.
-- **Reliability:** Sync timeout rejection is recoverable (retry-able without page reload). Promise cache invalidates on provider destroy/recycle. `forceSyncInterval: 200` reduces timeout probability.
+- **Reliability:** Sync timeout rejection is recoverable (retry-able without page reload). Promise cache invalidates on provider destroy/recycle. `forceSyncInterval: 5000` reduces timeout probability.
 - **Security/privacy:** N/A — no new data surfaces, no new auth paths.
 - **Operability:** Dev-mode bracket-prefix console logs (`[syncPromise]`, `[NavigationPendingBar]`, `[DocumentBoundary]`) per CLAUDE.md. Production: `console.warn` on timeout-reject in all environments so user reports can reference browser console. Aggregated telemetry deferred to NG8.
 - **Memory:** Up to 10 TipTap + CodeMirror editor instances in memory (bounded by `MAX_POOL = 10`). Per-editor overhead ~10-30 MB (depends on doc size). Ceiling ~300 MB additional over baseline. Acceptable for desktop local-first target (P1/P2).
@@ -295,7 +295,7 @@ Net experience: click → old content stays on screen → new content appears in
 
 - **Data model:** No persistent changes. Module-level promise cache is ephemeral (per-session). No IndexedDB, no server state.
 
-- **API/transport:** None added. Uses existing HocuspocusProvider `'synced'`, `'destroy'`, `'disconnect'` events. Client-side `forceSyncInterval: 200` added to `new HocuspocusProvider({...})` in `provider-pool.ts` (per D8).
+- **API/transport:** None added. Uses existing HocuspocusProvider `'synced'`, `'destroy'`, `'disconnect'` events. Client-side `forceSyncInterval: 5000` added to `new HocuspocusProvider({...})` in `provider-pool.ts` (per D8).
 
 - **Auth/permissions:** No change.
 
@@ -330,7 +330,7 @@ Net experience: click → old content stays on screen → new content appears in
 | syncPromise | 30s without `synced` event | `setTimeout(30_000)` in promise body | Rejects `SyncTimeoutError` | ErrorBoundary shows retry |
 | Provider | Pre-sync disconnect | `provider.onClose` fires with `!entry.hasSynced` | Rejects `PreSyncDisconnectError` | ErrorBoundary shows retry |
 | Provider | Post-sync disconnect + reconnect | `onDisconnect` fires; `RECYCLE_DEBOUNCE_MS=4000` timer schedules recycle | Reconnect before 4s → resume. Recycle → destroy+recreate; syncPromise cache invalidated for that docName | Transparent for warm reconnect. Recycled providers re-enter sync cycle |
-| Provider | Sync-never-fires edge (y-websocket#81, hocuspocus#183) | 30s timeout (D7) + `forceSyncInterval: 200` client-side (D8) | Timeout → retry UI; forceSync periodically ensures `synced` fires | Rare; escalating progress tiers give feedback |
+| Provider | Sync-never-fires edge (y-websocket#81, hocuspocus#183) | 30s timeout (D7) + `forceSyncInterval: 5000` client-side (D8) | Timeout → retry UI; forceSync periodically ensures `synced` fires | Rare; escalating progress tiers give feedback |
 | ErrorBoundary | Retry click | User action | Invalidate syncPromise cache entry; re-enter Suspense; new promise created | Fresh sync attempt |
 | Activity | mode flip | Context change | React preserves hidden editor state | Scroll/focus preserved (warm nav) |
 | ProviderPool | LRU eviction of visible doc | Shouldn't happen — active doc is never evicted (`provider-pool.ts:242-251`) | Invariant; verified by test | N/A |
@@ -386,7 +386,7 @@ All P0 questions from the initial backlog + systematic probes (walk-through, ten
 | Q3 | Error-recovery UX — auto-retry or manual? | **Resolved: manual only (DX3).** User-actionable "Try again" button; simpler state; matches `react-error-boundary` design intent. | DX3 |
 | Q4 | Sidebar sync-dot animation during pending? | **Resolved: no change needed — NavigationPendingBar is the primary pending affordance; the sync-dot already animates for `connecting` state, which naturally covers the pending window.** | Defer — no spec change |
 | Q5 | Skeleton shape — match editor or generic? | **Resolved: refactor existing `EditorSkeleton` (`EditorArea.tsx:19-30`) into standalone component; match editor's content column.** | D5 |
-| Q6 | Hocuspocus `forceSyncInterval` — set today? add? | **Resolved: not set today; add client-side 200ms (D8).** | D8 |
+| Q6 | Hocuspocus `forceSyncInterval` — set today? add? | **Resolved: not set today; add client-side 5000ms (D8).** | D8 |
 | Q7 | Sidebar row-highlight sufficient click feedback? | **Resolved: yes, unchanged.** Existing highlight provides immediate visual ack; NavigationPendingBar covers "work in progress" signal. | No change |
 | Q8 | `use(promise)` + key remount + Activity interaction? | **Resolved: Activity mitigates. Cold-load remount is fresh; no prior state to preserve, no interaction risk.** For composition confidence, F16 acceptance criterion covers StrictMode verification. | D1, A7 |
 | Q9 | Rapid sequential navigation behavior? | **Resolved: React transition semantics coalesce; each syncPromise independent; F11 acceptance criterion verifies.** | F11 |
@@ -461,7 +461,7 @@ Ship the full hybrid architecture per D1-D8 + DX1-DX7, delivering G1-G6. Single-
 - `packages/app/src/components/DocumentErrorBoundary.test.tsx` — error kind copy + retry reset.
 
 **Modified files:**
-- `packages/app/src/editor/provider-pool.ts` — add `forceSyncInterval: 200` to provider creation; emit lifecycle events that `sync-promise.ts` listens to (or extend `onChange` notification payload).
+- `packages/app/src/editor/provider-pool.ts` — add `forceSyncInterval: 5000` to provider creation; emit lifecycle events that `sync-promise.ts` listens to (or extend `onChange` notification payload).
 - `packages/app/src/editor/DocumentContext.tsx` — expose `openDocumentTransition` helper; integrate `useTransition` for `isPending` surface.
 - `packages/app/src/components/EditorArea.tsx` — replace `syncState === 'connecting' ? <EditorSkeleton /> : <editors>` ternary with `<DocumentErrorBoundary><Suspense><EditorActivityPool>...</EditorActivityPool></Suspense></DocumentErrorBoundary>`. Remove inline `EditorSkeleton` definition.
 - `packages/app/src/App.tsx` — consume `useTransition` in nav handler; render `<NavigationPendingBar isPending={...}/>` under `EditorHeader`.
