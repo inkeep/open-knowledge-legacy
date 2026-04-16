@@ -34,6 +34,12 @@ export interface GraphDocSelection {
 }
 
 export type GraphDocClickBehavior = 'navigate' | 'select';
+export type GraphNodeVisualState =
+  | 'default'
+  | 'active'
+  | 'selected'
+  | 'active-selected'
+  | 'external';
 
 export type GraphNodeClickAction =
   | { kind: 'external'; url: string }
@@ -42,6 +48,39 @@ export type GraphNodeClickAction =
 
 export function getGraphNodeTooltipLabel(node: GraphNode): string {
   return node.kind === 'external' ? node.url : (node.label ?? node.id);
+}
+
+export function getGraphNodeVisualState(
+  node: GraphNode,
+  {
+    activeDocName,
+    selectedDocName,
+  }: {
+    activeDocName: string;
+    selectedDocName: string | null;
+  },
+): GraphNodeVisualState {
+  if (node.kind === 'external') {
+    return 'external';
+  }
+
+  const isActive = node.docName === activeDocName;
+  const isSelected = selectedDocName !== null && node.docName === selectedDocName;
+
+  if (isActive && isSelected) {
+    return 'active-selected';
+  }
+  if (isActive) {
+    return 'active';
+  }
+  if (isSelected) {
+    return 'selected';
+  }
+  return 'default';
+}
+
+export function getHashForGraphDocSelection(selection: GraphDocSelection): string {
+  return hashFromDocName(selection.docName, selection.anchor);
 }
 
 export function resolveGraphNodeClickAction(
@@ -65,6 +104,10 @@ export function resolveGraphNodeClickAction(
 
   return {
     kind: 'navigate',
-    hash: hashFromDocName(node.docName, node.anchor ?? null),
+    hash: getHashForGraphDocSelection({
+      docName: node.docName,
+      label: node.label,
+      anchor: node.anchor ?? null,
+    }),
   };
 }

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 
-import { getGraphNodeTooltipLabel, resolveGraphNodeClickAction } from './graph-view-utils';
+import {
+  getGraphNodeTooltipLabel,
+  getGraphNodeVisualState,
+  getHashForGraphDocSelection,
+  resolveGraphNodeClickAction,
+} from './graph-view-utils';
 
 describe('getGraphNodeTooltipLabel', () => {
   test('returns display label for document nodes', () => {
@@ -96,5 +101,74 @@ describe('resolveGraphNodeClickAction', () => {
       kind: 'external',
       url: 'https://example.com/docs',
     });
+  });
+});
+
+describe('getGraphNodeVisualState', () => {
+  test('distinguishes active, selected, and active-and-selected document states', () => {
+    const node = {
+      kind: 'doc' as const,
+      id: 'notes/alpha',
+      label: 'Alpha',
+      docName: 'notes/alpha',
+      anchor: null,
+    };
+
+    expect(
+      getGraphNodeVisualState(node, {
+        activeDocName: 'notes/current',
+        selectedDocName: null,
+      }),
+    ).toBe('default');
+
+    expect(
+      getGraphNodeVisualState(node, {
+        activeDocName: 'notes/alpha',
+        selectedDocName: null,
+      }),
+    ).toBe('active');
+
+    expect(
+      getGraphNodeVisualState(node, {
+        activeDocName: 'notes/current',
+        selectedDocName: 'notes/alpha',
+      }),
+    ).toBe('selected');
+
+    expect(
+      getGraphNodeVisualState(node, {
+        activeDocName: 'notes/alpha',
+        selectedDocName: 'notes/alpha',
+      }),
+    ).toBe('active-selected');
+  });
+
+  test('keeps external nodes on their own visual path', () => {
+    expect(
+      getGraphNodeVisualState(
+        {
+          kind: 'external',
+          id: 'external:https://example.com',
+          label: 'example.com',
+          url: 'https://example.com',
+        },
+        {
+          activeDocName: 'notes/alpha',
+          selectedDocName: 'notes/alpha',
+        },
+      ),
+    ).toBe('external');
+  });
+});
+
+describe('getHashForGraphDocSelection', () => {
+  test('preserves anchors when opening a fullscreen selection', () => {
+    expect(
+      getHashForGraphDocSelection({
+        docName: 'notes/alpha',
+        label: 'Alpha',
+        anchor: 'deep-link',
+      }),
+    ).toBe('#/notes/alpha?anchor=deep-link');
   });
 });

@@ -17,6 +17,7 @@ import {
   type GraphLink,
   type GraphNode,
   getGraphNodeTooltipLabel,
+  getGraphNodeVisualState,
   resolveGraphNodeClickAction,
 } from './graph-view-utils';
 
@@ -169,6 +170,7 @@ function drawGraphLabelPlacements({
 }
 export function GraphView({
   activeDocName,
+  selectedDocName = null,
   isFullscreen = false,
   className = '',
   docClickBehavior = 'navigate',
@@ -177,6 +179,7 @@ export function GraphView({
   onStatsChange,
 }: {
   activeDocName: string;
+  selectedDocName?: string | null;
   isFullscreen?: boolean;
   className?: string;
   docClickBehavior?: GraphDocClickBehavior;
@@ -282,10 +285,14 @@ export function GraphView({
   const bgColor = isDark ? 'hsl(0 0% 4%)' : 'hsl(0 0% 100%)';
   const defaultNodeColor = isDark ? '#6b7280' : '#9ca3af';
   const activeNodeColor = isDark ? '#69a3ff' : '#3784ff';
+  const selectedNodeColor = isDark ? '#34d399' : '#059669';
+  const activeSelectedNodeColor = isDark ? '#c084fc' : '#7c3aed';
   const externalNodeColor = isDark ? '#f59e0b' : '#c2410c';
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
   const activeNodeRingColor = isDark ? 'rgba(105,163,255,0.45)' : 'rgba(55,132,255,0.3)';
+  const selectedNodeRingColor = isDark ? 'rgba(52,211,153,0.5)' : 'rgba(5,150,105,0.3)';
+  const activeSelectedNodeRingColor = isDark ? 'rgba(192,132,252,0.5)' : 'rgba(124,58,237,0.35)';
   const labelChipColor = isDark ? 'rgba(3,7,18,0.92)' : 'rgba(255,255,255,0.94)';
   const labelChipBorderColor = isDark ? 'rgba(243,244,246,0.08)' : 'rgba(17,24,39,0.08)';
   const focusZoom = isFullscreen ? 1.6 : 2.35;
@@ -380,9 +387,17 @@ export function GraphView({
             nodeId="id"
             nodeLabel={(node: NodeObject<GraphNode>) => getGraphNodeTooltipLabel(node)}
             nodeRelSize={4}
-            nodeVal={(node: NodeObject<GraphNode>) =>
-              node.kind === 'doc' && node.docName === activeDocName ? 18 : 6
-            }
+            nodeVal={(node: NodeObject<GraphNode>) => {
+              const state = getGraphNodeVisualState(node, {
+                activeDocName,
+                selectedDocName,
+              });
+
+              if (state === 'active-selected') return 20;
+              if (state === 'active') return 18;
+              if (state === 'selected') return 12;
+              return 6;
+            }}
             nodeCanvasObjectMode={() => 'replace'}
             nodeCanvasObject={(
               node: NodeObject<GraphNode>,
@@ -390,22 +405,40 @@ export function GraphView({
               globalScale: number,
             ) => {
               if (typeof node.x !== 'number' || typeof node.y !== 'number') return;
-              const isActive = node.kind === 'doc' && node.docName === activeDocName;
-              const nodeRadius = isActive ? 8 : 5;
+              const state = getGraphNodeVisualState(node, {
+                activeDocName,
+                selectedDocName,
+              });
+              const nodeRadius =
+                state === 'active' || state === 'active-selected'
+                  ? 8
+                  : state === 'selected'
+                    ? 7
+                    : 5;
 
               ctx.beginPath();
               ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
-              ctx.fillStyle = isActive
-                ? activeNodeColor
-                : node.kind === 'external'
-                  ? externalNodeColor
-                  : defaultNodeColor;
+              ctx.fillStyle =
+                state === 'active'
+                  ? activeNodeColor
+                  : state === 'selected'
+                    ? selectedNodeColor
+                    : state === 'active-selected'
+                      ? activeSelectedNodeColor
+                      : state === 'external'
+                        ? externalNodeColor
+                        : defaultNodeColor;
               ctx.fill();
 
-              if (isActive) {
+              if (state === 'active' || state === 'selected' || state === 'active-selected') {
                 ctx.beginPath();
                 ctx.arc(node.x, node.y, nodeRadius + 2 / globalScale, 0, 2 * Math.PI, false);
-                ctx.strokeStyle = activeNodeRingColor;
+                ctx.strokeStyle =
+                  state === 'active'
+                    ? activeNodeRingColor
+                    : state === 'selected'
+                      ? selectedNodeRingColor
+                      : activeSelectedNodeRingColor;
                 ctx.lineWidth = 2 / globalScale;
                 ctx.stroke();
               }
@@ -433,8 +466,19 @@ export function GraphView({
                 labelDescriptors,
                 measureTextWidthPx: (text) => ctx.measureText(text).width,
                 projectToScreen: (x, y) => fg.graph2ScreenCoords(x, y),
-                getNodeRadiusPx: (node) =>
-                  (node.kind === 'doc' && node.docName === activeDocName ? 8 : 5) * globalScale + 4,
+                getNodeRadiusPx: (node) => {
+                  const state = getGraphNodeVisualState(node, {
+                    activeDocName,
+                    selectedDocName,
+                  });
+                  const radius =
+                    state === 'active' || state === 'active-selected'
+                      ? 8
+                      : state === 'selected'
+                        ? 7
+                        : 5;
+                  return radius * globalScale + 4;
+                },
               });
 
               drawGraphLabelPlacements({
