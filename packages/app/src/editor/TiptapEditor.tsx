@@ -161,6 +161,18 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     };
   }, [editor, provider.document]);
 
+  // Expose the active editor on window for E2E tests. Matches the existing
+  // observability convention (__activeProvider, __agentFlashState). Cleared
+  // on unmount so late tests against a dead editor fail fast rather than
+  // silently operating on a stale instance.
+  useEffect(() => {
+    if (!editor) return;
+    window.__activeEditor = editor;
+    return () => {
+      if (window.__activeEditor === editor) window.__activeEditor = undefined;
+    };
+  }, [editor]);
+
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.
   //
@@ -424,5 +436,6 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
 declare global {
   interface Window {
     __agentFlashState?: AgentFlashState;
+    __activeEditor?: import('@tiptap/core').Editor;
   }
 }

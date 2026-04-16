@@ -100,6 +100,13 @@ function findYElementForPos(
 
 export const BridgeIdPlugin = Extension.create({
   name: 'bridgeIdPlugin',
+  // Priority 1000 (higher than default 100) ensures this extension is
+  // processed BEFORE SelectionStatePlugin so its PM plugin state field is
+  // registered first — SelectionStatePlugin.state.apply then sees the
+  // BridgeIdPlugin state in its newState. TipTap sorts extensions by
+  // descending priority; PM fields end up in that order; PM's applyInner
+  // loop runs them in field order.
+  priority: 1000,
 
   addProseMirrorPlugins() {
     return [
