@@ -22,7 +22,11 @@ import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/pop
 import { PropPanel } from '../components/PropPanel.tsx';
 import { markUserTyping } from '../observers.ts';
 import { getDescriptor } from '../registry/index.ts';
-import { createChildNode, focusInsertedComponent } from '../slash-command/component-items.ts';
+import {
+  consumeAutoOpen,
+  createChildNode,
+  focusInsertedComponent,
+} from '../slash-command/component-items.ts';
 import { getYDoc } from '../utils/get-ydoc.ts';
 
 // ── Error Boundary ──────────────────────────────────────────────────────
@@ -239,7 +243,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
         {/* Settings → Popover PropPanel (only if editable props) */}
         {hasEditableProps && (
-          <Popover defaultOpen={selected}>
+          <Popover defaultOpen={typeof pos === 'number' && consumeAutoOpen(pos)}>
             <PopoverTrigger asChild>
               <button
                 type="button"

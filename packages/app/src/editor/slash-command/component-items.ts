@@ -62,6 +62,19 @@ export function createChildNode(childName: string): Record<string, unknown> {
 }
 
 /**
+ * Module-level flag: position of a just-inserted component that should
+ * auto-open its PropPanel. Read once by JsxComponentView, then cleared.
+ */
+export let pendingAutoOpenPos: number | null = null;
+export function consumeAutoOpen(pos: number): boolean {
+  if (pendingAutoOpenPos === pos) {
+    pendingAutoOpenPos = null;
+    return true;
+  }
+  return false;
+}
+
+/**
  * After inserting a component, focus appropriately:
  * - Has editable props → NodeSelect the component (triggers popover auto-open)
  * - Has children only → place cursor inside children for typing
@@ -76,10 +89,13 @@ export function focusInsertedComponent(
   );
 
   if (hasEditableProps) {
-    // NodeSelect → the NodeView's Popover auto-opens via defaultOpen={selected}
-    editor.commands.setNodeSelection(insertPos);
+    // Set a module-level flag that the NodeView reads on mount/update
+    // to auto-open its Popover. Cleared after one read.
+    pendingAutoOpenPos = insertPos;
+    requestAnimationFrame(() => {
+      editor.commands.setNodeSelection(insertPos);
+    });
   } else if (descriptor.hasChildren) {
-    // Place cursor inside the children paragraph (insertPos + 1 = content start, + 1 = inside paragraph)
     editor.commands.setTextSelection(insertPos + 2);
   }
 }
