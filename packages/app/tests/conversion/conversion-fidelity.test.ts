@@ -31,7 +31,7 @@ import {
   type TestServer,
   testReset,
   wait,
-} from './test-harness';
+} from '../integration/test-harness';
 
 // ─── Helpers ───
 
