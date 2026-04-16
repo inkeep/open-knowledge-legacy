@@ -6,14 +6,6 @@ import { setupObservers } from './observers';
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
-function defaultCollabWsUrl(): string {
-  if (typeof location === 'undefined') {
-    return 'ws://localhost/collab';
-  }
-  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-  return `${scheme}://${location.host}/collab`;
-}
-
 export interface PoolEntry {
   provider: HocuspocusProvider;
   observerCleanup: (() => void) | null;
@@ -56,10 +48,12 @@ export class ProviderPool {
   private readonly recycleDebounceMs: number;
   private onChange: PoolChangeCallback | null = null;
 
-  constructor(maxSize = 10, wsUrl?: string, recycleDebounceMs?: number) {
+  constructor(maxSize: number, wsUrl: string, recycleDebounceMs?: number) {
     this.maxSize = maxSize;
-    // Match page scheme: ws:// from http dev, wss:// from https (tunnels, reverse proxies).
-    this.wsUrl = wsUrl ?? defaultCollabWsUrl();
+    // wsUrl is REQUIRED post-lifecycle-split (US-014 / FR-1.13) — resolved
+    // asynchronously by `useCollabUrl()` from the `ok ui` /api/config endpoint
+    // before the pool is instantiated. Callers must not pass an empty string.
+    this.wsUrl = wsUrl;
     this.recycleDebounceMs = recycleDebounceMs ?? RECYCLE_DEBOUNCE_MS;
   }
 

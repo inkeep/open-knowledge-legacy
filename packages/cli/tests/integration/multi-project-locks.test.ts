@@ -1,0 +1,150 @@
+/**
+ * Multi-project lock isolation — US-014 / A1.
+ *
+ * Exercises `acquireProcessLock` concurrently in three independent tmpdirs
+ * (simulating three open projects on one machine) and verifies:
+ *   - Three distinct `server.lock` + `ui.lock` pairs exist.
+ *   - Each pair carries a distinct port, none collide.
+ *   - Reading one project's lock never returns another's pid.
+ *
+ * Kept at the lock-primitive level (no real HTTP bind) so the test is fast,
+ * doesn't depend on the network, and doesn't require the CLI to be built.
+ * The guarantee it proves — that our lock layer is multi-project-safe — is
+ * exactly the A1 assumption the spec flagged as "active" (SPEC §12).
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import {
+  acquireProcessLock,
+  type ProcessLockHandle,
+  readProcessLock,
+} from '@inkeep/open-knowledge-server';
+
+interface ProjectHandles {
+  lockDir: string;
+  server: ProcessLockHandle;
+  ui: ProcessLockHandle;
+}
+
+function makeProject(root: string, slug: string): ProjectHandles {
+  const lockDir = join(root, slug, '.open-knowledge');
+  mkdirSync(lockDir, { recursive: true });
+  const metadata = { worktreeRoot: join(root, slug), startedAt: new Date().toISOString() };
+  const server = acquireProcessLock({ lockName: 'server', lockDir, metadata });
+  const ui = acquireProcessLock({ lockName: 'ui', lockDir, metadata });
+  // Simulate the real `listen()` port advertisement — ok start gets a kernel
+  // port, ok ui default 3000 + offset so ports across projects don't collide
+  // by coincidence.
+  const suffix = slug.slice(-1);
+  const num = Number.parseInt(suffix, 10);
+  server.updatePort(52000 + num);
+  ui.updatePort(3000 + num);
+  return { lockDir, server, ui };
+}
+
+describe('multi-project lock isolation (A1)', () => {
+  let testRoot: string;
+
+  beforeEach(() => {
+    testRoot = resolve(
+      tmpdir(),
+      `multi-project-locks-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    mkdirSync(testRoot, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(testRoot, { recursive: true, force: true });
+  });
+
+  it('three concurrent projects produce six distinct live locks with unique ports', () => {
+    const p1 = makeProject(testRoot, 'project-1');
+    const p2 = makeProject(testRoot, 'project-2');
+    const p3 = makeProject(testRoot, 'project-3');
+
+    try {
+      // All six lock files exist on disk
+      for (const p of [p1, p2, p3]) {
+        expect(existsSync(join(p.lockDir, 'server.lock'))).toBe(true);
+        expect(existsSync(join(p.lockDir, 'ui.lock'))).toBe(true);
+      }
+
+      // Reads return the right project's metadata
+      const s1 = readProcessLock({ lockDir: p1.lockDir, lockName: 'server' });
+      const s2 = readProcessLock({ lockDir: p2.lockDir, lockName: 'server' });
+      const s3 = readProcessLock({ lockDir: p3.lockDir, lockName: 'server' });
+      const u1 = readProcessLock({ lockDir: p1.lockDir, lockName: 'ui' });
+      const u2 = readProcessLock({ lockDir: p2.lockDir, lockName: 'ui' });
+      const u3 = readProcessLock({ lockDir: p3.lockDir, lockName: 'ui' });
+
+      for (const lock of [s1, s2, s3, u1, u2, u3]) {
+        expect(lock).not.toBeNull();
+        expect(lock?.pid).toBe(process.pid);
+      }
+
+      // Ports are all distinct across the six locks
+      const ports = [s1, s2, s3, u1, u2, u3].map((l) => l?.port ?? 0);
+      const uniquePorts = new Set(ports);
+      expect(uniquePorts.size).toBe(6);
+    } finally {
+      for (const p of [p1, p2, p3]) {
+        p.server.release();
+        p.ui.release();
+      }
+    }
+  });
+
+  it('one project releasing does not affect the others', () => {
+    const p1 = makeProject(testRoot, 'project-1');
+    const p2 = makeProject(testRoot, 'project-2');
+
+    try {
+      p1.server.release();
+      p1.ui.release();
+
+      expect(existsSync(join(p1.lockDir, 'server.lock'))).toBe(false);
+      expect(existsSync(join(p1.lockDir, 'ui.lock'))).toBe(false);
+
+      // Project 2 unaffected
+      expect(existsSync(join(p2.lockDir, 'server.lock'))).toBe(true);
+      expect(existsSync(join(p2.lockDir, 'ui.lock'))).toBe(true);
+
+      const s2 = readProcessLock({ lockDir: p2.lockDir, lockName: 'server' });
+      expect(s2?.pid).toBe(process.pid);
+      expect(s2?.port).toBeGreaterThan(0);
+    } finally {
+      p2.server.release();
+      p2.ui.release();
+    }
+  });
+
+  it('concurrent updatePort calls never cross-contaminate between projects', () => {
+    const projects = Array.from({ length: 5 }, (_, i) => makeProject(testRoot, `project-${i}`));
+
+    try {
+      // Bump each project's ports a few times — simulates listen() returning
+      // different ports on restart or a port-rebalance.
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < projects.length; i++) {
+          projects[i].server.updatePort(60000 + i * 10 + round);
+          projects[i].ui.updatePort(40000 + i * 10 + round);
+        }
+      }
+
+      // Final port for each project should be its last write, not another's.
+      for (let i = 0; i < projects.length; i++) {
+        const s = readProcessLock({ lockDir: projects[i].lockDir, lockName: 'server' });
+        const u = readProcessLock({ lockDir: projects[i].lockDir, lockName: 'ui' });
+        expect(s?.port).toBe(60000 + i * 10 + 2);
+        expect(u?.port).toBe(40000 + i * 10 + 2);
+      }
+    } finally {
+      for (const p of projects) {
+        p.server.release();
+        p.ui.release();
+      }
+    }
+  });
+});

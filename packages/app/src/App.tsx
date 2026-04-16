@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ConnectingBanner } from '@/components/ConnectingBanner';
 import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { defaultInitialDir } from '@/components/file-tree-utils';
@@ -70,6 +71,7 @@ function NewItemShortcutHandler() {
 export function App() {
   return (
     <DocumentProvider>
+      <ConnectingBanner />
       <PageListProvider>
         <SystemDocSubscriber />
         <NavigationHandler />

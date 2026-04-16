@@ -11,11 +11,20 @@ Local-first knowledge base with real-time CRDT collaboration. Includes a rich ed
 
 ```bash
 cd your-project
-bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP server
-bunx @inkeep/open-knowledge start     # Start the editor at http://localhost:3000
+bunx @inkeep/open-knowledge init      # Scaffold .open-knowledge/ + register MCP config for every detected editor
+bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok ui on http://localhost:3000
 ```
 
-After `init`, open your project in an MCP-compatible editor (Claude Code, Cursor, Windsurf) and approve the `open-knowledge` server. AI agents work immediately -- `start` is optional (the MCP server operates in disk-only mode without it).
+`init` writes MCP configuration at the correct per-editor path for every editor whose config directory exists on your machine:
+
+| Editor       | Config written to                         | Scope          |
+| ------------ | ----------------------------------------- | -------------- |
+| Claude Code  | `<project>/.mcp.json`                     | Project        |
+| Cursor       | `<project>/.cursor/mcp.json`              | Project        |
+| VS Code      | `<project>/.vscode/mcp.json`              | Project        |
+| Windsurf     | `~/.codeium/windsurf/mcp_config.json`     | User-global    |
+
+Override with `--editor <name1,name2>` or `--editor all`. AI agents work immediately — `start` is optional (the MCP server falls back to disk-only writes without a live collab server).
 
 ### Install globally (optional)
 
@@ -24,6 +33,24 @@ bun install -g @inkeep/open-knowledge
 open-knowledge init
 open-knowledge start
 ```
+
+### Lifecycle commands
+
+The CLI ships with a pair of long-lived processes and three utility commands so you can manage them without hunting for PIDs:
+
+| Command            | Role                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------- |
+| `open-knowledge start` | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.     |
+| `open-knowledge ui`    | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.               |
+| `open-knowledge stop`  | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                               |
+| `open-knowledge clean` | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.         |
+| `open-knowledge status`| Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output.   |
+
+Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.open-knowledge/{server,ui}.lock` with distinct ports.
+
+### Windows support
+
+macOS and Linux only (Node has long-standing bugs with detached spawn on Windows — [nodejs/node#5614](https://github.com/nodejs/node/issues/5614), [#51018](https://github.com/nodejs/node/issues/51018)). Windows demand will be revisited once the Electron desktop app lands.
 
 ## Development
 

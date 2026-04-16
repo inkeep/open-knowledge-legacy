@@ -10,13 +10,13 @@ import {
   type AgentFocusAwareness,
   pickPrimary,
 } from '@/lib/agent-focus';
-import { defaultCollabWsUrl, parseCC1Signal, SYSTEM_DOC_NAME } from '@/lib/cc1';
+import { parseCC1Signal, SYSTEM_DOC_NAME } from '@/lib/cc1';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged, subscribeToDocumentsChanged } from '@/lib/documents-events';
 
 export function SystemDocSubscriber() {
   const queryClient = useQueryClient();
-  const { activeDocName, pinnedDoc } = useDocumentContext();
+  const { activeDocName, pinnedDoc, collabUrl } = useDocumentContext();
   // Hold activeDocName + pinnedDoc in refs so the awareness handler reads the
   // latest without needing to recreate the provider on every change. Writing
   // refs in effects (not during render) keeps React Compiler happy.
@@ -47,9 +47,10 @@ export function SystemDocSubscriber() {
   }, [pinnedDoc]);
 
   useEffect(() => {
+    if (collabUrl === null) return;
     const doc = new Y.Doc();
     const provider = new HocuspocusProvider({
-      url: defaultCollabWsUrl(),
+      url: collabUrl,
       name: SYSTEM_DOC_NAME,
       document: doc,
       onStateless: ({ payload }: { payload: string }) => {
@@ -117,7 +118,7 @@ export function SystemDocSubscriber() {
       doc.destroy();
       providerRef.current = null;
     };
-  }, [queryClient]);
+  }, [queryClient, collabUrl]);
 
   return null;
 }

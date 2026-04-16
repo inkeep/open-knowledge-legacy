@@ -1,5 +1,6 @@
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createContext, type ReactNode, use, useEffect, useState } from 'react';
+import { useCollabUrl } from '@/lib/use-collab-url';
 import { ProviderPool, type SyncState } from './provider-pool';
 
 export interface DocumentContextValue {
@@ -18,6 +19,13 @@ export interface DocumentContextValue {
   pin: (docName: string) => void;
   /** Unpin — resume agent nav on the next focus change. */
   unpin: () => void;
+  /**
+   * Resolved collab WebSocket URL (from `/api/config` or `bun run dev`
+   * same-origin fallback). Null while the initial fetch is in flight or
+   * while `server.lock` is absent — consumers that also need the URL
+   * (e.g. `SystemDocSubscriber`) skip wiring until resolved.
+   */
+  collabUrl: string | null;
 }
 
 const PIN_STORAGE_KEY = 'ok-pin-v1';
@@ -44,12 +52,13 @@ function persistPinToStorage(value: string | null): void {
 const DocumentContext = createContext<DocumentContextValue | null>(null);
 
 // Module-level singleton — survives React re-renders and StrictMode double-mount.
-// Same pattern the old singleton HocuspocusProvider used.
+// Same pattern the old singleton HocuspocusProvider used. Instantiated lazily
+// when `collabUrl` resolves (US-014 / FR-1.13) — not at module load.
 let pool: ProviderPool | null = null;
 
-function getPool(): ProviderPool {
+function getPool(collabUrl: string): ProviderPool {
   if (!pool) {
-    pool = new ProviderPool(10);
+    pool = new ProviderPool(10, collabUrl);
   }
   return pool;
 }
@@ -78,9 +87,11 @@ function takeSnapshot(p: ProviderPool): Snapshot {
 export function DocumentProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(EMPTY_SNAPSHOT);
   const [pinnedDoc, setPinnedDoc] = useState<string | null>(null);
+  const { collabUrl } = useCollabUrl();
 
   useEffect(() => {
-    const p = getPool();
+    if (collabUrl === null) return;
+    const p = getPool(collabUrl);
 
     // Sync initial state
     setSnapshot(takeSnapshot(p));
@@ -102,7 +113,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     return () => {
       p.setOnChange(null);
     };
-  }, []);
+  }, [collabUrl]);
 
   // React Compiler handles memoization — no manual useMemo/useCallback needed
   const value: DocumentContextValue = {
@@ -110,12 +121,14 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     activeProvider: snapshot.activeProvider,
     syncState: snapshot.syncState,
     openDocument: (docName: string) => {
-      const p = getPool();
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
       p.open(docName);
       p.setActive(docName);
     },
     closeDocument: (docName: string) => {
-      const p = getPool();
+      if (collabUrl === null) return;
+      const p = getPool(collabUrl);
       p.close(docName);
     },
     pinnedDoc,
@@ -127,6 +140,7 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
       setPinnedDoc(null);
       persistPinToStorage(null);
     },
+    collabUrl,
   };
 
   return <DocumentContext value={value}>{children}</DocumentContext>;
