@@ -34,7 +34,7 @@ cd packages/<pkg> && bunx tsc --noEmit  # Typecheck per package
 cd packages/<pkg> && bun test           # Unit tests per package
 ```
 
-`bun run check`** is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is \\<50ms.
+`bun run check`\*\* is the canonical quality gate for agents and developers.\*\* Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is \\<50ms.
 
 ### Agent simulator (requires dev server running)
 
@@ -132,7 +132,8 @@ Hocuspocus Server
 ├── Shadow Repo (.git/openknowledge/ — attribution journal)
 ├── Reconciliation (three-way merge for external writes)
 ├── Shadow Branch GC (orphaned ref cleanup)
-└── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
+├── CC1 Broadcaster (pure-signal push over __system__ Y.Doc — derived-view invalidation)
+└── Idle Shutdown primitive (WebSocket-client count at /collab → SIGTERM ok ui sibling + destroy)
 ```
 
 ### CC1 push-over-awareness (derived-view invalidation)
@@ -163,15 +164,24 @@ The shadow repo is a bare git repo at `.git/openknowledge/` (integrated mode) or
 
 **Writer lock:** Only one active writer instance may mutate a given shadow root. The lock file at `<shadowDir>/lock` contains pid, hostname, startedAt, worktreeRoot. Stale locks from dead processes are auto-replaced.
 
-### Server process lock
+### Process locks (server + ui)
 
-One `createServer()` instance at a time per content directory. The lock file at `<contentDir>/.open-knowledge/server.lock` contains `{ pid, hostname, port, startedAt, worktreeRoot }`. `acquireServerLock()` runs at the top of `createServer()` before any side effects; a live same-host PID holding the lock throws `ServerLockCollisionError`, stale locks (dead PID, different host, corrupt JSON) are replaced with a warning.
+Two lockfiles coordinate the dual-process lifecycle model (Zero-Ceremony Resume, `specs/2026-04-16-zero-ceremony-resume/SPEC.md`). Both live under `<contentDir>/.open-knowledge/` and share the same `{ pid, hostname, port, startedAt, worktreeRoot }` shape.
 
-`port: 0` is the sentinel for "starting, not yet bound." CLI/Vite callers invoke `updateServerLockPort(lockDir, realPort)` after `http.listen()` resolves so MCP discovery reads the real port. The mutation is ownership-guarded — a process whose pid does not match refuses to rewrite.
+- `server.lock` — owned by `ok start` (the collab process, `/collab` + `/api/*`). Advertises the real port for MCP discovery.
+- `ui.lock` — owned by `ok ui` (the React-editor process, static assets + `/api/config`). Advertises the real port for `previewUrl` in MCP tool results.
 
-`bun run dev` (Vite plugin) and `open-knowledge start` share this lock, so running both against the same content directory fails the second invocation fast. Different content directories are unaffected.
+**Shared factory.** `acquireProcessLock({lockName, lockDir, metadata}): {lockPath, release, updatePort}` in `src/process-lock.ts` is the single primitive; `server-lock.ts` and `ui-lock.ts` are thin adapters that pin `lockName: 'server'` / `lockName: 'ui'` respectively. A live same-host PID holding the lock throws `ProcessLockCollisionError` (`ServerLockCollisionError` and `UiLockCollisionError` extend it, preserving `instanceof` callers). Stale locks (dead PID, different host, corrupt JSON) are replaced with a warning.
 
-**CC8 shutdown ordering.** The server lock is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release shadow lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited.
+**Port sentinel.** `port: 0` means "starting, not yet bound." CLI/Vite callers invoke `updateProcessLockPort(lockDir, lockName, realPort)` (or the typed `updateServerLockPort` / `updateUiLockPort` adapters) after `http.listen()` resolves so downstream tools (MCP, preview-url) read the real port. Mutation is ownership-guarded — a process whose pid does not match the lock's refuses to rewrite.
+
+**Mutual exclusion.** `bun run dev` (Vite plugin) and `open-knowledge start` share `server.lock`, so running both against the same content directory fails the second invocation fast. `ok ui` is its own lock — you can run `ok start` with the Vite plugin's embedded UI and `ok ui` in parallel against the same content directory is NOT supported (they'd both serve the React app).
+
+**Idle-shutdown.** `attachIdleShutdown` (`src/idle-shutdown.ts`) counts `/collab` WebSocket upgrades on the HTTP server only — DirectConnections (CC1 broadcaster, AgentSessionManager) are invisible by design (D-017). When the threshold elapses with zero WebSocket clients (default 30 min, `warnBeforeMs` = 5 min before), `onShutdown` SIGTERMs the `ui.lock.pid` sibling **before** awaiting `destroy()`, so the UI exits before `server.lock` is released.
+
+**D-025 safety-net.** `ok ui` arms a 12h timer (`DEFAULT_UI_SAFETY_NET_MS` in `packages/cli/src/commands/ui.ts`) that self-terminates if `ok start` crashes hard enough never to send SIGTERM via the idle path. Not a substitute for idle-shutdown; a backstop for silent crashes.
+
+**CC8 shutdown ordering.** `server.lock` is the LAST thing released in `destroy()`. Phase ordering: (1) stop watchers, (2) drain agent sessions, (3) L1 flush, (4) L2 flush, (5) release shadow lock, (6) release server lock. Phase 6 runs inside a `try/finally` so a mid-shutdown throw still releases the lock — otherwise the next start would see a stale lock from a process that cleanly exited. The sibling-SIGTERM for `ui.lock` happens inside the idle-shutdown path **before** Phase 1; `ok ui`'s own `release()` on SIGTERM walks its lockfile through the same ownership-guarded `releaseProcessLock` path.
 
 ### Symlinks
 
@@ -217,8 +227,11 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/persistence.ts` — `createPersistenceExtension()`; branch-scoped `reconciledBase` (`Map<branch, Map<docName, string>>`), batch-in-progress gating
 - `src/shadow-repo.ts` — `initShadowRepo()`, `commitWip()`, `commitUpstreamImport()`, `parkBranch()`, `readParkedState()`, `saveVersion()`
 - `src/shadow-lock.ts` — `acquireLock()` / `releaseLock()` for exclusive shadow-root writer access
-- `src/server-lock.ts` — `acquireServerLock()` / `updateServerLockPort()` / `readServerLock()` / `releaseServerLock()` + `ServerLockCollisionError`. One server per contentDir; advertises real port for MCP discovery
-- `src/process-alive.ts` — `isProcessAlive(pid)` shared between shadow-lock and server-lock
+- `src/process-lock.ts` — `acquireProcessLock` / `readProcessLock` / `updateProcessLockPort` / `releaseProcessLock` + `ProcessLockCollisionError`. The shared factory for every per-contentDir process lock
+- `src/server-lock.ts` — thin adapter over `process-lock.ts` pinned to `lockName: 'server'`. Exports `acquireServerLock` / `updateServerLockPort` / `readServerLock` / `releaseServerLock` + `ServerLockCollisionError` (extends `ProcessLockCollisionError`). One server per contentDir; advertises real port for MCP discovery
+- `src/ui-lock.ts` — thin adapter over `process-lock.ts` pinned to `lockName: 'ui'`. Exports `acquireUiLock` / `updateUiLockPort` / `readUiLock` / `releaseUiLock` + `UiLockCollisionError`. Owned by `ok ui`; its port backs the `previewUrl` that MCP tools advertise
+- `src/idle-shutdown.ts` — `attachIdleShutdown({httpServer, thresholdMs, onShutdown, log?, warnBeforeMs?, scheduler?})`. Counts WebSocket upgrades at `/collab` only; fires `onShutdown` after `thresholdMs` with zero clients; WARN log at `thresholdMs - warnBeforeMs`. Injected `Scheduler` per precedent #13b
+- `src/process-alive.ts` — `isProcessAlive(pid)` shared between shadow-lock, server-lock, ui-lock, and mcp spawn-verification
 - `src/head-watcher.ts` — `startHeadWatcher()`; tracks `lastKnownBranch`, classifies `BatchKind` (within-branch / cross-branch / detached-head)
 - `src/shadow-branch-gc.ts` — `gcShadowBranches()` — orphaned WIP ref cleanup with 24h grace period, branch rename detection
 - `src/reconciliation.ts` — `reconcile()` — three-way merge dispatcher (noop / clean / merged / conflicts / refused)
@@ -237,11 +250,16 @@ Commander.js v14 CLI published as `@inkeep/open-knowledge`.
 
 ### CLI Commands
 
-| Command | Description |
-|---------|-------------|
-| `open-knowledge` / `open-knowledge start` | Start Hocuspocus server + serve React app |
-| `open-knowledge init` | Scaffold `.open-knowledge/` and register MCP server in `.mcp.json` |
-| `open-knowledge mcp` | Start MCP stdio server (disk-only or connects to running Hocuspocus — port auto-discovered via `server.lock`) |
+| Command                                   | Description                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `open-knowledge` / `open-knowledge start` | Hocuspocus collab server (`/collab` + `/api/*`) on a kernel-allocated port; auto-spawns `ok ui` as a detached sibling when `ui.lock` is absent/stale. Idle-shutdown SIGTERMs the UI sibling after 30 min with zero WebSocket clients.                                                                                                |
+| `open-knowledge ui`                       | Serve the React editor + `GET /api/config` on port 3000 (or `PORT` env / `--port`); owns `.open-knowledge/ui.lock`. Port-aware collision handling: silent exit on same port, reverse HTTP proxy on a different port. Self-shutdowns after 12h as a D-025 safety-net against orphaned UIs from silent `ok start` crashes.             |
+| `open-knowledge mcp`                      | MCP stdio server. Reads `server.lock` on startup; live lock → connects, absent/stale → detach-spawns `ok start` as a sibling (opt-out via `OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config). Spawn stderr captured to `<lockDir>/last-spawn-error.log`; 5s timeout surfaces captured stderr in the first tool-result error. |
+| `open-knowledge init`                     | Scaffold `.open-knowledge/` and write MCP configs for every detected editor (Claude Code, Cursor, VS Code, Windsurf — non-TTY writes all detected; TTY preselects them). Also writes `.claude/launch.json` pointing at `['@inkeep/open-knowledge', 'ui']` with `autoPort: true`.                                                     |
+| `open-knowledge stop`                     | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale / foreign-host locks alone.                                                                                                                                                                                                                                            |
+| `open-knowledge clean`                    | Prune stale (dead-pid or corrupt) `.open-knowledge/{server,ui}.lock` files. Ignores live and foreign-host locks.                                                                                                                                                                                                                     |
+| `open-knowledge status`                   | Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output. Always exits 0.                                                                                                                                                                                                               |
+| `open-knowledge preview`                  | Read-only content scope inspection. Prints which files the watcher will track (resolved `content.dir` + `include` + `exclude`).                                                                                                                                                                                                      |
 
 ### Config system
 
@@ -260,13 +278,20 @@ Hierarchical YAML in `.open-knowledge/` directories:
 
 ### Key files
 
-- `src/cli.ts` — Commander.js entry point (shebang), early color detection
-- `src/commands/start.ts` — start command (Hocuspocus + static assets + colored output); calls `updateServerLockPort` post-listen; idempotent SIGINT/SIGTERM shutdown routed through `destroy()`
-- `src/commands/mcp.ts` — MCP stdio server command; `discoverServerUrl()` reads `<contentDir>/.open-knowledge/server.lock` for zero-config port discovery. Precedence: `--port` override > live lock with port > 0 > disk-only fallback
-- `src/config/paths.ts` — Shared `resolveContentDir(config, cwd)` / `resolveLockDir(contentDir)` so `start.ts` and `mcp.ts` cannot disagree on where the lock lives
+- `src/cli.ts` — Commander.js entry point (shebang), early color detection; registers `start` / `ui` / `mcp` / `init` / `preview` / `stop` / `clean` / `status` subcommands
+- `src/commands/start.ts` — collab-only server (Hocuspocus + `/api/*`, no static assets). Extracted `bootStartServer` (used by integration tests). `spawnOkUi` detaches an `ok ui` sibling with kernel-fd stderr redirect to `<lockDir>/last-spawn-error.log`. `decideUiSpawn` pure-function classifies the UI lock state (absent / stale / alive). `buildIdleShutdownHandler` wires the 30-min idle watcher to SIGTERM the UI sibling before releasing `server.lock`
+- `src/commands/ui.ts` — `startUiServer` serves the React bundle + `GET /api/config` on port 3000 (or `PORT` / `--port`). Acquires `ui.lock`, attaches the D-025 12h safety-net timer (`DEFAULT_UI_SAFETY_NET_MS`), handles lock-collision via `ui-proxy.ts` (silent exit / reverse HTTP proxy / timeout). `/api/config` returns `{collabUrl, previewUrl, port}` read from `server.lock` on every request (no-store)
+- `src/commands/ui-proxy.ts` — `startProxyServer` (pure `node:http`) proxies the UI port the user asked for onto whatever port `ui.lock` says the real UI is on. Used when Claude Code's `autoPort:true` lands on a port different from `ui.lock.port`
+- `src/commands/mcp.ts` — MCP stdio server command. `decideAutoStart` pure-function returns one of `{connect, spawn, disk-only}` from `{portOverride, envAutoStart, configAutoStart, readLock, isAlive}` — env `OK_MCP_AUTOSTART=0` > config `mcp.autoStart: false` > live-lock override. `spawn` path detach-spawns `npx @inkeep/open-knowledge start` with kernel-fd stderr to `last-spawn-error.log`; poll `server.lock` at 100ms until `port > 0` with a 5s deadline, surface captured stderr on timeout
+- `src/commands/stop.ts` — `buildStopPlan` / `runStop`. SIGTERMs only `status: 'alive'` locks; missing / corrupt / foreign-host / dead-pid are all `ok clean` / `ok status` concerns
+- `src/commands/clean.ts` — Prunes stale lockfiles (dead-pid or corrupt JSON); leaves live and foreign-host locks alone
+- `src/commands/status.ts` — `buildStatusReport` emits `{server: {pid, port, alive, startedAt, host}, ui: {...}}`. Always exits 0 (pure query). Foreign-host reports `alive: 'unknown'`
+- `src/commands/lock-state.ts` — Shared `inspectLock(lockDir, 'server'|'ui')` peek helper used by stop / clean / status. Unlike `readProcessLock`, it does NOT auto-unlink dead-pid locks — the peek must be non-destructive so `status` / `clean` see the same ground truth
+- `src/mcp/tools/preview-url.ts` — `resolvePreviewUrlForTool` (single-doc) / `buildListResolver` (list-producing). Precedence: env `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` > `ui.lock` > `config.preview.baseUrl`. URL shape `http://localhost:<ui-port>/#/<docName>` with per-segment `encodeURIComponent`. Reads `ui.lock` (not `server.lock`) per D-015 — preview points at the React app, not the collab port
+- `src/config/paths.ts` — Shared `resolveContentDir(config, cwd)` / `resolveLockDir(contentDir)` so every command agrees on the `<contentDir>/.open-knowledge/` lock location
 - `src/ui/colors.ts` — Color scheme + semantic helpers
 - `src/ui/banner.ts` — Startup banner rendering
-- `src/config/schema.ts` — Zod config schema with defaults
+- `src/config/schema.ts` — Zod config schema with defaults. `server.port` default is `0` (kernel-allocated); `mcp.autoStart` defaults `true`
 - `src/config/loader.ts` — YAML config hierarchy loader
 
 ## Package: app
@@ -308,14 +333,14 @@ Dark/light/system theme via `next-themes` (class strategy). Key pieces:
 
 ### Dev mode
 
-The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173. The plugin participates in the same `server.lock` as the published CLI, so `bun run dev` and `open-knowledge start` against the same content directory are mutually exclusive — the second invocation fails fast with `ServerLockCollisionError`.
+The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-knowledge-server` — single `bun run dev` starts Vite + Hocuspocus + file watcher on port 5173 (serves both the React bundle AND the collab server from one process — the production `ok start` / `ok ui` sibling split does not apply in dev). The plugin participates in the same `server.lock` as the published CLI, so `bun run dev` and `open-knowledge start` against the same content directory are mutually exclusive — the second invocation fails fast with `ServerLockCollisionError`. The client-side `fetchApiConfig` hook (`packages/app/src/lib/api-config.ts`) 404s against the Vite server's `/api/config` and falls back to same-origin `defaultCollabWsUrl()`, so no bootstrap ceremony is needed.
 
 ### Source-view minimal polish
 
 Small set of always-on CM6 decorations for source mode: broken-link squiggly (wikilinks + link-refs), strikethrough rendering, list hanging-indent on wrap, and code wrap-preserve-indent. Tables get structure/layout classes (hanging indent only) — no background, no border, no cell bands, no font-size/line-height change. No heading/blockquote/frontmatter decorations.
 
 - `src/editor/source-polish/` — ViewPlugin (viewport-scoped lezer walk for strikethrough, list, fenced-code, and table decorations) + StateField (doc-wide cross-scan for broken link-ref detection; skips matches inside `FencedCode`/`CodeBlock`/`InlineCode` via the Lezer tree)
-- `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting (~12 languages, lazy-loaded per block; NOT `@codemirror/language-data`)
+- `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting (\~12 languages, lazy-loaded per block; NOT `@codemirror/language-data`)
 - Broken-wikilink detection lives in `src/editor/plugins/wiki-link-source.ts` (extends the existing plugin's `pagesCache` check), not in `source-polish/`
 - CSS: all `.cm-*` classes in `globals.css` under the `/* Source-view minimal polish */` comment block
 
@@ -358,13 +383,13 @@ Y.Doc
 
 ### Propagation matrix (4 write surfaces x 3 read targets)
 
-| Write Surface             | → Y.Text                         | → XmlFragment                | → Disk               |
-| ------------------------- | -------------------------------- | ---------------------------- | -------------------- |
-| W1: WYSIWYG (XmlFragment) | Server Observer A                | (direct)                     | Persistence debounce |
-| W2: Source (Y.Text)       | (direct)                         | Server Observer B             | Persistence debounce |
-| W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket) | applyAgentMarkdownWrite on server | Persistence debounce |
-| W4: Disk (file watcher)   | applyExternalChange              | applyExternalChange          | (direct)             |
-| Undo/Redo (V0-14 pending) | applyAgentUndo (V0-14 template — see §7e of bridge-convergence SPEC) | applyAgentUndo (V0-14) | Persistence debounce |
+| Write Surface             | → Y.Text                                                             | → XmlFragment                     | → Disk               |
+| ------------------------- | -------------------------------------------------------------------- | --------------------------------- | -------------------- |
+| W1: WYSIWYG (XmlFragment) | Server Observer A                                                    | (direct)                          | Persistence debounce |
+| W2: Source (Y.Text)       | (direct)                                                             | Server Observer B                 | Persistence debounce |
+| W3: Agent API             | applyAgentMarkdownWrite + CRDT sync (WebSocket)                      | applyAgentMarkdownWrite on server | Persistence debounce |
+| W4: Disk (file watcher)   | applyExternalChange                                                  | applyExternalChange               | (direct)             |
+| Undo/Redo (V0-14 pending) | applyAgentUndo (V0-14 template — see §7e of bridge-convergence SPEC) | applyAgentUndo (V0-14)            | Persistence debounce |
 
 ### transaction.local semantics
 
@@ -377,6 +402,7 @@ Y.Doc
 ### Observer A (XmlFragment → Y.Text)
 
 **Server-side (write path)** — `packages/server/src/server-observers.ts`:
+
 - Origin: `OBSERVER_SYNC_ORIGIN` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'observer-sync'`, `skipStoreHooks: true`)
 - **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
 - **Path B** (Y.Text diverged from baseline): uses hybrid diff3+DMP three-way merge (`mergeThreeWay`), then `applyFastDiff` (character-level DMP `diff_main`) for minimal CRDT mutations. Handles D8 deduplication, sub-line conflicts, and delete/edit conflicts losslessly (see `specs/2026-04-15-lossless-bridge-merge/SPEC.md`)
@@ -384,6 +410,7 @@ Y.Doc
 - Fires on both `transaction.local=true` (server-side writes) and `transaction.local=false` (client edits arriving via WebSocket)
 
 **Client-side (baseline tracking only)** — `packages/app/src/editor/observers.ts`:
+
 - Origin: `ORIGIN_TREE_TO_TEXT` (retained for origin guards; no cross-CRDT write performed)
 - Maintains `lastSyncedXmlMd` for baseline-refresh reasoning and Bug-B conditional-refresh logic
 - **Bug-B fix (US-009):** conditional baseline refresh on remote transactions — if a local debounce is pending, `lastSyncedXmlMd` is NOT refreshed to the post-remote state
@@ -391,12 +418,14 @@ Y.Doc
 ### Observer B (Y.Text → XmlFragment)
 
 **Server-side (write path)** — `packages/server/src/server-observers.ts`:
+
 - Origin: `OBSERVER_SYNC_ORIGIN`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Handles frontmatter sync: reads `stripFrontmatter(md)` and writes `Y.Map('metadata').set('frontmatter', ...)`
 - Debounced (50ms) via injected `Scheduler`
 
 **Client-side (baseline tracking only)** — `packages/app/src/editor/observers.ts`:
+
 - Origin: `ORIGIN_TEXT_TO_TREE` (retained for origin guards; no cross-CRDT write performed)
 - Maintains `lastSyncedYText` baseline
 - Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
@@ -404,7 +433,7 @@ Y.Doc
 ### applyAgentMarkdownWrite (XmlFragment-authoritative — precedent #10)
 
 - File: `packages/server/src/agent-sessions.ts`
-- **Replaces the deleted `syncTextToFragment`** (FR-9 in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Called by all three agent-write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) in `api-extension.ts`.
+- \*\*Replaces the deleted \*\*`syncTextToFragment` (FR-9 in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`). Called by all three agent-write handlers (`handleAgentWrite`, `handleAgentWriteMd`, `handleAgentPatch`) in `api-extension.ts`.
 - Flow: (1) read current server XmlFragment (reflects all CRDT-synced content including concurrent client WYSIWYG typing); (2) serialize to markdown; (3) compose agent's delta at the markdown level per `'append'` / `'prepend'` / `'replace'` position; (4) parse composed markdown and apply to XmlFragment via `updateYFragment` (structural diff preserves user-content Items); (5) mirror the canonical post-fragment markdown to Y.Text via `applyByPrefixSuffix` (minimal mutation, preserves non-agent Y.Text Items and their origins)
 - **STOP:** Never write raw markdown directly to Y.Text on the server and then rebuild XmlFragment from it — that's the Bug-A/Bug-D anti-pattern. Compose at markdown-level, apply to XmlFragment via `updateYFragment`, mirror Y.Text via `applyFastDiff`. V0-14's future `applyAgentUndo` handler must follow this same template (see §7e of the bridge-convergence SPEC + `evidence/bug-d-mechanism.md`).
 
@@ -414,25 +443,25 @@ All transaction origins are `LocalTransactionOrigin` **object references** (prec
 
 **Server observers** (write cross-CRDT sync — `server-observers.ts`):
 
-| Transaction Origin                                      | Server Observer A (tree→text)                          | Server Observer B (text→tree)                          |
-| ------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------ |
-| `OBSERVER_SYNC_ORIGIN` (server self-writes)             | — (self)                                               | SKIP                                                   |
-| `AGENT_WRITE_ORIGIN` (applyAgentMarkdownWrite)          | Sync (but early-exit: already-in-sync)                 | Sync (but early-exit: already-in-sync)                 |
-| `FILE_WATCHER_ORIGIN` (applyExternalChange)             | Sync (early-exit via setReconciledBase + already-in-sync) | Sync (early-exit)                                   |
-| `ROLLBACK_ORIGIN` (future)                              | Sync                                                   | Sync                                                   |
-| Remote-arrived (no origin; `local=false`)               | Sync                                                   | Sync                                                   |
+| Transaction Origin                             | Server Observer A (tree→text)                             | Server Observer B (text→tree)          |
+| ---------------------------------------------- | --------------------------------------------------------- | -------------------------------------- |
+| `OBSERVER_SYNC_ORIGIN` (server self-writes)    | — (self)                                                  | SKIP                                   |
+| `AGENT_WRITE_ORIGIN` (applyAgentMarkdownWrite) | Sync (but early-exit: already-in-sync)                    | Sync (but early-exit: already-in-sync) |
+| `FILE_WATCHER_ORIGIN` (applyExternalChange)    | Sync (early-exit via setReconciledBase + already-in-sync) | Sync (early-exit)                      |
+| `ROLLBACK_ORIGIN` (future)                     | Sync                                                      | Sync                                   |
+| Remote-arrived (no origin; `local=false`)      | Sync                                                      | Sync                                   |
 
 **Client observers** (baseline tracking only — `observers.ts`; cross-CRDT write paths deleted per precedent #14):
 
-| Transaction Origin                                      | Client Observer A (baseline only)                 | Client Observer B (baseline only) |
-| ------------------------------------------------------- | ------------------------------------------------- | --------------------------------- |
-| `ORIGIN_TREE_TO_TEXT` (observers.ts)                    | — (self)                                          | SKIP                              |
-| `ORIGIN_TEXT_TO_TREE` (observers.ts)                    | SKIP                                              | — (self)                          |
-| `AGENT_WRITE_ORIGIN` (agent-sessions.ts)                | Skip local; conditional baseline refresh on remote (Bug-B fix) | Baseline refresh         |
-| `FILE_WATCHER_ORIGIN` (external-change.ts)              | Baseline refresh                                  | Baseline refresh                  |
-| `ROLLBACK_ORIGIN` (api-extension.ts)                    | Baseline refresh                                  | Baseline refresh                  |
-| `OBSERVER_SYNC_ORIGIN` (server-observers.ts)            | Baseline refresh                                  | Baseline refresh                  |
-| `undefined` (WebSocket remote / local WYSIWYG typing)   | Baseline refresh                                  | Baseline refresh                  |
+| Transaction Origin                                    | Client Observer A (baseline only)                              | Client Observer B (baseline only) |
+| ----------------------------------------------------- | -------------------------------------------------------------- | --------------------------------- |
+| `ORIGIN_TREE_TO_TEXT` (observers.ts)                  | — (self)                                                       | SKIP                              |
+| `ORIGIN_TEXT_TO_TREE` (observers.ts)                  | SKIP                                                           | — (self)                          |
+| `AGENT_WRITE_ORIGIN` (agent-sessions.ts)              | Skip local; conditional baseline refresh on remote (Bug-B fix) | Baseline refresh                  |
+| `FILE_WATCHER_ORIGIN` (external-change.ts)            | Baseline refresh                                               | Baseline refresh                  |
+| `ROLLBACK_ORIGIN` (api-extension.ts)                  | Baseline refresh                                               | Baseline refresh                  |
+| `OBSERVER_SYNC_ORIGIN` (server-observers.ts)          | Baseline refresh                                               | Baseline refresh                  |
+| `undefined` (WebSocket remote / local WYSIWYG typing) | Baseline refresh                                               | Baseline refresh                  |
 
 ## Testing
 
@@ -440,25 +469,26 @@ All transaction origins are `LocalTransactionOrigin` **object references** (prec
 
 - `*.test.ts` — Bun test runner (unit, integration, stress). Auto-discovered by `bun test`.
 - `*.e2e.ts` — Playwright E2E tests. Auto-discovered by `playwright.config.ts` (`testMatch: /.*\.e2e\.ts$/`). Run via `bun run test:stress:e2e`.
-- **Do not use **`*.spec.ts` — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
+- \*\*Do not use \*\*`*.spec.ts` — Bun auto-discovers both `.test.ts` and `.spec.ts`, which causes collisions when Playwright files use `.spec.ts` (`@playwright/test`'s `test()` throws outside the Playwright runner).
 
 ### Test layers
 
-| Layer       | Type                                                              | Location                                                                                                    | Command                                                    |
-| ----------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
-| A           | Unit (client baseline)                                            | `packages/app/src/editor/observers.test.ts` (client cross-CRDT write paths deleted per precedent #14; server owns them. Old Layer A stress shards `observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` and Layer D `observers.fuzz.test.ts` were deleted because they tested removed code paths.) | `bun run test` (unit) |
-| B           | HTTP + server-side CRDT                                           | `packages/app/tests/stress/stress-api.ts`                                                                   | `bun run tests/stress/stress-api.ts` (needs dev server)    |
-| C           | Playwright E2E                                                    | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`                       | `bunx playwright test`                                     |
-| D           | Multi-client convergence fuzz                                     | `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`                                                 | `bun run test:fuzz:bridge` or `STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts` |
-| Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`              | `bun run test`                                             |
-| Stress      | 5-client × 30s mixed edits with convergence timing                | `packages/app/tests/stress/server-authoritative-stress.test.ts`                                             | `bun run test:stress:server-authoritative`                 |
-| Fidelity    | PBT invariants (I1-I7) + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
+| Layer       | Type                                                              | Location                                                                                                                                                                                                                                                                                       | Command                                                                                                                    |
+| ----------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| A           | Unit (client baseline)                                            | `packages/app/src/editor/observers.test.ts` (client cross-CRDT write paths deleted per precedent #14; server owns them. Old Layer A stress shards `observers.stress.{s1-s8-s9,s2,s4,s5-s6}.test.ts` and Layer D `observers.fuzz.test.ts` were deleted because they tested removed code paths.) | `bun run test` (unit)                                                                                                      |
+| B           | HTTP + server-side CRDT                                           | `packages/app/tests/stress/stress-api.ts`                                                                                                                                                                                                                                                      | `bun run tests/stress/stress-api.ts` (needs dev server)                                                                    |
+| C           | Playwright E2E                                                    | `packages/app/tests/stress/crdt-stress.e2e.ts`, `tests/stress/ux-interactions.e2e.ts`                                                                                                                                                                                                          | `bunx playwright test`                                                                                                     |
+| D           | Multi-client convergence fuzz                                     | `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`                                                                                                                                                                                                                                    | `bun run test:fuzz:bridge` or `STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts` |
+| Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`                                                                                                                                                                                                 | `bun run test`                                                                                                             |
+| Stress      | 5-client × 30s mixed edits with convergence timing                | `packages/app/tests/stress/server-authoritative-stress.test.ts`                                                                                                                                                                                                                                | `bun run test:stress:server-authoritative`                                                                                 |
+| Fidelity    | PBT invariants (I1-I7) + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                                                                                                                                                                                                                 | `bun run test:fidelity` (also in `bun run check`)                                                                          |
 
 ### Tier 1 integration harness
 
 Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/integration/network-control.ts`
 
 **Core primitives:**
+
 - `createTestServer()` → spins up real Hocuspocus with HTTP/WebSocket on OS-assigned random port
 - `createTestClient(port, docName?, { skipInvariantWatcher?, syncControl? })` → connects HocuspocusProvider + wires `setupObservers()`. Default attaches FR-11 watcher; opt out for tests that deliberately drive divergence. `syncControl: true` wraps the WebSocket with `ControllableWebSocket` exposing `pauseSync()` / `resumeSync()`.
 - `createTestClients(port, { count, docName?, perClientOptions? })` → first-class multi-client factory (FR-14). All clients join the same docName (auto-generated if not given).
@@ -467,26 +497,33 @@ Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/int
 - Server uses `debounce: 200` (not production 2s) for fast disk tests
 
 **Bridge invariant watcher (FR-11 / US-005):**
+
 - `attachBridgeInvariantWatcher(doc, opts?)` → attached by default in `createTestClient`. Fires on every `afterTransaction` whose origin is a `LocalTransactionOrigin` object-ref in the enforcing set: `ORIGIN_TREE_TO_TEXT`, `ORIGIN_TEXT_TO_TREE`, `AGENT_WRITE_ORIGIN`, `FILE_WATCHER_ORIGIN`, `ROLLBACK_ORIGIN`, `OBSERVER_SYNC_ORIGIN` (every entry is the actual object ref, not a string). On violation throws `BridgeInvariantViolationError` with origin + unified diff. Settled-state assertion is `assertAllConverged`'s job (FR-14), not the watcher's — no quiescence timer, no magic numbers.
 
 **Origin-preservation probe (FR-12 / US-006):**
+
 - `createItemOriginProbe(ytext, { trackedOrigins: Array<LocalTransactionOrigin>, captureTimeout? })` → wraps `Y.UndoManager`. API: `recordCapture(label?)`, `assertCaptureIntact(label?)`, `capturedContent()`, `undoStackLength()`, `cleanup()`. Use to verify Items survive bridge cycles without origin laundering. `trackedOrigins` must contain object refs — strings fail identity match.
 
 **Server-side state inspector (FR-13 / US-002):**
+
 - `getServerState(server, docName): ServerDocState | null` → returns `{ ytext, fragment, md, fullMd, frontmatter, metaMap, activityMap, connectionCount }` or `null` if doc not loaded. Encapsulates the `(server.instance as any).hocuspocus.documents.get(...)` access — tests should use this helper instead of reaching into hocuspocus internals.
 
 **Observer scheduler DI (FR-15 / US-004):**
+
 - `createManualScheduler(): ManualScheduler` → test helper with `flush()` (fire all pending synchronously), `advanceTime(ms)`, `pending()`. Pass as `ObserverDeps.scheduler` in `setupObservers` for deterministic debounce control. Production default: arrow-wrapped passthrough to `globalThis.setTimeout`/`clearTimeout`.
 
-**Network control (FR-16 / US-010, `network-control.ts`):**
+**Network control (FR-16 / US-010, **`network-control.ts`**):**
+
 - `ControllableWebSocket` — WebSocket proxy with minimal `pauseInbound()` / `resumeInbound()`. Use via `createTestClient(port, docName, { syncControl: true })` then `client.pauseSync()` / `client.resumeSync()`. Default is passthrough — zero change in default test coverage. Deliberately no `delaySync` / `dropInbound` / `inspectSyncQueue` in v1 (FR-16 minimal surface — add when a concrete reproducer motivates them).
 
 **Regression gates committed by US-011 / US-012:**
+
 - `bridge-convergence-regression.test.ts` — primary 4-test regression harness for Bug-A + Bug-B (renamed from `observer-a-baseline-absorption-repro.test.ts`).
 - `bug-a-mechanism-isolation.test.ts`, `bug-c-real-reachability.test.ts` — empirical reachability reproducers.
 - `bug-d-v0-14-agent-undo-under-concurrent-typing.test.ts` — skip-guarded (FR-10); V0-14 unskips when wiring per-agent UM + agent-undo handler.
 
 **Mutation validation gates (server-authoritative bridge, US-012):**
+
 - **Mutation E:** revert server Observer B attachment → C2 + concurrent-source-mode fuzzer seeds fail with XmlFragment duplicates.
 - **Mutation F:** revert server Observer A's `skipStoreHooks: true` → persistence-feedback-loop detected as disk-write thrashing.
 - **Mutation G:** revert FR-7 deletion of client Observer A/B write paths → C1, C2, C3 fail with multi-writer RGA interleave. Validates the client write-path deletion is load-bearing.
@@ -595,8 +632,9 @@ No environment variables must be set by hand for any of these scenarios.
 - **STOP:** Any new server-side subsystem that keys off `documentName` MUST call `isSystemDoc()` at its entry point (see `cc1-broadcast.ts`). Forgetting leaks state into the `__system__` pseudo-doc — e.g. a `.__system__.md` file on disk, a backlink-index entry, a reconciledBase entry. `server-observer-extension.ts` short-circuits on `isSystemDoc()` in `afterLoadDocument`. The L1 integration test (`packages/app/tests/integration/cc1-broadcast.test.ts`) asserts zero `__system__` state across every audited subsystem after broadcasts.
 - **STOP:** Server-side observer cross-CRDT writes MUST use `OBSERVER_SYNC_ORIGIN`. Do not re-add client-side cross-CRDT write paths in `observers.ts` (deleted code under precedent #14). See Mutation G in `specs/2026-04-15-server-authoritative-observer-bridge/meta/mutation-validation.md`.
 - **STOP (V0-14 agent-undo, future spec):** V0-14's `applyAgentUndo` handler is a NEW server-side write surface and MUST satisfy all of the following simultaneously:
+
   1. **Use the XmlFragment-authoritative composition pattern** from `applyAgentMarkdownWrite` (precedent #10, #12) — never rebuild XmlFragment from Y.Text (Bug-A/Bug-D anti-pattern).
-  2. **Fire under a new `LocalTransactionOrigin` object-ref** (e.g. `AGENT_UNDO_ORIGIN`) distinct from `OBSERVER_SYNC_ORIGIN` and `AGENT_WRITE_ORIGIN` (precedent #1). Server Observer A/B already early-exit on the `AGENT_WRITE_ORIGIN` paired-write path; V0-14 inherits that behavior only if the new origin is similarly added to the origin-guard truth table in `server-observers.ts` with the "already-in-sync early-exit" classification.
+  2. **Fire under a new **`LocalTransactionOrigin`** object-ref** (e.g. `AGENT_UNDO_ORIGIN`) distinct from `OBSERVER_SYNC_ORIGIN` and `AGENT_WRITE_ORIGIN` (precedent #1). Server Observer A/B already early-exit on the `AGENT_WRITE_ORIGIN` paired-write path; V0-14 inherits that behavior only if the new origin is similarly added to the origin-guard truth table in `server-observers.ts` with the "already-in-sync early-exit" classification.
   3. **Extend the FR-17 fuzzer op set** (`packages/app/tests/stress/bridge-convergence.fuzz.test.ts`) with an `agent-undo` op kind. The D18 coverage gate (precedent #13(d)) enforces that every bridge write surface has a corresponding fuzzer op — adding `applyAgentUndo` without extending the fuzzer fails CI.
   4. **Do NOT re-add client-side cross-CRDT write paths** — even if convenient for client-side undo UX. Mutation G enforces that the deletion is load-bearing; any reintroduction re-surfaces the 2-4% multi-client RGA-interleave race.
   5. **Depend on the event-loop serialization guarantee** from the server-authoritative spec §7a + A7 — `applyAgentUndo` runs as a synchronous `doc.transact()` block with the subsequent observer fires as `setTimeout` callbacks. No defensive mutex needed under Node.js/Bun's single-threaded Y.Doc model.
@@ -771,15 +809,15 @@ bun run release          # Publish to npm
 - In React components, prefer Tailwind CSS utility classes via `className` instead of inline `style` props. Only use inline styles when there is no practical Tailwind expression for the requirement
 - Prefer existing shadcn components before building custom UI primitives. If the needed shadcn component is not installed yet, suggest installing it rather than reimplementing it from scratch
 
-
 <!-- open-knowledge:begin -->
+
 ## Open Knowledge
 
-This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowledge/config.yml`** (with optional `~/.open-knowledge/config.yml`; CLI/env may override) is the **path contract**: `content.dir` is the root for relative paths; `content.include` lists globs that **add** markdown; `content.exclude` lists globs that **remove** paths. Nothing else defines scope — not folder names, not "docs vs code." `.gitignore` still applies. When MCP is connected, the server's instructions echo the **resolved** `dir` / `include` / `exclude` for this session — treat that table and the YAML as two views of the same rules.
+This repo uses Open Knowledge — collaborative markdown via MCP. `.open-knowledge/config.yml` (with optional `~/.open-knowledge/config.yml`; CLI/env may override) is the **path contract**: `content.dir` is the root for relative paths; `content.include` lists globs that **add** markdown; `content.exclude` lists globs that **remove** paths. Nothing else defines scope — not folder names, not "docs vs code." `.gitignore` still applies. When MCP is connected, the server's instructions echo the **resolved** `dir` / `include` / `exclude` for this session — treat that table and the YAML as two views of the same rules.
 
-**Default mental model (no jargon):** unless this project narrowed `content.include`, **every `.md` and `.mdx` under `content.dir`** is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. If `content.include` is non-default, read `config.yml` once per turn so you do not mis-classify paths.
+**Default mental model (no jargon):** unless this project narrowed `content.include`, \*\*every `.md` and `.mdx` under \*\*`content.dir` is an Open Knowledge document — including under `specs/`, `reports/`, `docs/`, etc. If `content.include` is non-default, read `config.yml` once per turn so you do not mis-classify paths.
 
-**STOP — native `Read` / `Grep` / `Glob` on those markdown files.** When this workspace has Open Knowledge MCP configured (for example via root `.mcp.json`), you **must not** use the host's built-in file tools on in-scope `.md` / `.mdx` — same failure mode as native `Edit` on them (no frontmatter, backlinks, or shadow history).
+**STOP — native **`Read`** / **`Grep`** / **`Glob`** on those markdown files.** When this workspace has Open Knowledge MCP configured (for example via root `.mcp.json`), you **must not** use the host's built-in file tools on in-scope `.md` / `.mdx` — same failure mode as native `Edit` on them (no frontmatter, backlinks, or shadow history).
 
 **MCP wiring varies by client:** Claude Code, Codex, Cursor, Windsurf, VS Code–class clients, and others surface MCP differently — server labels are user-defined; tools may not appear as a top-level symbol named `exec`. **If Open Knowledge is registered**, route markdown reads through its `exec` / `search` / `read_document` tools using **your client's documented MCP invocation** (including any generic "call MCP tool" flow). **That counts as available.** Not seeing `exec` in a flat tool list is **not** the escape hatch.
 
@@ -792,6 +830,7 @@ This repo uses Open Knowledge — collaborative markdown via MCP. **`.open-knowl
 **Writing.** Edits to in-scope `.md` / `.mdx` go through `write_document` / `edit_document` only. Native `Edit` / `sed` land as anonymous `upstream` imports — you lose agent attribution in the shadow repo.
 
 **Preview before edit (REQUIRED).** You MUST follow this sequence every time you call `write_document` or `edit_document`:
+
 1. Call `get_preview_url` to obtain the browser URL for the target doc.
    - If it returns `null`, the server is not running. Start it with `open-knowledge start` (or `preview_start`), then call `get_preview_url` again — the server writes a lock file that this tool reads.
    - NEVER guess or manually construct the preview URL — always use the URL returned by `get_preview_url`.
