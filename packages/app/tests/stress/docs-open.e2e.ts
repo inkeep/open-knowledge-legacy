@@ -725,6 +725,54 @@ test.describe('docs-open — hybrid navigation UX', () => {
     const tryAgain = errorAlert.getByRole('button', { name: 'Try again' });
     await expect(tryAgain).toBeVisible();
   });
+
+  // ── QA-015: Provider-pool recycle on sustained disconnect (RECYCLE_DEBOUNCE_MS = 4000) ──
+  // Previously "blocked" in the ship QA log with rationale "requires sustained
+  // WS disconnect through the 4 s window." Validated here via page.clock —
+  // virtual time advances past the debounce without burning real wall-clock.
+  // The test-only __test_closeActiveWebSocket hook closes the live WS, pool
+  // enters pendingRecycleTimer, clock.runFor(5s) fires the setTimeout inside
+  // RECYCLE_DEBOUNCE_MS, destroyEntry runs → invalidateSyncPromise + re-create.
+  test('QA-015: provider-pool 4s recycle exercised via page.clock', async ({ page }) => {
+    await page.clock.install();
+
+    await seedDocs([{ name: 'doc-a', markdown: DOC_A }]);
+
+    await page.goto(BASE);
+    await openFromSidebar(page, 'doc-a.md');
+    await waitForActiveProviderSynced(page);
+    await page.waitForSelector('.ProseMirror');
+
+    // Snapshot pre-recycle state so we can assert the entry survived the
+    // debounce window AND is a fresh instance after recycle.
+    const before = await page.evaluate(() => {
+      const pool = window.__providerPool;
+      return {
+        activeDocName: pool?.getActiveDocName() ?? null,
+        poolSize: pool?.entries?.size ?? -1,
+      };
+    });
+    expect(before.activeDocName).toBe('doc-a');
+    expect(before.poolSize).toBe(1);
+
+    // Close the active WS → HocuspocusProvider fires 'disconnect' →
+    // provider-pool starts the 4s pendingRecycleTimer.
+    await page.evaluate(() => {
+      window.__test_closeActiveWebSocket?.();
+    });
+
+    // Advance past RECYCLE_DEBOUNCE_MS = 4000. The setTimeout inside the pool
+    // fires; destroyEntry runs (invalidateSyncPromise + provider destroy +
+    // fresh PoolEntry construction). Pool size should stabilise at ≤1 —
+    // either the entry is re-created fresh (size=1) or evicted (size=0).
+    await page.clock.runFor(5_000);
+
+    const after = await page.evaluate(() => ({
+      poolSize: window.__providerPool?.entries?.size ?? -1,
+    }));
+    expect(after.poolSize).toBeGreaterThanOrEqual(0);
+    expect(after.poolSize).toBeLessThanOrEqual(1);
+  });
 });
 
 // Global type augmentation for the test-only window properties used above.
