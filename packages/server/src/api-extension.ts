@@ -3236,6 +3236,388 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── Auth relay endpoints (/api/local-op/auth/*) ────────────────────────────
+  // FR18: loopback + origin security enforced on all five endpoints.
+  // Each endpoint has its own concurrency key to allow parallel auth operations
+  // (e.g., status check while login is in progress).
+
+  const LOCAL_OP_AUTH_LOGIN_KEY = '/api/local-op/auth/login';
+  const LOCAL_OP_AUTH_STATUS_KEY = '/api/local-op/auth/status';
+  const LOCAL_OP_AUTH_REPOS_KEY = '/api/local-op/auth/repos';
+  const LOCAL_OP_AUTH_SIGNOUT_KEY = '/api/local-op/auth/signout';
+  const LOCAL_OP_AUTH_PAT_KEY = '/api/local-op/auth/pat';
+
+  /**
+   * POST /api/local-op/auth/login
+   *
+   * Body: { host?: string }
+   * Spawns: auth login --json [--host <host>]
+   * Streams: NDJSON lines (verification + complete events) via chunked HTTP.
+   * The device-flow subprocess manages its own timeout.
+   */
+  async function handleLocalOpAuthLogin(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { host?: unknown };
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_LOGIN_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth login operation is already in progress' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
+
+    let settled = false;
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (!res.writableEnded) res.write(chunk);
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/login] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (code !== 0 && !res.writableEnded) {
+          res.write(
+            `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
+          );
+        }
+        res.end();
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_LOGIN_KEY);
+    });
+  }
+
+  /**
+   * POST /api/local-op/auth/status
+   *
+   * Body: { host?: string }
+   * Spawns: auth status --json [--host <host>]
+   * Returns: the single NDJSON line as parsed JSON.
+   */
+  async function handleLocalOpAuthStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { host?: unknown };
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_STATUS_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth status operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'status', '--json', '--host', host];
+
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env },
+        });
+        const chunks: Buffer[] = [];
+        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+        child.on('close', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+        child.on('error', reject);
+      });
+
+      const line = output.trim();
+      if (line) {
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          json(res, 200, parsed);
+        } catch {
+          json(res, 200, { raw: line });
+        }
+      } else {
+        json(res, 200, { authenticated: false });
+      }
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth status failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_STATUS_KEY);
+    }
+  }
+
+  /**
+   * POST /api/local-op/auth/repos
+   *
+   * Body: { host?: string }
+   * Spawns: auth repos --json [--host <host>]
+   * Streams: NDJSON via chunked HTTP.
+   */
+  async function handleLocalOpAuthRepos(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { host?: unknown };
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_REPOS_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth repos operation is already in progress' });
+      return;
+    }
+
+    res.writeHead(200, {
+      'Content-Type': 'application/x-ndjson',
+      'Transfer-Encoding': 'chunked',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-cache',
+    });
+
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'auth', 'repos', '--json', '--host', host];
+
+    let settled = false;
+    const child = spawn(cmd, spawnArgs, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const killTimer = setTimeout(() => {
+      child.kill('SIGTERM');
+    }, LOCAL_OP_TIMEOUT_MS);
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (!res.writableEnded) res.write(chunk);
+    });
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/auth/repos] stderr');
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (code !== 0 && !res.writableEnded) {
+          res.write(
+            `${JSON.stringify({ type: 'error', message: `auth repos exited with code ${code}` })}\n`,
+          );
+        }
+        res.end();
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_REPOS_KEY);
+    });
+
+    child.on('error', (err) => {
+      clearTimeout(killTimer);
+      if (!settled) {
+        settled = true;
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify({ type: 'error', message: err.message })}\n`);
+          res.end();
+        }
+      }
+      localOpGuard.release(LOCAL_OP_AUTH_REPOS_KEY);
+    });
+  }
+
+  /**
+   * POST /api/local-op/auth/signout
+   *
+   * Body: { host?: string }
+   * Spawns: auth signout [--host <host>]
+   * Returns: { ok: true }
+   */
+  async function handleLocalOpAuthSignout(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { host?: unknown };
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SIGNOUT_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth signout operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'signout', '--host', host];
+
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: 'ignore',
+          env: { ...process.env },
+        });
+        child.on('close', () => resolve());
+        child.on('error', reject);
+      });
+
+      json(res, 200, { ok: true });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth signout failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_SIGNOUT_KEY);
+    }
+  }
+
+  /**
+   * POST /api/local-op/auth/pat
+   *
+   * Body: { pat: string, host?: string }
+   * Spawns: auth pat --json [--host <host>] with pat piped to stdin.
+   * Returns: the NDJSON complete-event as parsed JSON.
+   */
+  async function handleLocalOpAuthPat(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let host = 'github.com';
+    let pat: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { pat?: unknown; host?: unknown };
+      if (typeof parsed.pat !== 'string' || !parsed.pat) {
+        json(res, 400, { ok: false, error: 'Missing or invalid pat' });
+        return;
+      }
+      pat = parsed.pat;
+      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_PAT_KEY)) {
+      json(res, 429, { ok: false, error: 'An auth pat operation is already in progress' });
+      return;
+    }
+
+    try {
+      const [cmd, ...baseArgs] = localOpCliArgs;
+      const spawnArgs = [...baseArgs, 'auth', 'pat', '--json', '--host', host];
+
+      const output = await new Promise<string>((resolve, reject) => {
+        const child = spawn(cmd, spawnArgs, {
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: { ...process.env },
+        });
+        // Write the PAT to stdin and close it so the CLI readline resolves
+        child.stdin.write(`${pat}\n`);
+        child.stdin.end();
+
+        const chunks: Buffer[] = [];
+        child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
+        child.on('close', (code) => {
+          if (code !== 0) {
+            reject(new Error(`auth pat exited with code ${code}`));
+          } else {
+            resolve(Buffer.concat(chunks).toString('utf-8'));
+          }
+        });
+        child.on('error', reject);
+      });
+
+      const line = output.trim();
+      if (line) {
+        try {
+          const parsed = JSON.parse(line) as unknown;
+          json(res, 200, parsed);
+        } catch {
+          json(res, 200, { raw: line });
+        }
+      } else {
+        json(res, 200, { ok: true });
+      }
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'auth pat failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_PAT_KEY);
+    }
+  }
+
   // ─── Security helpers for sync endpoints ────────────────────────────────────
 
   function isLoopback(req: IncomingMessage): boolean {
@@ -3403,6 +3785,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/sync/resolve-conflict': handleSyncResolveConflict,
     '/api/local-op/clone': handleLocalOpClone,
     '/api/local-op/open': handleLocalOpOpen,
+    '/api/local-op/auth/login': handleLocalOpAuthLogin,
+    '/api/local-op/auth/status': handleLocalOpAuthStatus,
+    '/api/local-op/auth/repos': handleLocalOpAuthRepos,
+    '/api/local-op/auth/signout': handleLocalOpAuthSignout,
+    '/api/local-op/auth/pat': handleLocalOpAuthPat,
   };
 
   if (enableTestRoutes) {
