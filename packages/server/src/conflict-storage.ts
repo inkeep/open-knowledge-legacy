@@ -10,13 +10,9 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { getLogger } from './logger.ts';
 
-// Avoid importing pino-backed logger — it has a broken symlink in the server
-// package's local node_modules (pre-existing environment issue). Use console directly.
-const log = {
-  warn: (ctx: Record<string, unknown>, msg: string) => console.warn('[conflict-storage]', msg, ctx),
-  info: (ctx: Record<string, unknown>, msg: string) => console.info('[conflict-storage]', msg, ctx),
-};
+const log = getLogger('conflict-storage');
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

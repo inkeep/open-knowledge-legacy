@@ -72,7 +72,7 @@ export async function runClone(
   const resolved = await resolveAuth(parsed.hostname, tokenStore, {});
 
   const env: Record<string, string> = {
-    GIT_TERMINAL_PROMPT: parsed.hostname === 'github.com' ? '1' : '0',
+    GIT_TERMINAL_PROMPT: '0',
   };
 
   // Build -c credential.helper config if needed

@@ -171,7 +171,9 @@ export class SyncEngine {
     this.onStateChange = options.onStateChange;
     this.setBatchInProgress = options.setBatchInProgress;
     this.statePath = resolve(this.contentDir, '.open-knowledge', 'sync-state.json');
-    this.conflictStore = new ConflictStore(this.contentDir, this.projectDir, 'main');
+    // ConflictStore branch is set lazily in start() after branch detection.
+    // Use a placeholder here; setBranch() updates it before any conflict operations.
+    this.conflictStore = new ConflictStore(this.contentDir, this.projectDir, this.currentBranch);
   }
 
   // ─── Lifecycle ─────────────────────────────────────────────────────────────
@@ -201,7 +203,10 @@ export class SyncEngine {
       // Also get current branch
       try {
         const b = (await handle.git.raw('rev-parse', '--abbrev-ref', 'HEAD')).trim();
-        if (b && b !== 'HEAD') this.currentBranch = b;
+        if (b && b !== 'HEAD') {
+          this.currentBranch = b;
+          this.conflictStore.setBranch(b);
+        }
       } catch {
         // detached HEAD — will pause when push/pull fires
       }
@@ -215,6 +220,19 @@ export class SyncEngine {
     }
 
     this.transitionTo('idle');
+
+    // Clean up stale merge state: if MERGE_HEAD exists but no conflicts are tracked,
+    // a previous crash left the repo in a half-merged state — abort to recover.
+    const mergeHeadPath = join(this.projectDir, '.git', 'MERGE_HEAD');
+    if (existsSync(mergeHeadPath) && this.conflictCount === 0) {
+      log.warn({}, '[sync] stale MERGE_HEAD detected with no tracked conflicts — aborting merge');
+      try {
+        const handle = createGitInstance(this.projectDir, { credentialArgs: this.credentialArgs });
+        await handle.git.raw(['merge', '--abort']);
+      } catch (e) {
+        log.warn({ err: e }, '[sync] git merge --abort for stale MERGE_HEAD failed');
+      }
+    }
 
     // If we restored in-flight conflicts, re-enter conflict state (timers paused)
     if (this.conflictCount > 0) {
@@ -697,8 +715,14 @@ export class SyncEngine {
       for (const entry of entries) {
         const fullPath = join(dir, entry.name);
         if (entry.isDirectory()) {
-          // Skip git internals and open-knowledge config dir
-          if (entry.name === '.git' || entry.name === '.open-knowledge') continue;
+          // Skip git internals, open-knowledge config, node_modules, and hidden dirs
+          if (
+            entry.name === 'node_modules' ||
+            entry.name === '.git' ||
+            entry.name === '.open-knowledge' ||
+            entry.name.startsWith('.')
+          )
+            continue;
           walk(fullPath);
         } else if (entry.isFile()) {
           const contentRelPath = relative(this.contentDir, fullPath);
@@ -812,7 +836,16 @@ export class SyncEngine {
         this.transitionTo('idle');
         log.info({}, '[sync] all conflicts auto-resolved — merge committed');
       } catch (e) {
-        log.warn({ err: e }, '[sync] failed to commit after auto-resolving conflicts');
+        // Commit failed after partial auto-resolve — abort merge to clean up git index
+        log.warn(
+          { err: e },
+          '[sync] failed to commit after auto-resolving conflicts — aborting merge',
+        );
+        try {
+          await handle.git.raw(['merge', '--abort']);
+        } catch (abortErr) {
+          log.warn({ err: abortErr }, '[sync] git merge --abort failed during cleanup');
+        }
         this.transitionTo('idle');
       }
     }

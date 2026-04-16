@@ -146,10 +146,10 @@ const PROTECTED_BRANCH_PATTERNS: RegExp[] = [
 ];
 
 const MERGE_CONFLICT_PATTERNS: RegExp[] = [
-  /conflict/i,
+  /\bmerge conflict\b/i,
   /automatic merge failed/i,
   /CONFLICT \(/,
-  /merge conflict/i,
+  /\bconflict\b.*\bmerge\b/i,
 ];
 
 // ---------------------------------------------------------------------------

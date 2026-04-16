@@ -13,7 +13,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 
 // ─── Protocol checks ─────────────────────────────────────────────────────────
 
@@ -44,6 +44,13 @@ export function isAllowedGitUrl(url: string): boolean {
 
 // ─── Path safety ─────────────────────────────────────────────────────────────
 
+/** Expand a leading `~` or `~/` to the user's home directory. */
+function expandTilde(p: string): string {
+  if (p === '~') return homedir();
+  if (p.startsWith('~/')) return join(homedir(), p.slice(2));
+  return p;
+}
+
 /**
  * Returns true if `dirPath` is within the user's home directory and contains
  * no null bytes. Resolves relative paths against cwd for a stable comparison.
@@ -55,9 +62,8 @@ export function isSafeLocalPath(dirPath: string): boolean {
   if (!dirPath || typeof dirPath !== 'string') return false;
   if (dirPath.includes('\0')) return false;
   const home = homedir();
-  // Always call resolve() — it normalizes '..' and '.' components, preventing
-  // traversal attacks like '/Users/miles/../etc' (which must NOT be allowed).
-  const resolved = resolve(dirPath);
+  // Expand tilde before resolving — resolve() alone does not expand `~`.
+  const resolved = resolve(expandTilde(dirPath));
   return resolved === home || resolved.startsWith(`${home}/`);
 }
 

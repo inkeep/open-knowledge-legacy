@@ -103,8 +103,8 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
     if (!open) return;
     void fetch('/api/local-op/auth/status', { method: 'POST' })
       .then((r) => r.json())
-      .then((data: { authed?: boolean }) => {
-        setIsSignedIn(!!data.authed);
+      .then((data: { authenticated?: boolean }) => {
+        setIsSignedIn(!!data.authenticated);
       })
       .catch(() => setIsSignedIn(false));
   }, [open]);
