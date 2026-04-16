@@ -17,7 +17,7 @@
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
-import React, { type ErrorInfo, type ReactNode, useEffect, useRef, useState } from 'react';
+import React, { type ErrorInfo, type ReactNode, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { markUserTyping } from '../observers.ts';
@@ -97,13 +97,9 @@ export function extractPrimitiveProps(
 export function JsxComponentView({ node, editor, getPos, selected }: NodeViewProps) {
   const descriptor = getDescriptor(node.attrs.componentName as string);
   const [renderError, setRenderError] = useState<Error | null>(null);
-  const [popoverOpen, setPopoverOpen] = useState(false);
-  const prevSelected = useRef(selected);
 
   const pos = typeof getPos === 'function' ? getPos() : undefined;
 
-  // Check if this block is a child of another jsxComponent (e.g., Card inside Cards).
-  // Compute sibling index + count for up/down arrow visibility.
   let isChildOfComponent = false;
   let siblingIndex = 0;
   let siblingCount = 1;
@@ -125,15 +121,6 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   const hasEditableProps = descriptor.props.some(
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
   );
-
-  // Auto-open popover when component becomes selected (e.g., after insertion
-  // via focusInsertedComponent → setNodeSelection).
-  useEffect(() => {
-    if (selected && !prevSelected.current && hasEditableProps) {
-      setPopoverOpen(true);
-    }
-    prevSelected.current = selected;
-  });
 
   const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.props);
   const resetKey = `${descriptor.name}::${JSON.stringify(primitiveProps)}`;
@@ -252,7 +239,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
         {/* Settings → Popover PropPanel (only if editable props) */}
         {hasEditableProps && (
-          <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+          <Popover>
             <PopoverTrigger asChild>
               <button
                 type="button"
@@ -303,21 +290,30 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       </div>
 
       {/* Live React component — renders exactly like production.
-          contentEditable={false} when:
-          - Self-closing / no-children (Card, File, ImageZoom): native behaviors work
-          - Typed-children container (Steps, Cards, Tabs): user can't type arbitrary
-            prose between children — only add the correct child type via the pill.
-            Children themselves (Step, Tab) remain editable for prose.
-          Freeform-children containers (Callout, Banner) stay editable. */}
+          contentEditable logic:
+          - Self-closing / no-children → false (native behaviors work)
+          - Typed-children container with VALID content → false (constrained editing)
+          - Typed-children container with INVALID content → true (user can fix)
+          - Freeform-children → true (always editable) */}
       <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
         <Comp {...primitiveProps}>
           <NodeViewContent
             className={`component-children ${
               !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
             }`}
-            contentEditable={
-              !(!descriptor.hasChildren || descriptor.isSelfClosing || descriptor.emptyChildName)
-            }
+            contentEditable={(() => {
+              // Self-closing or no children — never editable
+              if (!descriptor.hasChildren || descriptor.isSelfClosing) return false;
+              // Freeform children — always editable
+              if (!descriptor.emptyChildName) return true;
+              // Typed-children container — editable only if invalid content exists
+              // (so user can fix it), locked when content is valid
+              let hasInvalidChildren = false;
+              node.forEach((child) => {
+                if (child.type.name !== 'jsxComponent') hasInvalidChildren = true;
+              });
+              return hasInvalidChildren;
+            })()}
           />
         </Comp>
       </ComponentErrorBoundary>
