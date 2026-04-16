@@ -101,18 +101,24 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   const pos = typeof getPos === 'function' ? getPos() : undefined;
 
   // Check if this block is a child of another jsxComponent (e.g., Card inside Cards).
-  // Used to show up/down arrows only for children (top-level blocks use the SideMenu drag handle).
+  // Compute sibling index + count for up/down arrow visibility.
   let isChildOfComponent = false;
+  let siblingIndex = 0;
+  let siblingCount = 1;
   try {
     if (pos !== undefined) {
       const $pos = editor.state.doc.resolve(pos);
-      if ($pos.depth > 0) {
-        isChildOfComponent = $pos.parent.type.name === 'jsxComponent';
+      if ($pos.depth > 0 && $pos.parent.type.name === 'jsxComponent') {
+        isChildOfComponent = true;
+        siblingIndex = $pos.index($pos.depth);
+        siblingCount = $pos.parent.childCount;
       }
     }
   } catch {
     // Position resolution can fail during teardown
   }
+  const canMoveUp = isChildOfComponent && siblingIndex > 0;
+  const canMoveDown = isChildOfComponent && siblingIndex < siblingCount - 1;
 
   const hasEditableProps = descriptor.props.some(
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
@@ -181,8 +187,8 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         contentEditable={false}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Move up/down — only for children inside containers (top-level uses SideMenu drag) */}
-        {isChildOfComponent && (
+        {/* Move up/down — only for children inside containers; hidden at boundaries */}
+        {canMoveUp && (
           <button
             type="button"
             className="jsx-chrome-btn"
@@ -207,7 +213,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           </button>
         )}
 
-        {isChildOfComponent && (
+        {canMoveDown && (
           <button
             type="button"
             className="jsx-chrome-btn"
