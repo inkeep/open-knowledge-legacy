@@ -3,10 +3,12 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { placeholder as cmPlaceholder, EditorView, keymap } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
+import { sharedExtensions as coreExtensions, MarkdownManager } from '@inkeep/open-knowledge-core';
 import { GFM } from '@lezer/markdown';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
+import { createSourceClipboardExtension } from './clipboard/source-clipboard.ts';
 import { codeLanguages } from './markdown-code-languages';
 
 // Customize the dark editor surface colors here.
@@ -63,6 +65,21 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // Source clipboard (FR-4, FR-5, D4, D5): copy writes both text/plain
+    // markdown AND text/html canonical rendered HTML via the shared
+    // mdast-to-html pipeline; paste routes through a 4-branch dispatcher
+    // parallel to the WYSIWYG 5-branch. MarkdownManager is local to this
+    // effect — the Source editor doesn't serialize PM docs, but
+    // MarkdownManager's `serialize` method is unused here; the only
+    // requirement is a mdManager reference for consistency with the
+    // dispatcher shape. We construct one with the shared extensions.
+    const mdManager = new MarkdownManager({ extensions: coreExtensions });
+    const sourceClipboard = createSourceClipboardExtension({
+      ydoc: provider.document,
+      ytext,
+      mdManager,
+    });
+
     const state = EditorState.create({
       doc: ytext.toString(),
       extensions: [
@@ -79,6 +96,7 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
         createWikiLinkSourceExtension(),
         createMdLinkSourceExtension(),
         createSourcePolishExtension(),
+        sourceClipboard,
         themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
         placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
         EditorView.lineWrapping,
