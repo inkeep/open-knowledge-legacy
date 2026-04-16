@@ -1,4 +1,4 @@
-import { createInterface } from 'node:readline';
+import password from '@inquirer/password';
 import { Octokit } from '@octokit/rest';
 import { Command } from 'commander';
 import type { TokenStore } from '../../auth/token-store.ts';
@@ -15,17 +15,7 @@ export async function runPat(
 ): Promise<void> {
   const { host, json } = opts;
 
-  const getToken =
-    readToken ??
-    (() => {
-      return new Promise<string>((resolve) => {
-        const rl = createInterface({ input: process.stdin, output: process.stdout });
-        rl.question('Enter PAT: ', (answer) => {
-          rl.close();
-          resolve(answer.trim());
-        });
-      });
-    });
+  const getToken = readToken ?? (() => password({ message: 'Enter PAT:' }));
 
   const token = await getToken();
   if (!token) {

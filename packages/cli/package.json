@@ -33,6 +33,7 @@
   "dependencies": {
     "@clack/prompts": "^1.2.0",
     "@hocuspocus/provider": "4.0.0-rc.1",
+    "@inquirer/password": "^5.0.11",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "@napi-rs/keyring": "^1.2.0",
     "@octokit/auth-oauth-device": "^8.0.3",
