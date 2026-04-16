@@ -1,49 +1,57 @@
 /**
- * useBlockSelection — React hook for subscribing to `SelectionStatePlugin`
- * state (Precedent #15).
+ * useBlockSelection — React hook that exposes `SelectionStatePlugin` state
+ * (Precedent #15) to the React tree.
+ *
+ * Implementation: subscribes to TipTap's `transaction` + `selectionUpdate`
+ * events — the canonical TipTap integration pattern (same path used by
+ * BubbleMenu, official example at tiptap.dev/guide/node-views#react).
+ *
+ * Stores the plugin snapshot in local state; the local state is updated
+ * inside an event handler on every transaction/selection tick. React
+ * re-renders whenever the snapshot reference changes (plugin's
+ * `deriveBlockSelection` preserves identity on structural no-op so unrelated
+ * text edits don't trigger re-renders).
+ *
+ * Why not `useSyncExternalStore` via the plugin's view.update notifier:
+ *   empirically (logged trace in progress.txt), React 19 + Strict Mode +
+ *   the plugin-view update timing produced cases where the listener fired
+ *   on an effect instance whose setState didn't propagate to a re-render.
+ *   Wiring through `editor.on('transaction')` makes the subscription
+ *   lifecycle TipTap-owned, which is proven out by the existing BubbleMenu
+ *   + SideMenu implementations in this codebase.
  *
  * Returns `null` for a null editor (safe pre-mount rendering).
- *
- * Implementation notes:
- * - Uses `useState` + `useEffect` subscription. `useSyncExternalStore` was
- *   the first choice (canonical primitive) but in this codebase, combined
- *   with React Compiler auto-memoization + the TipTap+PM view-update cycle,
- *   it was observed to not propagate plugin-state changes to top-level
- *   subscribers (Breadcrumb, SelectionAnnouncer) while correctly updating
- *   NodeView-level subscribers (JsxComponentView). Likely cause:
- *   React Compiler memoizes the hook call when its single input (`editor`)
- *   is referentially stable, bypassing the snapshot-poll path. Plain
- *   useState + useEffect subscription is outside the compiler's
- *   memoization scope and propagates reliably to every subscriber tier.
- * - Subscribe fires synchronously on mount; cleanup fires on unmount or
- *   editor change. The listener reads the current snapshot imperatively
- *   and calls setState — React scheduling then triggers a re-render.
  */
 
 import type { Editor } from '@tiptap/core';
 import { useEffect, useState } from 'react';
-import {
-  type BlockSelection,
-  getBlockSelection,
-  subscribeBlockSelection,
-} from '../extensions/selection-state-plugin.ts';
+import { type BlockSelection, getBlockSelection } from '../extensions/selection-state-plugin.ts';
 
 export function useBlockSelection(editor: Editor | null): BlockSelection | null {
-  const [state, setState] = useState<BlockSelection | null>(() =>
+  const [snapshot, setSnapshot] = useState<BlockSelection | null>(() =>
     editor ? getBlockSelection(editor) : null,
   );
 
   useEffect(() => {
     if (!editor) {
-      setState(null);
+      setSnapshot(null);
       return;
     }
-    // Seed with current state in case it changed between render and effect.
-    setState(getBlockSelection(editor));
-    return subscribeBlockSelection(editor, () => {
-      setState(getBlockSelection(editor));
-    });
+
+    // Seed with the current state on mount.
+    setSnapshot(getBlockSelection(editor));
+
+    const update = () => {
+      setSnapshot(getBlockSelection(editor));
+    };
+
+    editor.on('transaction', update);
+    editor.on('selectionUpdate', update);
+    return () => {
+      editor.off('transaction', update);
+      editor.off('selectionUpdate', update);
+    };
   }, [editor]);
 
-  return state;
+  return snapshot;
 }

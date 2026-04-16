@@ -307,29 +307,10 @@ export const SelectionStatePlugin = Extension.create({
             if (runtime) runtime.pendingOrigin = 'pointer';
             return false;
           },
-          // HTML5 drag lifecycle — toggles isDragging, which gates the halo.
-          dragstart: () => {
-            const runtime = RUNTIME.get(plugin);
-            if (!runtime) return false;
-            runtime.isDragging = true;
-            // Force a state refresh even without a selection change.
-            scheduleRefresh(editor);
-            return false;
-          },
-          dragend: () => {
-            const runtime = RUNTIME.get(plugin);
-            if (!runtime) return false;
-            runtime.isDragging = false;
-            scheduleRefresh(editor);
-            return false;
-          },
-          drop: () => {
-            const runtime = RUNTIME.get(plugin);
-            if (!runtime) return false;
-            runtime.isDragging = false;
-            scheduleRefresh(editor);
-            return false;
-          },
+          // Drag events intentionally handled in view() via capture-phase
+          // listeners (below) — NodeView wrappers' stopEvent() intercepts
+          // drag events before PM's handleDOMEvents chain runs, so capture
+          // phase on view.dom is the only reliable registration point.
         },
         handleKeyDown: (_view, event) => {
           // Classify arrow/tab/escape/enter as keyboard-origin; other keys
@@ -342,13 +323,40 @@ export const SelectionStatePlugin = Extension.create({
         },
       },
 
-      view(_view: EditorView) {
+      view(view: EditorView) {
         RUNTIME.set(plugin, { pendingOrigin: null, isDragging: false });
+
+        // Drag listeners on view.dom in CAPTURE phase. NodeView wrappers
+        // (e.g. jsxComponent's React portal root) can set pmViewDesc.stopEvent
+        // for drag events, which short-circuits PM's handleDOMEvents chain.
+        // Capture phase on view.dom fires BEFORE any descendant handler,
+        // guaranteeing we observe the drag lifecycle regardless of NodeView
+        // stopEvent policies.
+        const onDragStart = () => {
+          const runtime = RUNTIME.get(plugin);
+          if (!runtime) return;
+          runtime.isDragging = true;
+          scheduleRefresh(editor);
+        };
+        const onDragEnd = () => {
+          const runtime = RUNTIME.get(plugin);
+          if (!runtime) return;
+          runtime.isDragging = false;
+          scheduleRefresh(editor);
+        };
+
+        view.dom.addEventListener('dragstart', onDragStart, true);
+        view.dom.addEventListener('dragend', onDragEnd, true);
+        view.dom.addEventListener('drop', onDragEnd, true);
+
         return {
           update: () => {
             notifyIfChanged(editor);
           },
           destroy: () => {
+            view.dom.removeEventListener('dragstart', onDragStart, true);
+            view.dom.removeEventListener('dragend', onDragEnd, true);
+            view.dom.removeEventListener('drop', onDragEnd, true);
             RUNTIME.delete(plugin);
             EMITTERS.delete(editor);
           },
