@@ -194,17 +194,27 @@ export async function ensureServerRunning(
   // Async spawn errors (e.g. ENOENT) are reported via `error` events — which
   // Node may emit before the next microtask. Attach the listener SYNCHRONOUSLY
   // (before the finally-block and any await) so we never miss an error.
+  //
+  // Sync-throw path: some spawn failures (EACCES on the npx binary, PATH
+  // resolution throws on certain platforms) are surfaced as synchronous
+  // exceptions from `spawnFn()` itself. Catch those and convert into the same
+  // `asyncSpawnError` shape so the downstream reporting is uniform regardless
+  // of whether Node chose sync-throw or async-emit for this particular failure.
   let asyncSpawnError: string | undefined;
   try {
-    child = spawnFn('npx', ['@inkeep/open-knowledge', 'start'], {
-      detached: true,
-      stdio: ['ignore', 'ignore', stderrFd],
-      cwd: opts.contentDir,
-    });
-    child.on('error', (err) => {
+    try {
+      child = spawnFn('npx', ['@inkeep/open-knowledge', 'start'], {
+        detached: true,
+        stdio: ['ignore', 'ignore', stderrFd],
+        cwd: opts.contentDir,
+      });
+      child.on('error', (err) => {
+        asyncSpawnError = err instanceof Error ? err.message : String(err);
+      });
+      child.unref();
+    } catch (err) {
       asyncSpawnError = err instanceof Error ? err.message : String(err);
-    });
-    child.unref();
+    }
   } finally {
     try {
       closeFd(stderrFd);
@@ -233,11 +243,15 @@ export async function ensureServerRunning(
   // Post-deadline: check one more time for an async spawn error that landed
   // between the last poll tick and the deadline — otherwise an ENOENT that
   // fires late surfaces as a generic "did not start in 5s" instead of the
-  // actual cause.
-  const stderr = readErrorLog(stderrPath);
+  // actual cause when available.
+  //
+  // Read stderr AFTER the asyncSpawnError check so a late error event +
+  // matching late-written stderr are both captured together.
   if (asyncSpawnError) {
+    const stderr = readErrorLog(stderrPath);
     throw new Error(`OK: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`);
   }
+  const stderr = readErrorLog(stderrPath);
   const seconds = (timeoutMs / 1000).toFixed(timeoutMs % 1000 === 0 ? 0 : 2);
   throw new Error(
     `OK: server did not start within ${seconds}s.${stderr ? ` stderr:\n${stderr}` : ''}`,

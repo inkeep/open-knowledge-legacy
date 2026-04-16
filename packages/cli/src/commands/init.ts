@@ -23,6 +23,7 @@ import {
   upsertRootInstructions,
 } from '../content/init.ts';
 import { formatPreviewBlock, type PreviewResult } from '../content/preview.ts';
+import { warning } from '../ui/colors.ts';
 import { isObject } from '../utils/is-object.ts';
 import {
   ALL_EDITOR_IDS,
@@ -477,12 +478,14 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
           break;
         case 'skipped-stale':
           lines.push(
-            `  launch.json   ${displayPath}  WARN: existing open-knowledge entry is out of date`,
+            `  launch.json   ${displayPath}  ${warning('\u26a0 existing open-knowledge entry is out of date')}`,
           );
           if (lj.staleFields && lj.staleFields.length > 0) {
-            lines.push(`                ${lj.staleFields.join(', ')} differ from current defaults`);
+            lines.push(
+              `                ${warning(`${lj.staleFields.join(', ')} differ from current defaults`)}`,
+            );
           }
-          lines.push(`                re-run with --force to update`);
+          lines.push(`                ${warning('re-run with --force to update')}`);
           break;
         case 'failed':
           lines.push(`  launch.json   ${displayPath}  FAILED: ${lj.error}`);

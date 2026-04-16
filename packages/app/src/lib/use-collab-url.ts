@@ -38,6 +38,9 @@ export function useCollabUrl(): UseCollabUrlState {
     let delay = INITIAL_DELAY_MS;
     let attempt = 0;
     let cancelled = false;
+    // One-shot breadcrumb for the common boot race — fire once per mount so
+    // the console doesn't fill up during a legitimately long `ok start` boot.
+    let nullCollabLogged = false;
 
     const schedule = (fn: () => void, ms: number): void => {
       if (cancelled) return;
@@ -54,6 +57,14 @@ export function useCollabUrl(): UseCollabUrlState {
           resolved = defaultCollabWsUrl();
         } else if (result.status === 'ok' && result.config.collabUrl !== null) {
           resolved = result.config.collabUrl;
+        } else if (result.status === 'ok') {
+          // `ok ui` responded but `server.lock` has no port yet — the common
+          // boot race when `ok mcp` spawns `ok start` + `ok ui` back-to-back.
+          // Log once so operators know why the banner is up; keep retrying.
+          if (!nullCollabLogged) {
+            nullCollabLogged = true;
+            console.info('[collab-url] ok ui responded but server.lock has no port yet — retrying');
+          }
         } else if (result.status === 'error') {
           // 5xx, network error, or malformed body — distinct from 404. Keep the
           // banner visible; surface a console breadcrumb so operators can
