@@ -1103,8 +1103,11 @@ button:active:not(:disabled) {
   background: var(--popover);
   white-space: nowrap;
 }
-.jsx-component-wrapper:hover:not(:has(.component-children .jsx-component-wrapper:hover))
-  > .jsx-add-child-pill {
+/* Add-child pill shows on ANY hover of the container — not restricted to
+   innermost-only like the chrome bar. The pill sits at bottom:-10px (outside
+   children) so it doesn't compete with child chrome. This makes it accessible
+   even when children fill the entire container (e.g., Steps full of Steps). */
+.jsx-component-wrapper:hover > .jsx-add-child-pill {
   opacity: 1;
   pointer-events: auto;
 }
