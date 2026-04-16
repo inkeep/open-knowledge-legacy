@@ -1,5 +1,5 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { Clock, Columns2, FolderOpen, Pin, PinOff, Rows2, Save } from 'lucide-react';
+import { ArrowDownToLine, Columns2, FolderOpen, History, Pin, PinOff, Rows2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -56,7 +56,7 @@ export function EditorHeader({
     ? `${activeTarget.folderPath}/`
     : activeDocName
       ? `${activeDocName}.md`
-      : 'No document';
+      : '';
   const isPinned = pinnedDoc !== null;
 
   function togglePin() {
@@ -239,7 +239,7 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        {!isDiffMode && (
+        {!isDiffMode && activeDocName && (
           <Button
             variant="ghost"
             size="sm"
@@ -248,19 +248,25 @@ export function EditorHeader({
             disabled={saving}
             className="gap-1.5 text-xs text-muted-foreground"
           >
-            <Save className="size-3.5" />
+            <ArrowDownToLine className="size-3.5" />
             {saving ? 'Saving…' : 'Save Version'}
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Open timeline"
-          onClick={onTimelineToggle}
-          disabled={!activeDocName}
-        >
-          <Clock className="size-4" />
-        </Button>
+        {activeDocName && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Document timeline"
+                onClick={onTimelineToggle}
+              >
+                <History className="size-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Document timeline</TooltipContent>
+          </Tooltip>
+        )}
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
         <ThemeToggle />

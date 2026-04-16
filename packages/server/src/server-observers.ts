@@ -2,7 +2,7 @@
  * Server-authoritative observer bridge — single-writer cross-CRDT sync.
  *
  * Mirrors the client-side observer bridge's write-side logic on the server:
- *   Observer A: XmlFragment → Y.Text (via applyByPrefixSuffix)
+ *   Observer A: XmlFragment → Y.Text (Path A: applyIncrementalDiff; Path B: mergeThreeWay + applyFastDiff)
  *   Observer B: Y.Text → XmlFragment (via updateYFragment)
  *
  * Runs on the server's copy of the Y.Doc so concurrent client edits converge
@@ -19,10 +19,11 @@
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
+  applyFastDiff,
   applyIncrementalDiff,
-  applyUserDelta,
   defaultScheduler,
   getFrontmatter,
+  mergeThreeWay,
   normalizeBridge,
   prependFrontmatter,
   type Scheduler,
@@ -32,6 +33,8 @@ import {
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+import { AGENT_WRITE_ORIGIN } from './agent-sessions.ts';
+import { FILE_WATCHER_ORIGIN } from './external-change.ts';
 import { incrementServerObserverError, incrementServerObserverFire } from './metrics.ts';
 
 // ─────────────────────────────────────────────────────────────
@@ -56,10 +59,34 @@ export const OBSERVER_SYNC_ORIGIN = {
   context: { origin: 'observer-sync' },
 } satisfies LocalTransactionOrigin;
 
-// Bridge utilities (applyIncrementalDiff, applyUserDelta, diffLinesFast,
-// Scheduler, defaultScheduler, getFrontmatter, normalizeBridge) are imported
-// from `@inkeep/open-knowledge-core` so they live in one place shared with
-// the client observer (precedent #4: shared computation, per-surface rendering).
+/**
+ * Paired-write origins — transactions where the caller atomically wrote BOTH
+ * XmlFragment and Y.Text inside a single `doc.transact(..., ORIGIN)` block:
+ *
+ *   - AGENT_WRITE_ORIGIN   → applyAgentMarkdownWrite (agent-sessions.ts)
+ *   - FILE_WATCHER_ORIGIN  → applyExternalChange (external-change.ts)
+ *
+ * Observer A MUST synchronously refresh `lastSyncedXmlMd` and cancel any
+ * pending debounce when it sees one of these origins. Otherwise, a concurrent
+ * Y.Text mutation arriving during the 50 ms debounce window causes
+ * `runObserverASync` to fire with a stale baseline and run Path B's
+ * `mergeThreeWay` — which duplicates content when user (XmlFragment) and
+ * agent (Y.Text) both contain the same addition.
+ *
+ * Fuzz reproduction: `STRESS_FUZZ_SEED=1776325179241 bun test
+ * packages/app/tests/stress/bridge-convergence.fuzz.test.ts` produces an
+ * "Oracle (e) content-set violation — missing 'M3-charlie hotel echo'" failure
+ * whose proximate cause is a duplicated `M0-alpha echo` line that a later
+ * agent-patch `indexOf('alpha')` locks onto instead of the intended target.
+ */
+const isPairedWriteOrigin = (origin: unknown): boolean =>
+  origin === AGENT_WRITE_ORIGIN || origin === FILE_WATCHER_ORIGIN;
+
+// Bridge utilities (applyIncrementalDiff, applyFastDiff, mergeThreeWay,
+// diffLinesFast, Scheduler, defaultScheduler, getFrontmatter, normalizeBridge)
+// are imported from `@inkeep/open-knowledge-core` so they live in one place
+// shared with the client observer (precedent #4: shared computation,
+// per-surface rendering).
 
 const DEBOUNCE_MS = 50;
 
@@ -141,8 +168,9 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
           // Path A: Y.Text in sync with baseline — use diffLines
           applyIncrementalDiff(ytext, currentText, md);
         } else {
-          // Path B: Y.Text diverged — use DMP three-way merge
-          applyUserDelta(ytext, lastSyncedXmlMd, md);
+          // Path B: Y.Text diverged — hybrid diff3+DMP three-way merge
+          const mergedText = mergeThreeWay(lastSyncedXmlMd, md, currentText);
+          applyFastDiff(ytext, currentText, mergedText);
         }
       }, OBSERVER_SYNC_ORIGIN);
 
@@ -163,8 +191,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       // fresh delta instead of re-applying the stale diff that just failed.
       try {
         lastSyncedXmlMd = ytext.toString();
-      } catch {
-        /* ignore — best-effort baseline recovery */
+      } catch (innerErr) {
+        console.warn('[Server Observer A] Baseline recovery also failed:', innerErr);
       }
     }
   };
@@ -177,14 +205,36 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // Self-skip: our own cross-CRDT write
     if (transaction.origin === OBSERVER_SYNC_ORIGIN) return;
 
-    // No callback-level baseline refresh needed on the server. Unlike the
-    // client Bug-B fix (which conditionally refreshes for remote transactions
-    // to prevent stale baselines when multiple peers collaborate), the server
-    // is the single writer for cross-CRDT sync. The baseline is correctly
-    // managed by runObserverASync: updated after successful write and at the
-    // already-in-sync gate (currentText === md → lastSyncedXmlMd = md).
-    // Refreshing here would cause the debounce to see lastSyncedXmlMd === md
-    // and early-exit without writing Y.Text.
+    // Paired-write origins atomically wrote both XmlFragment and Y.Text inside
+    // this transaction, so the baseline IS the current XmlFragment serialization.
+    // Refresh synchronously and cancel any pending debounce — a later
+    // `runObserverASync` firing against stale `lastSyncedXmlMd` would incorrectly
+    // take Path B and duplicate content when a concurrent Y.Text mutation lands
+    // in the debounce window. See `isPairedWriteOrigin` JSDoc for the fuzz seed.
+    if (isPairedWriteOrigin(transaction.origin)) {
+      try {
+        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const body = mdManager.serialize(json);
+        const frontmatter = getFrontmatter(doc);
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        if (debounceA) {
+          sched.clearTimeout(debounceA);
+          debounceA = null;
+        }
+      } catch (err) {
+        incrementServerObserverError('a');
+        console.warn(
+          '[Server Observer A] Paired-write baseline refresh failed — falling through to debounce:',
+          err instanceof Error ? err.message : String(err),
+        );
+        // Fall through to the debounce path for best-effort recovery. The
+        // next runObserverASync firing will reset the baseline from Y.Text
+        // in its own catch block if the underlying issue persists.
+        if (debounceA) sched.clearTimeout(debounceA);
+        debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
+      }
+      return;
+    }
 
     if (debounceA) sched.clearTimeout(debounceA);
     debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
@@ -272,6 +322,9 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
             (parseErr as RangeError).message.includes('Invalid content for node'))
         ) {
           console.debug('[Server Observer B] Parse skipped (partial/invalid markdown):', parseErr);
+          // Update baseline to current Y.Text so Observer A has a consistent
+          // reference — mirrors Observer A's error-recovery baseline reset.
+          lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
           return;
         }
         throw parseErr;
@@ -304,6 +357,17 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     } catch (err) {
       incrementServerObserverError('b');
       console.error('[Server Observer B] Failed to sync text→tree:', err);
+      // Reset baseline to current XmlFragment state so the next retry computes
+      // a fresh delta instead of re-applying the stale diff that just failed.
+      // Mirrors Observer A's baseline recovery pattern (lines 167-168).
+      try {
+        const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const postBody = mdManager.serialize(postJson);
+        const fm = getFrontmatter(doc);
+        lastSyncedXmlMd = prependFrontmatter(fm, postBody);
+      } catch (innerErr) {
+        console.warn('[Server Observer B] Baseline recovery also failed:', innerErr);
+      }
     }
   };
 

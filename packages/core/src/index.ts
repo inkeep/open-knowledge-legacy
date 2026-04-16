@@ -58,12 +58,13 @@ export {
 
 // Bridge — observer/CRDT-bridge shared utilities (precedent #14)
 export {
+  applyFastDiff,
   applyIncrementalDiff,
-  applyUserDelta,
   type DiffChange,
   defaultScheduler,
   diffLinesFast,
   getFrontmatter,
+  mergeThreeWay,
   normalizeBridge,
   type Scheduler,
 } from './bridge/index.ts';
@@ -87,6 +88,7 @@ export type {
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
 export {
   AGENT_COLORS,
+  AGENT_ICON_COLORS,
   colorFromSeed,
   deriveIconColor,
   generateRandomColor,

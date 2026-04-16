@@ -32,11 +32,11 @@ async function fetchHeadings(docName: string): Promise<HeadingEntry[]> {
   return data.headings ?? [];
 }
 
-// Each button is py-1 (4px × 2) + text-sm line-height (20px) = 28px tall.
+// Each button is py-1.5 (6px × 2) + text-sm line-height (20px) = 32px tall.
 // These values must stay in sync with the button className below.
-const ITEM_H = 28;
-const PAD_TOP = 4; // py-1
-const PAD_BOT = 4; // py-1
+const ITEM_H = 32;
+const PAD_TOP = 6; // py-1.5
+const PAD_BOT = 6; // py-1.5
 // Horizontal px per nesting level (1-based)
 const LEVEL_W = 8;
 
@@ -131,7 +131,7 @@ export function OutlinePanel({
       )}")`
     : undefined;
 
-  // Thumb covers the text region of the active item (excluding py-1 padding).
+  // Thumb covers the text region of the active item (excluding py-1.5 padding).
   const thumbTop = activeIndex >= 0 ? activeIndex * ITEM_H + PAD_TOP : 0;
   const thumbHeight = activeIndex >= 0 ? ITEM_H - PAD_TOP - PAD_BOT : 0;
 
@@ -192,12 +192,12 @@ export function OutlinePanel({
                   aria-current={isActive ? 'location' : undefined}
                   onClick={() => handleNav(index, heading.slug)}
                   className={cn(
-                    'w-full cursor-pointer truncate py-1 pe-2 text-left text-sm transition-colors',
+                    'w-full cursor-pointer truncate py-1.5 pe-2 text-left text-sm transition-colors',
                     isActive
                       ? 'font-medium text-primary'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
-                  style={{ paddingLeft: `${(heading.level - 1) * LEVEL_W + 12}px` }}
+                  style={{ paddingLeft: `${(heading.level - 1) * LEVEL_W + 16}px` }}
                   title={heading.text}
                 >
                   {heading.text}

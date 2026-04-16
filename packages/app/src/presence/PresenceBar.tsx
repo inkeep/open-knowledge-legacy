@@ -1,7 +1,6 @@
 import { deriveIconColor } from '@inkeep/open-knowledge-core';
 import {
   Bird,
-  Bot,
   Cat,
   Dog,
   Fish,
@@ -10,12 +9,17 @@ import {
   Rat,
   Shrimp,
   Snail,
+  Sparkles,
   Squirrel,
   Turtle,
 } from 'lucide-react';
 import type { FC, SVGProps } from 'react';
 import { ClaudeIcon } from '@/components/icons/claude';
+import { ClineIcon } from '@/components/icons/cline';
+import { CodexIcon } from '@/components/icons/codex';
+import { CopilotIcon } from '@/components/icons/copilot';
 import { CursorIcon } from '@/components/icons/cursor';
+import { WindsurfIcon } from '@/components/icons/windsurf';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { type Participant, usePresence } from './use-presence';
@@ -34,12 +38,15 @@ const ANIMAL_ICON_MAP: Record<string, FC<LucideProps>> = {
   Turtle,
 };
 
-/** Map the `icon` field from awareness to a component. Falls back to Bot for unknown agents. */
+/** Map the `icon` field from awareness to a component. Falls back to Sparkles for unknown agents. */
 function AgentIcon({ icon, ...props }: { icon?: string } & SVGProps<SVGSVGElement>) {
   if (icon === 'claude') return <ClaudeIcon {...props} />;
   if (icon === 'cursor') return <CursorIcon {...props} />;
-  // Unknown or missing icon — generic bot
-  return <Bot {...(props as LucideProps)} />;
+  if (icon === 'windsurf') return <WindsurfIcon {...props} />;
+  if (icon === 'openai') return <CodexIcon {...props} />;
+  if (icon === 'cline') return <ClineIcon {...props} />;
+  if (icon === 'github') return <CopilotIcon {...props} />;
+  return <Sparkles strokeWidth={1.5} {...(props as LucideProps)} />;
 }
 
 const AGENT_DISPLAY_NAME: Record<string, string> = {
