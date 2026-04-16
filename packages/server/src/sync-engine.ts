@@ -93,6 +93,9 @@ export interface SyncEngineOptions {
   cc1Broadcaster?: CC1Broadcaster | null;
   /** Called on every state transition. */
   onStateChange?: (state: SyncState) => void;
+  /** Callback to gate batch-in-progress during merge operations.
+   *  Prevents HEAD watcher from firing reconciliation mid-merge. */
+  setBatchInProgress?: (value: boolean) => void;
 }
 
 // ─── Jitter helper ───────────────────────────────────────────────────────────
@@ -127,6 +130,7 @@ export class SyncEngine {
   private credentialArgs: string[];
   private cc1Broadcaster: CC1Broadcaster | null;
   private onStateChange: ((state: SyncState) => void) | undefined;
+  private setBatchInProgress: ((value: boolean) => void) | undefined;
 
   private pullTimer: ReturnType<typeof setTimeout> | null = null;
   private pushTimer: ReturnType<typeof setTimeout> | null = null;
@@ -165,6 +169,7 @@ export class SyncEngine {
     this.credentialArgs = options.credentialArgs ?? [];
     this.cc1Broadcaster = options.cc1Broadcaster ?? null;
     this.onStateChange = options.onStateChange;
+    this.setBatchInProgress = options.setBatchInProgress;
     this.statePath = resolve(this.contentDir, '.open-knowledge', 'sync-state.json');
     this.conflictStore = new ConflictStore(this.contentDir, this.projectDir, 'main');
   }
@@ -431,6 +436,8 @@ export class SyncEngine {
     // Merge if behind and no unresolved conflicts
     if (this.behind > 0 && this.conflictCount === 0) {
       this.transitionTo('pulling');
+      // Gate batch to suppress HEAD watcher reconciliation during SyncEngine merge
+      this.setBatchInProgress?.(true);
       try {
         await handle.git.merge([`origin/${branch}`]);
         this.lastSyncUtc = new Date().toISOString();
@@ -445,6 +452,8 @@ export class SyncEngine {
           this.handleError(classified);
         }
         return;
+      } finally {
+        this.setBatchInProgress?.(false);
       }
     } else {
       this.transitionTo('idle');
@@ -630,6 +639,7 @@ export class SyncEngine {
           const retryHandle = createGitInstance(this.projectDir, {
             credentialArgs: this.credentialArgs,
           });
+          this.setBatchInProgress?.(true);
           try {
             await retryHandle.git.fetch('origin');
             await retryHandle.git.merge([`origin/${this.currentBranch}`]);
@@ -644,6 +654,8 @@ export class SyncEngine {
             }
             this.scheduleSaveState();
             return;
+          } finally {
+            this.setBatchInProgress?.(false);
           }
           // Merge succeeded — retry push once (retriesLeft=0 prevents recursion)
           await this.doPushCycle(0);

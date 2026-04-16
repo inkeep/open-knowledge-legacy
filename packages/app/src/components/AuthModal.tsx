@@ -432,11 +432,11 @@ export function AuthModal({
   }
 
   function handleIdentitySave(name: string, email: string) {
-    // Persist git identity via config endpoint (best-effort)
-    void fetch('/api/local-op/auth/status', {
+    // Persist git identity via dedicated endpoint (best-effort)
+    void fetch('/api/local-op/auth/set-identity', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ setIdentity: { name, email } }),
+      body: JSON.stringify({ name, email }),
     }).catch(() => {
       /* ignore */
     });

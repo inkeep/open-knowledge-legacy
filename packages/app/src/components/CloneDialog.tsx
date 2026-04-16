@@ -175,7 +175,7 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
       const res = await fetch('/api/local-op/clone', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: urlInput.trim(), localPath: localPath || undefined }),
+        body: JSON.stringify({ url: urlInput.trim(), dir: localPath || undefined }),
         signal: ac.signal,
       });
 

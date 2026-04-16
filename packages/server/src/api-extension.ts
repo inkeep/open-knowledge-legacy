@@ -69,6 +69,7 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { withParentLock } from './git-handle.ts';
 import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
@@ -556,19 +557,6 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
   // Concurrency guard: at most 1 in-flight request per local-op endpoint
   const localOpGuard = createConcurrencyGuard();
-
-  // Parent-git mutex: serializes checkpoint and rollback commits in the
-  // project's own git repository so they don't race with SyncEngine pushes.
-  let parentGitLock: Promise<void> = Promise.resolve();
-  function withParentGitMutex<T>(fn: () => Promise<T>): Promise<T> {
-    const result = parentGitLock.then(fn);
-    // Detach error so a failed run doesn't leave the mutex locked forever
-    parentGitLock = result.then(
-      () => {},
-      () => {},
-    );
-    return result;
-  }
 
   function resolveDocPath(docName: string): string | null {
     if (!isSafeDocName(docName)) return null;
@@ -1885,7 +1873,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       let versionTag: string | undefined;
       if (projectDir) {
         try {
-          versionTag = await withParentGitMutex(async () => {
+          versionTag = await withParentLock(async () => {
             const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
             // Count existing ok/v* tags to derive N
             const existing = await pg.tags(['--list', 'ok/v*']);
@@ -2265,7 +2253,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const versionLabel = versionTagForRollback ?? commitSha.slice(0, 8);
         const restoreMsg = `Restored to ${versionLabel}: ${docName}`;
         const resolvedContentRoot = contentRoot ?? 'content';
-        withParentGitMutex(async () => {
+        withParentLock(async () => {
           const pg = simpleGit({ baseDir: projectDir, timeout: { block: 15_000 } });
           const gitPathspec = resolvedContentRoot || '.';
           await pg.add(gitPathspec);
@@ -3443,10 +3431,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           stdio: ['ignore', 'pipe', 'pipe'],
           env: { ...process.env },
         });
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
         const chunks: Buffer[] = [];
         child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
-        child.on('close', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-        child.on('error', reject);
+        child.on('close', () => {
+          clearTimeout(killTimer);
+          resolve(Buffer.concat(chunks).toString('utf-8'));
+        });
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
       });
 
       const line = output.trim();
@@ -3595,8 +3592,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           stdio: 'ignore',
           env: { ...process.env },
         });
-        child.on('close', () => resolve());
-        child.on('error', reject);
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
+        child.on('close', () => {
+          clearTimeout(killTimer);
+          resolve();
+        });
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
       });
 
       json(res, 200, { ok: true });
@@ -3654,6 +3660,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           stdio: ['pipe', 'pipe', 'pipe'],
           env: { ...process.env },
         });
+        const killTimer = setTimeout(() => {
+          child.kill('SIGTERM');
+        }, 30_000);
         // Write the PAT to stdin and close it so the CLI readline resolves
         child.stdin.write(`${pat}\n`);
         child.stdin.end();
@@ -3661,13 +3670,17 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         const chunks: Buffer[] = [];
         child.stdout.on('data', (chunk: Buffer) => chunks.push(chunk));
         child.on('close', (code) => {
+          clearTimeout(killTimer);
           if (code !== 0) {
             reject(new Error(`auth pat exited with code ${code}`));
           } else {
             resolve(Buffer.concat(chunks).toString('utf-8'));
           }
         });
-        child.on('error', reject);
+        child.on('error', (err) => {
+          clearTimeout(killTimer);
+          reject(err);
+        });
       });
 
       const line = output.trim();
@@ -3691,35 +3704,74 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── POST /api/local-op/auth/set-identity ──────────────────────────────────
+  // Sets git user.name and user.email on the project dir (local config).
+
+  const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
+
+  async function handleLocalOpAuthSetIdentity(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+
+    let name: string;
+    let email: string;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { name?: unknown; email?: unknown };
+      if (typeof parsed.name !== 'string' || !parsed.name.trim()) {
+        json(res, 400, { ok: false, error: 'Missing or invalid name' });
+        return;
+      }
+      if (typeof parsed.email !== 'string' || !parsed.email.trim()) {
+        json(res, 400, { ok: false, error: 'Missing or invalid email' });
+        return;
+      }
+      name = parsed.name.trim();
+      email = parsed.email.trim();
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+
+    if (!projectDir) {
+      json(res, 400, { ok: false, error: 'No project directory configured' });
+      return;
+    }
+
+    if (!localOpGuard.tryAcquire(LOCAL_OP_AUTH_SET_IDENTITY_KEY)) {
+      json(res, 429, { ok: false, error: 'A set-identity operation is already in progress' });
+      return;
+    }
+
+    try {
+      const pg = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
+      await pg.addConfig('user.name', name, false, 'local');
+      await pg.addConfig('user.email', email, false, 'local');
+      json(res, 200, { ok: true });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'set-identity failed',
+      });
+    } finally {
+      localOpGuard.release(LOCAL_OP_AUTH_SET_IDENTITY_KEY);
+    }
+  }
+
   // ─── Security helpers for sync endpoints ────────────────────────────────────
-
-  function isLoopback(req: IncomingMessage): boolean {
-    const addr = req.socket.remoteAddress;
-    return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
-  }
-
-  function checkSyncSecurity(req: IncomingMessage, res: ServerResponse): boolean {
-    if (!isLoopback(req)) {
-      json(res, 403, { ok: false, error: 'Forbidden: sync endpoints require loopback connection' });
-      return false;
-    }
-    const origin = req.headers.origin;
-    if (
-      origin &&
-      !origin.startsWith('http://127.0.0.1') &&
-      !origin.startsWith('http://localhost') &&
-      !origin.startsWith('http://[::1]')
-    ) {
-      json(res, 403, { ok: false, error: 'Forbidden: invalid origin' });
-      return false;
-    }
-    return true;
-  }
+  // Sync endpoints reuse the shared loopback + origin check from local-op-security.ts
+  // to avoid duplicating the same logic (checkLocalOpSecurity already imported above).
 
   // ─── Sync endpoints ──────────────────────────────────────────────────────────
 
   async function handleSyncStatus(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkSyncSecurity(req, res)) return;
+    if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -3742,7 +3794,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleSyncTrigger(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkSyncSecurity(req, res)) return;
+    if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -3770,7 +3822,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
   }
 
   async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    if (!checkSyncSecurity(req, res)) return;
+    if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -3784,7 +3836,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    if (!checkSyncSecurity(req, res)) return;
+    if (!checkLocalOpSecurity(req, res, json)) return;
     if (req.method !== 'POST') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
@@ -3863,6 +3915,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/repos': handleLocalOpAuthRepos,
     '/api/local-op/auth/signout': handleLocalOpAuthSignout,
     '/api/local-op/auth/pat': handleLocalOpAuthPat,
+    '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
   };
 
   if (enableTestRoutes) {

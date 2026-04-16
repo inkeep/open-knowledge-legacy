@@ -206,7 +206,9 @@ export class ConflictStore {
       }
     }
 
-    // Remove from store
+    // Remove from store — but defer final removal if this is the last conflict
+    // so we can re-add on commit failure (prevents losing conflict from UI while
+    // git is still in half-merged state).
     this.removeConflict(file);
 
     // If all conflicts resolved, create the merge commit
@@ -215,9 +217,11 @@ export class ConflictStore {
         await handle.git.raw(['commit', '--no-edit']);
         log.info({ file }, '[conflicts] all conflicts resolved — merge commit created');
       } catch (e) {
+        // Commit failed — re-add the conflict so it stays visible in UI
+        this.addConflict({ file, detectedAt: new Date().toISOString() });
         log.warn(
           { err: e },
-          '[conflicts] failed to commit merge after all conflicts resolved — manual commit may be needed',
+          '[conflicts] failed to commit merge after all conflicts resolved — conflict re-added',
         );
       }
     }

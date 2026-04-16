@@ -1274,13 +1274,21 @@ export function createServer(options: ServerOptions): ServerInstance {
     }
 
     // Start SyncEngine (FR21): remote detection + auto-sync
+    // Build credentialArgs from localOpCliArgs so git fetch/push can authenticate.
+    // Pattern: ['-c', 'credential.helper=!<cli-binary> auth git-credential']
+    const cliCmd = localOpCliArgs?.[0] ?? 'open-knowledge';
+    const cliPrefix =
+      localOpCliArgs && localOpCliArgs.length > 1 ? localOpCliArgs.join(' ') : cliCmd;
+    const syncCredentialArgs = ['-c', `credential.helper=!${cliPrefix} auth git-credential`];
     try {
       syncEngine = new SyncEngine({
         projectDir,
         contentDir,
         contentFilter,
         contentRoot,
+        credentialArgs: syncCredentialArgs,
         cc1Broadcaster,
+        setBatchInProgress,
         onStateChange: (state) => {
           log.info({ state }, `[sync] state → ${state}`);
         },

@@ -30,7 +30,8 @@ async function fetchConflicts(): Promise<ConflictEntry[]> {
   try {
     const res = await fetch('/api/sync/conflicts');
     if (!res.ok) return [];
-    return (await res.json()) as ConflictEntry[];
+    const data = (await res.json()) as { conflicts: ConflictEntry[] };
+    return data.conflicts ?? [];
   } catch {
     return [];
   }
