@@ -16,7 +16,7 @@
 
 import type { PropDef } from '@inkeep/open-knowledge-core';
 import { Input } from '@/components/ui/input';
-import { Toggle } from '@/components/ui/toggle';
+import { Switch } from '@/components/ui/switch';
 
 interface PropPanelProps {
   props: PropDef[];
@@ -74,20 +74,16 @@ function PropControl({
     case 'boolean': {
       const boolId = `prop-${propDef.name}`;
       return (
-        <div className="flex items-center gap-2">
-          <Toggle
-            id={boolId}
-            pressed={Boolean(value)}
-            onPressedChange={(pressed) => onChange(pressed)}
-            size="sm"
-            className="h-6 w-6"
-            aria-label={propDef.name}
-          >
-            {value ? '✓' : ''}
-          </Toggle>
+        <div className="flex items-center justify-between gap-2">
           <label htmlFor={boolId} className="text-xs text-muted-foreground">
             {propDef.name}
           </label>
+          <Switch
+            id={boolId}
+            checked={Boolean(value)}
+            onCheckedChange={(checked) => onChange(checked)}
+            aria-label={propDef.name}
+          />
         </div>
       );
     }
