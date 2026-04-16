@@ -1,9 +1,9 @@
 # Page Render Optimization — Document-Open UX / CRDT Sync Loading States
 
-**Status:** In Review (pending audit)
+**Status:** Approved
 **Owner(s):** Nick Gomez (DRI)
 **Last updated:** 2026-04-16
-**Baseline commit:** 06da1ff (will be overwritten at finalization)
+**Baseline commit:** c4948e5 (post-audit finalization; overwrite at subsequent re-review)
 **Links:**
 - Evidence: `./evidence/` (worldmodel-findings.md is authoritative for current state)
 - Meta: `./meta/_changelog.md`
