@@ -184,7 +184,11 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
 test('sidebar folder row: clicking anywhere on the row toggles expand/collapse', async ({
   page,
 }) => {
-  const folderRow = page.getByRole('button', { name: 'sidebar-folder' });
+  // `exact: true` is required: the folder has a SidebarMenuAction with
+  // `aria-label="Expand sidebar-folder"` which would otherwise substring-match
+  // the same role query and trigger a strict-mode violation (2 elements
+  // resolved). The row button's accessible name is exactly "sidebar-folder".
+  const folderRow = page.getByRole('button', { name: 'sidebar-folder', exact: true });
   // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
   // EditorHeader's `${activeDocName}.md` label after navigating into the file,
   // causing toHaveCount(0) to fail on collapse even though the sidebar entry is
