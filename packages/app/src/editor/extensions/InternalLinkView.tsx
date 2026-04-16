@@ -8,10 +8,22 @@
 import { type ClassifiedLinkTarget, isExternalHref } from '@inkeep/open-knowledge-core';
 import type { MarkViewProps } from '@tiptap/core';
 import { MarkViewContent } from '@tiptap/react';
-import { CircleAlert, Ellipsis, File, FolderOpen, Loader2, Pencil, Trash2 } from 'lucide-react';
+import {
+  CircleAlert,
+  Ellipsis,
+  File,
+  FilePlus2,
+  FolderOpen,
+  Loader2,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
-import { resolveLinkTargetIntent } from '../../components/link-target-intent';
+import {
+  folderIndexCreateSeed,
+  resolveLinkTargetIntent,
+} from '../../components/link-target-intent';
 import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
@@ -230,7 +242,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
   const href = (mark.attrs.href as string | null) ?? '';
   const target = classifyCurrentMarkdownHref(href);
   const { folderPaths, pages, loading } = usePageList();
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createDialogMode, setCreateDialogMode] = useState<'missing' | 'folder-index' | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
   function handleSave(nextHref: string) {
@@ -298,6 +310,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
     pages,
     folderPaths,
   });
+  const folderCreateSeed = folderIndexCreateSeed(linkIntent);
   const isResolved =
     !loading && linkIntent.kind === 'navigate' && linkIntent.displayState === 'resolved';
   const isFolder =
@@ -312,7 +325,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
   function handlePrimaryClick(e: React.MouseEvent) {
     e.preventDefault();
     if (linkIntent.kind === 'create') {
-      setCreateDialogOpen(true);
+      setCreateDialogMode('missing');
       return;
     }
     if (shouldOpenInNewTab(e)) {
@@ -326,6 +339,9 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
   }
 
   function handleCreated(docName: string) {
+    if (createDialogMode !== 'missing') {
+      return;
+    }
     updateAttributes({ href: buildCurrentRelativeMarkdownHref(docName, docTarget.anchor ?? null) });
   }
 
@@ -403,7 +419,7 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
             {isUnresolved ? (
               <div>This page cannot be found.</div>
             ) : isFolder ? (
-              <div>This target is a folder. Open it to create an index note.</div>
+              <div>This target is a folder. Use link options to create an index note.</div>
             ) : (
               <LinkTooltipHint href={href} />
             )}
@@ -418,6 +434,15 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
             editor.commands.focus();
           }}
         >
+          {isFolder ? (
+            <>
+              <DropdownMenuItem onSelect={() => setCreateDialogMode('folder-index')}>
+                <FilePlus2 aria-hidden="true" />
+                Create index note
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+            </>
+          ) : null}
           <DropdownMenuItem onSelect={() => setEditDialogOpen(true)}>
             <Pencil aria-hidden="true" />
             Edit link
@@ -434,16 +459,37 @@ export function InternalLinkView({ mark, editor, updateAttributes }: MarkViewPro
       </DropdownMenuRoot>
 
       <NewItemDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
+        open={createDialogMode !== null}
+        onOpenChange={(open) => {
+          if (!open) setCreateDialogMode(null);
+        }}
         kind="file"
-        initialDir={linkIntent.kind === 'create' ? linkIntent.initialDir : ''}
-        suggestedName={linkIntent.kind === 'create' ? linkIntent.suggestedName : undefined}
+        initialDir={
+          createDialogMode === 'folder-index' && folderCreateSeed
+            ? folderCreateSeed.initialDir
+            : linkIntent.kind === 'create'
+              ? linkIntent.initialDir
+              : ''
+        }
+        suggestedName={
+          createDialogMode === 'folder-index' && folderCreateSeed
+            ? folderCreateSeed.suggestedName
+            : linkIntent.kind === 'create'
+              ? linkIntent.suggestedName
+              : undefined
+        }
         description={
-          <>
-            Create a page for{' '}
-            <span className="font-medium text-foreground">{docTarget.docName}</span>
-          </>
+          createDialogMode === 'folder-index' && folderCreateSeed ? (
+            <>
+              Create an index note for{' '}
+              <span className="font-medium text-foreground">{folderCreateSeed.initialDir}/</span>
+            </>
+          ) : (
+            <>
+              Create a page for{' '}
+              <span className="font-medium text-foreground">{docTarget.docName}</span>
+            </>
+          )
         }
         onCreated={handleCreated}
       />

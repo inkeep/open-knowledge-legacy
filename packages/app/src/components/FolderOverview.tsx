@@ -9,11 +9,11 @@ import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 
 export function FolderOverview({ folderPath }: { folderPath: string }) {
-  const { addPage, folderPaths, pages } = usePageList();
+  const { addPage, folderPaths, pages, pageTitles } = usePageList();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [creatingIndex, setCreatingIndex] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const data = buildFolderOverviewData(folderPath, { pages, folderPaths });
+  const data = buildFolderOverviewData(folderPath, { pages, pageTitles, folderPaths });
 
   async function handleCreateIndexNote() {
     setCreatingIndex(true);
@@ -104,7 +104,7 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
                       }}
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{child.name}</div>
+                        <div className="truncate text-sm font-medium">{child.title}</div>
                         <div className="truncate font-mono text-xs text-muted-foreground">
                           {child.path}/
                         </div>
@@ -136,7 +136,7 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
                       }}
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{child.name}</div>
+                        <div className="truncate text-sm font-medium">{child.title}</div>
                         <div className="truncate font-mono text-xs text-muted-foreground">
                           {child.docName}.md
                         </div>

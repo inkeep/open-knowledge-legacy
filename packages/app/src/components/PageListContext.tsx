@@ -5,6 +5,8 @@ import { deriveKnownFolderPaths } from './navigation-targets';
 interface PageListContextValue {
   /** Set of known docNames (filename without .md extension). */
   pages: Set<string>;
+  /** Display titles returned by `/api/pages`, keyed by docName. */
+  pageTitles: ReadonlyMap<string, string>;
   /** Set of known folder paths derived from the current document list. */
   folderPaths: Set<string>;
   /** True while the page list is being fetched from the server. */
@@ -18,6 +20,11 @@ interface PageListContextValue {
 }
 
 const PageListContext = createContext<PageListContextValue | null>(null);
+
+interface PageSummary {
+  docName: string;
+  title: string;
+}
 
 export function mergePageSets(
   serverPages: ReadonlySet<string>,
@@ -41,16 +48,29 @@ export function pruneConfirmedOptimisticPages(
   return pending;
 }
 
-async function loadPages(): Promise<Set<string>> {
+function mergePageTitles(
+  serverTitles: ReadonlyMap<string, string>,
+  optimisticPages: ReadonlySet<string>,
+) {
+  const merged = new Map(serverTitles);
+  for (const docName of optimisticPages) {
+    if (!merged.has(docName)) {
+      merged.set(docName, docName);
+    }
+  }
+  return merged;
+}
+
+async function loadPages(): Promise<PageSummary[]> {
   const r = await fetch('/api/pages');
   if (!r.ok) {
     throw new Error(`/api/pages responded with ${r.status}`);
   }
-  const data = (await r.json()) as { ok?: boolean; pages?: Array<{ docName: string }> };
+  const data = (await r.json()) as { ok?: boolean; pages?: PageSummary[] };
   if (Array.isArray(data.pages)) {
-    return new Set(data.pages.map((p) => p.docName));
+    return data.pages;
   }
-  return new Set();
+  return [];
 }
 
 function logLoadPagesError(err: unknown) {
@@ -59,6 +79,7 @@ function logLoadPagesError(err: unknown) {
 
 export function PageListProvider({ children }: { children: ReactNode }) {
   const [serverPages, setServerPages] = useState(new Set<string>());
+  const [serverPageTitles, setServerPageTitles] = useState(new Map<string, string>());
   const [optimisticPages, setOptimisticPages] = useState(new Set<string>());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,10 +89,14 @@ export function PageListProvider({ children }: { children: ReactNode }) {
     const requestId = ++latestRequestIdRef.current;
     setLoading(true);
     void loadPages()
-      .then((p) => {
+      .then((pageSummaries) => {
         if (requestId !== latestRequestIdRef.current) return;
-        setServerPages(p);
-        setOptimisticPages((prev) => pruneConfirmedOptimisticPages(prev, p));
+        const pageNames = new Set(pageSummaries.map((page) => page.docName));
+        setServerPages(pageNames);
+        setServerPageTitles(
+          new Map(pageSummaries.map((page) => [page.docName, page.title] as const)),
+        );
+        setOptimisticPages((prev) => pruneConfirmedOptimisticPages(prev, pageNames));
         setError(null);
       })
       .catch((err) => {
@@ -118,10 +143,11 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const pages = mergePageSets(serverPages, optimisticPages);
+  const pageTitles = mergePageTitles(serverPageTitles, optimisticPages);
   const folderPaths = deriveKnownFolderPaths(pages);
 
   return (
-    <PageListContext value={{ pages, folderPaths, loading, error, refetch, addPage }}>
+    <PageListContext value={{ pages, pageTitles, folderPaths, loading, error, refetch, addPage }}>
       {children}
     </PageListContext>
   );

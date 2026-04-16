@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveLinkTargetIntent } from './link-target-intent';
+import { folderIndexCreateSeed, resolveLinkTargetIntent } from './link-target-intent';
 
 describe('resolveLinkTargetIntent', () => {
   test('navigates directly to an exact document target', () => {
@@ -96,5 +96,27 @@ describe('resolveLinkTargetIntent', () => {
       },
       hashDocName: 'my-notes',
     });
+  });
+});
+
+describe('folderIndexCreateSeed', () => {
+  test('returns an index-note seed for folder-only targets', () => {
+    const intent = resolveLinkTargetIntent('reports', {
+      pages: new Set<string>(),
+      folderPaths: new Set(['reports']),
+    });
+
+    expect(folderIndexCreateSeed(intent)).toEqual({
+      initialDir: 'reports',
+      suggestedName: 'index.md',
+    });
+  });
+
+  test('returns null for direct document targets', () => {
+    const intent = resolveLinkTargetIntent('reports', {
+      pages: new Set(['reports']),
+    });
+
+    expect(folderIndexCreateSeed(intent)).toBeNull();
   });
 });

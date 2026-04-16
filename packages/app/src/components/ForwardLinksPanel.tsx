@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, FilePlus2, FolderOpen } from 'lucide-react';
 import { useState } from 'react';
-import { resolveLinkTargetIntent } from '@/components/link-target-intent';
+import { folderIndexCreateSeed, resolveLinkTargetIntent } from '@/components/link-target-intent';
 import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
@@ -79,6 +79,15 @@ export function ForwardLinksPanel({
           pages,
           folderPaths,
         });
+  const createDialogSeed =
+    createDialogIntent === null
+      ? null
+      : createDialogIntent.kind === 'create'
+        ? {
+            initialDir: createDialogIntent.initialDir,
+            suggestedName: createDialogIntent.suggestedName,
+          }
+        : folderIndexCreateSeed(createDialogIntent);
 
   function handleRowClick(link: ForwardLinkItem) {
     if (link.kind === 'external') {
@@ -137,71 +146,83 @@ export function ForwardLinksPanel({
                     ? `doc:${link.docName}:${link.anchor ?? ''}`
                     : `ext:${link.url}`;
                 return (
-                  <Button
-                    key={key}
-                    variant="outline"
-                    className={cn(
-                      'h-auto w-full items-start justify-start whitespace-normal px-3 py-2 text-left',
-                      unresolved &&
-                        'border-amber-300 bg-amber-50/70 text-amber-950 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200 dark:hover:bg-amber-950/35',
-                      folderTarget &&
-                        'border-sky-300 bg-sky-50/70 text-sky-950 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-100 dark:hover:bg-sky-950/35',
-                    )}
-                    onClick={() => handleRowClick(link)}
-                  >
-                    <div className="min-w-0 flex-1">
-                      <div
-                        className="truncate text-sm font-medium"
-                        title={
-                          link.kind === 'doc' && link.title === link.docName
-                            ? link.docName
-                            : link.kind === 'external'
-                              ? link.url
-                              : undefined
-                        }
-                      >
-                        <span className="inline-flex items-center gap-1">
-                          <span>{displayTitle}</span>
-                          {link.kind === 'external' ? (
-                            <ArrowUpRight
-                              className="size-3.5 shrink-0 text-muted-foreground"
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                        </span>
-                      </div>
-                      {link.kind === 'doc' && link.title !== link.docName ? (
+                  <div key={key} className="flex flex-col gap-2">
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        'h-auto w-full items-start justify-start whitespace-normal px-3 py-2 text-left',
+                        unresolved &&
+                          'border-amber-300 bg-amber-50/70 text-amber-950 hover:bg-amber-100 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200 dark:hover:bg-amber-950/35',
+                        folderTarget &&
+                          'border-sky-300 bg-sky-50/70 text-sky-950 hover:bg-sky-100 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-100 dark:hover:bg-sky-950/35',
+                      )}
+                      onClick={() => handleRowClick(link)}
+                    >
+                      <div className="min-w-0 flex-1">
                         <div
-                          className="truncate font-mono text-xs text-muted-foreground"
-                          title={link.docName}
+                          className="truncate text-sm font-medium"
+                          title={
+                            link.kind === 'doc' && link.title === link.docName
+                              ? link.docName
+                              : link.kind === 'external'
+                                ? link.url
+                                : undefined
+                          }
                         >
-                          {compactPath}
+                          <span className="inline-flex items-center gap-1">
+                            <span>{displayTitle}</span>
+                            {link.kind === 'external' ? (
+                              <ArrowUpRight
+                                className="size-3.5 shrink-0 text-muted-foreground"
+                                aria-hidden="true"
+                              />
+                            ) : null}
+                          </span>
                         </div>
-                      ) : null}
-                      {link.kind === 'external' ? (
-                        <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
-                          {link.url}
-                        </div>
-                      ) : null}
-                      {unresolved ? (
-                        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
-                          <FilePlus2 className="size-3 shrink-0" aria-hidden="true" />
-                          <span>Missing page. Click to create.</span>
-                        </div>
-                      ) : null}
-                      {folderTarget ? (
-                        <div className="mt-0.5 flex items-center gap-1.5 text-xs text-sky-700 dark:text-sky-300">
-                          <FolderOpen className="size-3 shrink-0" aria-hidden="true" />
-                          <span>Folder target. Open overview to create an index note.</span>
-                        </div>
-                      ) : null}
-                      {link.snippet ? (
-                        <p className="mt-1 break-words text-sm text-muted-foreground">
-                          {link.snippet}
-                        </p>
-                      ) : null}
-                    </div>
-                  </Button>
+                        {link.kind === 'doc' && link.title !== link.docName ? (
+                          <div
+                            className="truncate font-mono text-xs text-muted-foreground"
+                            title={link.docName}
+                          >
+                            {compactPath}
+                          </div>
+                        ) : null}
+                        {link.kind === 'external' ? (
+                          <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">
+                            {link.url}
+                          </div>
+                        ) : null}
+                        {unresolved ? (
+                          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300">
+                            <FilePlus2 className="size-3 shrink-0" aria-hidden="true" />
+                            <span>Missing page. Click to create.</span>
+                          </div>
+                        ) : null}
+                        {folderTarget ? (
+                          <div className="mt-0.5 flex items-center gap-1.5 text-xs text-sky-700 dark:text-sky-300">
+                            <FolderOpen className="size-3 shrink-0" aria-hidden="true" />
+                            <span>Folder target. Click to open the overview.</span>
+                          </div>
+                        ) : null}
+                        {link.snippet ? (
+                          <p className="mt-1 break-words text-sm text-muted-foreground">
+                            {link.snippet}
+                          </p>
+                        ) : null}
+                      </div>
+                    </Button>
+                    {folderTarget ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="self-start"
+                        onClick={() => setCreateTarget(link)}
+                      >
+                        <FilePlus2 className="size-3.5" />
+                        Create index note
+                      </Button>
+                    ) : null}
+                  </div>
                 );
               })}
             </div>
@@ -212,10 +233,8 @@ export function ForwardLinksPanel({
       <NewItemDialog
         open={createTarget !== null}
         kind="file"
-        initialDir={createDialogIntent?.kind === 'create' ? createDialogIntent.initialDir : ''}
-        suggestedName={
-          createDialogIntent?.kind === 'create' ? createDialogIntent.suggestedName : undefined
-        }
+        initialDir={createDialogSeed?.initialDir ?? ''}
+        suggestedName={createDialogSeed?.suggestedName}
         onOpenChange={(open: boolean) => {
           if (!open) setCreateTarget(null);
         }}

@@ -82,3 +82,22 @@ export function resolveLinkTargetIntent(
     suggestedName: seed.suggestedName,
   };
 }
+
+export function folderIndexCreateSeed(intent: LinkTargetIntent): {
+  initialDir: string;
+  suggestedName: string;
+} | null {
+  if (intent.kind !== 'navigate' || intent.displayState !== 'folder') {
+    return null;
+  }
+
+  const resolvedTarget = intent.resolvedTarget;
+  if (!('folderPath' in resolvedTarget)) {
+    return null;
+  }
+
+  return {
+    initialDir: resolvedTarget.folderPath,
+    suggestedName: 'index.md',
+  };
+}

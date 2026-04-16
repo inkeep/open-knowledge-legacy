@@ -6,11 +6,23 @@ import {
 } from '@inkeep/open-knowledge-core';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
-import { CircleAlert, Ellipsis, File, FolderOpen, Loader2, Pencil, Trash2 } from 'lucide-react';
+import {
+  CircleAlert,
+  Ellipsis,
+  File,
+  FilePlus2,
+  FolderOpen,
+  Loader2,
+  Pencil,
+  Trash2,
+} from 'lucide-react';
 import { Dialog } from 'radix-ui';
 import { useEffect, useId, useState } from 'react';
 import { defaultInitialDir } from '../../components/file-tree-utils';
-import { resolveLinkTargetIntent } from '../../components/link-target-intent';
+import {
+  folderIndexCreateSeed,
+  resolveLinkTargetIntent,
+} from '../../components/link-target-intent';
 import { NewItemDialog } from '../../components/NewItemDialog';
 import { usePageList } from '../../components/PageListContext';
 import { Button } from '../../components/ui/button';
@@ -225,8 +237,9 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
   const folderResolved = resolutionState === 'folder';
   const unresolved = resolutionState === 'unresolved';
 
-  const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [createDialogMode, setCreateDialogMode] = useState<'missing' | 'folder-index' | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const folderCreateSeed = folderIndexCreateSeed(linkIntent);
 
   /** Primary click: navigate (resolved/loading) or open create dialog (unresolved). */
   function handlePrimaryClick(event?: { metaKey: boolean; ctrlKey: boolean }) {
@@ -235,7 +248,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
       return;
     }
     if (linkIntent.kind === 'create') {
-      setCreateDialogOpen(true);
+      setCreateDialogMode('missing');
       return;
     }
     if (event && shouldOpenInNewTab(event)) {
@@ -260,7 +273,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
   }
 
   function handleCreated(docName: string) {
-    if (docName !== target) {
+    if (createDialogMode === 'missing' && docName !== target) {
       updateAttributes({ target: docName, alias: alias ?? label });
     }
     // Navigation is handled by NewItemDialog after creation
@@ -396,7 +409,7 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
               {unresolved ? (
                 <div>This page cannot be found.</div>
               ) : folderResolved ? (
-                <div>This target is a folder. Open it to create an index note.</div>
+                <div>This target is a folder. Use link options to create an index note.</div>
               ) : (
                 <LinkTooltipHint href={source} />
               )}
@@ -413,6 +426,15 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
               editor.commands.focus();
             }}
           >
+            {folderResolved ? (
+              <>
+                <DropdownMenuItem onSelect={() => setCreateDialogMode('folder-index')}>
+                  <FilePlus2 aria-hidden="true" />
+                  Create index note
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuItem onSelect={() => setEditDialogOpen(true)}>
               <Pencil aria-hidden="true" />
               Edit link
@@ -430,23 +452,36 @@ export function WikiLinkView({ node, updateAttributes, deleteNode, editor }: Nod
       </NodeViewWrapper>
 
       <NewItemDialog
-        open={createDialogOpen}
-        onOpenChange={setCreateDialogOpen}
+        open={createDialogMode !== null}
+        onOpenChange={(open) => {
+          if (!open) setCreateDialogMode(null);
+        }}
         kind="file"
         initialDir={
-          linkIntent.kind === 'create'
-            ? linkIntent.initialDir
-            : defaultInitialDir(docNameFromHash(window.location.hash) ?? '')
+          createDialogMode === 'folder-index' && folderCreateSeed
+            ? folderCreateSeed.initialDir
+            : linkIntent.kind === 'create'
+              ? linkIntent.initialDir
+              : defaultInitialDir(docNameFromHash(window.location.hash) ?? '')
         }
         suggestedName={
-          linkIntent.kind === 'create'
-            ? linkIntent.suggestedName
-            : wikiLinkSuggestedFilename(target)
+          createDialogMode === 'folder-index' && folderCreateSeed
+            ? folderCreateSeed.suggestedName
+            : linkIntent.kind === 'create'
+              ? linkIntent.suggestedName
+              : wikiLinkSuggestedFilename(target)
         }
         description={
-          <>
-            Create a page for <span className="font-medium text-foreground">[[{target}]]</span>
-          </>
+          createDialogMode === 'folder-index' && folderCreateSeed ? (
+            <>
+              Create an index note for{' '}
+              <span className="font-medium text-foreground">{folderCreateSeed.initialDir}/</span>
+            </>
+          ) : (
+            <>
+              Create a page for <span className="font-medium text-foreground">[[{target}]]</span>
+            </>
+          )
         }
         onCreated={handleCreated}
       />
