@@ -1,6 +1,7 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { ArrowDownToLine, Columns2, History, Pin, PinOff, Rows2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { usePageList } from '@/components/PageListContext';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
@@ -49,6 +50,8 @@ export function EditorHeader({
   const syncStatus = useSyncStatus(activeProvider);
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
+  const { pages, loading } = usePageList();
+  const isNewDoc = !loading && !!activeDocName && !pages.has(activeDocName);
 
   const displayName = activeDocName ? `${activeDocName}.md` : '';
   const isPinned = pinnedDoc !== null;
@@ -106,6 +109,11 @@ export function EditorHeader({
                 : 'Pin to stay on this doc — browser won’t auto-navigate to the agent’s current focus'}
             </TooltipContent>
           </Tooltip>
+        )}
+        {isNewDoc && (
+          <span className="ml-1.5 shrink-0 rounded border border-dashed border-blue-400/50 px-1.5 py-0.5 text-xs text-blue-500 dark:border-blue-400/40 dark:text-blue-400">
+            New file
+          </span>
         )}
       </div>
 

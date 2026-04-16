@@ -31,6 +31,7 @@ export interface ServerObserverExtensionOptions {
  */
 export function createServerObserverExtension(opts: ServerObserverExtensionOptions): Extension {
   const cleanups = new Map<string, () => void>();
+  const pendingRetries = new Map<string, ReturnType<typeof setTimeout>>();
 
   return {
     async afterLoadDocument({ documentName, document }) {
@@ -41,33 +42,58 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
       const xmlFragment = doc.getXmlFragment('default');
       const ytext = doc.getText('source');
 
-      try {
-        const unsubscribe = setupServerObservers({
-          doc,
-          xmlFragment,
-          ytext,
-          mdManager: opts.mdManager,
-          schema: opts.schema,
-        });
+      const attach = (): boolean => {
+        try {
+          const unsubscribe = setupServerObservers({
+            doc,
+            xmlFragment,
+            ytext,
+            mdManager: opts.mdManager,
+            schema: opts.schema,
+          });
+          cleanups.set(documentName, unsubscribe);
+          return true;
+        } catch (err) {
+          // Do NOT re-throw: Hocuspocus afterLoadDocument is not try/catch guarded
+          // (unlike onLoadDocument). Re-throwing would break the document setup
+          // pipeline (beforeBroadcastStateless, awareness wiring) for ALL clients.
+          console.error(
+            `[ServerObserverExtension] Failed to attach observers for '${documentName}':`,
+            err,
+          );
+          incrementServerObserverError('a');
+          incrementServerObserverError('b');
+          return false;
+        }
+      };
 
-        cleanups.set(documentName, unsubscribe);
-      } catch (err) {
-        // Do NOT re-throw: Hocuspocus afterLoadDocument is not try/catch guarded
-        // (unlike onLoadDocument). Re-throwing would break the document setup
-        // pipeline (beforeBroadcastStateless, awareness wiring) for ALL clients.
-        // Instead, log + increment error counter so monitoring detects the failure.
-        // The document loads without cross-CRDT sync — WYSIWYG and source mode
-        // will diverge until the document is unloaded and reloaded.
-        console.error(
-          `[ServerObserverExtension] Failed to attach observers for '${documentName}':`,
-          err,
-        );
-        incrementServerObserverError('a');
-        incrementServerObserverError('b');
+      if (!attach()) {
+        // Single delayed retry for transient failures (schema init timing,
+        // temporary resource exhaustion). If the retry also fails, the
+        // document remains degraded — the underlying cause is likely
+        // persistent and requires investigation via error counters.
+        // Tracked so afterUnloadDocument can cancel if the doc unloads
+        // before the retry fires (prevents orphaned observer attachment).
+        const retryId = setTimeout(() => {
+          pendingRetries.delete(documentName);
+          if (cleanups.has(documentName)) return; // already attached (e.g., unload+reload)
+          console.warn(
+            `[ServerObserverExtension] Retrying observer attachment for '${documentName}'`,
+          );
+          attach();
+        }, 5000);
+        pendingRetries.set(documentName, retryId);
       }
     },
 
     async afterUnloadDocument({ documentName }) {
+      // Cancel pending retry to prevent orphaned observer attachment
+      const pending = pendingRetries.get(documentName);
+      if (pending) {
+        clearTimeout(pending);
+        pendingRetries.delete(documentName);
+      }
+
       const cleanup = cleanups.get(documentName);
       if (!cleanup) return;
       cleanup();
@@ -75,6 +101,9 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
     },
 
     async onDestroy() {
+      for (const id of pendingRetries.values()) clearTimeout(id);
+      pendingRetries.clear();
+
       for (const [docName, cleanup] of cleanups.entries()) {
         try {
           cleanup();

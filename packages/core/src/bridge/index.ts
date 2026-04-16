@@ -7,8 +7,9 @@
  * and `specs/2026-04-15-server-authoritative-observer-bridge/SPEC.md`
  * for the architectural rationale.
  */
-export { applyIncrementalDiff, applyUserDelta } from './apply-diff.ts';
+export { applyFastDiff, applyIncrementalDiff } from './apply-diff.ts';
 export { type DiffChange, diffLinesFast } from './diff-lines.ts';
 export { getFrontmatter } from './frontmatter-y.ts';
+export { mergeThreeWay } from './merge-three-way.ts';
 export { normalizeBridge } from './normalize.ts';
 export { defaultScheduler, type Scheduler } from './scheduler.ts';

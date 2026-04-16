@@ -16,7 +16,7 @@ export const AGENT_COLORS = [
 export const AGENT_ICON_COLORS: Record<string, string> = {
   claude: '#D97757', // warm orange
   cursor: '#1B1912', // dark (Cursor brand)
-  windsurf: '#F9F3E9', // cream (Windsurf brand)
+  windsurf: '#0B100F', // dark (Windsurf brand)
   openai: '#7A9DFF', // blue (Codex brand)
   github: '#8534F3', // purple (Copilot brand)
   cline: '#9663F0', // purple (Cline brand)

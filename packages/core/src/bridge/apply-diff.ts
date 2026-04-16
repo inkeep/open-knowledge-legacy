@@ -1,5 +1,5 @@
 /**
- * Bridge write-side utilities — apply line-level and three-way-merge
+ * Bridge write-side utilities — apply line-level and character-level
  * deltas to a Y.Text instance with minimal CRDT mutation.
  *
  * Used by the server-authoritative observer (precedent #14) to sync
@@ -17,31 +17,21 @@
  *       origin-attributed Item ids, important for Y.UndoManager).
  *       Implemented in `applyIncrementalDiff`.
  *
- *   (b) Finer-grained three-way merge via DMP patch_make/patch_apply for
- *       divergent paths. DMP's character-level matching shrinks the
- *       "blast radius" of Items replaced; the final `applyByPrefixSuffix`
- *       preserves matching prefix/suffix regions.
- *       Implemented in `applyUserDelta`.
+ *   (b) Character-level diff application via `applyFastDiff` — uses DMP
+ *       `diff_main` to compute character-level changes, then applies
+ *       minimal insert/delete operations to Y.Text. Preserves CRDT Items
+ *       for unchanged content (unlike `applyByPrefixSuffix` which destroys
+ *       all Items in the middle region).
+ *       Implemented in `applyFastDiff`.
  *
- * ## D8 known limitation (from 2026-04-13 observer-a-origin-aware-diff spec)
- *
- * Path B's DMP `patch_apply` can silently drop patches when agent text
- * diverges beyond the Match_Threshold (0.5) context window. Non-fatal:
- * `console.warn` fires with full diagnostic (failed-patches count, byte
- * lengths, patch_toText dump). The bridge-convergence fuzzer tolerates
- * up to 5% drops under DMP-tolerance-pct (see
- * `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`).
+ * @see specs/2026-04-15-lossless-bridge-merge/SPEC.md
  */
 import DiffMatchPatch from 'diff-match-patch';
 import type * as Y from 'yjs';
-import { applyByPrefixSuffix } from '../utils/apply-by-prefix-suffix.ts';
 import { diffLinesFast } from './diff-lines.ts';
 
-/** Module-local DMP instance for three-way merge. Match_Threshold pinned to
- *  0.5 per audit F15 — depending on the default would silently regress if
- *  a future module mutated a shared singleton. */
-const dmpMerge = new DiffMatchPatch();
-dmpMerge.Match_Threshold = 0.5;
+/** Module-local DMP instance for character-level diffing in applyFastDiff. */
+const dmpDiff = new DiffMatchPatch();
 
 /**
  * Apply incremental diff from `currentText` to `newText` on a Y.Text
@@ -105,62 +95,33 @@ export function applyIncrementalDiff(ytext: Y.Text, currentText: string, newText
 }
 
 /**
- * Apply ONLY the user's delta to Y.Text when Y.Text has diverged from the
- * last synced XmlFragment state (Path B — see observer sync algorithm in
- * `packages/server/src/server-observers.ts`). Uses DMP's canonical
- * three-way merge:
+ * Apply a merged text to Y.Text via character-level DMP diff_main.
  *
- *   - base   = oldXmlMd (lastSyncedXmlMd, the common ancestor)
- *   - user   = newXmlMd (current XmlFragment serialized)
- *   - agent  = currentText (current Y.Text, possibly diverged)
+ * Produces minimal insert/delete operations that only touch the characters
+ * that actually changed. This preserves CRDT Items (and their origin
+ * attribution) for all unchanged content — strictly better than
+ * `applyByPrefixSuffix` which destroys all Items between the matching
+ * prefix and suffix.
  *
- * `patch_make(base, user)` computes the user's edits as patches; then
- * `patch_apply(patches, agent)` applies them against the agent's diverged
- * text. The result preserves Item-equal prefix/suffix via
- * `applyByPrefixSuffix` (precedent #11(b)).
+ * Used by Observer A Path B after `mergeThreeWay` computes the merged
+ * text. Also suitable for any path that needs to apply a string delta
+ * to Y.Text with minimal CRDT mutation.
  *
- * Known merge semantics (LOCKED decisions from 2026-04-13 spec):
- *   - D8: exact-character overlap (`base="hello", user="hello!", agent="hello!"`)
- *     produces `"hello!!"` — inherent to three-way merge; both sides
- *     independently made the same change.
- *   - D9: user-wins on collision — when user deletes a line that agent
- *     modified, the deletion wins (DMP default behavior).
+ * @see specs/2026-04-15-lossless-bridge-merge/SPEC.md §4d
  */
-export function applyUserDelta(ytext: Y.Text, oldXmlMd: string, newXmlMd: string): void {
-  if (oldXmlMd === newXmlMd) return;
-  const currentText = ytext.toString();
-
-  const patches = dmpMerge.patch_make(oldXmlMd, newXmlMd);
-  const [mergedText, results] = dmpMerge.patch_apply(patches, currentText);
-
-  // Failed patches indicate the patch's context could not be located in
-  // agent's text within Match_Threshold. patch_apply still returns
-  // mergedText with the successful patches applied and failed ones
-  // skipped — that's "user-wins on what we could merge". Emit a
-  // console.warn diagnostic (console.warn is the project convention for
-  // bridge-level advisory signals).
-  if (results.some((ok: boolean) => !ok)) {
-    const failedPatches = results.filter((ok: boolean) => !ok).length;
-    const info = {
-      failedPatches,
-      totalPatches: results.length,
-      baseLen: oldXmlMd.length,
-      userLen: newXmlMd.length,
-      agentLen: currentText.length,
-      mergedLen: mergedText.length,
-    };
-    const failedPatchDetail = dmpMerge.patch_toText(patches.filter((_, idx) => !results[idx]));
-    console.warn(
-      `[bridge applyUserDelta] patch_apply had ${failedPatches}/${results.length} failed patches`,
-      info,
-      failedPatchDetail,
-    );
+export function applyFastDiff(ytext: Y.Text, currentText: string, newText: string): void {
+  if (currentText === newText) return;
+  const diffs = dmpDiff.diff_main(currentText, newText);
+  dmpDiff.diff_cleanupSemantic(diffs);
+  let offset = 0;
+  for (const [type, text] of diffs) {
+    if (type === 0) {
+      offset += text.length;
+    } else if (type === -1) {
+      ytext.delete(offset, text.length);
+    } else if (type === 1) {
+      ytext.insert(offset, text);
+      offset += text.length;
+    }
   }
-
-  if (mergedText === currentText) return;
-
-  // Apply via prefix/suffix to minimize CRDT mutations beyond what
-  // patch_apply already resolved. Items in the matching prefix/suffix are
-  // preserved (no delete fires for them).
-  applyByPrefixSuffix(ytext, currentText, mergedText);
 }

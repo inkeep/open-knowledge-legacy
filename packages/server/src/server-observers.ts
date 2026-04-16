@@ -2,7 +2,7 @@
  * Server-authoritative observer bridge — single-writer cross-CRDT sync.
  *
  * Mirrors the client-side observer bridge's write-side logic on the server:
- *   Observer A: XmlFragment → Y.Text (via applyByPrefixSuffix)
+ *   Observer A: XmlFragment → Y.Text (Path A: applyIncrementalDiff; Path B: mergeThreeWay + applyFastDiff)
  *   Observer B: Y.Text → XmlFragment (via updateYFragment)
  *
  * Runs on the server's copy of the Y.Doc so concurrent client edits converge
@@ -19,10 +19,11 @@
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
+  applyFastDiff,
   applyIncrementalDiff,
-  applyUserDelta,
   defaultScheduler,
   getFrontmatter,
+  mergeThreeWay,
   normalizeBridge,
   prependFrontmatter,
   type Scheduler,
@@ -56,10 +57,11 @@ export const OBSERVER_SYNC_ORIGIN = {
   context: { origin: 'observer-sync' },
 } satisfies LocalTransactionOrigin;
 
-// Bridge utilities (applyIncrementalDiff, applyUserDelta, diffLinesFast,
-// Scheduler, defaultScheduler, getFrontmatter, normalizeBridge) are imported
-// from `@inkeep/open-knowledge-core` so they live in one place shared with
-// the client observer (precedent #4: shared computation, per-surface rendering).
+// Bridge utilities (applyIncrementalDiff, applyFastDiff, mergeThreeWay,
+// diffLinesFast, Scheduler, defaultScheduler, getFrontmatter, normalizeBridge)
+// are imported from `@inkeep/open-knowledge-core` so they live in one place
+// shared with the client observer (precedent #4: shared computation,
+// per-surface rendering).
 
 const DEBOUNCE_MS = 50;
 
@@ -141,8 +143,9 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
           // Path A: Y.Text in sync with baseline — use diffLines
           applyIncrementalDiff(ytext, currentText, md);
         } else {
-          // Path B: Y.Text diverged — use DMP three-way merge
-          applyUserDelta(ytext, lastSyncedXmlMd, md);
+          // Path B: Y.Text diverged — hybrid diff3+DMP three-way merge
+          const mergedText = mergeThreeWay(lastSyncedXmlMd, md, currentText);
+          applyFastDiff(ytext, currentText, mergedText);
         }
       }, OBSERVER_SYNC_ORIGIN);
 
@@ -163,8 +166,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       // fresh delta instead of re-applying the stale diff that just failed.
       try {
         lastSyncedXmlMd = ytext.toString();
-      } catch {
-        /* ignore — best-effort baseline recovery */
+      } catch (innerErr) {
+        console.warn('[Server Observer A] Baseline recovery also failed:', innerErr);
       }
     }
   };
@@ -304,6 +307,17 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     } catch (err) {
       incrementServerObserverError('b');
       console.error('[Server Observer B] Failed to sync text→tree:', err);
+      // Reset baseline to current XmlFragment state so the next retry computes
+      // a fresh delta instead of re-applying the stale diff that just failed.
+      // Mirrors Observer A's baseline recovery pattern (lines 167-168).
+      try {
+        const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const postBody = mdManager.serialize(postJson);
+        const fm = getFrontmatter(doc);
+        lastSyncedXmlMd = prependFrontmatter(fm, postBody);
+      } catch (innerErr) {
+        console.warn('[Server Observer B] Baseline recovery also failed:', innerErr);
+      }
     }
   };
 

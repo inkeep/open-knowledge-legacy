@@ -58,12 +58,13 @@ export {
 
 // Bridge — observer/CRDT-bridge shared utilities (precedent #14)
 export {
+  applyFastDiff,
   applyIncrementalDiff,
-  applyUserDelta,
   type DiffChange,
   defaultScheduler,
   diffLinesFast,
   getFrontmatter,
+  mergeThreeWay,
   normalizeBridge,
   type Scheduler,
 } from './bridge/index.ts';
@@ -95,6 +96,16 @@ export {
   getIdentity,
   HUMAN_COLORS,
 } from './utils/identity.ts';
+export {
+  type AnchorLinkTarget,
+  buildRelativeMarkdownHref,
+  type ClassifiedLinkTarget,
+  classifyMarkdownHref,
+  classifyWikiLinkTarget,
+  type DocLinkTarget,
+  type ExternalLinkTarget,
+  isExternalHref,
+} from './utils/link-targets.ts';
 export { type ResolvedInternalHref, resolveInternalHref } from './utils/resolve-internal-href.ts';
 export {
   disambiguateSlug,

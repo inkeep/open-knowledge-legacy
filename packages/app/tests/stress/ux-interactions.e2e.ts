@@ -211,3 +211,62 @@ test('sidebar folder row: clicking anywhere on the row toggles expand/collapse',
   await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
   await expect(nestedFile).toHaveCount(0);
 });
+
+test('markdown link edit dialog preserves page mode while clearing and updates the href target', async ({
+  page,
+}) => {
+  const doc = '[Beta page](beta.md)';
+
+  const writeRes = await fetch(`${BASE}/api/agent-write-md`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown: doc, position: 'replace' }),
+  });
+  expect(writeRes.ok).toBe(true);
+
+  await page.waitForFunction(
+    () =>
+      window.__activeProvider?.document
+        ?.getText('source')
+        ?.toString()
+        ?.includes('[Beta page](beta.md)'),
+    { timeout: 10_000 },
+  );
+
+  const chip = page.locator('[data-internal-link]').first();
+  await expect(chip).toHaveAttribute('data-doc-name', 'beta');
+
+  await chip.hover();
+  await chip.getByRole('button', { name: 'Link options' }).click();
+  await page.getByText('Edit link', { exact: true }).click();
+
+  const pageLabel = page.locator('label').filter({ hasText: 'Page' }).first();
+  const sectionLabel = page.locator('label').filter({ hasText: 'Section' }).first();
+  const targetInput = page
+    .locator('input[placeholder="guides/install or https://example.com"]')
+    .first();
+  await expect(pageLabel).toBeVisible();
+  await expect(sectionLabel).toBeVisible();
+
+  await targetInput.fill('');
+  await expect(pageLabel).toBeVisible();
+  await expect(sectionLabel).toBeVisible();
+
+  await targetInput.fill('sidebar-folder/nested-doc');
+  await page.getByRole('button', { name: 'Save' }).click();
+
+  await expect(chip).toHaveAttribute('data-doc-name', 'sidebar-folder/nested-doc');
+  await page.waitForFunction(
+    () =>
+      window.__activeProvider?.document
+        ?.getText('source')
+        ?.toString()
+        ?.includes('[Beta page](./sidebar-folder/nested-doc.md)'),
+    { timeout: 10_000 },
+  );
+
+  await chip.hover();
+  const tooltip = page.locator('[data-slot="tooltip-content"]').last();
+  await expect(tooltip).toBeVisible();
+  await expect(tooltip).toContainText('./sidebar-folder/nested-doc.md');
+});

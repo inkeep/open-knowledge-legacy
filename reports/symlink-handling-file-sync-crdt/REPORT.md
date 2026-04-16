@@ -22,10 +22,10 @@ topics:
   - file watchers
   - TOCTOU security
 ---
-
 # Symlink Handling in File-Sync / CRDT / Editor Pipelines
 
 **Purpose:** Derive concrete, evidence-grounded design decisions for two related changes to the open-knowledge server:
+
 1. A symlink-preserving persistence write path (replacing the current `writeFile(tmp) + rename(tmp, target)` that silently clobbers symlinks).
 2. A realpath-based document identity layer in the file watcher, so two aliased paths (e.g. `CLAUDE.md` → `AGENTS.md`) resolve to the same Y.Doc.
 
@@ -35,20 +35,22 @@ This report is the source-of-truth for the subsequent SPEC.md. It cites primary 
 
 ## Executive Summary
 
-**For persistence writes: implement the `write-file-atomic` pattern — realpath the destination, then atomic tmp+rename against the canonical path.** This is the exact fix npm shipped in `write-file-atomic@1.3.1` to resolve the same class of bug we hit. It preserves atomicity (tmp + atomic rename on the same filesystem) and preserves symlinks (the link entry is untouched; its target gets replaced atomically). Security side-effect: realpath also lets us enforce that writes cannot escape `contentDir`, which is independently worth doing.
+**For persistence writes: implement the **`write-file-atomic`** pattern — realpath the destination, then atomic tmp+rename against the canonical path.** This is the exact fix npm shipped in `write-file-atomic@1.3.1` to resolve the same class of bug we hit. It preserves atomicity (tmp + atomic rename on the same filesystem) and preserves symlinks (the link entry is untouched; its target gets replaced atomically). Security side-effect: realpath also lets us enforce that writes cannot escape `contentDir`, which is independently worth doing.
 
 **For watcher identity: realpath every indexed file at discovery time, keyed into the index by canonical path, with alias paths recorded as secondary lookup keys.** This matches how TypeScript, Node's require cache, rust-analyzer, and pnpm resolve module identity. The cost — one extra `lstat`/`realpath` per indexed file at startup, negligible on modern filesystems — is far smaller than the correctness wins (no duplicate Y.Docs, no double-edit races, no broken "same file two tabs" UX).
 
 **The specific bug we hit is real, confirmed, and has two plausible contributors:** (a) the persistence rename-clobber described above, and (b) git merge drift that at some point committed `CLAUDE.md` as a regular file. The persistence fix addresses (a) directly. (b) is a git discipline issue outside the server's scope — but the persistence fix means that *if* the worktree has a symlink when the server starts, it will stay a symlink.
 
 **Major tradeoffs:**
+
 - **Atomic vs write-through:** We recommend atomic (realpath-then-rename). Write-through (`writeFile` directly) is simpler but sacrifices crash-safety. The write-file-atomic pattern gives us both.
 - **Strict vs permissive escape policy:** We recommend **strict by default** (reject writes whose canonical path is outside contentDir). This matches the OWASP guidance reflected in multiple tar/container CVEs. A config escape hatch is cheap to add later if needed.
 - **Realpath dedup strategy:** We recommend **canonical path as primary key**, with original-path-as-alias recorded for the watcher-event ↔ docName lookup. This is a small indirection but matches how every robust comparable system (TypeScript, rust-analyzer, pnpm) handles it.
 
 **Key Findings:**
-- **`rename(2)` overwrites symlinks atomically with the new file** — it does not follow links ([rename(2) man page](https://man7.org/linux/man-pages/man2/rename.2.html)). This is the direct mechanism of our persistence bug.
-- **`fs.writeFile` follows symlinks** (writes through to the target) but is not atomic. `write-file-atomic` in 2017 added realpath-then-rename to reconcile the two — the canonical fix.
+
+- `rename(2)`** overwrites symlinks atomically with the new file** — it does not follow links ([rename(2) man page](https://man7.org/linux/man-pages/man2/rename.2.html)). This is the direct mechanism of our persistence bug.
+- `fs.writeFile`** follows symlinks** (writes through to the target) but is not atomic. `write-file-atomic` in 2017 added realpath-then-rename to reconcile the two — the canonical fix.
 - **@parcel/watcher's symlink behavior is formally undocumented** ([open issue #173](https://github.com/parcel-bundler/watcher/issues/173)); we cannot assume it fires events reliably for symlinks. We must enumerate symlinks explicitly at the application layer.
 - **VS Code chose NOT to realpath** workspace folders and lives with the "same file two tabs" bug ([#100533](https://github.com/microsoft/vscode/issues/100533)). We should choose differently — our identity model (docName) makes realpath dedup trivially correct.
 - **No Hocuspocus/Yjs persistence extension handles symlinks** — this is genuinely novel territory. We are building the reference pattern.
@@ -68,19 +70,22 @@ The 12 research questions supplied in the task prompt served as the rubric. Each
 **Finding:** `rename(2)` and Node's `fs.rename` atomically **replace** a symlink at the destination with the renamed source file. Neither follows the link. This is POSIX-specified behavior and Node.js inherits it without abstraction.
 
 **Evidence:** [evidence/rename-posix-node.md](evidence/rename-posix-node.md). Direct quote from [rename(2)](https://man7.org/linux/man-pages/man2/rename.2.html):
+
 > "If oldpath refers to a symbolic link, the link is renamed; if newpath refers to a symbolic link, the link will be overwritten."
 
 By contrast, `fs.writeFile` (and POSIX `open(path, O_WRONLY|O_CREAT|O_TRUNC)`) **does** follow symlinks — it opens the target and writes through. This is exactly the asymmetry that causes the bug: the naive atomic-write pattern `writeFile(tmp) + rename(tmp, target)` has the correct atomicity but the wrong symlink semantics, because `rename` does not preserve the link.
 
-**The canonical fix, shipped by [`write-file-atomic@1.3.1`](https://github.com/npm/write-file-atomic/issues/5) in January 2017:**
+**The canonical fix, shipped by **`write-file-atomic@1.3.1`** in January 2017:**
+
 1. Call `fs.realpath(target)` → `canonical`.
 2. Write the tmp file next to `canonical` (same directory → same filesystem → rename-atomic).
 3. `rename(tmp, canonical)`.
 4. The symlink at the original path is untouched; its target has been atomically replaced.
 
-Maintainer commit message for the fix: *"When the target is a symlink, write-file-atomic now overwrites the destination of the symlink, instead of replacing the symlink itself. This makes its behavior match `fs.writeFile`."*
+Maintainer commit message for the fix: *"When the target is a symlink, write-file-atomic now overwrites the destination of the symlink, instead of replacing the symlink itself. This makes its behavior match *`fs.writeFile`*."*
 
 **Implications:**
+
 - Our persistence fix is a direct port of this pattern. No novel algorithm required.
 - The tmp file MUST be created next to the **canonical** path, not next to the symlink — otherwise rename could cross filesystems (EXDEV) if the symlink points to a different volume.
 - For broken symlinks (target missing), `realpath` throws `ENOENT`. Fallback: write to the symlink's own path, which creates a new regular file there. This is the only defensible behavior for a broken link.
@@ -92,8 +97,9 @@ Maintainer commit message for the fix: *"When the target is a symlink, write-fil
 **Evidence:** [evidence/realpath-semantics.md](evidence/realpath-semantics.md). Confirmed against [Node.js fs docs](https://nodejs.org/api/fs.html) and nodejs/node PR history ([PR #10253](https://github.com/nodejs/node/pull/10253), inode bigint fix [commit b894df8](https://github.com/nodejs/node/commit/b894df860a)).
 
 **Implications:**
+
 - Safe to call `realpath` per-write without worrying about stale results.
-- At scale (thousands of files indexed at startup), per-call realpath is not free — PR #10253 saved ~6200 lstat calls in a fresh ember build. For our watcher index, we should realpath **once per path at discovery/watcher-event time** and cache in our own data structure.
+- At scale (thousands of files indexed at startup), per-call realpath is not free — PR #10253 saved \~6200 lstat calls in a fresh ember build. For our watcher index, we should realpath **once per path at discovery/watcher-event time** and cache in our own data structure.
 - `realpath` throws `ENOENT` for broken symlinks and non-existent paths. Calling code must handle both cases.
 
 ### 3. How Obsidian handles symlinks
@@ -101,6 +107,7 @@ Maintainer commit message for the fix: *"When the target is a symlink, write-fil
 **Finding:** Obsidian does **not** officially support symlinks. The community-plugin prior art (pjeby/obsidian-symlinks, now archived) documents the full spectrum of failure modes: duplicate search results from aliased files, missed change events on symlinked files, and infinite-loop traversal on cyclic symlinks.
 
 **Evidence:** [evidence/comparable-systems.md](evidence/comparable-systems.md). Direct quotes from the Obsidian symlinks plugin README:
+
 > "Symlinking to a target that is inside the same vault is likely to give you duplicate search results, among other issues."
 > "It's unlikely that change events will be processed for symlinked files..."
 > "This plugin doesn't check for symlink loops (direct or indirect) ... you run the risk of Obsidian trying to load infinite subdirectories, using up all your memory, crashing Obsidian, and maybe your computer along with it."
@@ -142,6 +149,7 @@ Maintainer commit message for the fix: *"When the target is a symlink, write-fil
 ### 8. @parcel/watcher and chokidar behavior on symlinks
 
 **Finding:**
+
 - **chokidar** has an explicit `followSymlinks` option (default `true`) but leaky semantics: event paths can be either the symlink or the realpath depending on OS backend ([chokidar #691](https://github.com/paulmillr/chokidar/issues/691)), and multiple open bugs cover edge cases (#31, #696, #959).
 - **@parcel/watcher** has **no documented symlink behavior** ([open issue #173](https://github.com/parcel-bundler/watcher/issues/173)). Inferred behavior varies by backend: inotify (Linux) follows by default; FSEvents (macOS) reports by path and misses external targets; ReadDirectoryChangesW (Windows) does not traverse reparse points. Circular symlinks can cause 100% CPU ([parcel #2069](https://github.com/parcel-bundler/parcel/issues/2069)).
 
@@ -151,7 +159,7 @@ Maintainer commit message for the fix: *"When the target is a symlink, write-fil
 
 ### 9. Security: symlink escape and TOCTOU
 
-**Finding:** Symlink escape is a well-documented CVE class. TOCTOU (time-of-check-time-of-use) races are a real concern in adversarial environments. For our threat model (localhost dev tool, trusted user), **escape validation via realpath matters for user protection** (prevent accidental writes to `/etc/passwd` through a user-created link), but TOCTOU hardening (openat with O_NOFOLLOW relative to a pinned root fd) is overkill.
+**Finding:** Symlink escape is a well-documented CVE class. TOCTOU (time-of-check-time-of-use) races are a real concern in adversarial environments. For our threat model (localhost dev tool, trusted user), **escape validation via realpath matters for user protection** (prevent accidental writes to `/etc/passwd` through a user-created link), but TOCTOU hardening (openat with O\_NOFOLLOW relative to a pinned root fd) is overkill.
 
 **Evidence:** [evidence/security-and-platform.md](evidence/security-and-platform.md). CVE-2021-32803 (node-tar), CVE-2025-47290 (containerd), CVE-2022-29799/29800 (systemd networkd-dispatcher), CVE-2026-32282 (Go Root.Chmod).
 
@@ -177,7 +185,7 @@ Maintainer commit message for the fix: *"When the target is a symlink, write-fil
 
 **Finding:** Both hypothesized root causes are confirmed and are non-exclusive.
 
-1. **Persistence `rename(tmp, symlinkPath)` replaces the symlink atomically** — mechanistically confirmed against rename(2) semantics (§1). `packages/server/src/persistence.ts` lines 369–385 do not realpath before rename; `safeContentPath` does not realpath either. Any CRDT save to `CLAUDE.md` will replace the symlink.
+1. **Persistence **`rename(tmp, symlinkPath)`** replaces the symlink atomically** — mechanistically confirmed against rename(2) semantics (§1). `packages/server/src/persistence.ts` lines 369–385 do not realpath before rename; `safeContentPath` does not realpath either. Any CRDT save to `CLAUDE.md` will replace the symlink.
 2. **Git merge drift** — the restoration commit is titled `"docs: restore CLAUDE.md → AGENTS.md symlink and merge drift"`. Git history shows multiple content-touching commits on `CLAUDE.md` after the symlink was established, suggesting at some point a branch committed it as a regular file, and checkout of that branch materialized a regular file.
 
 **Evidence:** [evidence/our-bug-analysis.md](evidence/our-bug-analysis.md).
@@ -188,38 +196,38 @@ Maintainer commit message for the fix: *"When the target is a symlink, write-fil
 
 ## Decision Matrix
 
-| Axis | Option A | Option B | Option C | Recommendation | Rationale |
-|---|---|---|---|---|---|
-| **Write semantics** | Atomic tmp+rename (current, buggy) | Write-through `writeFile(symlinkPath)` | Realpath-then-rename (write-file-atomic pattern) | **C** | Preserves both atomicity and symlink. Directly ports npm's 2017 fix. |
-| **Escape policy** | Permissive (any canonical path) | Strict (reject writes outside contentDir) | Allowlist (config-driven exceptions) | **B** default, **C** optional later | Matches OWASP guidance and multiple CVE mitigations. |
-| **Watcher identity** | Path-based (current) | Realpath-based primary, path-alias secondary | Fully realpath (drop original paths) | **B** | Matches TypeScript/rust-analyzer/pnpm convergence. Alias map preserves event routing. |
-| **Cycle detection** | None (current) | Visited-inode set during enumeration | OS-limit only (rely on realpath ELOOP) | **B** | Parcel #2069 shows the 100% CPU footgun of trusting OS limits alone. |
-| **Broken symlink behavior** | Crash on ENOENT | Write at original path (create regular file) | Skip silently | **B** | Only defensible choice — the user's intent was clearly "a file at this path." |
-| **Realpath cache** | Call per event (simple) | Cache in watcher index (fast) | LRU with TTL | **B** | File watcher index already keys per-path; canonical+inode fields are trivial to add. |
+| Axis                        | Option A                           | Option B                                     | Option C                                         | Recommendation                      | Rationale                                                                             |
+| --------------------------- | ---------------------------------- | -------------------------------------------- | ------------------------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------- |
+| **Write semantics**         | Atomic tmp+rename (current, buggy) | Write-through `writeFile(symlinkPath)`       | Realpath-then-rename (write-file-atomic pattern) | **C**                               | Preserves both atomicity and symlink. Directly ports npm's 2017 fix.                  |
+| **Escape policy**           | Permissive (any canonical path)    | Strict (reject writes outside contentDir)    | Allowlist (config-driven exceptions)             | **B** default, **C** optional later | Matches OWASP guidance and multiple CVE mitigations.                                  |
+| **Watcher identity**        | Path-based (current)               | Realpath-based primary, path-alias secondary | Fully realpath (drop original paths)             | **B**                               | Matches TypeScript/rust-analyzer/pnpm convergence. Alias map preserves event routing. |
+| **Cycle detection**         | None (current)                     | Visited-inode set during enumeration         | OS-limit only (rely on realpath ELOOP)           | **B**                               | Parcel #2069 shows the 100% CPU footgun of trusting OS limits alone.                  |
+| **Broken symlink behavior** | Crash on ENOENT                    | Write at original path (create regular file) | Skip silently                                    | **B**                               | Only defensible choice — the user's intent was clearly "a file at this path."         |
+| **Realpath cache**          | Call per event (simple)            | Cache in watcher index (fast)                | LRU with TTL                                     | **B**                               | File watcher index already keys per-path; canonical+inode fields are trivial to add.  |
 
 ---
 
 ## Edge Case Catalog
 
-| Case | Recommended behavior |
-|---|---|
-| Write to regular file (no symlinks) | Current path: tmp+rename. Realpath returns the file itself; no behavior change. |
-| Write to symlink → file inside contentDir | Realpath to canonical; tmp next to canonical; rename to canonical. Symlink preserved. |
-| Write to symlink → file outside contentDir | Strict mode: refuse with clear error. User can add an allowlist entry if intentional. |
-| Write to symlink → non-existent target (broken) | Realpath throws ENOENT. Fall back to direct write at original path. Creates a regular file at the symlink location. Log warning. |
-| Write to path that does not exist | Same as broken symlink — no realpath target; direct write at the path creates the file. |
-| Write to symlink chain (A → B → C) | `realpath(A)` returns C; tmp next to C; rename to C. All intermediate links preserved. |
-| Cyclic symlink chain (A → B → A) | `realpath` throws ELOOP. Refuse the write with a clear error. Log the cycle. |
-| Two paths aliased to same inode (hardlink) | Hardlinks share inode but distinct directory entries. Minor case; dedup by inode if ever observed. |
-| Symlink to directory containing content files | Watcher enumeration follows; realpath each file inside; dedup by canonical. First-encountered path wins for the alias map. |
-| Symlink repointed at runtime | Next realpath call returns the new target. Next write hits the new canonical. Old alias map entry cleared on next watcher event. |
-| Symlink created at runtime inside contentDir | Watcher 'add' event fires on original path. Handler does lstat→realpath; dedup into known docName or apply escape policy. |
-| Symlink deleted at runtime | Watcher 'unlink' fires. Remove from alias map. Canonical entry persists (its real file still exists). |
-| Write race: symlink repointed between realpath and rename | Worst case: write lands at the previous canonical. Watcher reconciliation detects drift; CRDT sync corrects. Not a data-loss scenario. |
-| Same file reachable via two symlinks | Both map to same canonical docName. No duplicate Y.Doc. Watcher events from either path route to the same Y.Doc. |
-| Cross-filesystem symlink (target on a different volume) | tmp file colocated with canonical → same filesystem → rename works. Fallback to write-through with warning if colocation impossible. |
-| Windows: target path contains reparse point (junction) | `fs.realpath` resolves transparently. No special handling. |
-| Windows: `core.symlinks=false` checkout | File in worktree is a regular file containing the target path string. Git-side issue; server sees a regular file and treats it as one. Not our concern. |
+| Case                                                      | Recommended behavior                                                                                                                                    |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Write to regular file (no symlinks)                       | Current path: tmp+rename. Realpath returns the file itself; no behavior change.                                                                         |
+| Write to symlink → file inside contentDir                 | Realpath to canonical; tmp next to canonical; rename to canonical. Symlink preserved.                                                                   |
+| Write to symlink → file outside contentDir                | Strict mode: refuse with clear error. User can add an allowlist entry if intentional.                                                                   |
+| Write to symlink → non-existent target (broken)           | Realpath throws ENOENT. Fall back to direct write at original path. Creates a regular file at the symlink location. Log warning.                        |
+| Write to path that does not exist                         | Same as broken symlink — no realpath target; direct write at the path creates the file.                                                                 |
+| Write to symlink chain (A → B → C)                        | `realpath(A)` returns C; tmp next to C; rename to C. All intermediate links preserved.                                                                  |
+| Cyclic symlink chain (A → B → A)                          | `realpath` throws ELOOP. Refuse the write with a clear error. Log the cycle.                                                                            |
+| Two paths aliased to same inode (hardlink)                | Hardlinks share inode but distinct directory entries. Minor case; dedup by inode if ever observed.                                                      |
+| Symlink to directory containing content files             | Watcher enumeration follows; realpath each file inside; dedup by canonical. First-encountered path wins for the alias map.                              |
+| Symlink repointed at runtime                              | Next realpath call returns the new target. Next write hits the new canonical. Old alias map entry cleared on next watcher event.                        |
+| Symlink created at runtime inside contentDir              | Watcher 'add' event fires on original path. Handler does lstat→realpath; dedup into known docName or apply escape policy.                               |
+| Symlink deleted at runtime                                | Watcher 'unlink' fires. Remove from alias map. Canonical entry persists (its real file still exists).                                                   |
+| Write race: symlink repointed between realpath and rename | Worst case: write lands at the previous canonical. Watcher reconciliation detects drift; CRDT sync corrects. Not a data-loss scenario.                  |
+| Same file reachable via two symlinks                      | Both map to same canonical docName. No duplicate Y.Doc. Watcher events from either path route to the same Y.Doc.                                        |
+| Cross-filesystem symlink (target on a different volume)   | tmp file colocated with canonical → same filesystem → rename works. Fallback to write-through with warning if colocation impossible.                    |
+| Windows: target path contains reparse point (junction)    | `fs.realpath` resolves transparently. No special handling.                                                                                              |
+| Windows: `core.symlinks=false` checkout                   | File in worktree is a regular file containing the target path string. Git-side issue; server sees a regular file and treats it as one. Not our concern. |
 
 ---
 
@@ -233,7 +241,7 @@ These could not be resolved from external evidence and are user-decisions for th
 
 3. **Config key for escape policy.** `content.symlinks.allowEscape: false` with optional `content.symlinks.allowedExternalPaths: []`? Naming and shape.
 
-4. **Should we reject writes when realpath disagrees with `safeContentPath`'s containment check?** `safeContentPath` already guards against `..` traversal. With realpath, we add a second layer. If they disagree (symlink inside contentDir whose realpath is outside), the realpath check is stricter — this should refuse the write in strict mode.
+4. **Should we reject writes when realpath disagrees with **`safeContentPath`**'s containment check?** `safeContentPath` already guards against `..` traversal. With realpath, we add a second layer. If they disagree (symlink inside contentDir whose realpath is outside), the realpath check is stricter — this should refuse the write in strict mode.
 
 5. **Git-level symlink preservation:** is it worth adding a startup check that warns if git's working tree differs from what the watcher expects? Scope creep risk; probably not part of this spec but worth flagging.
 
@@ -244,6 +252,7 @@ These could not be resolved from external evidence and are user-decisions for th
 ## References
 
 ### Evidence Files
+
 - [evidence/rename-posix-node.md](evidence/rename-posix-node.md) — POSIX rename(2), Node fs, write-file-atomic pattern
 - [evidence/realpath-semantics.md](evidence/realpath-semantics.md) — Node realpath caching and ELOOP behavior
 - [evidence/comparable-systems.md](evidence/comparable-systems.md) — Obsidian, Foam, Dendron, VS Code, tsserver, rust-analyzer, gopls
@@ -253,6 +262,7 @@ These could not be resolved from external evidence and are user-decisions for th
 - [evidence/our-bug-analysis.md](evidence/our-bug-analysis.md) — persistence.ts review + git history of CLAUDE.md
 
 ### External Sources (primary)
+
 - [rename(2) Linux manual page](https://man7.org/linux/man-pages/man2/rename.2.html)
 - [Node.js File System docs](https://nodejs.org/api/fs.html)
 - [write-file-atomic issue #5 — symlink handling](https://github.com/npm/write-file-atomic/issues/5)
@@ -261,8 +271,9 @@ These could not be resolved from external evidence and are user-decisions for th
 - [chokidar README — followSymlinks](https://github.com/paulmillr/chokidar)
 - [VS Code #18837 — do not realpath workspace](https://github.com/microsoft/vscode/issues/18837)
 - [VS Code #100533 — duplicate tabs via symlink](https://github.com/microsoft/vscode/issues/100533)
-- [rust-analyzer PR #15868 — canonicalize OUT_DIR](https://github.com/rust-lang/rust-analyzer/pull/15868)
+- [rust-analyzer PR #15868 — canonicalize OUT\_DIR](https://github.com/rust-lang/rust-analyzer/pull/15868)
 - [golang/go #59550 — duplicate edits via symlink aliases](https://github.com/golang/go/issues/59550)
 - [CVE-2021-32803 — node-tar symlink path traversal](https://www.sentinelone.com/vulnerability-database/cve-2021-32803/)
 - [Windows Developer Blog — Symlinks in Windows 10](https://blogs.windows.com/windowsdeveloper/2016/12/02/symlinks-windows-10/)
 - [git-config docs — core.symlinks](https://git-scm.com/docs/git-config)
+

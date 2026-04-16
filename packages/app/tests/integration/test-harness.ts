@@ -24,7 +24,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
-import { MarkdownManager, prependFrontmatter, sharedExtensions } from '@inkeep/open-knowledge-core';
+import {
+  MarkdownManager,
+  normalizeBridge,
+  prependFrontmatter,
+  sharedExtensions,
+} from '@inkeep/open-knowledge-core';
 import {
   AGENT_WRITE_ORIGIN,
   createServer,
@@ -132,7 +137,8 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'API route not found', path: url }));
         })
-        .catch(() => {
+        .catch((err) => {
+          console.error('[api] Unhandled onRequest error:', err);
           if (!res.writableEnded) {
             res.writeHead(500);
             res.end('Internal server error');
@@ -357,17 +363,8 @@ export function assertBridgeInvariant(ytext: Y.Text, fragment: Y.XmlFragment): v
   }
 }
 
-/** Normalize for bridge invariant comparison: strip trailing whitespace per line,
- * trailing newlines, and collapse 3+ consecutive newlines to exactly 2
- * (NG1: blank-line count between blocks normalizes). */
-function normalizeBridge(s: string): string {
-  return s
-    .split('\n')
-    .map((l) => l.trimEnd())
-    .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/\n+$/, '');
-}
+// normalizeBridge imported from @inkeep/open-knowledge-core (precedent #4:
+// shared computation, per-surface rendering).
 
 /** Read a document's .md file from the content directory */
 export function readTestDoc(contentDir: string, docName = 'test-doc'): string {

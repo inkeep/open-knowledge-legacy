@@ -16,7 +16,7 @@ import type {
 } from '@hocuspocus/server';
 import {
   AGENT_ICON_COLORS,
-  applyByPrefixSuffix,
+  applyFastDiff,
   colorFromSeed,
   prependFrontmatter,
 } from '@inkeep/open-knowledge-core';
@@ -76,8 +76,8 @@ export function iconFromClientName(name?: string): string {
  * Reads current XmlFragment (which reflects all CRDT-synced content including
  * client WYSIWYG typing mid-flight), composes the agent's delta at the markdown
  * level, applies via updateYFragment (structural diff preserves user-content
- * Items), and mirrors Y.Text via applyByPrefixSuffix (minimal mutation preserves
- * non-agent Y.Text Items and their origins).
+ * Items), and mirrors Y.Text via applyFastDiff (character-level DMP diff_main
+ * preserves non-agent Y.Text Items and their origins).
  *
  * Called within a transact() block whose origin is the caller's responsibility
  * (typically AGENT_WRITE_ORIGIN).
@@ -127,7 +127,7 @@ export function applyAgentMarkdownWrite(
     //    so user-content Items in Y.Text retain their origin.
     const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
     const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
-    applyByPrefixSuffix(ytext, ytext.toString(), canonicalFull);
+    applyFastDiff(ytext, ytext.toString(), canonicalFull);
   } catch (err) {
     log.error(
       { err, docName: document.name, position, markdownLen: markdown.length },

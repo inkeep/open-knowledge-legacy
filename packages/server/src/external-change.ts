@@ -7,7 +7,7 @@
  */
 
 import type { Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
-import { stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
@@ -67,8 +67,7 @@ export function applyExternalChange(
     const ytext = document.getText('source');
     const currentText = ytext.toString();
     if (currentText !== content) {
-      ytext.delete(0, currentText.length);
-      ytext.insert(0, content);
+      applyFastDiff(ytext, currentText, content);
     }
   }, FILE_WATCHER_ORIGIN);
 
