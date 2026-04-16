@@ -1,16 +1,21 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-15 by `generate-catalogue.ts`
-> 80 valid reports indexed
+> Auto-generated on 2026-04-16 by `generate-catalogue.ts`
+> 85 valid reports indexed
 
 ---
 
 | Report | Updated | Evidence | Topics | Subjects |
 |--------|---------|----------|--------|----------|
+| [Block-Level Selection Indicator Patterns in Rich-Text …](block-selection-indicator-patterns/REPORT.md) | 2026-04-16 | 6 files | block selection UX, focus indicato… | Notion, Tiptap, Lexical, Anytype, … |
+| [Storybook Ecosystem Survey — Component Blocks v2 Reuse…](storybook-ecosystem-component-blocks-reuse/REPORT.md) | 2026-04-14 | 7 files | component registration patterns, p… | Storybook 8.x, argTypes, Controls … |
 | [CodeMirror Markdown Source-View Rendering: Primitives,…](codemirror-markdown-source-view-rendering/REPORT.md) | 2026-04-14 | 8 files | CodeMirror 6 primitives, line wrap… | CodeMirror 6, Obsidian, SilverBull… |
+| [V0 Day-Zero Delight: What Would Make Our Launch Feel S…](v0-day-zero-delight/REPORT.md) | 2026-04-14 | 4 files | v0 launch strategy, day-0 delight,… | Open Knowledge, Obsidian, Notion, … |
 | [Clone-from-GitHub Onboarding Mechanics for On-Device E…](open-from-github-onboarding-mechanics/REPORT.md) | 2026-04-14 | 10 files | clone from github, oauth device fl… | VSCode, GitHub Desktop, Zed, Obsid… |
 | [Markdown Source-View Per-Construct Rendering: Evidence…](markdown-source-view-constructs/REPORT.md) | 2026-04-14 | 13 files | markdown source view, CodeMirror p… | CodeMirror 6, @lezer/markdown, @co… |
 | [Git Lifecycle UX Patterns: Push, Pull, Merge, and Beyo…](git-lifecycle-push-pull-merge-patterns/REPORT.md) | 2026-04-14 | 8 files | git lifecycle UX, staging and comm… | VS Code, GitHub Desktop, lazygit, … |
+| [Fumadocs Ecosystem Survey for Component Blocks v2 Reus…](fumadocs-ecosystem-component-blocks-reuse/REPORT.md) | 2026-04-14 | 5 files | MDX component editing, descriptor … | Fumadocs, MDXEditor, TinaCMS, Keys… |
+| [Storybook Alternatives and Adjacent Component Playgrou…](storybook-alternatives-component-playgrounds/REPORT.md) | 2026-04-14 | 8 files | component playgrounds, prop editin… | Ladle, Histoire, Playroom, React C… |
 | [Markdown Table Rendering in Prose-Constrained Columns](markdown-table-rendering-in-prose-columns/REPORT.md) | 2026-04-14 | 8 files | table rendering, prose column layo… | TipTap, BlockNote, Milkdown, Plate… |
 | [Bun Workspace ProseMirror-Model Deduplication](bun-prosemirror-model-dedup/REPORT.md) | 2026-04-13 | 3 files | module resolution, dependency dedu… | Bun, ProseMirror, TipTap, @tiptap/… |
 | [TinaCMS Production Architecture Beyond MDX](tinacms-production-architecture-beyond-mdx/REPORT.md) | 2026-04-13 | 9 files | git-backed CMS architecture, markd… | TinaCMS, SSW, isomorphic-git, Plat… |
@@ -92,6 +97,25 @@
 
 ## Report Details
 
+### [Block-Level Selection Indicator Patterns in Rich-Text Editors](block-selection-indicator-patterns/REPORT.md)
+
+> Survey of how production block editors (Notion, Tiptap, Lexical, Anytype, Outline, BlockNote, Figma et al.) visually signal block-level selection/focus, with concrete CSS techniques for avoiding the 'double outline' problem on blocks that already have their own border chrome. WCAG 2.1/2.2 + ARIA + …
+
+- **Created:** 2026-04-16
+- **Topics:** block selection UX, focus indicators, CSS outline vs box-shadow, forced-colors mode, double-outline problem, nested selection, multi-block selection, transition timing, data-state pattern
+- **Subjects:** Notion, Tiptap, Lexical, Anytype, Outline, BlockNote, Craft, Figma, WordPress Gutenberg, ProseMirror, Tailwind, WCAG 2.2, ARIA 1.2
+- **Evidence files:** 6
+- **Warnings:** 1
+
+### [Storybook Ecosystem Survey — Component Blocks v2 Reuse Assessment](storybook-ecosystem-component-blocks-reuse/REPORT.md)
+
+> End-to-end survey of the Storybook ecosystem (core, addons, community, adjacent projects) identifying utilities, patterns, and primitives analogous to what the Component Blocks v2 spec builds. Covers reuse decisions, pattern adoption, failure-mode lessons, and spec amendments.
+
+- **Created:** 2026-04-14
+- **Topics:** component registration patterns, prop editing architecture, visual editor controls, type extraction, component playground tools, failure modes
+- **Subjects:** Storybook 8.x, argTypes, Controls addon, react-docgen-typescript, CSF3, MDX3, Framer propertyControls, Plasmic registerComponent, Builder.io, MDXEditor, Ladle, Playroom, React Cosmos, react-live, Sandpack, Leva
+- **Evidence files:** 7
+
 ### [CodeMirror Markdown Source-View Rendering: Primitives, Patterns, and Ecosystem Practice](codemirror-markdown-source-view-rendering/REPORT.md)
 
 > How CodeMirror 6-based markdown source editors handle long logical lines (pipe table rows, fenced code blocks, HTML blocks, frontmatter) — what primitives CM6 exposes, what products do in practice, what maintainers and authoritative sources recommend. Covers Obsidian Source Mode & Live Preview, Sil…
@@ -101,6 +125,16 @@
 - **Subjects:** CodeMirror 6, Obsidian, SilverBullet, codemirror-rich-markdoc, Zettlr, HedgeDoc, Logseq, VS Code, Foam, Dendron, TipTap, @lezer/markdown, @codemirror/lang-markdown, y-codemirror.next, Markdoc
 - **Evidence files:** 8
 - **Warnings:** 1
+
+### [V0 Day-Zero Delight: What Would Make Our Launch Feel Special](v0-day-zero-delight/REPORT.md)
+
+> Research-driven divergent exploration of how Open Knowledge's v0 launch can feel special, differentiated, and shareable on day 0. Four-phase methodology (multi-channel worldmodel harvest + 20 parallel divergent agents + thematic consolidation + synthesis) producing a top-20 curated shortlist across…
+
+- **Created:** 2026-04-14
+- **Topics:** v0 launch strategy, day-0 delight, differentiation narrative, mascot and voice, onboarding ceremony, time-to-wow, shareability mechanics, viral dev-tool launches, power-user advocacy, benchmark-as-flywheel, anti-incumbent manifesto, divergent ideation methodology
+- **Subjects:** Open Knowledge, Obsidian, Notion, Claude Code, obsidian-mind, kepano, Andrej Karpathy, Clawd /buddy, Bolt.new, Cursor, Linear, Arc Browser, Finch, Tamagotchi, Octocat, Supabase Launch Week
+- **Evidence files:** 4
+- **Warnings:** 4
 
 ### [Clone-from-GitHub Onboarding Mechanics for On-Device Editors](open-from-github-onboarding-mechanics/REPORT.md)
 
@@ -129,6 +163,24 @@
 - **Subjects:** VS Code, GitHub Desktop, lazygit, Magit, JetBrains IntelliJ, Zed, GitKraken, Fork, Sourcetree, Obsidian-Git, TinaCMS, diffview.nvim, Sublime Merge, Logseq, SiYuan
 - **Evidence files:** 8
 - **Warnings:** 1
+
+### [Fumadocs Ecosystem Survey for Component Blocks v2 Reuse Assessment](fumadocs-ecosystem-component-blocks-reuse/REPORT.md)
+
+> End-to-end survey of the fumadocs ecosystem (core, mdx, ui, mdx-remote, community plugins, adjacent tools) mapped against Component Blocks v2 spec primitives. Identifies what to reuse, what to learn from, and what to build from scratch — with concrete spec amendment recommendations.
+
+- **Created:** 2026-04-14
+- **Topics:** MDX component editing, descriptor registry patterns, source fidelity preservation, CRDT collaboration, ecosystem reuse assessment
+- **Subjects:** Fumadocs, MDXEditor, TinaCMS, Keystatic, Plate, BlockNote, Storybook, mdast-util-mdx-jsx
+- **Evidence files:** 5
+
+### [Storybook Alternatives and Adjacent Component Playground Tools](storybook-alternatives-component-playgrounds/REPORT.md)
+
+> Primary-source survey of 7 tools (Ladle, Histoire, Playroom, React Cosmos, Docusaurus live code/react-live, Sandpack, and additional projects) covering maintenance status, component registration models, prop editing architectures, and relevance to in-editor component block systems with inline prop …
+
+- **Created:** 2026-04-14
+- **Topics:** component playgrounds, prop editing architecture, live preview rendering, component registration
+- **Subjects:** Ladle, Histoire, Playroom, React Cosmos, Sandpack, react-live, Docusaurus, react-styleguidist
+- **Evidence files:** 8
 
 ### [Markdown Table Rendering in Prose-Constrained Columns](markdown-table-rendering-in-prose-columns/REPORT.md)
 
@@ -232,7 +284,7 @@
 - **Topics:** electron operations, desktop app release pipeline, code signing, auto-update infrastructure
 - **Subjects:** Electron, electron-builder, electron-vite, electron-updater, Sentry, GitHub Actions, Apple Developer Program, Azure Trusted Signing
 - **Evidence files:** 5
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [OSS Licensing Strategies for Open-Core Companies: License Selection, Community Dynamics, and Business Model Interplay](oss-licensing-strategies-open-core/REPORT.md)
 
@@ -308,7 +360,6 @@
 - **Topics:** open core engineering, split licensing, npm obfuscation, AGPL linking exceptions
 - **Subjects:** Cal.com, Formbricks, Infisical, GitLab, Grafana, Documenso, Dub.co, Twenty, Appsmith, Mastra, Activepieces, n8n, Tldraw, Liveblocks, Firecrawl, napi-rs, terser, javascript-obfuscator
 - **Evidence files:** 5
-- **Warnings:** 1
 
 ### [CI Test Pipeline Patterns in TypeScript OSS Monorepos](ts-monorepo-ci-test-pipeline-patterns/REPORT.md)
 
@@ -418,7 +469,7 @@
 - **Topics:** CRDT migration assessment, Peritext rich text model, dual-view editor architecture, collaborative editor infrastructure
 - **Subjects:** Automerge, automerge-prosemirror, automerge-repo, automerge-codemirror, Yjs, TipTap, ProseMirror, Hocuspocus, Peritext, CodeMirror 6
 - **Evidence files:** 9
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Yjs Dual-Key Shimmer Analysis: Will Bidirectional Observer Sync Between Y.XmlFragment and Y.Text Actually Cascade?](yjs-dual-key-shimmer-analysis/REPORT.md)
 
@@ -437,7 +488,6 @@
 - **Topics:** source toggle architecture, CRDT dual representation, collaborative markdown editing, editor mode switching
 - **Subjects:** Yjs, TipTap, ProseMirror, CodeMirror 6, y-prosemirror, y-codemirror.next, Hocuspocus, Obsidian, AFFiNE, Automerge, Peritext
 - **Evidence files:** 5
-- **Warnings:** 1
 
 ### [KB Index and Navigation Patterns for AI Agents: How Agents Orient in Document Collections (2025-2026)](kb-index-navigation-patterns-for-agents/REPORT.md)
 
@@ -448,7 +498,6 @@
 - **Topics:** agent navigation, knowledge base indexing, progressive disclosure, context engineering, repo-map, CLAUDE.md, AGENTS.md, graph traversal, frontmatter metadata
 - **Subjects:** Claude Code, OpenAI Codex, Cursor, Aider, Augment Code, Windsurf, Devin, Context7, Obsidian, Andrej Karpathy, Dust.tt, LightRAG, GraphRAG, Anthropic
 - **Evidence files:** 9
-- **Warnings:** 1
 
 ### [Compiled Truth + Timeline: Content Conventions for Agent-Authored Knowledge Entries](compiled-truth-timeline-content-conventions/REPORT.md)
 
@@ -594,7 +643,6 @@
 - **Created:** 2026-04-04
 - **Topics:** wiki-link formats, backlink index architecture, knowledge graph navigation, CRDT collaboration, agent-native knowledge
 - **Subjects:** Obsidian, Logseq, Outline, AFFiNE, Foam, Dendron, Marksman, remark-wiki-link, TipTap, ProseMirror, Hocuspocus, Yjs, GraphRAG, Orama
-- **Warnings:** 1
 
 ### [Search Engine Decision: Orama vs SQLite FTS5+sqlite-vec vs PGlite+pgvector for a CRDT-Backed Branchable Knowledge Platform](search-engine-decision/REPORT.md)
 
@@ -604,7 +652,6 @@
 - **Topics:** search engine selection, CRDT search integration, per-branch index caching, contentless search indexing, local-to-cloud migration
 - **Subjects:** Orama, SQLite FTS5, sqlite-vec, better-sqlite3, PGlite, pgvector, pg_textsearch, Yjs, Hocuspocus
 - **Evidence files:** 6
-- **Warnings:** 1
 
 ### [TipTap in 2026: Product Direction, Platform Ambitions, and Overlap with Agent-Native Knowledge Platforms](tiptap-2026-direction-overlap/REPORT.md)
 
@@ -623,7 +670,7 @@
 - **Topics:** component inventory comparison, block type analysis, editing feature gap analysis, knowledge platform architecture, component distribution
 - **Subjects:** Obsidian, Fumadocs, fumadocs-ui, fumadocs-core, shadcn/ui, Radix UI, MDX
 - **Evidence files:** 5
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Bun vs Node.js as Server Runtime for an Agent-Native Knowledge Platform](bun-vs-node-runtime/REPORT.md)
 
@@ -652,7 +699,7 @@
 - **Topics:** component prop extraction, visual editor prop panels, TypeScript to UI control mapping, auto-generated editing interfaces
 - **Subjects:** react-docgen-typescript, Storybook, Webstudio, Builder.io, Plasmic, TypeScript Compiler API
 - **Evidence files:** 6
-- **Warnings:** 3
+- **Warnings:** 2
 
 ### [MDX Round-Trip Fidelity Through CRDT-Backed Visual Editors](mdx-crdt-roundtrip-fidelity/REPORT.md)
 
@@ -737,7 +784,7 @@
 - **Topics:** MCP tool design, agent tool interfaces, filesystem vs semantic tools, progressive disclosure, tool explosion problem, agent performance benchmarks
 - **Subjects:** Claude Code, Cursor, Mintlify, Context7, Anthropic, SWE-agent, SocratiCode, Microsoft Research, MCP-Bench, Mem0, GitHub MCP Server, Notion MCP Server
 - **Evidence files:** 7
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Orama Deep Dive: A Source-Code-Level Assessment for Agent-Native Knowledge Platforms](orama-deep-dive/REPORT.md)
 
@@ -747,7 +794,7 @@
 - **Topics:** hybrid search internals, in-memory search engine, TypeScript search library, vector search implementation, search engine gap analysis
 - **Subjects:** Orama, OramaSearch Inc, Orama Cloud, OramaCore, Fumadocs
 - **Evidence files:** 11
-- **Warnings:** 2
+- **Warnings:** 1
 
 ### [Fumadocs as Infrastructure for the Karpathy LLM Knowledge Base Workflow](fumadocs-karpathy-workflow-deep-dive/REPORT.md)
 
@@ -776,7 +823,7 @@
 - **Topics:** virtual filesystem MCP, agent tool surface overlap, filesystem abstraction backends, MCP tool design patterns, content search MCP tools, remote filesystem MCP tools
 - **Subjects:** Model Context Protocol, Claude Code, Mintlify ChromaFs, E2B, Daytona, Desktop Commander MCP, mcp-ripgrep, GitHub MCP Server, Replit MCP, Obsidian MCP, CodeSandbox MCP, filesystem-mcp-rs
 - **Evidence files:** 8
-- **Warnings:** 5
+- **Warnings:** 4
 
 ### [Git Worktrees as Draft Isolation for Knowledge Platforms: Lessons from Claude Code and the AI Coding Agent Landscape](claude-code-worktree-git-isolation/REPORT.md)
 
@@ -814,7 +861,7 @@
 - **Topics:** virtual filesystem for agents, custom filesystem backends, shell environment TypeScript, agent-native knowledge platform, MCP server architecture, MCP tool count agent performance, exec tool vs semantic tools, CRDT filesystem implementation
 - **Subjects:** just-bash, Vercel Labs, Mintlify ChromaFs, bash-tool, IFileSystem, just-bash-mcp, MCP structuredContent
 - **Evidence files:** 14
-- **Warnings:** 4
+- **Warnings:** 3
 
 ### [Fumadocs vs Mintlify: Architecture Deep Dive for Agent-Native Knowledge Platforms](fumadocs-vs-mintlify-architecture/REPORT.md)
 
@@ -843,7 +890,6 @@
 - **Topics:** knowledge consolidation, factual fidelity, multi-document synthesis, claim-level verification, information preservation, consensus mechanisms, multi-agent voting, incremental consolidation, cost-fidelity tradeoffs, production systems, recomposition patterns, outline-first generation, nuance preservation, confidence inflation, claim-to-document generation
 - **Subjects:** FActScore, MiniCheck, LLMxMapReduce, LangChain, LangGraph, AutoGen, CrewAI, Agent Zero, NEXUSSUM, GraphRAG, Perplexity, Elicit, Consensus, NotebookLM, Mem0, Zep/Graphiti, MemGPT, MetaFaith, FiC, WritingPath, PlanGen
 - **Evidence files:** 13
-- **Warnings:** 1
 
 ### [AI Coding Agent Tool Surfaces: How Agents Interface with Codebases](ai-coding-agent-tool-surfaces/REPORT.md)
 

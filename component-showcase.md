@@ -4,25 +4,29 @@ Every built-in component rendered in the WYSIWYG editor.
 
 ## Callouts
 
-<Callout type="info">
-
-This is an **info** callout with blue accent.
-
-</Callout>
-
 <Callout type="warning">
 
 This is a **warning** callout for cautions.
 
 </Callout>
 
+<Callout type="info">
+
+This is an **info** callout with blue accent.
+
+</Callout>
+
 ## Cards
 
-<Cards>
+<Cards title="" description="" href="" external>
 
 <Card title="Guides" description="Step-by-step tutorials" href="/guides" />
 
-<Card title="Reference" description="API documentation" href="/reference" />
+<Card title="What is Open Knowledge" description="API documentation" href="/reference" />
+
+<Card title="Hello" description="" href="" external />
+
+<Card title="" description="" href="" external={false} />
 
 </Cards>
 
@@ -43,6 +47,14 @@ Run `bun install` in the repo root.
 ### Configure
 
 Edit `.open-knowledge/config.yml` to set up your workspace.
+
+</Step>
+
+<Step>
+
+### Hi there how are you doing today
+
+well thanks!
 
 </Step>
 
@@ -98,15 +110,10 @@ Component Blocks v2 shipped.
 
 ## Wildcard (unregistered)
 
-<DataViz chartType="bar">
-
-This is an unregistered component rendered with the wildcard fallback.
-
-</DataViz>
-
 ## Standard markdown
 
 - Bullet one with **bold**
 - Bullet two with [a link](https://example.com)
 
 > The editor is a tool for working with content.
+
