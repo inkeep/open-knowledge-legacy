@@ -44,3 +44,4 @@ blob-report/
 # Editor workspace files
 .vscode/
 /test-doc.md
+.openknowledge/
