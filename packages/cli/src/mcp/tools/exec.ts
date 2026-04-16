@@ -31,6 +31,7 @@ import {
   type Stage,
   serializeStages,
 } from '../../bash/parse-command.ts';
+import type { Config } from '../../config/schema.ts';
 import {
   type DirectoryMeta,
   type EnrichedEntry,
@@ -72,6 +73,11 @@ export interface ExecDeps {
    * MCP client advertises its roots rather than being frozen at startup.
    */
   serverUrl: ServerUrlOrResolver;
+  /**
+   * Full resolved config. Used for `config.folders` (folder-frontmatter
+   * rules threaded through `enrichPath` / `enrichDirectory`).
+   */
+  config: Config;
 }
 
 export interface ExecStructuredResult {
@@ -218,7 +224,13 @@ function isDirectoryMeta(e: EnrichedEntry): e is DirectoryMeta {
 }
 
 function formatDirectoryEntry(d: DirectoryMeta): string {
-  const parts: string[] = [`**${d.path}/** (directory)`];
+  // When a `folders:` rule supplied a title, lead with it like file entries do;
+  // otherwise fall back to the path label. Either way show the path in parens
+  // so agents can always resolve the on-disk location.
+  const leader = d.title ? `**${d.title}** (${d.path}/)` : `**${d.path}/** (directory)`;
+  const parts: string[] = [leader];
+  if (d.description) parts.push(d.description);
+  if (d.tags && d.tags.length > 0) parts.push(`tags: ${d.tags.join(', ')}`);
   const counts: string[] = [];
   counts.push(`${d.recursiveMdCount} md file${d.recursiveMdCount === 1 ? '' : 's'}`);
   if (d.childDirCount > 0) {
@@ -367,11 +379,12 @@ export async function buildExecResult(
   const { files, dirs } = await classifyPaths(cwd, paths);
   // Single-path cat enrichment gets rich fields; all others get slim.
   const isSinglePathCat = stages.length === 1 && stages[0].command === 'cat' && files.length === 1;
+  const folderRules = deps.config.folders;
   const fileEnriched: EnrichedMeta[] = await Promise.all(
     files.map((p) =>
       enrichPath(
         p,
-        { projectDir: cwd, serverUrl: resolvedServerUrl },
+        { projectDir: cwd, serverUrl: resolvedServerUrl, folderRules },
         {
           includeRichFields: isSinglePathCat,
         },
@@ -393,7 +406,7 @@ export async function buildExecResult(
   );
   const dirEnriched: DirectoryMeta[] = await Promise.all(
     dirs.map((p) =>
-      enrichDirectory(p, { projectDir: cwd }).catch(
+      enrichDirectory(p, { projectDir: cwd, folderRules }).catch(
         (): DirectoryMeta => ({
           path: p,
           type: 'directory',
