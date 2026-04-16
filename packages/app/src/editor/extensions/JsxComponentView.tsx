@@ -148,61 +148,49 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     return p + 1 + node.content.size;
   };
 
-  // ── BRANCH 1: Wildcard (unregistered name) ────────────────────────────
-  // Convert to rawMdxFallback so the user can edit the source directly
-  // in the existing nested CM editor. The rawMdxFallback CM handles
-  // re-parsing on commit — if the user fixes the tag name to a registered
-  // component, it transitions back to a live jsxComponent render.
-  if (descriptor.name === '*') {
-    const convertToFallback = () => {
-      if (typeof pos !== 'number') return;
-      const source = reconstructSource(node);
-      const fallbackNode = node.type.schema.nodes.rawMdxFallback.create(
-        { reason: `Unregistered component: ${node.attrs.componentName as string}` },
-        node.type.schema.text(source),
-      );
-      editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + node.nodeSize, fallbackNode));
-    };
+  // ── Auto-convert to rawMdxFallback for wildcard + render errors ────────
+  // Fires once on mount (guarded by convertedRef). The rawMdxFallback CM
+  // handles source editing + re-parse on commit.
+  const needsConversion = descriptor.name === '*' || renderError !== null;
+  const convertedRef = useRef(false);
+  useEffect(() => {
+    if (!needsConversion || convertedRef.current) return;
+    convertedRef.current = true;
 
-    // Auto-convert on first render
-    requestAnimationFrame(convertToFallback);
+    const p = typeof getPos === 'function' ? getPos() : undefined;
+    if (typeof p !== 'number') return;
 
-    // Render a brief placeholder while the conversion dispatches
+    const source = reconstructSource(node);
+    const reason =
+      descriptor.name === '*'
+        ? `Unregistered component: ${node.attrs.componentName as string}`
+        : `Render error in <${descriptor.displayName ?? descriptor.name}>: ${renderError?.message ?? 'unknown'}`;
+
+    const fallbackNode = node.type.schema.nodes.rawMdxFallback.create(
+      { reason },
+      node.type.schema.text(source),
+    );
+
+    // Defer to next frame to avoid dispatching during render
+    requestAnimationFrame(() => {
+      try {
+        editor.view.dispatch(editor.state.tr.replaceWith(p, p + node.nodeSize, fallbackNode));
+      } catch {
+        // Position may have changed if other transactions fired — safe to ignore
+      }
+    });
+  });
+
+  // Show placeholder while conversion is pending
+  if (needsConversion) {
+    const label =
+      descriptor.name === '*'
+        ? `Unknown: ${node.attrs.componentName as string}`
+        : `${descriptor.displayName ?? descriptor.name} — render error`;
     return (
       <NodeViewWrapper className="jsx-component-wrapper my-2">
         <div className="text-xs font-mono text-muted-foreground px-2 py-1" contentEditable={false}>
-          Converting to source editor...
-        </div>
-        <NodeViewContent className="component-children" />
-      </NodeViewWrapper>
-    );
-  }
-
-  // ── BRANCH 3: Render failure → convert to rawMdxFallback (Precedent #14)
-  // Same approach as wildcard: reconstruct source, replace with rawMdxFallback,
-  // let the existing nested CM editor handle source editing + re-parse on commit.
-  if (renderError) {
-    const convertToFallback = () => {
-      if (typeof pos !== 'number') return;
-      const source = reconstructSource(node);
-      const fallbackNode = node.type.schema.nodes.rawMdxFallback.create(
-        {
-          reason: `Render error in <${descriptor.displayName ?? descriptor.name}>: ${renderError.message}`,
-        },
-        node.type.schema.text(source),
-      );
-      editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + node.nodeSize, fallbackNode));
-    };
-
-    requestAnimationFrame(convertToFallback);
-
-    return (
-      <NodeViewWrapper className="jsx-component-wrapper jsx-component-wrapper--error my-2">
-        <div
-          className="text-xs font-mono text-red-600 dark:text-red-400 px-2 py-1"
-          contentEditable={false}
-        >
-          &lt;{descriptor.displayName ?? descriptor.name}&gt; — converting to source editor...
+          {label} — opening source editor...
         </div>
         <NodeViewContent className="component-children" />
       </NodeViewWrapper>
