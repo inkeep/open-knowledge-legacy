@@ -6,10 +6,28 @@ describe('ConfigSchema', () => {
     const config = ConfigSchema.parse({});
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']);
     expect(config.content.exclude).toEqual([]);
-    expect(config.server.port).toBe(3000);
+    // Default 0 means kernel-allocated — `ok start` advertises the resolved
+    // port via server.lock for MCP discovery.
+    expect(config.server.port).toBe(0);
     expect(config.server.host).toBe('localhost');
     expect(config.persistence.debounceMs).toBe(2000);
     expect(config.persistence.maxDebounceMs).toBe(10000);
+    expect(config.mcp.autoStart).toBe(true);
+  });
+
+  test('explicit server.port: 3000 still parses (backward compat)', () => {
+    const config = ConfigSchema.parse({ server: { port: 3000 } });
+    expect(config.server.port).toBe(3000);
+  });
+
+  test('mcp.autoStart: false is accepted', () => {
+    const config = ConfigSchema.parse({ mcp: { autoStart: false } });
+    expect(config.mcp.autoStart).toBe(false);
+  });
+
+  test('mcp section absent parses with autoStart: true default', () => {
+    const config = ConfigSchema.parse({});
+    expect(config.mcp.autoStart).toBe(true);
   });
 
   test('partial override preserves other defaults', () => {
