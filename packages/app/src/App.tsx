@@ -3,7 +3,8 @@ import { EditorPane } from '@/components/EditorPane';
 import { FileSidebar } from '@/components/FileSidebar';
 import { defaultInitialDir } from '@/components/file-tree-utils';
 import { isNewItemShortcut, NewItemDialog } from '@/components/NewItemDialog';
-import { PageListProvider } from '@/components/PageListContext';
+import { resolveNavigationTarget } from '@/components/navigation-targets';
+import { PageListProvider, usePageList } from '@/components/PageListContext';
 import { SystemDocSubscriber } from '@/components/SystemDocSubscriber';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
 import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
@@ -12,27 +13,40 @@ import { docNameFromHash } from '@/lib/doc-hash';
 export { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 
 /** Hash is the source of truth for navigation; all navigation sets the hash;
- *  this handler is the single place that calls openDocument(). */
+ *  this handler is the single place that resolves the active navigation target. */
 function NavigationHandler() {
-  const { openDocument } = useDocumentContext();
+  const { clearTarget, openTarget } = useDocumentContext();
+  const { folderPaths, loading, pages } = usePageList();
 
   useEffect(() => {
     onHashChange();
 
     function onHashChange() {
       const docName = docNameFromHash(window.location.hash);
-      if (docName) openDocument(docName);
+      if (!docName) {
+        clearTarget();
+        return;
+      }
+      if (loading) return;
+      openTarget(
+        resolveNavigationTarget(docName, {
+          pages,
+          folderPaths,
+        }),
+      );
     }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
-  }, [openDocument]);
+  }, [clearTarget, folderPaths, loading, openTarget, pages]);
 
   return null;
 }
 
 function NewItemShortcutHandler() {
-  const { activeDocName } = useDocumentContext();
+  const { activeDocName, activeTarget } = useDocumentContext();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const initialDir =
+    activeTarget?.kind === 'folder' ? activeTarget.folderPath : defaultInitialDir(activeDocName);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -62,7 +76,7 @@ function NewItemShortcutHandler() {
       open={dialogOpen}
       onOpenChange={setDialogOpen}
       kind="file"
-      initialDir={defaultInitialDir(activeDocName)}
+      initialDir={initialDir}
     />
   );
 }

@@ -93,6 +93,32 @@ describe('initContent', () => {
       .filter((l) => l.length > 0 && !l.startsWith('#'));
     expect(activeLines).toEqual([]);
   });
+
+  it('AGENTS.md scaffold describes both per-file and config.yml folders: surfaces (US-006 / QA-009)', () => {
+    initContent(testDir);
+    const agents = readFileSync(join(testDir, OK_DIR, 'AGENTS.md'), 'utf-8');
+    // No longer claims per-file is the ONLY surface
+    expect(agents).not.toContain('the **only** authored metadata surface');
+    // Describes both surfaces
+    expect(agents).toContain('Per-file frontmatter');
+    expect(agents).toContain('folders:');
+    // Clarifies the rejected pattern was INDEX.md-in-content, not folder metadata
+    expect(agents).toContain('INDEX.md');
+  });
+
+  it('config.yml scaffold includes commented folders: example with picomatch nuance doc (US-006 / QA-009)', () => {
+    initContent(testDir);
+    const configYml = readFileSync(join(testDir, OK_DIR, 'config.yml'), 'utf-8');
+    // Folders block documented
+    expect(configYml).toContain('Folders:');
+    expect(configYml).toContain('# folders:');
+    expect(configYml).toContain("#   - match: 'specs/**'");
+    // Picomatch globstar nuance explicitly flagged
+    expect(configYml).toMatch(/foo-\*\*/);
+    expect(configYml).toMatch(/foo-\*\/\*\*/);
+    // Last-match-wins ordering documented
+    expect(configYml).toMatch(/LATER rules.*override/i);
+  });
 });
 
 describe('upsertRootInstructions', () => {

@@ -25,14 +25,24 @@ describe('extractReferencedPaths — cat', () => {
 });
 
 describe('extractReferencedPaths — ls', () => {
-  test('each stdout line becomes a path, prefixed with arg dir', () => {
+  test('parent dir arg is emitted first, followed by prefixed children', () => {
     const stdout = 'auth.md\nonboarding.md\nREADME.md\n';
     const paths = extractReferencedPaths(stdout, [stage('ls', 'articles/')]);
-    expect(paths).toEqual(['articles/auth.md', 'articles/onboarding.md', 'articles/README.md']);
+    expect(paths).toEqual([
+      'articles',
+      'articles/auth.md',
+      'articles/onboarding.md',
+      'articles/README.md',
+    ]);
   });
 
-  test('no dir arg → paths are project-relative', () => {
+  test('no dir arg → no parent; paths are project-relative', () => {
     const paths = extractReferencedPaths('top.md\n', [stage('ls')]);
+    expect(paths).toEqual(['top.md']);
+  });
+
+  test('`ls .` treated as no parent', () => {
+    const paths = extractReferencedPaths('top.md\n', [stage('ls', '.')]);
     expect(paths).toEqual(['top.md']);
   });
 
@@ -54,6 +64,26 @@ describe('extractReferencedPaths — grep', () => {
     const stdout = 'file.md:1:one\nfile.md:2:two\nfile.md:3:three\n';
     const paths = extractReferencedPaths(stdout, [stage('grep', '-rn', 'x', '.')]);
     expect(paths).toEqual(['file.md']);
+  });
+});
+
+describe('extractReferencedPaths — head/tail as conditional producer', () => {
+  test('`head file.md` extracts the file arg like cat', () => {
+    const paths = extractReferencedPaths('first ten lines...\n', [stage('head', '-5', 'auth.md')]);
+    expect(paths).toEqual(['auth.md']);
+  });
+
+  test('`tail file.md` extracts the file arg like cat', () => {
+    const paths = extractReferencedPaths('last ten lines...\n', [stage('tail', '-5', 'auth.md')]);
+    expect(paths).toEqual(['auth.md']);
+  });
+
+  test('`cat X | head -5` keeps cat as producer (head has no file arg)', () => {
+    const paths = extractReferencedPaths('5 lines of X...\n', [
+      stage('cat', 'articles/auth.md'),
+      stage('head', '-5'),
+    ]);
+    expect(paths).toEqual(['articles/auth.md']);
   });
 });
 
@@ -89,10 +119,10 @@ describe('extractReferencedPaths — pipe propagation', () => {
     expect(paths).toEqual(['articles/auth.md']);
   });
 
-  test('ls | sort preserves ls extraction', () => {
+  test('ls | sort preserves ls extraction (parent first, then children)', () => {
     const stdout = 'auth.md\nindex.md\n';
     const paths = extractReferencedPaths(stdout, [stage('ls', 'articles/'), stage('sort')]);
-    expect(paths).toEqual(['articles/auth.md', 'articles/index.md']);
+    expect(paths).toEqual(['articles', 'articles/auth.md', 'articles/index.md']);
   });
 });
 

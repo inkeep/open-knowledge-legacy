@@ -181,28 +181,17 @@ test('concurrent agent write: user + agent content coexist', async ({ page }) =>
   expect(sourceContent).toContain('Agent content here');
 });
 
-// Pre-existing failure on main — the shadcn sidebar component contract
-// changed (per PR #175): the folder row button now navigates to the
-// folder's resolved target URL on click, and `aria-expanded` + the
-// toggle affordance moved to the `SidebarMenuAction` chevron. This test
-// still asserts the old contract (row click toggles, row has
-// aria-expanded). PR #169 is the designated fix — it rewrites this
-// test to the new contract AND updates FileTree.tsx accordingly.
-//
-// Skipping here rather than rewriting because:
-//   1. The rewrite belongs with the FileTree.tsx component changes that
-//      codify the new contract (both are in PR #169).
-//   2. Duplicating the rewrite in this PR would collide with PR #169 at
-//      merge time and force a no-op resolution.
-//   3. Main's own CI is red on this same test (run 24530510201 at the
-//      time of writing) — our PR didn't introduce the failure; our
-//      cross-browser config (Act-5) amplified its visibility from 1
-//      failure (chromium-only on main) to 3 (chromium + webkit + firefox
-//      on this PR).
-test.skip('sidebar folder row: clicking anywhere on the row toggles expand/collapse', async ({
+test('sidebar folder: row click navigates to folder overview; chevron toggles expand/collapse', async ({
   page,
 }) => {
-  const folderRow = page.getByRole('button', { name: 'sidebar-folder' });
+  // Contract (post-PR #175 folder-aware link handling): the folder row button
+  // navigates to the folder's resolved target (#/<folderPath>) on click, and
+  // the SidebarMenuAction chevron carries the `aria-expanded` affordance +
+  // toggle. Pre-#175 the row itself toggled — that version of this test lived
+  // at this path and was failing post-merge (two main commits red before the
+  // rewrite) until it was updated to the new contract here.
+  const folderRow = page.getByRole('button', { name: 'sidebar-folder', exact: true });
+  const chevron = page.getByRole('button', { name: 'Expand sidebar-folder' });
   // Scope to the sidebar — `getByText('nested-doc.md')` would also match the
   // EditorHeader's `${activeDocName}.md` label after navigating into the file,
   // causing toHaveCount(0) to fail on collapse even though the sidebar entry is
@@ -210,24 +199,37 @@ test.skip('sidebar folder row: clicking anywhere on the row toggles expand/colla
   const sidebar = page.locator('[data-slot="sidebar-container"]');
   const nestedFile = sidebar.getByText('nested-doc.md');
 
-  // Starts collapsed — nested child is not visible, aria-expanded reflects state
+  // Starts collapsed — chevron reflects state, nested child not visible
   await expect(folderRow).toBeVisible();
-  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
+  await expect(chevron).toHaveAttribute('aria-expanded', 'false');
   await expect(nestedFile).toHaveCount(0);
 
-  // Click the label (not the chevron) — the whole row should be the hit target
-  await folderRow.click();
-  await expect(folderRow).toHaveAttribute('aria-expanded', 'true');
+  // Chevron click toggles expand/collapse and flips aria-expanded. The chevron
+  // is intentionally the toggle affordance (keyboard-reachable, state-bearing);
+  // the row itself is the navigation affordance.
+  await chevron.click();
+  // After expand, the chevron's accessible name flips to "Collapse sidebar-folder"
+  const chevronCollapse = page.getByRole('button', { name: 'Collapse sidebar-folder' });
+  await expect(chevronCollapse).toHaveAttribute('aria-expanded', 'true');
   await expect(nestedFile).toBeVisible();
 
-  // Nested file click still navigates (not shadowed by folder toggle)
+  // Nested file click navigates to the doc
   await nestedFile.click();
   await expect(page).toHaveURL(/#\/sidebar-folder\/nested-doc$/);
 
-  // Click the row again to collapse
-  await folderRow.click();
-  await expect(folderRow).toHaveAttribute('aria-expanded', 'false');
+  // Re-collapse via chevron
+  await chevronCollapse.click();
+  await expect(page.getByRole('button', { name: 'Expand sidebar-folder' })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  );
   await expect(nestedFile).toHaveCount(0);
+
+  // Row click navigates to the folder's resolved target (overview URL shape is
+  // `#/<folderPath>`, same as a doc URL — folder vs doc resolution happens in
+  // the editor layer via `resolveNavigationTarget` per PR #175).
+  await folderRow.click();
+  await expect(page).toHaveURL(/#\/sidebar-folder$/);
 });
 
 test('markdown link edit dialog preserves page mode while clearing and updates the href target', async ({
@@ -256,7 +258,7 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
 
   // The `Link options` button is hidden via Tailwind `hidden` (display:
   // none) and revealed on `:hover` or `:focus-within` of the `.group`
-  // ancestor (InternalLinkView.tsx:362-374). Playwright's hover + focus
+  // ancestor (InternalLinkView.tsx). Playwright's hover + focus
   // primitives are unreliable for triggering these pseudo-classes
   // across headless Chromium / WebKit / Firefox — pointer-state
   // inference differs per browser and display:none elements have no
