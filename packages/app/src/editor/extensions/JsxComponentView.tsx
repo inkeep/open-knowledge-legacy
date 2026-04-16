@@ -225,6 +225,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           type="button"
           contentEditable={false}
           className={node.childCount === 0 ? 'jsx-empty-child-placeholder' : 'jsx-add-child-pill'}
+          onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {
             const childJSON = createChildNode(descriptor.emptyChildName as string);
             editor.chain().focus().insertContentAt(insertChildAt(), childJSON).run();
