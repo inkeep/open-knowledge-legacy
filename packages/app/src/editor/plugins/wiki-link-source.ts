@@ -44,6 +44,7 @@ const PAGES_CACHE_TTL_MS = 5_000;
 
 let pagesCache: PageItem[] | null = null;
 let pagesCacheTime = 0;
+let pageNameSet: Set<string> | null = null;
 const headingsCache = new Map<string, { headings: HeadingEntry[]; time: number }>();
 
 async function getPages(): Promise<PageItem[]> {
@@ -51,6 +52,7 @@ async function getPages(): Promise<PageItem[]> {
   if (pagesCache && now - pagesCacheTime < PAGES_CACHE_TTL_MS) return pagesCache;
   pagesCache = await fetchPages();
   pagesCacheTime = now;
+  pageNameSet = buildPageNameSet(pagesCache);
   return pagesCache;
 }
 
@@ -94,7 +96,7 @@ function buildPageNameSet(pages: PageItem[]): Set<string> {
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   // Cache-cold → all wikilinks get plain mark (no false-positive broken flash)
-  const pageSet = pagesCache ? buildPageNameSet(pagesCache) : null;
+  const pageSet = pagesCache ? pageNameSet : null;
 
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
@@ -144,7 +146,9 @@ const wikiLinkDecorations = ViewPlugin.fromClass(
             /* view destroyed before cache resolved */
           }
         })
-        .catch(() => {});
+        .catch((err) => {
+          console.warn('[wiki-link-source] warmCache fetch failed:', err);
+        });
     }
   },
   { decorations: (v) => v.decorations },

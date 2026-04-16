@@ -68,11 +68,11 @@ export const codeLanguages: LanguageDescription[] = [
     alias: ['sh', 'shell', 'zsh'],
     extensions: ['sh', 'bash', 'zsh'],
     load: async () => {
-      const { StreamLanguage } = await import('@codemirror/language');
-      const { shell } = await import('@codemirror/legacy-modes/mode/shell');
-      return new (await import('@codemirror/language')).LanguageSupport(
-        StreamLanguage.define(shell),
-      );
+      const [{ StreamLanguage, LanguageSupport }, { shell }] = await Promise.all([
+        import('@codemirror/language'),
+        import('@codemirror/legacy-modes/mode/shell'),
+      ]);
+      return new LanguageSupport(StreamLanguage.define(shell));
     },
   }),
   LanguageDescription.of({
@@ -80,9 +80,11 @@ export const codeLanguages: LanguageDescription[] = [
     alias: ['golang'],
     extensions: ['go'],
     load: async () => {
-      const { StreamLanguage } = await import('@codemirror/language');
-      const { go } = await import('@codemirror/legacy-modes/mode/go');
-      return new (await import('@codemirror/language')).LanguageSupport(StreamLanguage.define(go));
+      const [{ StreamLanguage, LanguageSupport }, { go }] = await Promise.all([
+        import('@codemirror/language'),
+        import('@codemirror/legacy-modes/mode/go'),
+      ]);
+      return new LanguageSupport(StreamLanguage.define(go));
     },
   }),
 ];
