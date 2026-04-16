@@ -236,18 +236,17 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
   const chip = page.locator('[data-internal-link]').first();
   await expect(chip).toHaveAttribute('data-doc-name', 'beta');
 
-  // Firefox headless doesn't always fire the CSS :hover state from
-  // locator.hover() reliably enough for React to show the hover-only
-  // button. Explicit mouse.move over the chip's center fires
-  // pointerenter/pointermove events that every browser honors, which
-  // React respond-to consistently. Chromium + WebKit also tolerate this
-  // pattern, so no per-browser branching.
-  const chipBox = await chip.boundingBox();
-  if (chipBox) {
-    await page.mouse.move(chipBox.x + chipBox.width / 2, chipBox.y + chipBox.height / 2);
-  } else {
-    await chip.hover();
-  }
+  // The `Link options` button is CSS-hidden on the chip and revealed by
+  // either `group-hover:inline-flex` OR `group-focus-within:inline-flex`
+  // (see InternalLinkView.tsx: the button has both class modifiers).
+  // Firefox headless does not reliably apply :hover from Playwright's
+  // mouse movement, but :focus-within is deterministic in every browser
+  // because focus is an explicit DOM state, not a pointer-state
+  // inference. Focusing the anchor inside the chip triggers
+  // `:focus-within` on the chip's `.group` wrapper, which unhides the
+  // button consistently. Chromium + WebKit work the same way — no
+  // per-browser branching needed.
+  await chip.locator('a').first().focus();
   await chip.getByRole('button', { name: 'Link options' }).click();
   await page.getByText('Edit link', { exact: true }).click();
 
@@ -276,7 +275,10 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
     { timeout: 10_000 },
   );
 
-  await chip.hover();
+  // Radix Tooltip opens on focus OR hover — focus is deterministic in
+  // Firefox headless where :hover from Playwright's mouse movement is
+  // unreliable (see note on first hover above).
+  await chip.locator('a').first().focus();
   const tooltip = page.locator('[data-slot="tooltip-content"]').last();
   await expect(tooltip).toBeVisible();
   await expect(tooltip).toContainText('./sidebar-folder/nested-doc.md');
