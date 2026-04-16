@@ -62,6 +62,7 @@ import {
   updateFileIndex,
 } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
+import { isLoopbackAddress } from './loopback.ts';
 import {
   createManagedRenameRecoveryJournal,
   type ManagedRenameSnapshot,
@@ -2097,17 +2098,56 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    // Absolute, canonical contentDir so the client can build full filesystem paths
-    // (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in the
-    // workspace root are resolved via realpath so the path matches on-disk truth.
-    const resolvedContentDir = (() => {
-      try {
-        return realpathSync(resolve(contentDir));
-      } catch {
-        return resolve(contentDir);
+    // Loopback-only: this endpoint discloses the absolute host filesystem path
+    // (including home directory / username). That's fine for the local-editing
+    // use case the rest of the API is designed for, but if the user configures
+    // `server.host: 0.0.0.0` (demos, shared dev boxes, Codespaces), we do NOT
+    // want to leak the host shape over the network or to cross-origin fetches.
+    // All loopback clients (including requests from a browser on the same
+    // machine) pass — connections from other interfaces are refused.
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'Loopback-only endpoint' });
+      return;
+    }
+    // Absolute, canonical contentDir so the client can build full filesystem
+    // paths (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in
+    // the workspace root are resolved via realpath so the path matches on-disk
+    // truth. We treat error kinds in line with the persistence layer's symlink
+    // contract (CLAUDE.md "Symlinks" §):
+    //   - ENOENT: contentDir missing on disk → 200 with `symlinkResolved: false`
+    //     and the unresolved path. Lets "Copy Path" still produce a meaningful
+    //     value when the directory was deleted between server start and this
+    //     request; the client decides whether to act on it.
+    //   - ELOOP / EACCES / anything else: real filesystem error → 500. Matches
+    //     persistence's stricter policy (cyclic symlinks are rejected
+    //     everywhere) and avoids handing the user a path that won't resolve.
+    const resolvedRoot = resolve(contentDir);
+    let resolvedContentDir = resolvedRoot;
+    let symlinkResolved = true;
+    try {
+      resolvedContentDir = realpathSync(resolvedRoot);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === 'ENOENT') {
+        console.warn('[workspace] contentDir does not exist; returning unresolved path', {
+          path: resolvedRoot,
+        });
+        symlinkResolved = false;
+      } else {
+        console.warn('[workspace] realpath failed for contentDir', { path: resolvedRoot, err });
+        json(res, 500, { ok: false, error: 'workspace-realpath-failed', code: code ?? null });
+        return;
       }
-    })();
-    json(res, 200, { ok: true, contentDir: resolvedContentDir });
+    }
+    // `pathSeparator` lets the client build full paths without guessing from
+    // the shape of `contentDir` (which breaks on Windows + forward-slash paths
+    // and on POSIX folders that contain a literal backslash in the name).
+    json(res, 200, {
+      ok: true,
+      contentDir: resolvedContentDir,
+      pathSeparator: sep,
+      symlinkResolved,
+    });
   }
 
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */

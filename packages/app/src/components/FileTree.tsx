@@ -19,6 +19,7 @@ import {
   startTransition,
   useEffect,
   useImperativeHandle,
+  useRef,
   useState,
 } from 'react';
 import { toast } from 'sonner';
@@ -86,15 +87,14 @@ function relativePathForNode(node: { kind: 'file' | 'folder'; path: string }): s
 }
 
 /**
- * Join `contentDir` with a workspace-relative path. Cross-platform — picks the
- * separator that already appears in `contentDir` (POSIX `/` on macOS/Linux,
- * `\` on Windows). The relative segment itself is always `/`-joined because
- * TreeNode.path and DocEntry.docName are POSIX-form in transit.
+ * Join `contentDir` with a workspace-relative path. Cross-platform — uses the
+ * platform separator that `/api/workspace` returns (Node's `path.sep`), which
+ * is the source of truth for the host. `TreeNode.path` and `DocEntry.docName`
+ * are always POSIX-form in transit, so when the host is Windows we rewrite
+ * their internal `/` to `\` before joining.
  */
-function joinWorkspacePath(contentDir: string, relative: string): string {
-  const winSep = contentDir.includes('\\') && !contentDir.includes('/');
-  const sep = winSep ? '\\' : '/';
-  const normalizedRelative = winSep ? relative.replaceAll('/', '\\') : relative;
+function joinWorkspacePath(contentDir: string, relative: string, sep: '/' | '\\'): string {
+  const normalizedRelative = sep === '\\' ? relative.replaceAll('/', '\\') : relative;
   const trimmedDir = contentDir.endsWith(sep) ? contentDir.slice(0, -1) : contentDir;
   return `${trimmedDir}${sep}${normalizedRelative}`;
 }
@@ -110,16 +110,17 @@ async function copyToClipboard(text: string, label: string): Promise<void> {
 }
 
 /**
- * Basename-scoped files that get a distinct icon in the sidebar. AGENTS.md is
- * the cross-tool convention for agent instructions (agents.md spec) — surfacing
- * it visually makes the sidebar agent-native in the same way CLAUDE.md is
- * for this repo. Kept as a Set so adding siblings (CLAUDE.md, SKILL.md, etc.)
- * later is a one-liner. The `TreeNode.name` used here is already extension-less.
+ * Basename-scoped files that get a distinct icon in the sidebar. Covers the
+ * cross-tool agent-doc conventions this repo treats as first-class: AGENTS.md
+ * (agents.md spec), CLAUDE.md (Claude Code), and SKILL.md (skill bundles under
+ * `.claude/skills/**`, `.agents/skills/**`). Basename match is case-insensitive
+ * so `agents.md`, `Claude.md`, etc. all surface the badge. `TreeNode.name` is
+ * already extension-less by construction.
  */
-const AGENT_FILE_NAMES = new Set(['AGENTS']);
+const AGENT_FILE_NAMES = new Set(['agents', 'agent', 'claude', 'skill']);
 
 function isAgentFile(node: TreeNode): boolean {
-  return node.kind === 'file' && AGENT_FILE_NAMES.has(node.name);
+  return node.kind === 'file' && AGENT_FILE_NAMES.has(node.name.toLowerCase());
 }
 
 interface RenamePathResponse {
@@ -217,8 +218,8 @@ const FileTreeNode: FC<{
   editingPath: string | null;
   editingValue: string;
   busyPath: string | null;
-  /** Absolute on-disk workspace root, or null while /api/workspace is still loading. */
-  contentDir: string | null;
+  /** Absolute on-disk workspace root + host path separator, or null while /api/workspace is still loading. */
+  workspace: { contentDir: string; pathSeparator: '/' | '\\' } | null;
   onNavigate: (targetPath: string) => void;
   onStartRename: (target: FileTreeTarget) => void;
   onEditingValueChange: (value: string) => void;
@@ -242,7 +243,7 @@ const FileTreeNode: FC<{
   editingPath,
   editingValue,
   busyPath,
-  contentDir,
+  workspace,
   onNavigate,
   onStartRename,
   onEditingValueChange,
@@ -477,10 +478,14 @@ const FileTreeNode: FC<{
             </ContextMenuSubTrigger>
             <ContextMenuSubContent>
               <ContextMenuItem
-                disabled={!contentDir}
+                disabled={!workspace}
                 onSelect={() => {
-                  if (!contentDir) return;
-                  const full = joinWorkspacePath(contentDir, relativePathForNode(node));
+                  if (!workspace) return;
+                  const full = joinWorkspacePath(
+                    workspace.contentDir,
+                    relativePathForNode(node),
+                    workspace.pathSeparator,
+                  );
                   void copyToClipboard(full, 'full path');
                 }}
               >
@@ -527,7 +532,7 @@ const FileTreeNode: FC<{
               editingPath={editingPath}
               editingValue={editingValue}
               busyPath={busyPath}
-              contentDir={contentDir}
+              workspace={workspace}
               onNavigate={onNavigate}
               onStartRename={onStartRename}
               onEditingValueChange={onEditingValueChange}
@@ -586,9 +591,15 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const [creatingValue, setCreatingValue] = useState('');
   const [creatingBusy, setCreatingBusy] = useState(false);
   const [creatingError, setCreatingError] = useState<string | null>(null);
-  // Absolute workspace root — null until /api/workspace resolves. Used to build
-  // full filesystem paths for the row context menu's 'Copy path > Full path' item.
-  const [contentDir, setContentDir] = useState<string | null>(null);
+  // Absolute workspace root + host path separator — null until /api/workspace
+  // resolves. Used to build full filesystem paths for the row context menu's
+  // 'Copy path > Full path' item. The separator comes from the server (Node's
+  // `path.sep`) rather than being inferred client-side, because the shape of
+  // `contentDir` alone doesn't disambiguate all cross-platform cases.
+  const [workspace, setWorkspace] = useState<{
+    contentDir: string;
+    pathSeparator: '/' | '\\';
+  } | null>(null);
 
   if (activeNavigationPath !== prevActiveNavigationPath) {
     // Clear user-collapsed overrides on navigation so ancestors of the new
@@ -658,8 +669,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
       .then(async (res) => {
         const data = await res.json().catch(() => null);
         if (!active) return;
-        if (res.ok && data?.ok && typeof data.contentDir === 'string') {
-          setContentDir(data.contentDir);
+        if (
+          res.ok &&
+          data?.ok &&
+          typeof data.contentDir === 'string' &&
+          (data.pathSeparator === '/' || data.pathSeparator === '\\')
+        ) {
+          setWorkspace({ contentDir: data.contentDir, pathSeparator: data.pathSeparator });
         }
       })
       .catch((err) => {
@@ -972,7 +988,13 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
 
   // Derive expansion on every render (D4 derive-don't-store):
   //   expandedPaths = (ancestors(activeDocName) ∪ userExpanded) \ userCollapsed
-  // intersected with current folder paths to filter stale entries.
+  // Both userExpanded and userCollapsed are intersected with current folder
+  // paths — `userExpanded ∩ folderPaths` caps the expansion loop, and
+  // `userCollapsed ∩ folderPaths` prevents a stale "I collapsed this before"
+  // entry from pre-collapsing a later-recreated folder at the same path (e.g.
+  // delete then recreate `notes/drafts/`). Either set can grow unboundedly
+  // across a long session; the intersection prevents that from affecting the
+  // derived state.
   const expandedPaths = new Set<string>();
   for (const a of ancestors) {
     if (folderPaths.has(a)) expandedPaths.add(a);
@@ -981,7 +1003,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
     if (folderPaths.has(p)) expandedPaths.add(p);
   }
   for (const p of userCollapsed) {
-    expandedPaths.delete(p);
+    if (folderPaths.has(p)) expandedPaths.delete(p);
   }
 
   function handleToggle(path: string) {
@@ -1064,7 +1086,7 @@ export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
             onCollapseSubtree={collapseSubtree}
             inlineCreate={getInlineCreate(node.path)}
             getInlineCreate={getInlineCreate}
-            contentDir={contentDir}
+            workspace={workspace}
           />
         ))}
       </SidebarMenu>
