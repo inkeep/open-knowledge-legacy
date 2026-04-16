@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { OK_DIR } from '../constants.ts';
@@ -204,5 +204,35 @@ describe('upsertRootInstructions', () => {
     expect(PREVIEW_GUIDANCE).toContain('get_preview_url');
     expect(PREVIEW_GUIDANCE).toContain('write_document');
     expect(PREVIEW_GUIDANCE).toContain('edit_document');
+  });
+
+  it('writes extraFiles alongside AGENTS.md', () => {
+    const results = upsertRootInstructions(testDir, false, ['CLAUDE.md', '.cursorrules']);
+
+    expect(existsSync(join(testDir, 'AGENTS.md'))).toBe(true);
+    expect(existsSync(join(testDir, 'CLAUDE.md'))).toBe(true);
+    expect(existsSync(join(testDir, '.cursorrules'))).toBe(true);
+    expect(readFileSync(join(testDir, 'CLAUDE.md'), 'utf-8')).toContain(OK_MARKER_BEGIN);
+    expect(readFileSync(join(testDir, '.cursorrules'), 'utf-8')).toContain(OK_MARKER_BEGIN);
+    expect(results).toHaveLength(3);
+    expect(results.find((r) => r.file === 'AGENTS.md')?.action).toBe('created');
+    expect(results.find((r) => r.file === 'CLAUDE.md')?.action).toBe('created');
+    expect(results.find((r) => r.file === '.cursorrules')?.action).toBe('created');
+  });
+
+  it('deduplicates extraFiles that symlink to an already-written file', () => {
+    const agentsPath = join(testDir, 'AGENTS.md');
+    const claudePath = join(testDir, 'CLAUDE.md');
+    writeFileSync(agentsPath, '# Existing\n');
+    symlinkSync(agentsPath, claudePath);
+
+    const results = upsertRootInstructions(testDir, false, ['CLAUDE.md']);
+
+    // AGENTS.md gets the section appended; CLAUDE.md is skipped (same canonical path)
+    expect(results.find((r) => r.file === 'AGENTS.md')?.action).toBe('appended');
+    expect(results.find((r) => r.file === 'CLAUDE.md')?.action).toBe('skipped-symlink');
+    // Only one copy of the section in the file (symlink means both paths read the same content)
+    const content = readFileSync(agentsPath, 'utf-8');
+    expect(content.split(OK_MARKER_BEGIN)).toHaveLength(2); // exactly one marker
   });
 });
