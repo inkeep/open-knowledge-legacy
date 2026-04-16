@@ -124,6 +124,15 @@ export interface DocumentErrorBoundaryProps {
   activeDocName: string;
   previousDocName?: string;
   onNavigateBack?: (previousDocName: string) => void;
+  /**
+   * Called on imperative "Try again" — destroy + recreate the pool entry so
+   * the next sync attempt runs against a fresh provider. Without this, a
+   * `BridgeSetupError`-failed entry would remain in the pool and the retry
+   * would resolve immediately via the warm-path (the broken provider has
+   * `synced=true` from the original sync) without re-running `setupObservers`,
+   * leaving the user with a non-functional editor and no further error UI.
+   */
+  onRecycle?: (docName: string) => void;
   children: React.ReactNode;
 }
 
@@ -131,6 +140,7 @@ export function DocumentErrorBoundary({
   activeDocName,
   previousDocName,
   onNavigateBack,
+  onRecycle,
   children,
 }: DocumentErrorBoundaryProps) {
   // Bind the contextual props into a FallbackComponent for react-error-boundary.
@@ -153,11 +163,28 @@ export function DocumentErrorBoundary({
       // Suspense against a fresh syncPromise.
       onReset={(details) => {
         if (details.reason === 'imperative-api') {
-          invalidateSyncPromise(activeDocName);
-          console.warn(
-            `[DocumentErrorBoundary] retry invalidated syncPromise for ${activeDocName}`,
-          );
+          // Order is load-bearing: recycle FIRST (which destroys the pool
+          // entry, calling invalidateSyncPromise via destroyEntry, and
+          // recreates the entry with a fresh provider), so that when the
+          // boundary re-renders, `EditorArea` sees the new provider and
+          // `DocumentBoundary` calls syncPromise(docName, freshProvider)
+          // → fresh sync attempt. Without recycle, a BridgeSetupError'd
+          // entry would resolve immediately via the warm-path (broken
+          // provider has synced=true) without re-running setupObservers.
+          if (onRecycle) {
+            onRecycle(activeDocName);
+          } else {
+            invalidateSyncPromise(activeDocName);
+          }
+          console.warn(`[DocumentErrorBoundary] retry recycled ${activeDocName}`);
         } else {
+          // resetKeys change (navigated away). The broken doc's entry stays
+          // pool-resident with its cached rejection — revisiting it will
+          // re-render the same error UI, where the user can click "Try
+          // again" to recycle. Invalidating without recycling would let the
+          // warm-path resolve immediately on the broken provider (synced=true,
+          // observers not wired), surfacing a non-functional editor with no
+          // error UI. The user retains a clear retry path either way.
           console.warn(
             `[DocumentErrorBoundary] reset by key change (${details.prev?.[0]} → ${details.next?.[0]})`,
           );

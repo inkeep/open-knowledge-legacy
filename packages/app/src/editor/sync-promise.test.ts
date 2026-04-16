@@ -10,8 +10,11 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import {
   __resetSyncPromiseCache,
   __syncPromiseCacheSize,
+  __syncPromiseSettled,
+  BridgeSetupError,
   invalidateSyncPromise,
   PreSyncDisconnectError,
+  rejectSyncPromise,
   SYNC_TIMEOUT_MS,
   SyncTimeoutError,
   syncPromise,
@@ -85,8 +88,19 @@ describe('syncPromise resolution', () => {
     p.synced = true;
     const promise = syncPromise('warm-doc', p);
     await expect(promise).resolves.toBeUndefined();
-    // Fast-path returns Promise.resolve() directly, no cache entry.
-    expect(__syncPromiseCacheSize()).toBe(0);
+    // Cache holds a settled sentinel so repeat calls return the same reference.
+    expect(__syncPromiseCacheSize()).toBe(1);
+    expect(__syncPromiseSettled('warm-doc')).toBe(true);
+  });
+
+  test('warm-path returns the same promise reference on repeat calls', () => {
+    const p = track(makeProvider('warm-doc'));
+    p.synced = true;
+    const a = syncPromise('warm-doc', p);
+    const b = syncPromise('warm-doc', p);
+    // Stable reference is what makes React 19's `use()` short-circuit on
+    // subsequent renders (after .status='fulfilled' has been set by React).
+    expect(a).toBe(b);
   });
 
   test('resolves when provider fires synced', async () => {
@@ -97,8 +111,10 @@ describe('syncPromise resolution', () => {
     queueMicrotask(() => p.emit('synced', { state: true }));
 
     await expect(promise).resolves.toBeUndefined();
-    // Cache entry is cleared on resolve
-    expect(__syncPromiseCacheSize()).toBe(0);
+    // Entry stays in cache after resolve so subsequent calls return the same
+    // resolved promise (warm-path stability — see syncPromise lifecycle docstring).
+    expect(__syncPromiseCacheSize()).toBe(1);
+    expect(__syncPromiseSettled('doc1')).toBe(true);
   });
 
   test('resolves only once even if synced fires multiple times', async () => {
@@ -110,17 +126,19 @@ describe('syncPromise resolution', () => {
     p.emit('synced', { state: true });
 
     await expect(promise).resolves.toBeUndefined();
-    expect(__syncPromiseCacheSize()).toBe(0);
+    expect(__syncPromiseSettled('doc1')).toBe(true);
   });
 
-  test('after synced, a new call creates a fresh promise', async () => {
+  test('after synced, a new call returns the same cached resolved promise', async () => {
     const p = track(makeProvider('doc1'));
     const first = syncPromise('doc1', p);
     p.emit('synced', { state: true });
     await first;
 
     const second = syncPromise('doc1', p);
-    expect(second).not.toBe(first);
+    // Cache persists settled entries so React's `use()` sees the same
+    // .status='fulfilled' thenable across re-renders without a Suspense cycle.
+    expect(second).toBe(first);
     expect(__syncPromiseCacheSize()).toBe(1);
   });
 });
@@ -135,7 +153,21 @@ describe('syncPromise pre-sync close rejection', () => {
     });
 
     await expect(promise).rejects.toBeInstanceOf(PreSyncDisconnectError);
-    expect(__syncPromiseCacheSize()).toBe(0);
+    // Rejected entry stays in cache so subsequent renders see the same
+    // .status='rejected' thenable — React's `use()` re-throws without
+    // creating a fresh warm-path resolved promise that would mask the error.
+    expect(__syncPromiseSettled('doc1')).toBe(true);
+  });
+
+  test('repeat call after rejection returns the same rejected promise', async () => {
+    const p = track(makeProvider('doc1'));
+    const first = syncPromise('doc1', p);
+    p.emit('close', { event: { code: 1006, reason: 'test', wasClean: false } });
+    await first.catch(() => {}); // settle the rejection
+
+    const second = syncPromise('doc1', p);
+    expect(second).toBe(first);
+    await expect(second).rejects.toBeInstanceOf(PreSyncDisconnectError);
   });
 
   test('PreSyncDisconnectError carries docName', async () => {
@@ -155,15 +187,15 @@ describe('syncPromise pre-sync close rejection', () => {
     }
   });
 
-  test('close after synced does not re-reject (entry already cleared)', async () => {
+  test('close after synced does not re-reject (entry settled)', async () => {
     const p = track(makeProvider('doc1'));
     const promise = syncPromise('doc1', p);
     p.emit('synced', { state: true });
     await promise;
 
-    // Close after cache cleared — no-op, must not throw
+    // Close after settle — no-op, must not throw
     p.emit('close', { event: { code: 1000, reason: 'normal', wasClean: true } });
-    expect(__syncPromiseCacheSize()).toBe(0);
+    expect(__syncPromiseSettled('doc1')).toBe(true);
   });
 });
 
@@ -189,7 +221,8 @@ describe('syncPromise timeout', () => {
       // Fire the captured timer manually to simulate 30s elapsing
       capturedTimer?.();
       await expect(promise).rejects.toBeInstanceOf(SyncTimeoutError);
-      expect(__syncPromiseCacheSize()).toBe(0);
+      // Rejected entry stays in cache (settled sentinel) — see lifecycle docs.
+      expect(__syncPromiseSettled('slow-doc')).toBe(true);
     } finally {
       globalThis.setTimeout = origSetTimeout;
     }
@@ -254,6 +287,21 @@ describe('invalidateSyncPromise', () => {
     expect(__syncPromiseCacheSize()).toBe(1);
   });
 
+  test('after rejection + invalidate, next call returns fresh promise (retry path)', async () => {
+    const p = track(makeProvider('doc1'));
+    const first = syncPromise('doc1', p);
+    p.emit('close', { event: { code: 1006, reason: 'test', wasClean: false } });
+    await first.catch(() => {});
+
+    // Repeat call returns SAME rejected promise (boundary keeps catching)
+    expect(syncPromise('doc1', p)).toBe(first);
+
+    // Explicit invalidate (e.g. retry button) → next call gets fresh promise
+    invalidateSyncPromise('doc1');
+    const fresh = syncPromise('doc1', p);
+    expect(fresh).not.toBe(first);
+  });
+
   test('invalidate is idempotent / no-op when entry missing', () => {
     expect(() => invalidateSyncPromise('never-created')).not.toThrow();
     expect(__syncPromiseCacheSize()).toBe(0);
@@ -276,6 +324,58 @@ describe('invalidateSyncPromise', () => {
   });
 });
 
+describe('rejectSyncPromise (BridgeSetupError surface)', () => {
+  test('rejects an active cache entry with the supplied error', async () => {
+    const p = track(makeProvider('doc1'));
+    const promise = syncPromise('doc1', p);
+    const cause = new Error('observer wiring failed');
+
+    const ok = rejectSyncPromise('doc1', new BridgeSetupError('doc1', cause));
+    expect(ok).toBe(true);
+
+    try {
+      await promise;
+      throw new Error('should have rejected');
+    } catch (err) {
+      expect(err).toBeInstanceOf(BridgeSetupError);
+      expect((err as BridgeSetupError).docName).toBe('doc1');
+      expect((err as BridgeSetupError).cause).toBe(cause);
+    }
+  });
+
+  test('rejected entry stays in cache so subsequent renders catch the same error', async () => {
+    // Models the React re-render after rejection: DocumentBoundary's `use()`
+    // sees the same rejected promise and re-throws synchronously, letting
+    // DocumentErrorBoundary render its fallback. Without persistence, a fresh
+    // syncPromise call would warm-path-resolve on the broken provider and
+    // mask the error.
+    const p = track(makeProvider('doc1'));
+    const first = syncPromise('doc1', p);
+    rejectSyncPromise('doc1', new BridgeSetupError('doc1'));
+    await first.catch(() => {});
+
+    const second = syncPromise('doc1', p);
+    expect(second).toBe(first);
+    await expect(second).rejects.toBeInstanceOf(BridgeSetupError);
+  });
+
+  test('returns false when no entry exists', () => {
+    const ok = rejectSyncPromise('never-created', new BridgeSetupError('never-created'));
+    expect(ok).toBe(false);
+  });
+
+  test('returns false on already-settled entry (idempotent)', async () => {
+    const p = track(makeProvider('doc1'));
+    const promise = syncPromise('doc1', p);
+    rejectSyncPromise('doc1', new BridgeSetupError('doc1'));
+    await promise.catch(() => {});
+
+    // Second reject is a no-op
+    const ok = rejectSyncPromise('doc1', new BridgeSetupError('doc1'));
+    expect(ok).toBe(false);
+  });
+});
+
 describe('error class shape', () => {
   test('SyncTimeoutError extends Error and has `name`', () => {
     const err = new SyncTimeoutError('foo', 30_000);
@@ -290,5 +390,16 @@ describe('error class shape', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.name).toBe('PreSyncDisconnectError');
     expect(err.docName).toBe('bar');
+  });
+
+  test('BridgeSetupError extends Error and carries docName + cause', () => {
+    const cause = new Error('schema mismatch');
+    const err = new BridgeSetupError('baz', cause);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('BridgeSetupError');
+    expect(err.docName).toBe('baz');
+    expect(err.cause).toBe(cause);
+    expect(err.message).toContain('baz');
+    expect(err.message).toContain('schema mismatch');
   });
 });

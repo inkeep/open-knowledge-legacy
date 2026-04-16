@@ -12,6 +12,7 @@ import { ProviderPool } from './provider-pool';
 import {
   __resetSyncPromiseCache,
   __syncPromiseCacheSize,
+  BridgeSetupError,
   PreSyncDisconnectError,
   syncPromise,
 } from './sync-promise';
@@ -258,15 +259,17 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
   // try block. Overriding doc.getXmlFragment to throw triggers the catch before
   // setupObservers is called — same code path, same recovery behavior.
 
-  test('init-time throw in onSynced triggers destroy-and-evict with onChange notification', () => {
+  test('init-time throw rejects held syncPromise with BridgeSetupError + leaves entry pool-resident', async () => {
     pool = new ProviderPool(3, DUMMY_WS);
-    let onChangeCalls = 0;
-    pool.setOnChange(() => onChangeCalls++);
 
     const entry = pool.open('doc1');
     if (!entry) throw new Error('expected entry');
     pool.setActive('doc1');
-    onChangeCalls = 0; // reset after open + setActive notifications
+
+    // Subscribe to the syncPromise BEFORE firing synced — this models the
+    // DocumentBoundary use() consumer that must see the rejection. Without
+    // a subscriber the rejectSyncPromise call would be a no-op (no cache entry).
+    const consumerPromise = syncPromise('doc1', entry.provider);
 
     // Sabotage the provider's document to force a throw during observer init
     const doc = entry.provider.document;
@@ -274,27 +277,36 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
       throw new Error('synthetic getXmlFragment failure');
     };
 
-    // Spy on console.error to verify the error is logged (not re-thrown)
+    // Silence the expected console.error so test output stays readable
     const errorSpy = mock(() => {});
     const origError = console.error;
     console.error = errorSpy;
 
-    // Fire synced manually — this triggers onSynced → try block → doc.getXmlFragment() → throw → catch → console.error
-    // Should NOT throw — the error is caught, logged, and the entry is evicted.
+    // Fire synced manually — this triggers onSynced → try block → throw → catch
     entry.provider.emit('synced', { state: true });
 
     console.error = origError;
 
-    // Entry should be evicted from the pool
-    expect(pool.has('doc1')).toBe(false);
-    expect(pool.entries.size).toBe(0);
+    // Held syncPromise rejects with BridgeSetupError carrying the docName + cause.
+    try {
+      await consumerPromise;
+      throw new Error('expected promise to reject');
+    } catch (err) {
+      expect(err).toBeInstanceOf(BridgeSetupError);
+      expect((err as BridgeSetupError).docName).toBe('doc1');
+      expect((err as BridgeSetupError).cause).toBeInstanceOf(Error);
+      expect(((err as BridgeSetupError).cause as Error).message).toContain(
+        'synthetic getXmlFragment failure',
+      );
+    }
 
-    // Active document cleared (was the failing entry)
-    expect(pool.getActive()).toBeNull();
-    expect(pool.getActiveDocName()).toBeNull();
-
-    // onChange was called at least once (from notify() in the catch)
-    expect(onChangeCalls).toBeGreaterThanOrEqual(1);
+    // Entry stays pool-resident with bridgeSetupFailed flag — keeps activeProvider
+    // non-null so EditorArea continues to render the boundary subtree, and the
+    // user-driven recycle path (pool.recycle) can replace the broken provider.
+    expect(pool.has('doc1')).toBe(true);
+    expect(pool.entries.get('doc1')?.bridgeSetupFailed).toBe(true);
+    expect(pool.getActiveDocName()).toBe('doc1');
+    expect(pool.getActive()?.provider).toBe(entry.provider);
 
     // Error was logged via console.error with the expected prefix + full error object
     expect(errorSpy).toHaveBeenCalledTimes(1);
@@ -303,6 +315,37 @@ describe('ProviderPool setupObservers init-throw recovery (S4)', () => {
     expect(loggedPrefix).toContain('[ProviderPool] setupObservers init failed for doc1:');
     expect(loggedError).toBeInstanceOf(Error);
     expect(loggedError.message).toContain('synthetic getXmlFragment failure');
+  });
+
+  test('pool.recycle on a bridge-setup-failed entry replaces it with a fresh provider', () => {
+    pool = new ProviderPool(3, DUMMY_WS);
+
+    const entry = pool.open('doc1');
+    if (!entry) throw new Error('expected entry');
+    pool.setActive('doc1');
+
+    // Force a setup throw to mark the entry broken
+    entry.provider.document.getXmlFragment = () => {
+      throw new Error('synthetic init failure');
+    };
+    const errorSpy = mock(() => {});
+    const origError = console.error;
+    console.error = errorSpy;
+    entry.provider.emit('synced', { state: true });
+    console.error = origError;
+
+    expect(pool.entries.get('doc1')?.bridgeSetupFailed).toBe(true);
+    const brokenProvider = entry.provider;
+
+    // Recycle — destroys broken entry and creates fresh one, preserving activeDocName
+    pool.recycle('doc1');
+
+    expect(pool.has('doc1')).toBe(true);
+    expect(pool.getActiveDocName()).toBe('doc1');
+    const newEntry = pool.entries.get('doc1');
+    expect(newEntry).toBeDefined();
+    expect(newEntry?.provider).not.toBe(brokenProvider);
+    expect(newEntry?.bridgeSetupFailed).toBe(false);
   });
 
   test('non-active background doc disconnect triggers debounced destroy without re-open', async () => {
@@ -525,6 +568,9 @@ describe('ProviderPool syncPromise lifecycle integration (F15)', () => {
     });
 
     await expect(p).rejects.toBeInstanceOf(PreSyncDisconnectError);
-    expect(__syncPromiseCacheSize()).toBe(0);
+    // Cache entry stays as a settled sentinel after rejection — see
+    // sync-promise.ts lifecycle docstring (subsequent React renders need to
+    // see the same .status='rejected' thenable so the boundary catches).
+    expect(__syncPromiseCacheSize()).toBe(1);
   });
 });

@@ -25,6 +25,15 @@ export interface PoolEntry {
   hasSynced: boolean;
   tearingDown: boolean;
   pendingRecycleTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * True when `setupObservers` threw during initial sync. The provider stays
+   * pool-resident so `EditorArea` keeps rendering the boundary subtree (which
+   * shows `DocumentErrorBoundary`'s `BridgeSetupError` UI), but the entry is
+   * inert — observers are not wired, no further writes will land. The user's
+   * "Try again" path calls `pool.recycle(docName)` which destroys + recreates
+   * the entry to retry from a clean slate.
+   */
+  bridgeSetupFailed: boolean;
 }
 
 export type PoolChangeCallback = () => void;
@@ -130,6 +139,7 @@ export class ProviderPool {
       hasSynced: false,
       tearingDown: false,
       pendingRecycleTimer: null,
+      bridgeSetupFailed: false,
     };
 
     // Track sync state
@@ -156,8 +166,16 @@ export class ProviderPool {
       // is rare but must not be silent — without surfacing it through the
       // syncPromise, the user would see the doc vanish and fall back to the
       // empty "Select a document" state with no signal about what happened.
-      // We reject the syncPromise FIRST so the React error boundary fires
-      // with a typed BridgeSetupError, then close to release pool slot.
+      //
+      // Path: reject the syncPromise with BridgeSetupError + mark the entry
+      // bridgeSetupFailed. The entry stays in the pool so `activeProvider`
+      // remains non-null and `EditorArea` continues to render the boundary
+      // subtree — `DocumentBoundary`'s suspended fiber re-renders, `use()`
+      // re-throws the rejection, and `DocumentErrorBoundary` shows the
+      // "Couldn't open document" UI. The user-driven retry path
+      // (`pool.recycle(docName)`) destroys + recreates the entry on click;
+      // until then the broken provider stays pool-resident but inert
+      // (observers not wired, no further writes possible from this client).
       if (!entry.observerCleanup) {
         try {
           const doc = provider.document;
@@ -174,8 +192,8 @@ export class ProviderPool {
           });
         } catch (err) {
           console.error(`[ProviderPool] setupObservers init failed for ${docName}:`, err);
+          entry.bridgeSetupFailed = true;
           rejectSyncPromise(docName, new BridgeSetupError(docName, err));
-          this.close(docName);
         }
       }
     };
@@ -252,6 +270,21 @@ export class ProviderPool {
   /** Check if a document is open in the pool. */
   has(docName: string): boolean {
     return this.entries.has(docName);
+  }
+
+  /**
+   * Destroy and recreate the entry for `docName`, preserving `activeDocName`
+   * across the swap. Used by the "Try again" retry path in
+   * `DocumentErrorBoundary` and `NavigationPendingBar` tier-3 to recover from
+   * `BridgeSetupError` (or any sync failure that leaves the provider in a
+   * known-broken state). Differs from `close + open` in that it does NOT
+   * intermediately null `activeDocName`, so `EditorArea` does not flash the
+   * "Select a document" empty state during the swap.
+   *
+   * No-op if the doc is not in the pool.
+   */
+  recycle(docName: string): void {
+    this.recycleDisconnectedEntry(docName);
   }
 
   /** Dispose of all entries. */

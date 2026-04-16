@@ -4,7 +4,6 @@ import { toast } from 'sonner';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
 import { createNavigationRetryHandler } from '@/editor/navigation-retry';
-import { invalidateSyncPromise } from '@/editor/sync-promise';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
@@ -36,14 +35,16 @@ export function EditorPane() {
     };
   }, []);
 
-  const { activeDocName } = useDocumentContext();
+  const { activeDocName, recycleDocument } = useDocumentContext();
   const { openDocumentTransition, isPending } = useDocumentTransition();
 
   // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again?"
   // button (spec §D7). Reads `activeDocName` via a thunk at call time so the
   // handler always targets the currently-displayed doc, not a stale capture.
+  // `recycleDocument` is the one-shot reset — destroys the broken provider
+  // and recreates it before the new transition re-suspends DocumentBoundary.
   const handleRetry = createNavigationRetryHandler({
-    invalidateSyncPromise,
+    recycleDocument,
     openDocumentTransition,
     getActiveDocName: () => activeDocName,
   });

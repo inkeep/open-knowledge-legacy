@@ -4,7 +4,7 @@ import { createNavigationRetryHandler } from './navigation-retry';
 describe('createNavigationRetryHandler', () => {
   test('returns a zero-arg function', () => {
     const handler = createNavigationRetryHandler({
-      invalidateSyncPromise: () => {},
+      recycleDocument: () => {},
       openDocumentTransition: () => {},
       getActiveDocName: () => 'doc-a',
     });
@@ -12,28 +12,28 @@ describe('createNavigationRetryHandler', () => {
     expect(handler.length).toBe(0);
   });
 
-  test('invalidates then navigates when activeDocName is present', () => {
-    const invalidateSyncPromise = mock((_docName: string) => {});
+  test('recycles then navigates when activeDocName is present', () => {
+    const recycleDocument = mock((_docName: string) => {});
     const openDocumentTransition = mock((_docName: string) => {});
     const handler = createNavigationRetryHandler({
-      invalidateSyncPromise,
+      recycleDocument,
       openDocumentTransition,
       getActiveDocName: () => 'doc-a',
     });
 
     handler();
 
-    expect(invalidateSyncPromise).toHaveBeenCalledTimes(1);
-    expect(invalidateSyncPromise).toHaveBeenCalledWith('doc-a');
+    expect(recycleDocument).toHaveBeenCalledTimes(1);
+    expect(recycleDocument).toHaveBeenCalledWith('doc-a');
     expect(openDocumentTransition).toHaveBeenCalledTimes(1);
     expect(openDocumentTransition).toHaveBeenCalledWith('doc-a');
   });
 
-  test('ordering is load-bearing: invalidate fires before openDocumentTransition', () => {
-    const calls: Array<'invalidate' | 'open'> = [];
+  test('ordering is load-bearing: recycle fires before openDocumentTransition', () => {
+    const calls: Array<'recycle' | 'open'> = [];
     const handler = createNavigationRetryHandler({
-      invalidateSyncPromise: () => {
-        calls.push('invalidate');
+      recycleDocument: () => {
+        calls.push('recycle');
       },
       openDocumentTransition: () => {
         calls.push('open');
@@ -43,30 +43,30 @@ describe('createNavigationRetryHandler', () => {
 
     handler();
 
-    expect(calls).toEqual(['invalidate', 'open']);
+    expect(calls).toEqual(['recycle', 'open']);
   });
 
   test('no-op when activeDocName is null (nothing to retry)', () => {
-    const invalidateSyncPromise = mock((_docName: string) => {});
+    const recycleDocument = mock((_docName: string) => {});
     const openDocumentTransition = mock((_docName: string) => {});
     const handler = createNavigationRetryHandler({
-      invalidateSyncPromise,
+      recycleDocument,
       openDocumentTransition,
       getActiveDocName: () => null,
     });
 
     handler();
 
-    expect(invalidateSyncPromise).not.toHaveBeenCalled();
+    expect(recycleDocument).not.toHaveBeenCalled();
     expect(openDocumentTransition).not.toHaveBeenCalled();
   });
 
   test('reads activeDocName at call time, not at construction time', () => {
-    const invalidateSyncPromise = mock((_docName: string) => {});
+    const recycleDocument = mock((_docName: string) => {});
     const openDocumentTransition = mock((_docName: string) => {});
     let current: string | null = 'doc-a';
     const handler = createNavigationRetryHandler({
-      invalidateSyncPromise,
+      recycleDocument,
       openDocumentTransition,
       getActiveDocName: () => current,
     });
@@ -76,16 +76,16 @@ describe('createNavigationRetryHandler', () => {
     current = 'doc-b';
     handler();
 
-    expect(invalidateSyncPromise).toHaveBeenCalledWith('doc-b');
+    expect(recycleDocument).toHaveBeenCalledWith('doc-b');
     expect(openDocumentTransition).toHaveBeenCalledWith('doc-b');
   });
 
   test('successive calls re-read activeDocName each time', () => {
-    const invalidateSyncPromise = mock((_docName: string) => {});
+    const recycleDocument = mock((_docName: string) => {});
     const openDocumentTransition = mock((_docName: string) => {});
     let current: string | null = 'doc-a';
     const handler = createNavigationRetryHandler({
-      invalidateSyncPromise,
+      recycleDocument,
       openDocumentTransition,
       getActiveDocName: () => current,
     });
@@ -96,29 +96,29 @@ describe('createNavigationRetryHandler', () => {
     current = null;
     handler(); // no-op
 
-    expect(invalidateSyncPromise.mock.calls).toEqual([['doc-a'], ['doc-b']]);
+    expect(recycleDocument.mock.calls).toEqual([['doc-a'], ['doc-b']]);
     expect(openDocumentTransition.mock.calls).toEqual([['doc-a'], ['doc-b']]);
   });
 
   test('does not invoke any callback at construction time', () => {
-    const invalidateSyncPromise = mock((_docName: string) => {});
+    const recycleDocument = mock((_docName: string) => {});
     const openDocumentTransition = mock((_docName: string) => {});
     const getActiveDocName = mock(() => 'doc-a');
 
     createNavigationRetryHandler({
-      invalidateSyncPromise,
+      recycleDocument,
       openDocumentTransition,
       getActiveDocName,
     });
 
-    expect(invalidateSyncPromise).not.toHaveBeenCalled();
+    expect(recycleDocument).not.toHaveBeenCalled();
     expect(openDocumentTransition).not.toHaveBeenCalled();
     expect(getActiveDocName).not.toHaveBeenCalled();
   });
 
   test('relays openDocumentTransition throws without swallowing them', () => {
     const handler = createNavigationRetryHandler({
-      invalidateSyncPromise: () => {},
+      recycleDocument: () => {},
       openDocumentTransition: () => {
         throw new Error('boom');
       },
@@ -128,20 +128,20 @@ describe('createNavigationRetryHandler', () => {
     expect(() => handler()).toThrow('boom');
   });
 
-  test('skips openDocumentTransition when invalidateSyncPromise throws', () => {
-    // Belt-and-suspenders: if invalidation throws, the retry is aborted and
+  test('skips openDocumentTransition when recycleDocument throws', () => {
+    // Belt-and-suspenders: if recycle throws, the retry is aborted and
     // we don't navigate into a known-stale Suspense state. Validates the
     // sequential (not try/finally) structure of the handler body.
     const openDocumentTransition = mock((_docName: string) => {});
     const handler = createNavigationRetryHandler({
-      invalidateSyncPromise: () => {
-        throw new Error('invalidate failed');
+      recycleDocument: () => {
+        throw new Error('recycle failed');
       },
       openDocumentTransition,
       getActiveDocName: () => 'doc-a',
     });
 
-    expect(() => handler()).toThrow('invalidate failed');
+    expect(() => handler()).toThrow('recycle failed');
     expect(openDocumentTransition).not.toHaveBeenCalled();
   });
 });

@@ -24,7 +24,7 @@ interface EditorAreaProps {
 }
 
 export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: EditorAreaProps) {
-  const { activeDocName, activeProvider } = useDocumentContext();
+  const { activeDocName, activeProvider, recycleDocument } = useDocumentContext();
   const { openDocumentTransition } = useDocumentTransition();
   const { pages, loading } = usePageList();
   const isNewDoc = !loading && !!activeDocName && !pages.has(activeDocName);
@@ -167,6 +167,7 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
                   activeDocName={activeDocName}
                   previousDocName={previousDocName ?? undefined}
                   onNavigateBack={(prev) => openDocumentTransition(prev)}
+                  onRecycle={recycleDocument}
                 >
                   <Suspense fallback={<EditorSkeleton />}>
                     <EditorActivityPool

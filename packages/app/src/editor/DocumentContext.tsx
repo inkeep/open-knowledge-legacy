@@ -45,6 +45,14 @@ export interface DocumentContextValue {
   isPending: boolean;
   closeDocument: (docName: string) => void;
   /**
+   * Destroy and recreate the pool entry for `docName` while preserving
+   * `activeDocName`. Used by the "Try again" path in `DocumentErrorBoundary`
+   * to recover from `BridgeSetupError` (and any other sync failure where the
+   * existing provider is in a known-broken state) without flashing the
+   * "Select a document" empty state during the swap.
+   */
+  recycleDocument: (docName: string) => void;
+  /**
    * Pinned doc — when non-null, agent-driven navigation (SystemDocSubscriber)
    * does not change the URL even when agent focus moves elsewhere. Persisted
    * per-tab via localStorage `ok-pin-v1`. Null = not pinned = follow agent.
@@ -207,6 +215,10 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     closeDocument: (docName: string) => {
       const p = getPool();
       p.close(docName);
+    },
+    recycleDocument: (docName: string) => {
+      const p = getPool();
+      p.recycle(docName);
     },
     pinnedDoc,
     pin: (docName: string) => {
