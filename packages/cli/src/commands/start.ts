@@ -23,6 +23,7 @@ import {
 import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSync } from 'node:fs';
 import type { Server as HttpServer } from 'node:http';
 import { join } from 'node:path';
+import type { PinoLogger } from '@inkeep/open-knowledge-server';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
@@ -137,17 +138,6 @@ export function buildIdleShutdownHandler(
   };
 }
 
-/**
- * Logger contract bootStartServer + the idle-shutdown handler depend on.
- * Mirrors the subset of `getLogger` used here so tests can pass a no-op
- * structured logger without dragging in pino.
- */
-export interface BootStartLogger {
-  info: (obj: object, msg: string) => void;
-  warn: (obj: object, msg: string) => void;
-  error: (obj: object, msg: string) => void;
-}
-
 export interface BootStartServerOptions {
   config: Config;
   cwd: string;
@@ -159,8 +149,13 @@ export interface BootStartServerOptions {
   spawn?: typeof NativeSpawn;
   /** Override idle-shutdown threshold; default 30 min. Tests use small values. */
   idleThresholdMs?: number;
-  /** Logger override — defaults to `getLogger('start')`. Tests pass a silent logger. */
-  log?: BootStartLogger;
+  /**
+   * Logger override — defaults to `getLogger('start')`. PinoLogger is
+   * already silent in test mode (`NODE_ENV === 'test'` → level: 'silent'),
+   * so tests typically don't need to override; this hook exists for any
+   * future caller that wants to pipe logs elsewhere.
+   */
+  log?: PinoLogger;
 }
 
 export interface BootedStartServer {

@@ -8,7 +8,6 @@ import { join, resolve } from 'node:path';
 import type { Config } from '../config/schema.ts';
 import {
   type BootedStartServer,
-  type BootStartLogger,
   bootStartServer,
   buildIdleShutdownHandler,
   decideUiSpawn,
@@ -253,12 +252,6 @@ describe('spawnOkUi', () => {
 // Each test gets a unique tmpdir and disposes via `booted.destroy()` in
 // afterEach. We pass a no-op logger to silence pino in test output.
 
-const SILENT_LOGGER: BootStartLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-};
-
 function makeTestConfig(): Config {
   return {
     content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
@@ -325,7 +318,7 @@ describe('bootStartServer (integration)', () => {
       cwd: tmpDir,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
     const res = await fetchText(booted.port, '/');
     expect(res.status).toBe(404);
@@ -344,7 +337,7 @@ describe('bootStartServer (integration)', () => {
       cwd: tmpDir,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
     const res = await fetchText(booted.port, '/assets/main-abcdef.js');
     expect(res.status).toBe(404);
@@ -359,7 +352,7 @@ describe('bootStartServer (integration)', () => {
       cwd: tmpDir,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
     await booted.ready;
 
@@ -393,7 +386,7 @@ describe('bootStartServer (integration)', () => {
       cwd: tmpDir,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
     await booted.ready;
 
@@ -421,7 +414,7 @@ describe('bootStartServer (integration)', () => {
       skipAutoInit: true,
       // Note: skipUiAutoSpawn is intentionally false — we WANT the spawn to fire.
       spawn: fakeSpawn,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
 
     expect(spawnCalls.length).toBe(1);
@@ -462,7 +455,7 @@ describe('bootStartServer (integration)', () => {
       cwd: tmpDir,
       skipAutoInit: true,
       spawn: fakeSpawn,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
 
     expect(spawnCalls.length).toBe(0);
@@ -491,7 +484,7 @@ describe('bootStartServer (integration)', () => {
       skipAutoInit: true,
       skipUiAutoSpawn: true,
       spawn: fakeSpawn,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
 
     expect(spawnCalls.length).toBe(0);
@@ -507,7 +500,7 @@ describe('bootStartServer (integration)', () => {
       cwd: tmpDir,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
     await booted.destroy();
     // Second call must not throw; it short-circuits via the internal guard.
@@ -521,7 +514,7 @@ describe('bootStartServer (integration)', () => {
       cwd: tmpDir,
       skipAutoInit: true,
       skipUiAutoSpawn: true,
-      log: SILENT_LOGGER,
+      // PinoLogger is silent in NODE_ENV=test by default; no override needed.
     });
     expect(booted.port).toBeGreaterThan(0);
     expect(booted.port).toBeLessThan(65536);
