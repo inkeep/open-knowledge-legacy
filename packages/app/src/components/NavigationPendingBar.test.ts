@@ -14,8 +14,9 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import NavigationPendingBar, {
+import {
   computeTier,
+  NavigationPendingBar,
   type PendingTier,
   TIER_BOUNDARIES_MS,
 } from './NavigationPendingBar';

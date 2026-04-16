@@ -17,9 +17,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import { SYSTEM_DOC_NAME } from '@inkeep/open-knowledge-core';
-import EditorActivityPool, {
+import {
   ACTIVITY_MOUNT_LIMIT,
   computeActivityMountList,
+  EditorActivityPool,
 } from './EditorActivityPool';
 
 interface FakeEntry {

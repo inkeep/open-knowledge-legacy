@@ -23,7 +23,7 @@ import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentCon
 import { isSystemDoc } from '@/editor/is-system-doc';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
-import DocumentBoundary from './DocumentBoundary';
+import { DocumentBoundary } from './DocumentBoundary';
 import { usePageList } from './PageListContext';
 
 /**
@@ -81,7 +81,7 @@ export function computeActivityMountList<T extends { docName: string; lastAccess
   return [...top.slice(0, limit - 1), active];
 }
 
-export default function EditorActivityPool({
+export function EditorActivityPool({
   activeDocName,
   isSourceMode,
   editorPlaceholder,

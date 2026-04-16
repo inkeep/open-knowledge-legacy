@@ -72,7 +72,7 @@ export interface NavigationPendingBarProps {
   clock?: () => number;
 }
 
-export default function NavigationPendingBar({
+export function NavigationPendingBar({
   isPending,
   onRetry,
   clock = defaultClock,

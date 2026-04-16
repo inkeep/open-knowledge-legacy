@@ -9,7 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
  * no prior document content to preserve (warm nav keeps the previous Activity
  * entry visible during the transition instead of flashing this skeleton).
  */
-export default function EditorSkeleton() {
+export function EditorSkeleton() {
   return (
     // Reuse the tiptap-editor grid so skeleton lines sit in the same content column
     <div

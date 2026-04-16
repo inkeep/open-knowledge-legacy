@@ -11,10 +11,10 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
-import DocumentErrorBoundary from './DocumentErrorBoundary';
-import EditorActivityPool from './EditorActivityPool';
+import { DocumentErrorBoundary } from './DocumentErrorBoundary';
+import { EditorActivityPool } from './EditorActivityPool';
 import type { EditorMode } from './EditorPane';
-import EditorSkeleton from './EditorSkeleton';
+import { EditorSkeleton } from './EditorSkeleton';
 
 interface EditorAreaProps {
   editorMode: EditorMode;

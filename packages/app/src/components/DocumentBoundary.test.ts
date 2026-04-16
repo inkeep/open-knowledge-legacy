@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { __resetSyncPromiseCache, syncPromise } from '@/editor/sync-promise';
-import DocumentBoundary from './DocumentBoundary';
+import { DocumentBoundary } from './DocumentBoundary';
 
 const DUMMY_WS = 'ws://localhost:1/collab';
 

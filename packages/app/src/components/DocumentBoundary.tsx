@@ -28,7 +28,7 @@ export interface DocumentBoundaryProps {
   children: ReactNode;
 }
 
-export default function DocumentBoundary({ docName, provider, children }: DocumentBoundaryProps) {
+export function DocumentBoundary({ docName, provider, children }: DocumentBoundaryProps) {
   use(syncPromise(docName, provider));
   return <>{children}</>;
 }

@@ -58,6 +58,26 @@ export class DocumentNotFoundError extends Error {
   }
 }
 
+/**
+ * Bridge setup failed during `setupObservers` initialization in `ProviderPool`.
+ * Surfaced through the syncPromise so the user gets a deterministic error UI
+ * (DocumentErrorBoundary's "Try again") instead of a silent fall-back to the
+ * "Select a document" empty state. Without this, an init throw would close the
+ * provider, null out `activeDocName`, and leave the user with no signal about
+ * what happened or what to do next.
+ */
+export class BridgeSetupError extends Error {
+  readonly docName: string;
+  readonly cause?: unknown;
+  constructor(docName: string, cause?: unknown) {
+    const causeMsg = cause instanceof Error ? cause.message : String(cause ?? 'unknown');
+    super(`Bridge setup failed for "${docName}": ${causeMsg}`);
+    this.name = 'BridgeSetupError';
+    this.docName = docName;
+    this.cause = cause;
+  }
+}
+
 interface CacheEntry {
   promise: Promise<void>;
   resolve: () => void;
@@ -74,16 +94,13 @@ const cache = new Map<string, CacheEntry>();
 
 function detach(entry: CacheEntry): void {
   clearTimeout(entry.timeoutHandle);
-  try {
-    entry.provider.off('synced', entry.onSynced);
-  } catch {
-    // provider may already be destroyed; ignore
-  }
-  try {
-    entry.provider.off('close', entry.onClose);
-  } catch {
-    // ignore
-  }
+  // HocuspocusProvider extends EventEmitter whose `off()` short-circuits when
+  // no callbacks are registered (verified at @hocuspocus/provider/src/EventEmitter.ts).
+  // After destroy(), `removeAllListeners()` empties the callback map, so a
+  // subsequent off() is a safe no-op. No try/catch needed — if off() throws,
+  // something is structurally wrong and the noise should surface.
+  entry.provider.off('synced', entry.onSynced);
+  entry.provider.off('close', entry.onClose);
 }
 
 /**
@@ -93,10 +110,25 @@ function detach(entry: CacheEntry): void {
  * with `PreSyncDisconnectError` if the provider emits `close` before `synced`,
  * and rejects with `SyncTimeoutError` after 30s. Call `invalidateSyncPromise`
  * to tear down without rejecting.
+ *
+ * **Warm-provider fast path:** if the provider has already synced (e.g.
+ * pool-resident from a prior mount), `provider.synced` is true and the
+ * `'synced'` event has already fired and will not fire again — Hocuspocus's
+ * `set synced(value)` is a no-op when the value is unchanged
+ * (`@hocuspocus/provider/src/HocuspocusProvider.ts:387-397`). Returning a
+ * pre-resolved promise here is what makes the "cold mount, warm content" path
+ * (precedent #15(c), spec G1+G5) actually instant — without this gate, every
+ * Activity-evicted-but-pool-resident revisit would hang for 30s waiting on a
+ * listener that can never fire.
  */
 export function syncPromise(docName: string, provider: HocuspocusProvider): Promise<void> {
   const existing = cache.get(docName);
   if (existing) return existing.promise;
+
+  if (provider.synced) {
+    console.log(`[syncPromise] ${docName} resolved synchronously (warm provider)`);
+    return Promise.resolve();
+  }
 
   const createdAt = Date.now();
   let resolveFn: () => void = () => {};
@@ -154,11 +186,14 @@ export function syncPromise(docName: string, provider: HocuspocusProvider): Prom
     settled: false,
   };
 
-  // Attach last so an immediate synchronous `synced` emission during `on()`
-  // sees the entry in cache.
+  // Cache first, then attach listeners — so any synchronously-fired callback
+  // can find the entry via `cache.get(docName)`. EventEmitter.on() does not
+  // emit past events, so this ordering is currently belt-and-suspenders, but
+  // making it explicit keeps the invariant safe against future provider
+  // implementations that might change that contract.
+  cache.set(docName, entry);
   provider.on('synced', onSynced);
   provider.on('close', onClose);
-  cache.set(docName, entry);
 
   return promise;
 }
@@ -178,6 +213,25 @@ export function invalidateSyncPromise(docName: string): void {
   entry.settled = true;
   detach(entry);
   cache.delete(docName);
+}
+
+/**
+ * Reject the cached syncPromise for `docName` with a specific error. Used by
+ * `ProviderPool` to surface deterministic init failures (e.g. `BridgeSetupError`
+ * from `setupObservers`) through the React error boundary instead of silently
+ * tearing down. No-op if no entry exists.
+ *
+ * Returns true if an entry was rejected, false otherwise.
+ */
+export function rejectSyncPromise(docName: string, error: Error): boolean {
+  const entry = cache.get(docName);
+  if (!entry || entry.settled) return false;
+  entry.settled = true;
+  console.warn(`[syncPromise] ${docName} rejected: ${error.message}`);
+  detach(entry);
+  cache.delete(docName);
+  entry.reject(error);
+  return true;
 }
 
 /**

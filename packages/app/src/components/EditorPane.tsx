@@ -8,7 +8,7 @@ import { invalidateSyncPromise } from '@/editor/sync-promise';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
-import NavigationPendingBar from './NavigationPendingBar';
+import { NavigationPendingBar } from './NavigationPendingBar';
 import { TimelinePanel } from './TimelinePanel';
 
 /**

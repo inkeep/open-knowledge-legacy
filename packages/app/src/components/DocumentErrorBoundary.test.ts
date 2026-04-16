@@ -10,6 +10,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
+  BridgeSetupError,
   DocumentNotFoundError,
   PreSyncDisconnectError,
   SyncTimeoutError,
@@ -33,6 +34,12 @@ describe('errorCopy', () => {
     const copy = errorCopy(new DocumentNotFoundError('missing.md'));
     expect(copy.title).toBe('Document not found');
     expect(copy.summary).toContain('missing.md');
+  });
+
+  test('BridgeSetupError → "Couldn\'t open document" + doc name in summary', () => {
+    const copy = errorCopy(new BridgeSetupError('docs/troubled', new Error('observer wiring')));
+    expect(copy.title).toBe("Couldn't open document");
+    expect(copy.summary).toContain('docs/troubled');
   });
 
   test('unknown Error subclass → "Unknown error" + surfaced message', () => {

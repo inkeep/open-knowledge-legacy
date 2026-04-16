@@ -23,6 +23,7 @@
 import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
 import { Button } from '@/components/ui/button';
 import {
+  BridgeSetupError,
   DocumentNotFoundError,
   invalidateSyncPromise,
   PreSyncDisconnectError,
@@ -56,6 +57,12 @@ export function errorCopy(error: unknown): ErrorCopy {
     return {
       title: 'Document not found',
       summary: `"${error.docName}" could not be found.`,
+    };
+  }
+  if (error instanceof BridgeSetupError) {
+    return {
+      title: "Couldn't open document",
+      summary: `Failed to set up the editor for "${error.docName}". Try again or reopen.`,
     };
   }
   const message =
@@ -166,5 +173,3 @@ export function DocumentErrorBoundary({
     </ErrorBoundary>
   );
 }
-
-export default DocumentErrorBoundary;

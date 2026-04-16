@@ -4,7 +4,7 @@ import { getSchema } from '@tiptap/core';
 import { sharedExtensions } from './extensions/shared.ts';
 import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
-import { invalidateSyncPromise } from './sync-promise';
+import { BridgeSetupError, invalidateSyncPromise, rejectSyncPromise } from './sync-promise';
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
@@ -151,7 +151,13 @@ export class ProviderPool {
       }
       this.notify();
 
-      // Set up bidirectional observers once after first sync
+      // Set up bidirectional observers once after first sync. A throw here
+      // (Y.js observer wiring failure, baseline read crash, schema mismatch)
+      // is rare but must not be silent — without surfacing it through the
+      // syncPromise, the user would see the doc vanish and fall back to the
+      // empty "Select a document" state with no signal about what happened.
+      // We reject the syncPromise FIRST so the React error boundary fires
+      // with a typed BridgeSetupError, then close to release pool slot.
       if (!entry.observerCleanup) {
         try {
           const doc = provider.document;
@@ -167,8 +173,9 @@ export class ProviderPool {
             },
           });
         } catch (err) {
-          this.close(docName);
           console.error(`[ProviderPool] setupObservers init failed for ${docName}:`, err);
+          rejectSyncPromise(docName, new BridgeSetupError(docName, err));
+          this.close(docName);
         }
       }
     };

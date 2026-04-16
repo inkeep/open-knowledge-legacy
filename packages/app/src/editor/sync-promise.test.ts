@@ -76,6 +76,19 @@ describe('syncPromise creation + idempotency', () => {
 });
 
 describe('syncPromise resolution', () => {
+  test('resolves synchronously when provider is already synced (warm path)', async () => {
+    // Pool-resident reuse path: provider.synced is already true from a prior
+    // mount. Hocuspocus's `set synced` is a no-op when the value is unchanged
+    // so a freshly-attached `'synced'` listener would never fire — without the
+    // fast-path gate this would hang for the full 30s timeout.
+    const p = track(makeProvider('warm-doc'));
+    p.synced = true;
+    const promise = syncPromise('warm-doc', p);
+    await expect(promise).resolves.toBeUndefined();
+    // Fast-path returns Promise.resolve() directly, no cache entry.
+    expect(__syncPromiseCacheSize()).toBe(0);
+  });
+
   test('resolves when provider fires synced', async () => {
     const p = track(makeProvider('doc1'));
     const promise = syncPromise('doc1', p);

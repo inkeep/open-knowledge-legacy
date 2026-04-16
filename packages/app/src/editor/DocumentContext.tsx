@@ -149,32 +149,38 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     const persisted = loadPinFromStorage();
     if (persisted !== null) setPinnedDoc(persisted);
 
-    // Expose pool on window for E2E test access
-    window.__providerPool = p;
-    Object.defineProperty(window, '__activeProvider', {
-      get: () => p.getActive()?.provider ?? null,
-      configurable: true,
-    });
-    // Test-only hooks for Playwright E2E — see docs-open.e2e.ts. Safe in
-    // production: the helpers only manipulate in-memory caches / the active
-    // WebSocket (no data exfiltration, no cross-origin reach).
-    window.__test_rejectSyncPromise = (docName, kind) => __rejectSyncPromise(docName, kind);
-    window.__test_closeActiveWebSocket = () => {
-      const provider = p.getActive()?.provider;
-      if (!provider) return false;
-      // HocuspocusProvider wraps y-websocket internally; reach for the live WS
-      // via the typed fields we can see, falling back to any-cast for the
-      // nested websocketProvider (not in the provider's public TS surface).
-      const cfg = provider.configuration as unknown as {
-        websocketProvider?: { webSocket?: { close?: () => void } };
+    // Expose pool + test hooks on window for Playwright E2E access. Gated on
+    // `import.meta.env.DEV` so production bundles don't ship a sync-promise
+    // rejection trigger or a WebSocket close primitive — both useful for E2E,
+    // both unsafe to leave callable from arbitrary page-context script
+    // (extensions, bookmarklets, future embed consumers). Vite replaces this
+    // statically at build time, so the entire branch tree-shakes out of the
+    // production bundle. Mirrors the dev-only pattern already used in
+    // `editor/extensions/slash-command.ts`.
+    if (import.meta.env.DEV) {
+      window.__providerPool = p;
+      Object.defineProperty(window, '__activeProvider', {
+        get: () => p.getActive()?.provider ?? null,
+        configurable: true,
+      });
+      window.__test_rejectSyncPromise = (docName, kind) => __rejectSyncPromise(docName, kind);
+      window.__test_closeActiveWebSocket = () => {
+        const provider = p.getActive()?.provider;
+        if (!provider) return false;
+        // HocuspocusProvider wraps y-websocket internally; reach for the live WS
+        // via the typed fields we can see, falling back to any-cast for the
+        // nested websocketProvider (not in the provider's public TS surface).
+        const cfg = provider.configuration as unknown as {
+          websocketProvider?: { webSocket?: { close?: () => void } };
+        };
+        const ws = cfg.websocketProvider?.webSocket;
+        if (ws && typeof ws.close === 'function') {
+          ws.close();
+          return true;
+        }
+        return false;
       };
-      const ws = cfg.websocketProvider?.webSocket;
-      if (ws && typeof ws.close === 'function') {
-        ws.close();
-        return true;
-      }
-      return false;
-    };
+    }
 
     return () => {
       p.setOnChange(null);
