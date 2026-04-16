@@ -2,7 +2,9 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { getSchema } from '@tiptap/core';
 import { sharedExtensions } from './extensions/shared.ts';
+import { isSystemDoc } from './is-system-doc';
 import { setupObservers } from './observers';
+import { invalidateSyncPromise } from './sync-promise';
 
 export type SyncState = 'connecting' | 'synced' | 'disconnected';
 
@@ -44,6 +46,18 @@ const editorSchema = getSchema(sharedExtensions);
 const RECYCLE_DEBOUNCE_MS = 4_000;
 
 /**
+ * Periodic full-sync nudge for HocuspocusProvider. Secondary defense against
+ * the `synced`-never-fires edge cases documented in hocuspocus#183 and
+ * y-websocket#81; D7's 30s syncPromise timeout is the primary safety net.
+ *
+ * 5000ms chosen per SPEC.md §10 D8: 0.2 msgs/sec × 10 providers × 2 directions
+ * ≈ 4 msgs/sec steady-state — negligible overhead vs the 100 msgs/sec the
+ * originally-proposed 200ms interval would generate. Still catches the
+ * never-fires edge within 5s, imperceptible vs the 30s timeout.
+ */
+const FORCE_SYNC_INTERVAL_MS = 5_000;
+
+/**
  * LRU pool of HocuspocusProvider instances. Plain TS class — not a React hook.
  * Owns WebSocket connections, survives React re-renders.
  */
@@ -80,10 +94,14 @@ export class ProviderPool {
   }
 
   /**
-   * Open (or reuse) a document. Returns the pool entry.
-   * If the pool is at capacity, evicts the LRU entry (never the active doc).
+   * Open (or reuse) a document. Returns the pool entry, or `null` if the
+   * docName is reserved (the `__system__` pseudo-doc carries CC1 signals and
+   * is never user-editable — see SPEC.md §10 DX7). If the pool is at
+   * capacity, evicts the LRU entry (never the active doc).
    */
-  open(docName: string): PoolEntry {
+  open(docName: string): PoolEntry | null {
+    if (isSystemDoc(docName)) return null;
+
     const existing = this.entries.get(docName);
     if (existing) {
       existing.lastAccessedAt = Date.now();
@@ -100,6 +118,7 @@ export class ProviderPool {
     const provider = new HocuspocusProvider({
       url: this.wsUrl,
       name: docName,
+      forceSyncInterval: FORCE_SYNC_INTERVAL_MS,
     });
 
     const entry: PoolEntry = {
@@ -256,6 +275,12 @@ export class ProviderPool {
       clearTimeout(entry.pendingRecycleTimer);
       entry.pendingRecycleTimer = null;
     }
+    // Detach the syncPromise cache entry BEFORE destroy() fires the provider's
+    // `close` event — otherwise the sync-promise listener would reject the
+    // already-consumed promise with PreSyncDisconnectError on pool-triggered
+    // teardown. Natural (network-triggered) close events still reject as
+    // expected because this path only runs inside pool destroy/recycle/evict.
+    invalidateSyncPromise(entry.docName);
     // Observer cleanup first (observers reference Y.Doc state), then full teardown
     entry.observerCleanup?.();
     entry.observerCleanup = null;
@@ -278,8 +303,11 @@ export class ProviderPool {
     this.lruOrder = this.lruOrder.filter((n) => n !== docName);
 
     if (wasActive) {
-      this.open(docName);
-      this.setActive(docName);
+      // docName came from `this.entries.get(docName)` above — a system doc
+      // cannot reach this branch because `open()` rejects system docs at
+      // admission time.
+      const reopened = this.open(docName);
+      if (reopened) this.setActive(docName);
       return;
     }
 

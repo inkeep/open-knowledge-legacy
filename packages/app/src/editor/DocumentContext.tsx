@@ -111,7 +111,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
     syncState: snapshot.syncState,
     openDocument: (docName: string) => {
       const p = getPool();
-      p.open(docName);
+      const entry = p.open(docName);
+      if (!entry) return; // reserved doc (e.g. __system__) — pool refused admission
       p.setActive(docName);
     },
     closeDocument: (docName: string) => {
