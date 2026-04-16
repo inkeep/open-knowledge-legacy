@@ -62,12 +62,39 @@ export function createChildNode(childName: string): Record<string, unknown> {
 }
 
 /**
+ * After inserting a component, focus appropriately:
+ * - Has editable props → NodeSelect the component (triggers popover auto-open)
+ * - Has children only → place cursor inside children for typing
+ */
+export function focusInsertedComponent(
+  editor: Editor,
+  insertPos: number,
+  descriptor: JsxComponentDescriptor,
+): void {
+  const hasEditableProps = descriptor.props.some(
+    (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
+  );
+
+  if (hasEditableProps) {
+    // NodeSelect → the NodeView's Popover auto-opens via defaultOpen={selected}
+    editor.commands.setNodeSelection(insertPos);
+  } else if (descriptor.hasChildren) {
+    // Place cursor inside the children paragraph (insertPos + 1 = content start, + 1 = inside paragraph)
+    editor.commands.setTextSelection(insertPos + 2);
+  }
+}
+
+/**
  * Create the slash-command insertion command for a component.
  * Inserts a jsxComponent PM node with structured attrs + default props.
+ * Post-insert: auto-opens PropPanel (editable props) or focuses children.
  */
 function createInsertCommand(descriptor: JsxComponentDescriptor): (editor: Editor) => void {
   return (editor: Editor) => {
+    // Capture position before insertion (cursor position after deleteRange)
+    const insertPos = editor.state.selection.from;
     editor.chain().focus().insertContent(createChildNode(descriptor.name)).run();
+    focusInsertedComponent(editor, insertPos, descriptor);
   };
 }
 

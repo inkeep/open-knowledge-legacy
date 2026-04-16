@@ -16,7 +16,7 @@ import { offset } from '@floating-ui/dom';
 import { DragHandle } from '@tiptap/extension-drag-handle-react';
 import type { Editor } from '@tiptap/react';
 import { getDescriptor } from '../registry/index.ts';
-import { createChildNode } from '../slash-command/component-items.ts';
+import { createChildNode, focusInsertedComponent } from '../slash-command/component-items.ts';
 
 // Match existing drag-handle.ts positioning constants
 const HANDLE_HEIGHT = 20;
@@ -111,11 +111,9 @@ export function SideMenu({ editor }: SideMenuProps) {
             if (descriptor.emptyChildName) {
               const contentSize = Number.parseInt(contentSizeStr || '0', 10);
               const insertPos = pos + 1 + contentSize;
-              editor
-                .chain()
-                .focus()
-                .insertContentAt(insertPos, createChildNode(descriptor.emptyChildName))
-                .run();
+              const childName = descriptor.emptyChildName;
+              editor.chain().focus().insertContentAt(insertPos, createChildNode(childName)).run();
+              focusInsertedComponent(editor, insertPos, getDescriptor(childName));
               return;
             }
           }

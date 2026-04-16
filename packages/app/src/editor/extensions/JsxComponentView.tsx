@@ -22,7 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/pop
 import { PropPanel } from '../components/PropPanel.tsx';
 import { markUserTyping } from '../observers.ts';
 import { getDescriptor } from '../registry/index.ts';
-import { createChildNode } from '../slash-command/component-items.ts';
+import { createChildNode, focusInsertedComponent } from '../slash-command/component-items.ts';
 import { getYDoc } from '../utils/get-ydoc.ts';
 
 // ── Error Boundary ──────────────────────────────────────────────────────
@@ -240,7 +240,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
         {/* Settings → Popover PropPanel (only if editable props) */}
         {hasEditableProps && (
-          <Popover>
+          <Popover defaultOpen={selected}>
             <PopoverTrigger asChild>
               <button
                 type="button"
@@ -315,8 +315,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           className={node.childCount === 0 ? 'jsx-empty-child-placeholder' : 'jsx-add-child-pill'}
           onMouseDown={(e) => e.stopPropagation()}
           onClick={() => {
-            const childJSON = createChildNode(descriptor.emptyChildName as string);
-            editor.chain().focus().insertContentAt(insertChildAt(), childJSON).run();
+            const childName = descriptor.emptyChildName as string;
+            const childJSON = createChildNode(childName);
+            const insertPos = insertChildAt();
+            editor.chain().focus().insertContentAt(insertPos, childJSON).run();
+            focusInsertedComponent(editor, insertPos, getDescriptor(childName));
           }}
         >
           <span>
