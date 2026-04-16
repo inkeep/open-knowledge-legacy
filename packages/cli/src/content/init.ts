@@ -55,7 +55,9 @@ This is a pattern, not a requirement. Projects with existing layouts (\`specs/\`
 
 ## Frontmatter Conventions
 
-Every \`.md\` file that's part of the knowledge base should have YAML frontmatter:
+Open Knowledge has two metadata surfaces that merge at read time:
+
+**Per-file frontmatter.** Every \`.md\` file that's part of the knowledge base should have YAML frontmatter:
 
 \`\`\`yaml
 ---
@@ -67,7 +69,9 @@ tags:
 ---
 \`\`\`
 
-Per-file frontmatter is the **only** authored metadata surface. Folder-level frontmatter (the old \`INDEX.md\` catalog files) was removed — folder overviews are generated on demand from per-file frontmatter via \`exec("ls <dir>")\`.
+**Folder-level defaults via \`config.yml\` \`folders:\`.** Declare per-folder title/description/tags keyed by glob \`match:\` — see \`config.yml\` for the commented example. Rules apply in declaration order (later matches override earlier scalars), tags concat + dedup across all matching rules, and the file's own frontmatter always wins per-scalar. Folder defaults fill in blanks.
+
+Folder metadata lives in \`config.yml\`, **not** in content files — this is intentionally different from the rejected \`INDEX.md\`-inside-content pattern. The merge is computed on every \`exec("ls <dir>")\` / \`read_document\` / \`search\` call and is never written back to disk.
 
 ## Scaffolding (first-time setup)
 
@@ -139,6 +143,38 @@ export const CONFIG_YML_CONTENT = `# Open Knowledge — workspace configuration
 # persistence:
 #   debounceMs: 2000
 #   maxDebounceMs: 10000
+
+
+# --- Folders: per-folder frontmatter defaults -------------------------------
+# Declare title/description/tags defaults keyed by glob \`match:\`. Rules merge
+# with a file's own frontmatter at read time:
+#   - Per scalar (title, description): the FILE wins when declared; folder
+#     rule fills in blanks.
+#   - Tags: concatenated across ALL matching rules (in declaration order) with
+#     file tags last; first-occurrence preserved on dedup.
+#   - Evaluation is positional — LATER rules in this array override earlier
+#     rules for scalars. Put general rules first, specific rules last.
+#
+# Picomatch globstar nuance:
+#   \`match: 'foo'\`         — matches ONLY the folder \`foo\` itself
+#   \`match: 'foo/**'\`      — matches \`foo\` AND all descendants (files + dirs)
+#   \`match: 'foo-*'\`       — matches \`foo-1\`, \`foo-bar\` (single segment)
+#   \`match: 'foo-**'\`      — behaves like \`foo-*\` (NOT multi-segment); \`**\` only
+#                              acts as a multi-segment globstar when it is a
+#                              STANDALONE segment. Use \`foo-*/**\` if you want
+#                              \`foo-X\` plus its descendants.
+#
+# Example:
+# folders:
+#   - match: 'specs/**'
+#     frontmatter:
+#       title: Specifications
+#       description: Feature specifications and design documents
+#       tags: [spec]
+#   - match: 'specs/2026-*/**'
+#     frontmatter:
+#       title: 2026 Specifications
+#       tags: [2026]
 `;
 
 /**
