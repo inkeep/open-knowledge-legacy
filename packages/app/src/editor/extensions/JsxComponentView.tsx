@@ -28,6 +28,7 @@ import {
   focusInsertedComponent,
 } from '../slash-command/component-items.ts';
 import { getYDoc } from '../utils/get-ydoc.ts';
+import { reconstructSource } from '../utils/reconstruct-source.ts';
 
 // ── Error Boundary ──────────────────────────────────────────────────────
 
@@ -148,102 +149,60 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   };
 
   // ── BRANCH 1: Wildcard (unregistered name) ────────────────────────────
-  // Same chrome bar as registered (arrows + delete), no gear (no props).
+  // Convert to rawMdxFallback so the user can edit the source directly
+  // in the existing nested CM editor. The rawMdxFallback CM handles
+  // re-parsing on commit — if the user fixes the tag name to a registered
+  // component, it transitions back to a live jsxComponent render.
   if (descriptor.name === '*') {
+    const convertToFallback = () => {
+      if (typeof pos !== 'number') return;
+      const source = reconstructSource(node);
+      const fallbackNode = node.type.schema.nodes.rawMdxFallback.create(
+        { reason: `Unregistered component: ${node.attrs.componentName as string}` },
+        node.type.schema.text(source),
+      );
+      editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + node.nodeSize, fallbackNode));
+    };
+
+    // Auto-convert on first render
+    requestAnimationFrame(convertToFallback);
+
+    // Render a brief placeholder while the conversion dispatches
     return (
-      <NodeViewWrapper
-        className="jsx-component-wrapper my-2"
-        aria-label={`Unregistered component: ${node.attrs.componentName as string}`}
-        {...(!isChildOfComponent
-          ? { 'data-drag-handle': '', draggable: 'true' }
-          : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}
-        data-component-name={node.attrs.componentName}
-      >
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
-        <div
-          className="jsx-component-chrome"
-          contentEditable={false}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <span>Unknown: {node.attrs.componentName as string}</span>
-
-          {canMoveUp && (
-            <button
-              type="button"
-              className="jsx-chrome-btn"
-              aria-label="Move up"
-              onClick={() => {
-                if (typeof pos !== 'number') return;
-                const $p = editor.state.doc.resolve(pos);
-                const idx = $p.index($p.depth);
-                if (idx === 0) return;
-                const parent = $p.node($p.depth);
-                const prev = parent.child(idx - 1);
-                const from = pos - prev.nodeSize;
-                const to = pos + node.nodeSize;
-                const tr = editor.state.tr;
-                const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-                const pre = editor.state.doc.slice(from, pos);
-                tr.replaceWith(from, to, cur.content.append(pre.content));
-                editor.view.dispatch(tr.scrollIntoView());
-              }}
-            >
-              <ArrowUp size={12} />
-            </button>
-          )}
-
-          {canMoveDown && (
-            <button
-              type="button"
-              className="jsx-chrome-btn"
-              aria-label="Move down"
-              onClick={() => {
-                if (typeof pos !== 'number') return;
-                const $p = editor.state.doc.resolve(pos);
-                const idx = $p.index($p.depth);
-                const parent = $p.node($p.depth);
-                if (idx >= parent.childCount - 1) return;
-                const next = parent.child(idx + 1);
-                const from = pos;
-                const to = pos + node.nodeSize + next.nodeSize;
-                const tr = editor.state.tr;
-                const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
-                const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
-                tr.replaceWith(from, to, nxt.content.append(cur.content));
-                editor.view.dispatch(tr.scrollIntoView());
-              }}
-            >
-              <ArrowDown size={12} />
-            </button>
-          )}
-
-          <button
-            type="button"
-            className="jsx-chrome-btn jsx-chrome-btn--delete"
-            aria-label={`Delete ${node.attrs.componentName as string}`}
-            onClick={() => {
-              if (typeof pos === 'number') {
-                editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
-              }
-            }}
-          >
-            <Trash2 size={12} />
-          </button>
+      <NodeViewWrapper className="jsx-component-wrapper my-2">
+        <div className="text-xs font-mono text-muted-foreground px-2 py-1" contentEditable={false}>
+          Converting to source editor...
         </div>
         <NodeViewContent className="component-children" />
       </NodeViewWrapper>
     );
   }
 
-  // ── BRANCH 3: Invalid-state render failure (Precedent #14) ────────────
+  // ── BRANCH 3: Render failure → convert to rawMdxFallback (Precedent #14)
+  // Same approach as wildcard: reconstruct source, replace with rawMdxFallback,
+  // let the existing nested CM editor handle source editing + re-parse on commit.
   if (renderError) {
+    const convertToFallback = () => {
+      if (typeof pos !== 'number') return;
+      const source = reconstructSource(node);
+      const fallbackNode = node.type.schema.nodes.rawMdxFallback.create(
+        {
+          reason: `Render error in <${descriptor.displayName ?? descriptor.name}>: ${renderError.message}`,
+        },
+        node.type.schema.text(source),
+      );
+      editor.view.dispatch(editor.state.tr.replaceWith(pos, pos + node.nodeSize, fallbackNode));
+    };
+
+    requestAnimationFrame(convertToFallback);
+
     return (
       <NodeViewWrapper className="jsx-component-wrapper jsx-component-wrapper--error my-2">
         <div
           className="text-xs font-mono text-red-600 dark:text-red-400 px-2 py-1"
           contentEditable={false}
         >
-          &lt;{descriptor.displayName ?? descriptor.name}&gt; — render error
+          &lt;{descriptor.displayName ?? descriptor.name}&gt; — converting to source editor...
         </div>
         <NodeViewContent className="component-children" />
       </NodeViewWrapper>
