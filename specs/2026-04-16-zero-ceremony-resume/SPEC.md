@@ -594,16 +594,18 @@ All prior OQs resolved via D-015 through D-032.
 
 ## 17) QA test plan
 
-**Client matrix for manual verification** (implementation-time; this spec ships planning only). Available CLIs confirmed on dev machine 2026-04-16:
+**Client matrix for manual verification** (implementation-time; this spec ships planning only). Availability confirmed on dev machine 2026-04-16:
 
-| Client | Install status | QA role |
-|---|---|---|
-| Claude Code (`claude` v2.1.111) | ✅ installed | **Primary** — validates launch.json + preview_start + autoPort paths. Scenario A + B (D-032 proxy) |
-| Cursor (`cursor-agent` 2025.09.12-4852336 + `cursor` 3.0.13) | ✅ installed | **Primary** — validates MCP-stdio-spawn path for clients without launch.json |
-| Gemini CLI (`gemini`, `npx @google/gemini-cli`) | ❌ to install before QA | **Secondary** — third-vendor MCP client to confirm response-contract agnosticism (A2 / XQ3) |
-| Windsurf | ❌ not installed; GUI-only | Defer — no CLI QA path; GUI QA if GUI copy installed |
-| VS Code MCP | ✅ via Cursor/VS Code GUI | Secondary — `.vscode/mcp.json` path (FR-3.1) |
-| Codex CLI | ❌ not installed | Defer — install if vendor-diversity signal needed |
+| Client | Install status | Config path written by `ok init` | QA role |
+|---|---|---|---|
+| Claude Code (`claude` v2.1.111) | ✅ installed | `.mcp.json` (project root) + `.claude/launch.json` | **Primary** — validates launch.json + preview_start + autoPort. Scenario A (happy path) + B (D-032 proxy mode) |
+| Cursor (`cursor-agent` 2025.09.12 + `cursor` 3.0.13) | ✅ installed | `.cursor/mcp.json` | **Primary** — validates MCP-stdio-spawn path (no launch.json equivalent) |
+| OpenCode (`opencode`) | ✅ installed | **manual for now** — `opencode mcp add open-knowledge -- npx @inkeep/open-knowledge mcp` | **Secondary** — native MCP via `opencode mcp` subcommand; vendor-diversity check for response-contract (A2) |
+| Antigravity (`antigravity` / `agy` v1.107.0) | ✅ installed | `.vscode/mcp.json` (VS Code-compatible fork) | **Secondary** — exercises VS Code config path |
+| Gemini CLI (`gemini`) | ❌ install: `npm install -g @google/gemini-cli` | manual: `mcpServers` entry in `settings.json` | **Secondary** — third-vendor MCP client. Worth installing for A2 confidence |
+| Codex CLI (`codex`) | ❌ install: `npm install -g @openai/codex` (or `brew install --cask codex`) | manual: `codex mcp add open-knowledge -- npx @inkeep/open-knowledge mcp` | **Secondary** — OpenAI's CLI; another vendor for A2 |
+| Windsurf | ❌ GUI-only; download from [codeium.com/windsurf](https://codeium.com/windsurf) | `~/.codeium/windsurf/mcp_config.json` (user-global) | Defer — no headless CLI path; GUI QA only. FR-3.1 path verification already automatable |
+| VS Code Copilot MCP | ✅ (via VS Code install) | `.vscode/mcp.json` | Covered by Antigravity row (same config mechanism) |
 
 **Notes on QA execution timing:** Scenarios S1-S12 are implementation-time verification, not spec-time. They inform the `/implement` + `/qa` phase; we list them here so the implementer can execute without re-deriving from requirements.
 
@@ -614,7 +616,7 @@ All prior OQs resolved via D-015 through D-032.
 | S1 | Claude Code + autoPort-resolved port (OQ-1.4) | Claude Code | P0 | D-032, FR-1.1b, A5 |
 | S2 | Fresh-install cold-start end-to-end | Claude Code + Cursor | P0 | G1, FR-1.4 + FR-1.9, US-001 integration |
 | S3 | Returning-user resume (10-min-later simulation) | Claude Code + Cursor | P0 | G1 directly |
-| S4 | `previewUrl` coverage on all 18 generalized tools | Claude Code + Cursor + Gemini CLI | P0 | FR-2.1, FR-2.2, G2 |
+| S4 | `previewUrl` coverage on all 18 generalized tools | Claude Code + Cursor + (Gemini CLI OR OpenCode OR Codex CLI — any 3rd vendor) | P0 | FR-2.1, FR-2.2, G2, A2 |
 | S5 | Multi-project concurrent (3 projects + 3 sessions) | Claude Code ×2 + Cursor ×1 | P0 | A1, G4, FR-1.3 |
 | S6 | Idle-shutdown at 30 min with zero WS clients | Claude Code | P0 | FR-1.6, G5, D-017 |
 | S7 | Idle-shutdown does NOT fire with live DirectConnection-only (agent work, no browser tab) | Claude Code | P0 | FR-1.6 correctness on edge case |
