@@ -42,12 +42,9 @@ import { VFile } from 'vfile';
 
 // Ensure mdast type augmentations are loaded
 import './mdast-augmentation.ts';
-import { autolinkPromotionPlugin } from './autolink-promotion.ts';
 import { protectFromMdx, restoreFromMdx } from './autolink-void-html-guard.ts';
-import { docStartThematicFixPlugin } from './doc-start-thematic-fix.ts';
-import { positionSlicePlugin } from './position-slice.ts';
+import { mergedPostParseWalkerPlugin } from './merged-walker.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
-import { unknownMdastGuardPlugin } from './unknown-mdast-guard.ts';
 import { remarkWikiLink } from './wiki-link-micromark.ts';
 
 export interface PipelineOptions {
@@ -117,21 +114,25 @@ function ensureNonEmptyDoc(tree: MdastRoot): MdastRoot {
  * with respect to the processor.
  */
 export function createParseProcessor(opts: PipelineOptions): Processor {
+  // R17 — post-parse tree transformation is 2 phases (down from 5):
+  //
+  //   Phase A (`restoreFromMdx`): restore PUA sentinels → literal `<`, `>`,
+  //     `:`, `@`, `{` in text/URL/title/alt fields. Must be its own pass so
+  //     Phase B's autolink regex sees literal chars (see `merged-walker.ts`
+  //     header + `evidence/pipeline-refactor-audit.md` §R17).
+  //
+  //   Phase B (`mergedPostParseWalkerPlugin`): a single `unist-util-visit`
+  //     callback dispatching autolink promotion + doc-start thematic fix +
+  //     position-slice + unknown-mdast guard. `ensureNonEmptyDoc` and
+  //     `remarkProseMirror` run after (both outside R17's scope).
   const processor = unified()
     .use(remarkParse)
     .use(remarkFrontmatter, ['yaml'])
     .use(remarkMdxAgnostic)
     .use(remarkGfm)
     .use(remarkWikiLink)
-    .use(restoreFromMdx) // R23: Restore protected patterns after MDX parsing
-    .use(autolinkPromotionPlugin) // Promote <scheme:uri> text → semantic link nodes
-    .use(docStartThematicFixPlugin) // NG10: empty yaml at doc-start → thematicBreak
-    .use(positionSlicePlugin)
-    // R8 wildcard catch-all: replace any mdast node whose type is unknown to
-    // our handler table with `rawMdxFallbackMdast` so remark-prosemirror's
-    // throwing `unknown()` handler never fires. Runs AFTER positionSlice so
-    // node.data.sourceRaw is final, BEFORE ensureNonEmptyDoc + remarkProseMirror.
-    .use(unknownMdastGuardPlugin)
+    .use(restoreFromMdx) // Phase A
+    .use(mergedPostParseWalkerPlugin) // Phase B
     .use(() => ensureNonEmptyDoc) // Guard empty-doc edge case (see fn docs)
     .use(remarkProseMirror, {
       schema: opts.schema,

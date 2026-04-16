@@ -90,6 +90,53 @@ _All fixtures produced byte-identical mdast._
 _All fixtures produced byte-identical mdast._
 ```
 
+## US-008 acceptance run — pre-merge vs post-merge pipeline
+
+With `mergedPostParseWalkerPlugin` landed (US-008), run the validator with
+`buildPreMergeFactory()` vs a post-merge factory that mirrors
+`createParseProcessor`'s new 2-phase shape (Phase A: `restoreFromMdx`;
+Phase B: `mergedPostParseWalkerPlugin`). Driver:
+`evidence/r17-run-diff.ts`.
+
+Default mode (`bun run evidence/r17-run-diff.ts`):
+
+```
+[r17-run-diff] loaded 711 fixtures
+## R17 mdast-equivalence validation
+
+- fixtures:            711
+- matches:             706
+- mismatches:          0
+- both threw (same):   5
+- threw differently:   0
+- runtime:             436.2ms
+
+_All fixtures produced byte-identical mdast._
+```
+
+Full perf mode (`R17_PERF_ALL=1 bun run evidence/r17-run-diff.ts`):
+
+```
+[r17-run-diff] loaded 714 fixtures
+## R17 mdast-equivalence validation
+
+- fixtures:            714
+- matches:             709
+- mismatches:          0
+- both threw (same):   5
+- threw differently:   0
+- runtime:             10924.9ms
+
+_All fixtures produced byte-identical mdast._
+```
+
+**Both modes green. Zero mismatches. Zero divergent errors.** R17 merges with
+byte-identical mdast output against the pre-merge 5-pass pipeline across every
+fixture — 652 CommonMark examples, 20 GFM examples, the 26-class MDX crash
+taxonomy (including the 5 upstream-throw fixtures preserved as "both threw
+same"), inline wiki-link/frontmatter/NG-pinned fixtures, and synthetic perf
+fixtures at all 7 block counts (100-20K).
+
 ## The 5 "both threw (same)" fixtures
 
 All are deliberately-malformed MDX from the 26-class crash taxonomy where `r23Covers: false` — the R23 preprocessor doesn't protect against these shapes, so both before- and after-pipelines throw with identical error messages (the error originates inside `remarkParse` + `micromark-extension-mdx`, upstream of the 5 transformer passes R17 touches).
