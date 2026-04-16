@@ -283,6 +283,15 @@ export const toMarkdownHandlers = {
     const name = node.name ?? '';
     return `<${name}/>`;
   },
+
+  /**
+   * rawMdxFallback (D7 / US-006): emit `value` verbatim so the raw source
+   * round-trips byte-identically. `value` holds the exact bytes the parser
+   * choked on — see parse-with-fallback.ts for the producer side.
+   */
+  rawMdxFallback(node) {
+    return (node.value ?? '') as string;
+  },
 } satisfies Partial<MdastToMarkdownHandlers>;
 
 /**

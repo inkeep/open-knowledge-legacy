@@ -698,12 +698,30 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // rawMdxFallback → emit inner text as html mdast node (preserves raw bytes)
+  // rawMdxFallback → first-class `rawMdxFallback` mdast type per D7 / US-006.
+  // Shape: `{type:'rawMdxFallback', data:{reason, originalSpan}, value:rawSource}`.
+  // The to-markdown handler in to-markdown-handlers.ts emits `value` verbatim
+  // (bit-exact equivalent of the former `{type:'html',value:textContent}`
+  // workaround). US-007 wires the mdast→hast handler that renders the
+  // clipboard-HTML `<!-- Parse error: ... -->` + `<pre class="mdx-fallback">`.
   if (n.rawMdxFallback) {
-    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.textContent ?? '',
-    });
+    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => {
+      const raw = pmNode.textContent ?? '';
+      const reason = typeof pmNode.attrs.reason === 'string' ? pmNode.attrs.reason : '';
+      const span = pmNode.attrs.originalSpan;
+      const originalSpan =
+        span && typeof span === 'object' && 'start' in span && 'end' in span
+          ? {
+              start: Number((span as { start: unknown }).start) || 0,
+              end: Number((span as { end: unknown }).end) || 0,
+            }
+          : { start: 0, end: 0 };
+      return {
+        type: 'rawMdxFallback' as const,
+        value: raw,
+        data: { reason, originalSpan },
+      } as unknown as MdastNodes;
+    };
   }
 
   // jsxInline → first-class `mdxJsxTextElement` mdast type per D7 / US-005.

@@ -36,6 +36,23 @@ export interface WikiLinkMdast {
   position?: Position;
 }
 
+// rawMdxFallback mdast node — first-class type per D7 / US-006. Holds the
+// raw source bytes of a block whose MDX parse failed, along with metadata
+// describing why and where. Shape mirrors wikiLink: `data` drives markdown
+// serialization; `value` carries the raw source for the clipboard-HTML path
+// in US-007. Children are intentionally absent — the raw source is opaque
+// text, not structured phrasing content.
+export interface RawMdxFallbackMdast {
+  type: 'rawMdxFallback';
+  value: string;
+  data: {
+    reason: string;
+    originalSpan: { start: number; end: number };
+    [key: string]: unknown;
+  };
+  position?: Position;
+}
+
 declare module 'mdast' {
   interface TextData {
     escapedChars?: Array<{ offset: number; char: string }>;
@@ -77,6 +94,7 @@ declare module 'mdast' {
    */
   interface RootContentMap {
     wikiLink: WikiLinkMdast;
+    rawMdxFallback: RawMdxFallbackMdast;
   }
 }
 
