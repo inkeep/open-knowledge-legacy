@@ -287,6 +287,146 @@ test.describe('docs-open — hybrid navigation UX', () => {
     );
   });
 
+  test('F5: sync failure shows recoverable error boundary + retry re-enters Suspense', async ({
+    page,
+  }) => {
+    await seedDocs([
+      { name: 'doc-a', markdown: DOC_A },
+      { name: 'doc-b', markdown: DOC_B },
+    ]);
+
+    await page.goto(BASE);
+    await openFromSidebar(page, 'doc-a.md');
+    await waitForActiveProviderSynced(page);
+    await page.waitForSelector('.ProseMirror');
+
+    // Nav to doc B, then immediately force-reject B's syncPromise via the
+    // test hook (racing the sync event). Using a microtask-scheduling race:
+    // kick off the click, then immediately fire the hook — the syncPromise
+    // entry is created synchronously on the first DocumentBoundary render.
+    await page.evaluate(() => {
+      // Schedule the forced rejection as soon as the entry lands in cache.
+      // Polling is OK because this test is the only thing running in the
+      // page — no production code path calls __test_rejectSyncPromise.
+      const tryReject = () => {
+        const ok = window.__test_rejectSyncPromise?.('doc-b', 'timeout');
+        if (!ok) setTimeout(tryReject, 10);
+      };
+      setTimeout(tryReject, 50); // let the click land + promise get created
+    });
+    await openFromSidebar(page, 'doc-b.md');
+
+    // ErrorBoundary fallback should render with role=alert + 'Sync timed out' copy.
+    const errorAlert = page.locator('[data-slot="document-error-boundary"]');
+    await errorAlert.waitFor({ state: 'visible', timeout: 10_000 });
+    await expect(errorAlert).toContainText('Sync timed out');
+    await expect(errorAlert).toContainText('doc-b');
+
+    // Click "Try again" → onReset fires → invalidateSyncPromise → re-enter
+    // Suspense with a fresh promise → real sync completes → content shows.
+    await errorAlert.getByRole('button', { name: 'Try again' }).click();
+
+    // The retry should succeed because the real provider already synced
+    // (hasSynced=true on the pool entry), so the fresh syncPromise resolves
+    // immediately from the next emitted 'synced' (or already-synced state).
+    await expect(page.locator('.ProseMirror')).toContainText('Doc B Heading', { timeout: 10_000 });
+  });
+
+  test('F6: error boundary "Back to previous document" navigates to prior doc', async ({
+    page,
+  }) => {
+    await seedDocs([
+      { name: 'doc-a', markdown: DOC_A },
+      { name: 'doc-b', markdown: DOC_B },
+    ]);
+
+    await page.goto(BASE);
+    await openFromSidebar(page, 'doc-a.md');
+    await waitForActiveProviderSynced(page);
+    await page.waitForSelector('.ProseMirror');
+    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+
+    // Force B's syncPromise to reject on navigation.
+    await page.evaluate(() => {
+      const tryReject = () => {
+        const ok = window.__test_rejectSyncPromise?.('doc-b', 'disconnect');
+        if (!ok) setTimeout(tryReject, 10);
+      };
+      setTimeout(tryReject, 50);
+    });
+    await openFromSidebar(page, 'doc-b.md');
+
+    const errorAlert = page.locator('[data-slot="document-error-boundary"]');
+    await errorAlert.waitFor({ state: 'visible', timeout: 10_000 });
+    await expect(errorAlert).toContainText('Connection dropped');
+
+    // "Back to previous document" is present when previousDocName is set
+    // (it was — doc A was last successfully opened before the error on B).
+    const backButton = errorAlert.getByRole('button', { name: 'Back to previous document' });
+    await expect(backButton).toBeVisible();
+    await backButton.click();
+
+    // Navigation should resolve back to doc A.
+    await expect
+      .poll(async () => page.evaluate(() => window.location.hash), {
+        timeout: 5_000,
+        intervals: [100, 200, 400],
+      })
+      .toContain('doc-a');
+    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+  });
+
+  test('F8: post-wake reconnect preserves content on the active doc', async ({ page }) => {
+    await seedDocs([{ name: 'doc-a', markdown: DOC_A }]);
+
+    await page.goto(BASE);
+    await openFromSidebar(page, 'doc-a.md');
+    await waitForActiveProviderSynced(page);
+    await page.waitForSelector('.ProseMirror');
+    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+
+    // Snapshot the rendered content BEFORE the disconnect — we'll assert it
+    // stays intact across the WS drop + reconnect.
+    const expectedText = await page.locator('.ProseMirror').textContent();
+    expect(expectedText).toContain('Doc A Heading');
+
+    // Drop the WebSocket. Provider is already-synced, so hasSynced=true on
+    // the pool entry — the Y.Doc content stays rendered regardless of
+    // connection state.
+    await page.evaluate(() => {
+      window.__test_closeActiveWebSocket?.();
+    });
+
+    // Simulate sleep → wake by dispatching visibilitychange events.
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // Content MUST still be in DOM during the hidden phase.
+    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+
+    await page.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'visible',
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    // Post-wake: content stays rendered. HocuspocusProvider reconnects
+    // transparently since hasSynced was true.
+    await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
+
+    // Error boundary must NOT have rendered (post-sync disconnect is handled
+    // transparently, not surfaced as an error).
+    const errorAlert = page.locator('[data-slot="document-error-boundary"]');
+    await expect(errorAlert).toHaveCount(0);
+  });
+
   test('F11: rapid sequential navigation converges to final click', async ({ page }) => {
     await seedDocs([
       { name: 'doc-a', markdown: DOC_A },

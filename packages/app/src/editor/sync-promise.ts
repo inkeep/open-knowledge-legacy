@@ -198,3 +198,38 @@ export function __resetSyncPromiseCache(): void {
 export function __syncPromiseCacheSize(): number {
   return cache.size;
 }
+
+/**
+ * Test-only helper: force-reject the cached syncPromise for `docName`.
+ *
+ * Used by Playwright E2E (see packages/app/tests/stress/docs-open.e2e.ts) to
+ * exercise DocumentErrorBoundary recovery paths that are otherwise hard to
+ * trigger — sync never fires (requires 30s wait) or pre-sync disconnect
+ * (requires a real network-level event).
+ *
+ * Returns `true` if an entry was found and rejected, `false` otherwise.
+ *
+ * Safe in production: the cache is a local module-level data structure; there
+ * is no security boundary crossed by rejecting an entry that a legitimate
+ * consumer could simply invalidate via `invalidateSyncPromise`. The helper is
+ * exposed so tests can force error-boundary rendering without shipping a
+ * dev-only build flag.
+ */
+export function __rejectSyncPromise(
+  docName: string,
+  kind: 'timeout' | 'disconnect' = 'timeout',
+): boolean {
+  const entry = cache.get(docName);
+  if (!entry || entry.settled) return false;
+  entry.settled = true;
+  const elapsed = Date.now() - entry.createdAt;
+  const error =
+    kind === 'timeout'
+      ? new SyncTimeoutError(docName, elapsed)
+      : new PreSyncDisconnectError(docName);
+  console.warn(`[syncPromise] ${docName} force-rejected (test hook): ${error.message}`);
+  detach(entry);
+  cache.delete(docName);
+  entry.reject(error);
+  return true;
+}
