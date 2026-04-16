@@ -14,15 +14,23 @@
  * Read-only over the PM doc. Never dispatches a transaction that mutates the
  * document — bridge invariant (CLAUDE.md SC-INV-1) is preserved.
  *
- * Origin classification (Precedent #8 analog — event-layer truth, not tx
- * heuristics): DOM pointerdown/mousedown → 'pointer'; keydown → 'keyboard';
- * transactions stamped with `SELECTION_ORIGIN_META` → 'programmatic'.
+ * Origin classification is event-driven (not tx-heuristic): DOM
+ * pointerdown/mousedown → 'pointer'; keydown on nav keys → 'keyboard'; a
+ * transaction stamped with `SELECTION_ORIGIN_META_KEY` → 'programmatic'
+ * (covers agent writes + imperative test-harness `setNodeSelection`). The
+ * discipline of one typed meta key per origin category extends Precedent #1
+ * (typed transaction origins).
  *
  * Drag tracking: HTML5 dragstart/dragend on `view.dom` toggles `isDragging`.
  * The CSS layer uses this to suppress the halo mid-drag.
+ *
+ * Subscription model: the canonical React integration is
+ * `useBlockSelection(editor)` (see `../hooks/use-block-selection.ts`), which
+ * wires through TipTap's `transaction` + `selectionUpdate` events — the same
+ * path used by BubbleMenu and SideMenu. Non-React callers read imperatively
+ * via `getBlockSelection(editor)` and listen directly to TipTap events.
  */
 
-import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import { type Editor, Extension } from '@tiptap/core';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import type { EditorState } from '@tiptap/pm/state';
@@ -56,25 +64,13 @@ export interface BlockSelection {
   readonly isDragging: boolean;
 }
 
-// ── Typed transaction origins (Precedent #1) ─────────────────────────────
+// ── Typed origin override (Precedent #1 family) ──────────────────────────
 
-/**
- * Transaction meta-origin callers can stamp to force the plugin to record
- * the selection as `'programmatic'` (e.g. agent writes, imperative
- * `setNodeSelection` from test harness).
- *
- * Object identity, not a string — `Set.has()` matching in `trackedOrigins`
- * is identity-based; string literals silently fail.
- */
-export const SELECTION_ORIGIN_META = {
-  source: 'local' as const,
-  skipStoreHooks: false,
-  context: { origin: 'selection-origin-override' },
-} satisfies LocalTransactionOrigin;
-
-/** PM transaction meta key — consumers that want to override origin classification
- *  set `tr.setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic')`. The plugin's
- *  `apply` checks this before consulting the DOM-event-derived pendingOrigin. */
+/** PM transaction meta key — consumers that want to override origin
+ *  classification set `tr.setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic')`.
+ *  The plugin's `apply` checks this before consulting the DOM-event-derived
+ *  `pendingOrigin`. Used by agent writes and imperative `setNodeSelection`
+ *  in the test harness. */
 export const SELECTION_ORIGIN_META_KEY = 'selectionStatePlugin/origin';
 
 // ── PluginKey + imperative API ───────────────────────────────────────────
@@ -89,38 +85,16 @@ const EMPTY_SELECTION: BlockSelection = {
 };
 
 /** Imperative read — returns the current plugin state or a safe empty value
- *  if the plugin is not registered (e.g. in a harness without this extension). */
+ *  if the plugin is not registered (e.g. in a harness without this extension).
+ *
+ *  For React subscription, use `useBlockSelection(editor)` from
+ *  `../hooks/use-block-selection.ts` — it wires TipTap's `transaction` +
+ *  `selectionUpdate` events, matching the BubbleMenu / SideMenu pattern.
+ *  Non-React callers that need change notification should listen to those
+ *  events directly and call `getBlockSelection(editor)` inside the handler. */
 export function getBlockSelection(editor: Editor): BlockSelection {
   const state = selectionStatePluginKey.getState(editor.state);
   return state ?? EMPTY_SELECTION;
-}
-
-/** Imperative subscribe — React hooks use `useSyncExternalStore` against this.
- *  Non-React callers can subscribe directly for imperative needs. */
-export function subscribeBlockSelection(editor: Editor, onChange: () => void): () => void {
-  const emitter = getEmitter(editor);
-  emitter.listeners.add(onChange);
-  return () => {
-    emitter.listeners.delete(onChange);
-  };
-}
-
-// ── Per-editor emitter (no globals) ──────────────────────────────────────
-
-interface Emitter {
-  listeners: Set<() => void>;
-  lastState: BlockSelection | null;
-}
-
-const EMITTERS = new WeakMap<Editor, Emitter>();
-
-function getEmitter(editor: Editor): Emitter {
-  let emitter = EMITTERS.get(editor);
-  if (!emitter) {
-    emitter = { listeners: new Set(), lastState: null };
-    EMITTERS.set(editor, emitter);
-  }
-  return emitter;
 }
 
 // ── Ancestry derivation (pure) ───────────────────────────────────────────
@@ -239,26 +213,6 @@ interface PluginRuntime {
 
 const RUNTIME = new WeakMap<Plugin<BlockSelection>, PluginRuntime>();
 
-/**
- * Notify subscribers if the plugin state changed reference-wise.
- * Called from `view.update` (PM plugin lifecycle) so listeners see the
- * final committed state, not a mid-apply intermediate.
- */
-function notifyIfChanged(editor: Editor): void {
-  const emitter = getEmitter(editor);
-  const current = getBlockSelection(editor);
-  if (emitter.lastState === current) return;
-  emitter.lastState = current;
-  for (const listener of emitter.listeners) {
-    try {
-      listener();
-    } catch (err) {
-      // Defense-in-depth: a subscriber throwing must not break others.
-      console.warn('[selection-state] subscriber threw', err);
-    }
-  }
-}
-
 export const SelectionStatePlugin = Extension.create({
   name: 'selectionStatePlugin',
 
@@ -350,15 +304,11 @@ export const SelectionStatePlugin = Extension.create({
         view.dom.addEventListener('drop', onDragEnd, true);
 
         return {
-          update: () => {
-            notifyIfChanged(editor);
-          },
           destroy: () => {
             view.dom.removeEventListener('dragstart', onDragStart, true);
             view.dom.removeEventListener('dragend', onDragEnd, true);
             view.dom.removeEventListener('drop', onDragEnd, true);
             RUNTIME.delete(plugin);
-            EMITTERS.delete(editor);
           },
         };
       },

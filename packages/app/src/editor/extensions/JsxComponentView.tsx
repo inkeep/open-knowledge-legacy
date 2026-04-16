@@ -186,13 +186,15 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
   // Auto-open popover when: (1) component becomes selected AND (2) the
   // pendingAutoOpen flag is set. Uses controlled state so it works across
-  // React re-renders (defaultOpen only reads on first mount).
+  // React re-renders (defaultOpen only reads on first mount). `wasSelected`
+  // ref prevents double-fire under Strict Mode; explicit deps ensure the
+  // effect only runs when one of the watched values actually changes.
   useEffect(() => {
     if (selected && !wasSelected.current && hasEditableProps && consumeAutoOpen()) {
       setPopoverOpen(true);
     }
     wasSelected.current = selected;
-  });
+  }, [selected, hasEditableProps]);
 
   const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.props);
   const resetKey = `${descriptor.name}::${JSON.stringify(primitiveProps)}`;
@@ -205,7 +207,9 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
   // ── Auto-convert to rawMdxFallback for wildcard + render errors ────────
   // Fires once on mount (guarded by convertedRef). The rawMdxFallback CM
-  // handles source editing + re-parse on commit.
+  // handles source editing + re-parse on commit. Dep array tracks the
+  // inputs that flip `needsConversion` or determine the replacement node;
+  // the convertedRef guard still enforces single-fire under Strict Mode.
   const needsConversion = descriptor.name === '*' || renderError !== null;
   const convertedRef = useRef(false);
   useEffect(() => {
@@ -234,7 +238,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         // Position may have changed if other transactions fired — safe to ignore
       }
     });
-  });
+  }, [needsConversion, descriptor.name, descriptor.displayName, renderError, node, editor, getPos]);
 
   // Show placeholder while conversion is pending
   if (needsConversion) {

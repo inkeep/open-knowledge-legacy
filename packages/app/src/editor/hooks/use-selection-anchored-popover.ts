@@ -46,7 +46,17 @@ export interface UseSelectionAnchoredPopoverOptions {
   /** Floating UI placement. Default: 'bottom-start'. */
   placement?: Placement;
   /** Middleware override. Defaults to `[offset(8), flip(), shift({padding: 8}), hide()]`
-   *  — standard Tiptap-style placement for selection-anchored UI. */
+   *  — standard Tiptap-style placement for selection-anchored UI.
+   *
+   *  **Identity warning:** the middleware array is read in the hook's
+   *  `useLayoutEffect` dep list. Passing a fresh array literal on every
+   *  render will tear down + re-attach Floating UI's `autoUpdate`
+   *  listeners on every render, cancelling scroll/resize tracking mid-
+   *  frame. Either (a) pass a module-level constant, (b) memoize in the
+   *  caller with a stable reference, or (c) omit the prop to inherit the
+   *  default constant. React Compiler auto-memoizes array literals in
+   *  component bodies, but do not rely on that in code that may run
+   *  uncompiled (e.g. SSR harnesses or pre-compiler tests). */
   middleware?: Middleware[];
 }
 

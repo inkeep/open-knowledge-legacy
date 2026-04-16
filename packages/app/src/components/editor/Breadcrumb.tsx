@@ -5,49 +5,88 @@
  * Renders `Document › Cards › Card › Steps › Step` when a deeply-nested block
  * is selected; each ancestor segment is a clickable button that NodeSelects
  * that ancestor. The innermost (currently-selected) segment is non-interactive
- * with `aria-current='true'`.
+ * with `aria-current='location'` — WAI-ARIA 1.2 specifies `location` for
+ * "the current location within an environment or context," which matches
+ * block-ancestor navigation within a single document better than the generic
+ * `true`. (`page` is the canonical breadcrumb value for cross-page trails;
+ * we're navigating block ancestry within one document, so `location` fits.)
  *
- * Hidden when no block is selected — an empty trail is visual noise. The
- * "Document" segment is synthetic (non-clickable) because there's no
+ * Layout: container is always rendered with a reserved min-height so
+ * selecting / deselecting a block does not cause a footer layout shift
+ * (~28px pump visible on rapid drag-select). Content is conditional; the
+ * empty state collapses to `aria-hidden` with no interactive children.
+ * The "Document" segment is synthetic (non-clickable) because there's no
  * meaningful "select document" action; it's an orientation anchor.
+ *
+ * Unregistered components (descriptor resolves to wildcard `'*'`) surface
+ * the original `componentName` from the entry, not `"*"` — the real name
+ * is the only useful label for AT users.
  */
 
 import type { Editor } from '@tiptap/core';
 import { ChevronRight } from 'lucide-react';
+import type { BlockChainEntry } from '../../editor/extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../../editor/hooks/use-block-selection.ts';
 import { getDescriptor } from '../../editor/registry/index.ts';
 
+/** Resolve the human label for an ancestor entry.
+ *
+ *  Prefers the registered descriptor's `displayName`, falls back to
+ *  descriptor `name`, and finally to the entry's own `componentName` when
+ *  the descriptor is the wildcard — in that case the registered
+ *  `displayName`/`name` are both `'*'`, which is a useless trail label. */
+function entryLabel(entry: BlockChainEntry): string {
+  const descriptor = getDescriptor(entry.componentName);
+  if (descriptor.name === '*') return entry.componentName;
+  return descriptor.displayName ?? descriptor.name;
+}
+
 export function Breadcrumb({ editor }: { editor: Editor | null }) {
   const blockSelection = useBlockSelection(editor);
+  const hasSelection = Boolean(editor && blockSelection && blockSelection.ancestorChain.length > 0);
 
-  // Hide entirely when no block is selected — avoids always-visible noise.
-  if (!editor || !blockSelection || blockSelection.ancestorChain.length === 0) {
-    return null;
-  }
-
-  const { ancestorChain, selectedBlockId } = blockSelection;
-
+  // Render the container unconditionally — `min-h-[28px]` reserves the
+  // footer height so selecting / deselecting never shifts the editor body.
+  // When no block is selected, the nav is empty but not display:none (the
+  // reserved space is the point).
   return (
     <nav
       aria-label="Block ancestor navigation"
-      className="jsx-component-breadcrumb flex items-center gap-1 px-3 py-1.5 text-xs font-mono text-muted-foreground border-t border-border"
+      aria-hidden={hasSelection ? undefined : 'true'}
+      className="jsx-component-breadcrumb flex items-center gap-1 min-h-[28px] px-3 py-1.5 text-xs font-mono text-muted-foreground border-t border-border"
     >
+      {hasSelection && blockSelection ? (
+        <BreadcrumbContent editor={editor as Editor} blockSelection={blockSelection} />
+      ) : null}
+    </nav>
+  );
+}
+
+function BreadcrumbContent({
+  editor,
+  blockSelection,
+}: {
+  editor: Editor;
+  blockSelection: NonNullable<ReturnType<typeof useBlockSelection>>;
+}) {
+  const { ancestorChain, selectedBlockId } = blockSelection;
+  return (
+    <>
       {/* Synthetic "Document" anchor — non-interactive; orientation only. */}
       <span aria-hidden="true" className="opacity-60">
         Document
       </span>
       {ancestorChain.map((entry, index) => {
-        const descriptor = getDescriptor(entry.componentName);
-        const label = descriptor.displayName ?? descriptor.name;
+        const label = entryLabel(entry);
         const isInnermost = entry.bridgeId === selectedBlockId;
 
         return (
           <span key={entry.bridgeId} className="flex items-center gap-1">
             <ChevronRight size={12} className="opacity-50" aria-hidden="true" />
             {isInnermost ? (
-              // Innermost: non-interactive, aria-current flags the active
-              // node in the trail (WAI-ARIA breadcrumb authoring pattern).
-              <span aria-current="true" className="text-foreground">
+              // Innermost: non-interactive; `aria-current="location"` marks
+              // the current position within the ancestor hierarchy.
+              <span aria-current="location" className="text-foreground">
                 {label}
               </span>
             ) : (
@@ -71,6 +110,6 @@ export function Breadcrumb({ editor }: { editor: Editor | null }) {
           </span>
         );
       })}
-    </nav>
+    </>
   );
 }

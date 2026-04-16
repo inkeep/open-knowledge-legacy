@@ -24,6 +24,7 @@
 
 import type { Editor } from '@tiptap/core';
 import { useEffect, useRef } from 'react';
+import type { BlockChainEntry } from '../../editor/extensions/selection-state-plugin.ts';
 import { useBlockSelection } from '../../editor/hooks/use-block-selection.ts';
 import { getDescriptor } from '../../editor/registry/index.ts';
 
@@ -49,8 +50,14 @@ export function SelectionAnnouncer({ editor }: { editor: Editor | null }) {
     timeoutRef.current = window.setTimeout(() => {
       if (regionRef.current) {
         // Imperative write — bypasses React's batching so AT gets every
-        // mutation. Setting to an empty string then the new message
-        // guarantees a DOM change even when messages are identical.
+        // mutation. Two-step clear-then-write guarantees a detectable DOM
+        // change even when the new message is identical to the previous
+        // one (e.g. re-selecting the same block): screen readers only
+        // re-announce on observed content change, so `textContent = same`
+        // would be a silent no-op.
+        // Reference: MDN "ARIA live regions" — "briefly clear the contents
+        // of the alert container before injecting the alert message."
+        regionRef.current.textContent = '';
         regionRef.current.textContent = message;
       }
       timeoutRef.current = null;
@@ -70,10 +77,28 @@ export function SelectionAnnouncer({ editor }: { editor: Editor | null }) {
 }
 
 /**
+ * Resolve the announce-label for a BlockChainEntry. Prefers the registered
+ * descriptor's `displayName`, falls back to descriptor `name`, and finally to
+ * the entry's own `componentName` (the string the user actually authored) —
+ * the last case covers unregistered components that resolve to the wildcard
+ * `'*'` descriptor, where neither `displayName` nor `name` carries useful
+ * text. Appends " (unregistered)" in the wildcard case so AT users
+ * understand why the label is unfamiliar.
+ */
+function entryLabel(entry: BlockChainEntry): string {
+  const descriptor = getDescriptor(entry.componentName);
+  if (descriptor.name === '*') {
+    return `${entry.componentName} (unregistered)`;
+  }
+  return descriptor.displayName ?? descriptor.name;
+}
+
+/**
  * Format the aria-live message for the current selection. Separated out so
  * the formatting logic is pure and the useEffect stays focused on lifecycle.
+ * Exported for unit testing.
  */
-function formatSelectionMessage(
+export function formatSelectionMessage(
   editor: Editor,
   blockSelection: ReturnType<typeof useBlockSelection>,
 ): string {
@@ -83,16 +108,14 @@ function formatSelectionMessage(
 
   const chain = blockSelection.ancestorChain;
   const innermost = chain[chain.length - 1];
-  const innermostDescriptor = getDescriptor(innermost.componentName);
-  const innermostLabel = innermostDescriptor.displayName ?? innermostDescriptor.name;
+  const innermostLabel = entryLabel(innermost);
 
   if (chain.length === 1) {
     return `Selected: ${innermostLabel}`;
   }
 
   const parent = chain[chain.length - 2];
-  const parentDescriptor = getDescriptor(parent.componentName);
-  const parentLabel = parentDescriptor.displayName ?? parentDescriptor.name;
+  const parentLabel = entryLabel(parent);
 
   // Compute the selected wrapper's index within its parent's children via
   // PM position resolution. If the resolve fails (doc shifted mid-tick), we
