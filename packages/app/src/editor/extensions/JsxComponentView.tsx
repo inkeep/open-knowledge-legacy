@@ -17,7 +17,7 @@
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
-import React, { type ErrorInfo, type ReactNode, useState } from 'react';
+import React, { type ErrorInfo, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
 import { markUserTyping } from '../observers.ts';
@@ -97,6 +97,8 @@ export function extractPrimitiveProps(
 export function JsxComponentView({ node, editor, getPos, selected }: NodeViewProps) {
   const descriptor = getDescriptor(node.attrs.componentName as string);
   const [renderError, setRenderError] = useState<Error | null>(null);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const prevSelected = useRef(selected);
 
   const pos = typeof getPos === 'function' ? getPos() : undefined;
 
@@ -123,6 +125,15 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   const hasEditableProps = descriptor.props.some(
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
   );
+
+  // Auto-open popover when component becomes selected (e.g., after insertion
+  // via focusInsertedComponent → setNodeSelection).
+  useEffect(() => {
+    if (selected && !prevSelected.current && hasEditableProps) {
+      setPopoverOpen(true);
+    }
+    prevSelected.current = selected;
+  });
 
   const primitiveProps = extractPrimitiveProps(node.attrs, descriptor.props);
   const resetKey = `${descriptor.name}::${JSON.stringify(primitiveProps)}`;
@@ -239,7 +250,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
 
         {/* Settings → Popover PropPanel (only if editable props) */}
         {hasEditableProps && (
-          <Popover defaultOpen={selected}>
+          <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
             <PopoverTrigger asChild>
               <button
                 type="button"
@@ -303,9 +314,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
             }`}
             contentEditable={
-              !descriptor.hasChildren || descriptor.isSelfClosing || descriptor.emptyChildName
-                ? false
-                : true
+              !(!descriptor.hasChildren || descriptor.isSelfClosing || descriptor.emptyChildName)
             }
           />
         </Comp>
