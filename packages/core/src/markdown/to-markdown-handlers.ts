@@ -253,6 +253,36 @@ export const toMarkdownHandlers = {
     const sep = node.spread ? '\n\n' : '\n';
     return out.join(sep);
   },
+
+  /**
+   * mdxJsxFlowElement: emit node.data.sourceRaw verbatim when present, so the
+   * MDX source round-trips byte-identically. Shipped as part of D7 / US-005:
+   * the PM→mdast handler (index.ts `jsxComponent`) always sets sourceRaw, so
+   * this branch is the production path. If sourceRaw is missing (e.g. a tree
+   * constructed by hand with no position-slice walker run), fall back to the
+   * default extension handler by returning it via mdxToMarkdown's registered
+   * `mdxJsxFlowElement` handler — but in practice we always have sourceRaw.
+   */
+  mdxJsxFlowElement(node) {
+    const raw = node.data?.sourceRaw;
+    if (typeof raw === 'string') return raw;
+    // Minimal fallback: reconstruct the simplest form. Only reached if an
+    // mdxJsxFlowElement appears without position-slice coverage — outside
+    // our parse pipeline.
+    const name = node.name ?? '';
+    return `<${name}/>`;
+  },
+
+  /**
+   * mdxJsxTextElement: same sourceRaw-verbatim strategy as the flow element
+   * above. Covers inline `<Note>...</Note>` and `<br/>` variants.
+   */
+  mdxJsxTextElement(node) {
+    const raw = node.data?.sourceRaw;
+    if (typeof raw === 'string') return raw;
+    const name = node.name ?? '';
+    return `<${name}/>`;
+  },
 } satisfies Partial<MdastToMarkdownHandlers>;
 
 /**

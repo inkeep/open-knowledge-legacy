@@ -683,11 +683,18 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // JSX component → emit raw source as HTML for byte-identical MDX round-trip
+  // JSX component → first-class `mdxJsxFlowElement` mdast type per D7 / US-005.
+  // The raw source is stored in `data.sourceRaw`; the mdast→markdown override
+  // in `to-markdown-handlers.ts:mdxJsxFlowElement` reads it and emits verbatim,
+  // producing bit-exact equivalent output to the former
+  // `{type:'html',value:content}` workaround.
   if (n.jsxComponent) {
     nodeHandlers.jsxComponent = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.attrs.content ?? '',
+      type: 'mdxJsxFlowElement' as const,
+      name: null,
+      attributes: [],
+      children: [],
+      data: { sourceRaw: String(pmNode.attrs.content ?? '') },
     });
   }
 
@@ -699,13 +706,21 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // jsxInline → prefer sourceRaw for byte-identical round-trip; fallback to
-  // reconstructing from structured attributes
+  // jsxInline → first-class `mdxJsxTextElement` mdast type per D7 / US-005.
+  // Same sourceRaw-verbatim strategy as jsxComponent. Preserves the Y.Item
+  // identity invariant: PM-attr-only shape changes on nested text don't
+  // invalidate the parent container.
   if (n.jsxInline) {
-    nodeHandlers.jsxInline = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.attrs.sourceRaw || pmNode.textContent || '',
-    });
+    nodeHandlers.jsxInline = (pmNode: PmNode) => {
+      const raw = pmNode.attrs.sourceRaw || pmNode.textContent || '';
+      return {
+        type: 'mdxJsxTextElement' as const,
+        name: null,
+        attributes: [],
+        children: [],
+        data: { sourceRaw: String(raw) },
+      };
+    };
   }
 
   // Wiki-link → first-class `wikiLink` mdast type per D7 / US-004.
