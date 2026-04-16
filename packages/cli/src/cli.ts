@@ -25,6 +25,7 @@ import { initCommand } from './commands/init.ts';
 import { mcpCommand } from './commands/mcp.ts';
 import { previewCommand } from './commands/preview.ts';
 import { startCommand } from './commands/start.ts';
+import { uiCommand } from './commands/ui.ts';
 import { PACKAGE_VERSION } from './constants.ts';
 import { type Config, loadConfig } from './index.ts';
 
@@ -81,5 +82,9 @@ program.addCommand(initCommand());
 // preview command — read-only content scope inspection
 const preview = previewCommand(() => resolvedConfig);
 program.addCommand(preview);
+
+// ui command — serves the React editor (sibling of `start`).
+const ui = uiCommand(() => resolvedConfig);
+program.addCommand(ui);
 
 await program.parseAsync();

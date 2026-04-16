@@ -147,3 +147,11 @@ export {
   type WriterIdentity,
 } from './shadow-repo.ts';
 export { createServer, type ServerInstance, type ServerOptions } from './standalone.ts';
+export {
+  acquireUiLock,
+  readUiLock,
+  releaseUiLock,
+  UiLockCollisionError,
+  type UiLockMetadata,
+  updateUiLockPort,
+} from './ui-lock.ts';
