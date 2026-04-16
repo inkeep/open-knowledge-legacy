@@ -983,6 +983,12 @@ button:active:not(:disabled) {
   padding-inline-start: calc(var(--line-indent, 0) * 1ch);
 }
 
+/* Broken link-ref — wavy red underline (LSP convention). */
+.cm-link-ref-broken {
+  text-decoration: underline wavy;
+  text-decoration-color: oklch(55% 0.15 25);
+}
+
 /* Code language badge — visible pill next to opening fence. */
 .cm-code-language-badge {
   display: inline-block;
