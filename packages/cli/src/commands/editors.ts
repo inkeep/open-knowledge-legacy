@@ -27,6 +27,8 @@ export interface EditorMcpTarget {
   buildEntry: () => Record<string, unknown>;
   /** Whether the config is project-local or user-global. */
   scope: 'project' | 'global';
+  /** Project-local agent instruction file to inject the Open Knowledge section into, if any. */
+  instructionsPath?: (cwd: string) => string;
 }
 
 export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
@@ -37,6 +39,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     topLevelKey: 'mcpServers',
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
+    instructionsPath: (cwd) => join(cwd, 'CLAUDE.md'),
   },
   cursor: {
     id: 'cursor',
@@ -45,6 +48,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     topLevelKey: 'mcpServers',
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'project',
+    instructionsPath: (cwd) => join(cwd, '.cursorrules'),
   },
   vscode: {
     id: 'vscode',
@@ -61,6 +65,7 @@ export const EDITOR_TARGETS: Record<EditorId, EditorMcpTarget> = {
     topLevelKey: 'mcpServers',
     buildEntry: () => ({ command: MCP_SERVER_COMMAND, args: MCP_SERVER_ARGS }),
     scope: 'global',
+    instructionsPath: (cwd) => join(cwd, '.windsurfrules'),
   },
 };
 
