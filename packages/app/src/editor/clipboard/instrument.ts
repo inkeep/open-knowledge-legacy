@@ -1,3 +1,5 @@
+import { ChunkedInsertError, HtmlPayloadTooLargeError } from '@inkeep/open-knowledge-core';
+
 /**
  * Performance + source-detection instrumentation.
  *
@@ -167,4 +169,24 @@ export function logChunkedInsertFail(info: ChunkedInsertFailInfo): void {
       reason: info.reason,
     }),
   );
+}
+
+/**
+ * Map an unknown thrown value to a stable class name for telemetry so
+ * aggregators can distinguish expected-large-input (`HtmlPayloadTooLargeError`)
+ * and partial-progress failures (`ChunkedInsertError`) from bug-class errors
+ * without string-matching `reason`. Single source of truth for the
+ * `errorClass` taxonomy — both clipboard dispatchers import from here so new
+ * typed error classes need to be registered in exactly one place.
+ *
+ * Default `Error` name is elided: untyped `new Error(msg)` carries `name
+ * === 'Error'` which provides no signal beyond what `reason` already
+ * conveys. Typed subclasses (set via class constructor or explicit `name =`)
+ * produce a discriminating value; untyped errors omit the field entirely.
+ */
+export function classifyError(err: unknown): string | undefined {
+  if (err instanceof HtmlPayloadTooLargeError) return 'HtmlPayloadTooLargeError';
+  if (err instanceof ChunkedInsertError) return 'ChunkedInsertError';
+  if (err instanceof Error && err.name && err.name !== 'Error') return err.name;
+  return undefined;
 }

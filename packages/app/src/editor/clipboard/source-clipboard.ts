@@ -32,7 +32,6 @@ import { EditorView } from '@codemirror/view';
 import {
   ChunkedInsertError,
   chunkedYTextInsert,
-  HtmlPayloadTooLargeError,
   htmlToMdast,
   markdownToHtml,
   mdastToMarkdown,
@@ -41,6 +40,7 @@ import { toast } from 'sonner';
 import * as Y from 'yjs';
 import { detectSource } from './detect-source.ts';
 import {
+  classifyError,
   logChunkedInsertFail,
   logConversionFail,
   logIfSlow,
@@ -379,16 +379,4 @@ export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): vo
     htmlBytes: html.length,
   });
   toast.error('Paste failed. Your selection has been restored.');
-}
-
-/**
- * Map an unknown thrown value to a stable class name for telemetry. Allows
- * aggregators to distinguish expected-large-input (`HtmlPayloadTooLargeError`)
- * from unexpected failures without string-matching the reason field.
- */
-function classifyError(err: unknown): string | undefined {
-  if (err instanceof HtmlPayloadTooLargeError) return 'HtmlPayloadTooLargeError';
-  if (err instanceof ChunkedInsertError) return 'ChunkedInsertError';
-  if (err instanceof Error && err.name) return err.name;
-  return undefined;
 }

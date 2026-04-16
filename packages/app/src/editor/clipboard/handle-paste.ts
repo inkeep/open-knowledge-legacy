@@ -28,15 +28,11 @@
  */
 
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import {
-  HtmlPayloadTooLargeError,
-  htmlToMdast,
-  mdastToMarkdown,
-} from '@inkeep/open-knowledge-core';
+import { htmlToMdast, mdastToMarkdown } from '@inkeep/open-knowledge-core';
 import type { JSONContent } from '@tiptap/core';
 import type { EditorView } from '@tiptap/pm/view';
 import { detectSource } from './detect-source.ts';
-import { logConversionFail, logIfSlow, logSourceDetected } from './instrument.ts';
+import { classifyError, logConversionFail, logIfSlow, logSourceDetected } from './instrument.ts';
 import { isMarkdown } from './is-markdown.ts';
 import { pasteShiftHeld } from './shift-tracker.ts';
 
@@ -294,15 +290,4 @@ function applyJsonSlice(
     });
     return false;
   }
-}
-
-/**
- * Map an unknown thrown value to a stable class name for telemetry. Allows
- * aggregators to distinguish expected-large-input (`HtmlPayloadTooLargeError`)
- * from unexpected failures without string-matching the reason field.
- */
-function classifyError(err: unknown): string | undefined {
-  if (err instanceof HtmlPayloadTooLargeError) return 'HtmlPayloadTooLargeError';
-  if (err instanceof Error && err.name) return err.name;
-  return undefined;
 }
