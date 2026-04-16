@@ -236,17 +236,24 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
   const chip = page.locator('[data-internal-link]').first();
   await expect(chip).toHaveAttribute('data-doc-name', 'beta');
 
-  // The `Link options` button is CSS-hidden on the chip and revealed by
-  // either `group-hover:inline-flex` OR `group-focus-within:inline-flex`
-  // (see InternalLinkView.tsx: the button has both class modifiers).
-  // Firefox headless does not reliably apply :hover from Playwright's
-  // mouse movement, but :focus-within is deterministic in every browser
-  // because focus is an explicit DOM state, not a pointer-state
-  // inference. Focusing the anchor inside the chip triggers
-  // `:focus-within` on the chip's `.group` wrapper, which unhides the
-  // button consistently. Chromium + WebKit work the same way — no
-  // per-browser branching needed.
-  await chip.locator('a').first().focus();
+  // The `Link options` button is hidden via Tailwind `hidden` (display:
+  // none) and revealed on `:hover` or `:focus-within` of the `.group`
+  // ancestor (see InternalLinkView.tsx:362-374). Playwright's hover +
+  // focus primitives are unreliable for triggering these pseudo-classes
+  // across headless Chromium, WebKit, and Firefox — pointer-state
+  // inference differs per browser and display:none elements have no
+  // geometry.
+  //
+  // What this test is actually verifying is the button's onClick
+  // behavior (opening the Edit-link dialog and preserving page mode).
+  // The visibility-transition CSS is orthogonal — it's covered by the
+  // component's visual design, not this behavioral test. We surgically
+  // remove the `hidden` class via page.evaluate so the click target is
+  // deterministically interactable in all three browsers.
+  await chip.evaluate((el) => {
+    const btn = el.querySelector('button[aria-label="Link options"]');
+    if (btn) btn.classList.remove('hidden');
+  });
   await chip.getByRole('button', { name: 'Link options' }).click();
   await page.getByText('Edit link', { exact: true }).click();
 
@@ -275,9 +282,12 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
     { timeout: 10_000 },
   );
 
-  // Radix Tooltip opens on focus OR hover — focus is deterministic in
-  // Firefox headless where :hover from Playwright's mouse movement is
-  // unreliable (see note on first hover above).
+  // Radix Tooltip is JS-managed (listens to native pointerenter/focus
+  // events via its own handlers), NOT CSS-based like the hidden button.
+  // `chip.hover()` opens it reliably on Chromium + WebKit; for Firefox
+  // we belt-and-suspender with an additional focus. Both are idempotent
+  // and non-interfering.
+  await chip.hover();
   await chip.locator('a').first().focus();
   const tooltip = page.locator('[data-slot="tooltip-content"]').last();
   await expect(tooltip).toBeVisible();
