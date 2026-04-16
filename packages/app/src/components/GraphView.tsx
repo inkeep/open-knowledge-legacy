@@ -5,6 +5,8 @@ import ForceGraph2D, {
   type LinkObject,
   type NodeObject,
 } from 'react-force-graph-2d';
+import { usePageList } from '@/components/PageListContext';
+import { hashFromDocName } from '@/lib/doc-hash';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 import {
@@ -27,6 +29,7 @@ import {
   getGraphNodeVisualState,
   resolveGraphNodeClickAction,
 } from './graph-view-utils';
+import { resolveTargetNavigationIntent } from './target-navigation-intent';
 
 interface LinkGraphResponse {
   ok: boolean;
@@ -457,6 +460,7 @@ export function GraphView({
   const backgroundPointerRef = useRef<BackgroundPointerState | null>(null);
   const [dimensions, setDimensions] = useState({ width: 320, height: 400 });
   const { resolvedTheme } = useTheme();
+  const { folderPaths, loading: pageListLoading, pages } = usePageList();
 
   useEffect(() => {
     let cancelled = false;
@@ -544,9 +548,11 @@ export function GraphView({
   const selectedNodeColor = isDark ? '#34d399' : '#059669';
   const activeSelectedNodeColor = isDark ? '#c084fc' : '#7c3aed';
   const externalNodeColor = isDark ? '#f59e0b' : '#c2410c';
+  const folderNodeColor = isDark ? '#a78bfa' : '#7c3aed';
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
   const activeNodeRingColor = isDark ? 'rgba(105,163,255,0.45)' : 'rgba(55,132,255,0.3)';
+  const folderNodeRingColor = isDark ? 'rgba(167,139,250,0.38)' : 'rgba(124,58,237,0.22)';
   const selectedNodeRingColor = isDark ? 'rgba(52,211,153,0.5)' : 'rgba(5,150,105,0.3)';
   const activeSelectedNodeRingColor = isDark ? 'rgba(192,132,252,0.5)' : 'rgba(124,58,237,0.35)';
   const labelChipColor = isDark ? 'rgba(3,7,18,0.92)' : 'rgba(255,255,255,0.94)';
@@ -592,6 +598,21 @@ export function GraphView({
   const layoutLinks = displayData.links as GraphLabelLayoutLink[];
   const labelDescriptors = buildGraphLabelDescriptors(displayData.nodes);
   const focusKey = `${activeDocName}|${focusZoom}|${graphSig.nodes}|${graphSig.links}`;
+  const navigationIntentByNodeId = new Map(
+    graphData.nodes.flatMap((node) => {
+      if (node.kind !== 'doc') return [];
+      const navigationIntent = pageListLoading
+        ? {
+            displayState: 'doc' as const,
+            hashDocName: node.docName,
+          }
+        : resolveTargetNavigationIntent(node.docName, {
+            pages,
+            folderPaths,
+          });
+      return [[node.id, navigationIntent] as const];
+    }),
+  );
 
   useEffect(() => {
     onStatsChange?.(displayData.nodes.length, displayData.links.length, loading);
@@ -903,7 +924,13 @@ export function GraphView({
             height={dimensions.height}
             backgroundColor={bgColor}
             nodeId="id"
-            nodeLabel={(node: NodeObject<GraphNode>) => getGraphNodeTooltipLabel(node)}
+            nodeLabel={(node: NodeObject<GraphNode>) => {
+              const label = getGraphNodeTooltipLabel(node);
+              if (node.kind !== 'doc') return label;
+              return navigationIntentByNodeId.get(node.id)?.displayState === 'folder'
+                ? `Folder: ${label}`
+                : label;
+            }}
             nodeRelSize={4}
             nodeVal={(node: NodeObject<GraphNode>) => {
               const state = getGraphNodeVisualState(node, {
@@ -923,10 +950,14 @@ export function GraphView({
               globalScale: number,
             ) => {
               if (typeof node.x !== 'number' || typeof node.y !== 'number') return;
+
               const state = getGraphNodeVisualState(node, {
                 activeDocName,
                 selectedNodeId,
               });
+              const isFolderTarget =
+                node.kind === 'doc' &&
+                navigationIntentByNodeId.get(node.id)?.displayState === 'folder';
               const nodeRadius = getGraphNodeCanvasRadius(state);
               const pointerRadius = getGraphNodePointerRadius(state, globalScale);
 
@@ -941,7 +972,9 @@ export function GraphView({
                       ? activeSelectedNodeColor
                       : state === 'external' || state === 'external-selected'
                         ? externalNodeColor
-                        : defaultNodeColor;
+                        : isFolderTarget
+                          ? folderNodeColor
+                          : defaultNodeColor;
               ctx.fill();
 
               if (pointerRadius > nodeRadius) {
@@ -954,6 +987,12 @@ export function GraphView({
                       ? selectedNodeRingColor
                       : activeSelectedNodeRingColor;
                 ctx.lineWidth = 2 / globalScale;
+                ctx.stroke();
+              } else if (isFolderTarget) {
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, nodeRadius + 2 / globalScale, 0, 2 * Math.PI, false);
+                ctx.strokeStyle = folderNodeRingColor;
+                ctx.lineWidth = 1.5 / globalScale;
                 ctx.stroke();
               }
             }}
@@ -1026,6 +1065,21 @@ export function GraphView({
             linkDirectionalArrowRelPos={1}
             linkWidth={1}
             showPointerCursor={(obj) => Boolean(obj && 'kind' in obj)}
+            onNodeClick={(node: NodeObject<GraphNode>) => {
+              if (node.kind === 'external') {
+                window.open(node.url, '_blank', 'noopener,noreferrer');
+                return;
+              }
+              if (node.docName) {
+                const navigationIntent = navigationIntentByNodeId.get(node.id);
+                window.location.assign(
+                  hashFromDocName(
+                    navigationIntent?.hashDocName ?? node.docName,
+                    node.anchor ?? null,
+                  ),
+                );
+              }
+            }}
           />
         </div>
       )}

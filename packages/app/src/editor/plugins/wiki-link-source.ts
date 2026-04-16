@@ -44,7 +44,7 @@ const PAGES_CACHE_TTL_MS = 5_000;
 
 let pagesCache: PageItem[] | null = null;
 let pagesCacheTime = 0;
-let pageNameSet: Set<string> | null = null;
+let knownTargetSet: Set<string> | null = null;
 const headingsCache = new Map<string, { headings: HeadingEntry[]; time: number }>();
 
 async function getPages(): Promise<PageItem[]> {
@@ -52,7 +52,7 @@ async function getPages(): Promise<PageItem[]> {
   if (pagesCache && now - pagesCacheTime < PAGES_CACHE_TTL_MS) return pagesCache;
   pagesCache = await fetchPages();
   pagesCacheTime = now;
-  pageNameSet = buildPageNameSet(pagesCache);
+  knownTargetSet = buildKnownWikilinkTargetSet(pagesCache);
   return pagesCache;
 }
 
@@ -94,6 +94,20 @@ export function buildPageNameSet(pages: PageItem[]): Set<string> {
   return s;
 }
 
+export function buildKnownWikilinkTargetSet(pages: PageItem[]): Set<string> {
+  const s = buildPageNameSet(pages);
+  for (const page of pages) {
+    const segments = page.docName.split('/');
+    segments.pop();
+    let folderPath = '';
+    for (const segment of segments) {
+      folderPath = folderPath ? `${folderPath}/${segment}` : segment;
+      s.add(folderPath.toLowerCase());
+    }
+  }
+  return s;
+}
+
 /** Extract the target page name from a wikilink's inner text (the part between
  * `[[` and `]]`). Strips optional `#anchor` and `|alias`, normalizes to lowercase.
  * Returns the empty string for empty or whitespace-only inner text.
@@ -105,7 +119,8 @@ export function extractWikilinkTarget(inner: string): string {
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   // Cache-cold → all wikilinks get plain mark (no false-positive broken flash)
-  const pageSet = pagesCache ? pageNameSet : null;
+  // Warm cache → doc names, titles, and folder paths count as known targets.
+  const targetSet = pagesCache ? knownTargetSet : null;
 
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
@@ -113,9 +128,9 @@ function buildDecorations(view: EditorView): DecorationSet {
     let m = WIKI_LINK_RE.exec(text);
     while (m !== null) {
       let mark = wikiLinkMark;
-      if (pageSet) {
+      if (targetSet) {
         const target = extractWikilinkTarget(m[0].slice(2, -2)); // strip [[ and ]]
-        if (target && !pageSet.has(target)) {
+        if (target && !targetSet.has(target)) {
           mark = wikiLinkBrokenMark;
         }
       }

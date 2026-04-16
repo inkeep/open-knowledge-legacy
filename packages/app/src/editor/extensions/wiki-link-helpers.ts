@@ -46,11 +46,17 @@ export function buildUnresolvedWikiLinkAttrs(query: string): {
   };
 }
 
+export function getWikiLinkResolutionCandidates(target: string): string[] {
+  const trimmed = target.trim();
+  if (!trimmed) return [];
+  const slug = toWikiLinkSlug(trimmed);
+  return slug.length > 0 && slug !== trimmed ? [slug] : [];
+}
+
 export function isResolvedWikiLinkTarget(target: string, pages: Set<string>): boolean {
   const trimmed = target.trim();
   if (!trimmed) return false;
   if (pages.has(trimmed)) return true;
 
-  const slug = toWikiLinkSlug(trimmed);
-  return slug.length > 0 && pages.has(slug);
+  return getWikiLinkResolutionCandidates(trimmed).some((candidate) => pages.has(candidate));
 }
