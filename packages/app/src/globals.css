@@ -1029,7 +1029,12 @@ button:active:not(:disabled) {
   z-index: 10;
   white-space: nowrap;
 }
-.jsx-component-wrapper:hover > .jsx-component-chrome {
+/* Only show chrome for the INNERMOST hovered component — prevents
+   parent and child chrome bars from overlapping at the top-right.
+   When hovering a Card inside Cards, only the Card's icons show.
+   When hovering the Cards container gap, only Cards' icons show. */
+.jsx-component-wrapper:hover:not(:has(.component-children .jsx-component-wrapper:hover))
+> .jsx-component-chrome {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1087,7 +1092,8 @@ button:active:not(:disabled) {
   background: var(--popover);
   white-space: nowrap;
 }
-.jsx-component-wrapper:hover > .jsx-add-child-pill {
+.jsx-component-wrapper:hover:not(:has(.component-children .jsx-component-wrapper:hover))
+  > .jsx-add-child-pill {
   opacity: 1;
   pointer-events: auto;
 }
