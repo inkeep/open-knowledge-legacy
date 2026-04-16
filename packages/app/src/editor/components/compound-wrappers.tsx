@@ -93,7 +93,7 @@ export function EditorTabs({
   return (
     <div
       ref={rootRef}
-      className="editor-tabs-root flex flex-col overflow-hidden rounded-xl border bg-fd-secondary my-4"
+      className="editor-tabs-root flex flex-col rounded-xl border bg-fd-secondary my-4"
       data-active-tab={defaultValue}
     >
       {/* Tab trigger bar */}
@@ -245,7 +245,7 @@ export function EditorAccordion({ title, children }: { title?: string; children?
         </button>
       </h3>
       <div
-        className="editor-accordion-content overflow-hidden text-sm data-[state=closed]:hidden"
+        className="editor-accordion-content text-sm data-[state=closed]:hidden"
         data-state="open"
       >
         <div className="p-4 pt-0 prose-no-margin">{children}</div>
