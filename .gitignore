@@ -43,4 +43,10 @@ blob-report/
 
 # Editor workspace files
 .vscode/
+.openknowledge/
+
+# Benchmark harness output — per-run artifacts, published as CI artifacts.
+# Baselines live in specs/.../evidence/perf-baseline-measured.md instead.
+packages/core/tests/perf/results.*.json
+
 /test-doc.md

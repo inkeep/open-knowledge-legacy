@@ -1,6 +1,6 @@
 # Research Reports Catalogue
 
-> Auto-generated on 2026-04-15 by `generate-catalogue.ts`
+> Auto-generated on 2026-04-16 by `generate-catalogue.ts`
 > 85 valid reports indexed
 
 ---
