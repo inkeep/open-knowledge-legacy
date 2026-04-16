@@ -189,13 +189,13 @@ export function EditorAccordions({
 
 export function EditorAccordion({ title, children }: { title?: string; children?: ReactNode }) {
   return (
-    <div className="editor-accordion-item" data-state="closed">
+    <div className="editor-accordion-item" data-state="open">
       <h3 className="flex">
         <button
           type="button"
-          aria-expanded={false}
+          aria-expanded={true}
           className="flex flex-1 items-center gap-2 p-4 text-start text-sm font-medium transition-all [&[data-state=open]>svg]:rotate-180"
-          data-state="closed"
+          data-state="open"
           onClick={(e) => {
             const item = e.currentTarget.closest('.editor-accordion-item');
             if (!item) return;
@@ -246,7 +246,7 @@ export function EditorAccordion({ title, children }: { title?: string; children?
       </h3>
       <div
         className="editor-accordion-content overflow-hidden text-sm data-[state=closed]:hidden"
-        data-state="closed"
+        data-state="open"
       >
         <div className="p-4 pt-0 prose-no-margin">{children}</div>
       </div>
