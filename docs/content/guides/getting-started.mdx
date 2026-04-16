@@ -2,7 +2,6 @@
 title: Getting started
 description: Initialize Open Knowledge on an existing project, start the editor, and connect AI agents.
 ---
-
 ## Prerequisites
 
 - **Bun >= 1.3.11** or **Node.js >= 22**
@@ -27,9 +26,14 @@ cd your-project
 npx @inkeep/open-knowledge init
 ```
 
-This scaffolds the `.open-knowledge/` directory structure, registers the MCP server in your project's `.mcp.json`, and prints a content preview showing which files the watcher will track.
+When run interactively, `init` prompts you to select which editors you use. Based on your selection it:
 
-The `.mcp.json` entry that gets written:
+1. Scaffolds `.open-knowledge/` and writes `AGENTS.md` with the Open Knowledge agent instructions.
+2. Registers the MCP server in each editor's config file (e.g. `.mcp.json` for Claude Code, `.cursor/mcp.json` for Cursor).
+3. Writes the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]]. VS Code has no standard agent rules file.
+4. Prints a content preview showing which files the watcher will track.
+
+The `.mcp.json` entry written for Claude Code:
 
 ```json
 {
@@ -42,7 +46,9 @@ The `.mcp.json` entry that gets written:
 }
 ```
 
-The command is idempotent -- safe to run again without side effects. Pass `--force` to overwrite an existing `.mcp.json` entry, or `--no-mcp` to skip writing `.mcp.json` entirely.
+The command is idempotent — safe to run again without side effects. Pass `--force` to overwrite existing entries (including the Open Knowledge section in `AGENTS.md` and per-editor instruction files), or `--no-mcp` to skip writing editor config files entirely.
+
+**Upgrading an existing project:** if you ran `init` before, the `AGENTS.md` marker block is already present and `init` skips it by default. Run `open-knowledge init --force` to refresh the injected section with the latest agent instructions.
 </Step>
 
 </Steps>
