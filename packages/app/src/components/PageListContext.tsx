@@ -1,9 +1,12 @@
 import { createContext, type ReactNode, use, useEffect, useRef, useState } from 'react';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
+import { deriveKnownFolderPaths } from './navigation-targets';
 
 interface PageListContextValue {
   /** Set of known docNames (filename without .md extension). */
   pages: Set<string>;
+  /** Set of known folder paths derived from the current document list. */
+  folderPaths: Set<string>;
   /** True while the page list is being fetched from the server. */
   loading: boolean;
   /** Error message from the most recent fetch failure, or null on success. */
@@ -115,9 +118,10 @@ export function PageListProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const pages = mergePageSets(serverPages, optimisticPages);
+  const folderPaths = deriveKnownFolderPaths(pages);
 
   return (
-    <PageListContext value={{ pages, loading, error, refetch, addPage }}>
+    <PageListContext value={{ pages, folderPaths, loading, error, refetch, addPage }}>
       {children}
     </PageListContext>
   );
