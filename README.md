@@ -78,3 +78,7 @@ packages/
   app/     — React editor frontend
 docs/      — Documentation site (Fumadocs)
 ```
+
+## Prior Decision Revisited — detached sibling spawn (FR-1.10 / D-003)
+
+`ok mcp` auto-spawns `ok start` as a **detached sibling process** when no live `server.lock` is present. Earlier research ([reports/zero-config-bunx-cli-packaging/REPORT.md §D4](reports/zero-config-bunx-cli-packaging/REPORT.md) Open Question #1) considered **embedding** Hocuspocus inside the MCP stdio process and rejected auto-start on the grounds that Claude Code's "kill child on session end" model would tear the server down with the MCP stdio. This spec does NOT embed: `ok start` runs in a different process group via `spawn(..., { detached: true, stdio: ['ignore', 'ignore', <fd>] }) + child.unref()`, so it has no parent-lifetime dependency on the MCP stdio. The architectural distinction — sibling, not embedded — is what supersedes §D4, not detachment alone. Detachment of an embedded child still shares the parent's process group; a sibling in its own group is independently alive when Claude Code signals the MCP stdio. See [specs/2026-04-16-zero-ceremony-resume/SPEC.md](specs/2026-04-16-zero-ceremony-resume/SPEC.md) §10 D-003.

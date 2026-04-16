@@ -131,6 +131,14 @@ export interface LaunchJsonResult {
  * built-in preview browser can start the Open Knowledge dev server via
  * `preview_start("open-knowledge")`.
  *
+ * D-020 / D-031: `runtimeArgs` launches `ok ui` (not `ok start`). The UI
+ * sibling-process is what the preview pane actually renders; collab runs
+ * in a separate `ok start` process auto-spawned by `ok ui` via the MCP
+ * stdio path. `autoPort: true` lets Claude Code reroute to a free port
+ * when 3000 is busy — our `ok ui` lock-collision handler then enters
+ * proxy mode (D-022 revised / D-032) so the preview pane always reaches
+ * a live UI regardless of which process bound the port first.
+ *
  * - File missing        → create with the OK entry
  * - File exists, no OK  → merge the entry into configurations
  * - File exists, has OK → skip (unless force)
@@ -140,8 +148,9 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
   const entry = {
     name: LAUNCH_CONFIG_NAME,
     runtimeExecutable: 'npx',
-    runtimeArgs: ['open-knowledge', 'start'],
+    runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
     port: 3000,
+    autoPort: true,
   };
 
   try {

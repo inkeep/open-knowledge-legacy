@@ -369,6 +369,132 @@ describe('runInit', () => {
   });
 
   // -----------------------------------------------------------------------
+  // Claude Code launch.json scaffolding (US-009 / D-020 / D-031)
+  // -----------------------------------------------------------------------
+
+  describe('launch.json scaffolding', () => {
+    it('writes a fresh .claude/launch.json pointing at ok ui with autoPort', () => {
+      const result = runInit({ cwd: testDir });
+
+      expect(result.launchJson).toBeDefined();
+      expect(result.launchJson?.action).toBe('created');
+
+      const configPath = join(testDir, '.claude', 'launch.json');
+      expect(existsSync(configPath)).toBe(true);
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+
+      expect(parsed.configurations).toHaveLength(1);
+      const entry = parsed.configurations[0];
+      expect(entry.name).toBe('open-knowledge');
+      expect(entry.runtimeExecutable).toBe('npx');
+      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.port).toBe(3000);
+      expect(entry.autoPort).toBe(true);
+    });
+
+    it('skips an existing open-knowledge entry without --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['open-knowledge', 'start'],
+                port: 3000,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('skipped-existing');
+
+      // Unchanged — still the old shape
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations[0].runtimeArgs).toEqual(['open-knowledge', 'start']);
+      expect(parsed.configurations[0].autoPort).toBeUndefined();
+    });
+
+    it('migrates an existing open-knowledge entry on --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['open-knowledge', 'start'],
+                port: 3000,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir, force: true });
+      expect(result.launchJson?.action).toBe('merged');
+
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations).toHaveLength(1);
+      const entry = parsed.configurations[0];
+      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(entry.port).toBe(3000);
+      expect(entry.autoPort).toBe(true);
+    });
+
+    it('merges the new entry into an existing launch.json with other configurations', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'some-other-server',
+                runtimeExecutable: 'node',
+                runtimeArgs: ['./server.js'],
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('merged');
+
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
+      expect(parsed.configurations).toHaveLength(2);
+      const ok = parsed.configurations.find((c: { name: string }) => c.name === 'open-knowledge');
+      expect(ok.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
+      expect(ok.autoPort).toBe(true);
+    });
+
+    it('does NOT scaffold launch.json when Claude is not among selected editors', () => {
+      const result = runInit({ cwd: testDir, editors: ['cursor'] });
+      expect(result.launchJson).toBeUndefined();
+      expect(existsSync(join(testDir, '.claude', 'launch.json'))).toBe(false);
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // Content preview integration (US-002)
   // -----------------------------------------------------------------------
 
