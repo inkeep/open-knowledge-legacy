@@ -89,4 +89,36 @@ describeBench('R15 R23 guard: pathological unclosed-tag wall-clock bounds (tier-
     const median = samples[Math.floor(samples.length / 2)];
     expect(median).toBeLessThan(50);
   });
+
+  // Asymptotic-ratio check: the absolute wall-clock budgets above are
+  // hardware-sensitive, but the ratio across input sizes is not. Going
+  // from 5K → 20K tags is 4× input. Under the post-fix O(n log n)
+  // lookup, expected ratio is ≈ 4 × log(20K)/log(5K) ≈ 4.6; under the
+  // pre-fix O(n·m) scan it was ≈ 16. Locking the ratio below 10× is
+  // comfortably below the O(n²) regression signature while leaving
+  // room for cache / GC noise on slower runners.
+  test('20K ÷ 5K ratio stays asymptotically sub-quadratic', () => {
+    function median(src: string): number {
+      protectFromMdx(src); // Warm-up
+      const samples: number[] = [];
+      for (let i = 0; i < 5; i++) {
+        const t0 = performance.now();
+        protectFromMdx(src);
+        samples.push(performance.now() - t0);
+      }
+      samples.sort((a, b) => a - b);
+      return samples[Math.floor(samples.length / 2)];
+    }
+    const t5k = median(pathological(5_000));
+    const t20k = median(pathological(20_000));
+    // Guard against the degenerate "both ran sub-millisecond, ratio is
+    // noise" case by requiring a minimum measurable denominator.
+    if (t5k < 0.5) {
+      // Under measurable noise floor — skip silently rather than emit a
+      // console warning (lint rule noConsole blocks console.warn here).
+      return;
+    }
+    const ratio = t20k / t5k;
+    expect(ratio).toBeLessThan(10);
+  });
 });

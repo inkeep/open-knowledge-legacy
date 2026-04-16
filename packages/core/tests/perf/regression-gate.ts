@@ -198,10 +198,55 @@ export function formatReport(report: RegressionReport): string {
 
 // ───────────────────────── IO helpers ─────────────────────────────────────
 
+/**
+ * Assert every tracked numeric field is finite. Guards against a corrupt
+ * baseline (missing key, `NaN`, `Infinity`) silently passing the gate:
+ * `NaN`-arithmetic propagates, and `x > NaN` is always false — without
+ * this check a bogus baseline would let any fresh result through.
+ */
+function assertFiniteStats(
+  ctx: string,
+  blockCount: number,
+  opName: OpName,
+  stats: { p99: number; p99StdevMs: number },
+): void {
+  if (!Number.isFinite(stats.p99)) {
+    throw new Error(`${ctx}: blockCount=${blockCount} ${opName}.p99 is not finite (${stats.p99})`);
+  }
+  if (!Number.isFinite(stats.p99StdevMs)) {
+    throw new Error(
+      `${ctx}: blockCount=${blockCount} ${opName}.p99StdevMs is not finite (${stats.p99StdevMs})`,
+    );
+  }
+}
+
+function assertFiniteOpStats(
+  ctx: string,
+  blockCount: number,
+  opName: OpName,
+  stats: OpStats,
+): void {
+  for (const key of ['mean', 'min', 'max', 'p50', 'p95', 'p99'] as const) {
+    if (!Number.isFinite(stats[key])) {
+      throw new Error(
+        `${ctx}: blockCount=${blockCount} ${opName}.${key} is not finite (${stats[key]})`,
+      );
+    }
+  }
+}
+
 export function loadBaseline(path: string): Baseline {
   const raw = JSON.parse(readFileSync(path, 'utf8'));
   if (raw.schemaVersion !== 1) {
     throw new Error(`baseline.json schemaVersion must be 1 (got ${raw.schemaVersion})`);
+  }
+  if (!Array.isArray(raw.results)) {
+    throw new Error('baseline.json: results must be an array');
+  }
+  for (const entry of raw.results as BaselineBlockEntry[]) {
+    for (const op of OP_NAMES) {
+      assertFiniteStats('baseline', entry.blockCount, op, entry[op]);
+    }
   }
   return raw as Baseline;
 }
@@ -210,6 +255,14 @@ export function loadFreshResults(path: string): FreshResults {
   const raw = JSON.parse(readFileSync(path, 'utf8'));
   if (raw.schemaVersion !== 1) {
     throw new Error(`results.json schemaVersion must be 1 (got ${raw.schemaVersion})`);
+  }
+  if (!Array.isArray(raw.results)) {
+    throw new Error('results.json: results must be an array');
+  }
+  for (const entry of raw.results as FreshBlockResult[]) {
+    for (const op of OP_NAMES) {
+      assertFiniteOpStats('results', entry.blockCount, op, entry[op]);
+    }
   }
   return raw as FreshResults;
 }

@@ -19,11 +19,16 @@
  */
 
 import { describe, expect, test } from 'bun:test';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   type Baseline,
   evaluateRegression,
   type FreshResults,
   formatReport,
+  loadBaseline,
+  loadFreshResults,
 } from './regression-gate.ts';
 
 function makeBaseline(overrides: Partial<Baseline> = {}): Baseline {
@@ -210,5 +215,51 @@ describe('evaluateRegression (R4 synthetic gate)', () => {
     expect(text).toContain('✗');
     expect(text).toContain('100');
     expect(text).toContain('parseMs');
+  });
+});
+
+// ───────────────────────── Loader runtime validation ─────────────────────
+//
+// `NaN > anyFiniteNumber` evaluates to false, so a corrupted baseline would
+// silently pass the gate. `loadBaseline` / `loadFreshResults` reject
+// non-finite stats up front with a pointer at the offending key.
+
+describe('loadBaseline / loadFreshResults finite-value validation', () => {
+  function writeTmp(name: string, data: unknown): string {
+    const dir = mkdtempSync(join(tmpdir(), 'regression-gate-load-'));
+    const path = join(dir, name);
+    writeFileSync(path, JSON.stringify(data));
+    return path;
+  }
+
+  test('loadBaseline rejects NaN p99', () => {
+    const baseline = makeBaseline();
+    baseline.results[0].parseMs.p99 = Number.NaN;
+    const path = writeTmp('baseline.json', baseline);
+    expect(() => loadBaseline(path)).toThrow(/parseMs\.p99 is not finite/);
+  });
+
+  test('loadBaseline rejects Infinity p99StdevMs', () => {
+    const baseline = makeBaseline();
+    baseline.results[1].serializeMs.p99StdevMs = Number.POSITIVE_INFINITY;
+    const path = writeTmp('baseline.json', baseline);
+    expect(() => loadBaseline(path)).toThrow(/serializeMs\.p99StdevMs is not finite/);
+  });
+
+  test('loadFreshResults rejects NaN p95', () => {
+    const fresh = makeFresh();
+    fresh.results[0].parseMs.p95 = Number.NaN;
+    const path = writeTmp('results.json', fresh);
+    expect(() => loadFreshResults(path)).toThrow(/parseMs\.p95 is not finite/);
+  });
+
+  test('loadBaseline accepts a valid baseline', () => {
+    const path = writeTmp('baseline.json', makeBaseline());
+    expect(() => loadBaseline(path)).not.toThrow();
+  });
+
+  test('loadFreshResults accepts a valid results file', () => {
+    const path = writeTmp('results.json', makeFresh());
+    expect(() => loadFreshResults(path)).not.toThrow();
   });
 });

@@ -1,18 +1,25 @@
 /**
  * Unified pipeline factory.
  *
- * Parse direction:
- *   remark-parse → remark-frontmatter → remarkMdxAgnostic →
- *   remark-gfm → [position-slice walker slot] → remarkProseMirror
+ * Parse direction (post-R17 chain, wired in `createParseProcessor` below):
+ *   [R23 `protectFromMdx` pre-pass on source bytes]
+ *     → remark-parse → remark-frontmatter → remarkMdxAgnostic
+ *     → remark-gfm → remarkWikiLink
+ *     → `restoreFromMdx` (Phase A: PUA sentinel → literal char)
+ *     → `mergedPostParseWalkerPlugin` (Phase B: autolink promotion +
+ *        doc-start thematic fix + position slice + unknown-mdast guard)
+ *     → `ensureNonEmptyDoc` → remarkProseMirror
  *
  * Serialize direction:
  *   fromProseMirror → remark-stringify (with custom mdast-util-to-markdown handlers)
  *
  * Plugin order for parser extensions is empirically commutative (see
  * tech-probes/plugin-ordering/REPORT.md), but transformer ordering matters:
- * position-slice walker runs AFTER all syntax extensions produce their mdast
- * (so positions are final) and BEFORE remarkProseMirror (so handlers read
- * node.data.*).
+ * Phase A must run before Phase B (Phase B's autolink regex reads the literal
+ * `<`/`>` that Phase A restores — see `merged-walker.ts` header + precedent
+ * #16 in CLAUDE.md). Inside Phase B, position-slice runs AFTER all syntax
+ * extensions produce their mdast (so positions are final) and the final
+ * `remarkProseMirror` step reads `node.data.*` written by position-slice.
  *
  * R16 caching (spec 2026-04-16 markdown-pipeline-engineering-health):
  * processors are built once per MarkdownManager instance via

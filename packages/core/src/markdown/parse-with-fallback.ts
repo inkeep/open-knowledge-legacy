@@ -320,21 +320,27 @@ function tryPerBlockFallback(
       }
       merged.push(...nonEmpty);
       anySucceeded = true;
-    } catch {
+    } catch (blockErr) {
       incrementBlockFallback();
+      // Surface BOTH the block-specific failure AND the original top-level
+      // error — the two may differ (e.g. top-level is PM-construction, the
+      // block fails with a different MDX tokenizer error). Capped so log
+      // aggregators don't see unbounded payloads (A9 parse-health budget).
+      const blockMsg = (blockErr as Error)?.message?.slice(0, 200) ?? 'unknown block error';
+      const originalMsg = (originalErr as Error)?.message?.slice(0, 160) ?? 'unknown';
       console.warn(
         JSON.stringify({
           event: 'mdx-block-fallback',
           offset: block.start,
-          reason: `Per-block recovery after position-less error: ${
-            (originalErr as Error)?.message?.slice(0, 160) ?? 'unknown'
-          }`,
+          reason: `Per-block recovery after position-less error: ${originalMsg}`,
+          blockError: blockMsg,
+          blockErrorName: (blockErr as Error)?.name,
         }),
       );
       merged.push({
         type: 'rawMdxFallback',
         attrs: {
-          reason: (originalErr as Error)?.message?.slice(0, 200) ?? 'Position-less parse error',
+          reason: blockMsg,
           originalSpan: { start: block.start, end: block.end },
         },
         content: [{ type: 'text', text: block.src }],

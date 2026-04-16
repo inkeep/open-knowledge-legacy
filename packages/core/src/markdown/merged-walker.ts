@@ -66,9 +66,17 @@
  *
  * ### Acceptance
  *
- * Byte-for-byte mdast equivalence across the full fixture corpus is the
- * only correctness proof — see `evidence/r17-mdast-equivalence.ts` (US-007)
- * and the `merged-walker.equivalence.test.ts` gate alongside this file.
+ * Byte-for-byte mdast equivalence across the full fixture corpus was the
+ * correctness proof for the 5-pass → 2-phase refactor. The one-time
+ * validator (`evidence/r17-mdast-equivalence.{ts,md}` + `r17-run-diff.ts`)
+ * shipped with US-007 and was deleted after US-008 went green, per
+ * CLAUDE.md precedent #17 (byte-identity validators are ratchets, not
+ * regression tests). The architectural record — why the phase split is
+ * load-bearing and what ordering constraints apply — lives in
+ * `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md`
+ * §R17. The unit tests in `merged-walker.test.ts` cover per-node dispatch;
+ * the broader fidelity corpus + R19 parse-health gate + R4 perf regression
+ * gate together cover end-to-end correctness going forward.
  */
 
 import type { Nodes, Parent, Root } from 'mdast';
