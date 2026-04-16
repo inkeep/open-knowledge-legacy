@@ -2,7 +2,6 @@
 title: Lifecycle model
 description: How ok start, ok ui, and ok mcp coordinate — detached sibling spawn, lockfile discovery, idle-shutdown, and safety-net.
 ---
-
 Open Knowledge's production runtime is a pair of sibling processes — `ok start` (collab) and `ok ui` (React editor) — coordinated via lockfiles and managed through three utility commands (`ok status`, `ok stop`, `ok clean`). This page describes the full lifecycle: how the sibling pair comes up, how `ok mcp` resurrects it on demand, how it tears itself down when idle, and how each moving part is recoverable.
 
 The underlying design is in `specs/2026-04-16-zero-ceremony-resume/SPEC.md`. This page is the runtime-behavior reference.
