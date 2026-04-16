@@ -1,4 +1,5 @@
 import { ChunkedInsertError, HtmlPayloadTooLargeError } from '@inkeep/open-knowledge-core';
+import type { ClipboardSource } from './detect-source.ts';
 
 /**
  * Performance + source-detection instrumentation.
@@ -9,20 +10,33 @@ import { ChunkedInsertError, HtmlPayloadTooLargeError } from '@inkeep/open-knowl
  * names are camelCase to match the codebase-wide convention for
  * structured events (`originalSpan`, `regionSize`, `originalType`, etc.).
  *
- * Event shapes:
+ * ## Event names
+ *
+ * Telemetry event names are a contract — dashboards and alert rules key
+ * off exact strings. Every `clipboard-*` event uses a past-tense suffix
+ * so the namespace has one convention (matches `clipboard-source-detected`
+ * and `clipboard-chunked-insert-failed`; the earlier drafts had a mix of
+ * `-fail` and `-failed` which we normalized pre-ship). The
+ * `ClipboardEventName` literal union below is the canonical list —
+ * adding a new event requires adding a key here.
+ *
+ * ## Cardinality
+ *
+ * The `source`, `branch`, `stage`, `kind`, `op`, and `view` fields are
+ * typed as literal unions rather than `string` so a typo at a call site
+ * becomes a compile error. This also gives log-aggregator dashboards a
+ * static schema to render against.
+ *
+ * ## Event shapes
  *
  *   { event: 'clipboard-slow-op', op, view, elapsedMs, branch, source,
  *     htmlBytes? }
  *   { event: 'clipboard-source-detected', view, source, branch }
- *   { event: 'clipboard-html-conversion-fail', view, stage, source,
+ *   { event: 'clipboard-html-conversion-failed', view, stage, source,
  *     reason, htmlBytes? }
- *   { event: 'clipboard-serialize-fail', view, kind, reason }
+ *   { event: 'clipboard-serialize-failed', view, kind, reason }
  *   { event: 'clipboard-chunked-insert-failed', view, chunksCompleted,
  *     totalChunks, bytesWritten, bytesRemaining, reason }
- *
- * Consumers: log aggregators (Datadog / Grafana Loki) derive distributions
- * and error rates; tests assert the shape directly via paste-fidelity.e2e.ts
- * when we want to prove branch routing worked.
  *
  * `clipboard-source-detected` intentionally does NOT carry `htmlBytes` —
  * the value has unbounded cardinality and the SPEC (§7 Observability,
@@ -30,29 +44,76 @@ import { ChunkedInsertError, HtmlPayloadTooLargeError } from '@inkeep/open-knowl
  * live on `clipboard-slow-op` instead, which only fires above threshold.
  */
 
+/**
+ * Exhaustive list of telemetry events the clipboard module emits. New
+ * events must be added here first — downstream consumers treat this as
+ * the source of truth for dashboard + alert configuration.
+ */
+export type ClipboardEventName =
+  | 'clipboard-slow-op'
+  | 'clipboard-source-detected'
+  | 'clipboard-html-conversion-failed'
+  | 'clipboard-serialize-failed'
+  | 'clipboard-chunked-insert-failed';
+
+/** View identifier — one per clipboard-bearing editor surface. */
+export type ClipboardView = 'wysiwyg' | 'source';
+
+/** Operation that triggered the event. */
+export type ClipboardOp = 'copy' | 'cut' | 'paste';
+
+/**
+ * Dispatcher branch the event was emitted from. `A`–`E` match the 5-
+ * branch WYSIWYG paste dispatcher + the 4-branch Source paste dispatcher
+ * (Source's Branch B collapses into CM6's text/plain default). `shift`
+ * is the FR-17 Cmd+Shift+V escape hatch; `codeblock` is the FR-10 cursor-
+ * inside-code short-circuit; `serialize` is the copy/cut path where the
+ * concept of "paste branch" doesn't apply.
+ */
+export type ClipboardBranch = 'A' | 'B' | 'C' | 'D' | 'E' | 'shift' | 'codeblock' | 'serialize';
+
+/**
+ * Pipeline stage that produced a conversion failure. `htmlToMdast` is the
+ * rehype walk; `mdastToMarkdown` is remark-stringify; `mdManagerParse` is
+ * the markdown → PM conversion; `applyJsonSlice` is the PM dispatch;
+ * `branchA` is the VS-Code-fenced-block path; `chunkedYTextInsert` is the
+ * FR-21 partial-insert failure (also surfaces as the typed
+ * `ChunkedInsertError`).
+ */
+export type ClipboardStage =
+  | 'htmlToMdast'
+  | 'mdastToMarkdown'
+  | 'mdManagerParse'
+  | 'applyJsonSlice'
+  | 'branchA'
+  | 'chunkedYTextInsert';
+
+/** Serialization path — `text` is text/plain, `html` is text/html. */
+export type SerializeKind = 'text' | 'html';
+
 export interface ClipboardTiming {
-  op: 'copy' | 'cut' | 'paste';
-  view: 'wysiwyg' | 'source';
-  branch: string;
-  source: string;
+  op: ClipboardOp;
+  view: ClipboardView;
+  branch: ClipboardBranch;
+  source: ClipboardSource;
   htmlBytes?: number;
 }
 
 export interface ClipboardLogEvent {
-  op?: 'copy' | 'cut' | 'paste';
-  view: 'wysiwyg' | 'source';
-  branch: string;
-  source: string;
+  op?: ClipboardOp;
+  view: ClipboardView;
+  branch: ClipboardBranch;
+  source: ClipboardSource;
 }
 
 export interface ConversionFailInfo {
-  view: 'wysiwyg' | 'source';
-  /** Which stage of the pipeline threw: `htmlToMdast`, `mdastToMarkdown`, `mdManagerParse`, `applyJsonSlice`, or `branchA`. */
-  stage: string;
+  view: ClipboardView;
+  /** Which stage of the pipeline threw. */
+  stage: ClipboardStage;
   /** Vendor source identifier as produced by `detectSource` (gdocs/gmail/notion/etc.) — kept as a separate dimension from `branch` so Datadog/Loki queries can filter on either axis independently. */
-  source: string;
-  /** Dispatcher branch label (A/B/C/D/E) the stage was running inside. Optional: copy-side serializers do not have branches. */
-  branch?: string;
+  source: ClipboardSource;
+  /** Dispatcher branch label the stage was running inside. Optional: copy-side serializers do not have branches. */
+  branch?: ClipboardBranch;
   /** Error message — free-text, use for human debugging. */
   reason: string;
   /** Optional typed error class (e.g. `HtmlPayloadTooLargeError`) so aggregators can distinguish expected-large-input from bug-class failures without string-matching `reason`. */
@@ -61,14 +122,13 @@ export interface ConversionFailInfo {
 }
 
 export interface SerializeFailInfo {
-  view: 'wysiwyg' | 'source';
-  /** `text` for text/plain serialization, `html` for text/html serialization. */
-  kind: 'text' | 'html';
+  view: ClipboardView;
+  kind: SerializeKind;
   reason: string;
 }
 
 export interface ChunkedInsertFailInfo {
-  view: 'wysiwyg' | 'source';
+  view: ClipboardView;
   chunksCompleted: number;
   totalChunks: number;
   bytesWritten: number;
@@ -89,7 +149,7 @@ export function logIfSlow(start: number, timing: ClipboardTiming): void {
   if (elapsed < threshold) return;
   console.warn(
     JSON.stringify({
-      event: 'clipboard-slow-op',
+      event: 'clipboard-slow-op' satisfies ClipboardEventName,
       op: timing.op,
       view: timing.view,
       elapsedMs: Math.round(elapsed),
@@ -109,7 +169,7 @@ export function logIfSlow(start: number, timing: ClipboardTiming): void {
 export function logSourceDetected(ev: ClipboardLogEvent): void {
   console.warn(
     JSON.stringify({
-      event: 'clipboard-source-detected',
+      event: 'clipboard-source-detected' satisfies ClipboardEventName,
       view: ev.view,
       source: ev.source,
       branch: ev.branch,
@@ -125,7 +185,7 @@ export function logSourceDetected(ev: ClipboardLogEvent): void {
 export function logConversionFail(info: ConversionFailInfo): void {
   console.warn(
     JSON.stringify({
-      event: 'clipboard-html-conversion-fail',
+      event: 'clipboard-html-conversion-failed' satisfies ClipboardEventName,
       view: info.view,
       stage: info.stage,
       source: info.source,
@@ -144,7 +204,7 @@ export function logConversionFail(info: ConversionFailInfo): void {
 export function logSerializeFail(info: SerializeFailInfo): void {
   console.warn(
     JSON.stringify({
-      event: 'clipboard-serialize-fail',
+      event: 'clipboard-serialize-failed' satisfies ClipboardEventName,
       view: info.view,
       kind: info.kind,
       reason: info.reason,
@@ -160,7 +220,7 @@ export function logSerializeFail(info: SerializeFailInfo): void {
 export function logChunkedInsertFail(info: ChunkedInsertFailInfo): void {
   console.warn(
     JSON.stringify({
-      event: 'clipboard-chunked-insert-failed',
+      event: 'clipboard-chunked-insert-failed' satisfies ClipboardEventName,
       view: info.view,
       chunksCompleted: info.chunksCompleted,
       totalChunks: info.totalChunks,

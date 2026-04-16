@@ -101,6 +101,16 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   // Per D14 LOCKED, WYSIWYG clipboard uses PM's documented editorProps hooks
   // (clipboardTextSerializer + clipboardSerializer + handlePaste) —
   // DOM-level copy/cut/dragstart overrides are prohibited.
+  //
+  // Known scope: FR-21's chunked Y.Text insertion guard applies to the
+  // Source-view paste path only (D14 LOCKED). WYSIWYG paste of a >500KB
+  // HTML blob runs `rehype-parse → cleanup plugins → rehype-remark →
+  // remark-stringify → PM schema transaction → fragment insert`
+  // synchronously. On very large rich-HTML pastes the user sees a brief
+  // stall. Porting chunked insertion to the PM path is non-mechanical
+  // (PM reaches Y.XmlFragment through different primitives than Y.Text)
+  // and is explicitly out of scope for this spec — don't misdiagnose the
+  // stall as a regression. See SPEC.md §Consider-1 for context.
   const [clipboard] = useState(() => {
     const mdManager = new MarkdownManager({ extensions: coreExtensions });
     return {

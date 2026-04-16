@@ -46,15 +46,21 @@ interface DispatchCall {
   insert: string;
 }
 
-function makeFakeView(): {
+function makeFakeView(docLength = 1_000_000): {
   dispatch: ReturnType<typeof mock>;
   dispatches: DispatchCall[];
+  // biome-ignore lint/suspicious/noExplicitAny: fake view state for unit test
+  state: any;
 } {
   const dispatches: DispatchCall[] = [];
   const dispatch = mock((arg: { changes: DispatchCall }) => {
     dispatches.push(arg.changes);
   });
-  return { dispatch, dispatches };
+  return {
+    dispatch,
+    dispatches,
+    state: { doc: { length: docLength } },
+  };
 }
 
 function withSilencedWarn<T>(fn: () => T): T {
@@ -68,18 +74,19 @@ function withSilencedWarn<T>(fn: () => T): T {
 }
 
 describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
-  test('ChunkedInsertError: restores selection text + emits structured telemetry + shows toast', () => {
-    const { dispatch, dispatches } = makeFakeView();
+  test('ChunkedInsertError with bytesWritten > 0: deletes partial range + restores selection', () => {
+    const { dispatch, dispatches, state } = makeFakeView();
+    const bytesWritten = 100 * 1024;
     const err = new ChunkedInsertError(new Error('y-text full'), {
       chunksCompleted: 2,
       totalChunks: 10,
-      bytesWritten: 100 * 1024,
+      bytesWritten,
       bytesRemaining: 400 * 1024,
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
         // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
-        view: { dispatch } as any,
+        view: { dispatch, state } as any,
         source: 'gdocs',
         html: '<p>1</p>'.repeat(10),
         restoreText: 'original user selection',
@@ -87,8 +94,11 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         err,
       }),
     );
-    // Selection-restore dispatch landed at the anchor with the original text.
-    expect(dispatches).toEqual([{ from: 42, to: 42, insert: 'original user selection' }]);
+    // Partial chunks at [42, 42+100KB) are replaced with the restoreText —
+    // a single atomic change so yCollab sees no intermediate truncated state.
+    expect(dispatches).toEqual([
+      { from: 42, to: 42 + bytesWritten, insert: 'original user selection' },
+    ]);
     // Toast surfaces partial-progress info to the user.
     expect(toastMock.error).toHaveBeenCalledTimes(1);
     const msg = toastMock.error.mock.calls[0]?.[0];
@@ -96,8 +106,33 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     expect(msg).toContain('restored');
   });
 
-  test('empty restoreText: no dispatch but still emits telemetry + toast', () => {
-    const { dispatch, dispatches } = makeFakeView();
+  test('ChunkedInsertError with bytesWritten > 0 and empty restoreText: deletes partial range only', () => {
+    const { dispatch, dispatches, state } = makeFakeView();
+    const bytesWritten = 50 * 1024;
+    const err = new ChunkedInsertError(new Error('y-text limit hit'), {
+      chunksCompleted: 1,
+      totalChunks: 6,
+      bytesWritten,
+      bytesRemaining: 250 * 1024,
+    });
+    withSilencedWarn(() =>
+      handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
+        view: { dispatch, state } as any,
+        source: 'word',
+        html: '<p>x</p>',
+        restoreText: '',
+        anchorIndex: 10,
+        err,
+      }),
+    );
+    // Deletes the partial range; no restoreText to merge back.
+    expect(dispatches).toEqual([{ from: 10, to: 10 + bytesWritten, insert: '' }]);
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+  });
+
+  test('ChunkedInsertError with bytesWritten == 0: falls back to selection-restore at anchor', () => {
+    const { dispatch, dispatches, state } = makeFakeView();
     const err = new ChunkedInsertError(new Error('boom'), {
       chunksCompleted: 0,
       totalChunks: 5,
@@ -107,7 +142,31 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
         // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
-        view: { dispatch } as any,
+        view: { dispatch, state } as any,
+        source: 'generic',
+        html: '<p>x</p>',
+        restoreText: 'x',
+        anchorIndex: 0,
+        err,
+      }),
+    );
+    // Zero bytes landed — no partial range to delete; restoreText inserted at anchor.
+    expect(dispatches).toEqual([{ from: 0, to: 0, insert: 'x' }]);
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+  });
+
+  test('ChunkedInsertError bytesWritten > 0 with empty restoreText and empty anchor: deletes partial only', () => {
+    const { dispatch, dispatches, state } = makeFakeView();
+    const err = new ChunkedInsertError(new Error('boom'), {
+      chunksCompleted: 0,
+      totalChunks: 5,
+      bytesWritten: 0,
+      bytesRemaining: 250 * 1024,
+    });
+    withSilencedWarn(() =>
+      handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
+        view: { dispatch, state } as any,
         source: 'generic',
         html: '<p>x</p>',
         restoreText: '',
@@ -115,16 +174,39 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         err,
       }),
     );
-    expect(dispatches).toEqual([]); // no dispatch for empty restoreText
+    expect(dispatches).toEqual([]); // no dispatch for empty restoreText + 0 bytes
     expect(toastMock.error).toHaveBeenCalledTimes(1);
   });
 
-  test('non-ChunkedInsertError falls back to conversion-fail telemetry', () => {
-    const { dispatch, dispatches } = makeFakeView();
+  test('ChunkedInsertError clamps delete end to doc length on concurrent-peer truncation', () => {
+    const { dispatch, dispatches, state } = makeFakeView(/* docLength */ 60);
+    const err = new ChunkedInsertError(new Error('boom'), {
+      chunksCompleted: 1,
+      totalChunks: 5,
+      bytesWritten: 100, // we think 100 bytes landed
+      bytesRemaining: 400,
+    });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
         // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
-        view: { dispatch } as any,
+        view: { dispatch, state } as any,
+        source: 'generic',
+        html: '<p>x</p>',
+        restoreText: 'abc',
+        anchorIndex: 10,
+        err,
+      }),
+    );
+    // anchor(10) + bytesWritten(100) = 110, but doc length is 60 — clamp to 60.
+    expect(dispatches).toEqual([{ from: 10, to: 60, insert: 'abc' }]);
+  });
+
+  test('non-ChunkedInsertError falls back to conversion-fail telemetry', () => {
+    const { dispatch, dispatches, state } = makeFakeView();
+    withSilencedWarn(() =>
+      handleChunkedInsertFailure({
+        // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
+        view: { dispatch, state } as any,
         source: 'notion',
         html: '<p>x</p>',
         restoreText: 'abc',
@@ -132,6 +214,7 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
         err: new Error('unrelated failure'),
       }),
     );
+    // Can't know bytesWritten — falls back to insert-at-anchor.
     expect(dispatches).toEqual([{ from: 5, to: 5, insert: 'abc' }]);
     expect(toastMock.error).toHaveBeenCalledTimes(1);
     // The generic branch emits the "Paste failed" toast instead of the
@@ -140,14 +223,14 @@ describe('handleChunkedInsertFailure — Source-view recovery contract', () => {
     expect(msg).toContain('Paste failed');
   });
 
-  test('dispatch throw during restore is logged but does not prevent toast', () => {
+  test('dispatch throw during rollback is logged but does not prevent toast', () => {
     const throwingDispatch = mock(() => {
       throw new Error('view destroyed');
     });
     withSilencedWarn(() =>
       handleChunkedInsertFailure({
         // biome-ignore lint/suspicious/noExplicitAny: fake view for unit test
-        view: { dispatch: throwingDispatch } as any,
+        view: { dispatch: throwingDispatch, state: { doc: { length: 1_000_000 } } } as any,
         source: 'gmail',
         html: '<p>x</p>',
         restoreText: 'some text',

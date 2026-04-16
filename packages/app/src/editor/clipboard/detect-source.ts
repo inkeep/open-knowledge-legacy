@@ -16,6 +16,16 @@
  *   7. Only text/plain, prose → `plaintext`
  */
 
+/**
+ * Source identifier produced by `detectSource` + augmented with branch-level
+ * tokens that downstream paste dispatchers emit (`markdown-text` is set
+ * inside `handle-paste.ts` after `isMarkdown` fires on a text/plain-only
+ * payload). Keep this union in sync with the code that emits each token —
+ * orphan values mislead future readers into believing detection coverage
+ * exists where it does not. Precedent #7 ("remove broken capabilities
+ * rather than shipping them") guided the removal of the `ai-chat` value
+ * which was declared but never produced.
+ */
 export type ClipboardSource =
   | 'vscode'
   | 'gfm'
@@ -28,10 +38,14 @@ export type ClipboardSource =
   | 'slack'
   | 'gsheets'
   | 'github'
-  | 'ai-chat'
   | 'generic'
   | 'markdown-text'
-  | 'plaintext';
+  | 'plaintext'
+  // `local` is the token for copy/cut-path telemetry where the "source" of
+  // the content is the editor itself — the `source` dimension has no vendor
+  // meaning on the outbound side but we keep the field required so log
+  // aggregators can filter consistently across copy + paste events.
+  | 'local';
 
 export function detectSource(dt: DataTransfer | null): ClipboardSource {
   if (!dt) return 'plaintext';

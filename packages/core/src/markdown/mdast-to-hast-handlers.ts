@@ -37,7 +37,11 @@ import type { Comment, Element, ElementContent } from 'hast';
 import type { MdxJsxFlowElement, MdxJsxTextElement } from 'mdast-util-mdx';
 import type { Handler, Handlers } from 'mdast-util-to-hast';
 import { toWikiLinkSlug } from '../utils/slug.ts';
-import type { RawMdxFallbackMdast, WikiLinkMdast } from './mdast-augmentation.ts';
+import type {
+  PromotedMdastType,
+  RawMdxFallbackMdast,
+  WikiLinkMdast,
+} from './mdast-augmentation.ts';
 
 /**
  * Build the href for a wikiLink. Target slug + optional anchor fragment.
@@ -153,14 +157,23 @@ const rawMdxFallbackHandler: Handler = (state, node) => {
 };
 
 /**
- * Registered mdast → hast handlers for custom node types.
+ * Registered mdast → hast handlers for the `PromotedMdastType` union.
  *
- * Keyed by mdast type name; consumed by `remark-rehype`'s `handlers`
- * option inside `mdast-to-html.ts`.
+ * Typed as `Record<PromotedMdastType, Handler>` so TypeScript flags a
+ * missing handler when a new type is added to `PROMOTED_MDAST_TYPES` —
+ * the enforcement described in `mdast-augmentation.ts`. The alias cast
+ * to `Handlers` at the export site is safe because `Handlers` is
+ * `Record<string, Handler>` and our record's keys are all strings.
  */
-export const customNodeHandlers: Handlers = {
+const promotedHandlers: Record<PromotedMdastType, Handler> = {
   wikiLink: wikiLinkHandler,
   mdxJsxFlowElement: mdxJsxFlowHandler,
   mdxJsxTextElement: mdxJsxTextHandler,
   rawMdxFallback: rawMdxFallbackHandler,
 };
+
+/**
+ * Export surface for `remark-rehype`'s `handlers` option inside
+ * `mdast-to-html.ts`. Widens to the upstream `Handlers` shape.
+ */
+export const customNodeHandlers: Handlers = promotedHandlers;

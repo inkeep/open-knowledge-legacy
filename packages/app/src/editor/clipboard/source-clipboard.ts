@@ -38,7 +38,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { toast } from 'sonner';
 import * as Y from 'yjs';
-import { detectSource } from './detect-source.ts';
+import { type ClipboardSource, detectSource } from './detect-source.ts';
 import {
   classifyError,
   logChunkedInsertFail,
@@ -96,7 +96,7 @@ function handleCopyOrCut(event: ClipboardEvent, view: EditorView, kind: 'copy' |
     if (kind === 'cut') {
       view.dispatch({ changes: { from, to, insert: '' } });
     }
-    logIfSlow(start, { op: kind, view: 'source', branch: 'serialize', source: 'ok' });
+    logIfSlow(start, { op: kind, view: 'source', branch: 'serialize', source: 'local' });
     return true;
   } catch (err) {
     logSerializeFail({
@@ -185,7 +185,7 @@ function tryBranchAVscode(
   view: EditorView,
   vscodeData: string,
   text: string,
-  source: string,
+  source: ClipboardSource,
 ): boolean {
   try {
     const meta = JSON.parse(vscodeData) as { mode?: string };
@@ -217,7 +217,7 @@ function tryBranchDHtml(
   view: EditorView,
   html: string,
   deps: SourceClipboardDeps,
-  source: string,
+  source: ClipboardSource,
 ): boolean {
   let mdast: ReturnType<typeof htmlToMdast>;
   try {
@@ -272,6 +272,9 @@ function tryBranchDHtml(
   // delete dispatch so `handleChunkedInsertFailure` can restore it if the
   // chunked insertion throws mid-stream. Without this, chunk-0 failure
   // would leave the user's selection vanished with only a DevTools log.
+  // The captured `relPos` also bounds the partial-chunk rollback range so a
+  // mid-stream throw after N chunks wrote doesn't leave truncated content
+  // behind — see `handleChunkedInsertFailure` below.
   const restoreText = from === to ? '' : view.state.sliceDoc(from, to);
   if (from !== to) {
     view.dispatch({ changes: { from, to, insert: '' } });
@@ -305,6 +308,8 @@ function tryBranchDHtml(
       html,
       restoreText,
       anchorIndex,
+      anchorRelPos: relPos,
+      ydoc: deps.ydoc,
       err,
     });
   });
@@ -312,16 +317,25 @@ function tryBranchDHtml(
 }
 
 /**
- * Recovery for a mid-stream chunked-insert failure. Separates three concerns:
+ * Recovery for a mid-stream chunked-insert failure. Three concerns:
  *
- * 1. Data loss: if the chunks failed before writing anything, the user's
- *    selection is already deleted. Re-insert `restoreText` at `anchorIndex`
- *    so the user's content is not silently lost.
- * 2. Telemetry: emit a structured event (typed ChunkedInsertError variant
- *    with partial-progress fields; fallback to `clipboard-html-conversion-fail`
+ * 1. Rollback partial chunks + restore selection: chunked insertion writes
+ *    N of M chunks before throwing, leaving `bytesWritten` bytes in Y.Text
+ *    at `[anchor, anchor+bytesWritten)`. Without cleanup, the user's selection
+ *    is gone AND truncated paste content is in the doc. We resolve the
+ *    captured `anchorRelPos` (pinned before chunk-0 so concurrent peers
+ *    between paste-start and failure-time don't shift the range) and replace
+ *    `[absStart, absStart+bytesWritten)` with `restoreText` in a single
+ *    `view.dispatch` — atomic from yCollab's observer perspective.
+ * 2. Telemetry: emit a structured event (typed `ChunkedInsertError` variant
+ *    with partial-progress fields; fallback to `clipboard-html-conversion-failed`
  *    for non-chunked errors).
  * 3. User-visible signal: a sonner toast so the user knows the paste failed
  *    rather than relying on DevTools to spot the console.warn.
+ *
+ * Non-typed errors (not `ChunkedInsertError`) can't know `bytesWritten`, so
+ * we fall back to the simpler selection-restore path — same behavior as
+ * before this fix for those exotic failure modes.
  *
  * Exported for the unit test (`source-clipboard-recovery.test.ts`) so the
  * recovery contract is mechanically covered even though the full CM6 paste
@@ -329,20 +343,48 @@ function tryBranchDHtml(
  */
 export interface ChunkedInsertFailureContext {
   view: EditorView;
-  source: string;
+  source: ClipboardSource;
   html: string;
   /** Original selection text, or '' if the selection was empty. */
   restoreText: string;
+  /** CM6/Y.Text offset where the first chunk was written. */
   anchorIndex: number;
+  /**
+   * Y.RelativePosition captured pre-chunk-0. Used at recovery time to resolve
+   * the partial-paste start position through concurrent peer activity so the
+   * delete range targets the right bytes. Optional for legacy tests that
+   * predate the rollback discipline.
+   */
+  anchorRelPos?: Y.RelativePosition;
+  /** Y.Doc for resolving the relative position. Optional for the same reason. */
+  ydoc?: Y.Doc;
   err: unknown;
 }
 
 export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): void {
-  const { view, source, html, restoreText, anchorIndex, err } = ctx;
+  const { view, source, html, restoreText, anchorIndex, anchorRelPos, ydoc, err } = ctx;
 
-  // 1. Restore the user's deleted selection so they have the content back.
-  //    Dispatch is a no-op if restoreText is empty.
-  if (restoreText.length > 0) {
+  // 1. Rollback + restore. If we know bytesWritten (ChunkedInsertError) we
+  //    delete the partial range; otherwise we restore the selection at the
+  //    anchor (best effort).
+  if (err instanceof ChunkedInsertError && err.bytesWritten > 0) {
+    const absStart =
+      anchorRelPos && ydoc
+        ? (Y.createAbsolutePositionFromRelativePosition(anchorRelPos, ydoc)?.index ?? anchorIndex)
+        : anchorIndex;
+    // Clamp end to current doc length — concurrent peers may have deleted
+    // some of our partial content before we recovered.
+    const deleteEnd = Math.min(absStart + err.bytesWritten, view.state.doc.length);
+    try {
+      view.dispatch({
+        changes: { from: absStart, to: deleteEnd, insert: restoreText },
+      });
+    } catch (restoreErr) {
+      console.warn('[clipboard] partial-chunk rollback dispatch failed', restoreErr);
+    }
+  } else if (restoreText.length > 0) {
+    // Non-typed error or zero bytes written — restore the user's selection
+    // at the anchor. No partial range to delete.
     try {
       view.dispatch({ changes: { from: anchorIndex, to: anchorIndex, insert: restoreText } });
     } catch (restoreErr) {

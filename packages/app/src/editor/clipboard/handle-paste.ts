@@ -31,9 +31,16 @@ import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import { htmlToMdast, mdastToMarkdown } from '@inkeep/open-knowledge-core';
 import type { JSONContent } from '@tiptap/core';
 import type { EditorView } from '@tiptap/pm/view';
-import { detectSource } from './detect-source.ts';
-import { classifyError, logConversionFail, logIfSlow, logSourceDetected } from './instrument.ts';
+import { type ClipboardSource, detectSource } from './detect-source.ts';
+import {
+  type ClipboardBranch,
+  classifyError,
+  logConversionFail,
+  logIfSlow,
+  logSourceDetected,
+} from './instrument.ts';
 import { isMarkdown } from './is-markdown.ts';
+import { notifyPasteDegraded } from './paste-failure-toast.ts';
 import { pasteShiftHeld } from './shift-tracker.ts';
 
 export interface PasteDispatcherDeps {
@@ -158,7 +165,12 @@ function insertPlainText(view: EditorView, text: string): void {
 // language ident in our `codeLanguages` allowlist and then some.
 const LANG_IDENT = /^[A-Za-z0-9_+-]+$/;
 
-function tryBranchA(view: EditorView, vscodeData: string, text: string, source: string): boolean {
+function tryBranchA(
+  view: EditorView,
+  vscodeData: string,
+  text: string,
+  source: ClipboardSource,
+): boolean {
   try {
     const meta = JSON.parse(vscodeData) as { mode?: string };
     const rawLang = typeof meta.mode === 'string' ? meta.mode : '';
@@ -189,7 +201,7 @@ function tryBranchMarkdown(
   markdown: string,
   deps: PasteDispatcherDeps,
   branchLabel: 'B' | 'E',
-  source: string,
+  source: ClipboardSource,
 ): boolean {
   let json: JSONContent;
   try {
@@ -212,10 +224,15 @@ function tryBranchHtml(
   view: EditorView,
   html: string,
   deps: PasteDispatcherDeps,
-  source: string,
+  source: ClipboardSource,
 ): boolean {
   // Each stage has its own try block so the structured telemetry pinpoints
-  // the failing pipeline component (SPEC §7 Observability).
+  // the failing pipeline component (SPEC §7 Observability). A failure at
+  // any stage falls through to the dispatcher's later branches (PM default
+  // text/plain parse via clipboardTextParser) — user content is preserved
+  // but the rich-HTML fidelity is lost. We emit a throttled user-visible
+  // toast so the degradation is not silent: Consider-4 finding from the
+  // review pass.
   let mdast: ReturnType<typeof htmlToMdast>;
   try {
     mdast = htmlToMdast(html);
@@ -229,6 +246,7 @@ function tryBranchHtml(
       errorClass: classifyError(err),
       htmlBytes: html.length,
     });
+    notifyPasteDegraded('wysiwyg');
     return false;
   }
   let markdown: string;
@@ -244,6 +262,7 @@ function tryBranchHtml(
       errorClass: classifyError(err),
       htmlBytes: html.length,
     });
+    notifyPasteDegraded('wysiwyg');
     return false;
   }
   let json: JSONContent;
@@ -259,6 +278,7 @@ function tryBranchHtml(
       errorClass: classifyError(err),
       htmlBytes: html.length,
     });
+    notifyPasteDegraded('wysiwyg');
     return false;
   }
   return applyJsonSlice(view, json, source, 'D', html.length);
@@ -267,8 +287,8 @@ function tryBranchHtml(
 function applyJsonSlice(
   view: EditorView,
   json: JSONContent,
-  source: string,
-  branchLabel: string,
+  source: ClipboardSource,
+  branchLabel: ClipboardBranch,
   htmlBytes?: number,
 ): boolean {
   try {

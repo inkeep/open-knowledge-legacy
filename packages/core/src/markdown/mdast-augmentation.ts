@@ -32,6 +32,50 @@ export type { Nodes, Parent, Root } from 'mdast';
 
 import type { Position } from 'unist';
 
+/**
+ * The set of mdast types we promote from the legacy `{type:'html',value}`
+ * passthrough to first-class mdast per precedent #15(d). Every promoted
+ * type MUST have a handler on all three pipeline edges:
+ *
+ *   - parse (markdown → mdast)         — `index.ts` mdast → PM handlers +
+ *                                         the plugin / micromark extension
+ *                                         that produces the node.
+ *   - to-markdown (mdast → markdown)   — `to-markdown-handlers.ts` (MDX +
+ *                                         rawMdxFallback) or
+ *                                         `wiki-link-micromark.ts`'s
+ *                                         `wikiLinkToMarkdown` export
+ *                                         (wikiLink, via `remarkWikiLink`
+ *                                         plugin).
+ *   - to-hast (mdast → HTML)           — `mdast-to-hast-handlers.ts`
+ *                                         `customNodeHandlers` map.
+ *
+ * A missing handler on the to-hast edge silently falls through to
+ * remark-rehype's default — which emits a hast `html` node with the raw
+ * value as literal HTML, re-exposing the FR-20 security surface that
+ * precedent #15(d) was written to eliminate. A missing handler on the
+ * to-markdown edge falls through to mdast-util-to-markdown's default text
+ * passthrough, losing the node's structure on round-trip.
+ *
+ * `PROMOTED_MDAST_TYPES` is a const tuple so `typeof [number]` yields the
+ * `PromotedMdastType` union that handler maps key off. `customNodeHandlers`
+ * in `mdast-to-hast-handlers.ts` is typed as
+ * `Record<PromotedMdastType, Handler>` so omitting a key is a compile
+ * error — the TS compiler is the enforcement.
+ *
+ * A colocated coverage test (`promoted-mdast-coverage.test.ts`) asserts
+ * each promoted type has a handler on the to-markdown edge too, since
+ * wikiLink's handler lives in a different module than the MDX + fallback
+ * handlers and a single-file Record type can't span both.
+ */
+export const PROMOTED_MDAST_TYPES = [
+  'wikiLink',
+  'mdxJsxFlowElement',
+  'mdxJsxTextElement',
+  'rawMdxFallback',
+] as const;
+
+export type PromotedMdastType = (typeof PROMOTED_MDAST_TYPES)[number];
+
 // Wiki-link mdast node. Shape per D7 (full first-class promotion, US-004):
 // - `data.target/alias/anchor` drive the markdown `[[...]]` serialization via
 //   wiki-link-micromark.ts's `wikiLinkHandler`.
