@@ -1,10 +1,11 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
-import { Clock, Columns2, Rows2, Save } from 'lucide-react';
+import { ArrowDownToLine, Columns2, History, Rows2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { PresenceBar } from '@/presence/PresenceBar';
 import type { DiffLayout } from './DiffView';
@@ -45,7 +46,7 @@ export function EditorHeader({
 }: EditorHeaderProps) {
   const { activeDocName } = useDocumentContext();
 
-  const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
+  const displayName = activeDocName ? `${activeDocName}.md` : '';
   const isDiffMode = editorMode === 'diff';
   const [confirmingRestore, setConfirmingRestore] = useState(false);
 
@@ -157,7 +158,7 @@ export function EditorHeader({
       )}
 
       <div className="flex flex-1 items-center justify-end gap-2 px-3">
-        {!isDiffMode && (
+        {!isDiffMode && activeDocName && (
           <Button
             variant="ghost"
             size="sm"
@@ -166,18 +167,27 @@ export function EditorHeader({
             disabled={saving}
             className="gap-1.5 text-xs text-muted-foreground"
           >
-            <Save className="size-3.5" />
+            <ArrowDownToLine className="size-3.5" />
             {saving ? 'Saving…' : 'Save Version'}
           </Button>
         )}
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Open timeline"
-          onClick={onTimelineToggle}
-        >
-          <Clock className="size-4" />
-        </Button>
+        {activeDocName && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Document timeline"
+                  onClick={onTimelineToggle}
+                >
+                  <History className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Document timeline</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
         <ThemeToggle />
