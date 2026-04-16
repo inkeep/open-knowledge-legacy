@@ -50,9 +50,15 @@ import type {
   MdxJsxTextElement,
   MdxTextExpression,
 } from 'mdast-util-mdx';
+import type { Processor } from 'unified';
 import type { WikiLinkMdast } from './mdast-augmentation.ts';
 import { parseWithFallback } from './parse-with-fallback.ts';
-import { parseMd, serializeMd } from './pipeline.ts';
+import {
+  createParseProcessor,
+  createSerializeProcessor,
+  parseMd,
+  serializeMd,
+} from './pipeline.ts';
 import { toMarkdownHandlers } from './to-markdown-handlers.ts';
 
 // Structural shape of the state object passed to mdast→PM handlers
@@ -74,6 +80,11 @@ export class MarkdownManager {
   private handlers: RemarkProseMirrorOptions['handlers'];
   private pmNodeHandlers: FromProseMirrorOptions<string, string>['nodeHandlers'];
   private pmMarkHandlers: FromProseMirrorOptions<string, string>['markHandlers'];
+  // R16: processors are built once per MarkdownManager instance and reused
+  // across every parse()/serialize() call. Eliminates the Docusaurus #4978
+  // anti-pattern (per-parse processor reconstruction).
+  private parseProcessor: Processor;
+  private serializeProcessor: Processor;
 
   constructor(options: MarkdownManagerOptions) {
     this.schema = getSchema(options.extensions);
@@ -81,6 +92,23 @@ export class MarkdownManager {
     const { nodeHandlers, markHandlers } = buildPmToMdastHandlers(this.schema);
     this.pmNodeHandlers = nodeHandlers;
     this.pmMarkHandlers = markHandlers;
+
+    // Pre-build and freeze both processors. After freeze, .parse/.runSync/
+    // .stringify are stateless with respect to the processor, so the cached
+    // instances are safely reusable across concurrent parse/serialize calls.
+    this.parseProcessor = createParseProcessor({
+      schema: this.schema,
+      handlers: this.handlers,
+      pmNodeHandlers: this.pmNodeHandlers,
+      pmMarkHandlers: this.pmMarkHandlers,
+    });
+    this.serializeProcessor = createSerializeProcessor({
+      schema: this.schema,
+      handlers: this.handlers,
+      pmNodeHandlers: this.pmNodeHandlers,
+      pmMarkHandlers: this.pmMarkHandlers,
+      toMarkdownHandlers,
+    });
   }
 
   /**
@@ -99,12 +127,7 @@ export class MarkdownManager {
         content: [{ type: 'paragraph', content: [] }],
       };
     }
-    const doc = parseMd(markdown, {
-      schema: this.schema,
-      handlers: this.handlers,
-      pmNodeHandlers: this.pmNodeHandlers,
-      pmMarkHandlers: this.pmMarkHandlers,
-    });
+    const doc = parseMd(markdown, this.parseProcessor);
     return doc.toJSON() as JSONContent;
   }
 
@@ -152,12 +175,10 @@ export class MarkdownManager {
       const msg = `MarkdownManager.serialize() failed: schema rejected JSONContent (type=${json.type}, childCount=${json.content?.length ?? 0})`;
       throw new Error(msg, { cause: err });
     }
-    return serializeMd(doc, {
+    return serializeMd(doc, this.serializeProcessor, {
       schema: this.schema,
-      handlers: this.handlers,
       pmNodeHandlers: this.pmNodeHandlers,
       pmMarkHandlers: this.pmMarkHandlers,
-      toMarkdownHandlers,
     });
   }
 }
