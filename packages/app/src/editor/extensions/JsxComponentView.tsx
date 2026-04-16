@@ -99,17 +99,6 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   const [renderError, setRenderError] = useState<Error | null>(null);
 
   const pos = typeof getPos === 'function' ? getPos() : undefined;
-  let isChildOfComponent = false;
-  try {
-    if (pos !== undefined) {
-      const $pos = editor.state.doc.resolve(pos);
-      if ($pos.depth > 0) {
-        isChildOfComponent = $pos.parent.type.name === 'jsxComponent';
-      }
-    }
-  } catch {
-    // Position resolution can fail during teardown
-  }
 
   const hasEditableProps = descriptor.props.some(
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
@@ -178,8 +167,8 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
         contentEditable={false}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Badge label — show component name unless it's a child (FR-17 suppression) */}
-        {!isChildOfComponent && <span>{descriptor.displayName ?? descriptor.name}</span>}
+        {/* Badge label — always show component name (hover-revealed overlay, no layout noise) */}
+        <span>{descriptor.displayName ?? descriptor.name}</span>
 
         {/* Gear icon → Radix Popover with PropPanel. Suppressed when no editable props. */}
         {hasEditableProps && (
