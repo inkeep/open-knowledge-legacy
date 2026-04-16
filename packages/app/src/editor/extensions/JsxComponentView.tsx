@@ -188,7 +188,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       className={`jsx-component-wrapper my-2 ${selected ? 'is-selected' : ''}`}
       {...(!isChildOfComponent
         ? { 'data-drag-handle': '', draggable: 'true' }
-        : { draggable: 'false' })}
+        : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}
       data-component-name={descriptor.name}
       data-tab-value={((node.attrs.props as Record<string, unknown>)?.value as string) ?? ''}
     >
