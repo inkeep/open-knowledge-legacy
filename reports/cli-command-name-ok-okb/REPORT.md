@@ -37,7 +37,8 @@ topics:
 
 - **`ok` is clear of hard collisions.** Not a bash/zsh/POSIX builtin. No Homebrew formula. No Debian/Ubuntu/Arch package at `/usr/bin/ok`. npm `ok@0.1.2` exists as a library with no `bin` field — publishing `@inkeep/open-knowledge` with `"bin": { "ok": ... }` is mechanically supported and non-conflicting.
 - **`okb` has a severe brand collision.** [OKB](https://www.okx.com/en-us/learn/okb) is a widely-traded cryptocurrency token from the OKX exchange. No PATH conflict, but search-engine and community-context collisions are persistent and high-cost.
-- **Four alternatives are flat-out unsafe:** `wiki` (active npm bin via [Federated Wiki](https://github.com/fedwiki/wiki) + deprecated Homebrew formula), `ink` ([Debian `/usr/bin/ink`](https://manpages.debian.org/unstable/ink/ink.1.en.html) printer-ink checker + [Ink.js React-for-CLI](https://github.com/vadimdemedes/ink) mega-brand), `kb` (overloaded acronym: kilobyte / keyboard / knowledge-base), **and `openkb` — the worst collision on the list** ([VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) PyPI CLI ships the same `openkb` bin with almost-identical `init/add/query/chat` subcommands in the same LLM-knowledge-base domain).
+- **Popularity data (pulled 2026-04-16)** quantifies the collision severity — see the [Popularity of Colliding Projects](#popularity-of-colliding-projects) section below. Headline numbers: `ink` collides with Vadim Demedes' 2.99M-weekly-downloads / 37.7k-star library; `kb` with gnebbia/kb's 3.4k-star PyPI CLI; `openkb` with VectifyAI/OpenKB's 179-star actively-growing PyPI CLI.
+- **Four alternatives are flat-out unsafe:** `wiki` (active npm bin via [Federated Wiki](https://github.com/fedwiki/wiki) + deprecated Homebrew formula), `ink` ([Debian `/usr/bin/ink`](https://manpages.debian.org/unstable/ink/ink.1.en.html) printer-ink checker + [Ink.js React-for-CLI](https://github.com/vadimdemedes/ink) mega-brand at ~3M weekly downloads), `kb` ([gnebbia/kb](https://github.com/gnebbia/kb) PyPI note manager with 3.4k stars **plus** kilobyte/keyboard acronym overload), **and `openkb` — direct bin + subcommand + domain collision** with [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) PyPI CLI.
 - **The long-package / short-binary split is a well-established pattern.** [ripgrep](https://github.com/BurntSushi/ripgrep) publishes as `ripgrep` with binary `rg`. [fd](https://github.com/sharkdp/fd) publishes as `fd-find` with binary `fd`. npm `"bin"` supports arbitrary command names per package, and scoped packages (`@inkeep/open-knowledge`) may declare unscoped bins (`ok`) without registry conflict.
 - **2-char names are defensible for Inkeep's use case,** though CLI-design heuristics ([Small Step](https://smallstep.com/blog/the-poetics-of-cli-command-names/), [clig.dev](https://clig.dev/)) reserve them for tools used "all the time." `ok` gets away with it because of brand strength (universal affirmation) — the same logic that justifies `gh` for GitHub CLI despite it being used only a few times per day.
 - **A zero-cost migration exists:** ship both bins for one release, document deprecation, drop `open-knowledge` in v2.0. No users lose muscle memory.
@@ -180,6 +181,60 @@ Synthesized migration recipe:
 5. **MCP server name stays `open-knowledge`;** the command invoked in `.mcp.json` becomes `ok mcp`.
 
 **Implications:** Zero breakage risk. Users with existing `open-knowledge` in shell history keep working; new docs and screencasts introduce `ok` without any flag-day migration.
+
+---
+
+## Popularity of Colliding Projects
+
+Pulled 2026-04-16 from the npm downloads API (week of 2026-04-09 to 2026-04-15) and the GitHub REST API.
+
+| Candidate | Top colliding project | Kind | Weekly npm DL | GitHub ★ | Activity (last push) | Bin on PATH? |
+|-----------|----------------------|------|---------------:|---------:|----------------------|--------------|
+| `ink`    | [vadimdemedes/ink](https://github.com/vadimdemedes/ink) — React for CLI | npm lib | **2,994,443** | **37,740** | 2026-04-14 ✅ | No (lib), but nuclear brand |
+| `kb`     | [gnebbia/kb](https://github.com/gnebbia/kb) — note manager (`pip install kb-manager`) | PyPI CLI | (npm `kb`: 41) | **3,373** | 2025-06-21 ⚠️ stale-ish | **Yes — PyPI ships `kb`** |
+| `wiki`   | [fedwiki/wiki](https://github.com/fedwiki/wiki) — Federated Wiki | npm CLI | 193 | 367 | 2026-04-13 ✅ | **Yes — npm `bin: wiki`** |
+| `openkb` | [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) — LLM KB CLI + [mrvautin/openKB](https://github.com/mrvautin/openKB) — archived web app | PyPI CLI + npm app | 42 (mrvautin) | 179 (Vectify, active) + 658 (mrvautin, archived Dec 2024) | 2026-04-13 ✅ / archived | **Yes — PyPI ships `openkb`** |
+| `ok`     | [whiteinge/ok.sh](https://github.com/whiteinge/ok.sh) — bash GitHub API client | bash script | (npm `ok`: 67, no bin) | 435 | 2025-09-29 ✅ | No (bin is `ok.sh`) |
+| `onk`    | obscure vue scaffold | npm CLI | 10 | n/a | stale | Soft only |
+| `know`   | abandoned data-structure cache | npm lib | 10 | n/a | stale | No |
+| `okb`    | npm placeholder + [OKB crypto token](https://www.okx.com/en-us/learn/okb) | brand / placeholder | 3 | n/a | n/a | No (brand) |
+| `oknow`  | abandoned promise lib | npm lib | 1 | n/a | stale | No |
+| `oknw`   | (nothing) | — | 0 | n/a | — | No |
+
+### ASCII weekly-downloads chart (log scale)
+
+```
+ink     ████████████████████████████████████████████████  2,994,443
+wiki    ██                                                      193
+ok      █                                                        67
+openkb  █                                                        42
+kb      █                                                        41
+know    ▏                                                        10
+onk     ▏                                                        10
+okb     ▏                                                         3
+oknow   ▏                                                         1
+oknw    —                                                         0
+```
+
+### ASCII GitHub stars (top colliding project, linear)
+
+```
+ink      ████████████████████████████████████████████████  37,740
+gnebbia/kb       █████                                     3,373
+mrvautin/openKB  █                          658            (archived)
+ok.sh            ▌                          435
+fedwiki/wiki     ▌                          367
+VectifyAI/OpenKB ▏                          179
+okcli (Oracle)   ▏                          54
+```
+
+### What the data changes
+
+- **`ink` is confirmed unusable.** 3 million weekly downloads + 37.7k stars in the exact same CLI-authoring space. Any blog post using `ink` for anything other than the Vadim Demedes library will be miscategorized 100% of the time.
+- **`kb` is worse than "acronym overload" — it's a real PATH collision.** [gnebbia/kb](https://github.com/gnebbia/kb) is a pip-installable CLI (`pip install kb-manager` → `kb` binary) with 3.4k stars, and it's a *knowledge-base manager* — same domain as Inkeep's tool. Severity remains **HARD**, but the rationale is now primarily PyPI-bin collision, not just acronym confusion.
+- **`openkb` is confirmed as the worst semantic match** — the PyPI side (VectifyAI, 179 stars, active) is smaller than `kb`/`ink` in raw numbers but is a **direct, growing LLM-knowledge-base product** with near-identical subcommand surface. It's the highest-risk confusion per-user-encounter.
+- **`ok`'s numbers validate the soft-collision label.** npm `ok` has 67 weekly downloads as a library (no bin). `ok.sh` has 435 stars but doesn't claim the `ok` bin name. Nothing in the data elevates the severity.
+- **`okb` numbers are trivial on the software side** (3 npm weekly downloads); the concern remains brand/SEO only.
 
 ---
 

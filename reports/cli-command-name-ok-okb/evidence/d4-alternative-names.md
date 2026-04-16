@@ -112,6 +112,32 @@ Deprecated because it is not maintained upstream! It will be disabled on 2026-09
 
 ---
 
+---
+
+## Popularity data (2026-04-16 pull)
+
+npm downloads via `https://api.npmjs.org/downloads/point/last-week/<pkg>` (week of 2026-04-09 → 2026-04-15). GitHub stars via `gh api repos/<owner>/<repo>`.
+
+| Project | Type | Weekly DL | ★ | Last push | Notes |
+|---------|------|----------:|---:|-----------|-------|
+| [vadimdemedes/ink](https://github.com/vadimdemedes/ink) | npm lib | 2,994,443 | 37,740 | 2026-04-14 | React-for-CLI; used by Gatsby, Parcel, Yarn, Terraform, Prisma, Shopify, NYT |
+| [gnebbia/kb](https://github.com/gnebbia/kb) | PyPI CLI | npm `kb`: 41 | 3,373 | 2025-06-21 | `pip install kb-manager` → ships `/usr/local/bin/kb`; note manager for devs/pentesters |
+| [mrvautin/openKB](https://github.com/mrvautin/openKB) | npm app | `openkb`: 42 | 658 | 2024-12-07 (ARCHIVED) | Markdown KB/FAQ web app; no bin (`npm start` only) |
+| [whiteinge/ok.sh](https://github.com/whiteinge/ok.sh) | bash script | npm `ok`: 67 (no bin) | 435 | 2025-09-29 | Binary is `ok.sh`, not `ok` |
+| [fedwiki/wiki](https://github.com/fedwiki/wiki) | npm CLI | 193 | 367 | 2026-04-13 | Active Federated Wiki; ships `bin: wiki` |
+| [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) | PyPI CLI | `openkb`: 42 | 179 | 2026-04-13 | `pip install openkb` → ships `openkb` bin; LLM-KB domain |
+| [man-group/okcli](https://github.com/man-group/okcli) | PyPI | — | 54 | 2020-09-23 | Oracle REPL; bin is `okcli`, not `ok` |
+
+### Implications of the data
+
+1. **`kb` is actually a PATH collision, not just an acronym concern.** [gnebbia/kb](https://github.com/gnebbia/kb) installs as `pip install kb-manager` but ships the binary named `kb` on PATH. Combined with the acronym overload, this confirms **HARD** severity — anyone in Inkeep's audience who already has gnebbia/kb installed would clobber or be clobbered by `@inkeep/open-knowledge`'s `kb` bin with zero warning.
+2. **`ink` is orders of magnitude beyond the other collisions.** At 3M weekly npm downloads and 37.7k GitHub stars, `ink` occupies a globally-dominant position in the CLI-authoring mental-model. Irrecoverable from a naming perspective.
+3. **`openkb` PyPI vs. npm asymmetry:** the npm `openkb@1.0.22` (mrvautin) is archived as of 2024-12-07 — its 658 stars are legacy signal only. The *live* threat is [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) PyPI (179 stars, actively committing as of 2026-04-13). Smaller number, but a directly competing active product in the same LLM-knowledge-base domain with the same bin name and near-identical subcommand vocabulary.
+4. **`wiki` numbers validate the HARD rating but are moderate:** 193 weekly downloads is not large, but `fedwiki/wiki` is active and ships `bin: wiki`. The deprecated Homebrew formula is separate.
+5. **`ok`'s soft rating holds:** 67 weekly downloads for the npm library (no bin), 435 stars for `ok.sh` (binary name is `ok.sh`). Nothing in the popularity data changes the SOFT rating.
+
+---
+
 ## Gaps / follow-ups
 - Did not explore `onk` or `oknw` mnemonic fit beyond "letter-soup with no anchor" — the pronounceability heuristic from D3 was enough to deprioritize.
 - Did not evaluate novel candidates like `osk`, `okd`, `okn` (these were not in the rubric). Could be a follow-up.
