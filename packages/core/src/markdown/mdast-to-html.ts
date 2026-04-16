@@ -123,25 +123,20 @@ const rehypeSanitizeUrls: Plugin<[], HastRoot> = () => {
  * mdast → hast → HTML half of the round-trip.
  */
 export function mdastToHtml(tree: MdastRoot): string {
-  // Two processors by design: the transformer stage (remark-rehype) runs on
-  // mdast and produces hast, and the compiler stage (rehype-stringify) runs
-  // on hast and produces a string. unified's type parameters make expressing
-  // "one processor, two different tree shapes" awkward — splitting is cleaner
-  // than juggling generic annotations.
-  const mdastToHastProcessor = unified().use(remarkRehype, {
-    handlers: customNodeHandlers,
-    // `allowDangerousHtml` is NOT enabled, so rehype-stringify drops hast
-    // `raw` nodes (e.g. literal `<script>` passthrough). That covers script
-    // / iframe / svg element injection on the way out. URL-scheme injection
-    // (href="javascript:...") is a separate attack surface; `rehypeSanitizeUrls`
-    // below handles it.
-  });
-  const hast = mdastToHastProcessor.runSync(tree) as unknown as HastRoot;
-  const sanitizedHast = unified()
+  // Single chained processor mirrors `markdownToHtml` below. `remark-rehype`
+  // transforms mdast → hast; `rehypeSanitizeUrls` strips dangerous URL
+  // schemes on the hast side; `rehype-stringify` compiles hast → string.
+  // `allowDangerousHtml` is NOT enabled, so rehype-stringify drops hast
+  // `raw` nodes (literal `<script>` passthrough etc.). Element-level
+  // `<script>` / `<iframe>` / `<svg>` injection is handled that way;
+  // attribute-level URL-scheme injection (`href="javascript:..."`) is
+  // handled by `rehypeSanitizeUrls`.
+  const processor = unified()
+    .use(remarkRehype, { handlers: customNodeHandlers })
     .use(rehypeSanitizeUrls)
-    .runSync(hast as unknown as HastRoot) as unknown as HastRoot;
-  const hastToHtmlProcessor = unified().use(rehypeStringify);
-  return String(hastToHtmlProcessor.stringify(sanitizedHast));
+    .use(rehypeStringify);
+  const hast = processor.runSync(tree) as unknown as HastRoot;
+  return String(processor.stringify(hast));
 }
 
 /**

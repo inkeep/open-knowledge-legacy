@@ -47,8 +47,14 @@ export interface ConversionFailInfo {
   view: 'wysiwyg' | 'source';
   /** Which stage of the pipeline threw: `htmlToMdast`, `mdastToMarkdown`, `mdManagerParse`, `applyJsonSlice`, or `branchA`. */
   stage: string;
+  /** Vendor source identifier as produced by `detectSource` (gdocs/gmail/notion/etc.) — kept as a separate dimension from `branch` so Datadog/Loki queries can filter on either axis independently. */
   source: string;
+  /** Dispatcher branch label (A/B/C/D/E) the stage was running inside. Optional: copy-side serializers do not have branches. */
+  branch?: string;
+  /** Error message — free-text, use for human debugging. */
   reason: string;
+  /** Optional typed error class (e.g. `HtmlPayloadTooLargeError`) so aggregators can distinguish expected-large-input from bug-class failures without string-matching `reason`. */
+  errorClass?: string;
   htmlBytes?: number;
 }
 
@@ -121,7 +127,9 @@ export function logConversionFail(info: ConversionFailInfo): void {
       view: info.view,
       stage: info.stage,
       source: info.source,
+      ...(info.branch != null ? { branch: info.branch } : {}),
       reason: info.reason,
+      ...(info.errorClass != null ? { errorClass: info.errorClass } : {}),
       ...(info.htmlBytes != null ? { htmlBytes: info.htmlBytes } : {}),
     }),
   );

@@ -86,17 +86,3 @@ export function pasteShiftHeld(event: ClipboardEvent): boolean {
   const injected = (event as unknown as { shiftKey?: boolean }).shiftKey;
   return injected === true;
 }
-
-/**
- * Test-only: reset the tracker latch + detach listeners. Not exported from
- * the package barrel.
- */
-export function __resetShiftTrackerForTests(): void {
-  shiftHeldLatch = false;
-  if (listenersAttached && typeof window !== 'undefined') {
-    window.removeEventListener('keydown', onKeyDown, true);
-    window.removeEventListener('keyup', onKeyUp, true);
-    window.removeEventListener('blur', onBlur, true);
-  }
-  listenersAttached = false;
-}

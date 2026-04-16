@@ -28,7 +28,11 @@
  */
 
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import { htmlToMdast, mdastToMarkdown } from '@inkeep/open-knowledge-core';
+import {
+  HtmlPayloadTooLargeError,
+  htmlToMdast,
+  mdastToMarkdown,
+} from '@inkeep/open-knowledge-core';
 import type { JSONContent } from '@tiptap/core';
 import type { EditorView } from '@tiptap/pm/view';
 import { detectSource } from './detect-source.ts';
@@ -176,7 +180,9 @@ function tryBranchA(view: EditorView, vscodeData: string, text: string, source: 
       view: 'wysiwyg',
       stage: 'branchA',
       source,
+      branch: 'A',
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
     });
     return false;
   }
@@ -196,8 +202,10 @@ function tryBranchMarkdown(
     logConversionFail({
       view: 'wysiwyg',
       stage: 'mdManagerParse',
-      source: `${source}:${branchLabel}`,
+      source,
+      branch: branchLabel,
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
     });
     return false;
   }
@@ -220,7 +228,9 @@ function tryBranchHtml(
       view: 'wysiwyg',
       stage: 'htmlToMdast',
       source,
+      branch: 'D',
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
       htmlBytes: html.length,
     });
     return false;
@@ -233,7 +243,9 @@ function tryBranchHtml(
       view: 'wysiwyg',
       stage: 'mdastToMarkdown',
       source,
+      branch: 'D',
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
       htmlBytes: html.length,
     });
     return false;
@@ -246,7 +258,9 @@ function tryBranchHtml(
       view: 'wysiwyg',
       stage: 'mdManagerParse',
       source,
+      branch: 'D',
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
       htmlBytes: html.length,
     });
     return false;
@@ -272,10 +286,23 @@ function applyJsonSlice(
     logConversionFail({
       view: 'wysiwyg',
       stage: 'applyJsonSlice',
-      source: `${source}:${branchLabel}`,
+      source,
+      branch: branchLabel,
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
       ...(htmlBytes != null ? { htmlBytes } : {}),
     });
     return false;
   }
+}
+
+/**
+ * Map an unknown thrown value to a stable class name for telemetry. Allows
+ * aggregators to distinguish expected-large-input (`HtmlPayloadTooLargeError`)
+ * from unexpected failures without string-matching the reason field.
+ */
+function classifyError(err: unknown): string | undefined {
+  if (err instanceof HtmlPayloadTooLargeError) return 'HtmlPayloadTooLargeError';
+  if (err instanceof Error && err.name) return err.name;
+  return undefined;
 }

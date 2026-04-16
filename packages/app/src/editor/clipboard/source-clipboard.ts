@@ -32,10 +32,12 @@ import { EditorView } from '@codemirror/view';
 import {
   ChunkedInsertError,
   chunkedYTextInsert,
+  HtmlPayloadTooLargeError,
   htmlToMdast,
   markdownToHtml,
   mdastToMarkdown,
 } from '@inkeep/open-knowledge-core';
+import { toast } from 'sonner';
 import * as Y from 'yjs';
 import { detectSource } from './detect-source.ts';
 import {
@@ -203,7 +205,9 @@ function tryBranchAVscode(
       view: 'source',
       stage: 'branchA',
       source,
+      branch: 'A',
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
     });
     return false;
   }
@@ -223,7 +227,9 @@ function tryBranchDHtml(
       view: 'source',
       stage: 'htmlToMdast',
       source,
+      branch: 'D',
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
       htmlBytes: html.length,
     });
     return false;
@@ -236,7 +242,9 @@ function tryBranchDHtml(
       view: 'source',
       stage: 'mdastToMarkdown',
       source,
+      branch: 'D',
       reason: (err as Error)?.message ?? 'unknown',
+      errorClass: classifyError(err),
       htmlBytes: html.length,
     });
     return false;
@@ -259,11 +267,21 @@ function tryBranchDHtml(
   // append via chunked Y.Text insertion. rAF yields keep the UI 60fps.
   // Y.RelativePosition tracks the intended write anchor so a concurrent
   // peer inserting before the anchor during a yield does not shift us.
+  //
+  // Recovery discipline: capture the original selection text BEFORE the
+  // delete dispatch so `handleChunkedInsertFailure` can restore it if the
+  // chunked insertion throws mid-stream. Without this, chunk-0 failure
+  // would leave the user's selection vanished with only a DevTools log.
+  const restoreText = from === to ? '' : view.state.sliceDoc(from, to);
   if (from !== to) {
     view.dispatch({ changes: { from, to, insert: '' } });
   }
   const anchorIndex = from;
-  const startLen = deps.ytext.length;
+  // `assoc = 0` (default) is left-binding: concurrent inserts AT anchorIndex
+  // leave our anchor at the original spot, so their content lands AFTER our
+  // chunks. This matches the intuitive "my paste goes where my cursor was,
+  // their concurrent edits follow" semantic. Right-binding (`assoc = 1`)
+  // would flip this — revisit only with explicit product direction.
   const relPos = Y.createRelativePositionFromTypeIndex(deps.ytext, anchorIndex);
 
   const resolveOffset = (logical: number): number => {
@@ -281,26 +299,96 @@ function tryBranchDHtml(
   void chunkedYTextInsert(deps.ydoc, deps.ytext, anchorIndex, markdown, {
     resolveOffset,
   }).catch((err) => {
-    if (err instanceof ChunkedInsertError) {
-      logChunkedInsertFail({
-        view: 'source',
-        chunksCompleted: err.chunksCompleted,
-        totalChunks: err.totalChunks,
-        bytesWritten: err.bytesWritten,
-        bytesRemaining: err.bytesRemaining,
-        reason: err.message,
-      });
-      return;
-    }
-    logConversionFail({
-      view: 'source',
-      stage: 'chunkedYTextInsert',
+    handleChunkedInsertFailure({
+      view,
       source,
-      reason: (err as Error)?.message ?? 'unknown',
-      htmlBytes: html.length,
+      html,
+      restoreText,
+      anchorIndex,
+      err,
     });
   });
-  // Silence an unused-var lint when startLen is only used by CRDT semantics.
-  void startLen;
   return true;
+}
+
+/**
+ * Recovery for a mid-stream chunked-insert failure. Separates three concerns:
+ *
+ * 1. Data loss: if the chunks failed before writing anything, the user's
+ *    selection is already deleted. Re-insert `restoreText` at `anchorIndex`
+ *    so the user's content is not silently lost.
+ * 2. Telemetry: emit a structured event (typed ChunkedInsertError variant
+ *    with partial-progress fields; fallback to `clipboard-html-conversion-fail`
+ *    for non-chunked errors).
+ * 3. User-visible signal: a sonner toast so the user knows the paste failed
+ *    rather than relying on DevTools to spot the console.warn.
+ *
+ * Exported for the unit test (`source-clipboard-recovery.test.ts`) so the
+ * recovery contract is mechanically covered even though the full CM6 paste
+ * integration is out of reach for bun-test.
+ */
+export interface ChunkedInsertFailureContext {
+  view: EditorView;
+  source: string;
+  html: string;
+  /** Original selection text, or '' if the selection was empty. */
+  restoreText: string;
+  anchorIndex: number;
+  err: unknown;
+}
+
+export function handleChunkedInsertFailure(ctx: ChunkedInsertFailureContext): void {
+  const { view, source, html, restoreText, anchorIndex, err } = ctx;
+
+  // 1. Restore the user's deleted selection so they have the content back.
+  //    Dispatch is a no-op if restoreText is empty.
+  if (restoreText.length > 0) {
+    try {
+      view.dispatch({ changes: { from: anchorIndex, to: anchorIndex, insert: restoreText } });
+    } catch (restoreErr) {
+      // Restoration is best-effort — the view may be destroyed by the time
+      // the promise settles. Log, then continue emitting the telemetry /
+      // toast paths.
+      console.warn('[clipboard] selection-restore dispatch failed', restoreErr);
+    }
+  }
+
+  // 2. Emit structured telemetry.
+  if (err instanceof ChunkedInsertError) {
+    logChunkedInsertFail({
+      view: 'source',
+      chunksCompleted: err.chunksCompleted,
+      totalChunks: err.totalChunks,
+      bytesWritten: err.bytesWritten,
+      bytesRemaining: err.bytesRemaining,
+      reason: err.message,
+    });
+    // 3. User-visible signal with partial-progress info.
+    toast.error(
+      `Paste was incomplete — ${err.chunksCompleted} of ${err.totalChunks} chunks landed. Your selection has been restored.`,
+    );
+    return;
+  }
+  logConversionFail({
+    view: 'source',
+    stage: 'chunkedYTextInsert',
+    source,
+    branch: 'D',
+    reason: (err as Error)?.message ?? 'unknown',
+    errorClass: classifyError(err),
+    htmlBytes: html.length,
+  });
+  toast.error('Paste failed. Your selection has been restored.');
+}
+
+/**
+ * Map an unknown thrown value to a stable class name for telemetry. Allows
+ * aggregators to distinguish expected-large-input (`HtmlPayloadTooLargeError`)
+ * from unexpected failures without string-matching the reason field.
+ */
+function classifyError(err: unknown): string | undefined {
+  if (err instanceof HtmlPayloadTooLargeError) return 'HtmlPayloadTooLargeError';
+  if (err instanceof ChunkedInsertError) return 'ChunkedInsertError';
+  if (err instanceof Error && err.name) return err.name;
+  return undefined;
 }
