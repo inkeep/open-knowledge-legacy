@@ -98,24 +98,6 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const toastIdRef = useRef<string | number | null>(null);
 
-  // Check auth status when dialog opens
-  useEffect(() => {
-    if (!open) return;
-    void fetch('/api/local-op/auth/status', { method: 'POST' })
-      .then((r) => r.json())
-      .then((data: { authenticated?: boolean }) => {
-        setIsSignedIn(!!data.authenticated);
-      })
-      .catch(() => setIsSignedIn(false));
-  }, [open]);
-
-  // Load repos when signed in
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchRepos is stable (plain function, React Compiler bans useCallback)
-  useEffect(() => {
-    if (!isSignedIn || !open) return;
-    void fetchRepos();
-  }, [isSignedIn, open]);
-
   async function fetchRepos() {
     try {
       const res = await fetch('/api/local-op/auth/repos', { method: 'POST' });
@@ -145,6 +127,22 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
       /* ignore */
     }
   }
+
+  useEffect(() => {
+    if (!open) return;
+    void fetch('/api/local-op/auth/status', { method: 'POST' })
+      .then((r) => r.json())
+      .then((data: { authenticated?: boolean }) => {
+        setIsSignedIn(!!data.authenticated);
+      })
+      .catch(() => setIsSignedIn(false));
+  }, [open]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchRepos is stable (plain function, React Compiler bans useCallback)
+  useEffect(() => {
+    if (!isSignedIn || !open) return;
+    void fetchRepos();
+  }, [isSignedIn, open]);
 
   function handleUrlChange(value: string) {
     setUrlInput(value);

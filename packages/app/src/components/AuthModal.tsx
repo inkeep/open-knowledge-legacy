@@ -8,7 +8,7 @@
  *
  * Step machine:
  *   'auth' → sign-in panel; on success, probe GET /api/local-op/auth/identity.
- *            If the FR20a chain returns null, advance to 'identity'; otherwise 'done'.
+ *            If the identity resolution chain returns null, advance to 'identity'; otherwise 'done'.
  *   'identity' → Name + Email fields; POST /api/local-op/auth/set-identity.
  *                Can be entered directly via `initialStep='identity'` (reactive path
  *                from sync status' identityUnresolved nudge) — no sign-in needed.
@@ -101,38 +101,6 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: start device flow once on mount
-  useEffect(() => {
-    const ac = new AbortController();
-    abortRef.current = ac;
-    void startDeviceFlow(ac);
-
-    return () => {
-      ac.abort();
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
-
-  // Countdown timer
-  useEffect(() => {
-    if (!userCode) return;
-    const start = Date.now();
-    timerRef.current = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const remaining = DEVICE_TIMEOUT_MS - elapsed;
-      if (remaining <= 0) {
-        setTimeLeft(0);
-        if (timerRef.current) clearInterval(timerRef.current);
-        setError('Code expired — please try again');
-      } else {
-        setTimeLeft(remaining);
-      }
-    }, 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [userCode]);
-
   async function startDeviceFlow(ac: AbortController) {
     setError(null);
     setPolling(true);
@@ -196,6 +164,37 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
       setPolling(false);
     }
   }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: start device flow once on mount
+  useEffect(() => {
+    const ac = new AbortController();
+    abortRef.current = ac;
+    void startDeviceFlow(ac);
+
+    return () => {
+      ac.abort();
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!userCode) return;
+    const start = Date.now();
+    timerRef.current = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const remaining = DEVICE_TIMEOUT_MS - elapsed;
+      if (remaining <= 0) {
+        setTimeLeft(0);
+        if (timerRef.current) clearInterval(timerRef.current);
+        setError('Code expired — please try again');
+      } else {
+        setTimeLeft(remaining);
+      }
+    }, 1000);
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [userCode]);
 
   const minutesLeft = Math.floor(timeLeft / 60_000);
   const secondsLeft = Math.floor((timeLeft % 60_000) / 1000);
