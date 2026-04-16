@@ -16,7 +16,7 @@
 
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { Settings2 } from 'lucide-react';
+import { Settings2, Trash2 } from 'lucide-react';
 import React, { type ErrorInfo, type ReactNode, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
@@ -160,17 +160,15 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       data-component-name={descriptor.name}
       data-tab-value={((node.attrs.props as Record<string, unknown>)?.value as string) ?? ''}
     >
-      {/* Hover-revealed chrome bar: name + gear → Popover PropPanel.
-          Only rendered when there are configurable props — if nothing is editable,
-          the badge is noise (visual rendering already identifies the component). */}
-      {hasEditableProps && (
-        // biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView
-        <div
-          className="jsx-component-chrome"
-          contentEditable={false}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <span>{descriptor.displayName ?? descriptor.name}</span>
+      {/* Hover-revealed action icons: settings (if editable) + delete (always) */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
+      <div
+        className="jsx-component-chrome"
+        contentEditable={false}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {/* Gear icon → Popover PropPanel (only if component has editable props) */}
+        {hasEditableProps && (
           <Popover>
             <PopoverTrigger asChild>
               <button
@@ -204,8 +202,22 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               />
             </PopoverContent>
           </Popover>
-        </div>
-      )}
+        )}
+
+        {/* Delete icon — always available */}
+        <button
+          type="button"
+          className="inline-flex items-center justify-center rounded p-0.5 hover:bg-destructive hover:text-destructive-foreground transition-colors"
+          aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
+          onClick={() => {
+            if (typeof pos === 'number') {
+              editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
+            }
+          }}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
 
       {/* Live React component — renders exactly like production */}
       <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
