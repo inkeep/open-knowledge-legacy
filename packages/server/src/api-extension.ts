@@ -3876,6 +3876,26 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  async function handleSyncAbortMerge(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    try {
+      await engine.abortMerge();
+      json(res, 200, { ok: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      json(res, 500, { ok: false, error: message });
+    }
+  }
+
   const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>> = {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
@@ -3909,6 +3929,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/sync/trigger': handleSyncTrigger,
     '/api/sync/conflicts': handleSyncConflicts,
     '/api/sync/resolve-conflict': handleSyncResolveConflict,
+    '/api/sync/abort-merge': handleSyncAbortMerge,
     '/api/local-op/clone': handleLocalOpClone,
     '/api/local-op/open': handleLocalOpOpen,
     '/api/local-op/auth/login': handleLocalOpAuthLogin,

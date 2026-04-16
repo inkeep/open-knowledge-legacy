@@ -199,10 +199,19 @@ export function ConflictResolver({ open, onOpenChange }: ConflictResolverProps) 
     setManualFile(null);
   }
 
-  function handleAbort() {
+  async function handleAbort() {
+    try {
+      const res = await fetch('/api/sync/abort-merge', { method: 'POST' });
+      if (res.ok) {
+        toast.info('Merge aborted — sync paused');
+      } else {
+        toast.error('Failed to abort merge');
+      }
+    } catch {
+      toast.error('Failed to abort merge — connection error');
+    }
     onOpenChange(false);
     setResolved(new Set());
-    toast.info('Exited merge — conflicts remain unresolved');
   }
 
   const total = conflicts.length;
