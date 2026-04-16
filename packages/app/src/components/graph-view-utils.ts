@@ -27,11 +27,7 @@ export interface GraphData {
   links: GraphLink[];
 }
 
-export interface GraphDocSelection {
-  docName: string;
-  label: string;
-  anchor: string | null;
-}
+export type GraphDocSelection = Pick<DocGraphNode, 'docName' | 'label' | 'anchor'>;
 
 export type GraphDocClickBehavior = 'navigate' | 'select';
 export type GraphNodeVisualState =

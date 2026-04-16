@@ -67,6 +67,28 @@ describe('resolveGraphNodeClickAction', () => {
     });
   });
 
+  test('selects fullscreen document nodes without anchors', () => {
+    expect(
+      resolveGraphNodeClickAction(
+        {
+          kind: 'doc',
+          id: 'notes/alpha',
+          label: 'Alpha',
+          docName: 'notes/alpha',
+          anchor: null,
+        },
+        'select',
+      ),
+    ).toEqual({
+      kind: 'select',
+      selection: {
+        docName: 'notes/alpha',
+        label: 'Alpha',
+        anchor: null,
+      },
+    });
+  });
+
   test('navigates docked document nodes through the existing hash flow', () => {
     expect(
       resolveGraphNodeClickAction(
@@ -170,5 +192,15 @@ describe('getHashForGraphDocSelection', () => {
         anchor: 'deep-link',
       }),
     ).toBe('#/notes/alpha?anchor=deep-link');
+  });
+
+  test('generates a hash without anchor parameters when anchor is null', () => {
+    expect(
+      getHashForGraphDocSelection({
+        docName: 'notes/alpha',
+        label: 'Alpha',
+        anchor: null,
+      }),
+    ).toBe('#/notes/alpha');
   });
 });

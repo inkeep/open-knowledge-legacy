@@ -391,7 +391,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
               >
                 <selectedNodeState.Icon className="size-4 shrink-0 text-primary" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     {selectedNodeState.eyebrow}
                   </div>
                   <div className="truncate font-medium text-foreground">{selectedNode.label}</div>
