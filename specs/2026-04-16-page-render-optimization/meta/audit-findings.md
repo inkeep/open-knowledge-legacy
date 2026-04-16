@@ -5,6 +5,8 @@
 **Baseline commit verified against:** `572a08b` (current HEAD; SPEC.md header says `06da1ff`, which is the last pre-spec commit — the spec itself is on the current commit)
 **Total findings:** 14 (3 H, 5 M, 6 L)
 
+> **Post-ship note (2026-04-16):** Finding 11 below refers to "precedent #14." The precedent ultimately landed as **#15** in `CLAUDE.md` because the server-authoritative cross-CRDT sync precedent shipped as #14 between audit time and ship time. See `SPEC.md` §F14 for the current numbering. Body text preserved as-is — this is the historical audit record.
+
 ---
 
 ## High Severity

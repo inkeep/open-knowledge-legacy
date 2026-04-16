@@ -24,6 +24,20 @@ import type { HocuspocusProvider, onCloseParameters } from '@hocuspocus/provider
 
 export const SYNC_TIMEOUT_MS = 30_000;
 
+/**
+ * ⚠️ Class-name vs user-copy seam.
+ *
+ * Class names below (`SyncTimeoutError`, `PreSyncDisconnectError`,
+ * `BridgeSetupError`, `DocumentNotFoundError`) describe the wire-level
+ * mechanism — they're what telemetry / Sentry / dev-tools see. User-facing
+ * copy is translated via `errorCopy()` in
+ * `packages/app/src/components/DocumentErrorBoundary.tsx` into the
+ * "load/loading" vocabulary the product uses. DO NOT propagate the word
+ * "sync" into user-facing strings from these class names; always route
+ * through `errorCopy()`. If you add a new error class here, add a matching
+ * `errorCopy` arm before the generic fallback.
+ */
+
 export class SyncTimeoutError extends Error {
   readonly docName: string;
   readonly elapsedMs: number;
@@ -134,24 +148,34 @@ function checkTimeoutsOnVisible(): void {
  * `checkTimeoutsOnVisible` which wraps this with the DOM-gate.
  *
  * Returns the number of entries rejected — tests assert on the count.
+ *
+ * Emits a single consolidated warn summarizing all reaped entries rather than
+ * one warn per entry. Volume is bounded by `ACTIVITY_MOUNT_LIMIT = 3` so
+ * per-entry logging was already small, but a single summary keeps dev-console
+ * output cleaner when a user wakes a laptop that had 2-3 docs pending.
  */
 export function __reapTimedOutEntries(now: number): number {
-  let rejected = 0;
+  const reaped: Array<{ docName: string; elapsedMs: number }> = [];
   for (const [docName, entry] of cache) {
     if (entry.settled) continue;
     const elapsed = now - entry.createdAt;
     if (elapsed < SYNC_TIMEOUT_MS) continue;
     entry.settled = true;
     const error = new SyncTimeoutError(docName, elapsed);
-    console.warn(
-      `[syncPromise] ${docName} rejected on visibility restore (${elapsed}ms elapsed, tab-sleep recovered): ${error.message}`,
-    );
     detach(entry);
     entry.reject(error);
-    rejected += 1;
+    reaped.push({ docName, elapsedMs: elapsed });
+  }
+  if (reaped.length > 0) {
+    const summary = reaped.map((r) => `${r.docName} (${r.elapsedMs}ms)`).join(', ');
+    console.warn(
+      `[syncPromise] reaped ${reaped.length} timed-out ${
+        reaped.length === 1 ? 'entry' : 'entries'
+      } on visibility restore (tab-sleep recovered): ${summary}`,
+    );
   }
   if (!hasPendingEntries()) uninstallVisibilityHandler();
-  return rejected;
+  return reaped.length;
 }
 
 function installVisibilityHandler(): void {

@@ -4,6 +4,8 @@
 **Challenge date:** 2026-04-16
 **Total findings:** 9 (3 H, 4 M, 2 L)
 
+> **Post-ship note (2026-04-16):** Any reference to "precedent #14" in this file (e.g. Finding L2 / F14 ambiguity) refers to the draft-time numbering. The precedent ultimately landed as **#15** in `CLAUDE.md` because the server-authoritative cross-CRDT sync precedent shipped as #14 between challenge time and ship time. See `SPEC.md` §F14 for the current numbering. Body text preserved as-is — this is the historical challenge record.
+
 ---
 
 ## High Severity
