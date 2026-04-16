@@ -70,6 +70,7 @@ import {
   updateFileIndex,
 } from './file-watcher.ts';
 import { withParentLock } from './git-handle.ts';
+import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
@@ -3704,8 +3705,43 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  // ─── GET /api/local-op/auth/identity ───────────────────────────────────────
+  // Reads the resolved git identity via the identity resolution chain.
+  // Returns { ok: true, identity: { name, email } | null }.
+
+  async function handleLocalOpAuthIdentity(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!projectDir) {
+      json(res, 400, { ok: false, error: 'No project directory configured' });
+      return;
+    }
+    try {
+      // Step 3 of the chain (OAuth profile fallback) requires a tokenStore; the
+      // server package doesn't import the CLI's token store today, so we resolve
+      // only local + global config tiers here. Sign-in flows pre-fill the form
+      // with OAuth name/email separately.
+      const identity = await resolveGitIdentity(projectDir);
+      json(res, 200, { ok: true, identity });
+    } catch (err) {
+      json(res, 500, {
+        ok: false,
+        error: err instanceof Error ? err.message : 'identity resolution failed',
+      });
+    }
+  }
+
   // ─── POST /api/local-op/auth/set-identity ──────────────────────────────────
-  // Sets git user.name and user.email on the project dir (local config).
+  // Writes git user.name + user.email to repo-local config via writeGitIdentity
+  // On success, nudges the sync engine to re-probe the identity chain
+  // so the UI unresolved-nudge clears immediately instead of waiting for the
+  // next push cycle.
 
   const LOCAL_OP_AUTH_SET_IDENTITY_KEY = '/api/local-op/auth/set-identity';
 
@@ -3750,9 +3786,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
-      const pg = simpleGit({ baseDir: projectDir, timeout: { block: 10_000 } });
-      await pg.addConfig('user.name', name, false, 'local');
-      await pg.addConfig('user.email', email, false, 'local');
+      writeGitIdentity(projectDir, name, email);
+      // Fire-and-forget: the sync engine re-probes + signals CC1 'sync-status'
+      // so the unresolved nudge clears in the UI without waiting on the push timer.
+      void getSyncEngine?.()
+        ?.refreshIdentity()
+        .catch(() => {
+          /* best-effort — status will catch up on next push cycle */
+        });
       json(res, 200, { ok: true });
     } catch (err) {
       json(res, 500, {
@@ -3937,6 +3978,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/local-op/auth/repos': handleLocalOpAuthRepos,
     '/api/local-op/auth/signout': handleLocalOpAuthSignout,
     '/api/local-op/auth/pat': handleLocalOpAuthPat,
+    '/api/local-op/auth/identity': handleLocalOpAuthIdentity,
     '/api/local-op/auth/set-identity': handleLocalOpAuthSetIdentity,
   };
 

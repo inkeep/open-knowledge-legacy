@@ -65,7 +65,7 @@ export function shadowGit(shadow: ShadowHandle) {
  */
 export async function initShadowRepo(projectRoot: string): Promise<ShadowHandle> {
   // Path + mode resolution lives in @inkeep/open-knowledge-core so the CLI
-  // read path and this server write path use exactly the same rule (D22/FR20).
+  // read path and this server write path use exactly the same rule (D22).
   const { path: shadowDir, mode } = resolveShadowDir(projectRoot);
 
   // Skip init if already valid

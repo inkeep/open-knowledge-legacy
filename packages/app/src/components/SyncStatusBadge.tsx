@@ -6,7 +6,16 @@
  *
  * Click opens a popover with last-sync details and action buttons.
  */
-import { AlertTriangle, Check, Cloud, CloudOff, LogIn, RefreshCw, Slash } from 'lucide-react';
+import {
+  AlertTriangle,
+  Check,
+  Cloud,
+  CloudOff,
+  LogIn,
+  RefreshCw,
+  Slash,
+  UserCog,
+} from 'lucide-react';
 import type { GitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { Button } from './ui/button';
@@ -119,9 +128,15 @@ interface PopoverBodyProps {
   status: GitSyncStatus;
   onSignIn?: () => void;
   onOpenConflictResolver?: () => void;
+  onSetIdentity?: () => void;
 }
 
-function PopoverBody({ status, onSignIn, onOpenConflictResolver }: PopoverBodyProps) {
+function PopoverBody({
+  status,
+  onSignIn,
+  onOpenConflictResolver,
+  onSetIdentity,
+}: PopoverBodyProps) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
@@ -152,6 +167,21 @@ function PopoverBody({ status, onSignIn, onOpenConflictResolver }: PopoverBodyPr
           </div>
         )}
       </div>
+
+      {status.identityUnresolved && onSetIdentity && (
+        <div className="flex items-start gap-2 rounded-md border border-dashed p-2">
+          <UserCog className="size-3.5 mt-0.5 text-muted-foreground shrink-0" />
+          <div className="flex flex-col gap-1.5 min-w-0">
+            <p className="text-xs text-muted-foreground leading-snug">
+              Git identity isn't set — commits use a default author. Set yours so teammates see your
+              name.
+            </p>
+            <Button variant="outline" size="xs" className="self-start" onClick={onSetIdentity}>
+              Set identity
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-1 pt-1">
         {status.state !== 'dormant' &&
@@ -198,9 +228,15 @@ export interface SyncStatusBadgeProps {
   onSignIn?: () => void;
   /** Called when "Review conflicts" is clicked in the conflict popover. */
   onOpenConflictResolver?: () => void;
+  /** Called when "Set identity" is clicked in the identity-unresolved nudge. */
+  onSetIdentity?: () => void;
 }
 
-export function SyncStatusBadge({ onSignIn, onOpenConflictResolver }: SyncStatusBadgeProps = {}) {
+export function SyncStatusBadge({
+  onSignIn,
+  onOpenConflictResolver,
+  onSetIdentity,
+}: SyncStatusBadgeProps = {}) {
   const status = useGitSyncStatus();
 
   // Nothing to show until status arrives
@@ -210,6 +246,7 @@ export function SyncStatusBadge({ onSignIn, onOpenConflictResolver }: SyncStatus
   if (status.state === 'dormant' && !status.hasRemote) return null;
 
   const label = badgeLabel(status);
+  const showIdentityDot = Boolean(status.identityUnresolved);
 
   return (
     <Popover>
@@ -218,7 +255,7 @@ export function SyncStatusBadge({ onSignIn, onOpenConflictResolver }: SyncStatus
           variant="ghost"
           size="icon-sm"
           className="text-muted-foreground relative"
-          aria-label={`Sync status: ${stateLabel(status.state)}`}
+          aria-label={`Sync status: ${stateLabel(status.state)}${showIdentityDot ? ' — git identity unset' : ''}`}
         >
           <BadgeIcon status={status} />
           {label && (
@@ -226,13 +263,20 @@ export function SyncStatusBadge({ onSignIn, onOpenConflictResolver }: SyncStatus
               {label}
             </span>
           )}
+          {!label && showIdentityDot && (
+            <span
+              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-amber-500 ring-2 ring-background"
+              aria-hidden
+            />
+          )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-56 p-3">
+      <PopoverContent align="end" className="w-64 p-3">
         <PopoverBody
           status={status}
           onSignIn={onSignIn}
           onOpenConflictResolver={onOpenConflictResolver}
+          onSetIdentity={onSetIdentity}
         />
       </PopoverContent>
     </Popover>

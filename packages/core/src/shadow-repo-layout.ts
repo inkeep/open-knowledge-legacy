@@ -1,6 +1,6 @@
 /**
  * Shadow-repo layout helpers — shared between CLI (read path) and server
- * (write path) per spec D22 / FR20.
+ * (write path) per spec D22.
  *
  * The shadow repo at `.git/openknowledge/` (integrated mode, when the project
  * has its own `.git/`) or `.openknowledge/` (standalone mode) is OK's

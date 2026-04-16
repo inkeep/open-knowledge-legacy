@@ -75,6 +75,7 @@ interface EditorHeaderProps {
   diffLayout: DiffLayout;
   onDiffLayoutChange: (layout: DiffLayout) => void;
   onSignIn?: () => void;
+  onSetIdentity?: () => void;
   onOpenConflictResolver?: () => void;
   onOpenClone?: () => void;
 }
@@ -93,6 +94,7 @@ export function EditorHeader({
   diffLayout,
   onDiffLayoutChange,
   onSignIn,
+  onSetIdentity,
   onOpenConflictResolver,
   onOpenClone,
 }: EditorHeaderProps) {
@@ -610,7 +612,11 @@ export function EditorHeader({
             <TooltipContent>Document timeline</TooltipContent>
           </Tooltip>
         )}
-        <SyncStatusBadge onSignIn={onSignIn} onOpenConflictResolver={onOpenConflictResolver} />
+        <SyncStatusBadge
+          onSignIn={onSignIn}
+          onSetIdentity={onSetIdentity}
+          onOpenConflictResolver={onOpenConflictResolver}
+        />
         <PresenceBar />
         <Separator orientation="vertical" className="h-4 shrink-0 data-vertical:self-center" />
         <ThemeToggle />

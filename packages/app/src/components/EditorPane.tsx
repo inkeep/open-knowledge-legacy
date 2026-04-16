@@ -27,6 +27,7 @@ export function EditorPane() {
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [conflictResolverOpen, setConflictResolverOpen] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authInitialStep, setAuthInitialStep] = useState<'auth' | 'identity'>('auth');
   const [cloneDialogOpen, setCloneDialogOpen] = useState(false);
   const [previewEntry, setPreviewEntry] = useState<TimelineEntry | null>(null);
   const [diffLayout, setDiffLayout] = useState<DiffLayout>('unified');
@@ -188,7 +189,14 @@ export function EditorPane() {
         onRestore={handleRestore}
         diffLayout={diffLayout}
         onDiffLayoutChange={setDiffLayout}
-        onSignIn={() => setAuthModalOpen(true)}
+        onSignIn={() => {
+          setAuthInitialStep('auth');
+          setAuthModalOpen(true);
+        }}
+        onSetIdentity={() => {
+          setAuthInitialStep('identity');
+          setAuthModalOpen(true);
+        }}
         onOpenConflictResolver={() => setConflictResolverOpen(true)}
         onOpenClone={() => setCloneDialogOpen(true)}
       />
@@ -210,6 +218,7 @@ export function EditorPane() {
       <AuthModal
         open={authModalOpen}
         onOpenChange={setAuthModalOpen}
+        initialStep={authInitialStep}
         onSuccess={() => setAuthModalOpen(false)}
       />
       <CloneDialog
@@ -217,6 +226,7 @@ export function EditorPane() {
         onOpenChange={setCloneDialogOpen}
         onSignIn={() => {
           setCloneDialogOpen(false);
+          setAuthInitialStep('auth');
           setAuthModalOpen(true);
         }}
       />

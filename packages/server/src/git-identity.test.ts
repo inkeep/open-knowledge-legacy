@@ -2,7 +2,7 @@
  * Unit tests for resolveGitIdentity() — chain order + fallback logic.
  * Uses injected GitConfigReader so no actual git or simple-git calls are made.
  *
- * US-017 (FR20a): repo-local → global → tokenStore → null
+ * US-017: repo-local → global → tokenStore → null
  */
 
 import { describe, expect, test } from 'bun:test';

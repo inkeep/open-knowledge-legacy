@@ -23,6 +23,7 @@ import { ConflictStore } from './conflict-storage.ts';
 import type { ContentFilter } from './content-filter.ts';
 import { type ClassifiedError, classifyGitError } from './error-classification.ts';
 import { createGitInstance, withParentLock } from './git-handle.ts';
+import { resolveGitIdentity } from './git-identity.ts';
 import { getLogger } from './logger.ts';
 import { computeRemainingMs } from './sync-timing.ts';
 
@@ -52,6 +53,12 @@ export interface SyncStatus {
   conflictCount: number;
   /** True when a git remote exists, even if sync is dormant/disabled. */
   hasRemote: boolean;
+  /**
+   * Soft signal (FR20a): `resolveGitIdentity()` returned null on the last probe.
+   * The push cycle still commits under the "Open Knowledge" default — this flag
+   * tells the UI to surface a non-blocking nudge to set a real identity.
+   */
+  identityUnresolved: boolean;
   error?: string;
   pausedReason?: string;
 }
@@ -154,6 +161,9 @@ export class SyncEngine {
 
   /** True once a git remote has been confirmed present. */
   private hasRemote = false;
+
+  /** Latest known state of the FR20a identity chain (null-return on resolveGitIdentity). */
+  private identityUnresolved = false;
 
   private statePath: string;
   private conflictStore: ConflictStore;
@@ -306,9 +316,24 @@ export class SyncEngine {
       consecutiveFailures: this.consecutiveFailures,
       conflictCount: this.conflictCount,
       hasRemote: this.hasRemote,
+      identityUnresolved: this.identityUnresolved,
       error: this.error,
       pausedReason: this.pausedReason,
     };
+  }
+
+  /**
+   * Re-run the FR20a identity chain and broadcast if the unresolved flag
+   * changed. Called from the set-identity endpoint so the UI nudge clears
+   * immediately instead of waiting for the next push cycle.
+   */
+  async refreshIdentity(): Promise<void> {
+    const identity = await resolveGitIdentity(this.projectDir);
+    const next = identity === null;
+    if (this.identityUnresolved !== next) {
+      this.identityUnresolved = next;
+      this.cc1Broadcaster?.signal('sync-status');
+    }
   }
 
   /** Return all current conflict entries. */
@@ -585,17 +610,19 @@ export class SyncEngine {
         // ── 8. Build commit message ────────────────────────────────────────────
         const message = this.buildCommitMessage(contentFiles.map((f) => f.contentRelPath));
 
-        // ── 9. Author identity from git config (D29) ───────────────────────────
-        let authorName = '';
-        let authorEmail = '';
-        try {
-          authorName = (await handle.git.raw(['config', 'user.name'])).trim();
-        } catch {}
-        try {
-          authorEmail = (await handle.git.raw(['config', 'user.email'])).trim();
-        } catch {}
-        if (!authorName) authorName = 'Open Knowledge';
-        if (!authorEmail) authorEmail = 'sync@open-knowledge.local';
+        // ── 9. Author identity (FR20a: resolveGitIdentity chain, soft fallback) ─
+        // Chain: repo-local → global → (OAuth profile, when tokenStore plumbed) →
+        // hard-coded "Open Knowledge" default. We never error on unresolved
+        // identity — attribution silently degrades to the default and the UI
+        // surfaces a non-blocking nudge via `status.identityUnresolved`.
+        const identity = await resolveGitIdentity(this.projectDir);
+        const nextUnresolved = identity === null;
+        if (this.identityUnresolved !== nextUnresolved) {
+          this.identityUnresolved = nextUnresolved;
+          this.cc1Broadcaster?.signal('sync-status');
+        }
+        const authorName = identity?.name ?? 'Open Knowledge';
+        const authorEmail = identity?.email ?? 'sync@open-knowledge.local';
 
         // Set author/committer env vars on the handle for commit-tree
         handle.git.env({

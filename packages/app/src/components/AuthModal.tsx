@@ -1,17 +1,25 @@
 /**
- * AuthModal — GitHub sign-in dialog.
+ * AuthModal — GitHub sign-in + git-identity dialog.
  *
- * Two modes:
+ * Sign-in panels:
  *   'device'  — Device Flow (default): shows user_code, polls for completion,
  *               2-minute timeout. Calls POST /api/local-op/auth/login (streaming JSONL).
  *   'pat'     — PAT fallback: text input, validated via POST /api/local-op/auth/pat.
  *
- * Variant props:
- *   identityPrompt — when true, shows Name + Email fields after sign-in for unset
- *                    git identity (FR38 re-auth variant).
- *   reauth        — when true, shows "Re-authenticate" heading instead of "Sign in".
+ * Step machine:
+ *   'auth' → sign-in panel; on success, probe GET /api/local-op/auth/identity.
+ *            If the FR20a chain returns null, advance to 'identity'; otherwise 'done'.
+ *   'identity' → Name + Email fields; POST /api/local-op/auth/set-identity.
+ *                Can be entered directly via `initialStep='identity'` (reactive path
+ *                from sync status' identityUnresolved nudge) — no sign-in needed.
+ *   'done' → close modal.
  *
- * On success: calls onSuccess({ login, name, avatarUrl }) and closes.
+ * Props:
+ *   initialStep — 'auth' (default) or 'identity' to skip sign-in and go straight
+ *                 to the identity form.
+ *   reauth      — when true, shows "Re-authenticate" heading instead of "Sign in".
+ *
+ * On success: calls onSuccess(result?) and closes.
  */
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -63,9 +71,13 @@ export interface AuthSuccessResult {
 export interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onSuccess?: (result: AuthSuccessResult) => void;
-  /** Show git identity fields (Name + Email) after sign-in. */
-  identityPrompt?: boolean;
+  onSuccess?: (result: AuthSuccessResult | null) => void;
+  /**
+   * Which step to open in. 'auth' (default) shows the sign-in panels; 'identity'
+   * skips sign-in and goes straight to the Name/Email form. Use 'identity' for
+   * the reactive "identity unresolved" nudge from the sync-status badge.
+   */
+  initialStep?: 'auth' | 'identity';
   /** Show "Re-authenticate" heading. */
   reauth?: boolean;
 }
@@ -353,25 +365,30 @@ function PATPanel({ onSuccess, onCancel }: PATpanelProps) {
 // ── Identity prompt ────────────────────────────────────────────────────────────
 
 interface IdentityPromptProps {
-  login: string;
+  /** Optional sign-in handle used as a placeholder hint for the Name input. */
+  login?: string;
+  /** Optional default name (e.g. from OAuth profile). */
+  defaultName?: string;
+  /** Optional default email (e.g. from OAuth profile). */
+  defaultEmail?: string;
   onSave: (name: string, email: string) => void;
   onSkip: () => void;
 }
 
-function IdentityPrompt({ login, onSave, onSkip }: IdentityPromptProps) {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+function IdentityPrompt({ login, defaultName, defaultEmail, onSave, onSkip }: IdentityPromptProps) {
+  const [name, setName] = useState(defaultName ?? '');
+  const [email, setEmail] = useState(defaultEmail ?? '');
+  const namePlaceholder = login ? `Name (e.g. ${login})` : 'Name';
 
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-muted-foreground">
-        Before syncing, set your identity for git commits:
+        Set your identity for git commits. This writes{' '}
+        <code className="text-xs bg-muted px-1 rounded">user.name</code> and{' '}
+        <code className="text-xs bg-muted px-1 rounded">user.email</code> to this repo's local
+        config.
       </p>
-      <Input
-        placeholder={`Name (e.g. ${login})`}
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-      />
+      <Input placeholder={namePlaceholder} value={name} onChange={(e) => setName(e.target.value)} />
       <Input
         type="email"
         placeholder="Email"
@@ -403,25 +420,46 @@ export function AuthModal({
   open,
   onOpenChange,
   onSuccess,
-  identityPrompt,
+  initialStep = 'auth',
   reauth,
 }: AuthModalProps) {
   const [tab, setTab] = useState<AuthTab>('device');
-  const [step, setStep] = useState<AuthStep>('auth');
+  const [step, setStep] = useState<AuthStep>(initialStep);
   const [authResult, setAuthResult] = useState<AuthSuccessResult | null>(null);
 
-  // Reset on open
+  // Reset on open. Honors initialStep so callers can jump straight to the
+  // identity form (reactive path from the sync-status identity-unresolved nudge).
   useEffect(() => {
     if (open) {
       setTab('device');
-      setStep('auth');
+      setStep(initialStep);
       setAuthResult(null);
     }
-  }, [open]);
+  }, [open, initialStep]);
 
-  function handleAuthSuccess(result: AuthSuccessResult) {
+  /**
+   * After sign-in, probe the server's identity chain. Returns true if an
+   * identity was resolved (local or global git config), false otherwise.
+   * Fails open — a flaky probe shouldn't block the success path.
+   */
+  async function identityAlreadyResolved(): Promise<boolean> {
+    try {
+      const res = await fetch('/api/local-op/auth/identity');
+      if (!res.ok) return true;
+      const data = (await res.json()) as {
+        ok?: boolean;
+        identity?: { name: string; email: string } | null;
+      };
+      return Boolean(data.identity);
+    } catch {
+      return true;
+    }
+  }
+
+  async function handleAuthSuccess(result: AuthSuccessResult) {
     setAuthResult(result);
-    if (identityPrompt && (!result.name || !result.email)) {
+    const resolved = await identityAlreadyResolved();
+    if (!resolved) {
       setStep('identity');
     } else {
       setStep('done');
@@ -431,36 +469,54 @@ export function AuthModal({
     }
   }
 
-  function handleIdentitySave(name: string, email: string) {
-    // Persist git identity via dedicated endpoint (best-effort)
-    void fetch('/api/local-op/auth/set-identity', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email }),
-    }).catch(() => {
-      /* ignore */
-    });
+  async function handleIdentitySave(name: string, email: string) {
+    try {
+      const res = await fetch('/api/local-op/auth/set-identity', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email }),
+      });
+      if (!res.ok) {
+        toast.error('Could not save git identity — try again');
+        return;
+      }
+    } catch {
+      toast.error('Could not save git identity — try again');
+      return;
+    }
 
-    const result = { ...(authResult ?? { login: '' }), name, email };
     setStep('done');
-    onSuccess?.(result);
+    if (authResult) {
+      onSuccess?.({ ...authResult, name, email });
+      toast.success(`Signed in as @${authResult.login}`);
+    } else {
+      onSuccess?.(null);
+      toast.success('Git identity set');
+    }
     onOpenChange(false);
-    toast.success(`Signed in as @${result.login}`);
   }
 
   function handleIdentitySkip() {
-    if (!authResult) return;
     setStep('done');
-    onSuccess?.(authResult);
+    if (authResult) {
+      onSuccess?.(authResult);
+      toast.success(`Signed in as @${authResult.login}`);
+    } else {
+      onSuccess?.(null);
+    }
     onOpenChange(false);
-    toast.success(`Signed in as @${authResult.login}`);
   }
 
   function handleCancel() {
     onOpenChange(false);
   }
 
-  const title = reauth ? 'Re-authenticate with GitHub' : 'Sign in to GitHub';
+  const title =
+    step === 'identity' && !authResult
+      ? 'Set git identity'
+      : reauth
+        ? 'Re-authenticate with GitHub'
+        : 'Sign in to GitHub';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -497,12 +553,16 @@ export function AuthModal({
           </>
         )}
 
-        {step === 'identity' && authResult && (
+        {step === 'identity' && (
           <>
-            <p className="text-sm font-medium">Signed in as @{authResult.login}</p>
+            {authResult && <p className="text-sm font-medium">Signed in as @{authResult.login}</p>}
             <IdentityPrompt
-              login={authResult.login}
-              onSave={handleIdentitySave}
+              login={authResult?.login}
+              defaultName={authResult?.name}
+              defaultEmail={authResult?.email}
+              onSave={(name, email) => {
+                void handleIdentitySave(name, email);
+              }}
               onSkip={handleIdentitySkip}
             />
           </>
