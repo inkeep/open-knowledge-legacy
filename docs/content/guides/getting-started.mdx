@@ -28,10 +28,11 @@ npx @inkeep/open-knowledge init
 
 When run interactively, `init` prompts you to select which editors you use. Based on your selection it:
 
-1. Scaffolds `.open-knowledge/` and writes `AGENTS.md` with the Open Knowledge agent instructions.
+1. Scaffolds `.open-knowledge/` with `AGENTS.md`, `config.yml`, and `.gitignore` (no content subdirectories — content lives wherever `config.yml` points, defaulting to the repo root).
 2. Registers the MCP server in each editor's config file (e.g. `.mcp.json` for Claude Code, `.cursor/mcp.json` for Cursor).
-3. Writes the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]]. VS Code has no standard agent rules file.
-4. Prints a content preview showing which files the watcher will track.
+3. Injects the Open Knowledge section into the editor's agent instruction file — `CLAUDE.md` for Claude Code, `.cursorrules` for [[Cursor]], `.windsurfrules` for [[Windsurf]] (VS Code has no standard agent rules file). This is what teaches the agent to use `exec`, `write_document`, and the other tools correctly.
+4. Scaffolds `.claude/launch.json` (Claude Code only) so `preview_start("open-knowledge")` knows how to start the editor.
+5. Prints a content preview showing which files the watcher will track.
 
 The `.mcp.json` entry written for Claude Code:
 
@@ -53,18 +54,17 @@ The command is idempotent — safe to run again without side effects. Pass `--fo
 
 </Steps>
 
-## Start the editor
+## The editor starts automatically
+
+You don't need to start the editor manually. When a connected agent is about to make edits, it calls `preview_start("open-knowledge")` — which starts the [[server]] and opens the browser for you. Changes stream live into the editor as the agent writes.
+
+If you want to open the editor yourself:
 
 ```bash
-npx @inkeep/open-knowledge start
-npx @inkeep/open-knowledge start --open  # also opens the editor in your browser
+npx @inkeep/open-knowledge start --open
 ```
 
-This starts the collaborative editor at `http://localhost:3000`. The port is configurable via `.open-knowledge/config.yml`. The `--open` flag launches your default browser automatically (macOS, Linux, and Windows).
-
-<Callout type="info">
-Starting the editor is optional. AI agents work without it -- the MCP server operates in disk-only mode when no editor is running.
-</Callout>
+This starts the collaborative editor at `http://localhost:3000` and launches your browser. The port is configurable via `.open-knowledge/config.yml`.
 
 ## Create files from the sidebar
 
@@ -109,15 +109,17 @@ The agent now has access to three workflow tools:
 
 ```
 .open-knowledge/
-  articles/          — Canonical knowledge articles
-  external-sources/  — Ingested reference material
-  research/          — Exploratory findings
-  cache/             — Derived data (gitignored)
-  catalogs/          — Auto-generated indexes (created when agents connect)
-  AGENTS.md          — Navigation guide for AI agents
-  config.yml         — Workspace configuration overrides
+  AGENTS.md          — Navigation guide for AI agents (tool usage, linking conventions)
+  config.yml         — Workspace config (content dir, include/exclude globs, server port)
   .gitignore         — Excludes cache/
+  cache/             — Derived data (gitignored)
+AGENTS.md            — Root agent instructions with Open Knowledge section injected
+.mcp.json            — MCP server entry for open-knowledge
+.claude/
+  launch.json        — Tells Claude Code how to start the editor via preview_start
 ```
+
+Content directories (`articles/`, `research/`, etc.) are not pre-created — organize your knowledge wherever makes sense for the project. The agent creates files as it works.
 
 ## Preview content scope
 
