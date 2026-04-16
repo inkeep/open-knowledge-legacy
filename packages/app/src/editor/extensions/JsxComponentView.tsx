@@ -291,16 +291,19 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       </div>
 
       {/* Live React component — renders exactly like production.
-          Self-closing / no-children components get contentEditable={false} so
-          native behaviors work (links navigate, images click, etc.). Container
-          components keep contentEditable for inline prose editing. */}
+          contentEditable={false} when:
+          - Self-closing / no-children (Card, File, ImageZoom): native behaviors work
+          - Typed-children container (Steps, Cards, Tabs): user can't type arbitrary
+            prose between children — only add the correct child type via the pill.
+            Children themselves (Step, Tab) remain editable for prose.
+          Freeform-children containers (Callout, Banner) stay editable. */}
       <ComponentErrorBoundary key={resetKey} resetKey={resetKey} onError={setRenderError}>
         <Comp {...primitiveProps}>
           <NodeViewContent
             className={`component-children ${
               !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
             }`}
-            {...(!descriptor.hasChildren || descriptor.isSelfClosing
+            {...(!descriptor.hasChildren || descriptor.isSelfClosing || descriptor.emptyChildName
               ? { contentEditable: false }
               : {})}
           />
