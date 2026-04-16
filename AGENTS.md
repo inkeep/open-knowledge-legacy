@@ -318,21 +318,28 @@ Client observers maintain baselines only — cross-CRDT write paths deleted.
 Document-open UX is built on React 19.2's `<Activity>`, Suspense, `use(promise)`, `startTransition`, and `react-error-boundary` composed per precedent #18. The render tree for `EditorArea` is:
 
 ```
-<DocumentErrorBoundary>          ← react-error-boundary, resetKeys={[activeDocName]}
-  <Suspense fallback={<EditorSkeleton />}>
-    <EditorActivityPool>         ← LRU-bounded at ACTIVITY_MOUNT_LIMIT = 3
-      {mountList.map(entry =>
-        <Activity mode={entry.docName === activeDocName ? 'visible' : 'hidden'}>
-          <DocumentBoundary docName provider>     ← use(syncPromise(docName, provider))
-            <SourceEditor .../>                   ← dual-editor concurrent mount
-            <TiptapEditor .../>                     (display:none mode toggle)
-          </DocumentBoundary>
-        </Activity>
-      )}
-    </EditorActivityPool>
-  </Suspense>
-</DocumentErrorBoundary>
+<EditorActivityPool>                                     ← LRU-bounded at ACTIVITY_MOUNT_LIMIT = 3
+  {mountList.map(entry =>
+    <Activity mode={entry.docName === activeDocName ? 'visible' : 'hidden'}>
+      <ScrollPreservingContainer>                        ← per-Activity scroller (save/restore scrollTop)
+        <DocumentErrorBoundary                           ← PER-ACTIVITY scoped (see below)
+          activeDocName={entry.docName}
+          resetKeys={[entry.docName]}
+        >
+          <Suspense fallback={<EditorSkeleton />}>       ← PER-ACTIVITY scoped (see below)
+            <DocumentBoundary docName provider>          ← use(syncPromise(docName, provider))
+              <SourceEditor .../>                        ← dual-editor concurrent mount
+              <TiptapEditor .../>                          (display:none mode toggle)
+            </DocumentBoundary>
+          </Suspense>
+        </DocumentErrorBoundary>
+      </ScrollPreservingContainer>
+    </Activity>
+  )}
+</EditorActivityPool>
 ```
+
+**Why the error boundary + Suspense live INSIDE each Activity, not above the pool.** React 19.2 `<Activity mode="hidden">` silences *suspends* in the hidden subtree (by design — pending `use(promise)` calls don't trigger an ancestor Suspense fallback) but does NOT intercept *synchronous throws* from `use(rejectedPromise)`. A single global boundary above the pool lets any hidden doc's cached rejected `syncPromise` re-throw into the visible UI on every render — verified as a regression in Playwright tests QA-023 and QA-024 before refactor. Per-Activity scoping confines each error to its own subtree: hidden-Activity fallbacks render into hidden DOM (display:none via Activity) and become visible again naturally on revisit, which is exactly the UX for cached-rejection persistence. `resetKeys={[entry.docName]}` is stable per Activity instance — errors clear only via imperative "Try again" (recycle), "Back to previous" (invalidate + nav), or Activity eviction from the MRU mount list. Do not collapse this back to a global boundary.
 
 Navigation flow: `openDocumentTransition(docName)` (from `DocumentContext`) wraps `openDocument` in `startTransition` — React keeps the previously-visible Activity entry rendered while the next one's `syncPromise` suspends, delivering content-continuity (SPEC G2). `NavigationPendingBar` (rendered in `packages/app/src/components/EditorPane.tsx` immediately under `EditorHeader`, gated on `isPending` from the shared `useTransition()`) escalates through 4 visual tiers (0–5s subtle, 5–15s visible + "Loading doc…", 15–25s "taking longer", 25–30s "Try again?") before `sync-promise.ts` hard-rejects at 30s and the ErrorBoundary takes over.
 
@@ -381,7 +388,7 @@ Small set of always-on CM6 decorations for source mode: broken-link squiggly (wi
 - `src/editor/is-system-doc.ts` — Client-side mirror of the server's `cc1-broadcast.ts:isSystemDoc` check; `ProviderPool.open` and `EditorActivityPool` both filter via this helper (SPEC DX7 defense-in-depth)
 - `src/editor/DocumentContext.tsx` — React context owning the `ProviderPool` singleton; exposes `openDocument`, `openDocumentTransition` (transition-wrapped), `isPending` (single shared `useTransition()` so every consumer of `useDocumentTransition()` sees the same pending state), `poolEntries` (MRU-sorted read-only snapshots), and `pinnedDoc`/`pin`/`unpin` for agent-nav suppression
 - `src/components/DocumentBoundary.tsx` — Deliberately tiny Suspense-unwrap bridge (`use(syncPromise(docName, provider))` then render children); placed inside each `<Activity>` entry; see precedent #18(d)
-- `src/components/DocumentErrorBoundary.tsx` — `react-error-boundary` wrapper with `FallbackComponent` + `resetKeys={[activeDocName]}` + `onReset` that invalidates the cached promise before state clears (retry ordering is load-bearing per precedent #18(e)). Maps thrown values to error copy via the exported pure `errorCopy(error)` function; renders "Try again" primary + "Back to previous document" secondary affordances
+- `src/components/DocumentErrorBoundary.tsx` — `react-error-boundary` wrapper scoped PER-ACTIVITY (one instance inside each `<Activity>` in `EditorActivityPool`, not a single global boundary). `fallbackRender` + `resetKeys={[entry.docName]}` (stable per Activity — never auto-resets on nav, since per-Activity scoping handles visibility). `onReset` distinguishes two imperative-api paths: "Try again" recycles the errored doc's pool entry (retry ordering load-bearing per precedent #18(e) — recycle destroys the cached rejected promise before state clears); "Back to previous" invalidates the errored doc's `syncPromise` cache entry then triggers hash nav. Maps thrown values to error copy via the exported pure `errorCopy(error)`; renders "Try again" primary + "Back to previous document" secondary affordances
 - `src/components/EditorActivityPool.tsx` — Renders one `<Activity>` per most-recently-active doc up to `ACTIVITY_MOUNT_LIMIT = 3` (decoupled from `MAX_POOL = 10` per precedent #18(c)); exports the pure `computeActivityMountList(entries, activeDocName, limit)` helper (active doc always force-included, system docs filtered). Preserves the dual-editor concurrent-mount pattern (SourceEditor + TiptapEditor with `display:none` toggle) so mode swap doesn't re-run editor effects
 - `src/components/EditorSkeleton.tsx` — Suspense fallback rendered only on cold load when no prior Activity entry is visible; `role="status"` `aria-busy="true"`. Extracted from the inline definition previously at `EditorArea.tsx`
 - `src/components/NavigationPendingBar.tsx` — 4-tier escalating progress indicator (0–5s subtle strip → 5–15s visible + "Loading doc…" → 15–25s "taking longer" text → 25–30s "Try again?" button). Injectable `clock` for deterministic unit tests; exports the pure `computeTier(elapsedMs)` mapping. `role="status"` `aria-live="polite"` per SPEC DX5/F13
