@@ -15,6 +15,7 @@ import type {
   LocalTransactionOrigin,
 } from '@hocuspocus/server';
 import {
+  AGENT_ICON_COLORS,
   applyByPrefixSuffix,
   colorFromSeed,
   prependFrontmatter,
@@ -171,8 +172,8 @@ export class AgentSessionManager {
     let dc = this.sessions.get(key);
     if (!dc) {
       dc = (await this.hocuspocus.openDirectConnection(docName)) as AgentDirectConnection;
-      const color = colorFromSeed(identity?.colorSeed ?? agentId);
       const icon = iconFromClientName(identity?.clientName);
+      const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(identity?.colorSeed ?? agentId);
       dc.document.awareness.setLocalState({
         user: {
           name: identity?.displayName ?? 'Claude',

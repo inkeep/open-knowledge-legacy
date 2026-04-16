@@ -13,6 +13,17 @@ export const AGENT_COLORS = [
   '#3949AB',
 ] as const;
 
+/** Per-icon color palette — one entry per known agent client type. */
+export const AGENT_ICON_COLORS: Record<string, string> = {
+  claude: '#D97757', // warm orange
+  cursor: '#1B1912', // dark (Cursor brand)
+  windsurf: '#F9F3E9', // cream (Windsurf brand)
+  openai: '#7A9DFF', // blue (Codex brand)
+  github: '#8534F3', // purple (Copilot brand)
+  cline: '#9663F0', // purple (Cline brand)
+  bot: '#727CF3', // indigo (generic agent fallback)
+};
+
 export const HUMAN_COLORS = [
   '#f0ece3', // warm gray
   '#fff5e1', // cream
