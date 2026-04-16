@@ -45,7 +45,7 @@ const NORMALIZE_SECTIONS = new Set([
 
 // Track crashes to detect regressions — if fidelity extension changes introduce
 // new parsing crashes, the test fails even though individual examples are skipped.
-// Update this count only when a known @tiptap/markdown upstream crash is resolved.
+// Update this count only when a known upstream parser crash is resolved.
 const KNOWN_CRASH_CEILING = 50;
 
 describe('CommonMark corpus — round-trip stability', () => {
@@ -60,7 +60,7 @@ describe('CommonMark corpus — round-trip stability', () => {
       try {
         output1 = normalize(mdRoundTrip(example.markdown));
       } catch {
-        // Pre-existing crash in @tiptap/markdown on edge-case inputs
+        // Pre-existing upstream parser crash on edge-case inputs
         // (e.g., empty list items). Tracked, not blocking.
         crashCount++;
         return;

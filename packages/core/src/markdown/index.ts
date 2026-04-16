@@ -1,12 +1,15 @@
 /**
- * New MarkdownManager wrapping a unified + remark pipeline.
+ * MarkdownManager — wraps the unified + remark pipeline with a stable
+ * parse/serialize API (`parse(markdown) → JSONContent`, `serialize(json) → string`).
  *
- * Preserves the public API: parse(markdown) → JSONContent, serialize(json) → string.
- * Constructed with { extensions } (same as @tiptap/markdown's MarkdownManager).
+ * Constructed with `{ extensions }`, the TipTap extension list used to derive
+ * the target ProseMirror schema.
  *
- * Handler table starts with Tier A passthrough + basic Tier B coverage.
- * US-003 adds position-slice walker, US-004 fills full handler table,
- * US-005 adds serialize-side fidelity handlers.
+ * Handler organization:
+ *   - Tier A passthrough + Tier B basic coverage: this file.
+ *   - Position-slice walker for source-form recovery: `position-slice.ts`.
+ *   - Full PM↔mdast handler table: `handlers.ts`.
+ *   - Serialize-side fidelity overrides: `to-markdown-handlers.ts`.
  */
 
 import {
