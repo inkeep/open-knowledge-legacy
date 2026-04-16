@@ -303,9 +303,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
             className={`component-children ${
               !descriptor.hasChildren && node.childCount === 0 ? 'min-h-0 m-0 p-0' : ''
             }`}
-            {...(!descriptor.hasChildren || descriptor.isSelfClosing || descriptor.emptyChildName
-              ? { contentEditable: false }
-              : {})}
+            contentEditable={
+              !descriptor.hasChildren || descriptor.isSelfClosing || descriptor.emptyChildName
+                ? false
+                : true
+            }
           />
         </Comp>
       </ComponentErrorBoundary>
