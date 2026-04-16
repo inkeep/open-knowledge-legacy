@@ -17,12 +17,12 @@ bunx @inkeep/open-knowledge start     # Start Hocuspocus collab; auto-spawns ok 
 
 `init` writes MCP configuration at the correct per-editor path for every editor whose config directory exists on your machine:
 
-| Editor       | Config written to                         | Scope          |
-| ------------ | ----------------------------------------- | -------------- |
-| Claude Code  | `<project>/.mcp.json`                     | Project        |
-| Cursor       | `<project>/.cursor/mcp.json`              | Project        |
-| VS Code      | `<project>/.vscode/mcp.json`              | Project        |
-| Windsurf     | `~/.codeium/windsurf/mcp_config.json`     | User-global    |
+| Editor      | Config written to                     | Scope       |
+| ----------- | ------------------------------------- | ----------- |
+| Claude Code | `<project>/.mcp.json`                 | Project     |
+| Cursor      | `<project>/.cursor/mcp.json`          | Project     |
+| VS Code     | `<project>/.vscode/mcp.json`          | Project     |
+| Windsurf    | `~/.codeium/windsurf/mcp_config.json` | User-global |
 
 Override with `--editor <name1,name2>` or `--editor all`. AI agents work immediately — `start` is optional (the MCP server falls back to disk-only writes without a live collab server).
 
@@ -38,13 +38,13 @@ open-knowledge start
 
 The CLI ships with a pair of long-lived processes and three utility commands so you can manage them without hunting for PIDs:
 
-| Command            | Role                                                                                              |
-| ------------------ | ------------------------------------------------------------------------------------------------- |
-| `open-knowledge start` | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.     |
-| `open-knowledge ui`    | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.               |
-| `open-knowledge stop`  | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                               |
-| `open-knowledge clean` | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.         |
-| `open-knowledge status`| Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output.   |
+| Command                 | Role                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------ |
+| `open-knowledge start`  | Start Hocuspocus CRDT server (`/collab`, `/api/*`) on a kernel-allocated port; auto-spawns `ok ui`.    |
+| `open-knowledge ui`     | Serve the React editor on port 3000 (respects `PORT` env); owns `.open-knowledge/ui.lock`.             |
+| `open-knowledge stop`   | SIGTERM any live `ok start` + `ok ui` processes. Leaves stale locks alone.                             |
+| `open-knowledge clean`  | Prune stale `.open-knowledge/{server,ui}.lock` files. Ignores live locks and foreign-host locks.       |
+| `open-knowledge status` | Print the state of both locks (`{pid, port, alive, startedAt}`). `--json` for machine-readable output. |
 
 Multi-project users can safely run `ok start` in multiple project directories simultaneously; each project has its own `.open-knowledge/{server,ui}.lock` with distinct ports.
 
@@ -79,10 +79,14 @@ bun run build
 ### Run the CLI locally (after building)
 
 ```bash
-bun packages/cli/dist/cli.mjs start
-bun packages/cli/dist/cli.mjs init
-bun packages/cli/dist/cli.mjs preview
-bun packages/cli/dist/cli.mjs mcp
+bun packages/cli/dist/cli.mjs start    # Collab server — auto-spawns ok ui sibling
+bun packages/cli/dist/cli.mjs ui       # React editor + /api/config (port 3000)
+bun packages/cli/dist/cli.mjs init     # Scaffold .open-knowledge/ + MCP configs
+bun packages/cli/dist/cli.mjs preview  # Inspect content scope (read-only)
+bun packages/cli/dist/cli.mjs mcp      # MCP stdio server
+bun packages/cli/dist/cli.mjs status   # Inspect server.lock + ui.lock state
+bun packages/cli/dist/cli.mjs stop     # SIGTERM live server + ui processes
+bun packages/cli/dist/cli.mjs clean    # Prune stale lockfiles
 ```
 
 ### Quality checks
