@@ -33,7 +33,7 @@ export function EditorPane() {
     };
   }, []);
 
-  const { activeDocName } = useDocumentContext();
+  const { activeDocName, activeTarget } = useDocumentContext();
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
@@ -70,6 +70,15 @@ export function EditorPane() {
     window.addEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
     return () => window.removeEventListener(RAW_MDX_NAV_EVENT, onRawMdxNav);
   }, []);
+
+  useEffect(() => {
+    if (activeTarget?.kind !== 'folder') return;
+    setPreviewEntry(null);
+    setTimelineOpen(false);
+    if (editorMode === 'diff') {
+      setEditorMode(modeBeforeDiffRef.current);
+    }
+  }, [activeTarget, editorMode]);
 
   function handleModeChange(mode: 'wysiwyg' | 'source') {
     setEditorMode(mode);

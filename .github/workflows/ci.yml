@@ -1,5 +1,14 @@
 name: CI
 
+# Tier 1 per SPEC §6 R9 (US-016). Runs the canonical `bun run check`
+# composition (lint + typecheck + unit + integration + conversion + fidelity)
+# plus opt-in coverage (fuzz + stress + Playwright) since those match what
+# CLAUDE.md documents as the PR-time expectation. Budget: 15 min (p95 warm
+# baseline ≈ 2m30s on local M3 Max; CI runners are ~2× slower; 1.5× headroom).
+# Tier 2 (perf regression gate, parse-health gate, parseWithFallback 5× bound)
+# runs in `nightly.yml`. Tier 3 (elevated-sample PBT + fuzz + perf trend)
+# runs in `weekly.yml`.
+
 on:
   pull_request:
     branches: [main]

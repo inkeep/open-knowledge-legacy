@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { buildPageNameSet, extractWikilinkTarget } from './wiki-link-source';
+import {
+  buildKnownWikilinkTargetSet,
+  buildPageNameSet,
+  extractWikilinkTarget,
+} from './wiki-link-source';
 
 /**
  * Unit tests for the wikilink broken-detection primitives.
@@ -133,6 +137,16 @@ describe('end-to-end target matching', () => {
     const pageSet = buildPageNameSet([{ docName: 'real', title: 'Real' }]);
     expect(pageSet.has(extractWikilinkTarget('ghost'))).toBe(false);
     expect(pageSet.has(extractWikilinkTarget('ghost#anchor'))).toBe(false);
+  });
+
+  test('folder targets are treated as known when a child note exists', () => {
+    const targetSet = buildKnownWikilinkTargetSet([
+      { docName: 'reports/index', title: 'Reports' },
+      { docName: 'reports/q1/summary', title: 'Quarter One Summary' },
+    ]);
+
+    expect(targetSet.has(extractWikilinkTarget('reports'))).toBe(true);
+    expect(targetSet.has(extractWikilinkTarget('reports/q1'))).toBe(true);
   });
 
   test('empty target (bare #anchor in wikilink) matches nothing', () => {

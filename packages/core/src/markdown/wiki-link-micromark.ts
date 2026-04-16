@@ -224,8 +224,22 @@ export const wikiLinkToMarkdown: {
 // ─────────────── remark plugin ───────────────
 
 /**
+ * Module-level singleton. wikiLinkSyntax() builds a fresh Extension each call;
+ * R16 (spec 2026-04-16 markdown-pipeline-engineering-health) requires the
+ * attacher to be idempotent under re-entry, which means identity-based dedup:
+ * we always push the SAME object reference, never a rebuilt clone.
+ */
+const MICROMARK_EXT = wikiLinkSyntax();
+
+/**
  * Remark plugin that adds wiki-link syntax support.
  * Use: `.use(remarkWikiLink)`
+ *
+ * Idempotent: if the processor's `data()` already carries the exact
+ * `MICROMARK_EXT` / `wikiLinkFromMarkdown` / `wikiLinkToMarkdown` references,
+ * the attacher leaves them alone. Under the cached-processor pattern this is
+ * defense-in-depth — unified freezes the processor on first use, so the
+ * attacher only ever fires once per processor anyway.
  */
 export function remarkWikiLink(this: Processor) {
   const data = this.data() as {
@@ -236,12 +250,18 @@ export function remarkWikiLink(this: Processor) {
 
   // Register micromark syntax extension
   if (!data.micromarkExtensions) data.micromarkExtensions = [];
-  data.micromarkExtensions.push(wikiLinkSyntax());
+  if (!data.micromarkExtensions.some((e) => e === MICROMARK_EXT)) {
+    data.micromarkExtensions.push(MICROMARK_EXT);
+  }
 
-  // Register mdast-util extensions
+  // Register mdast-util extensions (already module-level singletons)
   if (!data.fromMarkdownExtensions) data.fromMarkdownExtensions = [];
-  data.fromMarkdownExtensions.push(wikiLinkFromMarkdown);
+  if (!data.fromMarkdownExtensions.some((e) => e === wikiLinkFromMarkdown)) {
+    data.fromMarkdownExtensions.push(wikiLinkFromMarkdown);
+  }
 
   if (!data.toMarkdownExtensions) data.toMarkdownExtensions = [];
-  data.toMarkdownExtensions.push(wikiLinkToMarkdown);
+  if (!data.toMarkdownExtensions.some((e) => e === wikiLinkToMarkdown)) {
+    data.toMarkdownExtensions.push(wikiLinkToMarkdown);
+  }
 }

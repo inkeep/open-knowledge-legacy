@@ -5,9 +5,12 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
 import type { EnrichedMeta } from '../../content/enrichment.ts';
 import { buildExecResult, type ExecStructuredResult } from './exec.ts';
 import { buildReadResult } from './read-document.ts';
+
+const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
 
 function fileEntries(s: ExecStructuredResult): EnrichedMeta[] {
   return s.enrichedPaths.filter(
@@ -60,7 +63,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'cat content/auth.md' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -86,7 +89,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'ls articles/' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     const s = structured(result);
@@ -110,7 +113,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn oauth articles/ | head -5' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -134,7 +137,7 @@ describe('exec — happy path', () => {
 
     const result = (await buildExecResult(
       { command: 'ls specs/' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -143,7 +146,10 @@ describe('exec — happy path', () => {
       (e): e is Extract<typeof e, { type: 'directory' }> =>
         (e as { type?: string }).type === 'directory',
     );
-    expect(dirs.length).toBe(2);
+    // Parent `specs` + two children (`specs/spec-a`, `specs/spec-b`).
+    expect(dirs.length).toBe(3);
+    const parentEntry = dirs.find((d) => d.path === 'specs');
+    expect(parentEntry).toBeDefined();
     const specAEntry = dirs.find((d) => d.path === 'specs/spec-a');
     expect(specAEntry).toBeDefined();
     expect(specAEntry?.directMdCount).toBe(1);
@@ -154,6 +160,269 @@ describe('exec — happy path', () => {
     expect(result.content[0].text).toContain('specs/spec-a/');
     expect(result.content[0].text).toContain('md file');
   });
+
+  test('ls with explicit dir arg surfaces parent folder frontmatter', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '# Foo\n');
+
+    const configWithRules: Config = ConfigSchema.parse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: { title: 'Specs', description: 'Specifications', tags: ['spec'] },
+        },
+      ],
+    });
+
+    const result = (await buildExecResult(
+      { command: 'ls specs/' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: configWithRules },
+    )) as ExecResult;
+
+    const s = structured(result);
+    const dirs = s.enrichedPaths.filter(
+      (e): e is Extract<typeof e, { type: 'directory' }> =>
+        (e as { type?: string }).type === 'directory',
+    );
+    const parent = dirs.find((d) => d.path === 'specs');
+    expect(parent).toBeDefined();
+    expect(parent?.title).toBe('Specs');
+    expect(parent?.description).toBe('Specifications');
+    expect(parent?.tags).toEqual(['spec']);
+  });
+});
+
+describe('exec — stdout provenance headers', () => {
+  test('`ls <dir>/` prepends `<dir>/:` header to stdout', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '# Auth\n');
+
+    const result = (await buildExecResult(
+      { command: 'ls articles/' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('articles/:\n')).toBe(true);
+    expect(result.content[0].text).toContain('articles/:\n');
+  });
+
+  test('`ls .` emits no header (no explicit subject dir)', async () => {
+    const project = await bootstrap();
+    writeFileSync(resolve(project, 'top.md'), '# Top\n');
+
+    const result = (await buildExecResult(
+      { command: 'ls .' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('./:')).toBe(false);
+    expect(s.stdout?.startsWith('.:')).toBe(false);
+  });
+
+  test('`cat <file.md>` prepends `==> <file> <==` header to stdout', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '# Auth\n\nBody\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat articles/auth.md' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('==> articles/auth.md <==\n')).toBe(true);
+  });
+
+  test('multi-file `cat a.md b.md` emits no header (would imply false boundaries)', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'a.md'), 'A\n');
+    writeFileSync(resolve(contentDir, 'b.md'), 'B\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat articles/a.md articles/b.md' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout).not.toContain('==>');
+    // enrichedPaths still lists every file read, so provenance is preserved.
+    const files = fileEntries(s);
+    expect(files.map((f) => f.path).sort()).toEqual(['articles/a.md', 'articles/b.md']);
+  });
+
+  test('`head <file.md>` prepends file header AND enriches the file', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody\n');
+
+    const result = (await buildExecResult(
+      { command: 'head -5 articles/auth.md' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('==> articles/auth.md <==\n')).toBe(true);
+    const files = fileEntries(s);
+    expect(files.some((f) => f.path === 'articles/auth.md')).toBe(true);
+  });
+
+  test('`cat X | head -5` — cat header wins, head is a trimmer', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), 'line 1\nline 2\nline 3\n');
+
+    const result = (await buildExecResult(
+      { command: 'cat articles/auth.md | head -2' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    expect(s.stdout?.startsWith('==> articles/auth.md <==\n')).toBe(true);
+  });
+});
+
+describe('exec — folder-rule flow-through (US-005 / QA-001 / QA-002)', () => {
+  test('ls on a folder with a matching rule surfaces folder fields (QA-001)', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '# Foo\n');
+
+    const configWithRules: Config = ConfigSchema.parse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: { title: 'Specs', description: 'Specifications', tags: ['spec'] },
+        },
+      ],
+    });
+
+    const result = (await buildExecResult(
+      { command: 'ls .' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: configWithRules },
+    )) as ExecResult;
+
+    const s = structured(result);
+    const dirs = s.enrichedPaths.filter(
+      (e): e is Extract<typeof e, { type: 'directory' }> =>
+        (e as { type?: string }).type === 'directory',
+    );
+    const specsEntry = dirs.find((d) => d.path === 'specs');
+    expect(specsEntry).toBeDefined();
+    expect(specsEntry?.title).toBe('Specs');
+    expect(specsEntry?.description).toBe('Specifications');
+    expect(specsEntry?.tags).toEqual(['spec']);
+  });
+
+  test('cat merges file + folder frontmatter (QA-002)', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '---\ntitle: Foo\ntags:\n  - wip\n---\nBody\n');
+
+    const configWithRules: Config = ConfigSchema.parse({
+      folders: [{ match: 'specs/**', frontmatter: { title: 'Specs', tags: ['spec'] } }],
+    });
+
+    const result = (await buildExecResult(
+      { command: 'cat specs/foo.md' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: configWithRules },
+    )) as ExecResult;
+
+    const files = fileEntries(structured(result));
+    expect(files.length).toBe(1);
+    expect(files[0].title).toBe('Foo'); // file wins
+    expect(files[0].tags).toEqual(['spec', 'wip']); // concat, file last, dedup
+  });
+
+  test('ls Referenced files text block renders folder-rule title/description/tags on directory rows', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '# Foo\n');
+
+    const configWithRules: Config = ConfigSchema.parse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: {
+            title: 'Specifications',
+            description: 'Product + technical specs',
+            tags: ['spec', 'wip'],
+          },
+        },
+      ],
+    });
+
+    const result = (await buildExecResult(
+      { command: 'ls .' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: configWithRules },
+    )) as ExecResult;
+
+    const text = result.content[0].text;
+    // Leader should use the folder title, with path in parens
+    expect(text).toContain('**Specifications** (specs/)');
+    // Description rendered
+    expect(text).toContain('Product + technical specs');
+    // Tags rendered in the same format as file entries
+    expect(text).toContain('tags: spec, wip');
+  });
+
+  test('ls Referenced files text block falls back to path label when no folder rule matches', async () => {
+    const project = await bootstrap();
+    const reports = resolve(project, 'reports');
+    mkdirSync(reports, { recursive: true });
+    writeFileSync(resolve(reports, 'report.md'), '# Report\n');
+
+    // Rule exists but does not match the `reports/` folder.
+    const configWithRules: Config = ConfigSchema.parse({
+      folders: [{ match: 'specs/**', frontmatter: { title: 'Specs' } }],
+    });
+
+    const result = (await buildExecResult(
+      { command: 'ls .' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: configWithRules },
+    )) as ExecResult;
+
+    const text = result.content[0].text;
+    // No folder-rule title applied → falls back to path-label format
+    expect(text).toContain('**reports/** (directory)');
+    expect(text).not.toContain('**Specs** (reports/)');
+  });
+
+  test('empty folders config behaves identically to no folders (backwards compat QA-006)', async () => {
+    const project = await bootstrap();
+    const specs = resolve(project, 'specs');
+    mkdirSync(specs, { recursive: true });
+    writeFileSync(resolve(specs, 'foo.md'), '---\ntitle: Foo\n---\nBody\n');
+
+    const result = (await buildExecResult(
+      { command: 'ls .' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    const dirs = s.enrichedPaths.filter(
+      (e): e is Extract<typeof e, { type: 'directory' }> =>
+        (e as { type?: string }).type === 'directory',
+    );
+    const specsEntry = dirs.find((d) => d.path === 'specs');
+    expect(specsEntry).toBeDefined();
+    expect(specsEntry?.title).toBeUndefined();
+    expect(specsEntry?.description).toBeUndefined();
+    expect(specsEntry?.tags).toBeUndefined();
+  });
 });
 
 describe('exec — categorized errors', () => {
@@ -161,7 +430,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'awk BEGIN{}' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -174,7 +443,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'grep x . > out.txt' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -185,7 +454,7 @@ describe('exec — categorized errors', () => {
     const project = await bootstrap();
     const result = (await buildExecResult(
       { command: 'cat `ls`' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBe(true);
@@ -202,7 +471,7 @@ describe('exec — binary file NG8 warning', () => {
 
     const result = (await buildExecResult(
       { command: 'cat assets/diagram.png' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.content[0].text).toContain('appears to be binary');
@@ -227,7 +496,7 @@ describe('exec — CC9 parity with read_document', () => {
     // exec("cat articles/parity.md") → pulls rich enrichment
     const execResult = (await buildExecResult(
       { command: 'cat articles/parity.md' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
     const execMeta = fileEntries(structured(execResult))[0];
 
@@ -237,8 +506,7 @@ describe('exec — CC9 parity with read_document', () => {
       {
         resolveCwd: async () => project,
         serverUrl: undefined,
-        // biome-ignore lint/suspicious/noExplicitAny: test-only config stub
-        config: { mcp: { tools: { read_document: { historyDepth: 5 } } } } as any,
+        config: DEFAULT_CONFIG,
       },
     );
 
@@ -275,7 +543,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | head -10' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -290,7 +558,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | head' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -303,7 +571,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -316,7 +584,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | tail -5' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -329,7 +597,7 @@ describe('exec — head/tail truncation banner', () => {
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | head -n 8' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     expect(result.isError).toBeFalsy();
@@ -355,7 +623,7 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const result = (await buildExecResult(
       { command: 'cat content/a.md' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     const s = structured(result);
@@ -370,7 +638,7 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const result = (await buildExecResult(
       { command: 'grep -rn needle content/ | head -10' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     const s = structured(result);
@@ -386,7 +654,7 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const result = (await buildExecResult(
       { command: 'cat content/tiny.md' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     const s = structured(result);
@@ -402,7 +670,7 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const result = (await buildExecResult(
       { command: 'cat content/big.md' },
-      { resolveCwd: async () => project, serverUrl: undefined },
+      { resolveCwd: async () => project, serverUrl: undefined, config: DEFAULT_CONFIG },
     )) as ExecResult;
 
     const s = structured(result);

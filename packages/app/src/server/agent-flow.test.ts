@@ -8,8 +8,8 @@
  * 4. Re-parsing that markdown back to Y.Doc (source → WYSIWYG path) preserves the agent's content
  *
  * This is a server-side test that exercises the same code paths as the browser editor,
- * without requiring a browser. The CRDT layer (Yjs) and serialization layer (@tiptap/markdown)
- * are the same in both environments.
+ * without requiring a browser. The CRDT layer (Yjs) and the unified + remark
+ * serialization layer (MarkdownManager) are the same in both environments.
  */
 import { describe, expect, test } from 'bun:test';
 import { Hocuspocus } from '@hocuspocus/server';

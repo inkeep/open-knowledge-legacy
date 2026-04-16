@@ -128,6 +128,26 @@ describe('graph endpoints', () => {
         },
       ]);
 
+      // Bulk backlink-count lookup for slim enrichment (exec ls/grep/find).
+      const counts = JSON.parse(
+        (
+          await callRoute(
+            contentDir,
+            '/api/backlink-counts?docNames=alpha,beta,gamma,unknown',
+            fileIndex,
+            backlinkIndex,
+          )
+        ).body,
+      ) as { ok: boolean; counts: Record<string, number> };
+      expect(counts.ok).toBe(true);
+      expect(counts.counts).toEqual({ alpha: 0, beta: 1, gamma: 0, unknown: 0 });
+
+      const countsMissing = JSON.parse(
+        (await callRoute(contentDir, '/api/backlink-counts', fileIndex, backlinkIndex)).body,
+      ) as { ok: boolean; error: string };
+      expect(countsMissing.ok).toBe(false);
+      expect(countsMissing.error).toContain('Missing docNames');
+
       const forward = JSON.parse(
         (await callRoute(contentDir, '/api/forward-links?docName=alpha', fileIndex, backlinkIndex))
           .body,

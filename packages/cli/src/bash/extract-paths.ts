@@ -3,11 +3,12 @@
  * handler can enrich each one.
  *
  * Strategy per D8 / FR14:
- *   1. Find the last "path-producer" stage (cat, ls, grep, find) walking
- *      backwards through stages — later commands like head/tail/sort
- *      simply pass paths through.
+ *   1. Find the last "path-producer" stage walking backwards through stages.
+ *      Base producers (cat, ls, grep, find) always qualify. `head` and
+ *      `tail` qualify conditionally — only when given a file arg directly
+ *      (`head file.md`), not when used as pipe trimmers (`grep ... | head -5`).
  *   2. Apply that stage's extraction rule:
- *        - `cat` → paths come from ARGS (stdout is file contents, not paths)
+ *        - `cat`, `head <file>`, `tail <file>` → paths from ARGS (stdout is contents)
  *        - `ls`  → each stdout line is a path (prefixed with the arg dir
  *                  if one was supplied)
  *        - `grep -rn` → `path:line:text` lines; split on first colon
@@ -45,11 +46,13 @@ function normalize(p: string): string {
   return out;
 }
 
-function argsOf(stage: Stage): string[] {
-  return stage.args.slice(1); // drop command token
+/** Stage args minus the leading command token. */
+export function argsOf(stage: Stage): string[] {
+  return stage.args.slice(1);
 }
 
-function nonFlagArgs(args: string[]): string[] {
+/** Drop flags (anything starting with `-`). */
+export function nonFlagArgs(args: string[]): string[] {
   return args.filter((a) => !a.startsWith('-'));
 }
 
@@ -64,6 +67,11 @@ function extractFromLs(stdout: string, stage: Stage): string[] {
   const baseDir = pathArgs.length > 0 ? pathArgs[pathArgs.length - 1] : '';
   const prefix = baseDir && baseDir !== '.' ? normalize(baseDir) : '';
   const out: string[] = [];
+  // When an explicit dir arg was given, emit the parent itself first so
+  // folder-level frontmatter (title/description/tags from folders: rules)
+  // reaches enrichDirectory alongside the children. classifyPaths stats the
+  // path, so a file arg like `ls foo.md` still classifies correctly.
+  if (prefix) out.push(prefix);
   for (const line of stdout.split('\n')) {
     const name = line.trim();
     if (!name) continue;
@@ -99,6 +107,17 @@ function extractFromFind(stdout: string): string[] {
   return out;
 }
 
+function extractFromHeadTail(stage: Stage): string[] {
+  // Like cat: when head/tail is given a file arg, paths come from ARGV.
+  return nonFlagArgs(argsOf(stage)).filter(isWikiPath);
+}
+
+function headTailActsAsProducer(stage: Stage): boolean {
+  // head/tail only qualify as producers when invoked with a file arg.
+  // `cat x | head -5` keeps head as a trimmer and falls through to cat.
+  return nonFlagArgs(argsOf(stage)).length > 0;
+}
+
 function fallback(stdout: string): string[] {
   const out: string[] = [];
   const matches = stdout.matchAll(PATH_FALLBACK_RE);
@@ -111,11 +130,17 @@ function fallback(stdout: string): string[] {
  * stages that produced it.
  */
 export function extractReferencedPaths(stdout: string, stages: Stage[]): string[] {
-  // Find the last producer stage.
+  // Find the last producer stage. head/tail qualify only when given a file
+  // arg — otherwise they're pipe trimmers and we should keep walking.
   let producer: Stage | null = null;
   for (let i = stages.length - 1; i >= 0; i--) {
-    if (PRODUCER_COMMANDS.has(stages[i].command)) {
-      producer = stages[i];
+    const s = stages[i];
+    if (PRODUCER_COMMANDS.has(s.command)) {
+      producer = s;
+      break;
+    }
+    if ((s.command === 'head' || s.command === 'tail') && headTailActsAsProducer(s)) {
+      producer = s;
       break;
     }
   }
@@ -136,6 +161,10 @@ export function extractReferencedPaths(stdout: string, stages: Stage[]): string[
         break;
       case 'find':
         raw = extractFromFind(stdout);
+        break;
+      case 'head':
+      case 'tail':
+        raw = extractFromHeadTail(producer);
         break;
       default:
         raw = fallback(stdout);

@@ -212,6 +212,13 @@ export class ProviderPool {
     this.notify();
   }
 
+  /** Clear the active document without closing any open providers. */
+  clearActive(): void {
+    if (this.activeDocName === null) return;
+    this.activeDocName = null;
+    this.notify();
+  }
+
   /** Get the active pool entry, or null if nothing is active. */
   getActive(): PoolEntry | null {
     if (!this.activeDocName) return null;

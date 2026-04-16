@@ -1279,6 +1279,42 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
+   * returns `{ ok: true, counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
+   * (exec ls/grep/find slim enrichment) that need connection density per file
+   * without N-amplifying the single-doc `/api/backlinks` endpoint.
+   * docNames failing `isSafeDocName` are silently dropped from `counts`.
+   */
+  async function handleBacklinkCounts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const raw = url.searchParams.get('docNames');
+      if (!raw) {
+        json(res, 400, { ok: false, error: 'Missing docNames parameter' });
+        return;
+      }
+      const counts: Record<string, number> = {};
+      for (const docName of raw.split(',')) {
+        const trimmed = docName.trim();
+        if (!trimmed || !isSafeDocName(trimmed)) continue;
+        counts[trimmed] = backlinkIndex.getBacklinkCount(trimmed);
+      }
+      json(res, 200, { ok: true, counts });
+    } catch (e) {
+      console.error('[backlink-counts]', e);
+      json(res, 500, { ok: false, error: 'Failed to read backlink counts' });
+    }
+  }
+
   async function handleForwardLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -2786,6 +2822,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
     '/api/backlinks': handleBacklinks,
+    '/api/backlink-counts': handleBacklinkCounts,
     '/api/forward-links': handleForwardLinks,
     '/api/link-graph': handleLinkGraph,
     '/api/dead-links': handleDeadLinks,

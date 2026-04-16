@@ -21,6 +21,19 @@ describe('MCP server module', () => {
     const instructions = buildInstructions(config);
     expect(instructions).toContain(PREVIEW_GUIDANCE);
   });
+
+  it('buildInstructions describes both per-file and folders: surfaces (US-006 / QA-010)', async () => {
+    const { buildInstructions } = await import('./server.ts');
+    const config = ConfigSchema.parse({});
+    const instructions = buildInstructions(config);
+    // Describes both surfaces, not the stale "deprecated" wording
+    expect(instructions).not.toContain('Folder-level frontmatter was deprecated');
+    expect(instructions).not.toContain('the only authored metadata surface');
+    expect(instructions).toContain('Per-file frontmatter');
+    expect(instructions).toContain('folders:');
+    // Distinguishes from the rejected INDEX.md-inside-content pattern
+    expect(instructions).toContain('INDEX.md');
+  });
 });
 
 describe('registerAllTools', () => {

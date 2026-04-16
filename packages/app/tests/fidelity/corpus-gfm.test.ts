@@ -6,8 +6,10 @@
  */
 
 import { describe, expect, test } from 'bun:test';
-import gfmExamples from './fixtures/gfm-examples.json';
+import { loadGfmExamples } from '../../../core/src/markdown/fixtures/index.ts';
 import { mdRoundTrip, normalize } from './helpers';
+
+const gfmExamples = loadGfmExamples();
 
 // Sections that normalize non-idempotently until Tier 2/3 features land
 const NORMALIZE_SECTIONS = new Set(['Tables']);
