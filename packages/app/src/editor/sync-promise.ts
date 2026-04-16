@@ -44,6 +44,20 @@ export class PreSyncDisconnectError extends Error {
   }
 }
 
+/**
+ * Document lookup failed (not yet surfaced by the current sync pipeline — reserved
+ * so the error-boundary copy taxonomy is complete and future sync paths can throw
+ * a typed instance instead of a generic Error).
+ */
+export class DocumentNotFoundError extends Error {
+  readonly docName: string;
+  constructor(docName: string) {
+    super(`Document not found: "${docName}"`);
+    this.name = 'DocumentNotFoundError';
+    this.docName = docName;
+  }
+}
+
 interface CacheEntry {
   promise: Promise<void>;
   resolve: () => void;

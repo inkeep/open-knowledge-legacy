@@ -1,0 +1,170 @@
+/**
+ * DocumentErrorBoundary — error surface for the hybrid Activity + Suspense
+ * render tree. Wraps `react-error-boundary` and renders a recoverable fallback
+ * when a `DocumentBoundary` (or anything beneath) throws during render — most
+ * notably when a `syncPromise` rejects via `use()`.
+ *
+ * UX (SPEC §5 Failure/debug + §9):
+ *   - Document name + one-line error summary (per error kind).
+ *   - Primary "Try again": invalidates the syncPromise cache entry and resets
+ *     the error boundary so the next render re-enters Suspense with a fresh
+ *     promise.
+ *   - Secondary "Back to previous document": calls `onNavigateBack` with the
+ *     previously-active docName (only rendered when present).
+ *   - `resetKeys={[activeDocName]}` so navigating away auto-clears the error.
+ *
+ * Retry ordering (per acceptance criterion): invalidate MUST run before the
+ * boundary state clears, otherwise the re-render would pick up the old cached
+ * rejected promise. We hook that through `onReset` because react-error-boundary
+ * fires `onReset(...)` synchronously before calling `setState`
+ * (node_modules/react-error-boundary/dist/react-error-boundary.cjs).
+ */
+
+import { ErrorBoundary, type FallbackProps } from 'react-error-boundary';
+import { Button } from '@/components/ui/button';
+import {
+  DocumentNotFoundError,
+  invalidateSyncPromise,
+  PreSyncDisconnectError,
+  SyncTimeoutError,
+} from '@/editor/sync-promise';
+
+export interface ErrorCopy {
+  title: string;
+  summary: string;
+}
+
+/**
+ * Map a thrown value to user-facing copy. Pure — unit-testable without a
+ * DOM. Kept separate from the React surface so the taxonomy can evolve
+ * without touching rendering code.
+ */
+export function errorCopy(error: unknown): ErrorCopy {
+  if (error instanceof SyncTimeoutError) {
+    return {
+      title: 'Sync timed out',
+      summary: `Could not sync "${error.docName}" within the timeout. Check your connection and try again.`,
+    };
+  }
+  if (error instanceof PreSyncDisconnectError) {
+    return {
+      title: 'Connection dropped',
+      summary: `Lost connection before "${error.docName}" finished syncing.`,
+    };
+  }
+  if (error instanceof DocumentNotFoundError) {
+    return {
+      title: 'Document not found',
+      summary: `"${error.docName}" could not be found.`,
+    };
+  }
+  const message =
+    error instanceof Error && error.message ? error.message : 'An unexpected error occurred.';
+  return {
+    title: 'Unknown error',
+    summary: message,
+  };
+}
+
+interface DocumentErrorFallbackProps extends FallbackProps {
+  activeDocName: string;
+  previousDocName?: string;
+  onNavigateBack?: (previousDocName: string) => void;
+}
+
+function DocumentErrorFallback({
+  error,
+  resetErrorBoundary,
+  activeDocName,
+  previousDocName,
+  onNavigateBack,
+}: DocumentErrorFallbackProps) {
+  const { title, summary } = errorCopy(error);
+  const canGoBack = !!previousDocName && !!onNavigateBack;
+
+  return (
+    <div
+      role="alert"
+      aria-labelledby="document-error-title"
+      data-slot="document-error-boundary"
+      className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center"
+    >
+      <p className="text-xs font-mono text-muted-foreground">{activeDocName}</p>
+      <h2 id="document-error-title" className="text-lg font-semibold">
+        {title}
+      </h2>
+      <p className="max-w-md text-sm text-muted-foreground">{summary}</p>
+      <div className="mt-2 flex gap-2">
+        <Button variant="default" onClick={resetErrorBoundary}>
+          Try again
+        </Button>
+        {canGoBack ? (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (previousDocName && onNavigateBack) onNavigateBack(previousDocName);
+            }}
+          >
+            Back to previous document
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export interface DocumentErrorBoundaryProps {
+  activeDocName: string;
+  previousDocName?: string;
+  onNavigateBack?: (previousDocName: string) => void;
+  children: React.ReactNode;
+}
+
+export function DocumentErrorBoundary({
+  activeDocName,
+  previousDocName,
+  onNavigateBack,
+  children,
+}: DocumentErrorBoundaryProps) {
+  // Bind the contextual props into a FallbackComponent for react-error-boundary.
+  // Defined inline so `activeDocName` / `previousDocName` / `onNavigateBack`
+  // are current on every render — React Compiler handles stability.
+  const FallbackComponent = (props: FallbackProps) => (
+    <DocumentErrorFallback
+      {...props}
+      activeDocName={activeDocName}
+      previousDocName={previousDocName}
+      onNavigateBack={onNavigateBack}
+    />
+  );
+
+  return (
+    <ErrorBoundary
+      FallbackComponent={FallbackComponent}
+      resetKeys={[activeDocName]}
+      // Fires before the boundary clears state, so the next render re-enters
+      // Suspense against a fresh syncPromise.
+      onReset={(details) => {
+        if (details.reason === 'imperative-api') {
+          invalidateSyncPromise(activeDocName);
+          console.warn(
+            `[DocumentErrorBoundary] retry invalidated syncPromise for ${activeDocName}`,
+          );
+        } else {
+          console.warn(
+            `[DocumentErrorBoundary] reset by key change (${details.prev?.[0]} → ${details.next?.[0]})`,
+          );
+        }
+      }}
+      onError={(error) => {
+        console.warn(
+          `[DocumentErrorBoundary] rendered fallback for ${activeDocName}: ${errorCopy(error).title}`,
+        );
+      }}
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
+
+export default DocumentErrorBoundary;
