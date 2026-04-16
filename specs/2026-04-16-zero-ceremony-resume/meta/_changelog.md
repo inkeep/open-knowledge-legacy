@@ -131,3 +131,23 @@ tags:
 ### Status
 
 **Ready for implementation.** Spec passes resolution completeness gate; one remaining OQ is runtime-verifiable and has a documented fallback.
+
+## 2026-04-16 (post-PR update)
+
+### OQ-1.4 resolved — `ok ui` proxy mode (D-032)
+
+- Investigated Claude Code `preview_start` lifecycle with `autoPort:true`. Confirmed from docs that Claude Code picks a free port when preferred (3000) is busy and passes via `PORT` env var.
+- Identified silent-failure case: Scenario B (MCP spawns UI first, user later clicks preview, Claude Code picks different port, our `ok ui` exits 0, preview proxy has no listener).
+- **Resolution:** `ok ui` lock-collision handler is port-aware (D-022 revised):
+  - Same port → exit 0 (terminal user's "already running" case).
+  - Different port → start reverse HTTP proxy on requested port forwarding to lock's port. Zero new dependencies (Node's built-in `http`).
+  - Lock port=0 (race) → poll for 2s, then exit 1 with "run `ok clean`" hint.
+- **New artifacts:** `evidence/oq-1-4-resolution.md` with full scenario analysis + implementation sketch.
+- **SPEC.md deltas:** added FR-1.1b (port-aware collision handler); D-032 (proxy mode resolution); Status line now "all OQs resolved"; §5 P1 narrative + §9 failure modes + §11 open questions + §14 risks + §16 STOP_IF updated. §9 alternatives grew with Option M (exit-0-always) + Option N (autoPort:false) — both rejected with rationale.
+- A5 reframed from "verify exit-0 tolerance" to "verify proxy-mode end-to-end with Claude Code."
+
+### No new open questions.
+
+### Status
+
+**Ready for implementation.** All P0 open questions resolved. A5 is a runtime verification task (not an OQ) with a documented fallback path.

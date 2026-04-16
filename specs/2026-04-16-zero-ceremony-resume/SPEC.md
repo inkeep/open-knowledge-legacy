@@ -1,13 +1,13 @@
 # Zero-Ceremony Resume — Spec
 
-**Status:** Draft — post-audit, pending final verification
+**Status:** Draft — all OQs resolved; pending implementation-time runtime verification (A5)
 **Owner(s):** TBD (implementer) — product direction from session 2026-04-16
 **Last updated:** 2026-04-16
 **Baseline commit:** 5dab8683
 **Links:**
 - Parent project: [../../projects/zero-ceremony-resume/PROJECT.md](../../projects/zero-ceremony-resume/PROJECT.md)
 - Evidence (project-level): [../../projects/zero-ceremony-resume/evidence/current-state.md](../../projects/zero-ceremony-resume/evidence/current-state.md), [../../projects/zero-ceremony-resume/evidence/worldmodel-synthesis.md](../../projects/zero-ceremony-resume/evidence/worldmodel-synthesis.md)
-- Evidence (spec-local): [./evidence/ui-client-tracking.md](./evidence/ui-client-tracking.md), [./evidence/launch-json-and-port.md](./evidence/launch-json-and-port.md), [./evidence/idle-shutdown-directconnection.md](./evidence/idle-shutdown-directconnection.md)
+- Evidence (spec-local): [./evidence/ui-client-tracking.md](./evidence/ui-client-tracking.md), [./evidence/launch-json-and-port.md](./evidence/launch-json-and-port.md), [./evidence/idle-shutdown-directconnection.md](./evidence/idle-shutdown-directconnection.md), [./evidence/oq-1-4-resolution.md](./evidence/oq-1-4-resolution.md)
 - Audit trail: [./meta/audit-findings.md](./meta/audit-findings.md), [./meta/design-challenge.md](./meta/design-challenge.md)
 - Superseded research: [../../reports/zero-config-bunx-cli-packaging/REPORT.md](../../reports/zero-config-bunx-cli-packaging/REPORT.md) §D4 (answers Open Question #1)
 - Sibling bet: [../../stories/init-and-project-switching/STORY.md](../../stories/init-and-project-switching/STORY.md) Part B
@@ -115,7 +115,8 @@ Reads §1, §9, §10 D-003 carefully. Understands: §D4 OQ#1 was about embedding
 
 | ID | Priority | Requirement | Acceptance criteria | Notes |
 |---|---|---|---|---|
-| FR-1.1 | Must | Add `ok ui` top-level Commander command serving the React UI with its own `ui.lock` at `<contentDir>/.open-knowledge/ui.lock`. Default port 3000; respects `PORT` env var (set by Claude Code's `autoPort:true`); `--port` flag overrides. | `ok ui` binds port 3000 by default; if `PORT` env set, binds that; writes `ui.lock` via shared factory; graceful SIGINT/SIGTERM releases lock. Lock collision with live pid: prints "UI already running at http://localhost:<port>" exit 0. Stale lock: replaced. | TQ6, D-010, D-021 revised, D-022. |
+| FR-1.1 | Must | Add `ok ui` top-level Commander command serving the React UI with its own `ui.lock` at `<contentDir>/.open-knowledge/ui.lock`. Default port 3000; respects `PORT` env var (set by Claude Code's `autoPort:true`); `--port` flag overrides. On lock collision, behavior is port-aware (see FR-1.1b). | `ok ui` binds port 3000 by default; if `PORT` env set, binds that; writes `ui.lock` via shared factory; graceful SIGINT/SIGTERM releases lock. Stale lock (dead pid or corrupt): replaced on re-acquire. | TQ6, D-010, D-021, D-022 revised, D-032. |
+| FR-1.1b | Must | `ok ui` lock-collision handler is port-aware per D-022 revised (D-032): **(a)** If lock port === requested (PORT env or default): "UI already running at http://localhost:<port>"; exit 0. **(b)** If lock port !== requested: start reverse HTTP proxy listening on requested port, forwarding to lock's port. Log "UI running at http://localhost:<lock-port>; acting as HTTP proxy on port <requested>". Does NOT acquire a second lock. Proxy exits on SIGTERM/SIGINT. **(c)** If lock port is 0 (live but unbound): poll lock for up to 2s; if still 0, exit 1 with "UI did not bind within 2s; run `ok clean`." | Integration tests for all three branches. Proxy forwards GET/POST/HEAD requests with response bodies and status codes preserved. Proxy 502s when upstream dies; Claude Code preview pane surfaces the error. | D-032 (OQ-1.4 resolution). Covers Scenario B (MCP spawns UI first, Claude Code's preview_start picks different port via autoPort). See [evidence/oq-1-4-resolution.md](./evidence/oq-1-4-resolution.md). |
 | FR-1.2 | Must | Extract UI asset serving from `ok start` — `ok start` serves Hocuspocus (WebSocket + API + content filter) only. `ok start` default port changes to `0` (kernel-allocated); config schema default updated from `3000`. | Post-change: `curl http://<start-port>/` returns 404 or API-only. `curl http://localhost:<ui-port>/` returns React app. `config/schema.ts:17` default = `0`. | PQ4, D-021 revised (port separation). |
 | FR-1.3 | Must | Abstract lockfile acquisition into shared factory `acquireProcessLock({lockName, contentDir, metadata})` used by both lockfiles. | Both call sites use factory; existing `server.lock` tests pass; factory handles port:0 sentinel, `isProcessAlive`, `ServerLockCollisionError`, ownership-guarded `updatePort`. | CC-A. Factory in `@inkeep/open-knowledge-server`. |
 | FR-1.4 | Must | `ok mcp` spawns `ok start` detached when `server.lock` absent/stale AND (`OK_MCP_AUTOSTART != 0` AND `config.mcp.autoStart != false`). Spawn stderr captured via kernel `stdio: [ignore, ignore, <temp-fd>]` redirect; on 5s poll timeout, MCP reads temp file and surfaces stderr in first tool-result error. | Integration test: no lock → spawn succeeds; timeout → error message contains actual stderr content. ENOENT/EACCES → clear error. | TQ1, TQ4, TQ8, D-009 revised, D-018 revised (M7), D-023. |
@@ -395,7 +396,7 @@ try {
 - **Shadow paths:**
   - Absent / port=0 / corrupt / spawn-timeout / cold-spawn-race / partial failure — all handled per state matrix.
   - **Idle-shutdown under active subagent:** DirectConnection from agent-sessions doesn't block WebSocket-count-based timer. If WebSocket clients are 0 for 30 min, shutdown fires — and agent session state is lost. Acceptable per G1 priority (zero-ceremony UX > long-idle agent persistence). Documented as NG10.
-  - **`ok ui` collision under Claude Code `preview_start`:** exit 0 + message. OQ-1.4 runtime verification remains.
+  - **`ok ui` collision under Claude Code `preview_start` with different PORT (autoPort-resolved):** proxy mode per D-032. Proxy binds the Claude-resolved port, forwards to the lock's port. Preview pane receives live content.
 
 #### Failure modes
 
@@ -405,8 +406,9 @@ try {
 | `ok start` auto-spawn `ok ui` | Port 3000 busy (non-autoPort path) | kernel stderr → log | Collab up; UI failed; `previewUrl` null | Agent tools work; preview broken until port freed |
 | Cold-spawn race | Two MCPs spawn | `ServerLockCollisionError` loser | Bounded retry + jitter | None |
 | Idle-shutdown | Fires with DirectConnection active | By design — WebSocket count is 0 | Agent session state lost | NG10 explicit |
-| `ok ui` solo collision | Lock live | Handler exits 0 | — | None |
-| Claude Code preview_start on collision | `ok ui` exits 0 | OQ-1.4 runtime test | Fallback: idle-process placeholder if exit-0 rejected | None or minor |
+| `ok ui` solo collision (same port) | Lock live | Handler exits 0 | — | None |
+| `ok ui` collision with DIFFERENT PORT (Claude Code autoPort) | Lock live, PORT env ≠ lock port | Handler enters proxy mode (D-032) | Proxy on PORT → forwards to lock port | None; preview pane works |
+| `ok ui` proxy upstream dies | Proxy's upstream `http.request` errors | Proxy returns 502 | User sees preview error; runs `ok start` or `ok ui` | Recoverable |
 
 ### Alternatives considered
 
@@ -424,7 +426,9 @@ Per [meta/design-challenge.md](./meta/design-challenge.md) + [meta/audit-finding
 - **Option J: Port 3000 hardcoded for all.** Rejected per H2 — use `autoPort:true` + port:0 for collab.
 - **Option K: `window.__OK_COLLAB_URL__` HTML injection.** Rejected per M8 — `/api/config` endpoint cleaner; less React app coupling.
 - **Option L: `ok stop` combined with stale-lock prune.** Rejected per M9 — separate `ok clean` for hygiene.
-- **Chosen:** Hybrid detached sibling-process spawn; WebSocket-only idle; `/api/config` endpoint; two separate utility commands.
+- **Option M: `ok ui` collision always exits 0.** Rejected per D-032 — silent-failure under Claude Code `autoPort:true` when Claude resolves a port different from our lock's. Proxy mode (D-022 revised) handles both cases.
+- **Option N: `autoPort: false` in launch.json.** Rejected — Scenario B (MCP-spawns-first) would fail visibly; user has to `ok stop` before previewing. Proxy mode avoids this friction.
+- **Chosen:** Hybrid detached sibling-process spawn; WebSocket-only idle; `/api/config` endpoint; two separate utility commands; port-aware collision with proxy mode.
 
 ## 10) Decision log
 
@@ -451,7 +455,7 @@ Per [meta/design-challenge.md](./meta/design-challenge.md) + [meta/audit-finding
 | D-019 | `ok init` TTY + zero detected: show all 4 unselected with hint | P | **DIRECTED** | No | Preserves escape hatch | Session | FR-3.4 |
 | D-020 | `.claude/launch.json` → single entry `['@inkeep/open-knowledge', 'ui']` | T | **LOCKED** | No | UI is what preview pane renders | [evidence/launch-json-and-port.md](./evidence/launch-json-and-port.md); session | FR-1.8 |
 | D-021 | **Port model (revised per H2/F-002): `ok ui` default=3000 + `autoPort:true`; `ok start` default=0 (kernel-allocated).** Claude Code's autoPort:true finds a free port and passes `PORT` env var. Both processes independently discoverable via lockfiles. | T | **LOCKED** | No | `autoPort:true` verified at https://code.claude.com/docs/en/desktop; `config/schema.ts:17` `ok start` default changes to `0` | Official Claude Code launch.json docs; H2 challenger; F-002 audit | FR-1.1, FR-1.2, FR-1.8 |
-| D-022 | `ok ui` lock collision → exit 0 with message | T | **DIRECTED** | No | Cooperate with already-running UI | Synthesis | FR-1.1 |
+| D-022 | `ok ui` lock-collision handler — **port-aware**: exit 0 when requested port matches lock; proxy mode when requested differs. Originally specified as plain "exit 0"; revised per D-032 / OQ-1.4 investigation. | T | **DIRECTED** | No | Exit-0-always fails silently under Claude Code's `autoPort:true` when Claude resolves a different port than our lock holds. Proxy mode lets Claude Code's preview pane reach the live UI via the autoPort-assigned port. | [evidence/oq-1-4-resolution.md](./evidence/oq-1-4-resolution.md); D-032 | FR-1.1, FR-1.1b |
 | D-023 | `ok start` auto-spawns UI when `ui.lock` absent | T | **DIRECTED** | No | Manual UX + MCP spawn symmetry | User answer | FR-1.9 |
 | D-024 | `ok clean` separate from `ok stop` (M9) | T | **DIRECTED** | No | Single responsibility | M9 challenger | FR-1.7b |
 | D-025 | `ok ui` safety-net 12h self-shutdown | T | **DIRECTED** | No | Crash case backstop | [evidence/ui-client-tracking.md](./evidence/ui-client-tracking.md) | FR-1.6 |
@@ -461,14 +465,15 @@ Per [meta/design-challenge.md](./meta/design-challenge.md) + [meta/audit-finding
 | D-029 | **H4 agent-session cleanup is OUT of scope; Future Work Identified.** Idle-shutdown ignores agent DirectConnections; doesn't leak from UX perspective. Per-session memory growth acknowledged but not-blocking. | P | **LOCKED** | No | User confirmation 2026-04-16 | H4 challenger | NG10 |
 | D-030 | **OQ-A7 resolved: DirectConnection IS counted by Hocuspocus `getConnectionsCount()`; we don't use that method.** FR-1.6 bypasses it entirely with `httpServer.on('upgrade')`. | T | **LOCKED** | No | Challenger H1 + auditor F-006 independently verified | H1, F-006 | FR-1.6 |
 | D-031 | `autoPort: true` added to launch.json scaffold | T | **DIRECTED** | No | Port 3000 graceful fallback when busy | Official Claude Code docs | FR-1.8 |
+| D-032 | **OQ-1.4 resolved: `ok ui` proxy mode on lock collision with different PORT.** When `PORT` env var differs from existing lock's port, `ok ui` starts a reverse HTTP proxy on PORT forwarding to lock's port. Implementation via Node's built-in `http` module (no new 3P). Covers Scenario B (MCP-spawns-first → Claude Code preview_start later picks different port via autoPort). Scenario A (preview_start first) unchanged. | T | **LOCKED** | No | Verified via Claude Code official docs (autoPort sets `PORT` env; preview pane proxies to the resolved port). Exit-0-always was a silent-failure path. | [evidence/oq-1-4-resolution.md](./evidence/oq-1-4-resolution.md) | FR-1.1b (new), D-022 revised |
 
 ## 11) Open questions
 
 | ID | Question | Type | Priority | Blocking? | Plan / action | Status |
 |---|---|---|---|---|---|---|
-| OQ-1.4 | Claude Code `preview_start` behavior when launched subprocess exits code 0 quickly (lock-collision path) — treat as success, retry, or error? | T | P0 | No | Manual test against current Claude Code. Fallback: idle-process-placeholder. autoPort's PORT env var suggests Claude Code re-resolves port after spawn; exit-0 may still work if port is live. | **Open (runtime-verifiable at implementation)** |
+All prior OQs resolved via D-015 through D-032.
 
-All other prior OQs resolved via D-015 through D-031.
+**OQ-1.4** (Claude Code `preview_start` behavior on lock collision) → **RESOLVED via D-032** (proxy mode on port mismatch). See [evidence/oq-1-4-resolution.md](./evidence/oq-1-4-resolution.md). Runtime verification at implementation time remains as an A5 test case (confirm proxy-mode end-to-end with live Claude Code).
 
 ## 12) Assumptions
 
@@ -478,7 +483,7 @@ All other prior OQs resolved via D-015 through D-031.
 | A2 | MCP clients ignore unknown fields in `structuredContent` (SEP-1624 clarifying — MEDIUM per F-008) | MEDIUM | Smoke test against Claude Code + Cursor + Windsurf | Before Story 2 merge | Active |
 | A3 | Detached-spawn + unref severs parent-child lifetime on macOS + Linux (Node ≥ 18, Bun) | HIGH | Integration test: parent spawn → parent exit → child alive 10s later | Before Story 1 merge | Active |
 | A4 | `bun run dev` adapts to two-process split without regressing app test suite | MEDIUM | Vite plugin investigation + full test pass | During Story 1 | Active |
-| A5 | Claude Code `preview_start` tolerates subprocess exit-0 (OQ-1.4) | MEDIUM | Manual test with current version | Before OQ-1.4 resolved | Active |
+| A5 | Claude Code `preview_start` + `autoPort:true` → resolves free port; our `ok ui` proxy mode (D-032) correctly forwards to the lock's port; Claude Code's preview pane renders correctly via the proxy. | MEDIUM | Manual test: (1) start MCP stdio first (spawns UI on 3000), (2) click preview dropdown in Claude Code to trigger `preview_start`, (3) confirm preview pane shows live CRDT content. | Before Story 1 merge | Active |
 | A6 | MCP spawn p50 ≤ 3s cold-start | MEDIUM | Instrument spawn timing | Before merge | Active |
 | A7 | **RESOLVED (D-030):** Hocuspocus `onConnect/onDisconnect` hooks for DirectConnection — we no longer depend on this. FR-1.6 uses raw WebSocket upgrade count. | N/A | Not applicable | — | **Resolved** |
 
@@ -493,6 +498,7 @@ All other prior OQs resolved via D-015 through D-031.
   1. Lockfile factory (FR-1.3).
   2. `ok ui` entry point + FR-1.1 + FR-1.2 + FR-1.13 (`/api/config`).
   3. Idle-shutdown primitive (FR-1.6) — WebSocket-count based per D-017 revised.
+  3b. `ok ui` proxy mode for lock collision with different PORT (FR-1.1b, D-032) — thin HTTP proxy; no 3P dep.
   4. `ok stop` (FR-1.7) + `ok clean` (FR-1.7b) + `ok status` (FR-1.14).
   5. `ok start` auto-spawn UI (FR-1.9) + port default change to 0 (FR-1.2).
   6. MCP spawn wiring with kernel stdio redirect (FR-1.4 + D-018) + dual opt-out (FR-1.15).
@@ -526,7 +532,7 @@ All other prior OQs resolved via D-015 through D-031.
 | §D4 supersession reverted | Medium | High | D-003 explicit + bidirectional cross-link with prior report | Implementer, reviewer |
 | `bun run dev` silent breakage | Medium | Medium | A4 test | Implementer |
 | Spawn fails silently | Low-Medium | High | D-018 kernel stderr redirect (M7) | Implementer |
-| Claude Code rejects exit-0 on collision | Medium | Medium | A5/OQ-1.4 test; idle-process fallback | Implementer |
+| Proxy mode fails end-to-end with Claude Code (e.g., preview pane rejects proxied responses) | Low-Medium | Medium | A5 runtime verification at implementation; fallback to `autoPort:false` if proxy-pane interop breaks | Implementer |
 | Port 3000 conflict (non-Claude clients don't have autoPort) | Medium | Medium | `ok ui --port N` flag fallback; document | Implementer |
 | `ok start` port default change breaks existing users | Low (greenfield) | Medium | README note; error on 3000 if it's not what users expect | Implementer |
 | Agent DirectConnection accumulation | Low | Low-Medium | NG10 documented Future Work; not blocking | — |
