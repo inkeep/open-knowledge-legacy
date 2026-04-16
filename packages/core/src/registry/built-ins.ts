@@ -441,6 +441,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Accordions',
     description: 'Collapsible accordion container',
     searchTerms: ['accordion', 'collapse', 'expand', 'faq'],
+    emptyChildName: 'Accordion',
   },
   {
     name: 'Accordion',
@@ -474,6 +475,7 @@ export const builtInComponents: JsxComponentMeta[] = [
     displayName: 'Folder',
     description: 'Folder node in file tree',
     searchTerms: ['folder', 'directory'],
+    emptyChildName: 'File',
   },
   {
     name: 'File',
