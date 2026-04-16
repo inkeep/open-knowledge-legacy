@@ -11,6 +11,8 @@ import {
   __resetSyncPromiseCache,
   __syncPromiseCacheSize,
   __syncPromiseSettled,
+  __test_armPendingRejection,
+  __test_clearArmedRejection,
   BridgeSetupError,
   invalidateSyncPromise,
   PreSyncDisconnectError,
@@ -401,5 +403,96 @@ describe('error class shape', () => {
     expect(err.cause).toBe(cause);
     expect(err.message).toContain('baz');
     expect(err.message).toContain('schema mismatch');
+  });
+});
+
+describe('__test_armPendingRejection — race-free e2e error-path hook', () => {
+  test('arms a rejection that fires on the next syncPromise creation with timeout kind', async () => {
+    const p = track(makeProvider('doc-armed-timeout'));
+    __test_armPendingRejection('doc-armed-timeout', 'timeout');
+    const promise = syncPromise('doc-armed-timeout', p);
+    await expect(promise).rejects.toBeInstanceOf(SyncTimeoutError);
+    // Arm should be consumed (one-shot semantics).
+    expect(__test_clearArmedRejection('doc-armed-timeout')).toBe(false);
+  });
+
+  test('arms a rejection with predisconnect kind', async () => {
+    const p = track(makeProvider('doc-armed-predisconnect'));
+    __test_armPendingRejection('doc-armed-predisconnect', 'predisconnect');
+    const promise = syncPromise('doc-armed-predisconnect', p);
+    await expect(promise).rejects.toBeInstanceOf(PreSyncDisconnectError);
+  });
+
+  test('defaults to timeout kind when kind is omitted', async () => {
+    const p = track(makeProvider('doc-armed-default'));
+    __test_armPendingRejection('doc-armed-default');
+    const promise = syncPromise('doc-armed-default', p);
+    await expect(promise).rejects.toBeInstanceOf(SyncTimeoutError);
+  });
+
+  test('arm takes priority over warm-provider fast path', async () => {
+    // Even when provider.synced=true (which would normally short-circuit to
+    // a resolved promise), an armed rejection must win so the error boundary
+    // surfaces. This is load-bearing for F6 where the nav target's provider
+    // may have been warm from a prior test step.
+    const p = track(makeProvider('doc-armed-warm'));
+    p.synced = true;
+    __test_armPendingRejection('doc-armed-warm', 'timeout');
+    const promise = syncPromise('doc-armed-warm', p);
+    await expect(promise).rejects.toBeInstanceOf(SyncTimeoutError);
+  });
+
+  test('is one-shot: second syncPromise call returns the cached rejected promise', async () => {
+    const p = track(makeProvider('doc-armed-once'));
+    __test_armPendingRejection('doc-armed-once', 'timeout');
+
+    // First call consumes the arm → rejected promise cached.
+    const first = syncPromise('doc-armed-once', p);
+    await expect(first).rejects.toBeInstanceOf(SyncTimeoutError);
+
+    // Second call returns the SAME cached (rejected) promise — the arm was
+    // one-shot and the rejected entry persists for React `use()` stability
+    // (re-throwing synchronously across boundary re-renders).
+    const second = syncPromise('doc-armed-once', p);
+    expect(second).toBe(first);
+
+    // Arm is consumed — `__test_clearArmedRejection` should see nothing to clear.
+    expect(__test_clearArmedRejection('doc-armed-once')).toBe(false);
+  });
+
+  test('arm is consumed on creation, so a fresh syncPromise after invalidate is NOT armed', async () => {
+    // Arm + create consumes the arm on the first call. After invalidate, a
+    // new syncPromise call MUST follow the normal pending path — proven by
+    // checking the entry is not settled before any async event fires.
+    const p = track(makeProvider('doc-consumed-arm'));
+    __test_armPendingRejection('doc-consumed-arm', 'timeout');
+    const first = syncPromise('doc-consumed-arm', p);
+    await expect(first).rejects.toBeInstanceOf(SyncTimeoutError);
+
+    invalidateSyncPromise('doc-consumed-arm');
+    // Arm is one-shot; the invalidate + fresh-create sequence starts with no arm.
+    expect(__test_clearArmedRejection('doc-consumed-arm')).toBe(false);
+
+    // A fresh syncPromise does NOT synchronously reject (the rejection would
+    // only come from the real provider lifecycle, not the consumed arm).
+    // Snapshot the settled-state BEFORE any async tick so the WS close path
+    // cannot mutate it.
+    const fresh = syncPromise('doc-consumed-arm', p);
+    expect(__syncPromiseSettled('doc-consumed-arm')).toBe(false);
+    // Prevent unhandled rejection noise from the provider's eventual close.
+    fresh.catch(() => {});
+  });
+
+  test('__test_clearArmedRejection returns true when an arm was removed, false otherwise', () => {
+    __test_armPendingRejection('doc-clear', 'timeout');
+    expect(__test_clearArmedRejection('doc-clear')).toBe(true);
+    expect(__test_clearArmedRejection('doc-clear')).toBe(false);
+    expect(__test_clearArmedRejection('never-armed')).toBe(false);
+  });
+
+  test('__resetSyncPromiseCache also clears pending arms', () => {
+    __test_armPendingRejection('doc-leak', 'timeout');
+    __resetSyncPromiseCache();
+    expect(__test_clearArmedRejection('doc-leak')).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { createContext, type ReactNode, use, useEffect, useState, useTransition } from 'react';
 import { createOpenDocumentTransition } from './document-transition';
 import { ProviderPool, type SyncState } from './provider-pool';
-import { __rejectSyncPromise } from './sync-promise';
+import { __rejectSyncPromise, __test_armPendingRejection } from './sync-promise';
 
 /**
  * Read-only projection of a `PoolEntry` — exposes the fields downstream React
@@ -172,6 +172,8 @@ export function DocumentProvider({ children }: { children: ReactNode }) {
         configurable: true,
       });
       window.__test_rejectSyncPromise = (docName, kind) => __rejectSyncPromise(docName, kind);
+      window.__test_armPendingRejection = (docName, kind) =>
+        __test_armPendingRejection(docName, kind);
       window.__test_closeActiveWebSocket = () => {
         const provider = p.getActive()?.provider;
         if (!provider) return false;

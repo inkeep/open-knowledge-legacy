@@ -300,19 +300,13 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await waitForActiveProviderSynced(page);
     await page.waitForSelector('.ProseMirror');
 
-    // Nav to doc B, then immediately force-reject B's syncPromise via the
-    // test hook (racing the sync event). Using a microtask-scheduling race:
-    // kick off the click, then immediately fire the hook — the syncPromise
-    // entry is created synchronously on the first DocumentBoundary render.
+    // Arm a rejection for doc-b's NEXT syncPromise creation BEFORE
+    // navigation. The arm fires on promise creation (race-free) so the
+    // error boundary renders deterministically on localhost where real
+    // sync completes in <10ms and a post-hoc polling reject would miss
+    // the pending window. See sync-promise.ts `__test_armPendingRejection`.
     await page.evaluate(() => {
-      // Schedule the forced rejection as soon as the entry lands in cache.
-      // Polling is OK because this test is the only thing running in the
-      // page — no production code path calls __test_rejectSyncPromise.
-      const tryReject = () => {
-        const ok = window.__test_rejectSyncPromise?.('doc-b', 'timeout');
-        if (!ok) setTimeout(tryReject, 10);
-      };
-      setTimeout(tryReject, 50); // let the click land + promise get created
+      window.__test_armPendingRejection?.('doc-b', 'timeout');
     });
     await openFromSidebar(page, 'doc-b.md');
 
@@ -346,13 +340,10 @@ test.describe('docs-open — hybrid navigation UX', () => {
     await page.waitForSelector('.ProseMirror');
     await expect(page.locator('.ProseMirror')).toContainText('Doc A Heading');
 
-    // Force B's syncPromise to reject on navigation.
+    // Arm B's syncPromise creation to reject. See F5 rationale — the arm is
+    // race-free on localhost.
     await page.evaluate(() => {
-      const tryReject = () => {
-        const ok = window.__test_rejectSyncPromise?.('doc-b', 'disconnect');
-        if (!ok) setTimeout(tryReject, 10);
-      };
-      setTimeout(tryReject, 50);
+      window.__test_armPendingRejection?.('doc-b', 'predisconnect');
     });
     await openFromSidebar(page, 'doc-b.md');
 
@@ -550,34 +541,14 @@ test.describe('docs-open — hybrid navigation UX', () => {
     // aria-hidden is 'false' when mounted (per spec §D7 + NavigationPendingBar.tsx).
     expect(barAttrs?.ariaHidden).toBe('false');
 
-    // Error boundary a11y — force an error on a new nav to observe role=alert.
-    await page.evaluate(() => {
-      const tryReject = () => {
-        const ok = window.__test_rejectSyncPromise?.('doc-a', 'timeout');
-        if (!ok) setTimeout(tryReject, 10);
-      };
-      // We nav back to doc-a, whose syncPromise cache entry won't exist
-      // (already resolved + cleared). To force an error on re-nav we need
-      // the boundary to create a fresh entry which we then reject. But
-      // warm-Activity nav bypasses Suspense (no fresh entry). So: we nav
-      // to a doc NOT in pool. Use an always-pending fetch to "newly
-      // discovered" doc-c (seeded below).
-      setTimeout(tryReject, 50);
-    });
-
-    // Trigger error-boundary via a fresh nav to a seeded-but-unpooled doc
-    // — after nav, force-reject races against sync. For portability we
-    // just scope the assertion to role=alert IF the error boundary
-    // renders, since F5/F6 already verify the retry paths deterministically.
-    // Here we just confirm the role/aria contract on the fallback.
+    // Error boundary a11y — arm a rejection on a fresh navigation to observe
+    // role=alert on the fallback. We nav to doc-c (seeded fresh below) so
+    // DocumentBoundary creates a brand-new syncPromise entry that the arm
+    // can reject on creation. See F5 for the arm-vs-reject timing rationale.
     await createPage('doc-c.md');
     await replaceDoc('doc-c', DOC_C);
     await page.evaluate(() => {
-      const tryReject = () => {
-        const ok = window.__test_rejectSyncPromise?.('doc-c', 'timeout');
-        if (!ok) setTimeout(tryReject, 10);
-      };
-      setTimeout(tryReject, 50);
+      window.__test_armPendingRejection?.('doc-c', 'timeout');
     });
     await openFromSidebar(page, 'doc-c.md');
 

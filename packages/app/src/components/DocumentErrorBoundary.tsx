@@ -36,6 +36,30 @@ export interface ErrorCopy {
 }
 
 /**
+ * Sentinel string passed to `resetErrorBoundary(...)` from the "Back to
+ * previous document" button so `onReset` can differentiate a back-nav
+ * reset (no recycle) from a "Try again" reset (needs recycle). The
+ * `resetErrorBoundary` args surface as `details.args` in `onReset`.
+ */
+const BACK_NAV_RESET_SENTINEL = '__back-nav__' as const;
+
+/**
+ * Read the errored doc's name from the error object. All typed sync-promise
+ * errors carry `docName`; anything else returns null.
+ */
+function errorDocName(error: unknown): string | null {
+  if (
+    error instanceof SyncTimeoutError ||
+    error instanceof PreSyncDisconnectError ||
+    error instanceof DocumentNotFoundError ||
+    error instanceof BridgeSetupError
+  ) {
+    return error.docName;
+  }
+  return null;
+}
+
+/**
  * Map a thrown value to user-facing copy. Pure — unit-testable without a
  * DOM. Kept separate from the React surface so the taxonomy can evolve
  * without touching rendering code.
@@ -109,7 +133,27 @@ function DocumentErrorFallback({
           <Button
             variant="ghost"
             onClick={() => {
-              if (previousDocName && onNavigateBack) onNavigateBack(previousDocName);
+              if (!previousDocName || !onNavigateBack) return;
+              // Invalidate the errored doc's cached sync promise BEFORE
+              // triggering navigation. The cached rejected promise would
+              // otherwise keep throwing for the errored doc's hidden
+              // Activity subtree (which stays mounted pool-side), trapping
+              // the error boundary after back-nav. A future re-visit to the
+              // errored doc will create a fresh syncPromise — exactly what
+              // we want for "Back now, retry later" UX. Read the docName
+              // from the error itself (not activeDocName prop) because a
+              // synchronously-thrown `use()` aborts the transition and
+              // leaves activeDocName pointing at the pre-transition doc.
+              const erroredDoc = errorDocName(error) ?? activeDocName;
+              invalidateSyncPromise(erroredDoc);
+              onNavigateBack(previousDocName);
+              // Reset the boundary with a sentinel tag so onReset knows
+              // this is a back-nav (no recycle). Without this reset, the
+              // boundary's resetKeys would stay unchanged on an aborted
+              // transition (sync throw aborts the transition before
+              // activeDocName can transition commit) and leave the fallback
+              // mounted even after the user leaves the errored doc.
+              resetErrorBoundary(BACK_NAV_RESET_SENTINEL);
             }}
           >
             Back to previous document
@@ -163,14 +207,25 @@ export function DocumentErrorBoundary({
       // Suspense against a fresh syncPromise.
       onReset={(details) => {
         if (details.reason === 'imperative-api') {
-          // Order is load-bearing: recycle FIRST (which destroys the pool
-          // entry, calling invalidateSyncPromise via destroyEntry, and
-          // recreates the entry with a fresh provider), so that when the
-          // boundary re-renders, `EditorArea` sees the new provider and
-          // `DocumentBoundary` calls syncPromise(docName, freshProvider)
-          // → fresh sync attempt. Without recycle, a BridgeSetupError'd
-          // entry would resolve immediately via the warm-path (broken
-          // provider has synced=true) without re-running setupObservers.
+          // Back-nav reset carries the sentinel string — do NOT recycle the
+          // active doc (we're navigating AWAY from the errored target, not
+          // retrying it). Sentinel check reads `details.args` which holds
+          // the arguments passed to `resetErrorBoundary(...)`.
+          const isBackNav =
+            Array.isArray(details.args) && details.args[0] === BACK_NAV_RESET_SENTINEL;
+          if (isBackNav) {
+            console.warn(`[DocumentErrorBoundary] back-nav reset (no recycle)`);
+            return;
+          }
+          // "Try again" path. Order is load-bearing: recycle FIRST (which
+          // destroys the pool entry, calling invalidateSyncPromise via
+          // destroyEntry, and recreates the entry with a fresh provider),
+          // so that when the boundary re-renders, `EditorArea` sees the new
+          // provider and `DocumentBoundary` calls syncPromise(docName,
+          // freshProvider) → fresh sync attempt. Without recycle, a
+          // BridgeSetupError'd entry would resolve immediately via the
+          // warm-path (broken provider has synced=true) without re-running
+          // setupObservers.
           if (onRecycle) {
             onRecycle(activeDocName);
           } else {

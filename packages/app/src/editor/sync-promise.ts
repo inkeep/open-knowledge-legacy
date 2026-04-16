@@ -95,6 +95,22 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * Test-only armed-rejection map. When `__test_armPendingRejection(docName, kind)`
+ * is called, the next `syncPromise(docName, provider)` creation path checks
+ * this map and rejects the freshly-created promise immediately with the armed
+ * error kind. Load-bearing for e2e tests on localhost where sync completes in
+ * a few ms — a post-hoc `__test_rejectSyncPromise` polling loop races the real
+ * sync and cannot reliably catch the window before the entry settles. Arming
+ * BEFORE navigation guarantees the rejection fires on the first creation.
+ *
+ * Scoped with `armedRejections` (not merged into `cache`) because the arm is
+ * a one-shot prime that only fires on the NEXT creation — it must not
+ * interfere with entries that already exist (e.g. warm-provider sentinels from
+ * a prior mount).
+ */
+const armedRejections = new Map<string, 'timeout' | 'predisconnect'>();
+
 function detach(entry: CacheEntry): void {
   if (entry.detached) return;
   entry.detached = true;
@@ -152,6 +168,34 @@ function detach(entry: CacheEntry): void {
 export function syncPromise(docName: string, provider: HocuspocusProvider): Promise<void> {
   const existing = cache.get(docName);
   if (existing) return existing.promise;
+
+  // Test-only: if a rejection was armed for this docName via
+  // `__test_armPendingRejection`, fire it immediately on first creation so
+  // the DocumentBoundary's `use()` throws and the error boundary catches.
+  // Must be checked BEFORE the warm-provider fast path — otherwise an
+  // already-synced provider would resolve, masking the armed rejection.
+  const armed = armedRejections.get(docName);
+  if (armed !== undefined) {
+    armedRejections.delete(docName);
+    const error =
+      armed === 'timeout' ? new SyncTimeoutError(docName, 0) : new PreSyncDisconnectError(docName);
+    console.warn(
+      `[syncPromise] ${docName} rejected on creation (test hook, armed ${armed}): ${error.message}`,
+    );
+    // Build a pre-settled thenable with `status='rejected'` + `reason=error`.
+    // React's `use()` checks `status` synchronously (React 19 shape per
+    // `react/src/ReactUseHook.js`): an already-rejected thenable throws on
+    // first access WITHOUT suspending. This is load-bearing — a naive
+    // `Promise.reject(error)` settles on a microtask, so `use()` would
+    // suspend once (showing Suspense fallback) before re-rendering and
+    // throwing. During that suspend window the sibling Activity subtrees
+    // still render and can crash if a passive effect on a warm editor
+    // touches a torn-down ProseMirror view. Synchronous throw keeps the
+    // error surface isolated to the DocumentBoundary that owns this promise.
+    const promise = createRejectedThenable<void>(error);
+    cache.set(docName, makeRejectedSentinelEntry(promise, provider));
+    return promise;
+  }
 
   if (provider.synced) {
     console.log(`[syncPromise] ${docName} resolved synchronously (warm provider)`);
@@ -246,6 +290,63 @@ function makeSentinelEntry(promise: Promise<void>, provider: HocuspocusProvider)
 }
 
 /**
+ * Create a pre-settled rejected thenable with the `status`/`reason` shape
+ * React's `use()` hook reads synchronously. Unlike `Promise.reject(error)`
+ * (which settles on a microtask so `use()` suspends once before throwing),
+ * this throws on first `use()` access — important for test paths that
+ * must not suspend the DocumentBoundary at all. See the caller in
+ * `syncPromise` for the suspend-sensitive rationale.
+ *
+ * React does NOT need a real Promise — it type-checks for the Thenable
+ * shape (an object with `.then`, plus optional `.status`/`.value`/`.reason`).
+ * We add a dummy `.catch` so the value still satisfies `Promise<void>` for
+ * downstream callers (which only await it via `use()` in practice). We also
+ * call `.catch(() => {})` on a real Promise under the hood to swallow the
+ * unhandled-rejection signal without needing browser-level tracking.
+ */
+function createRejectedThenable<T>(error: Error): Promise<T> {
+  const settled = Promise.reject(error) as Promise<T>;
+  // Ensure unhandled-rejection warnings are swallowed — `use()` consumers
+  // observe the rejection synchronously via status/reason and don't attach
+  // `.then` themselves, so the underlying Promise sees no consumer.
+  settled.catch(() => {});
+  // React inspects these fields as a plain-object protocol — attach them
+  // directly (cast-through-unknown since the stock Promise type doesn't
+  // have them).
+  const thenable = settled as unknown as Promise<T> & {
+    status: 'rejected';
+    reason: Error;
+  };
+  thenable.status = 'rejected';
+  thenable.reason = error;
+  return thenable;
+}
+
+/**
+ * Build a settled sentinel cache entry for an armed-rejection. Mirrors
+ * `makeSentinelEntry` shape but reflects that the entry is pre-rejected —
+ * kept in cache so React's `use()` on the same reference across re-renders
+ * throws synchronously (see syncPromise lifecycle docstring).
+ */
+function makeRejectedSentinelEntry(
+  promise: Promise<void>,
+  provider: HocuspocusProvider,
+): CacheEntry {
+  return {
+    promise,
+    resolve: () => {},
+    reject: () => {},
+    createdAt: Date.now(),
+    timeoutHandle: null,
+    provider,
+    onSynced: () => {},
+    onClose: () => {},
+    settled: true,
+    detached: true,
+  };
+}
+
+/**
  * Remove the cached entry for `docName` without settling the promise. Called
  * from ProviderPool on destroy/recycle so the next `syncPromise(docName, provider)`
  * call returns a fresh promise bound to the replacement provider.
@@ -286,7 +387,8 @@ export function rejectSyncPromise(docName: string, error: Error): boolean {
 
 /**
  * Test-only helper: clear all cached entries. Exported for unit tests that
- * need a clean slate between cases without discarding the pool state.
+ * need a clean slate between cases without discarding the pool state. Also
+ * clears any pending armed rejections so tests cannot leak state.
  */
 export function __resetSyncPromiseCache(): void {
   for (const entry of cache.values()) {
@@ -294,6 +396,7 @@ export function __resetSyncPromiseCache(): void {
     detach(entry);
   }
   cache.clear();
+  armedRejections.clear();
 }
 
 /**
@@ -327,6 +430,13 @@ export function __syncPromiseCacheSize(): number {
  * consumer could simply invalidate via `invalidateSyncPromise`. The helper is
  * exposed so tests can force error-boundary rendering without shipping a
  * dev-only build flag.
+ *
+ * **Race note:** on localhost where real sync completes in ~3ms, the cache
+ * entry is already resolved/removed before a post-hoc polling loop can
+ * observe it. Tests that want to deterministically fail the NEXT sync should
+ * use `__test_armPendingRejection(docName, kind)` BEFORE triggering
+ * navigation — the arm fires on promise creation, winning the race by
+ * construction.
  */
 export function __rejectSyncPromise(
   docName: string,
@@ -345,4 +455,52 @@ export function __rejectSyncPromise(
   // Entry stays in cache (post-settle sentinel) — see syncPromise lifecycle docstring.
   entry.reject(error);
   return true;
+}
+
+/**
+ * Test-only helper: arm a rejection to fire on the NEXT `syncPromise(docName, ...)`
+ * creation. Complements `__rejectSyncPromise` for a different timing regime:
+ *
+ *   - `__rejectSyncPromise` rejects an existing cached entry. Works when the
+ *     promise is still pending. Races the real sync event on localhost where
+ *     round-trips are sub-10ms — by the time a polling loop fires, the entry
+ *     has already resolved + transitioned to the settled sentinel state
+ *     (`.settled=true`), so the helper returns false and the test sees a
+ *     successfully-synced editor instead of the error boundary.
+ *
+ *   - `__test_armPendingRejection` stages a rejection for the NEXT creation.
+ *     Must be called BEFORE the navigation that creates the cache entry.
+ *     On the next `syncPromise(docName, provider)` call, the function checks
+ *     `armedRejections`, rejects the returned promise immediately with the
+ *     armed error kind, and removes the arm (one-shot). Wins the race by
+ *     construction — no polling required.
+ *
+ * `kind` — `'timeout'` produces `SyncTimeoutError`, `'predisconnect'`
+ * produces `PreSyncDisconnectError`. Both map 1:1 to the error classes the
+ * real listener paths throw, so `DocumentErrorBoundary`'s copy taxonomy sees
+ * the same shape it would see in production.
+ *
+ * Safe in production for the same reason `__rejectSyncPromise` is — no
+ * security boundary crossed. Exposed only under `import.meta.env.DEV` via
+ * the window global wiring in `DocumentContext.tsx`.
+ *
+ * Returns void (arming is a pure write; there's no pre-existing state to
+ * report back). Calling twice for the same docName before creation overwrites
+ * the armed kind — tests that want both should arm and consume sequentially.
+ */
+export function __test_armPendingRejection(
+  docName: string,
+  kind: 'timeout' | 'predisconnect' = 'timeout',
+): void {
+  armedRejections.set(docName, kind);
+  console.warn(`[syncPromise] ${docName} armed for rejection on next creation (kind=${kind})`);
+}
+
+/**
+ * Test-only helper: clear any pending armed rejection for `docName`. Useful
+ * for test teardown when a previous test armed but never consumed. Returns
+ * true if an arm was removed.
+ */
+export function __test_clearArmedRejection(docName: string): boolean {
+  return armedRejections.delete(docName);
 }
