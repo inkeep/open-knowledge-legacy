@@ -54,6 +54,7 @@ import {
   saveInMemoryCheckpoint,
   shadowGit,
 } from './shadow-repo.ts';
+import { SyncEngine } from './sync-engine.ts';
 
 export interface ServerOptions {
   port?: number;
@@ -119,6 +120,8 @@ export interface ServerInstance {
    * once the HTTP listener has bound to a kernel-assigned port.
    */
   readonly lockDir: string;
+  /** Active sync engine instance, or null if dormant / no remote detected. */
+  readonly syncEngine: SyncEngine | null;
 }
 
 export function createServer(options: ServerOptions): ServerInstance {
@@ -540,6 +543,7 @@ export function createServer(options: ServerOptions): ServerInstance {
 
   let watcher: WatcherHandle | null = null;
   let headWatcher: HeadWatcherHandle | null = null;
+  let syncEngine: SyncEngine | null = null;
   let inflightDestroy: Promise<void> | null = null;
 
   // This helper mirrors @hocuspocus/server's internal Server.destroy() pattern
@@ -773,6 +777,19 @@ export function createServer(options: ServerOptions): ServerInstance {
             log.error({ err }, '[server] shutdown phase-4 git commit flush failed');
           } finally {
             if (l2TimeoutId !== undefined) clearTimeout(l2TimeoutId);
+          }
+          // Phase 4.5: stop sync engine (CC8 Phase 5 per spec)
+          try {
+            if (syncEngine) {
+              await syncEngine.destroy();
+              syncEngine = null;
+            }
+          } catch (err) {
+            phaseErrors.push({
+              phase: 'sync-engine-stop',
+              error: err instanceof Error ? err.message : String(err),
+            });
+            log.error({ err }, '[server] shutdown sync-engine-stop failed');
           }
         } finally {
           // Phase 5: shadow repo release — ALWAYS runs
@@ -1244,6 +1261,24 @@ export function createServer(options: ServerOptions): ServerInstance {
       log.error({ err }, '[server] HEAD watcher failed to start');
       degraded.push('head-watcher');
     }
+
+    // Start SyncEngine (FR21): remote detection + auto-sync
+    try {
+      syncEngine = new SyncEngine({
+        projectDir,
+        contentDir,
+        contentFilter,
+        contentRoot,
+        cc1Broadcaster,
+        onStateChange: (state) => {
+          log.info({ state }, `[sync] state → ${state}`);
+        },
+      });
+      await syncEngine.start();
+    } catch (err) {
+      log.warn({ err }, '[server] SyncEngine failed to start — sync disabled');
+      syncEngine = null;
+    }
   }
 
   const ready = initAsync();
@@ -1258,5 +1293,8 @@ export function createServer(options: ServerOptions): ServerInstance {
     ready,
     degraded,
     lockDir,
+    get syncEngine() {
+      return syncEngine;
+    },
   };
 }
