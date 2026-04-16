@@ -33,28 +33,25 @@ const SKIP_SECTIONS = new Set(['Tabs', 'Indented code blocks']);
 // noted here with a citation), but currently empty by design.
 const NORMALIZE_SECTIONS = new Set<string>();
 
-// Crash ceiling. Actual count: 0 (probed across full corpus 2026-04-16).
-// Drop to 0 closes the silent-crash-tolerance hole. Any new crash will
-// fail the dedicated assertion at the bottom of the suite.
-const KNOWN_CRASH_CEILING = 0;
+// Zero-crash invariant: every example must round-trip without throwing.
+// Per-example tests re-throw on parse/serialize failure so Bun reports
+// the exact example that regressed; no describe-scope accumulator is
+// involved, so the signal is order-independent and cannot be masked by
+// an earlier-running ceiling assertion. (Prior to 2026-04-16 this was a
+// `crashCount` counter + final ceiling test at 0; the counter-based
+// pattern works today but made the "any crash fails" invariant depend
+// on Bun running the ceiling test strictly after all generated tests.)
 
 describe('CommonMark corpus — round-trip stability', () => {
   let idx = 0;
-  let crashCount = 0;
   for (const example of commonmark) {
     if (SKIP_SECTIONS.has(example.section)) continue;
     idx++;
 
     test(`[${example.section}] example ${idx}`, () => {
-      let output1: string;
-      try {
-        output1 = normalize(mdRoundTrip(example.markdown));
-      } catch {
-        // Pre-existing upstream parser crash on edge-case inputs
-        // (e.g., empty list items). Tracked, not blocking.
-        crashCount++;
-        return;
-      }
+      // Re-throw on crash so the specific failing example is reported
+      // with the original error. KNOWN_CRASH_CEILING effectively 0.
+      const output1 = normalize(mdRoundTrip(example.markdown));
 
       if (!NORMALIZE_SECTIONS.has(example.section)) {
         // Idempotence: second round-trip must equal first
@@ -63,8 +60,4 @@ describe('CommonMark corpus — round-trip stability', () => {
       }
     });
   }
-
-  test('crash count does not exceed known ceiling', () => {
-    expect(crashCount).toBeLessThanOrEqual(KNOWN_CRASH_CEILING);
-  });
 });

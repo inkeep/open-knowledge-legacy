@@ -47,21 +47,25 @@ const LEGACY_PATH_FRAGMENTS = [
 ];
 
 /**
- * Signatures unique to the canonical corpora. If any of these strings
- * appears outside the fixtures directory, someone has duplicated the
- * fixture inline.
+ * Signatures unique to the canonical corpora. If any of these regexes
+ * matches outside the fixtures directory, someone has duplicated the
+ * fixture inline. Regex (rather than literal includes) so the guard
+ * survives re-quoting / re-indentation of the same signature.
  */
-const FIXTURE_SIGNATURES: Array<{ signature: string; suggestion: string }> = [
+const FIXTURE_SIGNATURES: Array<{ pattern: RegExp; label: string; suggestion: string }> = [
   {
-    signature: '"r23Covers"',
+    pattern: /\br23Covers\b/,
+    label: 'r23Covers',
     suggestion: 'load via loadMdxCrashTaxonomy()',
   },
   {
-    signature: '"section": "Task list items"',
+    pattern: /["'\s:]section["'\s:]+["']Task list items["']/,
+    label: '"section": "Task list items"',
     suggestion: 'load via loadGfmExamples()',
   },
   {
-    signature: '"section": "Strikethrough"',
+    pattern: /["'\s:]section["'\s:]+["']Strikethrough["']/,
+    label: '"section": "Strikethrough"',
     suggestion: 'load via loadGfmExamples()',
   },
 ];
@@ -98,7 +102,10 @@ function walk(dir: string, acc: string[] = []): string[] {
       continue;
     }
     if (stat.isDirectory()) walk(full, acc);
-    else if (entry.endsWith('.ts') || entry.endsWith('.tsx')) {
+    // Scan .ts/.tsx source files AND .json files — copying a JSON fixture
+    // outside the canonical location is a common duplication pattern that
+    // the .ts-only walk previously missed.
+    else if (entry.endsWith('.ts') || entry.endsWith('.tsx') || entry.endsWith('.json')) {
       acc.push(full);
     }
   }
@@ -154,9 +161,9 @@ describe('fixture isolation (US-001 / R8)', () => {
     for (const file of files) {
       if (SCAN_EXEMPT_BASENAMES.has(basename(file))) continue;
       const source = readFileSync(file, 'utf8');
-      for (const { signature, suggestion } of FIXTURE_SIGNATURES) {
-        if (source.includes(signature)) {
-          offenders.push(`${relative(REPO_ROOT, file)}: contains ${signature} — ${suggestion}`);
+      for (const { pattern, label, suggestion } of FIXTURE_SIGNATURES) {
+        if (pattern.test(source)) {
+          offenders.push(`${relative(REPO_ROOT, file)}: matches ${label} — ${suggestion}`);
         }
       }
     }

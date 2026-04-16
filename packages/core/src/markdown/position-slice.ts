@@ -108,6 +108,12 @@ export function applyPositionSliceToNode(
             // remark-parse left the `\` literal (PUA isn't §2.4-escapable). If
             // we tagged this as an escape anyway, the value's offset would
             // drift and mdast→PM splitting would corrupt downstream chars.
+            //
+            // Cross-ref: `autolink-void-html-guard.ts:protectFromMdx` handles
+            // brace-escape at the source-byte layer (skip stack ops when
+            // `\{` / `\}` has odd preceding backslashes). A future refactor
+            // that uniformly adds escape-awareness for `<`/`>`/`:`/`@` at
+            // R23 would let this consistency guard be simplified.
             value[valIdx] === raw[rawIdx + 1]
           ) {
             // This is an escape sequence: \X

@@ -57,6 +57,18 @@ interface Stats {
   max: number;
   p50: number;
   p95: number;
+  /**
+   * Nominal 99th percentile. With `MEASURED_ITERS = 10`,
+   * `Math.floor(0.99 * 10) = 9` → this degenerates to the max sample;
+   * with `MEASURED_ITERS = 20` it would be the 19th of 20, i.e. still
+   * the max. The regression-gate floor formula
+   * (`max(2σ, 10% × baseline.p99)`) inherits that property — the 10%
+   * floor is anchored to a worst-of-10 observation, not a steady-state
+   * p99. We keep the field named `p99` for config-schema stability; the
+   * σ arm of the formula (calibrated across multiple runs) provides the
+   * noise-aware term. Raising `MEASURED_ITERS` to ≥100 would make this a
+   * genuine p99 but invalidates `baseline.json` and lengthens the bench.
+   */
   p99: number;
 }
 

@@ -283,9 +283,16 @@ function buildMdastToPmHandlers(schema: Schema): RemarkProseMirrorOptions['handl
   if (m.escapeMark) {
     handlers.text = (node: Text) => {
       const value: string = node.value ?? '';
+      // Mirror the patched library-default text handler's null-on-empty guard
+      // (see `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch` hunk 2).
+      // `schema.text('')` throws in recent PM versions; returning `null` lets
+      // upstream filter the node. mdast-from-markdown normally doesn't emit
+      // empty text nodes, but stripping helpers / custom splitters can, so
+      // the guard is parity defense not just hypothetical.
+      if (!value) return null;
       const escapedChars: Array<{ offset: number; char: string }> | undefined =
         node.data?.escapedChars;
-      if (!escapedChars?.length || !value) {
+      if (!escapedChars?.length) {
         return schema.text(value.replaceAll('\u00A0', ' '));
       }
       // Build PM Fragment: split text at escape boundaries, apply escapeMark to escaped chars

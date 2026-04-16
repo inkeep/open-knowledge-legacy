@@ -96,6 +96,15 @@
       ],
       "env": ["RUN_BENCH"]
     },
+    "test:perf:r15-guard": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "src/markdown/autolink-void-html-guard.ts",
+        "src/markdown/autolink-void-html-guard.perf.test.ts"
+      ],
+      "env": ["RUN_BENCH"]
+    },
     "test:perf:regression:unit": {
       "dependsOn": [],
       "cache": true,

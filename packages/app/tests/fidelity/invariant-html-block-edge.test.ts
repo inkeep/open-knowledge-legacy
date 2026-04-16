@@ -22,7 +22,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
-import { mdRoundTrip, NUM_RUNS, normalize, PBT_TIMEOUT_MS } from './helpers';
+import { assertAcrossSeeds, mdRoundTrip, normalize, PBT_TIMEOUT_MS } from './helpers';
 
 const safeWord = fc.stringMatching(/^[a-zA-Z0-9]{1,8}$/);
 const safePhrase = fc
@@ -67,13 +67,12 @@ describe('HTML block edge — double round-trip stable (US-009 / R6a Finding 4)'
   test(
     'recognized HTML block shapes (div / details / comment / CDATA / PI / DOCTYPE)',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(recognizedHtmlBlock, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -82,13 +81,12 @@ describe('HTML block edge — double round-trip stable (US-009 / R6a Finding 4)'
   test(
     'HTML block followed by paragraph',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(htmlBlockWithFollowing, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -97,13 +95,12 @@ describe('HTML block edge — double round-trip stable (US-009 / R6a Finding 4)'
   test(
     'two adjacent HTML blocks',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(twoHtmlBlocks, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,

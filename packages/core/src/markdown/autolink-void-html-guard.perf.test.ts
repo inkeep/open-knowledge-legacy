@@ -12,17 +12,27 @@
  *   10000 unclosed tags → 569  ms  (≈ quadratic growth)
  *
  * Post-fix (pre-indexed close-tag positions + binary search), the same
- * workload runs log-linear. This test pins that behavior: at 10K unique
- * unclosed tags, protectFromMdx must complete in under 100 ms. That
- * bound is ~6× the observed M3-Max wall clock and far below the pre-fix
- * 569 ms — any regression to O(n·m) behavior immediately trips the gate.
+ * workload runs log-linear.
  *
- * The bound is deliberately generous (100 ms) so CI runner variance does
- * not cause flakes. A pre-fix regression would violate it by an order of
- * magnitude, keeping the signal unambiguous.
+ * GATING. Wall-clock assertions require `RUN_BENCH=1`. Rationale: tier-1
+ * CI runners (ubuntu-latest) have 5-20× larger σ than the M-series
+ * hardware the bounds were calibrated on (`evidence/r4-calibration.md`),
+ * and noisy-neighbor variance can push the 4-5ms p50 toward the 100 ms
+ * bound on unrelated changes. Every other perf test in this repo is
+ * `RUN_BENCH`-gated (see `tests/perf/markdown-bench.test.ts`); this one
+ * now matches. The tier-2 `test:perf:regression` pipeline runs this file
+ * with `RUN_BENCH=1` set at the nightly job level.
+ *
+ * A correctness smoke runs regardless of `RUN_BENCH` — it exercises the
+ * 10K-tag input to catch shape regressions (e.g. accidentally returning
+ * empty output or throwing on the pathological input). A reintroduced
+ * O(n·m) scan would still show up in nightly's wall-clock assertions.
  */
 import { describe, expect, test } from 'bun:test';
 import { protectFromMdx } from './autolink-void-html-guard.ts';
+
+const BENCH_ENABLED = process.env.RUN_BENCH === '1' || process.env.RUN_BENCH === 'true';
+const describeBench = BENCH_ENABLED ? describe : describe.skip;
 
 function pathological(jsxCount: number): string {
   const parts: string[] = [];
@@ -32,7 +42,19 @@ function pathological(jsxCount: number): string {
   return `${parts.join('\n\n')}\n`;
 }
 
-describe('R15 R23 guard: pathological unclosed-tag workload', () => {
+// Correctness smoke — always runs. Behavioral regressions (empty output,
+// throw on pathological input) fail tier-1 fast without depending on
+// wall-clock numbers.
+describe('R15 R23 guard: pathological unclosed-tag correctness (tier-1 smoke)', () => {
+  test('10K unique unclosed uppercase tags produce non-empty output', () => {
+    const src = pathological(10_000);
+    const out = protectFromMdx(src);
+    expect(typeof out).toBe('string');
+    expect(out.length).toBeGreaterThan(src.length / 2);
+  });
+});
+
+describeBench('R15 R23 guard: pathological unclosed-tag wall-clock bounds (tier-2)', () => {
   test('10K unique unclosed uppercase tags complete in under 100ms', () => {
     const src = pathological(10_000);
     // Warm-up pass: JIT + any lazy initialization.

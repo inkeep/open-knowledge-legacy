@@ -24,7 +24,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
-import { mdRoundTrip, NUM_RUNS, normalize, PBT_TIMEOUT_MS } from './helpers';
+import { assertAcrossSeeds, mdRoundTrip, normalize, PBT_TIMEOUT_MS } from './helpers';
 
 const safeWord = fc.stringMatching(/^[a-zA-Z0-9]{1,8}$/);
 const linkText = fc.array(safeWord, { minLength: 1, maxLength: 4 }).map((words) => words.join(' '));
@@ -70,13 +70,12 @@ describe('link edge — double round-trip stable (US-010 / R6b)', () => {
   test(
     'URL shapes: balanced / unbalanced parens, backslashes',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(linkArbitrary, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -85,13 +84,12 @@ describe('link edge — double round-trip stable (US-010 / R6b)', () => {
   test(
     'links with title (quoted)',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(linkWithTitle, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -100,13 +98,12 @@ describe('link edge — double round-trip stable (US-010 / R6b)', () => {
   test(
     'empty-text links',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(emptyTextLink, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,

@@ -22,7 +22,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
-import { mdRoundTrip, NUM_RUNS, normalize, PBT_TIMEOUT_MS } from './helpers';
+import { assertAcrossSeeds, mdRoundTrip, normalize, PBT_TIMEOUT_MS } from './helpers';
 
 const safeWord = fc.stringMatching(/^[a-zA-Z0-9]{1,8}$/);
 const safePhrase = fc
@@ -78,13 +78,12 @@ describe('list nesting — double round-trip stable (US-011 / R6d)', () => {
   test(
     'bullet list items with leading code/quote/thematicBreak/nested list',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(listWithLeadingNonParaItems, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -93,13 +92,12 @@ describe('list nesting — double round-trip stable (US-011 / R6d)', () => {
   test(
     'mixed nested bullet + bullet (depth 2)',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(mixedNestedList, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -108,13 +106,12 @@ describe('list nesting — double round-trip stable (US-011 / R6d)', () => {
   test(
     'ordered list with leading code block (CommonMark example 252 shape)',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(orderedListWithLeadingCode, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,

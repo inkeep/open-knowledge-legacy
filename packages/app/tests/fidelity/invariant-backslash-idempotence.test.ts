@@ -30,7 +30,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
-import { mdRoundTrip, NUM_RUNS, normalize, PBT_TIMEOUT_MS } from './helpers';
+import { assertAcrossSeeds, mdRoundTrip, normalize, PBT_TIMEOUT_MS } from './helpers';
 
 const safeWord = fc.stringMatching(/^[a-zA-Z0-9]{1,8}$/);
 const safePhrase = fc
@@ -60,13 +60,12 @@ describe('backslash escape idempotence — double round-trip stable (R24)', () =
   test(
     'backslash before named HTML entity reference',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(backslashEntity, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -75,13 +74,12 @@ describe('backslash escape idempotence — double round-trip stable (R24)', () =
   test(
     'backslash + ampersand followed by entity-like text',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(backslashAmpThenText, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -90,13 +88,12 @@ describe('backslash escape idempotence — double round-trip stable (R24)', () =
   test(
     'backslash at non-§2.4-ambiguous positions',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(backslashAtNonAmbiguousPositions, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,

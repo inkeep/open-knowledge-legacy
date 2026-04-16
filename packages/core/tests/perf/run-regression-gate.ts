@@ -51,6 +51,25 @@ async function main(): Promise<void> {
   const freshPath = findFreshestResults();
   const baseline = loadBaseline(BASELINE_PATH);
   const fresh = loadFreshResults(freshPath);
+
+  // Soft warning on runner-class mismatch. The threshold formula
+  // (`max(2σ, 10% × p99)`) absorbs some cross-runner variance but anchors
+  // to p99 numbers measured on the baseline's hardware class; σ on shared
+  // CI runners can be 5-20× larger than on the M-series calibration box
+  // (evidence/r4-calibration.md). When the mismatch is real, operators
+  // need the signal — but blocking the gate on it would be a step backward
+  // until a CI-class baseline is captured.
+  const freshRunnerClass =
+    process.env.BENCH_RUNNER_CLASS ??
+    (fresh.runner as { runnerClass?: string } | undefined)?.runnerClass ??
+    'unknown';
+  if (freshRunnerClass !== baseline.runnerClass) {
+    console.warn(
+      `[r4-gate] runner class mismatch: baseline="${baseline.runnerClass}" ` +
+        `fresh="${freshRunnerClass}". p99 deltas may reflect hardware, not code.`,
+    );
+  }
+
   const report = evaluateRegression(baseline, fresh);
   console.log(formatReport(report));
   console.log(`  baseline=${BASELINE_PATH}`);

@@ -109,9 +109,13 @@ function ensureNonEmptyDoc(tree: MdastRoot): MdastRoot {
  * Build the cached parse processor. Called once per MarkdownManager instance;
  * the result is reused across every `parseMd` call.
  *
- * `processor.freeze()` runs all attachers and locks in the pipeline config —
- * subsequent calls to `.parse()`/`.runSync()`/`.stringify()` are stateless
- * with respect to the processor.
+ * `processor.freeze()` is called eagerly — unified otherwise lazy-freezes on
+ * the first `.parse()` / `.runSync()` / `.stringify()`. Eager freeze surfaces
+ * attacher misconfiguration (e.g. a plugin whose `create` throws, an option
+ * mismatch between `parse` and `serialize` config) at MarkdownManager
+ * construction time rather than on the first real document. This is
+ * load-bearing — the `freeze()` calls here and in `createSerializeProcessor`
+ * must not be deleted during refactors. See US-006 notes in spec.json.
  */
 export function createParseProcessor(opts: PipelineOptions): Processor {
   // R17 — post-parse tree transformation is 2 phases (down from 5):
@@ -148,6 +152,10 @@ export function createParseProcessor(opts: PipelineOptions): Processor {
  *
  * The `fromProseMirror` step runs per-document (needs the PM doc) and is not
  * part of the cached processor — see `serializeMd`.
+ *
+ * The eager `processor.freeze()` below is the same fail-fast discipline
+ * documented on `createParseProcessor` — do not delete without
+ * understanding what it catches.
  */
 export function createSerializeProcessor(opts: PipelineOptions): Processor {
   // Note: `remarkWikiLink` is intentionally absent here. The PM → mdast

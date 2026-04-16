@@ -346,6 +346,14 @@ export function protectFromMdx(source: string): string {
       if (result[i] === '{' || result[i] === '}') {
         // Count preceding backslashes; odd count means this brace is
         // CommonMark-escaped and remark-parse will consume the escape.
+        // Escape-awareness for `<`/`>`/`:`/`@` is NOT applied here — those
+        // passes unconditionally PUA-substitute. The position-slice walker
+        // at packages/core/src/markdown/position-slice.ts (ESCAPABLE_CHARS
+        // check + value-consistency guard, lines 100-116) is the
+        // downstream enforcement point for the `\<` / `\>` / `\:` / `\@`
+        // cases: if a future refactor makes R23 escape-aware for those
+        // chars as well, the position-slice value-consistency guard can be
+        // simplified at that time.
         let bs = 0;
         for (let j = i - 1; j >= 0 && result[j] === '\\'; j--) bs++;
         if (bs % 2 === 1) continue; // escaped — skip stack operations

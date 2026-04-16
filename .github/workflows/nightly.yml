@@ -38,6 +38,11 @@ jobs:
           STRESS_FUZZ_NIGHTLY: "1"
         run: bunx turbo run test:fuzz:bridge
 
+  # NOTE: `test:fuzz:bridge` is intentionally not in this matrix.
+  # Tier-1 `ci.yml` already runs it at default seeds on every PR/push, and
+  # `deep-fuzz` (above) runs the elevated-seed variant via
+  # `STRESS_FUZZ_NIGHTLY=1`. Re-running the default-seed variant here
+  # would duplicate the tier-1 job without adding variance coverage.
   full-stress:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -46,7 +51,6 @@ jobs:
       matrix:
         shard:
           - test:stress:server-authoritative
-          - test:fuzz:bridge
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
@@ -81,6 +85,7 @@ jobs:
           - test:perf:regression
           - test:health
           - test:perf:fallback
+          - test:perf:r15-guard
     env:
       RUN_BENCH: "1"
     steps:

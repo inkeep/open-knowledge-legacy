@@ -24,7 +24,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import * as fc from 'fast-check';
-import { mdRoundTrip, NUM_RUNS, normalize, PBT_TIMEOUT_MS } from './helpers';
+import { assertAcrossSeeds, mdRoundTrip, normalize, PBT_TIMEOUT_MS } from './helpers';
 
 const safeWord = fc.stringMatching(/^[a-zA-Z0-9]{1,8}$/);
 const altText = fc.array(safeWord, { minLength: 1, maxLength: 4 }).map((words) => words.join(' '));
@@ -60,13 +60,12 @@ describe('image edge — double round-trip stable (US-010 / R6c)', () => {
   test(
     'URL shapes: balanced / unbalanced parens, backslashes',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(imageArbitrary, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -75,13 +74,12 @@ describe('image edge — double round-trip stable (US-010 / R6c)', () => {
   test(
     'images with title (quoted)',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(imageWithTitle, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
@@ -90,13 +88,12 @@ describe('image edge — double round-trip stable (US-010 / R6c)', () => {
   test(
     'empty-alt images',
     () => {
-      fc.assert(
+      assertAcrossSeeds(
         fc.property(emptyAltImage, (md) => {
           const once = normalize(mdRoundTrip(md));
           const twice = normalize(mdRoundTrip(once));
           expect(twice).toBe(once);
         }),
-        { numRuns: NUM_RUNS, seed: 42 },
       );
     },
     PBT_TIMEOUT_MS,
