@@ -148,20 +148,87 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   };
 
   // ── BRANCH 1: Wildcard (unregistered name) ────────────────────────────
+  // Same chrome bar as registered (arrows + delete), no gear (no props).
   if (descriptor.name === '*') {
     return (
       <NodeViewWrapper
         className="jsx-component-wrapper my-2"
+        aria-label={`Unregistered component: ${node.attrs.componentName as string}`}
+        {...(!isChildOfComponent
+          ? { 'data-drag-handle': '', draggable: 'true' }
+          : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}
         data-component-name={node.attrs.componentName}
       >
-        {/* Hover-revealed name badge */}
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: contentEditable={false} + stopPropagation required inside PM NodeView */}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
         <div
           className="jsx-component-chrome"
           contentEditable={false}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <span>Unknown: {node.attrs.componentName as string}</span>
+
+          {canMoveUp && (
+            <button
+              type="button"
+              className="jsx-chrome-btn"
+              aria-label="Move up"
+              onClick={() => {
+                if (typeof pos !== 'number') return;
+                const $p = editor.state.doc.resolve(pos);
+                const idx = $p.index($p.depth);
+                if (idx === 0) return;
+                const parent = $p.node($p.depth);
+                const prev = parent.child(idx - 1);
+                const from = pos - prev.nodeSize;
+                const to = pos + node.nodeSize;
+                const tr = editor.state.tr;
+                const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+                const pre = editor.state.doc.slice(from, pos);
+                tr.replaceWith(from, to, cur.content.append(pre.content));
+                editor.view.dispatch(tr.scrollIntoView());
+              }}
+            >
+              <ArrowUp size={12} />
+            </button>
+          )}
+
+          {canMoveDown && (
+            <button
+              type="button"
+              className="jsx-chrome-btn"
+              aria-label="Move down"
+              onClick={() => {
+                if (typeof pos !== 'number') return;
+                const $p = editor.state.doc.resolve(pos);
+                const idx = $p.index($p.depth);
+                const parent = $p.node($p.depth);
+                if (idx >= parent.childCount - 1) return;
+                const next = parent.child(idx + 1);
+                const from = pos;
+                const to = pos + node.nodeSize + next.nodeSize;
+                const tr = editor.state.tr;
+                const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+                const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
+                tr.replaceWith(from, to, nxt.content.append(cur.content));
+                editor.view.dispatch(tr.scrollIntoView());
+              }}
+            >
+              <ArrowDown size={12} />
+            </button>
+          )}
+
+          <button
+            type="button"
+            className="jsx-chrome-btn jsx-chrome-btn--delete"
+            aria-label={`Delete ${node.attrs.componentName as string}`}
+            onClick={() => {
+              if (typeof pos === 'number') {
+                editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
+              }
+            }}
+          >
+            <Trash2 size={12} />
+          </button>
         </div>
         <NodeViewContent className="component-children" />
       </NodeViewWrapper>
