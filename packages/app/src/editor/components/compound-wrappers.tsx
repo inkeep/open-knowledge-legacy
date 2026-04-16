@@ -96,11 +96,19 @@ export function EditorTabs({
       className="editor-tabs-root flex flex-col rounded-xl border bg-fd-secondary my-4"
       data-active-tab={defaultValue}
     >
-      {/* Tab trigger bar */}
+      {/* Tab trigger bar — chrome, not user content. `contentEditable={false}`
+          tells PM this subtree isn't editable; `onMouseDown stopPropagation`
+          stops PM's root mousedown handler from placing the caret "inside
+          <Tabs>" (the nearest editable location, which lands at the Tabs
+          content boundary where only jsxComponent children are legal).
+          Without both, clicking a tab label drops the caret in an invalid
+          position and the next keystroke is rejected by TypedChildrenGuard. */}
       {tabItems.length > 0 && (
         <div
           role="tablist"
           className="flex gap-3.5 text-fd-secondary-foreground overflow-x-auto px-4 not-prose"
+          contentEditable={false}
+          onMouseDown={(e) => e.stopPropagation()}
         >
           {tabItems.map((item) => (
             <button

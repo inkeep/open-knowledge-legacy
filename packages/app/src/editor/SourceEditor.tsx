@@ -1,35 +1,19 @@
-import { markdown } from '@codemirror/lang-markdown';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
-import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
-import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
-import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
-
-// Customize the dark editor surface colors here.
-const darkTheme = basicDarkInit({
-  settings: {
-    background: 'var(--background)',
-    gutterBackground: 'var(--background)',
-  },
-});
-
-const lightTheme = basicLightInit({
-  settings: {
-    background: 'var(--background)',
-    gutterBackground: 'var(--background)',
-  },
-});
-
 import { basicSetup } from 'codemirror';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef } from 'react';
 import { yCollab } from 'y-codemirror.next';
 import type * as Y from 'yjs';
+import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
+import {
+  createNestedCMExtensions,
+  darkTheme,
+  lightTheme,
+} from '@/editor/extensions/nested-cm-extensions';
+import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
 import { markUserTyping } from './observers';
-import { createAgentFlashSourceExtension } from './plugins/agent-flash-source';
-import { createMdLinkSourceExtension } from './plugins/md-link-source';
-import { createWikiLinkSourceExtension } from './plugins/wiki-link-source';
 
 interface SourceEditorProps {
   ytext: Y.Text;
@@ -61,13 +45,12 @@ export function SourceEditor({ ytext, provider }: SourceEditorProps) {
       doc: ytext.toString(),
       extensions: [
         basicSetup,
-        markdown(),
         yCollab(ytext, provider.awareness),
-        createAgentFlashSourceExtension(provider.document),
-        createWikiLinkSourceExtension(),
-        createMdLinkSourceExtension(),
-        themeCompartment.of(resolvedTheme === 'dark' ? darkTheme : lightTheme),
-        EditorView.lineWrapping,
+        ...createNestedCMExtensions({
+          themeCompartment,
+          resolvedTheme,
+          ydoc: provider.document,
+        }),
         EditorView.theme({
           '&': {
             height: '100%',

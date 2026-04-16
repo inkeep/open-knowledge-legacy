@@ -47,7 +47,22 @@ export const TypedChildrenGuard = Extension.create({
             stepMap.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
               if (dominated) return;
 
-              // Check if the insertion target is directly inside a typed-children container
+              // Check if the insertion target is directly inside a typed-children container.
+              //
+              // Two cases reject non-jsxComponent insertions:
+              //   (a) `$pos.depth === depth`  — the position's parent IS the
+              //       typed-children container. Anything inserted here becomes
+              //       a direct child of the container (e.g. a paragraph
+              //       dropped into <Tabs> when a user types after clicking
+              //       the tab trigger bar). Only jsxComponents are allowed.
+              //   (b) `$pos.depth === depth + 1` — the position is inside a
+              //       child of the container. If that child is a non-jsxComponent
+              //       textblock (only possible post-corruption or via an
+              //       earlier paste), typing further text keeps feeding the
+              //       illegal child. Reject to contain the damage.
+              //
+              // Anything deeper (`$pos.depth > depth + 1`) is inside a legit
+              // jsxComponent child's own content — allowed.
               try {
                 const $pos = tr.doc.resolve(newStart);
                 for (let depth = $pos.depth; depth > 0; depth--) {
@@ -56,12 +71,7 @@ export const TypedChildrenGuard = Extension.create({
                     const componentName = ancestor.attrs.componentName as string;
                     const descriptor = getDescriptor(componentName);
                     if (descriptor.emptyChildName) {
-                      // This is a typed-children container. Check if the insertion
-                      // is at the CONTAINER level (direct child) not inside a child's content.
-                      // If $pos.depth === depth + 1, we're inserting directly inside the container.
-                      // If $pos.depth > depth + 1, we're inside a child's content (allowed).
-                      if ($pos.depth === depth + 1) {
-                        // Check what's being inserted — allow jsxComponent, reject everything else
+                      if ($pos.depth === depth || $pos.depth === depth + 1) {
                         const insertedSlice = tr.doc.slice(newStart, newEnd);
                         insertedSlice.content.forEach((insertedNode) => {
                           if (insertedNode.type.name !== 'jsxComponent') {
@@ -70,6 +80,7 @@ export const TypedChildrenGuard = Extension.create({
                               insertedNode.type.name,
                               'inside',
                               componentName,
+                              `(posDepth=${$pos.depth}, containerDepth=${depth})`,
                             );
                             dominated = true;
                           }

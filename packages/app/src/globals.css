@@ -10,6 +10,13 @@
    used internally by fumadocs components. */
 @source "../../../node_modules/fumadocs-ui/dist/**/*.js";
 
+/* Tailwind v4's auto-source-detection is disabled once any explicit @source
+   exists, so our own .tsx/.ts files must also be listed. Without this, local
+   usage of `data-[state=active]:border-fd-primary`, `bg-(--callout-color)/50`,
+   etc. (editor-local tab triggers, prop controls) would silently not generate
+   CSS even though the classes render in the DOM. */
+@source "./**/*.{ts,tsx}";
+
 @custom-variant dark (&:is(.dark *));
 
 @theme {
@@ -645,9 +652,14 @@
 
 /* CodeMirror polish */
 .cm-editor {
-  min-height: 200px;
   font-size: 14px;
   font-family: var(--font-mono);
+}
+
+/* SourceEditor (full-page source mode) reserves a usable baseline height;
+   nested CM instances inside PM NodeViews size to their content. */
+.source-editor .cm-editor {
+  min-height: 200px;
 }
 
 .cm-editor .cm-content {
@@ -781,6 +793,43 @@ button:active:not(:disabled) {
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  /* fumadocs-ui token bridge (FR-25).
+     MUST be inside @theme (not :root) for Tailwind v4 to generate
+     utilities like `bg-fd-card`, `border-fd-primary`, `text-fd-muted-foreground`.
+     `@theme inline` means these resolve to the current value of the aliased
+     CSS variable at use time, so dark-mode overrides of --card, --primary,
+     etc. flow through automatically. */
+  --color-fd-background: var(--background);
+  --color-fd-foreground: var(--foreground);
+  --color-fd-card: var(--card);
+  --color-fd-card-foreground: var(--card-foreground);
+  --color-fd-popover: var(--popover);
+  --color-fd-popover-foreground: var(--popover-foreground);
+  --color-fd-muted: var(--muted);
+  --color-fd-muted-foreground: var(--muted-foreground);
+  --color-fd-border: var(--border);
+  --color-fd-primary: var(--primary);
+  --color-fd-primary-foreground: var(--primary-foreground);
+  --color-fd-secondary: var(--secondary);
+  --color-fd-secondary-foreground: var(--secondary-foreground);
+  --color-fd-accent: var(--accent);
+  --color-fd-accent-foreground: var(--accent-foreground);
+  --color-fd-ring: var(--ring);
+}
+
+/* fumadocs semantic callout colors — literal oklch values copied verbatim
+   from fumadocs-ui/css/default.css. Must use `@theme static` (not plain
+   `@theme`) so the tokens are emitted into `:root` as CSS variables —
+   fumadocs Callout reads them at runtime via inline
+   `style={{ '--callout-color': 'var(--color-fd-info, ...)' }}` and would
+   silently fall back to --color-fd-muted if the vars weren't in :root. */
+@theme static {
+  --color-fd-info: oklch(62.3% 0.214 259.815);
+  --color-fd-warning: oklch(76.9% 0.188 70.08);
+  --color-fd-error: oklch(63.7% 0.237 25.331);
+  --color-fd-success: oklch(72.3% 0.219 149.579);
+  --color-fd-idea: oklch(70.5% 0.209 60.849);
 }
 
 :root {
@@ -856,61 +905,37 @@ button:active:not(:disabled) {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   fumadocs-ui CSS variable bridge (FR-25)
-   Maps fumadocs's --color-fd-* namespace to our existing shadcn
-   design tokens. No new visual design; pure aliasing. Dark mode
-   inherits via our existing .dark class overrides on shadcn tokens.
-   Explicitly NOT importing fumadocs-ui/style.css or preset.css
-   (base-layer conflicts with our @custom-variant dark).
+   fumadocs-ui cherry-picked assets (FR-25)
+   Token bridge lives in @theme inline above (required for Tailwind v4
+   to generate bg-fd-*, border-fd-*, etc. utilities). Semantic callout
+   colors live in the @theme block above.
+
+   We intentionally do NOT import fumadocs-ui/style.css or preset.css:
+   (1) preset.css redefines `@variant dark` with different specificity
+       than our `@custom-variant dark`, (2) its `@layer base *` border
+       reset conflicts with shadcn's own reset. Cherry-picking the
+       utilities + keyframes below is the portable way to get fumadocs
+       visuals inside our app's token system.
    ───────────────────────────────────────────────────────────── */
 
-/* 1. Token bridge — alias fd variables to shadcn tokens */
-:root {
-  --color-fd-background: var(--background);
-  --color-fd-foreground: var(--foreground);
-  --color-fd-card: var(--card);
-  --color-fd-card-foreground: var(--card-foreground);
-  --color-fd-popover: var(--popover);
-  --color-fd-popover-foreground: var(--popover-foreground);
-  --color-fd-muted: var(--muted);
-  --color-fd-muted-foreground: var(--muted-foreground);
-  --color-fd-border: var(--border);
-  --color-fd-primary: var(--primary);
-  --color-fd-primary-foreground: var(--primary-foreground);
-  --color-fd-secondary: var(--secondary);
-  --color-fd-secondary-foreground: var(--secondary-foreground);
-  --color-fd-accent: var(--accent);
-  --color-fd-accent-foreground: var(--accent-foreground);
-  --color-fd-ring: var(--ring);
-}
-
-/* 2. Static semantic callout colors — verbatim from fumadocs-ui/css/default.css */
-:root {
-  --color-fd-info: oklch(62.3% 0.214 259.815);
-  --color-fd-warning: oklch(76.9% 0.188 70.08);
-  --color-fd-error: oklch(63.7% 0.237 25.331);
-  --color-fd-success: oklch(72.3% 0.219 149.579);
-  --color-fd-idea: oklch(70.5% 0.209 60.849);
-}
-
-/* 3. Steps utility classes — cherry-picked from fumadocs-ui/css/preset.css.
-   fumadocs components reference these as Tailwind utilities (fd-steps, fd-step). */
+/* Steps utility classes — verbatim from fumadocs-ui/css/preset.css
+   (@utility fd-steps, @utility fd-step). fumadocs components reference
+   these as Tailwind utilities and we can't @import fumadocs' preset
+   (conflicts with @custom-variant dark), so we mirror it here.
+   Expansions: pl-6=1.5rem, ml-2=0.5rem, sm:pl-7=1.75rem, sm:ml-4=1rem,
+   size-8=2rem, -start-4=-1rem, rounded-full=9999px. */
 .fd-steps {
   counter-reset: step;
   position: relative;
-  padding-left: 2.5rem;
+  padding-left: 1.5rem;
   margin-left: 0.5rem;
   border-left: 1px solid var(--color-fd-border);
 }
 @media (min-width: 640px) {
   .fd-steps {
     margin-left: 1rem;
-    padding-left: 2.75rem;
+    padding-left: 1.75rem;
   }
-}
-.fd-step {
-  position: relative;
-  padding-left: 0.5rem;
 }
 .fd-step::before {
   background-color: var(--color-fd-secondary);
@@ -925,8 +950,26 @@ button:active:not(:disabled) {
   width: 2rem;
   height: 2rem;
   position: absolute;
-  left: -2.5rem;
+  inset-inline-start: -1rem;
   border-radius: 9999px;
+}
+
+/* Editor-only compensation: in fumadocs' native layout the `.fd-step::before`
+   counter-circle anchors to `.fd-steps` (the only positioned ancestor), which
+   places the circle in `.fd-steps`'s left padding area. Our editor wraps every
+   jsxComponent child in `.jsx-component-wrapper` with `position: relative`
+   (needed for drag-handle + chrome overlay), hijacking that anchor: the circle
+   now sits at `-1rem` relative to the wrapper, which sits at `.fd-steps`'s
+   content edge — so the circle slides right and overlaps the heading's first
+   ~16px ("In" of "Install" disappears behind the "1"). Compensate by shifting
+   the circle left by one more `.fd-steps` padding-left's worth. */
+.jsx-component-wrapper .fd-step::before {
+  inset-inline-start: calc(-1rem - 1.5rem); /* -2.5rem to match -1rem offset from .fd-steps edge */
+}
+@media (min-width: 640px) {
+  .jsx-component-wrapper .fd-step::before {
+    inset-inline-start: calc(-1rem - 1.75rem); /* -2.75rem at sm breakpoint */
+  }
 }
 
 /* 4. Accordion + Collapsible animation keyframes — required for fumadocs
@@ -1022,7 +1065,10 @@ button:active:not(:disabled) {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 40%, transparent);
 }
 
-/* Hover-revealed chrome bar (component name + gear icon) — top-right overlay */
+/* Hover-revealed chrome bar (component name + gear icon) — top-right overlay.
+   z-index 50 sits above fumadocs' own internal sticky/z-40 (Banner's header)
+   but still below shadcn Popover/Dialog portals (typically z-50+ on a detached
+   layer), so the chrome isn't occluded by in-component stickies. */
 .jsx-component-chrome {
   position: absolute;
   top: -11px;
@@ -1040,7 +1086,7 @@ button:active:not(:disabled) {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s;
-  z-index: 10;
+  z-index: 50;
   white-space: nowrap;
 }
 /* Only show chrome for the INNERMOST hovered component — prevents
@@ -1051,6 +1097,29 @@ button:active:not(:disabled) {
 > .jsx-component-chrome {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Unconfigured hint — when the component has settable props AND at least one
+   is empty/unset, surface the full-styled chrome pill with ONLY the gear
+   button visible (arrows + destructive delete stay hidden until hover).
+   The pill itself looks identical to its hovered state (full background,
+   border, padding, opacity) — the hint is conveyed by *presence*, not by
+   styling the gear differently. Hover upgrades the pill to show every
+   button via the hover rule above. */
+.jsx-component-wrapper[data-needs-config="true"]:not(
+  :has(.component-children .jsx-component-wrapper:hover)
+)
+> .jsx-component-chrome {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* In hint mode (not hovering the wrapper itself), hide every chrome button
+   except the properties trigger so the gear is the only affordance shown. */
+.jsx-component-wrapper[data-needs-config="true"]:not(:hover):not(
+    :has(.component-children .jsx-component-wrapper:hover)
+  ) > .jsx-component-chrome
+  > button:not([aria-label*="properties"]) {
+  display: none;
 }
 
 /* Chrome bar icon buttons — shared base style */

@@ -15,6 +15,7 @@
  */
 
 import type { NodeViewProps } from '@tiptap/core';
+import { TextSelection } from '@tiptap/pm/state';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
 import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
 import React, { type ErrorInfo, type ReactNode, useEffect, useRef, useState } from 'react';
@@ -129,6 +130,29 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
     (p) => !('hidden' in p && p.hidden) && p.type !== 'reactnode',
   );
 
+  // needsConfig = at least one STRING prop is an explicit empty `''`. Used as
+  // a passive visual hint: the chrome bar surfaces the gear without hover
+  // (via `data-needs-config` CSS rule in globals.css). Clears as soon as
+  // every string prop has a non-empty value.
+  //
+  // Scoping rationale:
+  //   - boolean / number / enum props have sensible defaults from
+  //     `getDefaultProps` (false / 0 / first enum value) — defaulting is
+  //     intentional, not "unconfigured."
+  //   - `undefined` string values come from authored markdown that simply
+  //     doesn't write that attr (e.g. `<Callout type="info">` omits title).
+  //     Hinting there would nag on every well-formed, render-complete
+  //     callout. So we only flag explicit `''`, which is what
+  //     `getDefaultProps` stamps on fresh slash-inserts.
+  const currentProps = (node.attrs.props as Record<string, unknown>) ?? {};
+  const needsConfig =
+    hasEditableProps &&
+    descriptor.props.some((p) => {
+      if (p.type !== 'string') return false;
+      if ('hidden' in p && p.hidden) return false;
+      return currentProps[p.name] === '';
+    });
+
   // Auto-open popover when: (1) component becomes selected AND (2) the
   // pendingAutoOpen flag is set. Uses controlled state so it works across
   // React re-renders (defaultOpen only reads on first mount).
@@ -200,14 +224,44 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // ── BRANCH 2: Registered healthy render ───────────────────────────────
   const Comp = descriptor.Component;
 
+  // For components with no editable children (Card, File, ImageZoom, …), a
+  // click on the rendered body would otherwise land the caret in the node's
+  // empty content hole — the user then sees "stuck caret" chrome with no
+  // visible cursor and no productive keystrokes. Instead: NodeSelect the
+  // component so the chrome highlights and the user can act via arrows /
+  // Delete / the gear popover. Uses `onClick` (runs after PM's mousedown
+  // has committed) rather than `onMouseDown` (would clobber HTML5 drag).
+  const handleBodyClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (descriptor.hasChildren && !descriptor.isSelfClosing) return;
+    const target = e.target as HTMLElement;
+    // React events bubble through the React tree including portals, so
+    // clicks on inputs inside Radix Popover/Dialog content reach this
+    // handler even though those nodes live at document.body. Filter to
+    // clicks that are actually inside this wrapper's DOM — otherwise the
+    // `setNodeSelection().focus()` below steals focus from the popover's
+    // inputs and the user can't type into the PropPanel.
+    if (!e.currentTarget.contains(target)) return;
+    if (target.closest('.jsx-component-chrome')) return;
+    if (target.closest('.jsx-add-child-pill, .jsx-empty-child-placeholder')) return;
+    if (typeof pos !== 'number') return;
+    const curNode = editor.state.doc.nodeAt(pos);
+    if (!curNode) return;
+    const nodeEnd = pos + curNode.nodeSize;
+    const selFrom = editor.state.selection.from;
+    if (selFrom < pos || selFrom >= nodeEnd) return;
+    editor.chain().focus().setNodeSelection(pos).run();
+  };
+
   return (
     <NodeViewWrapper
       className={`jsx-component-wrapper my-2 ${selected ? 'is-selected' : ''}`}
+      data-needs-config={needsConfig ? 'true' : undefined}
       {...(!isChildOfComponent
         ? { 'data-drag-handle': '', draggable: 'true' }
         : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}
       data-component-name={descriptor.name}
       data-tab-value={((node.attrs.props as Record<string, unknown>)?.value as string) ?? ''}
+      onClick={handleBodyClick}
     >
       {/* Hover-revealed action icons: [↑] [↓] [⚙️] [🗑] */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
@@ -267,9 +321,71 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           </button>
         )}
 
-        {/* Settings → Popover PropPanel (only if editable props) */}
+        {/* Delete — positioned between move arrows and settings so the
+            settings gear stays anchored at the right edge of the chrome bar
+            (consistent "destructive action mid, config action far-right"
+            pattern regardless of whether the component has editable props). */}
+        <button
+          type="button"
+          className="jsx-chrome-btn jsx-chrome-btn--delete"
+          aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
+          onClick={() => {
+            if (typeof pos === 'number') {
+              editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
+            }
+          }}
+        >
+          <Trash2 size={12} />
+        </button>
+
+        {/* Settings → Popover PropPanel (shown whenever the descriptor has
+            any non-hidden, non-reactnode prop — even if the user hasn't set
+            a value yet; empty-prop state is a valid config entry point). */}
         {hasEditableProps && (
-          <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+          <Popover
+            open={popoverOpen}
+            onOpenChange={(open) => {
+              setPopoverOpen(open);
+              // When the popover closes for a component with no editable
+              // children (Card, File, ImageZoom, …), the caret may still be
+              // on/inside the node. Defer to the next frame so PM's click
+              // handler settles first, then — if the caret is still within
+              // the node's range — advance it to the NEAREST VALID TEXT
+              // POSITION forward.
+              //
+              // We used to `setTextSelection(pos + node.nodeSize)`. That
+              // fails when the node sits inside a typed-children container
+              // like `<Cards>`: `pos + nodeSize` is a block boundary inside
+              // `Cards` (parent == Cards, not a textblock). Typing there
+              // wraps the keystroke in a paragraph and inserts the paragraph
+              // into `Cards` — bypassing `typedChildrenGuard`, which only
+              // fires when `$pos.depth === depth + 1` (i.e. inside a child
+              // textblock). Traced via agent-browser: pos 29 resolves with
+              // parent=Cards and isTextblock=false; the next textblock is
+              // one step forward at pos 30 (the "After card." paragraph).
+              //
+              // `TextSelection.near($pos, 1)` walks forward past block
+              // boundaries to a real text position, so typing lands in the
+              // next paragraph instead of inside the container.
+              if (open) return;
+              if (descriptor.hasChildren && !descriptor.isSelfClosing) return;
+              requestAnimationFrame(() => {
+                const p = typeof getPos === 'function' ? getPos() : undefined;
+                if (typeof p !== 'number') return;
+                const curNode = editor.state.doc.nodeAt(p);
+                if (!curNode) return;
+                const nodeEnd = p + curNode.nodeSize;
+                const selFrom = editor.state.selection.from;
+                if (selFrom < p || selFrom >= nodeEnd) return;
+                const $end = editor.state.doc.resolve(
+                  Math.min(nodeEnd, editor.state.doc.content.size),
+                );
+                const nextSel = TextSelection.near($end, 1);
+                editor.view.dispatch(editor.state.tr.setSelection(nextSel).scrollIntoView());
+                editor.view.focus();
+              });
+            }}
+          >
             <PopoverTrigger asChild>
               <button
                 type="button"
@@ -287,36 +403,34 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
                 props={descriptor.props}
                 values={primitiveProps}
                 onChange={(propName, value) => {
-                  if (typeof pos === 'number') {
-                    editor.commands.updateAttributes('jsxComponent', {
-                      props: {
-                        ...(node.attrs.props as Record<string, unknown>),
-                        [propName]: value,
-                      },
+                  // Update the node at its live position — NOT via
+                  // `editor.commands.updateAttributes`, which targets the
+                  // *current selection*. When the PropPanel popover has an
+                  // input focused, the PM selection has already moved off
+                  // this Card (the editor loses focus to the portal input),
+                  // so selection-based updateAttributes silently no-ops and
+                  // every keystroke disappears. `setNodeMarkup(pos, ...)`
+                  // targets the node at its position regardless of where
+                  // the selection is now.
+                  const p = typeof getPos === 'function' ? getPos() : undefined;
+                  if (typeof p !== 'number') return;
+                  const curNode = editor.state.doc.nodeAt(p);
+                  if (!curNode) return;
+                  const currentProps = (curNode.attrs.props as Record<string, unknown>) ?? {};
+                  editor.view.dispatch(
+                    editor.state.tr.setNodeMarkup(p, null, {
+                      ...curNode.attrs,
+                      props: { ...currentProps, [propName]: value },
                       sourceDirty: true,
-                    });
-                    const ydoc = getYDoc(editor);
-                    if (ydoc) markUserTyping(ydoc);
-                  }
+                    }),
+                  );
+                  const ydoc = getYDoc(editor);
+                  if (ydoc) markUserTyping(ydoc);
                 }}
               />
             </PopoverContent>
           </Popover>
         )}
-
-        {/* Delete */}
-        <button
-          type="button"
-          className="jsx-chrome-btn jsx-chrome-btn--delete"
-          aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
-          onClick={() => {
-            if (typeof pos === 'number') {
-              editor.chain().focus().setNodeSelection(pos).deleteSelection().run();
-            }
-          }}
-        >
-          <Trash2 size={12} />
-        </button>
       </div>
 
       {/* Live React component — renders exactly like production.

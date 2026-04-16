@@ -19,10 +19,12 @@ import { Compartment } from '@codemirror/state';
 import { EditorView as CMEditorView, keymap } from '@codemirror/view';
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewWrapper } from '@tiptap/react';
+import { Trash2 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef } from 'react';
 import { markUserTyping } from '../observers';
 import { getYDoc } from '../utils/get-ydoc';
+import { classifySeverity, SEVERITY_STYLES } from '../utils/severity';
 import { createNestedCMExtensions, darkTheme, lightTheme } from './nested-cm-extensions';
 
 /**
@@ -60,6 +62,8 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
   const themeCompartmentRef = useRef(new Compartment());
   const { resolvedTheme } = useTheme();
   const reason = (node.attrs.reason as string) || 'Parse failed';
+  const severity = classifySeverity(reason);
+  const style = SEVERITY_STYLES[severity];
 
   // CM→PM sync: forward CM changes as PM transactions.
   // Uses getPos() and editor.view.state directly (both stable across renders)
@@ -123,9 +127,11 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
       },
     ]);
 
+    const ydoc = getYDoc(editor);
     const extensions = createNestedCMExtensions({
       themeCompartment,
       resolvedTheme,
+      ydoc: ydoc ?? undefined,
       extraKeymaps: undoRedoKeymap,
     });
 
@@ -147,7 +153,6 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
 
     // FR-32: forward markUserTyping for Observer B typing-defer
     try {
-      const ydoc = getYDoc(editor);
       if (ydoc) {
         const mark = () => markUserTyping(ydoc);
         const dom = cmView.contentDOM;
@@ -194,19 +199,41 @@ export function RawMdxFallbackView({ node, editor, getPos }: NodeViewProps) {
     updatingRef.current = false;
   }, [textContent]);
 
+  const handleDelete = () => {
+    const p = typeof getPos === 'function' ? getPos() : undefined;
+    if (typeof p !== 'number') return;
+    editor.chain().focus().setNodeSelection(p).deleteSelection().run();
+  };
+
   return (
     <NodeViewWrapper
-      className="raw-mdx-fallback-wrapper relative my-2 rounded border border-dashed border-amber-400/60 dark:border-amber-500/40 bg-amber-50/50 dark:bg-amber-900/10"
+      className={`raw-mdx-fallback-wrapper relative my-2 py-2 rounded border border-dashed ${style.wrapperClass}`}
       contentEditable={false}
       data-drag-handle=""
       draggable="true"
+      data-severity={severity}
     >
-      <span
-        className="absolute top-1 right-1 z-10 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30"
-        title={reason}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
+      <div
+        className="absolute top-1 right-1 z-10 flex items-center gap-1.5"
+        contentEditable={false}
+        onMouseDown={(e) => e.stopPropagation()}
       >
-        raw
-      </span>
+        <span
+          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${style.badgeClass}`}
+          title={reason}
+        >
+          {style.label}
+        </span>
+        <button
+          type="button"
+          className="jsx-chrome-btn jsx-chrome-btn--delete"
+          aria-label="Delete block"
+          onClick={handleDelete}
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
 
       <div ref={cmContainerRef} className="raw-mdx-fallback-cm" />
     </NodeViewWrapper>
