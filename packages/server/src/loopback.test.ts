@@ -20,6 +20,15 @@ describe('isLoopbackAddress', () => {
     expect(isLoopbackAddress('::ffff:127.0.0.1')).toBe(true);
   });
 
+  test('accepts anywhere in the IPv4-mapped 127.0.0.0/8 block', () => {
+    // Parity with the pure-IPv4 branch: any 127.X.Y.Z mapped onto v6 is
+    // still loopback. `startsWith('::ffff:127.')` with the trailing dot
+    // mirrors the pure-IPv4 pattern.
+    expect(isLoopbackAddress('::ffff:127.0.0.2')).toBe(true);
+    expect(isLoopbackAddress('::ffff:127.1.2.3')).toBe(true);
+    expect(isLoopbackAddress('::ffff:127.255.255.254')).toBe(true);
+  });
+
   test('rejects LAN IPv4 addresses', () => {
     expect(isLoopbackAddress('192.168.1.1')).toBe(false);
     expect(isLoopbackAddress('10.0.0.1')).toBe(false);
@@ -54,6 +63,14 @@ describe('isLoopbackAddress', () => {
     // something with a `127` substring that isn't a dotted IPv4 address.
     expect(isLoopbackAddress('127')).toBe(false);
     expect(isLoopbackAddress('1270.0.0.1')).toBe(false);
+  });
+
+  test('does not misclassify ::ffff:127-prefixed strings outside the mapped loopback block', () => {
+    // Mirror of the pure-IPv4 edge-string test: the trailing `.` in
+    // `startsWith('::ffff:127.')` means `::ffff:127` and `::ffff:1270.0.0.1`
+    // do not match. Protects against a future refactor that drops the dot.
+    expect(isLoopbackAddress('::ffff:127')).toBe(false);
+    expect(isLoopbackAddress('::ffff:1270.0.0.1')).toBe(false);
   });
 });
 

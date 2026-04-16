@@ -13,9 +13,13 @@
  *                                 does hand out non-.0.0.1 loopback addresses
  *                                 when apps open them explicitly)
  *   - `::1`                       IPv6 loopback
- *   - `::ffff:127.0.0.1`          IPv4-mapped IPv6 (dual-stack sockets on
- *                                 Linux/macOS represent `127.0.0.1` this way
- *                                 when the listener is `::` instead of `0.0.0.0`)
+ *   - `::ffff:127.X.Y.Z`          IPv4-mapped IPv6 loopback block (dual-stack
+ *                                 sockets on Linux/macOS represent 127.0.0.0/8
+ *                                 this way when the listener is `::` instead
+ *                                 of `0.0.0.0`; parity with the pure-IPv4
+ *                                 branch so a non-.0.0.1 loopback address that
+ *                                 happens to reach us via a dual-stack socket
+ *                                 is accepted the same way as over v4)
  *
  * Rejects: undefined (socket already closed — treat as untrusted), every
  * public/private-LAN v4 address, every v6 address outside `::1`, and any
@@ -24,7 +28,10 @@
 export function isLoopbackAddress(remote: string | undefined): boolean {
   if (!remote) return false;
   if (remote === '::1') return true;
-  if (remote === '::ffff:127.0.0.1') return true;
+  // IPv4-mapped IPv6 loopback block — mirrors the pure-IPv4 branch below.
+  // The trailing `.` in the prefix defeats edge strings like `::ffff:127` or
+  // `::ffff:1270.0.0.1` that could otherwise match a bare-prefix check.
+  if (remote.startsWith('::ffff:127.')) return true;
   // IPv4 loopback block (127.0.0.0/8). `startsWith('127.')` is sufficient —
   // string peers never contain arbitrary trailing garbage under Node's parser.
   if (remote.startsWith('127.')) return true;

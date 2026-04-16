@@ -58,14 +58,14 @@ describe('GET /api/workspace', () => {
     expect(body.symlinkResolved).toBe(true);
   });
 
-  test('rejects non-GET methods with 405 and error:method-not-allowed', async () => {
+  test('rejects non-GET methods with 405 and error:Method not allowed', async () => {
     const res = await fetch(`http://127.0.0.1:${server.port}/api/workspace`, {
       method: 'POST',
     });
     expect(res.status).toBe(405);
     const body = (await res.json()) as { ok: boolean; error: string };
     expect(body.ok).toBe(false);
-    expect(body.error).toBe('method-not-allowed');
+    expect(body.error).toBe('Method not allowed');
   });
 
   test('rejects DNS-rebinding Host header with 403 even from loopback peer', async () => {

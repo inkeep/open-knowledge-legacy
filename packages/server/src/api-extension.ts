@@ -2122,7 +2122,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     if (req.method !== 'GET') {
-      json(res, 405, { ok: false, error: 'method-not-allowed' });
+      json(res, 405, { ok: false, error: 'Method not allowed' });
       return;
     }
     // Absolute, canonical contentDir so the client can build full filesystem
