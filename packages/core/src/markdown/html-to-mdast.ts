@@ -23,9 +23,12 @@ import type { Root as MdastRoot } from 'mdast';
 import rehypeParse from 'rehype-parse';
 import rehypeRemark from 'rehype-remark';
 import { type Plugin, unified } from 'unified';
+import { rehypeSkipNotionWhitespace } from './rehype-plugins/skip-notion-whitespace.ts';
 import { rehypeStripCocoaMeta } from './rehype-plugins/strip-cocoa-meta.ts';
 import { rehypeStripGdocsWrapper } from './rehype-plugins/strip-gdocs-wrapper.ts';
+import { rehypeStripGmailClasses } from './rehype-plugins/strip-gmail-classes.ts';
 import { rehypeStripMsoStyles } from './rehype-plugins/strip-mso-styles.ts';
+import { rehypeStripVscodeSpans } from './rehype-plugins/strip-vscode-spans.ts';
 
 export interface HtmlToMdastOptions {
   /**
@@ -52,12 +55,17 @@ export interface HtmlToMdastOptions {
  * Sheets / Slack / GitHub rendered) bringing the total to 9.
  */
 export const cleanupPlugins: Plugin[] = [
-  // US-008: fingerprint-detecting plugins — each is a no-op on non-matching
-  // trees, so ordering among them is irrelevant. They run before the generic
+  // Fingerprint-detecting plugins — each is a no-op on non-matching trees,
+  // so ordering among them is irrelevant. They run before the generic
   // rehype-remark conversion stage which has no fingerprint detection.
+  // US-008:
   rehypeStripGdocsWrapper as Plugin,
   rehypeStripMsoStyles as Plugin,
   rehypeStripCocoaMeta as Plugin,
+  // US-009:
+  rehypeStripGmailClasses as Plugin,
+  rehypeSkipNotionWhitespace as Plugin,
+  rehypeStripVscodeSpans as Plugin,
 ];
 
 /**
