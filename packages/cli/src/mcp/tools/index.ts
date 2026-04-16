@@ -168,7 +168,11 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     config: opts.config,
     serverUrl: opts.serverUrl,
   });
-  registerSuggestLinks(server, opts.serverUrl);
+  registerSuggestLinks(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
 
   // Document tools — make HTTP calls to Hocuspocus
   registerWriteDocument(server, {
@@ -183,10 +187,22 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     resolveCwd: opts.resolveCwd,
     identityRef: opts.identityRef,
   });
-  registerRenameDocument(server, opts.serverUrl);
-  registerGetHistory(server, opts.serverUrl);
+  registerRenameDocument(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetHistory(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
   registerSaveVersion(server, opts.serverUrl, opts.identityRef);
-  registerRollbackToVersion(server, opts.serverUrl);
+  registerRollbackToVersion(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
   registerListDocuments(server, opts.serverUrl);
   registerGetBacklinks(server, opts.serverUrl);
   registerGetForwardLinks(server, opts.serverUrl);

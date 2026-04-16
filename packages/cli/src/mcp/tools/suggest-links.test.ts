@@ -1,10 +1,15 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
 import type { ServerInstance } from './shared.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR } from './shared.ts';
-import { DESCRIPTION, register } from './suggest-links.ts';
+import { DESCRIPTION, register, type SuggestLinksDeps } from './suggest-links.ts';
 
 interface ToolResult {
   content: Array<{ type: 'text'; text: string }>;
+  structuredContent?: Record<string, unknown>;
   isError?: true;
 }
 
@@ -82,6 +87,33 @@ afterAll(() => {
   testServer.stop();
 });
 
+const BASE_CONFIG: Config = ConfigSchema.parse({});
+let tmpDir: string;
+let originalEnv: string | undefined;
+
+beforeEach(async () => {
+  tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-suggest-links-'));
+  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+});
+
+afterEach(async () => {
+  if (originalEnv === undefined) {
+    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  } else {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
+  }
+  await rm(tmpDir, { recursive: true, force: true });
+});
+
+function makeDeps(serverUrl: SuggestLinksDeps['serverUrl']): SuggestLinksDeps {
+  return {
+    serverUrl,
+    config: BASE_CONFIG,
+    resolveCwd: async () => tmpDir,
+  };
+}
+
 describe('suggest_links MCP tool', () => {
   test('describes the docName contract and precision workflow', () => {
     expect(DESCRIPTION).toContain('docName');
@@ -92,7 +124,7 @@ describe('suggest_links MCP tool', () => {
   test('returns actionable guidance when Hocuspocus is not running', async () => {
     const { server, getTool } = createFakeServer();
 
-    register(server, undefined);
+    register(server, makeDeps(undefined));
 
     const result = await getTool().handler({ docName: 'project-alpha' });
 
@@ -105,86 +137,63 @@ describe('suggest_links MCP tool', () => {
   test('returns the suggest-links payload from the HTTP endpoint', async () => {
     const { server, getTool } = createFakeServer();
 
-    register(server, baseUrl);
+    register(server, makeDeps(baseUrl));
 
     const tool = getTool();
     expect(tool.name).toBe('suggest_links');
 
     const result = await tool.handler({ docName: 'project-alpha' });
 
-    expect(result).toEqual({
-      content: [
+    const expectedBody = {
+      target: { docName: 'project-alpha', title: 'Project Alpha', aliases: ['PA'] },
+      mentions: [
         {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              target: {
-                docName: 'project-alpha',
-                title: 'Project Alpha',
-                aliases: ['PA'],
-              },
-              mentions: [
-                {
-                  source: 'notes',
-                  excerpt: 'Project Alpha should link back to the launch notes.',
-                  offset: 0,
-                },
-              ],
-              truncated: false,
-            },
-            null,
-            2,
-          ),
+          source: 'notes',
+          excerpt: 'Project Alpha should link back to the launch notes.',
+          offset: 0,
         },
       ],
-    });
+      truncated: false,
+    };
+    expect(result.content[0]?.text).toBe(JSON.stringify(expectedBody, null, 2));
+    expect(result.structuredContent).toMatchObject({ ...expectedBody, previewUrl: null });
   });
 
   test('normalizes trailing markdown extensions before querying the API', async () => {
     const { server, getTool } = createFakeServer();
 
-    register(server, baseUrl);
+    register(server, makeDeps(baseUrl));
 
     const result = await getTool().handler({ docName: 'project-alpha.md' });
 
-    expect(result).toEqual({
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify(
-            {
-              target: {
-                docName: 'project-alpha',
-                title: 'Project Alpha',
-                aliases: ['PA'],
-              },
-              mentions: [
-                {
-                  source: 'notes',
-                  excerpt: 'Project Alpha should link back to the launch notes.',
-                  offset: 0,
-                },
-              ],
-              truncated: false,
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-    });
+    expect(result.content[0]?.text).toContain('"docName": "project-alpha"');
+    expect(result.structuredContent).toMatchObject({ previewUrl: null });
   });
 
   test('propagates HTTP endpoint errors to the caller', async () => {
     const { server, getTool } = createFakeServer();
 
-    register(server, baseUrl);
+    register(server, makeDeps(baseUrl));
 
     const result = await getTool().handler({ docName: 'missing-page' });
 
     expect(result).toEqual({
       content: [{ type: 'text', text: 'Error: Page not found' }],
       isError: true,
+    });
+  });
+
+  test('emits previewUrl + source when resolver resolves', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    const { server, getTool } = createFakeServer();
+
+    register(server, makeDeps(baseUrl));
+
+    const result = await getTool().handler({ docName: 'project-alpha' });
+
+    expect(result.structuredContent).toMatchObject({
+      previewUrl: 'https://env.example/#/project-alpha',
+      previewUrlSource: 'env',
     });
   });
 });

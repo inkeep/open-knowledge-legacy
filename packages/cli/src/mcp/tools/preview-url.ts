@@ -17,6 +17,7 @@
  * URLs fall through to the next source.
  */
 import { readUiLock } from '@inkeep/open-knowledge-server';
+import { resolveContentDir, resolveLockDir } from '../../config/paths.ts';
 import type { Config } from '../../config/schema.ts';
 
 export type PreviewUrlSource = 'env' | 'lock' | 'config';
@@ -29,6 +30,17 @@ export interface PreviewUrlResult {
 export interface PreviewUrlContext {
   config: Config;
   lockDir: string;
+}
+
+/**
+ * Common deps shape for MCP tool handlers that need to resolve preview URLs.
+ * `resolveCwd` is the per-call cwd resolver (see `ResolveCwd` in tools/index.ts);
+ * `config` supplies `content.dir` for lockDir derivation plus `preview.baseUrl`
+ * fallback.
+ */
+export interface PreviewUrlDeps {
+  config: Config;
+  resolveCwd: (explicit?: string) => Promise<string>;
 }
 
 const ENV_VAR = 'OPEN_KNOWLEDGE_PREVIEW_BASE_URL';
@@ -51,6 +63,21 @@ function isValidUrl(candidate: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Convenience wrapper for MCP tool handlers: resolves cwd via `deps.resolveCwd`,
+ * derives lockDir via `resolveContentDir` + `resolveLockDir`, then delegates to
+ * `resolvePreviewUrl`. Keeps the "cwd → lockDir → resolve" boilerplate in one
+ * place so all single-doc tools (FR-2.1) emit previewUrl the same way.
+ */
+export async function resolvePreviewUrlForTool(
+  docName: string,
+  deps: PreviewUrlDeps,
+): Promise<PreviewUrlResult | null> {
+  const cwd = await deps.resolveCwd();
+  const lockDir = resolveLockDir(resolveContentDir(deps.config, cwd));
+  return resolvePreviewUrl(docName, { config: deps.config, lockDir });
 }
 
 export function resolvePreviewUrl(

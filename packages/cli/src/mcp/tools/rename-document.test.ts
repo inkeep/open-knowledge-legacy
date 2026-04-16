@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, test } from 'bun:test';
-import { ConfigSchema } from '../../config/schema.ts';
-import { registerAllTools } from './index.ts';
-import { register } from './rename-document.ts';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
+import { type Config, ConfigSchema } from '../../config/schema.ts';
+import { type RenameDocumentDeps, register } from './rename-document.ts';
 import { HOCUSPOCUS_NOT_RUNNING_ERROR, type ServerInstance } from './shared.ts';
 
 interface ToolResult {
@@ -33,10 +35,34 @@ function getRegisteredTool(registrations: RegisteredTool[], name: string): Regis
 }
 
 const originalFetch = globalThis.fetch;
+let tmpDir: string;
+let originalEnv: string | undefined;
 
-afterEach(() => {
-  globalThis.fetch = originalFetch;
+const BASE_CONFIG: Config = ConfigSchema.parse({});
+
+beforeEach(async () => {
+  tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-rename-doc-'));
+  originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
 });
+
+afterEach(async () => {
+  globalThis.fetch = originalFetch;
+  if (originalEnv === undefined) {
+    delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+  } else {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
+  }
+  await rm(tmpDir, { recursive: true, force: true });
+});
+
+function makeDeps(serverUrl: RenameDocumentDeps['serverUrl']): RenameDocumentDeps {
+  return {
+    serverUrl,
+    config: BASE_CONFIG,
+    resolveCwd: async () => tmpDir,
+  };
+}
 
 describe('rename_document MCP tool', () => {
   test('normalizes trailing markdown extensions before calling the API', async () => {
@@ -58,7 +84,7 @@ describe('rename_document MCP tool', () => {
       );
     }) as typeof fetch;
 
-    register(server, 'http://localhost:4321');
+    register(server, makeDeps('http://localhost:4321'));
     const tool = getRegisteredTool(registrations, 'rename_document');
 
     const result = await tool.handler({ docName: 'old-page.md', newDocName: 'new-page.mdx' });
@@ -76,7 +102,7 @@ describe('rename_document MCP tool', () => {
   test('rejects unsupported markdown extensions before calling the API', async () => {
     const { server, registrations } = createCapturingServer();
 
-    register(server, 'http://localhost:4321');
+    register(server, makeDeps('http://localhost:4321'));
     const tool = getRegisteredTool(registrations, 'rename_document');
 
     const result = await tool.handler({
@@ -107,7 +133,7 @@ describe('rename_document MCP tool', () => {
       );
     }) as typeof fetch;
 
-    register(server, 'http://localhost:4321');
+    register(server, makeDeps('http://localhost:4321'));
     const tool = getRegisteredTool(registrations, 'rename_document');
 
     const result = await tool.handler({ docName: 'old-page', newDocName: 'new-page' });
@@ -122,10 +148,11 @@ describe('rename_document MCP tool', () => {
     expect(result.isError).toBeUndefined();
     expect(result.content[0]?.text).toContain('old-page');
     expect(result.content[0]?.text).toContain('new-page');
-    expect(result.structuredContent).toEqual({
+    expect(result.structuredContent).toMatchObject({
       ok: true,
       renamed: [{ fromDocName: 'old-page', toDocName: 'new-page' }],
       rewrittenDocs: [{ docName: 'notes/referrer', rewrites: 2 }],
+      previewUrl: null,
     });
   });
 
@@ -144,7 +171,7 @@ describe('rename_document MCP tool', () => {
         },
       )) as typeof fetch;
 
-    register(server, 'http://localhost:4321');
+    register(server, makeDeps('http://localhost:4321'));
     const tool = getRegisteredTool(registrations, 'rename_document');
 
     const result = await tool.handler({ docName: 'old-page', newDocName: 'new-page' });
@@ -160,7 +187,7 @@ describe('rename_document MCP tool', () => {
   test('uses the shared Hocuspocus-not-running error when no server URL is available', async () => {
     const { server, registrations } = createCapturingServer();
 
-    register(server, undefined);
+    register(server, makeDeps(undefined));
     const tool = getRegisteredTool(registrations, 'rename_document');
 
     const result = await tool.handler({ docName: 'old-page', newDocName: 'new-page' });
@@ -169,17 +196,52 @@ describe('rename_document MCP tool', () => {
     expect(result.content[0]?.text).toBe(HOCUSPOCUS_NOT_RUNNING_ERROR);
   });
 
-  test('registerAllTools includes rename_document in the MCP surface', () => {
+  test('emits previewUrl for NEW docName (and previousPreviewUrl for OLD) on success', async () => {
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
     const { server, registrations } = createCapturingServer();
 
-    registerAllTools(server, {
-      projectDir: process.cwd(),
-      config: ConfigSchema.parse({}),
-      serverUrl: 'http://localhost:4321',
-    });
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          renamed: [{ fromDocName: 'old-page', toDocName: 'new-page' }],
+          rewrittenDocs: [],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
 
-    expect(registrations.some((registration) => registration.name === 'rename_document')).toBe(
-      true,
-    );
+    register(server, makeDeps('http://localhost:4321'));
+    const tool = getRegisteredTool(registrations, 'rename_document');
+
+    const result = await tool.handler({ docName: 'old-page', newDocName: 'new-page' });
+
+    expect(result.structuredContent).toMatchObject({
+      ok: true,
+      previewUrl: 'https://env.example/#/new-page',
+      previewUrlSource: 'env',
+      previousPreviewUrl: 'https://env.example/#/old-page',
+    });
+  });
+
+  test('previewUrl is null when resolver returns null', async () => {
+    const { server, registrations } = createCapturingServer();
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          ok: true,
+          renamed: [{ fromDocName: 'old-page', toDocName: 'new-page' }],
+          rewrittenDocs: [],
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as typeof fetch;
+
+    register(server, makeDeps('http://localhost:4321'));
+    const tool = getRegisteredTool(registrations, 'rename_document');
+
+    const result = await tool.handler({ docName: 'old-page', newDocName: 'new-page' });
+
+    expect(result.structuredContent).toMatchObject({ ok: true, previewUrl: null });
+    expect(result.structuredContent).not.toHaveProperty('previousPreviewUrl');
   });
 });

@@ -23,8 +23,9 @@ import type { Config } from '../../config/schema.ts';
 import type { BacklinkEntry, ForwardLinkEntry, GitCommit } from '../../content/enrichment.ts';
 import { enrichPath } from '../../content/enrichment.ts';
 import type { ShadowCommit } from '../../content/shadow-log.ts';
+import { resolvePreviewUrlForTool } from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
-import { resolveServerUrl, textResult } from './shared.ts';
+import { resolveServerUrl, textPlusStructured, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   'Read a wiki file with enriched context: contents + frontmatter metadata + recent shadow-repo activity (agent vs human attribution) + backlink/forward-link context.',
@@ -110,6 +111,11 @@ function relativePath(input: string): string {
   return input.replace(/^\.\//, '').replace(/^\/+/, '');
 }
 
+/** Strip a trailing .md/.mdx to produce the extension-less docName the UI hash-routes on. */
+function docNameFromRelPath(relPath: string): string {
+  return relPath.replace(/\.(md|mdx)$/i, '');
+}
+
 export async function buildReadResult(
   args: { path: string; since?: string; cwd?: string },
   deps: ReadDocumentDeps,
@@ -178,7 +184,18 @@ export function register(server: ServerInstance, deps: ReadDocumentDeps): void {
     async (args: { path: string; since?: string; cwd?: string }) => {
       try {
         const body = await buildReadResult(args, deps);
-        return textResult(body);
+        const docName = docNameFromRelPath(relativePath(args.path));
+        const preview = await resolvePreviewUrlForTool(docName, {
+          config: deps.config,
+          resolveCwd: deps.resolveCwd,
+        });
+        if (!preview) {
+          return textPlusStructured(body, { previewUrl: null });
+        }
+        return textPlusStructured(body, {
+          previewUrl: preview.url,
+          previewUrlSource: preview.source,
+        });
       } catch (err) {
         return textResult(`Error: ${err instanceof Error ? err.message : String(err)}`, true);
       }
