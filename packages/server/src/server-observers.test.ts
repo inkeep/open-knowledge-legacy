@@ -279,6 +279,13 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
     scheduler.advanceTime(50);
     expect(writeCount).toBe(1);
 
+    // Verify the coalesced write produced the correct XmlFragment content
+    const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+    const body = mdManager.serialize(json);
+    expect(body).toContain('Title');
+    expect(body).toContain('Paragraph');
+    expect(body).toContain('More');
+
     cleanup();
   });
 

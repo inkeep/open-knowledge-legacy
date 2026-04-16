@@ -275,6 +275,9 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
             (parseErr as RangeError).message.includes('Invalid content for node'))
         ) {
           console.debug('[Server Observer B] Parse skipped (partial/invalid markdown):', parseErr);
+          // Update baseline to current Y.Text so Observer A has a consistent
+          // reference — mirrors Observer A's error-recovery baseline reset.
+          lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
           return;
         }
         throw parseErr;
