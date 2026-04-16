@@ -44,6 +44,7 @@ export {
   cleanupPlugins as htmlToMdastCleanupPlugins,
   type HtmlToMdastOptions,
   htmlToMdast,
+  mdastToMarkdown,
 } from './markdown/html-to-mdast.ts';
 export { MarkdownManager } from './markdown/index.ts';
 export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';

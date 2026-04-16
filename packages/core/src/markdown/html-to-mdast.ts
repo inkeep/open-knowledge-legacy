@@ -22,6 +22,8 @@ import type { Root as HastRoot } from 'hast';
 import type { Root as MdastRoot } from 'mdast';
 import rehypeParse from 'rehype-parse';
 import rehypeRemark from 'rehype-remark';
+import remarkGfm from 'remark-gfm';
+import remarkStringify from 'remark-stringify';
 import { type Plugin, unified } from 'unified';
 import { rehypeSkipNotionWhitespace } from './rehype-plugins/skip-notion-whitespace.ts';
 import { rehypeStripCocoaMeta } from './rehype-plugins/strip-cocoa-meta.ts';
@@ -108,4 +110,22 @@ export function htmlToMdast(html: string, options?: HtmlToMdastOptions): MdastRo
   const hastTree = processor.parse(html) as HastRoot;
   const mdast = processor.runSync(hastTree) as unknown as MdastRoot;
   return mdast;
+}
+
+/**
+ * Serialize an mdast tree back to a markdown string.
+ *
+ * Paired with `htmlToMdast` on the paste-side Branch D: converted HTML
+ * arrives as mdast; before feeding it through `MarkdownManager.parse` to
+ * obtain a PM doc, we render it as markdown first — that keeps the
+ * existing parse pipeline authoritative and reuses all of its handlers
+ * (escapeMark, wikiLink, MDX, etc.) instead of duplicating them on a
+ * new mdast → PM path.
+ *
+ * Consumers outside the paste path (e.g. unit tests) can use this the
+ * same way: `mdastToMarkdown(htmlToMdast(someHtml))` yields a markdown
+ * string representation of arbitrary HTML input.
+ */
+export function mdastToMarkdown(tree: MdastRoot): string {
+  return String(unified().use(remarkGfm).use(remarkStringify).stringify(tree));
 }

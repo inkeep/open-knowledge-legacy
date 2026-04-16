@@ -13,10 +13,15 @@ import Collaboration from '@tiptap/extension-collaboration';
 import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
-import { type FC, useEffect, useRef } from 'react';
+import { type FC, useEffect, useRef, useState } from 'react';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
+import { createHandlePaste } from './clipboard/handle-paste.ts';
+import {
+  createClipboardHtmlSerializer,
+  createClipboardTextSerializer,
+} from './clipboard/serialize.ts';
 import { sharedExtensions } from './extensions/shared.ts';
 import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';
@@ -87,9 +92,24 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
   const identity = useIdentity();
 
   // Always-parse text/plain paste as markdown (R18, Archetype D).
-  // All text/plain clipboard data is parsed as markdown — no detection heuristic.
-  // Cmd+Shift+V remains the browser-level plain-text escape hatch.
-  const mdManagerRef = useRef(new MarkdownManager({ extensions: coreExtensions }));
+  // Use useState with a lazy initializer so the bundle is constructed once
+  // and returned via stable reference — React Compiler accepts useState
+  // reads during render while it flags `useRef().current` reads. The
+  // MarkdownManager + clipboard handlers are effectively constants; the
+  // "state" slot is just the rendering-safe carrier.
+  //
+  // Per D14 LOCKED, WYSIWYG clipboard uses PM's documented editorProps hooks
+  // (clipboardTextSerializer + clipboardSerializer + handlePaste) —
+  // DOM-level copy/cut/dragstart overrides are prohibited.
+  const [clipboard] = useState(() => {
+    const mdManager = new MarkdownManager({ extensions: coreExtensions });
+    return {
+      mdManager,
+      text: createClipboardTextSerializer({ mdManager }),
+      html: createClipboardHtmlSerializer({ mdManager }),
+      paste: createHandlePaste({ mdManager }),
+    };
+  });
 
   const editor = useEditor({
     editorProps: {
@@ -97,11 +117,14 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
         class: 'pt-10 pb-16 h-full',
       },
       clipboardTextParser: (text, _context, _plain, view) => {
-        const json = mdManagerRef.current.parse(text);
+        const json = clipboard.mdManager.parse(text);
         const node = view.state.schema.nodeFromJSON(json);
         // biome-ignore lint/suspicious/noExplicitAny: TipTap's clipboardTextParser expects a Slice-like return but ProseMirror Fragment works at runtime; no public type expresses the union
         return node.content as any;
       },
+      clipboardTextSerializer: (slice, view) => clipboard.text(slice, view),
+      clipboardSerializer: clipboard.html,
+      handlePaste: (view, event) => clipboard.paste(view, event),
     },
     extensions: [
       ...sharedExtensions,
