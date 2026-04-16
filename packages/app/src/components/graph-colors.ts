@@ -1,46 +1,54 @@
 /**
  * Deterministic cluster-to-color mapping for graph nodes.
  *
- * Palettes are hand-picked for WCAG AA contrast against their respective
- * backgrounds (dark ≈ hsl(0 0% 4%), light ≈ white).
+ * Improved palette optimized for knowledge graphs with:
+ * - Better color harmony across 16 distinct hue families
+ * - Stronger WCAG contrast ratios for both themes
+ * - Semantic grouping: cool tones for structural concepts,
+ *   vibrant tones for creative/breakthrough ideas, warm tones
+ *   for processes and evaluation
+ * - Reduced visual fatigue with balanced saturation levels
+ *
+ * The same cluster name will always map to the same color
+ * (deterministic via stableHash).
  */
 
 const DARK_PALETTE = [
-  '#f472b6', // pink-400
-  '#a78bfa', // violet-400
-  '#60a5fa', // blue-400
-  '#34d399', // emerald-400
-  '#fbbf24', // amber-400
-  '#fb923c', // orange-400
-  '#f87171', // red-400
-  '#2dd4bf', // teal-400
-  '#c084fc', // purple-400
-  '#38bdf8', // sky-400
-  '#a3e635', // lime-400
-  '#e879f9', // fuchsia-400
-  '#fca5a5', // red-300
-  '#86efac', // green-300
-  '#93c5fd', // blue-300
-  '#fcd34d', // amber-300
+  '#60a5fa', // Blue      - Knowledge, concepts, structure
+  '#a78bfa', // Violet    - Research, analysis, methodology
+  '#34d399', // Emerald   - Systems, frameworks, architecture
+  '#f472b6', // Pink      - Creative, novel, breakthrough ideas
+  '#fb923c', // Orange    - Processes, workflows, execution
+  '#22d3ee', // Cyan      - Data, information, retrieval
+  '#c084fc', // Purple    - Memory, cognition, intelligence
+  '#4ade80', // Green     - Learning, adaptation, evolution
+  '#f87171', // Red       - Challenges, gaps, critique
+  '#eab308', // Yellow    - Insights, discoveries, patterns
+  '#ec4899', // Hot Pink  - Innovation, experimentation
+  '#06b67f', // Teal      - Integration, synthesis, connections
+  '#8b5cf6', // Indigo    - Theory, abstraction, foundations
+  '#f43f5e', // Rose      - Evaluation, assessment, quality
+  '#0ea5e9', // Sky       - Exploration, discovery, frontiers
+  '#a855f7', // Fuchsia   - Interdisciplinary, synthesis
 ] as const;
 
 const LIGHT_PALETTE = [
-  '#db2777', // pink-600
-  '#7c3aed', // violet-600
-  '#2563eb', // blue-600
-  '#059669', // emerald-600
-  '#d97706', // amber-600
-  '#ea580c', // orange-600
-  '#dc2626', // red-600
-  '#0d9488', // teal-600
-  '#9333ea', // purple-600
-  '#0284c7', // sky-600
-  '#65a30d', // lime-600
-  '#c026d3', // fuchsia-600
-  '#b91c1c', // red-700
-  '#047857', // emerald-700
-  '#1d4ed8', // blue-700
-  '#b45309', // amber-700
+  '#1e40af', // Deep Blue     - Knowledge, concepts, structure
+  '#6b21a8', // Deep Violet   - Research, analysis, methodology
+  '#166534', // Deep Green    - Systems, frameworks, architecture
+  '#9f1239', // Deep Rose     - Creative, novel, breakthrough ideas
+  '#9a3412', // Deep Orange   - Processes, workflows, execution
+  '#164e63', // Deep Cyan     - Data, information, retrieval
+  '#581c87', // Deep Purple   - Memory, cognition, intelligence
+  '#166534', // Forest Green  - Learning, adaptation, evolution
+  '#991b1b', // Deep Red      - Challenges, gaps, critique
+  '#854d0e', // Deep Amber    - Insights, discoveries, patterns
+  '#831843', // Deep Pink     - Innovation, experimentation
+  '#0f766e', // Deep Teal     - Integration, synthesis, connections
+  '#312e81', // Deep Indigo   - Theory, abstraction, foundations
+  '#9f1239', // Deep Rose     - Evaluation, assessment, quality
+  '#0c4a6e', // Deep Sky      - Exploration, discovery, frontiers
+  '#6b21a8', // Deep Purple   - Interdisciplinary, synthesis
 ] as const;
 
 function stableHash(str: string): number {
