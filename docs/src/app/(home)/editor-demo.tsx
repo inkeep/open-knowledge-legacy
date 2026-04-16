@@ -1,5 +1,8 @@
 'use client';
 
+import { offset } from '@floating-ui/dom';
+import { Extension } from '@tiptap/core';
+import { DragHandlePlugin, normalizeNestedOptions } from '@tiptap/extension-drag-handle';
 import Placeholder from '@tiptap/extension-placeholder';
 import { Table } from '@tiptap/extension-table';
 import { TableCell } from '@tiptap/extension-table-cell';
@@ -7,8 +10,11 @@ import { TableHeader } from '@tiptap/extension-table-header';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TaskItem } from '@tiptap/extension-task-item';
 import { TaskList } from '@tiptap/extension-task-list';
+import type { Node as PmNode } from '@tiptap/pm/model';
+import { TextSelection } from '@tiptap/pm/state';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { Markdown as TiptapMarkdown } from 'tiptap-markdown';
 import { DemoSlashCommand } from './demo-slash-command';
@@ -57,6 +63,7 @@ export function EditorDemo() {
         transformPastedText: true,
       }),
       DemoSlashCommand,
+      DemoBlockDragHandle,
       Placeholder.configure({
         placeholder: "Type '/' for commands",
         showOnlyCurrent: true,
@@ -65,7 +72,7 @@ export function EditorDemo() {
     content: DEMO_MARKDOWN,
     editorProps: {
       attributes: {
-        class: 'ok-prosemirror outline-none min-h-[360px] px-8 py-6 sm:px-12 sm:py-8',
+        class: 'ok-prosemirror outline-none min-h-[360px] px-8 py-6 sm:pl-16 sm:pr-12 sm:py-8',
         style: 'line-height: 1.7; color: var(--slide-text)',
       },
     },
@@ -317,6 +324,96 @@ function ToggleItem({
     </button>
   );
 }
+
+/* ---------------------------------------------------------------------------
+ * DemoBlockDragHandle — uses the real @tiptap/extension-drag-handle plugin.
+ * Mirrors packages/app/src/editor/extensions/drag-handle.ts but self-contained.
+ * --------------------------------------------------------------------------- */
+
+const HANDLE_HEIGHT = 20;
+const MAX_SINGLE_LINE_HEIGHT = 44;
+const BODY_LINE_HEIGHT = 28;
+
+const DemoBlockDragHandle = Extension.create({
+  name: 'demoBlockDragHandle',
+
+  addProseMirrorPlugins() {
+    const editor = this.editor;
+
+    let currentNode: PmNode | null = null;
+    let currentNodePos = -1;
+
+    const container = document.createElement('div');
+    container.className = 'ok-block-controls';
+    container.style.visibility = 'hidden';
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'ok-add-block-btn';
+    addBtn.setAttribute('aria-label', 'Add block below');
+    addBtn.setAttribute('type', 'button');
+    addBtn.innerHTML = `<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>`;
+
+    addBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    const grip = document.createElement('div');
+    grip.className = 'ok-drag-grip';
+    grip.setAttribute('aria-hidden', 'true');
+    grip.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>`;
+
+    container.appendChild(addBtn);
+    container.appendChild(grip);
+
+    addBtn.addEventListener('click', () => {
+      if (!currentNode || currentNodePos < 0) return;
+      const { state, view } = editor;
+      const insertAt = currentNodePos + currentNode.nodeSize;
+      if (insertAt > state.doc.content.size) return;
+
+      const { tr } = state;
+      const paragraph = state.schema.nodes.paragraph?.create();
+      if (!paragraph) return;
+
+      tr.insert(insertAt, paragraph);
+      const sel = TextSelection.near(tr.doc.resolve(insertAt + 1));
+      tr.setSelection(sel).scrollIntoView();
+      view.dispatch(tr);
+      view.focus();
+
+      editor.commands.insertContent('/');
+    });
+
+    return [
+      DragHandlePlugin({
+        element: container,
+        editor,
+        onNodeChange({ node, pos }: { node: PmNode | null; pos: number }) {
+          currentNode = node;
+          currentNodePos = pos ?? -1;
+        },
+        computePositionConfig: {
+          placement: 'left-start',
+          strategy: 'absolute',
+          middleware: [
+            offset(({ rects }) => {
+              const firstLineHeight =
+                rects.reference.height <= MAX_SINGLE_LINE_HEIGHT
+                  ? rects.reference.height
+                  : BODY_LINE_HEIGHT;
+              return {
+                mainAxis: 10,
+                crossAxis: (firstLineHeight - HANDLE_HEIGHT) / 2,
+              };
+            }),
+          ],
+        },
+        nestedOptions: normalizeNestedOptions(false),
+      }).plugin,
+    ];
+  },
+});
 
 /* ---------------------------------------------------------------------------
  * MockPresenceBar — mirrors packages/app/src/presence/PresenceBar.tsx

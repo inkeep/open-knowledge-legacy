@@ -179,6 +179,58 @@
   background: color-mix(in srgb, var(--slide-text) 4%, transparent);
 }
 
+/* Block controls — + button and drag grip (mirrors packages/app/src/globals.css) */
+.ok-block-controls {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 1;
+  transition: opacity 100ms ease-out;
+  user-select: none;
+}
+
+.ok-add-block-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  color: var(--slide-muted);
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  transition: background-color 100ms ease-out;
+}
+.ok-add-block-btn:hover {
+  background-color: color-mix(in srgb, var(--slide-text) 6%, transparent);
+}
+
+.ok-drag-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: grab;
+  color: var(--slide-muted);
+  border-radius: 3px;
+  transition: background-color 100ms ease-out;
+}
+.ok-drag-grip:hover {
+  background-color: color-mix(in srgb, var(--slide-text) 6%, transparent);
+}
+.ok-drag-grip:active {
+  cursor: grabbing;
+}
+
+.ok-block-controls[style*="visibility: hidden"],
+.ok-block-controls[style*="visibility:hidden"] {
+  opacity: 0;
+}
+
 /* Tippy.js — minimal styles for slash command popup (no theme import needed) */
 .tippy-box {
   background: transparent;
