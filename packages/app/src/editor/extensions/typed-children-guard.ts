@@ -63,8 +63,14 @@ export const TypedChildrenGuard = Extension.create({
                       if ($pos.depth === depth + 1) {
                         // Check what's being inserted — allow jsxComponent, reject everything else
                         const insertedSlice = tr.doc.slice(newStart, newEnd);
-                        insertedSlice.content.forEach((node) => {
-                          if (node.type.name !== 'jsxComponent') {
+                        insertedSlice.content.forEach((insertedNode) => {
+                          if (insertedNode.type.name !== 'jsxComponent') {
+                            console.warn(
+                              '[TypedChildrenGuard] REJECTED:',
+                              insertedNode.type.name,
+                              'inside',
+                              componentName,
+                            );
                             dominated = true;
                           }
                         });
