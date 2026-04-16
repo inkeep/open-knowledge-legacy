@@ -1,14 +1,135 @@
 /**
- * `open-knowledge start` command — launches standalone Hocuspocus server
- * with optional static React app serving.
+ * `open-knowledge start` — collab server only (Hocuspocus + /api/*).
+ *
+ * Lifecycle split (SPEC §9, FR-1.2 / FR-1.9):
+ * - `ok start` owns the WebSocket (/collab) + HTTP API (/api/*) and advertises
+ *   its port via `server.lock`. Static React assets are served by `ok ui`.
+ * - On startup we auto-spawn `ok ui` as a detached sibling when `ui.lock` is
+ *   absent or stale. A pre-existing live UI is left alone.
+ * - Idle-shutdown (FR-1.6) counts WebSocket upgrades at `/collab` only; it is
+ *   blind to DirectConnections by design (D-017). When the threshold fires we
+ *   SIGTERM the UI sibling before releasing our own lock.
  */
+import { type ChildProcess, spawn as nativeSpawn } from 'node:child_process';
+import { closeSync, existsSync as fsExistsSync, mkdirSync as fsMkdirSync, openSync } from 'node:fs';
+import { join } from 'node:path';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { OK_DIR, PACKAGE_VERSION } from '../constants.ts';
 
+/** 30 minutes — matches SPEC §9 default threshold. */
+const DEFAULT_IDLE_THRESHOLD_MS = 30 * 60 * 1000;
+
+export type UiSpawnDecision =
+  | { action: 'spawn'; reason: 'absent' }
+  | { action: 'spawn'; reason: 'stale'; stalePid: number }
+  | { action: 'skip'; reason: 'alive'; pid: number; port: number };
+
+export interface DecideUiSpawnInput {
+  uiLock: { pid: number; port: number } | null;
+  isAlive: (pid: number) => boolean;
+}
+
+/**
+ * Pure decision function. The caller feeds the current `ui.lock` contents
+ * (or null) and an `isProcessAlive` probe; we return one of three verdicts.
+ * No side effects — tests drive it directly without a filesystem.
+ */
+export function decideUiSpawn(input: DecideUiSpawnInput): UiSpawnDecision {
+  if (!input.uiLock) return { action: 'spawn', reason: 'absent' };
+  if (!input.isAlive(input.uiLock.pid)) {
+    return { action: 'spawn', reason: 'stale', stalePid: input.uiLock.pid };
+  }
+  return { action: 'skip', reason: 'alive', pid: input.uiLock.pid, port: input.uiLock.port };
+}
+
+export interface SpawnOkUiOptions {
+  lockDir: string;
+  cwd: string;
+  /** Override for tests — defaults to `node:child_process#spawn`. */
+  spawn?: typeof nativeSpawn;
+  /** Args to pass after `npx @inkeep/open-knowledge` — defaults to `['ui']`. */
+  args?: string[];
+}
+
+/**
+ * Spawn `ok ui` as a detached sibling. Child's stderr is redirected at the
+ * kernel layer to `<lockDir>/last-spawn-error.log` — matches the MCP spawn
+ * template in SPEC §9 / FR-1.4 so the same log consumer can surface failures.
+ */
+export function spawnOkUi(opts: SpawnOkUiOptions): ChildProcess {
+  if (!fsExistsSync(opts.lockDir)) fsMkdirSync(opts.lockDir, { recursive: true });
+  const stderrPath = join(opts.lockDir, 'last-spawn-error.log');
+  const stderrFd = openSync(stderrPath, 'w');
+  const spawnFn = opts.spawn ?? nativeSpawn;
+  try {
+    const child = spawnFn('npx', ['@inkeep/open-knowledge', ...(opts.args ?? ['ui'])], {
+      detached: true,
+      stdio: ['ignore', 'ignore', stderrFd],
+      cwd: opts.cwd,
+    });
+    child.unref();
+    return child;
+  } finally {
+    // Child now owns the fd — close our copy so the parent does not keep it open.
+    try {
+      closeSync(stderrFd);
+    } catch {
+      // Best-effort: some mocks may not hand back a real fd.
+    }
+  }
+}
+
+export interface BuildIdleShutdownHandlerInput {
+  readUiLock: () => { pid: number; port: number } | null;
+  isAlive: (pid: number) => boolean;
+  killPid: (pid: number, signal: NodeJS.Signals) => void;
+  destroy: () => Promise<void>;
+  log?: {
+    info: (obj: object, msg: string) => void;
+    warn: (obj: object, msg: string) => void;
+    error: (obj: object, msg: string) => void;
+  };
+}
+
+/**
+ * Build the idle-shutdown `onShutdown` closure. On fire:
+ *   (1) look up `ui.lock`; SIGTERM the sibling if it's still alive;
+ *   (2) await `destroy()`, which releases `server.lock` as its final step.
+ *
+ * Extracted so tests can exercise each branch (no UI, live UI, stale UI) and
+ * assert kill / destroy ordering without standing up Hocuspocus.
+ */
+export function buildIdleShutdownHandler(
+  input: BuildIdleShutdownHandlerInput,
+): () => Promise<void> {
+  return async () => {
+    try {
+      const lock = input.readUiLock();
+      if (lock && input.isAlive(lock.pid)) {
+        try {
+          input.killPid(lock.pid, 'SIGTERM');
+          input.log?.info({ pid: lock.pid, port: lock.port }, 'idle-shutdown: SIGTERM UI sibling');
+        } catch (err) {
+          input.log?.warn(
+            { pid: lock.pid, err: err instanceof Error ? err.message : String(err) },
+            'idle-shutdown: failed to SIGTERM UI sibling',
+          );
+        }
+      }
+    } catch (err) {
+      input.log?.warn(
+        { err: err instanceof Error ? err.message : String(err) },
+        'idle-shutdown: UI lookup failed; proceeding with destroy',
+      );
+    }
+    await input.destroy();
+  };
+}
+
 export function startCommand(getConfig: () => Config): Command {
   const cmd = new Command('start')
-    .description('Start the knowledge base server')
+    .description('Start the knowledge base collab server')
     .option('-p, --port <port>', 'Server port', undefined)
     .option('-H, --host <host>', 'Server host', undefined)
     .option('--open', 'Open browser after start')
@@ -18,11 +139,15 @@ export function startCommand(getConfig: () => Config): Command {
       const { existsSync, mkdirSync } = await import('node:fs');
       const { createServer: createHttpServer } = await import('node:http');
       const { resolve } = await import('node:path');
-      const { createServer, getLogger, updateServerLockPort } = await import(
-        '@inkeep/open-knowledge-server'
-      );
+      const {
+        attachIdleShutdown,
+        createServer,
+        getLogger,
+        isProcessAlive,
+        readUiLock,
+        updateServerLockPort,
+      } = await import('@inkeep/open-knowledge-server');
       const { resolveContentDir } = await import('../config/paths.ts');
-      const { default: sirv } = await import('sirv');
       const { WebSocketServer } = await import('ws');
       const { renderBanner } = await import('../ui/banner.ts');
       const { dim, error, info, warning } = await import('../ui/colors.ts');
@@ -55,25 +180,28 @@ export function startCommand(getConfig: () => Config): Command {
         log.info({ contentDir }, 'Created content directory');
       }
 
-      // First-agent-edit auto-open. `localUrl` is only known after listen(),
-      // so we capture a setter here and let the onAgentWrite callback fire
-      // once the URL has been assigned. The `once` flag debounces to a single
-      // browser open per server session.
-      let agentEditUrl: string | null = null;
+      // First-agent-edit auto-open points at the UI sibling when we can find
+      // one, so the browser lands on the editor rather than the bare collab
+      // endpoint. Lookup is lazy — the sibling may still be binding on the
+      // first agent write; if `ui.lock` isn't usable we skip open silently.
       let agentEditOpened = false;
+      const lockDirForUiLookup = resolve(contentDir, OK_DIR);
       const onAgentWrite = config.server.openOnAgentEdit
         ? () => {
-            if (agentEditOpened || !agentEditUrl) return;
+            if (agentEditOpened) return;
+            const ui = readUiLock(lockDirForUiLookup);
+            if (!ui || ui.port <= 0 || !isProcessAlive(ui.pid)) return;
             agentEditOpened = true;
+            const uiUrl = `http://localhost:${ui.port}`;
             import('../utils/open-browser.ts')
-              .then(({ openBrowser }) => openBrowser(agentEditUrl as string))
+              .then(({ openBrowser }) => openBrowser(uiUrl))
               .catch(() => {
                 // openBrowser already logs a hint on failure; URL is in the banner.
               });
           }
         : undefined;
 
-      const { hocuspocus, contentFilter, destroy, ready, degraded, lockDir } = createServer({
+      const { hocuspocus, destroy, ready, degraded, lockDir } = createServer({
         contentDir,
         projectDir: cwd,
         contentRoot: config.content.dir,
@@ -91,10 +219,23 @@ export function startCommand(getConfig: () => Config): Command {
       // if multiple signals arrive (SIGINT then SIGTERM). Ensures `releaseServerLock`
       // runs as the final step in `destroy()`.
       let shuttingDown = false;
-      const shutdown = async (signal: NodeJS.Signals) => {
+      const shutdown = async (signal: NodeJS.Signals | 'idle') => {
         if (shuttingDown) return;
         shuttingDown = true;
         console.log(dim(`\nShutting down (${signal})...`));
+        // Best-effort: SIGTERM the UI sibling so the lifecycle stays paired.
+        try {
+          const ui = readUiLock(lockDir);
+          if (ui && isProcessAlive(ui.pid)) {
+            try {
+              process.kill(ui.pid, 'SIGTERM');
+            } catch {
+              // Already exiting; nothing to do.
+            }
+          }
+        } catch {
+          // Lock read is best-effort; fall through to destroy.
+        }
         try {
           await destroy();
         } catch (err) {
@@ -112,43 +253,42 @@ export function startCommand(getConfig: () => Config): Command {
         void shutdown('SIGTERM');
       });
 
-      // Static asset serving — locate built React app.
-      // Priority: (1) dist/public/ for npm-installed CLI, (2-3) monorepo dev paths.
-      const cliDir = import.meta.dirname ?? new URL('.', import.meta.url).pathname;
-      const assetPaths = [
-        resolve(cliDir, 'public'), // npm install: dist/public/ (bundled assets)
-        resolve(cliDir, '../../app/dist'), // monorepo dev from src/
-        resolve(cliDir, '../../../app/dist'), // monorepo dev from dist/
-      ];
-      const assetDir = assetPaths.find((p) => existsSync(p));
-      const staticHandler = assetDir
-        ? sirv(assetDir, { single: true, gzip: true, immutable: true })
-        : null;
-
-      if (assetDir) {
-        log.info({ assetDir }, 'Serving static assets');
+      // Auto-spawn the UI sibling when none is running. Greenfield: we don't
+      // try to adopt alien siblings — if another `ok ui` is already live we
+      // leave it alone and let it keep serving.
+      const uiLockBefore = readUiLock(lockDir);
+      const uiSpawnDecision = decideUiSpawn({
+        uiLock: uiLockBefore,
+        isAlive: isProcessAlive,
+      });
+      if (uiSpawnDecision.action === 'spawn') {
+        try {
+          spawnOkUi({ lockDir, cwd });
+          log.info({ reason: uiSpawnDecision.reason }, '[start] auto-spawned ok ui sibling');
+        } catch (err) {
+          console.warn(
+            `${warning('[start]')} failed to auto-spawn ok ui: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       } else {
-        log.warn({}, 'No React app assets found — browser UI will not be available');
+        log.info(
+          { port: uiSpawnDecision.port, pid: uiSpawnDecision.pid },
+          `UI already running at port ${uiSpawnDecision.port}`,
+        );
       }
 
-      // Filter-aware asset serving over contentDir (D9)
-      const contentSirv = sirv(contentDir, { dotfiles: false });
-
-      // Create HTTP server and wire up Hocuspocus
+      // Create HTTP server — collab + /api/* only. Static React assets are
+      // served by `ok ui` after the lifecycle split (SPEC FR-1.2).
       const httpServer = createHttpServer((req, res) => {
-        // Priority 1: API routes via Hocuspocus onRequest extensions.
-        // Unknown `/api/*` routes must return 404 JSON, NOT fall through to
-        // static/SPA (which would return index.html and confuse API clients
-        // like MCP stdio). Await the hook and check writableEnded; if no
-        // handler consumed the request, emit 404 JSON explicitly.
         const url = req.url?.split('?')[0];
+
+        // Priority 1: API routes via Hocuspocus onRequest extensions.
         if (url?.startsWith('/api/')) {
           hocuspocus
             // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
             .hooks('onRequest', { request: req, response: res } as any)
             .then(() => {
               if (res.writableEnded) return;
-              // Unhandled /api/* route — 404 JSON.
               res.statusCode = 404;
               res.setHeader('Content-Type', 'application/json');
               res.end(JSON.stringify({ error: 'API route not found', path: url }));
@@ -163,30 +303,15 @@ export function startCommand(getConfig: () => Config): Command {
           return;
         }
 
-        // Priority 2: Content assets via filter-aware sirv
-        const rel = decodeURIComponent(url?.replace(/^\//, '') ?? '');
-        if (rel && !contentFilter.isExcluded(rel)) {
-          res.setHeader('X-Content-Type-Options', 'nosniff');
-          contentSirv(req, res, () => {
-            // Asset not found on disk — fall through to SPA
-            if (staticHandler) {
-              staticHandler(req, res);
-            } else {
-              res.writeHead(404);
-              res.end('Not found');
-            }
-          });
-          return;
-        }
-
-        // Priority 3: Static file serving (SPA fallback)
-        if (staticHandler) {
-          staticHandler(req, res);
-          return;
-        }
-
-        res.writeHead(404);
-        res.end('Not found');
+        // Anything else — collab only, no static assets. `ok ui` owns the
+        // browser surface; point users there.
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: 'Not found. The React UI is served by `ok ui` (default port 3000).',
+            path: url ?? '/',
+          }),
+        );
       });
 
       const wss = new WebSocketServer({ noServer: true });
@@ -219,6 +344,26 @@ export function startCommand(getConfig: () => Config): Command {
         }
       });
 
+      // Wire idle-shutdown AFTER upgrade handler so both listeners see the
+      // same events (Node fires `upgrade` listeners in registration order).
+      // WebSocket-count only — DirectConnections are invisible per D-017.
+      attachIdleShutdown({
+        httpServer,
+        thresholdMs: DEFAULT_IDLE_THRESHOLD_MS,
+        log,
+        onShutdown: buildIdleShutdownHandler({
+          readUiLock: () => readUiLock(lockDir),
+          isAlive: isProcessAlive,
+          killPid: (pid, signal) => {
+            process.kill(pid, signal);
+          },
+          destroy: async () => {
+            await destroy();
+          },
+          log,
+        }),
+      });
+
       httpServer.listen(config.server.port, config.server.host, () => {
         // Update the lock file with the kernel-assigned port (or confirm the
         // configured one). MCP discovery reads this field to connect.
@@ -227,7 +372,6 @@ export function startCommand(getConfig: () => Config): Command {
         updateServerLockPort(lockDir, realPort);
 
         const localUrl = `http://${config.server.host}:${realPort}`;
-        agentEditUrl = localUrl;
         const networkUrl =
           config.server.host === '0.0.0.0' || config.server.host === '::'
             ? `http://0.0.0.0:${realPort}`
@@ -247,9 +391,7 @@ export function startCommand(getConfig: () => Config): Command {
           );
         }
 
-        // Surface degraded-boot warnings after the banner. The ready promise
-        // resolves when all subsystem init attempts complete — each failed
-        // subsystem is recorded in the degraded array.
+        // Surface degraded-boot warnings after the banner.
         const DEGRADED_IMPACTS: Record<string, string> = {
           'shadow-repo': 'Version history and branch-switch safety unavailable',
           'file-watcher': 'External file changes will not sync to the editor',

@@ -100,6 +100,7 @@ export {
   type PersistenceOptions,
   safeContentPath,
 } from './persistence.ts';
+export { isProcessAlive } from './process-alive.ts';
 export {
   acquireProcessLock,
   type LockName,
