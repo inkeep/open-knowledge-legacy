@@ -252,39 +252,84 @@ test.describe('§6.1 Broken wikilink', () => {
   });
 });
 
-// ── §6.6 Tables (negative AC) ───────────────────────────────────────────────
+// ── §6.6 Tables — structure/layout only, no styling ─────────────────────────
 
-test.describe('§6.6 Tables (negative AC)', () => {
-  test('table lines carry no polish classes', async ({ page }) => {
+test.describe('§6.6 Tables (structure/layout only)', () => {
+  test('header + row + delimiter get structural classes; no styling', async ({ page }) => {
     await seedMarkdown(
       'plain paragraph\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nanother paragraph',
     );
     await switchToSource(page);
 
-    // Get all cm-line elements
     const allLines = page.locator('.cm-line');
     const lineCount = await allLines.count();
     expect(lineCount).toBeGreaterThanOrEqual(5);
 
-    // Check each line for forbidden classes
-    const forbiddenPrefixes = ['cm-table-', 'cm-row-', 'cm-cell-'];
+    // Walk lines; classify by content and assert expected classes.
+    let headerSeen = 0;
+    let rowSeen = 0;
+    let delimiterSeen = 0;
+
     for (let i = 0; i < lineCount; i++) {
-      const classes = await allLines.nth(i).getAttribute('class');
-      if (!classes) continue;
-      const text = await allLines.nth(i).textContent();
-      if (text?.includes('|')) {
-        // This is a table line — must not have polish classes
-        for (const prefix of forbiddenPrefixes) {
-          expect(classes, `table line "${text}" should not have ${prefix}* class`).not.toContain(
-            prefix,
-          );
-        }
-        // Also should not have cm-fenced-code-line, cm-list-item, or cm-del
-        expect(classes).not.toContain('cm-fenced-code-line');
-        expect(classes).not.toContain('cm-list-item');
-        expect(classes).not.toContain('cm-del');
+      const classes = (await allLines.nth(i).getAttribute('class')) ?? '';
+      const text = (await allLines.nth(i).textContent()) ?? '';
+
+      if (!text.includes('|')) {
+        // Non-table line — no table polish classes.
+        expect(classes).not.toContain('cm-table-row');
+        expect(classes).not.toContain('cm-table-header');
+        continue;
       }
+
+      // Table line — must get exactly ONE of the structural classes.
+      // Delimiter row: only `|`, `-`, and whitespace (remark-stringify may
+      // normalize `---` to `-` on round-trip, so don't rely on dash count).
+      if (/^\s*\|[\s|-]*\|\s*$/.test(text) && /-/.test(text)) {
+        expect(classes).toContain('cm-table-row');
+        delimiterSeen++;
+      } else if (/^\s*\|\s*a\s*\|\s*b\s*\|/.test(text)) {
+        // Header row (contains column labels `a` / `b`).
+        expect(classes).toContain('cm-table-header');
+        headerSeen++;
+      } else {
+        // Body row.
+        expect(classes).toContain('cm-table-row');
+        rowSeen++;
+      }
+
+      // Negative AC: NO styling classes — only structure/layout. These are
+      // classes the prior polish-engine spec had but this spec explicitly cut.
+      expect(classes).not.toContain('cm-table-cell-band-');
+      expect(classes).not.toContain('cm-fenced-code-line');
+      expect(classes).not.toContain('cm-list-item');
+      expect(classes).not.toContain('cm-del');
+
+      // Computed style must have NO background color, NO border (styling cut).
+      const box = await allLines.nth(i).evaluate((el) => {
+        const s = getComputedStyle(el);
+        return {
+          bg: s.backgroundColor,
+          borderLeftWidth: s.borderLeftWidth,
+          borderTopWidth: s.borderTopWidth,
+          borderBottomWidth: s.borderBottomWidth,
+          paddingInlineStart: s.paddingInlineStart,
+        };
+      });
+      // Background transparent (rgba 0,0,0,0) or matches editor bg — must not be
+      // an explicit tint. We check it's not a non-transparent color-mix'd tint.
+      expect(box.bg).toMatch(/rgba?\(0, ?0, ?0, ?0\)|transparent|rgb\(255/);
+      expect(box.borderLeftWidth).toBe('0px');
+      expect(box.borderTopWidth).toBe('0px');
+      expect(box.borderBottomWidth).toBe('0px');
+      // Structure IS present — padding-inline-start should be ≥ 8px + 2ch
+      // (non-zero from the hanging-indent rule).
+      const padPx = parseFloat(box.paddingInlineStart);
+      expect(padPx).toBeGreaterThan(0);
     }
+
+    expect(headerSeen).toBe(1);
+    expect(delimiterSeen).toBe(1);
+    expect(rowSeen).toBe(1);
   });
 });
 

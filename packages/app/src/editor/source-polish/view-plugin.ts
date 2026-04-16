@@ -14,6 +14,9 @@ const LIST_PREFIX_RE = /^(\s*(?:[-*+]|\d+[.)]) (?:\[[ x]\] )?)/;
 
 const delMark = Decoration.mark({ class: 'cm-del' });
 
+const tableHeaderLine = Decoration.line({ class: 'cm-table-header' });
+const tableRowLine = Decoration.line({ class: 'cm-table-row' });
+
 /** Widget that renders a small language-name pill next to the opening fence. */
 class LanguageBadgeWidget extends WidgetType {
   constructor(readonly lang: string) {
@@ -128,6 +131,31 @@ function buildDecorations(view: EditorView): DecorationSet {
             decorations.push(lineDeco.range(line.from));
           }
 
+          return false;
+        }
+
+        // Tables — structure/layout only. Hanging indent so wrapped row
+        // continuation aligns under cell content (not under `|`), plus
+        // compactness (font-size 0.9em, line-height 1.4) so rows fit more
+        // horizontal content. NO background, border, accent bar, or cell
+        // bands — explicit scope boundary per spec §6.6.
+        if (node.name === 'TableHeader') {
+          const line = state.doc.lineAt(node.from);
+          decorations.push(tableHeaderLine.range(line.from));
+          return false;
+        }
+        if (node.name === 'TableRow') {
+          const line = state.doc.lineAt(node.from);
+          decorations.push(tableRowLine.range(line.from));
+          return false;
+        }
+        if (node.name === 'TableDelimiter' && node.node.parent?.name === 'Table') {
+          // The `|---|---|` separator row — a TableDelimiter whose parent is
+          // Table directly (not TableHeader/TableRow). Inline `|` characters
+          // inside rows are also TableDelimiters but their parent is the row,
+          // so the parent check filters them out.
+          const line = state.doc.lineAt(node.from);
+          decorations.push(tableRowLine.range(line.from));
           return false;
         }
       },
