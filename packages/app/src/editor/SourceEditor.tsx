@@ -1,6 +1,7 @@
+import { indentWithTab } from '@codemirror/commands';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { Compartment, EditorSelection, EditorState } from '@codemirror/state';
-import { placeholder as cmPlaceholder, EditorView } from '@codemirror/view';
+import { placeholder as cmPlaceholder, EditorView, keymap } from '@codemirror/view';
 import type { HocuspocusProvider } from '@hocuspocus/provider';
 import { GFM } from '@lezer/markdown';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
@@ -66,6 +67,12 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
       doc: ytext.toString(),
       extensions: [
         basicSetup,
+        // Tab inserts indentation instead of escaping focus. CM6's default is
+        // to let Tab move focus (WCAG "no keyboard trap") — for a code-style
+        // editor this is unexpected UX. Users who need to escape focus can
+        // press Esc → Tab, or Ctrl+M (Shift+Alt+M on macOS) to toggle tab-
+        // focus mode. Upstream convention per codemirror.net/examples/tab/.
+        keymap.of([indentWithTab]),
         markdown({ base: markdownLanguage, extensions: [GFM], codeLanguages }),
         yCollab(ytext, provider.awareness),
         createAgentFlashSourceExtension(provider.document),
