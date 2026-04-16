@@ -19,16 +19,30 @@
  * silent exit (same port), reverse HTTP proxy (different port with live
  * upstream), or timeout (upstream still binding). The proxy uses only
  * `node:http` (see `ui-proxy.ts`).
+ *
+ * Safety-net self-shutdown (D-025): a 12-hour timer self-terminates the UI
+ * if the parent `ok start` ever crashes silently without sending SIGTERM
+ * (idle-shutdown sends SIGTERM as its final pre-exit step, but a hard crash
+ * doesn't get there). The default 12h is comfortably longer than any
+ * legitimate uninterrupted editing session, and short enough that a
+ * forgotten UI doesn't linger overnight. Cancelled by `handle.release()`.
  */
 import type { Server as HttpServer, ServerResponse } from 'node:http';
+import { defaultScheduler, type Scheduler } from '@inkeep/open-knowledge-core';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
 import { type ProxyServerHandle, startProxyServer } from './ui-proxy.ts';
 
+/** 12 hours — D-025 default safety-net interval. */
+export const DEFAULT_UI_SAFETY_NET_MS = 12 * 60 * 60 * 1000;
+
 export interface UiServerHandle {
   httpServer: HttpServer;
   port: number;
+  /** Release the lock + cancel the safety-net timer. Idempotent. */
   release: () => void;
+  /** Cancel only the safety-net timer (release() also calls this). Idempotent. */
+  detachSafetyNet: () => void;
 }
 
 export interface StartUiServerOptions {
@@ -36,6 +50,17 @@ export interface StartUiServerOptions {
   cwd: string;
   port: number;
   host: string;
+  /** Override the 12h safety-net interval. Tests pass a small value. */
+  safetyNetMs?: number;
+  /** Scheduler override for tests (precedent #13b — implicit time-coupling is a smell). */
+  scheduler?: Scheduler;
+  /**
+   * Optional callback invoked by the safety-net timer right before it tears
+   * down the http listener + lock. Tests use this to assert the safety-net
+   * actually fired (rather than coincidentally being shut down by something
+   * else). Production use case: future hook for metrics / logging.
+   */
+  onSafetyNet?: () => void;
 }
 
 /**
@@ -147,16 +172,60 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   resolvedPort = realPort;
   updateUiLockPort(lockDir, realPort);
 
+  // D-025 — schedule the safety-net self-shutdown. The timer is cancelled
+  // by `release()` (the canonical "I'm shutting down" signal) so an
+  // operator-driven SIGTERM never trips it.
+  const scheduler = opts.scheduler ?? defaultScheduler;
+  const safetyNetMs = opts.safetyNetMs ?? DEFAULT_UI_SAFETY_NET_MS;
+  let safetyNetHandle: ReturnType<typeof scheduler.setTimeout> | null = null;
+  let safetyNetCancelled = false;
+  let lockReleased = false;
+
+  const detachSafetyNet = (): void => {
+    if (safetyNetCancelled) return;
+    safetyNetCancelled = true;
+    if (safetyNetHandle !== null) {
+      scheduler.clearTimeout(safetyNetHandle);
+      safetyNetHandle = null;
+    }
+  };
+
+  const release = (): void => {
+    detachSafetyNet();
+    if (lockReleased) return;
+    lockReleased = true;
+    try {
+      releaseUiLock(lockDir);
+    } catch {
+      // Release is best-effort — another cleanup may have raced us.
+    }
+  };
+
+  if (safetyNetMs > 0) {
+    safetyNetHandle = scheduler.setTimeout(() => {
+      safetyNetHandle = null;
+      // Ensure callbacks see safetyNetCancelled === false at this point —
+      // we treat the fire as authoritative shutdown intent.
+      console.warn(`[ui] safety-net (${safetyNetMs}ms) reached — shutting down (D-025 backstop)`);
+      try {
+        opts.onSafetyNet?.();
+      } catch {
+        // best-effort observer
+      }
+      try {
+        httpServer.close();
+      } catch {
+        // best-effort
+      }
+      release();
+    }, safetyNetMs);
+  }
+
   return {
     httpServer,
     port: realPort,
-    release: () => {
-      try {
-        releaseUiLock(lockDir);
-      } catch {
-        // Release is best-effort — another cleanup may have raced us.
-      }
-    },
+    release,
+    detachSafetyNet,
   };
 }
 

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import type { Scheduler } from '@inkeep/open-knowledge-core';
 import {
   acquireServerLock,
   readUiLock,
@@ -13,11 +14,50 @@ import {
 import { ConfigSchema } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
 import {
+  DEFAULT_UI_SAFETY_NET_MS,
   resolveRequestedPort,
   resolveUiLockCollision,
   startUiServer,
   type UiServerHandle,
 } from './ui.ts';
+
+interface ManualScheduler extends Scheduler {
+  advanceTime(ms: number): void;
+  pendingCount(): number;
+}
+
+function createManualScheduler(): ManualScheduler {
+  type Entry = { id: number; cb: () => void; dueAt: number };
+  const queue: Entry[] = [];
+  let now = 0;
+  let nextId = 1;
+  return {
+    setTimeout: (cb, ms) => {
+      const id = nextId++;
+      queue.push({ id, cb, dueAt: now + ms });
+      return id as unknown as ReturnType<typeof globalThis.setTimeout>;
+    },
+    clearTimeout: (handle) => {
+      const id = handle as unknown as number;
+      const idx = queue.findIndex((e) => e.id === id);
+      if (idx >= 0) queue.splice(idx, 1);
+    },
+    now: () => now,
+    advanceTime(ms) {
+      now += ms;
+      for (let pass = 0; pass < 100; pass++) {
+        const due = queue.filter((e) => e.dueAt <= now);
+        if (due.length === 0) return;
+        for (const e of due) {
+          const idx = queue.indexOf(e);
+          if (idx >= 0) queue.splice(idx, 1);
+          e.cb();
+        }
+      }
+    },
+    pendingCount: () => queue.length,
+  };
+}
 
 let tmpDir: string;
 let lockDir: string;
@@ -157,6 +197,137 @@ describe('startUiServer', () => {
     expect(caught).toBeDefined();
     // Lock acquired pre-listen must be released on bind failure.
     expect(readUiLock(lockDir)).toBeNull();
+  });
+});
+
+describe('startUiServer — D-025 12h safety-net', () => {
+  test('default safety-net is 12 hours', () => {
+    expect(DEFAULT_UI_SAFETY_NET_MS).toBe(12 * 60 * 60 * 1000);
+  });
+
+  test('schedules a safety-net timer with the configured interval', async () => {
+    const scheduler = createManualScheduler();
+    handle = await startUiServer({
+      config: config(),
+      cwd: tmpDir,
+      port: 0,
+      host: 'localhost',
+      safetyNetMs: 60_000,
+      scheduler,
+    });
+    expect(scheduler.pendingCount()).toBe(1);
+  });
+
+  test('safety-net fires after the configured interval — closes server, releases lock, invokes onSafetyNet', async () => {
+    const scheduler = createManualScheduler();
+    let onSafetyNetFired = 0;
+    handle = await startUiServer({
+      config: config(),
+      cwd: tmpDir,
+      port: 0,
+      host: 'localhost',
+      safetyNetMs: 60_000,
+      scheduler,
+      onSafetyNet: () => {
+        onSafetyNetFired++;
+      },
+    });
+    const port = handle.port;
+    const lockPath = resolve(lockDir, 'ui.lock');
+    expect(existsSync(lockPath)).toBe(true);
+
+    // Advance past the safety-net deadline — the timer's callback runs
+    // synchronously inside advanceTime, including releaseUiLock and
+    // httpServer.close() (close() returns immediately; the actual socket
+    // close completes async).
+    scheduler.advanceTime(60_000);
+    expect(onSafetyNetFired).toBe(1);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(readUiLock(lockDir)).toBeNull();
+
+    // Wait for the close to complete on the event loop — fetch should fail
+    // (or get ECONNREFUSED) once the listener is gone.
+    await new Promise<void>((done) => handle?.httpServer.close(() => done()));
+    let connectError: unknown = null;
+    try {
+      await fetch(`http://localhost:${port}/api/config`);
+    } catch (err) {
+      connectError = err;
+    }
+    expect(connectError).not.toBeNull();
+    handle = null; // afterEach already cleaned up.
+  });
+
+  test('release() before fire cancels the safety-net timer', async () => {
+    const scheduler = createManualScheduler();
+    let onSafetyNetFired = 0;
+    handle = await startUiServer({
+      config: config(),
+      cwd: tmpDir,
+      port: 0,
+      host: 'localhost',
+      safetyNetMs: 60_000,
+      scheduler,
+      onSafetyNet: () => {
+        onSafetyNetFired++;
+      },
+    });
+    expect(scheduler.pendingCount()).toBe(1);
+
+    handle.release();
+    expect(scheduler.pendingCount()).toBe(0);
+
+    // Even if we advance well past the deadline, the cancelled callback
+    // never fires.
+    scheduler.advanceTime(60_000 * 100);
+    expect(onSafetyNetFired).toBe(0);
+  });
+
+  test('detachSafetyNet() cancels the timer without releasing the lock', async () => {
+    const scheduler = createManualScheduler();
+    handle = await startUiServer({
+      config: config(),
+      cwd: tmpDir,
+      port: 0,
+      host: 'localhost',
+      safetyNetMs: 60_000,
+      scheduler,
+    });
+    const lockPath = resolve(lockDir, 'ui.lock');
+    expect(existsSync(lockPath)).toBe(true);
+
+    handle.detachSafetyNet();
+    expect(scheduler.pendingCount()).toBe(0);
+    // Lock is still held — only the timer was cancelled.
+    expect(existsSync(lockPath)).toBe(true);
+  });
+
+  test('release() is idempotent — second call is a no-op', async () => {
+    handle = await startUiServer({ config: config(), cwd: tmpDir, port: 0, host: 'localhost' });
+    const lockPath = resolve(lockDir, 'ui.lock');
+
+    handle.release();
+    expect(existsSync(lockPath)).toBe(false);
+    // Second call must not throw and must not affect anything else.
+    handle.release();
+    expect(existsSync(lockPath)).toBe(false);
+
+    // Keep afterEach happy — server still up, just lock gone.
+    await new Promise<void>((done) => handle?.httpServer.close(() => done()));
+    handle = null;
+  });
+
+  test('safetyNetMs=0 disables the safety-net entirely (no timer scheduled)', async () => {
+    const scheduler = createManualScheduler();
+    handle = await startUiServer({
+      config: config(),
+      cwd: tmpDir,
+      port: 0,
+      host: 'localhost',
+      safetyNetMs: 0,
+      scheduler,
+    });
+    expect(scheduler.pendingCount()).toBe(0);
   });
 });
 
