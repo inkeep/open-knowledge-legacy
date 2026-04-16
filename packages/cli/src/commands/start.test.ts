@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, readFileSync } from 'node:fs';
+import type { spawn as NativeSpawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { request as httpRequest } from 'node:http';
+import { hostname, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import type { Config } from '../config/schema.ts';
 import {
+  type BootedStartServer,
+  type BootStartLogger,
+  bootStartServer,
   buildIdleShutdownHandler,
   decideUiSpawn,
   spawnOkUi,
@@ -213,11 +219,9 @@ describe('spawnOkUi', () => {
   });
 
   test('truncates last-spawn-error.log on each invocation', () => {
-    // Pre-populate with some bytes to verify the next spawn truncates.
-    const fs = require('node:fs');
     const errorLog = join(lockDir, 'last-spawn-error.log');
-    fs.mkdirSync(lockDir, { recursive: true });
-    fs.writeFileSync(errorLog, 'previous run error\n', 'utf-8');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(errorLog, 'previous run error\n', 'utf-8');
     expect(readFileSync(errorLog, 'utf-8')).toBe('previous run error\n');
 
     spawnOkUi({
@@ -230,5 +234,296 @@ describe('spawnOkUi', () => {
     });
 
     expect(readFileSync(errorLog, 'utf-8')).toBe('');
+  });
+});
+
+// ----------------------------------------------------------------------------
+// bootStartServer (integration)
+// ----------------------------------------------------------------------------
+//
+// These exercise the composed boot path the Commander action wraps:
+//   - HTTP server bound on the configured/kernel port
+//   - GET / returns 404 with the React-UI-served-by-ok-ui pointer (no static
+//     asset serving from `ok start` after the lifecycle split)
+//   - /api/* dispatches via Hocuspocus onRequest hook (proves API routes
+//     survive the split — not falling through to the SPA pointer)
+//   - Auto-spawn-of-ok-ui-sibling fires when ui.lock is absent
+//   - Auto-spawn skips when ui.lock is alive (idempotent re-acquire path)
+//
+// Each test gets a unique tmpdir and disposes via `booted.destroy()` in
+// afterEach. We pass a no-op logger to silence pino in test output.
+
+const SILENT_LOGGER: BootStartLogger = {
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
+function makeTestConfig(): Config {
+  return {
+    content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
+    server: { port: 0, host: '127.0.0.1', openOnAgentEdit: false },
+    persistence: { debounceMs: 200, maxDebounceMs: 1000 },
+    preview: {},
+    mcp: {
+      tools: { read_document: { historyDepth: 5 }, search: { maxResults: 50 } },
+      autoStart: true,
+    },
+  } as Config;
+}
+
+function fetchText(
+  port: number,
+  path: string,
+): Promise<{
+  status: number;
+  body: string;
+  headers: Record<string, string | string[] | undefined>;
+}> {
+  return new Promise((resolveFetch, reject) => {
+    const req = httpRequest({ hostname: '127.0.0.1', port, path, method: 'GET' }, (res) => {
+      let body = '';
+      res.setEncoding('utf-8');
+      res.on('data', (chunk) => {
+        body += chunk;
+      });
+      res.on('end', () => {
+        resolveFetch({ status: res.statusCode ?? 0, body, headers: res.headers });
+      });
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
+describe('bootStartServer (integration)', () => {
+  let tmpDir: string;
+  let booted: BootedStartServer | null = null;
+
+  beforeEach(async () => {
+    tmpDir = await mkdtemp(resolve(tmpdir(), 'ok-start-boot-'));
+    booted = null;
+  });
+
+  afterEach(async () => {
+    if (booted) {
+      try {
+        await booted.destroy();
+      } catch {
+        // Tests may have already triggered destroy via assertion failure paths;
+        // the destroy itself is idempotent so the second call is a no-op.
+      }
+      booted = null;
+    }
+    await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  test('GET / returns 404 with React-UI-served-by-ok-ui pointer', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      log: SILENT_LOGGER,
+    });
+    const res = await fetchText(booted.port, '/');
+    expect(res.status).toBe(404);
+    expect(res.headers['content-type']).toContain('application/json');
+    const body = JSON.parse(res.body);
+    expect(body.error).toContain('React UI is served by `ok ui`');
+    expect(body.path).toBe('/');
+  });
+
+  test('GET /assets/anything also returns the same pointer (no static fallthrough)', async () => {
+    // Pre-split the SPA fell through to dist/public/. Post-split there is no
+    // static handler in `ok start` at all — every non-/api path returns the
+    // pointer. This is the behavior the lifecycle split promises.
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      log: SILENT_LOGGER,
+    });
+    const res = await fetchText(booted.port, '/assets/main-abcdef.js');
+    expect(res.status).toBe(404);
+    const body = JSON.parse(res.body);
+    expect(body.error).toContain('React UI is served by `ok ui`');
+    expect(body.path).toBe('/assets/main-abcdef.js');
+  });
+
+  test('GET /api/document is routed through Hocuspocus onRequest (not the SPA pointer)', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      log: SILENT_LOGGER,
+    });
+    await booted.ready;
+
+    // /api/document is the canonical health-check endpoint exposed by the API
+    // extension. The exact response body depends on persistence's docName
+    // semantics, but importantly the response MUST NOT be the
+    // 'React UI is served by `ok ui`' pointer — that would mean the request
+    // fell through to the catch-all branch instead of hitting the API hook.
+    const res = await fetchText(booted.port, '/api/document?docName=integration-test-doc');
+    if (res.body.length > 0 && res.headers['content-type']?.toString().includes('json')) {
+      const parsed = (() => {
+        try {
+          return JSON.parse(res.body);
+        } catch {
+          return null;
+        }
+      })();
+      if (parsed && typeof parsed.error === 'string') {
+        expect(parsed.error).not.toContain('React UI is served by `ok ui`');
+      }
+    }
+    // Status is whatever the API extension chose — we accept 200, 404, or any
+    // 4xx; the assertion is purely 'not a 404 with the SPA pointer payload'.
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(600);
+  });
+
+  test('GET /api/nonexistent-route returns the API-route-not-found 404 (not the SPA pointer)', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      log: SILENT_LOGGER,
+    });
+    await booted.ready;
+
+    const res = await fetchText(booted.port, '/api/totally-nonexistent-xyz');
+    expect(res.status).toBe(404);
+    const body = JSON.parse(res.body);
+    expect(body.error).toBe('API route not found');
+    expect(body.path).toBe('/api/totally-nonexistent-xyz');
+  });
+
+  test('auto-spawn ok ui when ui.lock absent — invokes spawn with correct args', async () => {
+    const spawnCalls: Array<{ cmd: string; args: readonly string[] }> = [];
+    const fakeSpawn: typeof NativeSpawn = ((cmd: string, args: readonly string[]) => {
+      spawnCalls.push({ cmd, args });
+      return {
+        unref: () => {},
+        on: () => {},
+        kill: () => {},
+      } as unknown as ReturnType<typeof NativeSpawn>;
+    }) as never;
+
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      // Note: skipUiAutoSpawn is intentionally false — we WANT the spawn to fire.
+      spawn: fakeSpawn,
+      log: SILENT_LOGGER,
+    });
+
+    expect(spawnCalls.length).toBe(1);
+    expect(spawnCalls[0]?.cmd).toBe('npx');
+    expect(spawnCalls[0]?.args).toEqual(['@inkeep/open-knowledge', 'ui']);
+    expect(booted.uiSpawnDecision).toEqual({ action: 'spawn', reason: 'absent' });
+  });
+
+  test('skip auto-spawn when ui.lock alive (idempotent re-acquire path)', async () => {
+    // Pre-populate ui.lock with the test process' own pid (which is alive).
+    // process-lock treats same-pid as idempotent, so this simulates a
+    // pre-existing live UI sibling without actually spawning one.
+    const lockDir = join(tmpDir, '.open-knowledge');
+    mkdirSync(lockDir, { recursive: true });
+    writeFileSync(
+      join(lockDir, 'ui.lock'),
+      JSON.stringify({
+        pid: process.pid,
+        hostname: hostname(),
+        port: 9876,
+        startedAt: new Date().toISOString(),
+        worktreeRoot: tmpDir,
+      }),
+    );
+
+    const spawnCalls: Array<{ cmd: string }> = [];
+    const fakeSpawn: typeof NativeSpawn = ((cmd: string) => {
+      spawnCalls.push({ cmd });
+      return {
+        unref: () => {},
+        on: () => {},
+        kill: () => {},
+      } as unknown as ReturnType<typeof NativeSpawn>;
+    }) as never;
+
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      spawn: fakeSpawn,
+      log: SILENT_LOGGER,
+    });
+
+    expect(spawnCalls.length).toBe(0);
+    expect(booted.uiSpawnDecision).toEqual({
+      action: 'skip',
+      reason: 'alive',
+      pid: process.pid,
+      port: 9876,
+    });
+  });
+
+  test('skipUiAutoSpawn=true bypasses spawn even when ui.lock is absent', async () => {
+    const spawnCalls: Array<{ cmd: string }> = [];
+    const fakeSpawn: typeof NativeSpawn = ((cmd: string) => {
+      spawnCalls.push({ cmd });
+      return {
+        unref: () => {},
+        on: () => {},
+        kill: () => {},
+      } as unknown as ReturnType<typeof NativeSpawn>;
+    }) as never;
+
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      spawn: fakeSpawn,
+      log: SILENT_LOGGER,
+    });
+
+    expect(spawnCalls.length).toBe(0);
+    // Decision is still 'spawn(absent)' — the gate is only on the ACTION,
+    // not the decision. This lets the booted handle still report what would
+    // have been done (useful for tests + potentially for `ok status`).
+    expect(booted.uiSpawnDecision).toEqual({ action: 'spawn', reason: 'absent' });
+  });
+
+  test('destroy() is idempotent — second call is a no-op', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      log: SILENT_LOGGER,
+    });
+    await booted.destroy();
+    // Second call must not throw; it short-circuits via the internal guard.
+    await booted.destroy();
+    booted = null; // Prevent afterEach from calling destroy again — already done.
+  });
+
+  test('booted.port reflects the kernel-assigned port (server.port=0)', async () => {
+    booted = await bootStartServer({
+      config: makeTestConfig(),
+      cwd: tmpDir,
+      skipAutoInit: true,
+      skipUiAutoSpawn: true,
+      log: SILENT_LOGGER,
+    });
+    expect(booted.port).toBeGreaterThan(0);
+    expect(booted.port).toBeLessThan(65536);
   });
 });
