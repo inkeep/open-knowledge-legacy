@@ -1,11 +1,14 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { useDocumentContext } from '@/editor/DocumentContext';
+import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
 import { RAW_MDX_NAV_EVENT } from '@/editor/extensions/RawMdxFallbackView';
+import { createNavigationRetryHandler } from '@/editor/navigation-retry';
+import { invalidateSyncPromise } from '@/editor/sync-promise';
 import type { DiffLayout } from './DiffView';
 import { EditorArea } from './EditorArea';
 import { EditorHeader } from './EditorHeader';
+import NavigationPendingBar from './NavigationPendingBar';
 import { TimelinePanel } from './TimelinePanel';
 
 /**
@@ -34,6 +37,16 @@ export function EditorPane() {
   }, []);
 
   const { activeDocName } = useDocumentContext();
+  const { openDocumentTransition, isPending } = useDocumentTransition();
+
+  // Retry handler consumed by `NavigationPendingBar`'s tier-3 "Try again?"
+  // button (spec §D7). Reads `activeDocName` via a thunk at call time so the
+  // handler always targets the currently-displayed doc, not a stale capture.
+  const handleRetry = createNavigationRetryHandler({
+    invalidateSyncPromise,
+    openDocumentTransition,
+    getActiveDocName: () => activeDocName,
+  });
 
   function handleEntrySelect(entry: TimelineEntry) {
     if (!entry.sha) {
@@ -134,6 +147,7 @@ export function EditorPane() {
         diffLayout={diffLayout}
         onDiffLayoutChange={setDiffLayout}
       />
+      <NavigationPendingBar isPending={isPending} onRetry={handleRetry} />
       <EditorArea
         editorMode={editorMode}
         previewEntry={previewEntry}

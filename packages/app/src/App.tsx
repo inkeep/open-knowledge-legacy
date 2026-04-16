@@ -6,26 +6,35 @@ import { isNewItemShortcut, NewItemDialog } from '@/components/NewItemDialog';
 import { PageListProvider } from '@/components/PageListContext';
 import { SystemDocSubscriber } from '@/components/SystemDocSubscriber';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
-import { DocumentProvider, useDocumentContext } from '@/editor/DocumentContext';
+import {
+  DocumentProvider,
+  useDocumentContext,
+  useDocumentTransition,
+} from '@/editor/DocumentContext';
 import { docNameFromHash } from '@/lib/doc-hash';
 
 export { docNameFromHash, hashFromDocName } from '@/lib/doc-hash';
 
 /** Hash is the source of truth for navigation; all navigation sets the hash;
- *  this handler is the single place that calls openDocument(). */
+ *  this handler is the single place that calls openDocumentTransition().
+ *  Wrapping every hash-driven nav in a transition (a) keeps the previously-revealed
+ *  doc visible while the next entry suspends on syncPromise (SPEC G2), and
+ *  (b) surfaces `isPending` to NavigationPendingBar (SPEC G3). Agent-driven
+ *  nav via SystemDocSubscriber flows through `window.location.hash` too, so
+ *  it inherits the same UX without a separate code path (SPEC §F7). */
 function NavigationHandler() {
-  const { openDocument } = useDocumentContext();
+  const { openDocumentTransition } = useDocumentTransition();
 
   useEffect(() => {
     onHashChange();
 
     function onHashChange() {
       const docName = docNameFromHash(window.location.hash);
-      if (docName) openDocument(docName);
+      if (docName) openDocumentTransition(docName);
     }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
-  }, [openDocument]);
+  }, [openDocumentTransition]);
 
   return null;
 }
