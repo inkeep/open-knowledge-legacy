@@ -13,8 +13,10 @@ import { Schema } from '@tiptap/pm/model';
 import { EditorState, NodeSelection, Plugin, TextSelection } from '@tiptap/pm/state';
 import {
   type BlockSelection,
+  computeSelectionApply,
   deriveAncestorChain,
   deriveBlockSelection,
+  type PluginRuntime,
   SELECTION_ORIGIN_META_KEY,
   selectionStatePluginKey,
 } from './selection-state-plugin.ts';
@@ -216,6 +218,103 @@ describe('deriveBlockSelection', () => {
     const state = makeStateFromDoc(doc);
     const chain = deriveAncestorChain(state, NodeSelection.create(doc, 0));
     expect(chain[0].pos).toBe(0);
+  });
+});
+
+describe('computeSelectionApply (real plugin apply path)', () => {
+  // These tests exercise the real apply pure helper that the production
+  // plugin wires up — covering the precedence chain (meta > pending > prev),
+  // the consume-on-selection-change semantics, and the refresh-tx exemption.
+
+  const seed = (origin: BlockSelection['selectionOrigin']): BlockSelection => ({
+    ...EMPTY,
+    selectionOrigin: origin,
+  });
+
+  test('pending pointer origin lands on the next selection-change tx', () => {
+    const doc = schema.node('doc', null, [jsx('Card', [p('x')])]);
+    const state = makeStateFromDoc(doc);
+    const runtime: PluginRuntime = { pendingOrigin: 'pointer', isDragging: false };
+    const tr = state.tr.setSelection(NodeSelection.create(doc, 0));
+    const next = computeSelectionApply(tr, EMPTY, state.apply(tr), runtime);
+    expect(next.selectionOrigin).toBe('pointer');
+    // pendingOrigin consumed.
+    expect(runtime.pendingOrigin).toBeNull();
+  });
+
+  test('pending origin is NOT consumed by a tx that does not change selection', () => {
+    // Race scenario: user clicks → pendingOrigin='pointer'. Before the
+    // user's selection-changing tx arrives, a foreign tx (e.g. y-prosemirror
+    // remote sync or a meta-only tx) runs apply. The plugin must NOT
+    // consume the pending origin — otherwise the user's actual selection
+    // change inherits prev (stale) instead of 'pointer'.
+    const doc = schema.node('doc', null, [p('hi')]);
+    const state = makeStateFromDoc(doc);
+    const runtime: PluginRuntime = { pendingOrigin: 'pointer', isDragging: false };
+    const noopTr = state.tr.setMeta('foreign', true); // no selection change
+    const after = computeSelectionApply(noopTr, EMPTY, state.apply(noopTr), runtime);
+    // Origin not advanced (prev remains); pending preserved for next tx.
+    expect(after.selectionOrigin).toBe('programmatic');
+    expect(runtime.pendingOrigin).toBe('pointer');
+  });
+
+  test('refresh-tagged tx does NOT consume pending origin even if selectionSet', () => {
+    // Defense in depth: even if a refresh tx happens to set a selection
+    // somehow, the explicit refresh tag exempts it from consumption.
+    const doc = schema.node('doc', null, [jsx('Card', [p('x')])]);
+    const state = makeStateFromDoc(doc);
+    const runtime: PluginRuntime = { pendingOrigin: 'keyboard', isDragging: false };
+    const refreshTr = state.tr
+      .setSelection(NodeSelection.create(doc, 0))
+      .setMeta('selectionStatePlugin/refresh', true);
+    const after = computeSelectionApply(refreshTr, EMPTY, state.apply(refreshTr), runtime);
+    // Refresh tx did not consume pending — pending still 'keyboard'.
+    expect(runtime.pendingOrigin).toBe('keyboard');
+    // Origin falls through to prev because pending wasn't consumed.
+    expect(after.selectionOrigin).toBe('programmatic');
+  });
+
+  test('SELECTION_ORIGIN_META_KEY (meta) overrides pending origin', () => {
+    const doc = schema.node('doc', null, [jsx('Card', [p('x')])]);
+    const state = makeStateFromDoc(doc);
+    const runtime: PluginRuntime = { pendingOrigin: 'pointer', isDragging: false };
+    const tr = state.tr
+      .setSelection(NodeSelection.create(doc, 0))
+      .setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic');
+    const after = computeSelectionApply(tr, EMPTY, state.apply(tr), runtime);
+    // Meta wins; pending still consumed (selectionSet=true).
+    expect(after.selectionOrigin).toBe('programmatic');
+    expect(runtime.pendingOrigin).toBeNull();
+  });
+
+  test('keyboard pendingOrigin produces selectionOrigin=keyboard', () => {
+    const doc = schema.node('doc', null, [jsx('Card', [p('x')])]);
+    const state = makeStateFromDoc(doc);
+    const runtime: PluginRuntime = { pendingOrigin: 'keyboard', isDragging: false };
+    const tr = state.tr.setSelection(NodeSelection.create(doc, 0));
+    const after = computeSelectionApply(tr, EMPTY, state.apply(tr), runtime);
+    expect(after.selectionOrigin).toBe('keyboard');
+  });
+
+  test('isDragging propagates from runtime to next state', () => {
+    const doc = schema.node('doc', null, [p('hi')]);
+    const state = makeStateFromDoc(doc);
+    const runtime: PluginRuntime = { pendingOrigin: null, isDragging: true };
+    const tr = state.tr.setMeta('selectionStatePlugin/refresh', true);
+    const after = computeSelectionApply(tr, EMPTY, state.apply(tr), runtime);
+    expect(after.isDragging).toBe(true);
+  });
+
+  test('runtime undefined falls back to prev (no crash)', () => {
+    // If the runtime WeakMap entry was somehow GC'd or missing, the apply
+    // must not crash; falls back to prev for both origin and isDragging.
+    const doc = schema.node('doc', null, [jsx('Card', [p('x')])]);
+    const state = makeStateFromDoc(doc);
+    const tr = state.tr.setSelection(NodeSelection.create(doc, 0));
+    const prev = seed('keyboard');
+    const after = computeSelectionApply(tr, prev, state.apply(tr), undefined);
+    expect(after.selectionOrigin).toBe('keyboard');
+    expect(after.isDragging).toBe(false);
   });
 });
 

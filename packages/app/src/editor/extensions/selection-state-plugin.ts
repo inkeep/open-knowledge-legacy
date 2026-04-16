@@ -64,14 +64,27 @@ export interface BlockSelection {
   readonly isDragging: boolean;
 }
 
-// ── Typed origin override (Precedent #1 family) ──────────────────────────
+// ── Tr-meta keys ─────────────────────────────────────────────────────────
 
 /** PM transaction meta key — consumers that want to override origin
  *  classification set `tr.setMeta(SELECTION_ORIGIN_META_KEY, 'programmatic')`.
  *  The plugin's `apply` checks this before consulting the DOM-event-derived
  *  `pendingOrigin`. Used by agent writes and imperative `setNodeSelection`
- *  in the test harness. */
+ *  in the test harness.
+ *
+ *  Note on Precedent #1: that precedent governs Y.Doc transaction origins
+ *  (typed `LocalTransactionOrigin` objects, identity-matched). PM tr-meta
+ *  keys are a different surface — PM's `tr.getMeta(key)` API takes string
+ *  or PluginKey instances. We use a unique namespaced string here, in line
+ *  with PM convention. */
 export const SELECTION_ORIGIN_META_KEY = 'selectionStatePlugin/origin';
+
+/** PM transaction meta key for the plugin's own meta-only refresh
+ *  transactions (dragstart/dragend → re-run apply with new isDragging).
+ *  Tagged so `apply` can distinguish "we dispatched this to surface a
+ *  runtime change" from "the user did something" and not consume
+ *  `pendingOrigin` on these passes. */
+const SELECTION_REFRESH_META_KEY = 'selectionStatePlugin/refresh';
 
 // ── PluginKey + imperative API ───────────────────────────────────────────
 
@@ -145,9 +158,20 @@ function toChainEntry(state: EditorState, node: PMNode, pos: number): BlockChain
 
 /**
  * Canonical lookup: get the stable bridgeId for a jsxComponent wrapper at a
- * given position, or a position-derived synthetic fallback when
- * bridge-id-plugin hasn't published a mapping yet (brief during editor init)
- * or isn't registered (unit tests with pure PM).
+ * given position.
+ *
+ * **Production:** `BridgeIdPlugin` is registered in `sharedExtensions` and its
+ * `init` walks the doc to assign every jsxComponent a `b{N}`-style ID
+ * synchronously, even before y-prosemirror has built its Y.XmlElement
+ * mapping. After init, every jsxComponent in the doc has an entry in the
+ * plugin's `posToId` map at all times — the position-derived fallback
+ * branch below is **unreachable** in production code.
+ *
+ * **Tests / harness without BridgeIdPlugin:** the fallback returns a
+ * `pos-N` synthetic. This path is positional and unstable across edits,
+ * which is acceptable in unit-test contexts where edits don't shift
+ * positions of nodes that need bridge-id stability. Do not rely on the
+ * synthetic ID's stability in any new production path.
  *
  * NodeView consumers (e.g. JsxComponentView) use this to compare against
  * `BlockSelection.selectedBlockId` / `ancestorChain[].bridgeId` — both must
@@ -206,12 +230,57 @@ function blockSelectionEqual(a: BlockSelection, b: BlockSelection): boolean {
  * Stored per-plugin-instance via a WeakMap keyed on the plugin. (PM plugins
  * are long-lived singletons, so this is effectively per-editor.)
  */
-interface PluginRuntime {
+export interface PluginRuntime {
   pendingOrigin: SelectionOrigin | null;
   isDragging: boolean;
 }
 
 const RUNTIME = new WeakMap<Plugin<BlockSelection>, PluginRuntime>();
+
+/**
+ * Pure apply logic — testable without TipTap or DOM. Mutates `runtime`
+ * in-place to consume `pendingOrigin` on selection-changing transactions.
+ *
+ * Origin precedence (highest → lowest):
+ *   1. `metaOrigin` — caller-controlled, e.g. agent-write, programmatic
+ *      `setNodeSelection`. Wins absolutely.
+ *   2. `pendingOrigin` — DOM-event-derived ('pointer' / 'keyboard'),
+ *      consumed only when this tx changes the selection. Foreign
+ *      transactions (y-prosemirror remote sync, plugin refresh) that
+ *      don't change selection do NOT consume the pending origin —
+ *      otherwise a remote sync arriving between user click and PM's
+ *      selection-set would steal the classification.
+ *   3. `prev.selectionOrigin` — carry-forward when nothing newer applies.
+ *
+ * Drag state: read from runtime on every apply (no pendingOrigin
+ * coupling); the plugin's view() drag handlers schedule a refresh tx that
+ * triggers apply, which then reflects the new isDragging.
+ */
+export function computeSelectionApply(
+  tr: import('@tiptap/pm/state').Transaction,
+  prev: BlockSelection,
+  newState: EditorState,
+  runtime: PluginRuntime | undefined,
+): BlockSelection {
+  const isDragging = runtime?.isDragging ?? prev.isDragging;
+
+  // Selection-changed gate: only consume pendingOrigin when this tx
+  // actually moved the selection. PM exposes `tr.selectionSet` for this.
+  // Refresh transactions (drag) explicitly disclaim consumption regardless.
+  const isRefreshTx = Boolean(tr.getMeta(SELECTION_REFRESH_META_KEY));
+  const consumesPending = tr.selectionSet && !isRefreshTx;
+
+  const metaOrigin = tr.getMeta(SELECTION_ORIGIN_META_KEY) as SelectionOrigin | undefined;
+  const pendingOrigin = consumesPending ? (runtime?.pendingOrigin ?? null) : null;
+  const origin = metaOrigin ?? pendingOrigin ?? prev.selectionOrigin;
+
+  // Consume pendingOrigin only when we actually used (or could have used) it.
+  // A foreign tx that doesn't change selection leaves the pending origin
+  // intact, so the user's NEXT selection change still picks it up.
+  if (consumesPending && runtime) runtime.pendingOrigin = null;
+
+  return deriveBlockSelection(newState, prev, { origin, isDragging });
+}
 
 export const SelectionStatePlugin = Extension.create({
   name: 'selectionStatePlugin',
@@ -228,22 +297,7 @@ export const SelectionStatePlugin = Extension.create({
         },
 
         apply(tr, prev, _oldState, newState): BlockSelection {
-          const runtime = RUNTIME.get(plugin);
-          const pendingOrigin = runtime?.pendingOrigin ?? null;
-          const isDragging = runtime?.isDragging ?? prev.isDragging;
-
-          // Programmatic override wins over pending event classification.
-          const metaOrigin = tr.getMeta(SELECTION_ORIGIN_META_KEY) as SelectionOrigin | undefined;
-          const origin = metaOrigin ?? pendingOrigin ?? prev.selectionOrigin;
-
-          // Consume pendingOrigin — next selection change re-derives it from events.
-          if (runtime) runtime.pendingOrigin = null;
-
-          const next = deriveBlockSelection(newState, prev, {
-            origin,
-            isDragging,
-          });
-          return next;
+          return computeSelectionApply(tr, prev, newState, RUNTIME.get(plugin));
         },
       },
 
@@ -335,17 +389,27 @@ function isBlockNavigationKey(key: string): boolean {
 }
 
 /**
- * Dispatch a no-op transaction to force PM to re-run `apply` so the plugin
- * state reflects the latest runtime (e.g. after dragstart/dragend). Uses
- * `setMeta` with a benign key so the transaction is visible to observers
- * but mutates nothing.
+ * Dispatch a meta-only transaction to force PM to re-run `apply` so the
+ * plugin state reflects the latest runtime (e.g. after dragstart/dragend
+ * toggled `isDragging`). The tx mutates no document content — only PM's
+ * tx pipeline propagates the runtime change to subscribers.
+ *
+ * Tagged with `SELECTION_REFRESH_META_KEY` so `computeSelectionApply` can
+ * distinguish "we dispatched this to surface a runtime change" from
+ * "the user did something" and not consume `pendingOrigin` on these
+ * passes.
+ *
+ * Note: this is the ONE intentional case where the plugin dispatches a tx.
+ * The plugin remains read-only with respect to the PM doc (SC-INV-1
+ * preserved); the dispatch is a meta-only signal carrier, not a doc
+ * mutation. The CLAUDE.md Precedent #15 docstring acknowledges this.
  */
 function scheduleRefresh(editor: Editor): void {
   // The dragstart/dragend may fire during PM's internal event processing.
   // Deferring to the next microtask ensures we don't dispatch mid-tr.
   queueMicrotask(() => {
     try {
-      const tr = editor.state.tr.setMeta('selectionStatePlugin/refresh', true);
+      const tr = editor.state.tr.setMeta(SELECTION_REFRESH_META_KEY, true);
       editor.view.dispatch(tr);
     } catch {
       // Editor torn down between queueMicrotask and dispatch — safe to ignore.

@@ -290,6 +290,11 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
   // ARIA: role="group" for typed-children containers, with a descriptive
   // aria-label summarizing content. Screen readers announce on focus/select.
   // See Precedent #20 (a11y codified in the selection plugin / its consumers).
+  // TODO(i18n): pluralization is English-only (`+ 's'` heuristic) — this
+  // breaks for irregular plurals (Foot → Foots) and any non-English locale.
+  // When i18n lands, route through `Intl.PluralRules` + a localized message
+  // catalog. The same heuristic appears nowhere else in this layer; do not
+  // copy this pattern.
   const componentLabel = descriptor.displayName ?? descriptor.name;
   const isGroupContainer = Boolean(descriptor.emptyChildName);
   const groupAriaLabel = isGroupContainer
@@ -310,7 +315,15 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       aria-selected={isInnermostSelected ? true : undefined}
       role={isGroupContainer ? 'group' : undefined}
       aria-label={groupAriaLabel}
-      tabIndex={isChildOfComponent ? -1 : 0}
+      // Roving tabindex (W3C ARIA Authoring Practices, "Composite Widgets"):
+      // exactly one wrapper per editor is in the document tab order at a
+      // time — the currently-selected one. Without this, every top-level
+      // jsxComponent created an O(N) Tab cost before the user could reach
+      // anything outside the editor (Breadcrumb buttons, presence bar). The
+      // wrappers remain reachable via PM's NodeSelection arrow-nav; Tab
+      // stays a "leave the editor" affordance, not "step through every
+      // block." Matches Gutenberg / Lexical block-editor conventions.
+      tabIndex={isInnermostSelected ? 0 : -1}
       {...(!isChildOfComponent
         ? { 'data-drag-handle': '', draggable: 'true' }
         : { draggable: 'false', onDragStart: (e: React.DragEvent) => e.preventDefault() })}

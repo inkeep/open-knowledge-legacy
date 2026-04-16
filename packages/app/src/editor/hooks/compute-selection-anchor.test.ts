@@ -204,15 +204,15 @@ describe('computeSelectionAnchor', () => {
     expect(anchor?.contextElement).toBe(view.dom);
   });
 
-  test('falls back to null when block selected but DOM unresolvable', () => {
+  test('Path 1 unresolvable DOM falls through to Path 2 posToDOMRect anchor', () => {
     // pos 99 is not in the mock's posToDom map — nodeDOM returns null.
+    // The hook falls through to Path 2 (posToDOMRect fallback over the raw
+    // PM selection), which always returns SOME reference object (even if
+    // rect is empty under headless test). Asserts the fall-through path
+    // is exercised, not that the result is null.
     const doc = schema.node('doc', null, [jsx('Card')]);
     const state = EditorState.create({ doc, selection: NodeSelection.create(doc, 0) });
     const view = makeMockView(state, { posToDom: new Map() });
-    // Plugin state says block selected, but mock can't resolve DOM.
-    // Path 2 (posToDOMRect fallback) will be tried on the PM selection,
-    // but our mock view doesn't implement posToDOMRect's prerequisites,
-    // so it throws and returns makeRect(0, 0, 0, 0) (all zeros) — a valid anchor.
     const anchor = computeSelectionAnchor(view, {
       selectedBlockId: 'pos-99',
       ancestorChain: [{ bridgeId: 'pos-99', componentName: 'Card', pos: 99 }],
@@ -220,8 +220,10 @@ describe('computeSelectionAnchor', () => {
       isDragging: false,
     });
     // Non-null: Path 2 always provides a fallback reference via
-    // posToDOMRect even when Path 1 fails.
+    // posToDOMRect even when Path 1 fails. The rect is empty in headless
+    // test envs but the contract (returns a SelectionVirtualElement) holds.
     expect(anchor).not.toBeNull();
+    expect(anchor?.getClientRects()).toHaveLength(1);
   });
 
   test('TextSelection (non-empty) produces an anchor via posToDOMRect fallback', () => {

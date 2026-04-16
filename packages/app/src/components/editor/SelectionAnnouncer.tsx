@@ -15,7 +15,10 @@
  * Message format:
  *   - ancestorChain.length === 1: "Selected: Card"
  *   - ancestorChain.length > 1:   "Selected: Step, 2 of 4 in Steps"
- *   - null selection:             "" (clears — previous announcement fades)
+ *   - selection cleared after a non-empty selection: "Outside any block"
+ *     (prevents AT silence on arrow-out — users would otherwise have no
+ *     audible cue that they have left the previously-selected block)
+ *   - no selection at mount: "" (don't announce on initial load)
  *
  * The index-in-parent is derived from the PM doc at read time: we use the
  * selected wrapper's pos and its parent's childCount. This is cheap; the
@@ -28,11 +31,16 @@ import { useBlockSelection } from '../../editor/hooks/use-block-selection.ts';
 import { getEntryLabel } from '../../editor/selection/entry-label.ts';
 
 const ANNOUNCE_DEBOUNCE_MS = 200;
+const DESELECTION_MESSAGE = 'Outside any block';
 
 export function SelectionAnnouncer({ editor }: { editor: Editor | null }) {
   const blockSelection = useBlockSelection(editor);
   const regionRef = useRef<HTMLDivElement | null>(null);
   const timeoutRef = useRef<number | null>(null);
+  /** Tracks whether the most-recent announcement was non-empty. Used to
+   *  decide if a transition to no-selection deserves a "deselection"
+   *  announcement (transition matters; standing-empty does not). */
+  const lastWasSelected = useRef(false);
 
   useEffect(() => {
     // Clear any pending announcement — selection has moved; the in-flight
@@ -44,7 +52,19 @@ export function SelectionAnnouncer({ editor }: { editor: Editor | null }) {
 
     if (!editor || !regionRef.current) return;
 
-    const message = formatSelectionMessage(editor, blockSelection);
+    const isSelected = blockSelection !== null && blockSelection.ancestorChain.length > 0;
+
+    let message: string;
+    if (isSelected) {
+      message = formatSelectionMessage(editor, blockSelection);
+    } else if (lastWasSelected.current) {
+      // Selection was non-empty and is now empty — announce deselection
+      // explicitly so AT users know they exited the block.
+      message = DESELECTION_MESSAGE;
+    } else {
+      // No selection, no prior selection — nothing useful to say.
+      message = '';
+    }
 
     timeoutRef.current = window.setTimeout(() => {
       if (regionRef.current) {
@@ -59,6 +79,7 @@ export function SelectionAnnouncer({ editor }: { editor: Editor | null }) {
         regionRef.current.textContent = '';
         regionRef.current.textContent = message;
       }
+      lastWasSelected.current = isSelected;
       timeoutRef.current = null;
     }, ANNOUNCE_DEBOUNCE_MS);
 
@@ -80,9 +101,10 @@ export function SelectionAnnouncer({ editor }: { editor: Editor | null }) {
  * the formatting logic is pure and the useEffect stays focused on lifecycle.
  * Exported for unit testing.
  *
- * AT announcements pass `{ unregisteredSuffix: true }` so screen-reader users
- * understand why an unfamiliar label appears (the component resolved to the
- * wildcard descriptor).
+ * `unregisteredSuffix: true` is applied ONLY to the focused (innermost) label —
+ * the parent label drops the suffix so AT users don't hear "(unregistered)"
+ * twice in one announcement when both nodes resolve to wildcard descriptors.
+ * The disambiguation belongs on the focused item.
  */
 export function formatSelectionMessage(
   editor: Editor,
@@ -101,7 +123,10 @@ export function formatSelectionMessage(
   }
 
   const parent = chain[chain.length - 2];
-  const parentLabel = getEntryLabel(parent, { unregisteredSuffix: true });
+  // No `unregisteredSuffix` here — only the focused label needs the
+  // disambiguation. Doubling it ("Foo (unregistered) in Bar (unregistered)")
+  // is screen-reader noise.
+  const parentLabel = getEntryLabel(parent);
 
   // Compute the selected wrapper's index within its parent's children via
   // PM position resolution. If the resolve fails (doc shifted mid-tick), we
