@@ -26,8 +26,11 @@ import { type Plugin, unified } from 'unified';
 import { rehypeSkipNotionWhitespace } from './rehype-plugins/skip-notion-whitespace.ts';
 import { rehypeStripCocoaMeta } from './rehype-plugins/strip-cocoa-meta.ts';
 import { rehypeStripGdocsWrapper } from './rehype-plugins/strip-gdocs-wrapper.ts';
+import { rehypeStripGithubHovercard } from './rehype-plugins/strip-github-hovercard.ts';
 import { rehypeStripGmailClasses } from './rehype-plugins/strip-gmail-classes.ts';
+import { rehypeStripGsheetsWrapper } from './rehype-plugins/strip-gsheets-wrapper.ts';
 import { rehypeStripMsoStyles } from './rehype-plugins/strip-mso-styles.ts';
+import { rehypeStripSlackClasses } from './rehype-plugins/strip-slack-classes.ts';
 import { rehypeStripVscodeSpans } from './rehype-plugins/strip-vscode-spans.ts';
 
 export interface HtmlToMdastOptions {
@@ -58,6 +61,7 @@ export const cleanupPlugins: Plugin[] = [
   // Fingerprint-detecting plugins — each is a no-op on non-matching trees,
   // so ordering among them is irrelevant. They run before the generic
   // rehype-remark conversion stage which has no fingerprint detection.
+  // Full 9-plugin panel per D9 LOCKED.
   // US-008:
   rehypeStripGdocsWrapper as Plugin,
   rehypeStripMsoStyles as Plugin,
@@ -66,6 +70,10 @@ export const cleanupPlugins: Plugin[] = [
   rehypeStripGmailClasses as Plugin,
   rehypeSkipNotionWhitespace as Plugin,
   rehypeStripVscodeSpans as Plugin,
+  // US-010:
+  rehypeStripGsheetsWrapper as Plugin,
+  rehypeStripSlackClasses as Plugin,
+  rehypeStripGithubHovercard as Plugin,
 ];
 
 /**
