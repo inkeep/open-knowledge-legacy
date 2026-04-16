@@ -62,13 +62,17 @@ export function createChildNode(childName: string): Record<string, unknown> {
 }
 
 /**
- * Module-level flag: position of a just-inserted component that should
- * auto-open its PropPanel. Read once by JsxComponentView, then cleared.
+ * Module-level flag: a component was just inserted and should auto-open
+ * its PropPanel. The NEXT jsxComponent NodeView that renders with
+ * `selected=true` consumes this flag.
  */
-export let pendingAutoOpenPos: number | null = null;
-export function consumeAutoOpen(pos: number): boolean {
-  if (pendingAutoOpenPos === pos) {
-    pendingAutoOpenPos = null;
+let pendingAutoOpen = false;
+export function setPendingAutoOpen(): void {
+  pendingAutoOpen = true;
+}
+export function consumeAutoOpen(): boolean {
+  if (pendingAutoOpen) {
+    pendingAutoOpen = false;
     return true;
   }
   return false;
@@ -89,9 +93,7 @@ export function focusInsertedComponent(
   );
 
   if (hasEditableProps) {
-    // Set a module-level flag that the NodeView reads on mount/update
-    // to auto-open its Popover. Cleared after one read.
-    pendingAutoOpenPos = insertPos;
+    setPendingAutoOpen();
     requestAnimationFrame(() => {
       editor.commands.setNodeSelection(insertPos);
     });
