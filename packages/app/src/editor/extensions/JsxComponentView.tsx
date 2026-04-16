@@ -16,7 +16,7 @@
 
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { ChevronDown, ChevronUp, Settings2, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, Settings2, Trash2 } from 'lucide-react';
 import React, { type ErrorInfo, type ReactNode, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
@@ -209,7 +209,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               editor.view.dispatch(tr.scrollIntoView());
             }}
           >
-            <ChevronUp size={12} />
+            <ArrowUp size={12} />
           </button>
         )}
 
@@ -234,7 +234,7 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
               editor.view.dispatch(tr.scrollIntoView());
             }}
           >
-            <ChevronDown size={12} />
+            <ArrowDown size={12} />
           </button>
         )}
 
