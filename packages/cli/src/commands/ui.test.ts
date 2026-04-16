@@ -1,12 +1,23 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer as createHttpServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { acquireServerLock, readUiLock, updateServerLockPort } from '@inkeep/open-knowledge-server';
+import {
+  acquireServerLock,
+  readUiLock,
+  type UiLockMetadata,
+  updateServerLockPort,
+} from '@inkeep/open-knowledge-server';
 import { ConfigSchema } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
-import { resolveRequestedPort, startUiServer, type UiServerHandle } from './ui.ts';
+import {
+  resolveRequestedPort,
+  resolveUiLockCollision,
+  startUiServer,
+  type UiServerHandle,
+} from './ui.ts';
 
 let tmpDir: string;
 let lockDir: string;
@@ -146,5 +157,153 @@ describe('startUiServer', () => {
     expect(caught).toBeDefined();
     // Lock acquired pre-listen must be released on bind failure.
     expect(readUiLock(lockDir)).toBeNull();
+  });
+});
+
+describe('resolveUiLockCollision', () => {
+  function fakeLock(port: number): UiLockMetadata {
+    return {
+      pid: process.pid,
+      hostname: 'localhost',
+      port,
+      startedAt: new Date().toISOString(),
+      worktreeRoot: tmpDir,
+    };
+  }
+
+  test('same port as holder → already-running', async () => {
+    const result = await resolveUiLockCollision({
+      requestedPort: 3000,
+      host: 'localhost',
+      lockDir,
+      readLock: () => fakeLock(3000),
+    });
+    expect(result.mode).toBe('already-running');
+    if (result.mode === 'already-running') expect(result.port).toBe(3000);
+  });
+
+  test('throws when lock disappeared mid-handle', async () => {
+    await expect(
+      resolveUiLockCollision({
+        requestedPort: 3000,
+        host: 'localhost',
+        lockDir,
+        readLock: () => null,
+      }),
+    ).rejects.toThrow(/disappeared/);
+  });
+
+  test('different port + live upstream → proxy mode forwards correctly', async () => {
+    // Stand up a real upstream so the proxy has something to forward to.
+    const upstream = createHttpServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('upstream ok');
+    });
+    await new Promise<void>((done) => upstream.listen(0, 'localhost', () => done()));
+    const upstreamPort = (upstream.address() as { port: number }).port;
+
+    const result = await resolveUiLockCollision({
+      requestedPort: 0, // kernel-allocated so we don't conflict with anything
+      host: 'localhost',
+      lockDir,
+      readLock: () => fakeLock(upstreamPort),
+    });
+
+    expect(result.mode).toBe('proxy');
+    if (result.mode !== 'proxy') throw new Error('unreachable');
+    expect(result.upstreamPort).toBe(upstreamPort);
+
+    try {
+      const response = await fetch(`http://localhost:${result.handle.port}/`);
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe('upstream ok');
+    } finally {
+      await result.handle.close();
+      await new Promise<void>((done) => upstream.close(() => done()));
+    }
+  });
+
+  test('proxy returns 502 when upstream dies', async () => {
+    // Probe an ephemeral port and close so upstreamPort points at nothing.
+    const probe = createHttpServer();
+    await new Promise<void>((done) => probe.listen(0, 'localhost', () => done()));
+    const deadPort = (probe.address() as { port: number }).port;
+    await new Promise<void>((done) => probe.close(() => done()));
+
+    const result = await resolveUiLockCollision({
+      requestedPort: 0,
+      host: 'localhost',
+      lockDir,
+      readLock: () => fakeLock(deadPort),
+    });
+    if (result.mode !== 'proxy') throw new Error('unreachable');
+
+    try {
+      const response = await fetch(`http://localhost:${result.handle.port}/`);
+      expect(response.status).toBe(502);
+    } finally {
+      await result.handle.close();
+    }
+  });
+
+  test('lock port=0 that becomes live within deadline → proxy mode', async () => {
+    const upstream = createHttpServer((_req, res) => res.end('late upstream'));
+    await new Promise<void>((done) => upstream.listen(0, 'localhost', () => done()));
+    const upstreamPort = (upstream.address() as { port: number }).port;
+
+    let calls = 0;
+    const readLock = () => {
+      calls++;
+      return calls < 3 ? fakeLock(0) : fakeLock(upstreamPort);
+    };
+
+    const result = await resolveUiLockCollision({
+      requestedPort: 0,
+      host: 'localhost',
+      lockDir,
+      readLock,
+      pollIntervalMs: 10,
+      pollDeadlineMs: 2000,
+    });
+
+    expect(result.mode).toBe('proxy');
+    if (result.mode !== 'proxy') throw new Error('unreachable');
+    expect(result.upstreamPort).toBe(upstreamPort);
+
+    await result.handle.close();
+    await new Promise<void>((done) => upstream.close(() => done()));
+  });
+
+  test('lock port=0 that stays 0 → throws timeout error', async () => {
+    await expect(
+      resolveUiLockCollision({
+        requestedPort: 3000,
+        host: 'localhost',
+        lockDir,
+        readLock: () => fakeLock(0),
+        pollIntervalMs: 5,
+        pollDeadlineMs: 25,
+      }),
+    ).rejects.toThrow(/did not bind within 2s/);
+  });
+
+  test('lock port=0 that resolves equal to requested port → already-running', async () => {
+    let calls = 0;
+    const readLock = () => {
+      calls++;
+      return calls < 3 ? fakeLock(0) : fakeLock(4321);
+    };
+
+    const result = await resolveUiLockCollision({
+      requestedPort: 4321,
+      host: 'localhost',
+      lockDir,
+      readLock,
+      pollIntervalMs: 5,
+      pollDeadlineMs: 500,
+    });
+
+    expect(result.mode).toBe('already-running');
+    if (result.mode === 'already-running') expect(result.port).toBe(4321);
   });
 });

@@ -14,13 +14,16 @@
  * `contentDir` — mirrors `start.ts` verbatim so asset-path precedence does
  * not change post-split.
  *
- * Lock-collision handling (US-005) is intentionally out of scope for this
- * story — a `ProcessLockCollisionError` propagates. The proxy-mode handler
- * lands in a follow-up commit.
+ * Lock-collision handling (US-005): when another `ok ui` already holds
+ * `ui.lock`, `resolveUiLockCollision` decides between three modes —
+ * silent exit (same port), reverse HTTP proxy (different port with live
+ * upstream), or timeout (upstream still binding). The proxy uses only
+ * `node:http` (see `ui-proxy.ts`).
  */
 import type { Server as HttpServer, ServerResponse } from 'node:http';
 import { Command } from 'commander';
 import type { Config } from '../config/schema.ts';
+import { type ProxyServerHandle, startProxyServer } from './ui-proxy.ts';
 
 export interface UiServerHandle {
   httpServer: HttpServer;
@@ -180,6 +183,90 @@ function resolveRequestedPort(optsPort: string | undefined, envPort: string | un
   return 3000;
 }
 
+/**
+ * Decide what to do when another `ok ui` already holds `ui.lock`.
+ *
+ * - Same requested port as the lock holder → "already running"; caller
+ *   logs and exits 0 (no proxy; duplicate attempt).
+ * - Different requested port, lock port > 0 → reverse HTTP proxy on the
+ *   requested port forwarding to the lock holder.
+ * - Different requested port, lock port == 0 → poll the lock for up to
+ *   `pollDeadlineMs` (default 2000); throw if still 0 at deadline.
+ * - Lock disappears during resolution → throw so the caller can retry
+ *   acquiring cleanly.
+ *
+ * No side effects beyond starting the proxy server on the "proxy" branch.
+ * Tests verify each branch directly without driving Commander.
+ */
+export type UiCollisionResult =
+  | { mode: 'already-running'; port: number }
+  | { mode: 'proxy'; handle: ProxyServerHandle; upstreamPort: number };
+
+export interface ResolveUiLockCollisionOptions {
+  requestedPort: number;
+  host: string;
+  lockDir: string;
+  /** Override for tests. Defaults to `readUiLock` from the server package. */
+  readLock?: () =>
+    | import('@inkeep/open-knowledge-server').UiLockMetadata
+    | null
+    | Promise<import('@inkeep/open-knowledge-server').UiLockMetadata | null>;
+  pollIntervalMs?: number;
+  pollDeadlineMs?: number;
+}
+
+export async function resolveUiLockCollision(
+  opts: ResolveUiLockCollisionOptions,
+): Promise<UiCollisionResult> {
+  const readLock =
+    opts.readLock ??
+    (async () => {
+      const { readUiLock } = await import('@inkeep/open-knowledge-server');
+      return readUiLock(opts.lockDir);
+    });
+
+  const initial = await readLock();
+  if (!initial) {
+    throw new Error(
+      'UI lock collision reported but the lock disappeared before handling — retry acquiring.',
+    );
+  }
+
+  if (initial.port === opts.requestedPort && initial.port > 0) {
+    return { mode: 'already-running', port: initial.port };
+  }
+
+  let upstreamPort = initial.port;
+  if (upstreamPort === 0) {
+    const deadline = Date.now() + (opts.pollDeadlineMs ?? 2000);
+    const intervalMs = opts.pollIntervalMs ?? 100;
+    while (Date.now() < deadline) {
+      await new Promise<void>((done) => {
+        setTimeout(done, intervalMs);
+      });
+      const lock = await readLock();
+      if (lock && lock.port > 0) {
+        upstreamPort = lock.port;
+        break;
+      }
+    }
+    if (upstreamPort === 0) {
+      throw new Error('UI did not bind within 2s; run `ok clean`');
+    }
+    if (upstreamPort === opts.requestedPort) {
+      return { mode: 'already-running', port: upstreamPort };
+    }
+  }
+
+  const handle = await startProxyServer({
+    listenPort: opts.requestedPort,
+    host: opts.host,
+    upstreamHost: 'localhost',
+    upstreamPort,
+  });
+  return { mode: 'proxy', handle, upstreamPort };
+}
+
 export function uiCommand(getConfig: () => Config): Command {
   return new Command('ui')
     .description('Serve the Open Knowledge React editor UI')
@@ -187,7 +274,10 @@ export function uiCommand(getConfig: () => Config): Command {
     .option('-H, --host <host>', 'UI host', 'localhost')
     .action(async (opts: { port?: string; host?: string }) => {
       const { dim } = await import('../ui/colors.ts');
+      const { UiLockCollisionError } = await import('@inkeep/open-knowledge-server');
+      const { resolveContentDir, resolveLockDir } = await import('../config/paths.ts');
       const config = getConfig();
+      const host = opts.host ?? 'localhost';
 
       let requestedPort: number;
       try {
@@ -198,29 +288,67 @@ export function uiCommand(getConfig: () => Config): Command {
         return;
       }
 
-      const handle = await startUiServer({
-        config,
-        cwd: process.cwd(),
-        port: requestedPort,
-        host: opts.host ?? 'localhost',
-      });
-
-      console.log(`${dim('[ui]')} listening on http://${opts.host ?? 'localhost'}:${handle.port}`);
-
-      let shuttingDown = false;
-      const shutdown = (signal: NodeJS.Signals) => {
-        if (shuttingDown) return;
-        shuttingDown = true;
-        console.log(dim(`\n[ui] Shutting down (${signal})...`));
-        handle.release();
-        handle.httpServer.close(() => {
-          process.exit(process.exitCode ?? 0);
+      try {
+        const handle = await startUiServer({
+          config,
+          cwd: process.cwd(),
+          port: requestedPort,
+          host,
         });
-        // Safety timeout — close() may hang on keepalive sockets.
-        setTimeout(() => process.exit(process.exitCode ?? 0), 2000).unref();
-      };
-      process.once('SIGINT', () => shutdown('SIGINT'));
-      process.once('SIGTERM', () => shutdown('SIGTERM'));
+        console.log(`${dim('[ui]')} listening on http://${host}:${handle.port}`);
+
+        let shuttingDown = false;
+        const shutdown = (signal: NodeJS.Signals) => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          console.log(dim(`\n[ui] Shutting down (${signal})...`));
+          handle.release();
+          handle.httpServer.close(() => {
+            process.exit(process.exitCode ?? 0);
+          });
+          setTimeout(() => process.exit(process.exitCode ?? 0), 2000).unref();
+        };
+        process.once('SIGINT', () => shutdown('SIGINT'));
+        process.once('SIGTERM', () => shutdown('SIGTERM'));
+        return;
+      } catch (err) {
+        if (!(err instanceof UiLockCollisionError)) throw err;
+
+        const lockDir = resolveLockDir(resolveContentDir(config, process.cwd()));
+        let result: UiCollisionResult;
+        try {
+          result = await resolveUiLockCollision({
+            requestedPort,
+            host,
+            lockDir,
+          });
+        } catch (collisionErr) {
+          console.error(
+            collisionErr instanceof Error ? collisionErr.message : String(collisionErr),
+          );
+          process.exit(1);
+        }
+
+        if (result.mode === 'already-running') {
+          console.log(`UI already running at http://${host}:${result.port}`);
+          process.exit(0);
+        }
+
+        console.log(
+          `UI running at http://${host}:${result.upstreamPort}; acting as HTTP proxy on port ${result.handle.port}`,
+        );
+
+        let shuttingDown = false;
+        const shutdown = (signal: NodeJS.Signals) => {
+          if (shuttingDown) return;
+          shuttingDown = true;
+          console.log(dim(`\n[ui-proxy] Shutting down (${signal})...`));
+          result.handle.close().finally(() => process.exit(process.exitCode ?? 0));
+          setTimeout(() => process.exit(process.exitCode ?? 0), 2000).unref();
+        };
+        process.once('SIGINT', () => shutdown('SIGINT'));
+        process.once('SIGTERM', () => shutdown('SIGTERM'));
+      }
     });
 }
 
