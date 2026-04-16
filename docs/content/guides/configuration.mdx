@@ -42,7 +42,7 @@ The following directories are always excluded from traversal regardless of `.git
 | Tool caches | `.turbo`, `.cache`, `.parcel-cache`, `coverage` |
 | VCS | `.git` |
 
-These skips apply at the top level of the content directory. A directory named `dist` nested under a non-skipped path (e.g. `docs/dist/`) is also skipped.
+These skips apply when the directory name appears as the first path segment. For example, `dist/` at the content root is skipped, and paths like `dist/foo/bar` are also skipped because `dist` is the first segment. Nested instances under non-skipped paths (e.g. `docs/dist/`) rely on `.gitignore` or `content.exclude` patterns.
 
 ## Example configs
 

@@ -305,6 +305,10 @@ function loadNestedGitignores(dir: string, projectDir: string, ig: Ignore): void
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
 
+    // Fast-path: built-in skips never contain user .gitignore files and can
+    // be massive trees (node_modules) or contain broken symlinks (pnpm).
+    if (BUILTIN_SKIP_DIRS.has(entry.name)) continue;
+
     const dirPath = join(dir, entry.name);
     const relToProject = relative(projectDir, dirPath);
 

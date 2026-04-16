@@ -327,18 +327,21 @@ describe('ContentFilter', () => {
       mkdirSync(nmDir);
       // Broken symlink — target does not exist
       symlinkSync(join(nmDir, 'nonexistent-target'), join(nmDir, 'broken-link'));
+      // A real .md inside node_modules — if populateDirCount descends, the dir
+      // would count as having an included doc, making its sibling assets pass.
+      writeFileSync(join(nmDir, 'README.md'), '# Pkg\n');
       writeFileSync(join(projectDir, 'docs.md'), '# Docs\n');
 
-      // createContentFilter calls populateDirCount at construction time.
-      // If it descends into node_modules, statSync on broken-link will throw.
-      expect(() =>
-        createContentFilter({
-          projectDir,
-          contentDir: projectDir,
-          includePatterns: ['**/*.md'],
-          excludePatterns: [],
-        }),
-      ).not.toThrow();
+      const filter = createContentFilter({
+        projectDir,
+        contentDir: projectDir,
+        includePatterns: ['**/*.md'],
+        excludePatterns: [],
+      });
+
+      // node_modules was skipped: the .md inside it was NOT counted, so the
+      // sibling-asset rule does not apply and its assets remain excluded.
+      expect(filter.isExcluded('node_modules/logo.png')).toBe(true);
     });
   });
 
