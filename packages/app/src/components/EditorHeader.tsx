@@ -5,6 +5,7 @@ import {
   buildRenamedNodePath,
   isValidNodeName,
   normalizeRenameValue,
+  type RenamedDocMapping,
   remapActiveDocName,
 } from '@/components/file-tree-operations';
 import { Button } from '@/components/ui/button';
@@ -14,6 +15,7 @@ import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
@@ -23,6 +25,12 @@ import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 import { ThemeToggle } from './ThemeToggle';
 import { displayAuthor, formatRelativeTime } from './TimelinePanel';
+
+interface RenameResponse {
+  ok: boolean;
+  renamed?: RenamedDocMapping[];
+  error?: string;
+}
 
 interface EditorHeaderProps {
   editorMode: EditorMode;
@@ -82,10 +90,21 @@ export function EditorHeader({
   const [isRenameLoading, setIsRenameLoading] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const commitInProgressRef = useRef(false);
+  // Set by cancelRename/reset-effect to block the blur→commitRename race
+  // (unmounting a focused Input fires blur; this prevents commit-after-cancel).
+  const cancelRequestedRef = useRef(false);
+  // Captures activeDocName at rename entry to prevent wrong-doc rename
+  // if the user navigates mid-rename and blur fires with the new doc's closure.
+  const renameDocRef = useRef<string | null>(null);
+  // Last normalized value the server rejected. Blocks re-POST of the same value
+  // on every outside-click blur, which would hammer the server on 409/503.
+  const lastFailedValueRef = useRef<string | null>(null);
 
-  // Exit rename mode when the active doc changes (e.g. navigation)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset rename on doc change
+  // Exit rename mode when the active doc changes (e.g. navigation).
+  // cancelRequestedRef suppresses the blur→commitRename race on unmount.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeDocName is an intentional trigger-only dep, not a missing one
   useEffect(() => {
+    cancelRequestedRef.current = true;
     setIsRenaming(false);
     setRenameError(null);
   }, [activeDocName]);
@@ -107,26 +126,39 @@ export function EditorHeader({
   function enterRenameMode() {
     if (!activeDocName || isFolderTarget) return;
     const segments = activeDocName.split('/');
+    cancelRequestedRef.current = false;
+    renameDocRef.current = activeDocName;
     setRenameValue(segments[segments.length - 1]);
     setRenameError(null);
+    lastFailedValueRef.current = null;
     setIsRenaming(true);
   }
 
   function cancelRename() {
+    cancelRequestedRef.current = true;
     setIsRenaming(false);
     setRenameValue('');
     setRenameError(null);
+    lastFailedValueRef.current = null;
   }
 
   async function commitRename() {
+    if (cancelRequestedRef.current) {
+      cancelRequestedRef.current = false;
+      return;
+    }
     if (commitInProgressRef.current) return;
-    if (!activeDocName) {
+
+    // Use the doc name captured at rename entry to prevent wrong-doc rename
+    // if activeDocName changed due to navigation mid-rename.
+    const docName = renameDocRef.current;
+    if (!docName) {
       cancelRename();
       return;
     }
 
     const normalized = normalizeRenameValue('file', renameValue);
-    const segments = activeDocName.split('/');
+    const segments = docName.split('/');
     const currentName = segments[segments.length - 1];
 
     // No-op: name unchanged
@@ -135,14 +167,18 @@ export function EditorHeader({
       return;
     }
 
+    // The server already rejected this exact value — don't re-POST on every
+    // outside click. User must edit the input to clear lastFailedValueRef.
+    if (normalized === lastFailedValueRef.current) return;
+
     // Validation
     if (!isValidNodeName(normalized)) {
-      setRenameError('Invalid name — cannot be empty, ".", "..", or contain "/" or "\\"');
+      setRenameError('Name must be a single path segment');
       return;
     }
 
     const newDocName = buildRenamedNodePath(
-      { kind: 'file', path: activeDocName, name: currentName },
+      { kind: 'file', path: docName, name: currentName },
       normalized,
     );
 
@@ -154,21 +190,36 @@ export function EditorHeader({
       const res = await fetch('/api/rename', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docName: activeDocName, newDocName }),
+        body: JSON.stringify({ docName: docName, newDocName }),
       });
-      const data = await res.json();
+
+      let data: RenameResponse;
+      try {
+        data = (await res.json()) as RenameResponse;
+      } catch (parseErr) {
+        console.warn(
+          '[EditorHeader] rename response JSON parse failed:',
+          parseErr,
+          'status:',
+          res.status,
+        );
+        setRenameError(`Server returned an invalid response (HTTP ${res.status})`);
+        setIsRenameLoading(false);
+        commitInProgressRef.current = false;
+        lastFailedValueRef.current = normalized;
+        return;
+      }
 
       if (!res.ok || !data.ok) {
         setRenameError(data.error ?? 'Failed to rename');
         setIsRenameLoading(false);
         commitInProgressRef.current = false;
+        lastFailedValueRef.current = normalized;
         return;
       }
 
-      const renamed: Array<{ fromDocName: string; toDocName: string }> = Array.isArray(data.renamed)
-        ? data.renamed
-        : [];
-      const nextActiveDocName = remapActiveDocName(activeDocName, renamed);
+      const renamed: RenamedDocMapping[] = Array.isArray(data.renamed) ? data.renamed : [];
+      const nextActiveDocName = remapActiveDocName(docName, renamed);
 
       for (const entry of renamed) closeDocument(entry.fromDocName);
       emitDocumentsChanged(['files', 'backlinks', 'graph']);
@@ -177,11 +228,14 @@ export function EditorHeader({
       setRenameValue('');
       setIsRenameLoading(false);
       commitInProgressRef.current = false;
+      lastFailedValueRef.current = null;
+      renameDocRef.current = null;
 
-      if (nextActiveDocName && nextActiveDocName !== activeDocName) {
-        window.location.hash = `#/${nextActiveDocName}`;
+      if (nextActiveDocName && nextActiveDocName !== docName) {
+        window.location.hash = hashFromDocName(nextActiveDocName);
       }
-    } catch (_err) {
+    } catch (err) {
+      console.warn('[EditorHeader] rename failed:', err);
       setRenameError('Network error — please try again');
       setIsRenameLoading(false);
       commitInProgressRef.current = false;
@@ -215,10 +269,14 @@ export function EditorHeader({
                 ref={renameInputRef}
                 value={renameValue}
                 disabled={isRenameLoading}
-                aria-label="Rename file"
+                aria-label={`Rename ${activeDocName}`}
+                aria-invalid={renameError ? true : undefined}
+                aria-describedby={renameError ? 'editor-header-rename-error' : undefined}
+                aria-busy={isRenameLoading || undefined}
                 onChange={(e) => {
                   setRenameValue(e.target.value);
                   setRenameError(null);
+                  lastFailedValueRef.current = null;
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -232,18 +290,33 @@ export function EditorHeader({
                 onBlur={() => void commitRename()}
                 className="h-7 min-w-0 flex-1 bg-background text-sm"
               />
-              <span className="shrink-0 text-xs text-muted-foreground/40">.md</span>
+              <span aria-hidden="true" className="shrink-0 text-xs text-muted-foreground/40">
+                .md
+              </span>
             </div>
-            {renameError && <span className="text-xs text-destructive mt-0.5">{renameError}</span>}
+            {renameError && (
+              <span
+                id="editor-header-rename-error"
+                role="alert"
+                className="text-xs text-destructive mt-0.5"
+              >
+                {renameError}
+              </span>
+            )}
           </div>
         ) : activeDocName ? (
-          <button
-            type="button"
-            onClick={enterRenameMode}
-            className="text-sm text-muted-foreground truncate min-w-0 cursor-pointer hover:text-foreground transition-colors bg-transparent border-none p-0"
-          >
-            {displayName}
-          </button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={enterRenameMode}
+                className="text-sm text-muted-foreground truncate min-w-0 cursor-pointer hover:text-foreground transition-colors bg-transparent border-none p-0"
+              >
+                {displayName}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Click to rename</TooltipContent>
+          </Tooltip>
         ) : (
           <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
         )}
