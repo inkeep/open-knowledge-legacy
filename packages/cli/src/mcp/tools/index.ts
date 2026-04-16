@@ -149,6 +149,7 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   registerExec(server, {
     resolveCwd: opts.resolveCwd,
     serverUrl: opts.serverUrl,
+    config: opts.config,
   });
 
   // Workflow tools — return instructional text, no server connection needed

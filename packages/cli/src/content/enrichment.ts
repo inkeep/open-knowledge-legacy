@@ -17,9 +17,11 @@ import type { Dirent } from 'node:fs';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, relative, resolve } from 'node:path';
 import { z } from 'zod';
+import type { FolderRule } from '../config/schema.ts';
 import { OK_DIR } from '../constants.ts';
 import { httpGet } from '../mcp/tools/shared.ts';
 import { parseFrontmatter } from '../utils/frontmatter.ts';
+import { resolveFolderFrontmatter } from './folder-rules.ts';
 import { type GitCommit, type ProjectHistorySource, readProjectGitLog } from './project-log.ts';
 import { type HistorySource, readShadowLog, type ShadowCommit } from './shadow-log.ts';
 
@@ -82,6 +84,27 @@ export interface DirectoryMeta {
   /** Project-root-relative path to the directory (no trailing slash). */
   path: string;
   type: 'directory';
+  /**
+   * Folder title from a matching `folders:` rule in config.yml, if any.
+   * Absent when no folder rule matches or no rules are configured.
+   */
+  title?: string;
+  /** Folder description from a matching `folders:` rule. Absent when no match. */
+  description?: string;
+  /**
+   * Folder tags from matching `folders:` rules (concat + dedup across rules).
+   * Absent when no matching rule contributes any tag.
+   *
+   * Note the type divergence from `EnrichedMeta.tags` (which is always
+   * `string[]`, defaulting to `[]`): on `DirectoryMeta`, tags is optional so
+   * that folders without a matching rule have no `tags` key at all — matching
+   * the behavior of `title` and `description` on this type. EnrichedMeta.tags
+   * stays always-present because every file has frontmatter state (even if
+   * empty). Consumers of `EnrichedEntry` must handle both cases:
+   *   file.tags.length       // always safe — array or []
+   *   directory.tags?.length // optional — may be undefined
+   */
+  tags?: string[];
   /** Number of wiki (.md/.mdx) files directly in this dir (not recursive). */
   directMdCount: number;
   /** Number of wiki (.md/.mdx) files in this dir and all descendants (bounded). */
@@ -160,6 +183,14 @@ export interface EnrichPathDeps {
   serverUrl?: string | undefined;
   /** History depth for rich mode; defaults to 5. */
   historyDepth?: number;
+  /**
+   * Folder-rule defaults from `config.yml` `folders:`. When provided, the
+   * resolver merges rule-derived title/description/tags with the file's own
+   * frontmatter — file scalars win; tags concat (rules first, file last)
+   * with first-occurrence-preserved dedup. Omit / pass `[]` for today's
+   * file-only behavior.
+   */
+  folderRules?: FolderRule[];
 }
 
 export interface EnrichPathOptions {
@@ -178,7 +209,7 @@ const FrontmatterSchema = z.object({
   tags: z.array(z.string()).default([]),
 });
 
-function pathToDocName(relPath: string): string {
+export function pathToDocName(relPath: string): string {
   return relPath.replace(/\.md$/, '').replace(/\.mdx$/, '');
 }
 
@@ -231,6 +262,54 @@ async function fetchBacklinks(
   return entries;
 }
 
+/**
+ * Chunk size for bulk backlink-count fetches. Keeps each URL comfortably
+ * under typical 8KB HTTP URL limits even with long docNames (e.g. 100 x
+ * ~70-char paths ≈ 7KB after comma-joining and percent-encoding).
+ */
+const BACKLINK_COUNT_CHUNK = 100;
+
+/**
+ * Bulk backlink-count fetch for slim-enrichment callers (multi-path ls/grep/
+ * find/multi-cat). Batches into chunks of ${BACKLINK_COUNT_CHUNK} to keep
+ * each request URL well under the 8KB limit; chunks fire in parallel so
+ * latency stays close to a single round-trip. Returns `null` when no
+ * serverUrl or every chunk fails; otherwise returns a `Map<docName, number>`
+ * with entries from all successful chunks (partial chunks are merged —
+ * missing docNames ⇒ not in the map).
+ *
+ * See `/api/backlink-counts` in `api-extension.ts`.
+ */
+export async function fetchBacklinkCountsBatch(
+  serverUrl: string | undefined,
+  docNames: string[],
+): Promise<Map<string, number> | null> {
+  if (!serverUrl || docNames.length === 0) return null;
+  const unique = [...new Set(docNames)];
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += BACKLINK_COUNT_CHUNK) {
+    chunks.push(unique.slice(i, i + BACKLINK_COUNT_CHUNK));
+  }
+  const results = await Promise.all(
+    chunks.map(async (chunk) => {
+      const param = encodeURIComponent(chunk.join(','));
+      const result = await httpGet(serverUrl, `/api/backlink-counts?docNames=${param}`);
+      if (!result.ok) return null;
+      return (result.counts ?? {}) as Record<string, unknown>;
+    }),
+  );
+  const out = new Map<string, number>();
+  let anySuccess = false;
+  for (const chunkResult of results) {
+    if (!chunkResult) continue;
+    anySuccess = true;
+    for (const [name, val] of Object.entries(chunkResult)) {
+      if (typeof val === 'number' && Number.isFinite(val)) out.set(name, val);
+    }
+  }
+  return anySuccess ? out : null;
+}
+
 async function fetchForwardLinks(
   serverUrl: string | undefined,
   docName: string,
@@ -269,6 +348,44 @@ async function fetchForwardLinks(
 }
 
 /**
+ * Merge file frontmatter with folder-rule defaults (FR3 + FR4).
+ * Scalars (title, description): file value wins when set; folder value fills in.
+ * Tags: concat folder tags first, file tags last; dedup first-occurrence.
+ */
+function mergeFileAndFolder(
+  fileFm: { title?: string; description?: string; tags: string[] } | null,
+  folderRules: FolderRule[] | undefined,
+  relPath: string,
+): { title?: string; description?: string; tags: string[] } {
+  const rules = folderRules ?? [];
+  const folderFm = rules.length === 0 ? {} : resolveFolderFrontmatter(rules, relPath);
+  const title = fileFm?.title ?? folderFm.title;
+  const description = fileFm?.description ?? folderFm.description;
+  const fileTags = fileFm?.tags ?? [];
+  const folderTags = folderFm.tags ?? [];
+  let tags: string[];
+  if (folderTags.length === 0) {
+    tags = fileTags;
+  } else {
+    const seen = new Set<string>();
+    tags = [];
+    for (const tag of folderTags) {
+      if (!seen.has(tag)) {
+        seen.add(tag);
+        tags.push(tag);
+      }
+    }
+    for (const tag of fileTags) {
+      if (!seen.has(tag)) {
+        seen.add(tag);
+        tags.push(tag);
+      }
+    }
+  }
+  return { title, description, tags };
+}
+
+/**
  * Assemble enrichment for a single wiki path. See `EnrichedMeta` for the
  * unified shape and the convention for nullable fields on multi-path output.
  */
@@ -284,20 +401,14 @@ export async function enrichPath(
 
   const fmPromise = readFrontmatter(absPath);
 
-  const base = {
-    path: relPath,
-    title: undefined as string | undefined,
-    description: undefined as string | undefined,
-    tags: [] as string[],
-  };
-
   if (!rich) {
     const fm = await fmPromise;
+    const merged = mergeFileAndFolder(fm, deps.folderRules, relPath);
     return {
-      ...base,
-      title: fm?.title,
-      description: fm?.description,
-      tags: fm?.tags ?? [],
+      path: relPath,
+      title: merged.title,
+      description: merged.description,
+      tags: merged.tags,
       backlinkCount: null,
       backlinks: null,
       forwardLinkCount: null,
@@ -324,11 +435,12 @@ export async function enrichPath(
     })),
   ]);
 
+  const merged = mergeFileAndFolder(fm, deps.folderRules, relPath);
   return {
-    ...base,
-    title: fm?.title,
-    description: fm?.description,
-    tags: fm?.tags ?? [],
+    path: relPath,
+    title: merged.title,
+    description: merged.description,
+    tags: merged.tags,
     backlinkCount: backlinks?.length ?? null,
     backlinks,
     forwardLinkCount: forwardLinks?.length ?? null,
@@ -410,10 +522,15 @@ async function scanDirectory(absDir: string, projectDir: string): Promise<DirSca
  * Assemble enrichment for a directory path. Returns folder-shape metadata
  * (counts + most-recent wiki file hint) — the on-demand equivalent of the
  * old persisted INDEX.md catalogs (D26 teardown).
+ *
+ * When `folderRules` is provided, a matching rule's title/description/tags
+ * are attached directly to the returned `DirectoryMeta` (D19 / FR5 folder-
+ * level view). `scanDirectory` semantics (recursive/direct/childDirCount)
+ * are NOT affected by rules — counts remain raw-count per FR12.
  */
 export async function enrichDirectory(
   relPathInput: string,
-  deps: Pick<EnrichPathDeps, 'projectDir'>,
+  deps: Pick<EnrichPathDeps, 'projectDir' | 'folderRules'>,
 ): Promise<DirectoryMeta> {
   const relPath = relPathInput.replace(/^\.\//, '').replace(/^\/+/, '').replace(/\/+$/, '');
   const absDir = resolve(deps.projectDir, relPath);
@@ -429,7 +546,7 @@ export async function enrichDirectory(
     };
   }
 
-  return {
+  const result: DirectoryMeta = {
     path: relPath,
     type: 'directory',
     directMdCount: scan.directMdCount,
@@ -438,4 +555,14 @@ export async function enrichDirectory(
     mostRecentMd,
     truncated: scan.truncated,
   };
+
+  const rules = deps.folderRules ?? [];
+  if (rules.length > 0) {
+    const folderFm = resolveFolderFrontmatter(rules, relPath);
+    if (folderFm.title !== undefined) result.title = folderFm.title;
+    if (folderFm.description !== undefined) result.description = folderFm.description;
+    if (folderFm.tags !== undefined && folderFm.tags.length > 0) result.tags = folderFm.tags;
+  }
+
+  return result;
 }

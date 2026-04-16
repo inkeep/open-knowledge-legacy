@@ -893,6 +893,15 @@ export class BacklinkIndex {
       .sort((a, b) => a.source.localeCompare(b.source));
   }
 
+  /**
+   * O(1) backlink count without materializing the entry list — cheap primitive
+   * for bulk/listing UIs that need connection density but not sources/snippets.
+   */
+  getBacklinkCount(target: string, branch = this.activeBranch): number {
+    const state = this.getState(branch);
+    return state.backward.get(target)?.size ?? 0;
+  }
+
   getForwardLinks(source: string, branch = this.activeBranch): string[] {
     const state = this.getState(branch);
     return [...(state.forward.get(source) ?? new Set<string>())].sort((a, b) => a.localeCompare(b));

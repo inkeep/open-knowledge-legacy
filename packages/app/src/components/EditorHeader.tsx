@@ -3,7 +3,7 @@ import { ArrowDownToLine, Columns2, FolderOpen, History, Pin, PinOff, Rows2 } fr
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { SidebarTrigger } from '@/components/ui/sidebar';
+import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
@@ -47,6 +47,7 @@ export function EditorHeader({
 }: EditorHeaderProps) {
   const { activeDocName, activeProvider, activeTarget, pinnedDoc, pin, unpin } =
     useDocumentContext();
+  const { state: sidebarState } = useSidebar();
   const syncStatus = useSyncStatus(activeProvider);
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
   const sourceDisabled = !activeDocName || !isConnected;
@@ -80,7 +81,14 @@ export function EditorHeader({
   return (
     <header className="flex h-12 shrink-0 items-center border-b">
       <div className="flex flex-1 items-center gap-1 px-3 min-w-0">
-        <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
+          </TooltipTrigger>
+          <TooltipContent>
+            {sidebarState === 'expanded' ? 'Hide Files' : 'Show Files'}
+          </TooltipContent>
+        </Tooltip>
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
         {isFolderTarget ? (
           <span className="inline-flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
@@ -133,7 +141,7 @@ export function EditorHeader({
       </div>
 
       {/* Normal editing mode: Visual/Markdown toggle */}
-      {!isDiffMode && (
+      {!isDiffMode && activeDocName && (
         <ToggleGroup
           type="single"
           value={editorMode === 'source' ? 'source' : 'visual'}

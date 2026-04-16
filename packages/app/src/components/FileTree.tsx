@@ -1,15 +1,27 @@
 import {
+  Bot,
   ChevronRight,
+  Copy,
   File,
   Folder,
   FolderOpen,
   FolderPlus,
+  FoldVertical,
   Link2,
   Pencil,
   SquarePen,
   Trash2,
+  UnfoldVertical,
 } from 'lucide-react';
-import { type FC, useEffect, useRef, useState } from 'react';
+import {
+  type FC,
+  type Ref,
+  startTransition,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react';
 import { toast } from 'sonner';
 import { DeleteConfirmationDialog } from '@/components/DeleteConfirmationDialog';
 import {
@@ -39,6 +51,9 @@ import {
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { Dialog } from '@/components/ui/dialog';
@@ -60,6 +75,57 @@ import { cn } from '@/lib/utils';
 
 function navigateTo(targetPath: string) {
   window.location.hash = hashFromDocName(targetPath);
+}
+
+/**
+ * Workspace-relative on-disk path for a tree node. Files get the `.md` extension;
+ * folders return the bare path (no trailing slash). Mirrors how paths appear in
+ * git diffs, VS Code 'Copy Relative Path', and the server's docName convention.
+ */
+function relativePathForNode(node: { kind: 'file' | 'folder'; path: string }): string {
+  return node.kind === 'file' ? `${node.path}.md` : node.path;
+}
+
+/**
+ * Join `contentDir` with a workspace-relative path. Cross-platform — uses the
+ * platform separator that `/api/workspace` returns (Node's `path.sep`), which
+ * is the source of truth for the host. `TreeNode.path` and `DocEntry.docName`
+ * are always POSIX-form in transit, so when the host is Windows we rewrite
+ * their internal `/` to `\` before joining.
+ */
+function joinWorkspacePath(contentDir: string, relative: string, sep: '/' | '\\'): string {
+  const normalizedRelative = sep === '\\' ? relative.replaceAll('/', '\\') : relative;
+  const trimmedDir = contentDir.endsWith(sep) ? contentDir.slice(0, -1) : contentDir;
+  return `${trimmedDir}${sep}${normalizedRelative}`;
+}
+
+async function copyToClipboard(text: string, label: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast.success(`Copied ${label}`, { description: text });
+  } catch (err) {
+    console.warn('[FileTree] clipboard write failed:', err);
+    toast.error(`Could not copy ${label}`);
+  }
+}
+
+/**
+ * Basename-scoped files that get a distinct icon in the sidebar. Covers the
+ * cross-tool agent-doc conventions this repo treats as first-class: AGENTS.md
+ * (agents.md spec), CLAUDE.md (Claude Code), and SKILL.md (skill bundles under
+ * `.claude/skills/**`, `.agents/skills/**`). Basename match is case-insensitive
+ * so `agents.md`, `Claude.md`, etc. all surface the badge. `TreeNode.name` is
+ * already extension-less by construction.
+ *
+ * The badge icon is `Bot`, not `Sparkles` — `Sparkles` is already the live-
+ * agent-presence fallback in `PresenceBar.tsx` (`AgentIcon` default case). Two
+ * separate meanings on the same glyph ("this file is an agent config" vs. "an
+ * agent is editing right now") would be ambiguous in the sidebar chrome.
+ */
+const AGENT_FILE_NAMES = new Set(['agents', 'agent', 'claude', 'skill']);
+
+function isAgentFile(node: TreeNode): boolean {
+  return node.kind === 'file' && AGENT_FILE_NAMES.has(node.name.toLowerCase());
 }
 
 interface RenamePathResponse {
@@ -157,6 +223,8 @@ const FileTreeNode: FC<{
   editingPath: string | null;
   editingValue: string;
   busyPath: string | null;
+  /** Absolute on-disk workspace root + host path separator, or null while /api/workspace is still loading. */
+  workspace: { contentDir: string; pathSeparator: '/' | '\\' } | null;
   onNavigate: (targetPath: string) => void;
   onStartRename: (target: FileTreeTarget) => void;
   onEditingValueChange: (value: string) => void;
@@ -164,6 +232,8 @@ const FileTreeNode: FC<{
   onCancelRename: () => void;
   onDelete: (target: FileTreeTarget) => void;
   onStartCreating: (kind: 'file' | 'folder', parentDir: string) => void;
+  onExpandSubtree: (folder: TreeNode) => void;
+  onCollapseSubtree: (folder: TreeNode) => void;
   inlineCreate: InlineCreateProps | null;
   getInlineCreate: (parentDir: string) => InlineCreateProps | null;
   nested?: boolean;
@@ -178,6 +248,7 @@ const FileTreeNode: FC<{
   editingPath,
   editingValue,
   busyPath,
+  workspace,
   onNavigate,
   onStartRename,
   onEditingValueChange,
@@ -185,6 +256,8 @@ const FileTreeNode: FC<{
   onCancelRename,
   onDelete,
   onStartCreating,
+  onExpandSubtree,
+  onCollapseSubtree,
   inlineCreate,
   getInlineCreate,
 }) => {
@@ -220,6 +293,7 @@ const FileTreeNode: FC<{
   const target: FileTreeTarget = { kind: node.kind, path: node.path, name: node.name };
 
   const showSymlink = isFile && node.isSymlink;
+  const showAgentBadge = isAgentFile(node);
 
   const fileContent = (
     <>
@@ -238,7 +312,15 @@ const FileTreeNode: FC<{
         {node.name}
         {isFile && '.md'}
       </span>
-      {showSymlink && <Link2 className="size-3.5 shrink-0 text-muted-foreground/50" />}
+      {/*
+       * `!text-muted-foreground/50` (Tailwind v4 trailing-bang) is required
+       * because SidebarMenuSubButton applies `[&>svg]:text-sidebar-accent-foreground`
+       * to every direct SVG child (sidebar.tsx:636) — without !important, nested
+       * rows render these badges as bright sidebar-accent-foreground while root
+       * rows render them as muted-foreground/50.
+       */}
+      {showAgentBadge && <Bot className="size-3.5 shrink-0 text-muted-foreground/50!" />}
+      {showSymlink && <Link2 className="size-3.5 shrink-0 text-muted-foreground/50!" />}
     </>
   );
 
@@ -350,7 +432,7 @@ const FileTreeNode: FC<{
                 }}
               >
                 <SquarePen aria-hidden="true" />
-                New file
+                New File
               </ContextMenuItem>
               <ContextMenuItem
                 disabled={anyActionBusy}
@@ -362,7 +444,22 @@ const FileTreeNode: FC<{
                 }}
               >
                 <FolderPlus aria-hidden="true" />
-                New folder
+                New Folder
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              {/*
+               * Subtree-scoped expand/collapse — distinct from the sidebar-
+               * header buttons which operate on the whole tree. Only meaningful
+               * on folder rows, which is why the block sits inside the !isFile
+               * guard alongside the other folder-only actions.
+               */}
+              <ContextMenuItem onSelect={() => onExpandSubtree(node)}>
+                <UnfoldVertical aria-hidden="true" />
+                Expand All
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => onCollapseSubtree(node)}>
+                <FoldVertical aria-hidden="true" />
+                Collapse All
               </ContextMenuItem>
               <ContextMenuSeparator />
             </>
@@ -376,9 +473,38 @@ const FileTreeNode: FC<{
               }
             }}
           >
-            <Pencil />
+            <Pencil aria-hidden="true" />
             Rename
           </ContextMenuItem>
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <Copy aria-hidden="true" />
+              Copy Path
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              <ContextMenuItem
+                disabled={!workspace}
+                onSelect={() => {
+                  if (!workspace) return;
+                  const full = joinWorkspacePath(
+                    workspace.contentDir,
+                    relativePathForNode(node),
+                    workspace.pathSeparator,
+                  );
+                  void copyToClipboard(full, 'full path');
+                }}
+              >
+                Full Path
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => {
+                  void copyToClipboard(relativePathForNode(node), 'relative path');
+                }}
+              >
+                Relative Path
+              </ContextMenuItem>
+            </ContextMenuSubContent>
+          </ContextMenuSub>
           <ContextMenuSeparator />
           <ContextMenuItem
             variant="destructive"
@@ -387,7 +513,7 @@ const FileTreeNode: FC<{
               if (!anyActionBusy) onDelete(target);
             }}
           >
-            <Trash2 />
+            <Trash2 aria-hidden="true" />
             Delete
           </ContextMenuItem>
         </ContextMenuContent>
@@ -411,6 +537,7 @@ const FileTreeNode: FC<{
               editingPath={editingPath}
               editingValue={editingValue}
               busyPath={busyPath}
+              workspace={workspace}
               onNavigate={onNavigate}
               onStartRename={onStartRename}
               onEditingValueChange={onEditingValueChange}
@@ -418,6 +545,8 @@ const FileTreeNode: FC<{
               onCancelRename={onCancelRename}
               onDelete={onDelete}
               onStartCreating={onStartCreating}
+              onExpandSubtree={onExpandSubtree}
+              onCollapseSubtree={onCollapseSubtree}
               inlineCreate={getInlineCreate(child.path)}
               getInlineCreate={getInlineCreate}
               nested
@@ -429,11 +558,20 @@ const FileTreeNode: FC<{
   );
 };
 
-export function FileTree({
-  createTrigger,
-}: {
-  createTrigger: { kind: 'file' | 'folder'; parentDir: string; seq: number };
-}) {
+/**
+ * Imperative commands exposed by the FileTree, invoked by the FileSidebar header
+ * buttons. Modeled as a ref handle instead of prop-seq counters because the
+ * trigger relationship here is "parent tells child to do a one-shot thing" —
+ * which React 19's docs explicitly call out as a case that does NOT belong in
+ * an Effect. See https://react.dev/learn/you-might-not-need-an-effect.
+ */
+export interface FileTreeHandle {
+  startCreating(kind: 'file' | 'folder', parentDir: string): void;
+  expandAll(): void;
+  collapseAll(): void;
+}
+
+export function FileTree({ ref }: { ref?: Ref<FileTreeHandle | null> }) {
   const { activeDocName, activeTarget, closeDocument } = useDocumentContext();
   const { addPage } = usePageList();
   const [documents, setDocuments] = useState<DocEntry[]>([]);
@@ -458,7 +596,15 @@ export function FileTree({
   const [creatingValue, setCreatingValue] = useState('');
   const [creatingBusy, setCreatingBusy] = useState(false);
   const [creatingError, setCreatingError] = useState<string | null>(null);
-  const prevCreateSeqRef = useRef(0);
+  // Absolute workspace root + host path separator — null until /api/workspace
+  // resolves. Used to build full filesystem paths for the row context menu's
+  // 'Copy path > Full path' item. The separator comes from the server (Node's
+  // `path.sep`) rather than being inferred client-side, because the shape of
+  // `contentDir` alone doesn't disambiguate all cross-platform cases.
+  const [workspace, setWorkspace] = useState<{
+    contentDir: string;
+    pathSeparator: '/' | '\\';
+  } | null>(null);
 
   if (activeNavigationPath !== prevActiveNavigationPath) {
     // Clear user-collapsed overrides on navigation so ancestors of the new
@@ -519,24 +665,31 @@ export function FileTree({
     };
   }, []);
 
-  // Consume header-button triggers from FileSidebar.
-  const { seq: createSeq, kind: createKind, parentDir: createParentDir } = createTrigger;
+  // Fetch workspace metadata once — contentDir is stable for the session, so no
+  // subscription or refresh is needed. Failure is non-fatal: the 'Copy path > Full
+  // path' menu item stays disabled until the fetch resolves.
   useEffect(() => {
-    if (createSeq > prevCreateSeqRef.current) {
-      prevCreateSeqRef.current = createSeq;
-      setCreatingItem({ kind: createKind, parentDir: createParentDir });
-      setCreatingValue('');
-      setCreatingError(null);
-      if (createParentDir) {
-        setUserExpanded((prev) => new Set(prev).add(createParentDir));
-        setUserCollapsed((prev) => {
-          const next = new Set(prev);
-          next.delete(createParentDir);
-          return next;
-        });
-      }
-    }
-  }, [createSeq, createKind, createParentDir]);
+    let active = true;
+    fetch('/api/workspace')
+      .then(async (res) => {
+        const data = await res.json().catch(() => null);
+        if (!active) return;
+        if (
+          res.ok &&
+          data?.ok &&
+          typeof data.contentDir === 'string' &&
+          (data.pathSeparator === '/' || data.pathSeparator === '\\')
+        ) {
+          setWorkspace({ contentDir: data.contentDir, pathSeparator: data.pathSeparator });
+        }
+      })
+      .catch((err) => {
+        console.warn('[FileTree] /api/workspace fetch failed:', err);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   function startCreating(kind: 'file' | 'folder', parentDir: string) {
     setCreatingItem({ kind, parentDir });
@@ -551,6 +704,85 @@ export function FileTree({
       });
     }
   }
+
+  /**
+   * Expand a folder and all its descendant folders. Used by the row
+   * context-menu "Expand All" action — distinct from the header button which
+   * operates on the whole tree. Same `startTransition` wrapping rationale:
+   * avoids the materialize-all-rows stutter.
+   */
+  function expandSubtree(folder: TreeNode) {
+    const subtreePaths = collectFolderPaths([folder]);
+    startTransition(() => {
+      setUserExpanded((prev) => {
+        const next = new Set(prev);
+        for (const p of subtreePaths) next.add(p);
+        return next;
+      });
+      setUserCollapsed((prev) => {
+        const next = new Set(prev);
+        for (const p of subtreePaths) next.delete(p);
+        return next;
+      });
+    });
+  }
+
+  /**
+   * Collapse a folder and all its descendant folders. Because the global
+   * derivation is `expanded = (ancestors ∪ userExpanded) \ userCollapsed`,
+   * adding the subtree paths to `userCollapsed` correctly overrides both
+   * prior user expansions and the active-doc-ancestor auto-expansion inside
+   * this scope, while leaving unrelated folders untouched.
+   */
+  function collapseSubtree(folder: TreeNode) {
+    const subtreePaths = collectFolderPaths([folder]);
+    startTransition(() => {
+      setUserCollapsed((prev) => {
+        const next = new Set(prev);
+        for (const p of subtreePaths) next.add(p);
+        return next;
+      });
+      setUserExpanded((prev) => {
+        const next = new Set(prev);
+        for (const p of subtreePaths) next.delete(p);
+        return next;
+      });
+    });
+  }
+
+  // Expose imperative commands to the FileSidebar header. Replaces the old
+  // createTrigger prop + seq-counter useEffect — the "parent pings child to do
+  // one thing" pattern is exactly what React 19 recommends against wiring
+  // through Effects. Methods close over current state; useImperativeHandle
+  // re-runs on each render so closures are never stale.
+  //
+  // `expandAll` / `collapseAll` wrap their setters in `startTransition` because
+  // materializing every folder's rows at once produces a user-visible stutter
+  // (hundreds of Radix ContextMenu subtrees instantiating in one render pass).
+  // Transitions mark the update as non-urgent, so the HoverCard close animation
+  // and button-click feedback stay at 60fps; React yields to browser paint /
+  // input and interleaves the tree expansion. See
+  // https://react.dev/reference/react/startTransition.
+  useImperativeHandle(ref, () => ({
+    startCreating,
+    expandAll() {
+      const paths = collectFolderPaths(buildTree(documents));
+      startTransition(() => {
+        setUserExpanded(paths);
+        setUserCollapsed(new Set());
+      });
+    },
+    collapseAll() {
+      // `userCollapsed` must include ancestors of the active doc to override the
+      // derivation `expanded = (ancestors ∪ userExpanded) \ userCollapsed`;
+      // otherwise "collapse all" would leave the active file's chain open.
+      const paths = collectFolderPaths(buildTree(documents));
+      startTransition(() => {
+        setUserCollapsed(paths);
+        setUserExpanded(new Set());
+      });
+    },
+  }));
 
   function handleCancelCreating() {
     if (!creatingBusy) {
@@ -761,7 +993,13 @@ export function FileTree({
 
   // Derive expansion on every render (D4 derive-don't-store):
   //   expandedPaths = (ancestors(activeDocName) ∪ userExpanded) \ userCollapsed
-  // intersected with current folder paths to filter stale entries.
+  // Both userExpanded and userCollapsed are intersected with current folder
+  // paths — `userExpanded ∩ folderPaths` caps the expansion loop, and
+  // `userCollapsed ∩ folderPaths` prevents a stale "I collapsed this before"
+  // entry from pre-collapsing a later-recreated folder at the same path (e.g.
+  // delete then recreate `notes/drafts/`). Either set can grow unboundedly
+  // across a long session; the intersection prevents that from affecting the
+  // derived state.
   const expandedPaths = new Set<string>();
   for (const a of ancestors) {
     if (folderPaths.has(a)) expandedPaths.add(a);
@@ -770,7 +1008,7 @@ export function FileTree({
     if (folderPaths.has(p)) expandedPaths.add(p);
   }
   for (const p of userCollapsed) {
-    expandedPaths.delete(p);
+    if (folderPaths.has(p)) expandedPaths.delete(p);
   }
 
   function handleToggle(path: string) {
@@ -849,8 +1087,11 @@ export function FileTree({
             }}
             onDelete={(target) => setDeleteTarget(target)}
             onStartCreating={startCreating}
+            onExpandSubtree={expandSubtree}
+            onCollapseSubtree={collapseSubtree}
             inlineCreate={getInlineCreate(node.path)}
             getInlineCreate={getInlineCreate}
+            workspace={workspace}
           />
         ))}
       </SidebarMenu>

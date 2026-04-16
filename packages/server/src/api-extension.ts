@@ -62,6 +62,7 @@ import {
   updateFileIndex,
 } from './file-watcher.ts';
 import { getLogger } from './logger.ts';
+import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
   createManagedRenameRecoveryJournal,
   type ManagedRenameSnapshot,
@@ -1246,6 +1247,42 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  /**
+   * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
+   * returns `{ ok: true, counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
+   * (exec ls/grep/find slim enrichment) that need connection density per file
+   * without N-amplifying the single-doc `/api/backlinks` endpoint.
+   * docNames failing `isSafeDocName` are silently dropped from `counts`.
+   */
+  async function handleBacklinkCounts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const raw = url.searchParams.get('docNames');
+      if (!raw) {
+        json(res, 400, { ok: false, error: 'Missing docNames parameter' });
+        return;
+      }
+      const counts: Record<string, number> = {};
+      for (const docName of raw.split(',')) {
+        const trimmed = docName.trim();
+        if (!trimmed || !isSafeDocName(trimmed)) continue;
+        counts[trimmed] = backlinkIndex.getBacklinkCount(trimmed);
+      }
+      json(res, 200, { ok: true, counts });
+    } catch (e) {
+      console.error('[backlink-counts]', e);
+      json(res, 500, { ok: false, error: 'Failed to read backlink counts' });
+    }
+  }
+
   async function handleForwardLinks(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'GET') {
       json(res, 405, { ok: false, error: 'Method not allowed' });
@@ -2091,6 +2128,80 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     json(res, 200, getParseHealth());
   }
 
+  async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Authorization runs BEFORE method dispatch: reversing the order turns the
+    // method check into a fingerprinting oracle for unauth callers (GET → 403,
+    // POST → 405 discloses the verb the endpoint expects). See OWASP ASVS 4.0
+    // V4.1.1 — "perform access control on every request."
+    //
+    // Loopback-only: this endpoint discloses the absolute host filesystem path
+    // (including home directory / username). That's fine for the local-editing
+    // use case the rest of the API is designed for, but if the user configures
+    // `server.host: 0.0.0.0` (demos, shared dev boxes, Codespaces), we do NOT
+    // want to leak the host shape over the network or to cross-origin fetches.
+    // All loopback clients (including requests from a browser on the same
+    // machine) pass — connections from other interfaces are refused.
+    //
+    // DNS-rebinding defense: `req.socket.remoteAddress` will read `127.0.0.1`
+    // for any request that reached the socket via loopback, including requests
+    // triggered by a malicious page that rebinds its hostname to `127.0.0.1`.
+    // The Host-header allowlist below enforces that the caller actually spoke
+    // to us via `localhost` / `127.0.0.1` / `[::1]`, matching the mitigation
+    // in the Ethereum/geth JSON-RPC lineage. Same-origin fetches from the
+    // editor app pass; cross-origin rebinding attempts are refused.
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    // Absolute, canonical contentDir so the client can build full filesystem
+    // paths (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in
+    // the workspace root are resolved via realpath so the path matches on-disk
+    // truth. We treat error kinds in line with the persistence layer's symlink
+    // contract (CLAUDE.md "Symlinks" §):
+    //   - ENOENT: contentDir missing on disk → 200 with `symlinkResolved: false`
+    //     and the unresolved path. Lets "Copy Path" still produce a meaningful
+    //     value when the directory was deleted between server start and this
+    //     request; the client decides whether to act on it.
+    //   - ELOOP / EACCES / anything else: real filesystem error → 500. Matches
+    //     persistence's stricter policy (cyclic symlinks are rejected
+    //     everywhere) and avoids handing the user a path that won't resolve.
+    const resolvedRoot = resolve(contentDir);
+    let resolvedContentDir = resolvedRoot;
+    let symlinkResolved = true;
+    try {
+      resolvedContentDir = realpathSync(resolvedRoot);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === 'ENOENT') {
+        console.warn('[workspace] contentDir does not exist; returning unresolved path', {
+          path: resolvedRoot,
+        });
+        symlinkResolved = false;
+      } else {
+        console.warn('[workspace] realpath failed for contentDir', { path: resolvedRoot, err });
+        json(res, 500, { ok: false, error: 'workspace-realpath-failed', code: code ?? null });
+        return;
+      }
+    }
+    // `pathSeparator` lets the client build full paths without guessing from
+    // the shape of `contentDir` (which breaks on Windows + forward-slash paths
+    // and on POSIX folders that contain a literal backslash in the name).
+    json(res, 200, {
+      ok: true,
+      contentDir: resolvedContentDir,
+      pathSeparator: sep,
+      symlinkResolved,
+    });
+  }
+
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
   const RESCUE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
@@ -2748,6 +2859,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
     '/api/backlinks': handleBacklinks,
+    '/api/backlink-counts': handleBacklinkCounts,
     '/api/forward-links': handleForwardLinks,
     '/api/link-graph': handleLinkGraph,
     '/api/dead-links': handleDeadLinks,
@@ -2771,6 +2883,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/rescue': handleRescueList,
+    '/api/workspace': handleWorkspace,
   };
 
   if (enableTestRoutes) {
