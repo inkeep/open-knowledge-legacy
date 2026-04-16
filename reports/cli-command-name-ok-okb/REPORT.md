@@ -37,7 +37,7 @@ topics:
 
 - **`ok` is clear of hard collisions.** Not a bash/zsh/POSIX builtin. No Homebrew formula. No Debian/Ubuntu/Arch package at `/usr/bin/ok`. npm `ok@0.1.2` exists as a library with no `bin` field — publishing `@inkeep/open-knowledge` with `"bin": { "ok": ... }` is mechanically supported and non-conflicting.
 - **`okb` has a severe brand collision.** [OKB](https://www.okx.com/en-us/learn/okb) is a widely-traded cryptocurrency token from the OKX exchange. No PATH conflict, but search-engine and community-context collisions are persistent and high-cost.
-- **Three alternatives are flat-out unsafe:** `wiki` (active npm bin via [Federated Wiki](https://github.com/fedwiki/wiki) + deprecated Homebrew formula), `ink` ([Debian `/usr/bin/ink`](https://manpages.debian.org/unstable/ink/ink.1.en.html) printer-ink checker + [Ink.js React-for-CLI](https://github.com/vadimdemedes/ink) mega-brand), `kb` (overloaded acronym: kilobyte / keyboard / knowledge-base).
+- **Four alternatives are flat-out unsafe:** `wiki` (active npm bin via [Federated Wiki](https://github.com/fedwiki/wiki) + deprecated Homebrew formula), `ink` ([Debian `/usr/bin/ink`](https://manpages.debian.org/unstable/ink/ink.1.en.html) printer-ink checker + [Ink.js React-for-CLI](https://github.com/vadimdemedes/ink) mega-brand), `kb` (overloaded acronym: kilobyte / keyboard / knowledge-base), **and `openkb` — the worst collision on the list** ([VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) PyPI CLI ships the same `openkb` bin with almost-identical `init/add/query/chat` subcommands in the same LLM-knowledge-base domain).
 - **The long-package / short-binary split is a well-established pattern.** [ripgrep](https://github.com/BurntSushi/ripgrep) publishes as `ripgrep` with binary `rg`. [fd](https://github.com/sharkdp/fd) publishes as `fd-find` with binary `fd`. npm `"bin"` supports arbitrary command names per package, and scoped packages (`@inkeep/open-knowledge`) may declare unscoped bins (`ok`) without registry conflict.
 - **2-char names are defensible for Inkeep's use case,** though CLI-design heuristics ([Small Step](https://smallstep.com/blog/the-poetics-of-cli-command-names/), [clig.dev](https://clig.dev/)) reserve them for tools used "all the time." `ok` gets away with it because of brand strength (universal affirmation) — the same logic that justifies `gh` for GitHub CLI despite it being used only a few times per day.
 - **A zero-cost migration exists:** ship both bins for one release, document deprecation, drop `open-knowledge` in v2.0. No users lose muscle memory.
@@ -51,7 +51,7 @@ topics:
 | D1 | Collision audit — `ok` (shell, PATH, Homebrew, npm bin, Debian/Ubuntu/Arch) | Deep | P0 |
 | D2 | Collision audit — `okb` (same + known-acronym / brand check) | Deep | P0 |
 | D3 | Conventions for short CLI names (2–3 chars) from `gh`, `rg`, `fd`, `bat`, `bun`, `jj`, etc. | Moderate | P0 |
-| D4 | Alternative short names: `oknow`, `oknw`, `wiki`, `kb`, `onk`, `ink`, `know` | Moderate | P0 |
+| D4 | Alternative short names: `oknow`, `oknw`, `wiki`, `kb`, `onk`, `ink`, `know`, `openkb` | Moderate | P0 |
 | D5 | Collision mitigation strategies (multi-bin, aliases, rename precedent) | Light | P1 |
 
 **Non-goals:** Windows PATH semantics, trademark/legal search, renaming migration mechanics for existing users, logo/brand identity, npm-org ownership questions.
@@ -138,7 +138,7 @@ Key data points:
 
 ### D4 — Alternative short names
 
-**Finding:** Of the surveyed alternatives, `oknow` is the only clear-and-pronounceable option; `oknw` is clear but unpronounceable; `wiki`, `ink`, `kb` are hard collisions; `onk` and `know` are soft and weak.
+**Finding:** Of the surveyed alternatives, `oknow` is the only clear-and-pronounceable option; `oknw` is clear but unpronounceable; `wiki`, `ink`, `kb`, `openkb` are hard collisions (and `openkb` is the most severe — direct bin + subcommand + domain collision with the [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) PyPI CLI); `onk` and `know` are soft and weak.
 
 **Evidence:** [evidence/d4-alternative-names.md](evidence/d4-alternative-names.md)
 
@@ -151,6 +151,7 @@ Key data points:
 | `kb`      | HARD     | Acronym overload: kilobyte / keyboard / knowledge-base |
 | `wiki`    | HARD     | [Federated Wiki](https://github.com/fedwiki/wiki) npm has active `bin: wiki`; deprecated Homebrew formula |
 | `ink`     | HARD     | [Debian `/usr/bin/ink`](https://manpages.debian.org/unstable/ink/ink.1.en.html) printer util + [Ink.js](https://github.com/vadimdemedes/ink) React-for-CLI mega-brand |
+| **`openkb`** | **HARD (worst)** | [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) PyPI CLI ships `openkb` bin with `init/add/query/chat` subcommands in the same LLM-KB domain; npm `openkb@1.0.22` ([mrvautin/openKB](https://github.com/mrvautin/openKB)) is an active KB/wiki web app. Direct bin + subcommand + domain collision. |
 
 **Implications:** The only alternative that meaningfully beats `ok` on collision safety is `oknow`, and it costs 3 characters of length plus loses the recognizability anchor ("ok" is a universal affirmation; "oknow" is a contrived pun). None of these is a compelling upgrade over `ok`.
 
@@ -194,6 +195,7 @@ Synthesized migration recipe:
 | 2 | `oknow` | Clear but 5 chars; pronounceable "oh-know"; weak brevity win |
 | 3 | `onk` | Soft (obscure npm bin); phonetically awkward, no anchor — fallback only |
 | — | `okb`, `kb`, `wiki`, `ink` | Hard collisions or brand conflicts — avoid |
+| — | **`openkb`** | **Worst collision on the list** — PyPI `openkb` (VectifyAI) ships same bin + same `init/add/query/chat` subcommands + same LLM-KB domain. Avoid unequivocally. |
 | — | `oknw`, `know` | Clear but unpronounceable or generic — no reason to pick over `ok` |
 
 ---
@@ -228,6 +230,8 @@ Synthesized migration recipe:
 - [bat](https://github.com/sharkdp/bat) — Debian upstream-collision resolution story
 - [Ink.js](https://github.com/vadimdemedes/ink) — React-for-CLI; brand collision for `ink`
 - [Federated Wiki](https://github.com/fedwiki/wiki) — active npm `wiki` CLI
+- [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB) — PyPI `openkb` LLM knowledge-base CLI (direct collision)
+- [mrvautin/openKB](https://github.com/mrvautin/openKB) — npm `openkb` markdown KB/FAQ web app (semantic collision)
 - [Debian `ink` manpage](https://manpages.debian.org/unstable/ink/ink.1.en.html) — printer ink checker
 - [OKB token](https://www.okx.com/en-us/learn/okb) — crypto brand conflict
 - [Small Step — Poetics of CLI Command Names](https://smallstep.com/blog/the-poetics-of-cli-command-names/)

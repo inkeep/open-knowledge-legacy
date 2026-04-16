@@ -1,6 +1,6 @@
 # Evidence: D4 — Alternative short-name candidates
 
-**Dimension:** D4 — Evaluate `oknow`, `oknw`, `wiki`, `kb`, `onk`, `ink`, `know` as alternatives.
+**Dimension:** D4 — Evaluate `oknow`, `oknw`, `wiki`, `kb`, `onk`, `ink`, `know`, `openkb` as alternatives.
 **Date:** 2026-04-16
 **Sources:** local `npm view` + `brew info` probes, subagent web research
 
@@ -14,6 +14,8 @@
 - https://manpages.debian.org/unstable/ink/ink.1.en.html
 - https://en.wikipedia.org/wiki/Kilobyte (KB as SI unit)
 - https://www.okx.com/en-us/learn/okb (for OKB cross-check)
+- https://github.com/VectifyAI/OpenKB (PyPI `openkb` CLI)
+- https://github.com/mrvautin/openKB (npm `openkb` KB/wiki web app)
 - Subagent Debian/Arch checks
 
 ---
@@ -72,6 +74,19 @@ Deprecated because it is not maintained upstream! It will be disabled on 2026-09
 - No brand meaning.
 **Implications:** Mechanically clear, but reads as letter-salad. Violates the "pronounceable or known initials" heuristic from D3. Hard to speak aloud ("oh-kay-en-double-you"). Poor brand.
 
+### Finding: `openkb` — HARD collision (PyPI CLI + npm semantic competitor)
+**Confidence:** CONFIRMED
+**Evidence:**
+- **PyPI `openkb`** — [VectifyAI/OpenKB](https://github.com/VectifyAI/OpenKB), "Open LLM Knowledge Base." Python, installed via `pip install openkb`. 179 GitHub stars. Ships the `openkb` bin with subcommands `openkb init`, `openkb add`, `openkb query`, `openkb chat`, `openkb watch`, `openkb lint`, `openkb list`, `openkb status`. Active development (90+ commits).
+- **npm `openkb@1.0.22`** — [mrvautin/openKB](https://github.com/mrvautin/openKB), "Open Source Nodejs Markdown based knowledge base/FAQ/Wiki app with powerful lunr search." 29 versions. No `bin` field (it's an `npm start` web app, not a PATH binary), but keywords list `knowledge base, markdown, kb, documentation, faq, wiki, openkb` — direct semantic overlap with Inkeep's product space.
+- **GitHub repo forks** — multiple independent forks named `openKB` (noduslabs, go-faast, pillows). The name "openKB" is established in the OSS knowledge-base naming space.
+- **No Homebrew formula.** `brew info openkb` returns "No available formula" (suggests `openvdb`, `opencbm`, etc. — unrelated).
+- **No Debian/Ubuntu/Arch package.** Clear at distro level.
+**Implications:** This is the **most severe collision on the entire candidate list**. The PyPI tool is not just a brand collision — it literally claims the `openkb` PATH entry via `pip install`, with an almost-identical subcommand vocabulary (`openkb init`, `openkb add`, `openkb query`). Any user who has both Python (near-universal in the AI-dev audience) and runs `pip install openkb` then `npm install -g @inkeep/open-knowledge` will have two `openkb` binaries fighting for the same PATH slot, whichever got installed later wins, with no warning. The semantic collision is worse: VectifyAI's OpenKB is *also* an LLM-oriented knowledge-base tool. Users would confuse the two products in search, support threads, and demos.
+**Severity:** **HARD**
+
+---
+
 ### Finding: `know` — CLEAR
 **Confidence:** CONFIRMED
 **Evidence:**
@@ -93,6 +108,7 @@ Deprecated because it is not maintained upstream! It will be disabled on 2026-09
 | `kb`      | HARD     | "KB" = kilobyte/keyboard/knowledge base overload |
 | `wiki`    | HARD     | npm `wiki` (Federated Wiki, active) has `bin: wiki`; brew formula (deprecated) |
 | `ink`     | HARD     | Debian `/usr/bin/ink` printer util + Ink.js React-for-CLI mega-brand |
+| `openkb`  | **HARD** | PyPI `openkb` (VectifyAI) ships same bin + same `init/add/query/chat` subcommands + same LLM-KB domain; npm `openkb` is active KB/wiki web app |
 
 ---
 
