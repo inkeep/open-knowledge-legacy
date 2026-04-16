@@ -1,7 +1,7 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { PanelRightClose, PanelRightOpen } from 'lucide-react';
-import { Suspense, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { usePanelRef } from 'react-resizable-panels';
 import { DocPanel } from '@/components/DocPanel';
 import { usePageList } from '@/components/PageListContext';
@@ -12,10 +12,8 @@ import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentCont
 import { hashFromDocName } from '@/lib/doc-hash';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
-import { DocumentErrorBoundary } from './DocumentErrorBoundary';
 import { EditorActivityPool } from './EditorActivityPool';
 import type { EditorMode } from './EditorPane';
-import { EditorSkeleton } from './EditorSkeleton';
 
 interface EditorAreaProps {
   editorMode: EditorMode;
@@ -168,10 +166,18 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
                 inner display:none toggle) is preserved inside EditorActivityPool
                 per spec §9 + audit A2. Each Activity entry owns its own scroll
                 container so scroll position is DOM-local to that doc's subtree
-                and survives the Activity hidden-mode mount/unmount cycle. */}
+                and survives the Activity hidden-mode mount/unmount cycle.
+
+                Error + Suspense scoping lives INSIDE EditorActivityPool — each
+                Activity wraps its own DocumentErrorBoundary + Suspense so a
+                hidden doc's cached rejected syncPromise cannot re-throw into
+                the visible UI (QA-023/024). See EditorActivityPool.tsx file
+                docstring "ERROR + SUSPENSE SCOPING" for rationale. */}
             <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
-              <DocumentErrorBoundary
+              <EditorActivityPool
                 activeDocName={activeDocName}
+                isSourceMode={isSourceMode}
+                editorPlaceholder={editorPlaceholder}
                 previousDocName={previousDocName ?? undefined}
                 onNavigateBack={(prev) => {
                   // Navigate via hash so the URL stays in sync with app state —
@@ -187,15 +193,7 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
                   }
                 }}
                 onRecycle={recycleDocument}
-              >
-                <Suspense fallback={<EditorSkeleton />}>
-                  <EditorActivityPool
-                    activeDocName={activeDocName}
-                    isSourceMode={isSourceMode}
-                    editorPlaceholder={editorPlaceholder}
-                  />
-                </Suspense>
-              </DocumentErrorBoundary>
+              />
             </div>
             <div className="absolute top-2 right-2 z-10">
               <Tooltip>

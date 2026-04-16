@@ -4,19 +4,34 @@
  * when a `DocumentBoundary` (or anything beneath) throws during render — most
  * notably when a `syncPromise` rejects via `use()`.
  *
+ * SCOPING: one instance per `<Activity>` inside `EditorActivityPool` — NOT
+ * a single top-level boundary for the whole pool. A hidden Activity's cached
+ * rejected syncPromise re-throws synchronously on every render; placing the
+ * boundary outside Activity lets those throws bubble into the visible UI
+ * (QA-023/024 regression trace). Scoping per-Activity confines the error
+ * render output to the Activity subtree, where `<Activity mode="hidden">`
+ * applies `display:none` — hidden errors stay invisible until their Activity
+ * becomes visible again.
+ *
  * UX (SPEC §5 Failure/debug + §9):
  *   - Document name + one-line error summary (per error kind).
- *   - Primary "Try again": invalidates the syncPromise cache entry and resets
- *     the error boundary so the next render re-enters Suspense with a fresh
- *     promise.
- *   - Secondary "Back to previous document": calls `onNavigateBack` with the
- *     previously-active docName (only rendered when present).
- *   - `resetKeys={[activeDocName]}` so navigating away auto-clears the error.
+ *   - Primary "Try again": recycles the pool entry (fresh provider) so the
+ *     next render re-enters Suspense with a fresh `syncPromise`.
+ *   - Secondary "Back to previous document": invalidates this doc's cached
+ *     `syncPromise` and calls `onNavigateBack` with the previously-active
+ *     docName. Only rendered when `previousDocName` is present.
  *
- * Retry ordering (per acceptance criterion): invalidate MUST run before the
- * boundary state clears, otherwise the re-render would pick up the old cached
- * rejected promise. We hook that through `onReset` because react-error-boundary
- * fires `onReset(...)` synchronously before calling `setState`
+ * `resetKeys={[activeDocName]}`: `activeDocName` is the Activity's OWN doc
+ * (stable for the lifetime of the Activity), not the globally-active doc —
+ * so key changes don't fire spuriously on navigation. Errors clear only
+ * through (a) imperative "Try again" (recycle), (b) "Back to previous"
+ * (invalidate + nav), or (c) Activity eviction from the MRU mount list.
+ *
+ * Retry ordering (per acceptance criterion): recycle MUST run before the
+ * boundary state clears, otherwise the re-render would pick up the old
+ * cached rejected promise (or a broken provider with `synced=true`). We
+ * hook that through `onReset` because react-error-boundary fires
+ * `onReset(...)` synchronously before calling `setState`
  * (node_modules/react-error-boundary/dist/react-error-boundary.cjs).
  */
 

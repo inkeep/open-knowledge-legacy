@@ -16,14 +16,42 @@
  * The dual-editor mount pattern (both `SourceEditor` and `TiptapEditor` rendered
  * concurrently with `display:none` toggle) is preserved per spec §9 + audit A2 —
  * mode swap stays CSS-only so neither editor's effect lifecycle re-runs.
+ *
+ * ERROR + SUSPENSE SCOPING (per-Activity, not global).
+ *   Each `<Activity>` wraps its own `<DocumentErrorBoundary>` + `<Suspense>`.
+ *   Rationale: `<Activity mode="hidden">` silences suspends in the hidden
+ *   subtree (good) but does NOT intercept synchronous throws from
+ *   `use(rejectedPromise)` (React 19.2 behavior — verified in regression
+ *   QA-023/024). A single global boundary above the pool caused any hidden
+ *   doc's cached rejection to re-throw into the visible UI when a healthy
+ *   doc was active. Scoping per-Activity confines each error to its own
+ *   subtree — hidden Activities' errors render into hidden DOM
+ *   (`display:none`), and become visible again naturally when the user
+ *   navigates back (QA-024 cached-rejection persistence).
+ *
+ *   `resetKeys={[entry.docName]}` is intentionally stable for each Activity
+ *   instance — auto-reset on navigation is not needed when the boundary is
+ *   per-Activity (visibility is handled by Activity itself). Error clears
+ *   only via (a) imperative "Try again" (recycle), (b) "Back to previous"
+ *   (invalidate + nav), or (c) Activity eviction from the MRU mount list.
  */
 
-import { Activity, Fragment, type ReactNode, useEffect, useLayoutEffect, useRef } from 'react';
+import {
+  Activity,
+  Fragment,
+  type ReactNode,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from 'react';
 import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentContext';
 import { isSystemDoc } from '@/editor/is-system-doc';
 import { SourceEditor } from '@/editor/SourceEditor';
 import { TiptapEditor } from '@/editor/TiptapEditor';
 import { DocumentBoundary } from './DocumentBoundary';
+import { DocumentErrorBoundary } from './DocumentErrorBoundary';
+import { EditorSkeleton } from './EditorSkeleton';
 import { usePageList } from './PageListContext';
 
 /**
@@ -46,6 +74,25 @@ export interface EditorActivityPoolProps {
   activeDocName: string;
   isSourceMode: boolean;
   editorPlaceholder?: string;
+  /**
+   * Forwarded to each per-Activity `DocumentErrorBoundary` so the
+   * "Back to previous document" affordance in a fallback UI knows where
+   * to send the user. Global navigation concern — tracked once at the
+   * `EditorArea` level and threaded down through every Activity.
+   */
+  previousDocName?: string;
+  /**
+   * Navigation callback for the "Back to previous document" button. Shared
+   * across every per-Activity boundary; only the visible Activity's button
+   * is ever clickable, so routing is unambiguous.
+   */
+  onNavigateBack?: (previousDocName: string) => void;
+  /**
+   * "Try again" recovery for any errored Activity — destroys + recreates
+   * the pool entry for the doc that errored (per-Activity boundary passes
+   * its own `entry.docName` to the callback, not the globally-active one).
+   */
+  onRecycle: (docName: string) => void;
 }
 
 /**
@@ -89,6 +136,9 @@ export function EditorActivityPool({
   activeDocName,
   isSourceMode,
   editorPlaceholder,
+  previousDocName,
+  onNavigateBack,
+  onRecycle,
 }: EditorActivityPoolProps) {
   const { poolEntries } = useDocumentContext();
   const { pages, loading } = usePageList();
@@ -105,6 +155,9 @@ export function EditorActivityPool({
             isSourceMode,
             editorPlaceholder,
             isNewDoc: !loading && !pages.has(entry.docName),
+            previousDocName,
+            onNavigateBack,
+            onRecycle,
           })}
         </Fragment>
       ))}
@@ -118,6 +171,9 @@ interface RenderActivityArgs {
   isSourceMode: boolean;
   editorPlaceholder?: string;
   isNewDoc: boolean;
+  previousDocName?: string;
+  onNavigateBack?: (previousDocName: string) => void;
+  onRecycle: (docName: string) => void;
 }
 
 /**
@@ -229,6 +285,9 @@ function renderActivity({
   isSourceMode,
   editorPlaceholder,
   isNewDoc,
+  previousDocName,
+  onNavigateBack,
+  onRecycle,
 }: RenderActivityArgs) {
   return (
     <Activity mode={isActive ? 'visible' : 'hidden'} name={`editor:${entry.docName}`}>
@@ -238,29 +297,45 @@ function renderActivity({
           state cross-document and collapse scrollHeight on hidden-mode
           effect cleanup (QA-002 / SPEC US-007/F1). */}
       <ScrollPreservingContainer isActive={isActive}>
-        <DocumentBoundary docName={entry.docName} provider={entry.provider}>
-          {/* Dual-editor concurrent mount preserved per spec §9 + audit A2 — both
-              SourceEditor and TiptapEditor render with display:none toggle so mode
-              switches don't trigger effect re-runs (and don't recreate the
-              CodeMirror EditorView or the TipTap editor instance). */}
-          <div className={isSourceMode ? 'h-full' : 'hidden'}>
-            <SourceEditor
-              ytext={entry.provider.document.getText('source')}
-              provider={entry.provider}
-              placeholder={editorPlaceholder}
-            />
-          </div>
-          <div className={isSourceMode ? 'hidden' : 'h-full'}>
-            <TiptapEditor
-              // Composite key matches existing pattern at EditorArea.tsx:172 —
-              // forces TipTap remount on draft → saved transition (the isNewDoc
-              // flip changes the page list's membership of this docName).
-              key={`${entry.docName}-${String(isNewDoc)}`}
-              provider={entry.provider}
-              placeholder={editorPlaceholder}
-            />
-          </div>
-        </DocumentBoundary>
+        {/* Per-Activity error + suspense scoping — see file-level docstring
+            "ERROR + SUSPENSE SCOPING" for rationale. `activeDocName` passed
+            to the boundary is this Activity's OWN docName (entry.docName),
+            not the globally-active doc. This keeps the error state tied to
+            the Activity instance: a healthy doc becoming active does not
+            reset an errored doc's boundary, and revisiting an errored doc
+            re-reveals the same error UI (QA-024). */}
+        <DocumentErrorBoundary
+          activeDocName={entry.docName}
+          previousDocName={previousDocName}
+          onNavigateBack={onNavigateBack}
+          onRecycle={onRecycle}
+        >
+          <Suspense fallback={<EditorSkeleton />}>
+            <DocumentBoundary docName={entry.docName} provider={entry.provider}>
+              {/* Dual-editor concurrent mount preserved per spec §9 + audit A2 — both
+                  SourceEditor and TiptapEditor render with display:none toggle so mode
+                  switches don't trigger effect re-runs (and don't recreate the
+                  CodeMirror EditorView or the TipTap editor instance). */}
+              <div className={isSourceMode ? 'h-full' : 'hidden'}>
+                <SourceEditor
+                  ytext={entry.provider.document.getText('source')}
+                  provider={entry.provider}
+                  placeholder={editorPlaceholder}
+                />
+              </div>
+              <div className={isSourceMode ? 'hidden' : 'h-full'}>
+                <TiptapEditor
+                  // Composite key matches existing pattern at EditorArea.tsx:172 —
+                  // forces TipTap remount on draft → saved transition (the isNewDoc
+                  // flip changes the page list's membership of this docName).
+                  key={`${entry.docName}-${String(isNewDoc)}`}
+                  provider={entry.provider}
+                  placeholder={editorPlaceholder}
+                />
+              </div>
+            </DocumentBoundary>
+          </Suspense>
+        </DocumentErrorBoundary>
       </ScrollPreservingContainer>
     </Activity>
   );
