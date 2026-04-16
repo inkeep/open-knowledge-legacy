@@ -171,11 +171,13 @@ export function GraphView({
   isFullscreen = false,
   className = '',
   onStatsChange,
+  onClustersChange,
 }: {
   activeDocName: string;
   isFullscreen?: boolean;
   className?: string;
   onStatsChange?: (nodes: number, links: number, loading: boolean) => void;
+  onClustersChange?: (clusters: string[]) => void;
 }) {
   // force-graph mutates the objects it receives in-place during layout, so we compare
   // incoming API payloads against separate signatures before replacing graphData.
@@ -294,6 +296,17 @@ export function GraphView({
   useEffect(() => {
     onStatsChange?.(graphData.nodes.length, graphData.links.length, loading);
   }, [graphData, loading, onStatsChange]);
+
+  useEffect(() => {
+    if (!onClustersChange) return;
+    const seen = new Set<string>();
+    for (const node of graphData.nodes) {
+      if (node.kind === 'doc' && node.cluster) {
+        seen.add(node.cluster);
+      }
+    }
+    onClustersChange(Array.from(seen).sort());
+  }, [graphData, onClustersChange]);
 
   useEffect(() => {
     focusStateRef.current = {

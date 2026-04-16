@@ -2,6 +2,7 @@ import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowle
 import { useQuery } from '@tanstack/react-query';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { GraphLegend } from '@/components/GraphLegend';
 import { GraphView } from '@/components/GraphView';
 import { Button } from '@/components/ui/button';
 import {
@@ -255,6 +256,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const [fullscreenMode, setFullscreenMode] = useState<FullscreenGraphMode>('explore');
   const [orphanMode, setOrphanMode] = useState<OrphanMode>('both');
   const [stats, setStats] = useState<{ nodes: number; links: number } | null>(null);
+  const [clusters, setClusters] = useState<string[]>([]);
 
   useEffect(() => {
     const sync = () => setIsFullscreen(getFullscreenElement() === panelRef.current);
@@ -315,18 +317,22 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
         </div>
       </PanelHeader>
       {activeMode === 'explore' ? (
-        <GraphView
-          activeDocName={activeDocName}
-          isFullscreen={isFullscreen}
-          className="min-h-0 flex-1"
-          onStatsChange={(nodes, links, loading) => {
-            if (loading) {
-              setStats(null);
-              return;
-            }
-            setStats({ nodes, links });
-          }}
-        />
+        <div className="relative min-h-0 flex-1">
+          <GraphView
+            activeDocName={activeDocName}
+            isFullscreen={isFullscreen}
+            className="h-full min-h-0"
+            onStatsChange={(nodes, links, loading) => {
+              if (loading) {
+                setStats(null);
+                return;
+              }
+              setStats({ nodes, links });
+            }}
+            onClustersChange={isFullscreen ? setClusters : undefined}
+          />
+          {isFullscreen && <GraphLegend clusters={clusters} />}
+        </div>
       ) : null}
       {isFullscreen && activeMode === 'orphans' ? (
         <FullscreenOrphansView mode={orphanMode} onModeChange={setOrphanMode} />
