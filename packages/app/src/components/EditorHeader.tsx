@@ -105,6 +105,8 @@ export function EditorHeader({
   // biome-ignore lint/correctness/useExhaustiveDependencies: activeDocName is an intentional trigger-only dep, not a missing one
   useEffect(() => {
     cancelRequestedRef.current = true;
+    renameDocRef.current = null;
+    lastFailedValueRef.current = null;
     setIsRenaming(false);
     setRenameError(null);
   }, [activeDocName]);
@@ -136,10 +138,11 @@ export function EditorHeader({
 
   function cancelRename() {
     cancelRequestedRef.current = true;
+    renameDocRef.current = null;
+    lastFailedValueRef.current = null;
     setIsRenaming(false);
     setRenameValue('');
     setRenameError(null);
-    lastFailedValueRef.current = null;
   }
 
   async function commitRename() {
@@ -239,6 +242,7 @@ export function EditorHeader({
       setRenameError('Network error — please try again');
       setIsRenameLoading(false);
       commitInProgressRef.current = false;
+      lastFailedValueRef.current = normalized;
     }
   }
 
@@ -307,13 +311,14 @@ export function EditorHeader({
         ) : activeDocName ? (
           <Tooltip>
             <TooltipTrigger asChild>
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={enterRenameMode}
-                className="text-sm text-muted-foreground truncate min-w-0 cursor-pointer hover:text-foreground transition-colors bg-transparent border-none p-0"
+                className="h-7 min-w-0 justify-start truncate px-2 text-sm font-normal text-muted-foreground hover:text-foreground"
               >
                 {displayName}
-              </button>
+              </Button>
             </TooltipTrigger>
             <TooltipContent>Click to rename</TooltipContent>
           </Tooltip>
