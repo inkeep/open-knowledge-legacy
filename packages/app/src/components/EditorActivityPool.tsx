@@ -18,7 +18,7 @@
  * mode swap stays CSS-only so neither editor's effect lifecycle re-runs.
  */
 
-import { Activity, Fragment } from 'react';
+import { Activity, Fragment, type ReactNode, useEffect, useLayoutEffect, useRef } from 'react';
 import { type PoolEntrySnapshot, useDocumentContext } from '@/editor/DocumentContext';
 import { isSystemDoc } from '@/editor/is-system-doc';
 import { SourceEditor } from '@/editor/SourceEditor';
@@ -116,6 +116,109 @@ interface RenderActivityArgs {
   isNewDoc: boolean;
 }
 
+/**
+ * Per-Activity scroll container that (a) owns its own scroller so scrollTop
+ * is DOM-local to this doc's subtree and (b) saves/restores scrollTop across
+ * `<Activity>` visibility flips.
+ *
+ * Why both:
+ *   Per-Activity scrollers are necessary but not sufficient. When `<Activity
+ *   mode="hidden">` applies `display:none` to the subtree, the browser
+ *   removes layout for the hidden element — `scrollTop` reads as 0, and
+ *   TipTap's effect cleanup unmounts the ProseMirror DOM so `scrollHeight`
+ *   collapses. By the time `isActive` flips to `false` in a layout effect,
+ *   `display:none` has already been applied and `ref.current.scrollTop` is
+ *   0. To capture the real scroll position, we install a `scroll` listener
+ *   that records `scrollTop` on every change, so the last-non-zero value is
+ *   preserved in a ref independently of Activity state transitions.
+ *
+ *   On the restore side, a layout effect races TipTap's own re-mount. The
+ *   initial scrollTop assignment usually gets clamped (scrollHeight hasn't
+ *   grown back yet), so we follow up with a `ResizeObserver` that re-
+ *   applies `scrollTop = target` whenever the subtree grows past it. A
+ *   250ms safety timer disconnects the observer so deleted-while-hidden
+ *   content doesn't hold it forever.
+ *
+ * QA-002 / SPEC US-007/F1 — Playwright regression harness validates this.
+ */
+function ScrollPreservingContainer({
+  isActive,
+  children,
+}: {
+  isActive: boolean;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const savedScrollTop = useRef<number>(0);
+
+  // Continuously track scrollTop via scroll listener so we always have the
+  // latest user position — independent of Activity mode transitions.
+  // `display:none` zeros scrollTop before any layout effect could read it,
+  // so we MUST capture via scroll events to have a real value to restore.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onScroll = () => {
+      // Only record non-zero values — a content collapse under display:none
+      // can fire a spurious scroll event with scrollTop=0 that we must NOT
+      // persist (it would overwrite the real saved value).
+      if (el.scrollTop > 0) savedScrollTop.current = el.scrollTop;
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Restore scrollTop when `isActive` flips to true. Two phases:
+  //   1. Synchronous scrollTop assignment in the layout effect — cheap if
+  //      content is already mounted.
+  //   2. `ResizeObserver`-driven retry once the subtree grows past
+  //      `target` — handles the Activity-unhide race where TipTap's
+  //      ProseMirror hasn't re-inflated scrollHeight in time.
+  useLayoutEffect(() => {
+    if (!isActive) return;
+    const el = ref.current;
+    if (!el) return;
+    const target = savedScrollTop.current;
+    if (target === 0) return;
+
+    // Phase 1 — try immediately.
+    el.scrollTop = target;
+    if (el.scrollTop === target) return;
+
+    // Phase 2 — observe size changes until content grows past target.
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      observer.disconnect();
+      clearTimeout(safetyTimer);
+    };
+    const observer = new ResizeObserver(() => {
+      if (done || !el) return;
+      if (el.scrollHeight > target) {
+        el.scrollTop = target;
+        if (el.scrollTop === target) finish();
+      }
+    });
+    observer.observe(el);
+
+    // Safety timeout — don't leak the observer if content never grows back.
+    const safetyTimer = setTimeout(finish, 500);
+
+    return finish;
+  }, [isActive]);
+
+  return (
+    <div
+      ref={ref}
+      className="subtle-scrollbar h-full overflow-y-auto"
+      style={{ overflowAnchor: 'auto' }}
+    >
+      {children}
+    </div>
+  );
+}
+
 function renderActivity({
   entry,
   isActive,
@@ -125,29 +228,36 @@ function renderActivity({
 }: RenderActivityArgs) {
   return (
     <Activity mode={isActive ? 'visible' : 'hidden'} name={`editor:${entry.docName}`}>
-      <DocumentBoundary docName={entry.docName} provider={entry.provider}>
-        {/* Dual-editor concurrent mount preserved per spec §9 + audit A2 — both
-            SourceEditor and TiptapEditor render with display:none toggle so mode
-            switches don't trigger effect re-runs (and don't recreate the
-            CodeMirror EditorView or the TipTap editor instance). */}
-        <div className={isSourceMode ? 'h-full' : 'hidden'}>
-          <SourceEditor
-            ytext={entry.provider.document.getText('source')}
-            provider={entry.provider}
-            placeholder={editorPlaceholder}
-          />
-        </div>
-        <div className={isSourceMode ? 'hidden' : 'h-full'}>
-          <TiptapEditor
-            // Composite key matches existing pattern at EditorArea.tsx:172 —
-            // forces TipTap remount on draft → saved transition (the isNewDoc
-            // flip changes the page list's membership of this docName).
-            key={`${entry.docName}-${String(isNewDoc)}`}
-            provider={entry.provider}
-            placeholder={editorPlaceholder}
-          />
-        </div>
-      </DocumentBoundary>
+      {/* Per-Activity scroll container with save/restore across Activity
+          visibility flips. See ScrollPreservingContainer for the full
+          rationale. Hoisting the scroller to EditorArea would make scroll
+          state cross-document and collapse scrollHeight on hidden-mode
+          effect cleanup (QA-002 / SPEC US-007/F1). */}
+      <ScrollPreservingContainer isActive={isActive}>
+        <DocumentBoundary docName={entry.docName} provider={entry.provider}>
+          {/* Dual-editor concurrent mount preserved per spec §9 + audit A2 — both
+              SourceEditor and TiptapEditor render with display:none toggle so mode
+              switches don't trigger effect re-runs (and don't recreate the
+              CodeMirror EditorView or the TipTap editor instance). */}
+          <div className={isSourceMode ? 'h-full' : 'hidden'}>
+            <SourceEditor
+              ytext={entry.provider.document.getText('source')}
+              provider={entry.provider}
+              placeholder={editorPlaceholder}
+            />
+          </div>
+          <div className={isSourceMode ? 'hidden' : 'h-full'}>
+            <TiptapEditor
+              // Composite key matches existing pattern at EditorArea.tsx:172 —
+              // forces TipTap remount on draft → saved transition (the isNewDoc
+              // flip changes the page list's membership of this docName).
+              key={`${entry.docName}-${String(isNewDoc)}`}
+              provider={entry.provider}
+              placeholder={editorPlaceholder}
+            />
+          </div>
+        </DocumentBoundary>
+      </ScrollPreservingContainer>
     </Activity>
   );
 }

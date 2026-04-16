@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext, useDocumentTransition } from '@/editor/DocumentContext';
+import { hashFromDocName } from '@/lib/doc-hash';
 import type { DiffLayout } from './DiffView';
 import { DiffView } from './DiffView';
 import { DocumentErrorBoundary } from './DocumentErrorBoundary';
@@ -135,49 +136,66 @@ export function EditorArea({ editorMode, previewEntry, diffLayout, onNoDiff }: E
       <ResizablePanelGroup orientation="horizontal">
         <ResizablePanel minSize="30%" defaultSize="75%">
           <div className="relative h-full">
-            <div
-              className="subtle-scrollbar h-full overflow-y-auto"
-              style={{ overflowAnchor: 'auto' }}
-            >
-              {/* Diff view — shown when editorMode === 'diff' */}
-              {isDiffMode && previewLoading && (
-                <div
-                  className="flex items-center justify-center py-16"
-                  role="status"
-                  aria-label="Loading version"
-                >
-                  <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
-                </div>
-              )}
-              {isDiffMode && !previewLoading && diffContent !== null && (
-                <DiffView
-                  oldContent={diffContent.old}
-                  newContent={diffContent.new}
-                  layout={diffLayout}
-                />
-              )}
+            {/* No outer scroller. Scrolling is owned by (a) DiffView's own
+                internal scroller in diff mode and (b) the per-Activity scroller
+                inside EditorActivityPool in editor mode. Hoisting the scroller
+                to this level would let the Activity subtree's content contract
+                on hidden-mode effect cleanup, clamping scrollTop to 0 and
+                losing the user's position across warm navigation (QA-002 /
+                SPEC US-007/F1). */}
 
-              {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
-                  Outer display:none keeps the editor DOM alive when in diff mode.
-                  Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
-                  inner display:none toggle) is preserved inside EditorActivityPool
-                  per spec §9 + audit A2. */}
-              <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
-                <DocumentErrorBoundary
-                  activeDocName={activeDocName}
-                  previousDocName={previousDocName ?? undefined}
-                  onNavigateBack={(prev) => openDocumentTransition(prev)}
-                  onRecycle={recycleDocument}
-                >
-                  <Suspense fallback={<EditorSkeleton />}>
-                    <EditorActivityPool
-                      activeDocName={activeDocName}
-                      isSourceMode={isSourceMode}
-                      editorPlaceholder={editorPlaceholder}
-                    />
-                  </Suspense>
-                </DocumentErrorBoundary>
+            {/* Diff view — shown when editorMode === 'diff' */}
+            {isDiffMode && previewLoading && (
+              <div
+                className="flex items-center justify-center py-16"
+                role="status"
+                aria-label="Loading version"
+              >
+                <div className="size-5 animate-spin rounded-full border-2 border-muted border-t-foreground" />
               </div>
+            )}
+            {isDiffMode && !previewLoading && diffContent !== null && (
+              <DiffView
+                oldContent={diffContent.old}
+                newContent={diffContent.new}
+                layout={diffLayout}
+              />
+            )}
+
+            {/* Hybrid Activity + Suspense + ErrorBoundary render tree.
+                Outer display:none keeps the editor DOM alive when in diff mode.
+                Per-Activity dual-editor mount (SourceEditor + TiptapEditor with
+                inner display:none toggle) is preserved inside EditorActivityPool
+                per spec §9 + audit A2. Each Activity entry owns its own scroll
+                container so scroll position is DOM-local to that doc's subtree
+                and survives the Activity hidden-mode mount/unmount cycle. */}
+            <div className="h-full" style={{ display: isDiffMode ? 'none' : undefined }}>
+              <DocumentErrorBoundary
+                activeDocName={activeDocName}
+                previousDocName={previousDocName ?? undefined}
+                onNavigateBack={(prev) => {
+                  // Navigate via hash so the URL stays in sync with app state —
+                  // NavigationHandler's hashchange listener will call
+                  // openDocumentTransition(prev). If the hash is already at
+                  // prev (rare — happens when back-nav is used after agent
+                  // nav without URL update), fall back to direct transition.
+                  const nextHash = hashFromDocName(prev);
+                  if (window.location.hash === nextHash) {
+                    openDocumentTransition(prev);
+                  } else {
+                    window.location.hash = nextHash;
+                  }
+                }}
+                onRecycle={recycleDocument}
+              >
+                <Suspense fallback={<EditorSkeleton />}>
+                  <EditorActivityPool
+                    activeDocName={activeDocName}
+                    isSourceMode={isSourceMode}
+                    editorPlaceholder={editorPlaceholder}
+                  />
+                </Suspense>
+              </DocumentErrorBoundary>
             </div>
             <div className="absolute top-2 right-2 z-10">
               <Tooltip>
