@@ -16,6 +16,13 @@
  * tags are tolerated per the HTML5 parsing spec. Callers still wrap this
  * function in try/catch per FR-11 (three-layer fallback discipline) to
  * cover rehype-remark exceptions on pathological trees.
+ *
+ * Payload-size guard: `htmlToMdast` is synchronous and long HTML inputs
+ * monopolise the main thread. The `HTML_MAX_BYTES` ceiling throws
+ * `HtmlPayloadTooLargeError` before invoking the pipeline so the paste
+ * dispatcher can fall through to plain-text insertion instead of hanging
+ * the UI on pathological (50MB auto-generated email / screen-scrape)
+ * inputs. Matches iOS Safari's constrained JSC throughput (FR-21 target).
  */
 
 import type { Root as HastRoot } from 'hast';
@@ -45,6 +52,32 @@ export interface HtmlToMdastOptions {
    * vendor-specific cleanup plugins lives in `cleanupPlugins` (see below).
    */
   additionalCleanupPlugins?: Plugin[];
+  /**
+   * Override the 5MB payload-size ceiling. Useful in tests; production
+   * callers should leave the default.
+   */
+  maxBytes?: number;
+}
+
+/**
+ * Upper bound on accepted HTML payload size (5MB). Inputs above this
+ * threshold throw `HtmlPayloadTooLargeError` synchronously instead of
+ * running the (synchronous) rehype pipeline, which on pathological inputs
+ * can block the main thread for multiple seconds.
+ */
+export const HTML_MAX_BYTES = 5 * 1024 * 1024;
+
+export class HtmlPayloadTooLargeError extends Error {
+  readonly htmlBytes: number;
+  readonly maxBytes: number;
+  constructor(htmlBytes: number, maxBytes: number) {
+    super(
+      `HTML payload (${htmlBytes} bytes) exceeds htmlToMdast ceiling (${maxBytes} bytes); falling through to plain text`,
+    );
+    this.name = 'HtmlPayloadTooLargeError';
+    this.htmlBytes = htmlBytes;
+    this.maxBytes = maxBytes;
+  }
 }
 
 /**
@@ -88,6 +121,11 @@ export const cleanupPlugins: Plugin[] = [
  *   `{type:'root', children:[]}`.
  */
 export function htmlToMdast(html: string, options?: HtmlToMdastOptions): MdastRoot {
+  const maxBytes = options?.maxBytes ?? HTML_MAX_BYTES;
+  if (html.length > maxBytes) {
+    throw new HtmlPayloadTooLargeError(html.length, maxBytes);
+  }
+
   const processor = unified()
     // Fragment mode — clipboard HTML is almost never a full document with
     // <!DOCTYPE html>. `fragment: true` skips synthesizing <html><body>.

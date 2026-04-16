@@ -126,3 +126,50 @@ describe('mdastToHtml — mdast Root → HTML', () => {
     expect(viaMdast).toBe(viaMarkdown);
   });
 });
+
+describe('URL scheme filter — outbound clipboard HTML sanitization', () => {
+  test('strips javascript: href from links', () => {
+    const html = markdownToHtml('[click](javascript:alert(1))');
+    expect(html).not.toContain('javascript:');
+    // Text content + <a> preserved; just the href is dropped.
+    expect(html).toContain('>click<');
+  });
+
+  test('strips data: href from links', () => {
+    const html = markdownToHtml('[boom](data:text/html,<script>alert(1)</script>)');
+    expect(html).not.toContain('data:');
+    expect(html).toContain('>boom<');
+  });
+
+  test('strips vbscript: href from links', () => {
+    const html = markdownToHtml('[click](vbscript:msgbox)');
+    expect(html).not.toContain('vbscript:');
+  });
+
+  test('strips file: href from links', () => {
+    const html = markdownToHtml('[open](file:///etc/passwd)');
+    expect(html).not.toContain('file:');
+  });
+
+  test('preserves https, http, mailto, tel, and relative hrefs', () => {
+    expect(markdownToHtml('[a](https://example.com)')).toContain('href="https://example.com"');
+    expect(markdownToHtml('[b](http://example.com)')).toContain('href="http://example.com"');
+    expect(markdownToHtml('[c](mailto:foo@example.com)')).toContain('href="mailto:');
+    expect(markdownToHtml('[d](tel:+15551234)')).toContain('href="tel:');
+    expect(markdownToHtml('[e](/relative/path)')).toContain('href="/relative/path"');
+    expect(markdownToHtml('[f](#anchor)')).toContain('href="#anchor"');
+  });
+
+  test('strips javascript: src from images', () => {
+    const html = markdownToHtml('![alt](javascript:alert(1))');
+    expect(html).not.toContain('javascript:');
+    expect(html).toContain('alt="alt"');
+  });
+
+  test('case-insensitive: JavaScript:/DATA: variants are stripped', () => {
+    const html1 = markdownToHtml('[a](JavaScript:alert(1))');
+    const html2 = markdownToHtml('[b](DATA:text/html,x)');
+    expect(html1).not.toMatch(/javascript:/i);
+    expect(html2).not.toMatch(/data:/i);
+  });
+});

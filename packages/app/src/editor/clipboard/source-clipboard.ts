@@ -16,28 +16,40 @@
  *     WYSIWYG 5-branch. Source's insertion IS markdown text, so branch B
  *     (text/x-gfm) collapses into CM6's text/plain default path.
  *
- *   - Cmd+Shift+V / inside-a-codeBlock-ish (not applicable to CM6 — it's
- *     all source) / the rest of the error-path discipline matches
- *     WYSIWYG's implementation.
+ *   - Cmd+Shift+V detected via `pasteShiftHeld(event)` (keyboard-event
+ *     tracker — ClipboardEvent does not expose shiftKey natively).
+ *
+ *   - FR-21 large-paste chunked insert: payloads >500KB bypass the CM6
+ *     dispatch and land via `chunkedYTextInsert` directly. A Y.RelativePosition
+ *     is pinned before the first chunk so concurrent peers writing at
+ *     offsets ≤ writeIndex during rAF yields do not shift the target.
+ *     Mid-stream failure surfaces as a structured `clipboard-chunked-insert-failed`
+ *     event with partial-progress fields.
  */
 
 import type { Extension } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
-import type { MarkdownManager } from '@inkeep/open-knowledge-core';
 import {
+  ChunkedInsertError,
   chunkedYTextInsert,
   htmlToMdast,
   markdownToHtml,
   mdastToMarkdown,
 } from '@inkeep/open-knowledge-core';
-import type * as Y from 'yjs';
+import * as Y from 'yjs';
 import { detectSource } from './detect-source.ts';
-import { logIfSlow, logSourceDetected } from './instrument.ts';
+import {
+  logChunkedInsertFail,
+  logConversionFail,
+  logIfSlow,
+  logSerializeFail,
+  logSourceDetected,
+} from './instrument.ts';
+import { installShiftTracker, pasteShiftHeld } from './shift-tracker.ts';
 
 export interface SourceClipboardDeps {
   ydoc: Y.Doc;
   ytext: Y.Text;
-  mdManager: MarkdownManager;
 }
 
 /**
@@ -47,19 +59,18 @@ export interface SourceClipboardDeps {
  * (preventing CM6's default), or `false` to let CM6's built-in run.
  */
 export function createSourceClipboardExtension(deps: SourceClipboardDeps): Extension {
+  // Attach the shift-key tracker so Cmd+Shift+V detection works. Calling
+  // this eagerly ensures the listener is already in place when the first
+  // paste event arrives.
+  installShiftTracker();
   return EditorView.domEventHandlers({
-    copy: (event: ClipboardEvent, view: EditorView) => handleCopyOrCut(event, view, deps, 'copy'),
-    cut: (event: ClipboardEvent, view: EditorView) => handleCopyOrCut(event, view, deps, 'cut'),
+    copy: (event: ClipboardEvent, view: EditorView) => handleCopyOrCut(event, view, 'copy'),
+    cut: (event: ClipboardEvent, view: EditorView) => handleCopyOrCut(event, view, 'cut'),
     paste: (event: ClipboardEvent, view: EditorView) => handlePaste(event, view, deps),
   });
 }
 
-function handleCopyOrCut(
-  event: ClipboardEvent,
-  view: EditorView,
-  _deps: SourceClipboardDeps,
-  kind: 'copy' | 'cut',
-): boolean {
+function handleCopyOrCut(event: ClipboardEvent, view: EditorView, kind: 'copy' | 'cut'): boolean {
   const { from, to } = view.state.selection.main;
   if (from === to) return false; // empty selection → CM6 default no-op.
 
@@ -73,7 +84,11 @@ function handleCopyOrCut(
     try {
       dt.setData('text/html', markdownToHtml(markdown));
     } catch (err) {
-      console.warn('[clipboard] source: HTML render fell through — text/plain only', err);
+      logSerializeFail({
+        view: 'source',
+        kind: 'html',
+        reason: (err as Error)?.message ?? 'unknown',
+      });
     }
     event.preventDefault();
     if (kind === 'cut') {
@@ -82,7 +97,11 @@ function handleCopyOrCut(
     logIfSlow(start, { op: kind, view: 'source', branch: 'serialize', source: 'ok' });
     return true;
   } catch (err) {
-    console.warn('[clipboard] source: copy/cut serialize fell through — CM6 default', err);
+    logSerializeFail({
+      view: 'source',
+      kind: 'text',
+      reason: (err as Error)?.message ?? 'unknown',
+    });
     return false;
   }
 }
@@ -97,9 +116,7 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
   const html = dt.getData('text/html');
 
   // FR-17: Cmd+Shift+V → let CM6 default text/plain verbatim insert run.
-  // ClipboardEvent doesn't declare shiftKey on its public type; the DOM
-  // dispatches the paste with a KeyboardEvent-like shiftKey in practice.
-  if ((event as unknown as { shiftKey?: boolean }).shiftKey) {
+  if (pasteShiftHeld(event)) {
     logSourceDetected({ view: 'source', branch: 'shift', source });
     logIfSlow(start, { op: 'paste', view: 'source', branch: 'shift', source });
     return false;
@@ -108,7 +125,7 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
   // Branch A: VS Code → fenced code block at selection.
   const vscodeData = dt.getData('vscode-editor-data');
   if (vscodeData && plain) {
-    const handled = tryBranchAVscode(view, vscodeData, plain);
+    const handled = tryBranchAVscode(view, vscodeData, plain, source);
     if (handled) {
       event.preventDefault();
       logSourceDetected({ view: 'source', branch: 'A', source });
@@ -126,7 +143,6 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
       view: 'source',
       branch: 'C',
       source,
-      htmlBytes: html.length,
     });
     logIfSlow(start, { op: 'paste', view: 'source', branch: 'C', source });
     return false;
@@ -134,14 +150,13 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
 
   // Branch D: generic HTML → htmlToMdast → markdown string → Y.Text insert.
   if (html) {
-    const handled = tryBranchDHtml(view, html, deps);
+    const handled = tryBranchDHtml(view, html, deps, source);
     if (handled) {
       event.preventDefault();
       logSourceDetected({
         view: 'source',
         branch: 'D',
         source,
-        htmlBytes: html.length,
       });
       logIfSlow(start, {
         op: 'paste',
@@ -161,10 +176,21 @@ function handlePaste(event: ClipboardEvent, view: EditorView, deps: SourceClipbo
   return false;
 }
 
-function tryBranchAVscode(view: EditorView, vscodeData: string, text: string): boolean {
+// Same allowlist used by the WYSIWYG dispatcher's Branch A.
+const LANG_IDENT = /^[A-Za-z0-9_+-]+$/;
+
+function tryBranchAVscode(
+  view: EditorView,
+  vscodeData: string,
+  text: string,
+  source: string,
+): boolean {
   try {
     const meta = JSON.parse(vscodeData) as { mode?: string };
-    const lang = typeof meta.mode === 'string' ? meta.mode : '';
+    const rawLang = typeof meta.mode === 'string' ? meta.mode : '';
+    // Unsanitized `mode` could embed newlines + fence chars and break out of
+    // the fenced block we build below; restrict to ident chars.
+    const lang = LANG_IDENT.test(rawLang) ? rawLang : '';
     const block = `\`\`\`${lang}\n${text}\n\`\`\`\n`;
     const { from, to } = view.state.selection.main;
     view.dispatch({
@@ -173,42 +199,108 @@ function tryBranchAVscode(view: EditorView, vscodeData: string, text: string): b
     });
     return true;
   } catch (err) {
-    console.warn('[clipboard] source: branch A VS Code fell through', err);
+    logConversionFail({
+      view: 'source',
+      stage: 'branchA',
+      source,
+      reason: (err as Error)?.message ?? 'unknown',
+    });
     return false;
   }
 }
 
-function tryBranchDHtml(view: EditorView, html: string, deps: SourceClipboardDeps): boolean {
+function tryBranchDHtml(
+  view: EditorView,
+  html: string,
+  deps: SourceClipboardDeps,
+  source: string,
+): boolean {
+  let mdast: ReturnType<typeof htmlToMdast>;
   try {
-    const mdast = htmlToMdast(html);
-    const markdown = mdastToMarkdown(mdast);
-    const { from, to } = view.state.selection.main;
-    // For small inserts, let CM6's dispatch handle the Y.Text mutation via
-    // the yCollab binding. For large inserts (FR-21) bypass the CM6 path
-    // and chunk directly into Y.Text — yCollab observes Y.Text changes
-    // and mirrors them into CM6, so the view catches up.
-    const shouldChunk = markdown.length > 500 * 1024;
-    if (!shouldChunk) {
-      view.dispatch({
-        changes: { from, to, insert: markdown },
-        selection: { anchor: from + markdown.length },
-      });
-      return true;
-    }
-    // Chunked path: delete the selection first (single CM6 dispatch) then
-    // append via chunked Y.Text insertion. rAF yields keep the UI 60fps.
-    if (from !== to) {
-      view.dispatch({ changes: { from, to, insert: '' } });
-    }
-    // Fire-and-forget — the Promise resolves as chunks land, but paste
-    // event handler must return synchronously. yCollab surfaces the
-    // inserts incrementally.
-    void chunkedYTextInsert(deps.ydoc, deps.ytext, from, markdown).catch((err) => {
-      console.warn('[clipboard] chunked Y.Text insertion failed', err);
-    });
-    return true;
+    mdast = htmlToMdast(html);
   } catch (err) {
-    console.warn('[clipboard] source: branch D HTML pipeline fell through', err);
+    logConversionFail({
+      view: 'source',
+      stage: 'htmlToMdast',
+      source,
+      reason: (err as Error)?.message ?? 'unknown',
+      htmlBytes: html.length,
+    });
     return false;
   }
+  let markdown: string;
+  try {
+    markdown = mdastToMarkdown(mdast);
+  } catch (err) {
+    logConversionFail({
+      view: 'source',
+      stage: 'mdastToMarkdown',
+      source,
+      reason: (err as Error)?.message ?? 'unknown',
+      htmlBytes: html.length,
+    });
+    return false;
+  }
+  const { from, to } = view.state.selection.main;
+  // For small inserts, let CM6's dispatch handle the Y.Text mutation via
+  // the yCollab binding. For large inserts (FR-21) bypass the CM6 path
+  // and chunk directly into Y.Text — yCollab observes Y.Text changes
+  // and mirrors them into CM6, so the view catches up.
+  const shouldChunk = markdown.length > 500 * 1024;
+  if (!shouldChunk) {
+    view.dispatch({
+      changes: { from, to, insert: markdown },
+      selection: { anchor: from + markdown.length },
+    });
+    return true;
+  }
+
+  // Chunked path: delete the selection first (single CM6 dispatch) then
+  // append via chunked Y.Text insertion. rAF yields keep the UI 60fps.
+  // Y.RelativePosition tracks the intended write anchor so a concurrent
+  // peer inserting before the anchor during a yield does not shift us.
+  if (from !== to) {
+    view.dispatch({ changes: { from, to, insert: '' } });
+  }
+  const anchorIndex = from;
+  const startLen = deps.ytext.length;
+  const relPos = Y.createRelativePositionFromTypeIndex(deps.ytext, anchorIndex);
+
+  const resolveOffset = (logical: number): number => {
+    // `logical` is the monotonic chunk writeIndex counted from anchorIndex.
+    // Resolve anchorIndex against current Y.Text state, then add the local
+    // offset within our insert sequence.
+    const abs = Y.createAbsolutePositionFromRelativePosition(relPos, deps.ydoc);
+    if (abs == null) return logical; // fall back to the monotonic index.
+    return abs.index + (logical - anchorIndex);
+  };
+
+  // Fire-and-forget — the Promise resolves as chunks land, but paste
+  // event handler must return synchronously. yCollab surfaces the
+  // inserts incrementally.
+  void chunkedYTextInsert(deps.ydoc, deps.ytext, anchorIndex, markdown, {
+    resolveOffset,
+  }).catch((err) => {
+    if (err instanceof ChunkedInsertError) {
+      logChunkedInsertFail({
+        view: 'source',
+        chunksCompleted: err.chunksCompleted,
+        totalChunks: err.totalChunks,
+        bytesWritten: err.bytesWritten,
+        bytesRemaining: err.bytesRemaining,
+        reason: err.message,
+      });
+      return;
+    }
+    logConversionFail({
+      view: 'source',
+      stage: 'chunkedYTextInsert',
+      source,
+      reason: (err as Error)?.message ?? 'unknown',
+      htmlBytes: html.length,
+    });
+  });
+  // Silence an unused-var lint when startLen is only used by CRDT semantics.
+  void startLen;
+  return true;
 }

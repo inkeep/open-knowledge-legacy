@@ -161,4 +161,24 @@ describe('htmlToMdast — basic HTML→mdast conversion', () => {
     // need updating when plugins are registered.
     expect(Array.isArray(cleanupPlugins)).toBe(true);
   });
+
+  test('throws HtmlPayloadTooLargeError when input exceeds the size ceiling', async () => {
+    const { HtmlPayloadTooLargeError } = await import('./html-to-mdast.ts');
+    // Use a low override so the test does not allocate 5MB strings.
+    let caught: unknown;
+    try {
+      htmlToMdast('<p>x</p>'.repeat(2000), { maxBytes: 100 });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(HtmlPayloadTooLargeError);
+    const e = caught as { htmlBytes: number; maxBytes: number };
+    expect(e.htmlBytes).toBeGreaterThan(100);
+    expect(e.maxBytes).toBe(100);
+  });
+
+  test('passes through when input is at or below the size ceiling', () => {
+    const html = '<p>under the cap</p>';
+    expect(() => htmlToMdast(html, { maxBytes: html.length })).not.toThrow();
+  });
 });

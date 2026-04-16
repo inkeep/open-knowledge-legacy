@@ -11,6 +11,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
+  ChunkedInsertError,
   chunkedYTextInsert,
   DEFAULT_CHUNK_SIZE_BYTES,
   DEFAULT_CHUNK_THRESHOLD_BYTES,
@@ -125,5 +126,68 @@ describe('chunkedYTextInsert — FR-21 large-paste chunking', () => {
     const payload = 'INSERTED';
     await chunkedYTextInsert(doc, text, 3, payload, { yieldFn: async () => {} });
     expect(text.content).toBe('abcINSERTEDXYZ');
+  });
+
+  test('mid-stream failure throws ChunkedInsertError with partial-progress info', async () => {
+    // Fake that throws on the 3rd insert call to simulate e.g. Y.Text length
+    // limit hit, doc destroyed, or peer concurrently truncating.
+    let callCount = 0;
+    const failingText: InsertableYText = {
+      get length() {
+        return 0;
+      },
+      insert(_index: number, _value: string) {
+        callCount++;
+        if (callCount === 3) throw new Error('simulated Y.Text failure');
+      },
+    };
+    const doc: InsertableYDoc = {
+      transact<T>(fn: () => T) {
+        return fn();
+      },
+    };
+    const payload = 'a'.repeat(300 * 1024); // 6 chunks at 50KB
+    let caught: unknown;
+    try {
+      await chunkedYTextInsert(doc, failingText, 0, payload, {
+        thresholdBytes: 10 * 1024,
+        chunkSizeBytes: 50 * 1024,
+        yieldFn: async () => {},
+      });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ChunkedInsertError);
+    const cie = caught as ChunkedInsertError;
+    expect(cie.chunksCompleted).toBe(2);
+    expect(cie.totalChunks).toBe(6);
+    expect(cie.bytesWritten).toBe(100 * 1024);
+    expect(cie.bytesRemaining).toBe(200 * 1024);
+    expect(cie.cause).toBeInstanceOf(Error);
+  });
+
+  test('resolveOffset callback re-resolves absolute index per chunk', async () => {
+    const { doc, text } = makeFake();
+    // Simulate a concurrent writer who inserts 2 chars before our writeIndex
+    // between each chunk. resolveOffset compensates by returning an offset
+    // shifted by the number of chunks already completed.
+    const payload = 'a'.repeat(150 * 1024);
+    let chunkIdx = 0;
+    const resolvedOffsets: number[] = [];
+    await chunkedYTextInsert(doc, text, 0, payload, {
+      thresholdBytes: 10 * 1024,
+      chunkSizeBytes: 50 * 1024,
+      yieldFn: async () => {},
+      resolveOffset: (logical) => {
+        const resolved = logical + chunkIdx * 2; // each prior yield += 2 external chars
+        resolvedOffsets.push(resolved);
+        chunkIdx++;
+        return resolved;
+      },
+    });
+    // First chunk at logical 0 → resolved 0.
+    // Second chunk at logical 50*1024 → resolved 50*1024 + 2.
+    // Third at logical 100*1024 → resolved 100*1024 + 4.
+    expect(resolvedOffsets).toEqual([0, 50 * 1024 + 2, 100 * 1024 + 4]);
   });
 });

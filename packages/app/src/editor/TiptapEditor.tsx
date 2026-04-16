@@ -17,11 +17,11 @@ import { type FC, useEffect, useRef, useState } from 'react';
 import { OUTLINE_NAV_EVENT, type OutlineNavDetail } from '@/components/OutlinePanel';
 import { useIdentity } from '../presence/identity';
 import { BubbleMenuBar } from './bubble-menu/BubbleMenuBar';
-import { createHandlePaste } from './clipboard/handle-paste.ts';
 import {
   createClipboardHtmlSerializer,
   createClipboardTextSerializer,
-} from './clipboard/serialize.ts';
+  createHandlePaste,
+} from './clipboard/index.ts';
 import { sharedExtensions } from './extensions/shared.ts';
 import { setCurrentDocName, uploadDecorationPlugin } from './image-upload/index.ts';
 import { markUserTyping } from './observers';

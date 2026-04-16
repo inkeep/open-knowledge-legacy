@@ -399,29 +399,70 @@ test.describe('WYSIWYG FR-specific paste behavior', () => {
 
 // ─── FR-21 chunked large paste ───
 
-test.describe('FR-21 large-paste chunked insertion', () => {
+/**
+ * Paste a payload at the Source editor's (CodeMirror) DOM. The chunked
+ * Y.Text insertion path (`chunkedYTextInsert`) is invoked exclusively by
+ * the Source dispatcher (per AGENTS.md precedent #15 + D14 LOCKED), so
+ * the FR-21 frame-timing test must target `.cm-content`, not `.ProseMirror`.
+ */
+async function pasteHtmlInSource(page: Page, html: string, plain: string) {
+  await page.evaluate(
+    ({ html: h, plain: p }) => {
+      const editor = document.querySelector('.cm-content');
+      if (!editor) throw new Error('Source editor (.cm-content) not found');
+      const dt = new DataTransfer();
+      dt.setData('text/plain', p);
+      dt.setData('text/html', h);
+      const event = new ClipboardEvent('paste', {
+        clipboardData: dt,
+        bubbles: true,
+        cancelable: true,
+      });
+      editor.dispatchEvent(event);
+    },
+    { html, plain },
+  );
+}
+
+test.describe('FR-21 large-paste chunked insertion (Source view)', () => {
   test.beforeEach(async ({ page }) => {
     await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
     await page.goto(BASE);
     await page.getByText('test-doc.md').click({ timeout: 10_000 });
     await waitForProvider(page);
+    // Switch the editor pane to the Source view — the chunked path is
+    // Source-exclusive per D14 LOCKED / precedent #15.
+    await page.getByRole('button', { name: /source/i }).click({ timeout: 10_000 });
+    await page.waitForSelector('.cm-content', { timeout: 10_000 });
   });
 
-  test('1MB paste lands in Y.Text without blocking the event loop', async ({ page }) => {
+  test('1MB HTML paste lands in Y.Text via chunked insertion without blocking', async ({
+    page,
+  }) => {
     // Seed a non-trivial existing doc (a few KB) so the insertion happens
     // in context, not on an empty doc.
-    await page.click('.ProseMirror');
     const seed = 'seeded line\n'.repeat(1000);
-    await pasteText(page, seed);
+    await page.evaluate((s) => {
+      const editor = document.querySelector('.cm-content');
+      if (!editor) throw new Error('no cm-content');
+      const dt = new DataTransfer();
+      dt.setData('text/plain', s);
+      editor.dispatchEvent(
+        new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }),
+      );
+    }, seed);
     await page.waitForTimeout(500);
 
-    // Build a ~1MB payload.
-    const payload = 'line of prose that is pasted in a big block\n'.repeat(25_000);
-    expect(payload.length).toBeGreaterThan(1_000_000);
+    // Build a ~1MB HTML payload so the Source Branch D chunked path is
+    // exercised (text/html triggers htmlToMdast → mdastToMarkdown →
+    // chunkedYTextInsert for payloads >500KB).
+    const paragraph = '<p>line of prose that is pasted in a big block</p>';
+    const html = paragraph.repeat(22_000);
+    const plain = 'line of prose that is pasted in a big block\n'.repeat(22_000);
+    expect(html.length).toBeGreaterThan(1_000_000);
 
-    // Dispatch the paste; capture the Y.Text size growth.
     const before = (await getYText(page)).length;
-    await pasteText(page, payload);
+    await pasteHtmlInSource(page, html, plain);
     await expect(async () => {
       const after = (await getYText(page)).length;
       expect(after - before).toBeGreaterThan(900_000);

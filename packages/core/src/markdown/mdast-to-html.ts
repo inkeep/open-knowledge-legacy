@@ -28,18 +28,92 @@
  * `mdast-to-hast-handlers.ts` is the registration point for wikiLink /
  * MDX JSX / rawMdxFallback HTML shapes. Empty at scaffold-time (US-003);
  * populated in US-007 once the mdast types are promoted (US-004..US-006).
+ *
+ * Outbound URL sanitization: `<a href>` / `<img src>` / `<link href>` /
+ * `<area href>` / `<iframe src>` URLs are checked against an allowlist of
+ * safe schemes before serialization. `javascript:`, `data:`, `vbscript:`,
+ * `file:`, and any unknown scheme are stripped (attribute removed entirely).
+ * Copy produces clipboard HTML for foreign destinations that may have
+ * weaker sanitization than the editor's own surfaces, so URL schemes are
+ * filtered at the boundary. The storage-layer NG4 ("render-time layers
+ * sanitize") remains intact — this filter runs only on the copy-out path
+ * and does not touch stored content.
  */
 
-import type { Root as HastRoot } from 'hast';
+import type { Element, Root as HastRoot } from 'hast';
 import type { Root as MdastRoot } from 'mdast';
 import rehypeStringify from 'rehype-stringify';
 import remarkFrontmatter from 'remark-frontmatter';
 import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
-import { unified } from 'unified';
+import { type Plugin, unified } from 'unified';
+import { visit } from 'unist-util-visit';
 import { customNodeHandlers } from './mdast-to-hast-handlers.ts';
 import { remarkMdxAgnostic } from './remark-mdx-agnostic.ts';
+
+const SAFE_URL_SCHEME = /^(https?:|mailto:|tel:|ftp:|sms:|\/|#|\?|\.\/|\.\.\/)/i;
+
+/**
+ * Unsafe URL schemes we deliberately block from the outbound clipboard HTML.
+ * Tests assert this list — do not remove entries without revisiting
+ * `mdast-to-html.test.ts`.
+ */
+export const UNSAFE_URL_SCHEMES = ['javascript:', 'data:', 'vbscript:', 'file:'] as const;
+
+function isSafeUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (trimmed === '') return true; // empty href — benign, keep.
+  return SAFE_URL_SCHEME.test(trimmed);
+}
+
+/**
+ * hast-walking plugin: strip dangerous URL schemes from attributes that
+ * resolve to URLs. Runs AFTER remark-rehype converts mdast `link` / `image`
+ * to hast `a` / `img`, so markdown `[x](javascript:...)` gets blocked
+ * regardless of its mdast origin.
+ */
+const rehypeSanitizeUrls: Plugin<[], HastRoot> = () => {
+  return (tree) => {
+    visit(tree, 'element', (node: Element) => {
+      const tag = node.tagName.toLowerCase();
+      const props = node.properties;
+      if (!props) return;
+      // `href` lives on <a>, <area>, <link>, <base>. `src` lives on <img>,
+      // <iframe>, <script>, <embed>, <source>, <audio>, <video>, <track>.
+      // `action` lives on <form>. We don't emit <form> / <iframe> / <script>
+      // / <embed> from our pipeline — but defend anyway in case a custom
+      // handler ever passes them through.
+      if (tag === 'a' || tag === 'area' || tag === 'link' || tag === 'base') {
+        const href = props.href;
+        if (typeof href === 'string' && !isSafeUrl(href)) {
+          delete props.href;
+        }
+      }
+      if (
+        tag === 'img' ||
+        tag === 'iframe' ||
+        tag === 'script' ||
+        tag === 'embed' ||
+        tag === 'source' ||
+        tag === 'audio' ||
+        tag === 'video' ||
+        tag === 'track'
+      ) {
+        const src = props.src;
+        if (typeof src === 'string' && !isSafeUrl(src)) {
+          delete props.src;
+        }
+      }
+      if (tag === 'form') {
+        const action = props.action;
+        if (typeof action === 'string' && !isSafeUrl(action)) {
+          delete props.action;
+        }
+      }
+    });
+  };
+};
 
 /**
  * Convert an mdast Root to an HTML string.
@@ -56,14 +130,18 @@ export function mdastToHtml(tree: MdastRoot): string {
   // than juggling generic annotations.
   const mdastToHastProcessor = unified().use(remarkRehype, {
     handlers: customNodeHandlers,
-    // Markdown `<script>` HTML passthrough stays as hast `raw` nodes —
-    // `allowDangerousHtml` is NOT enabled, so `rehype-stringify` drops them.
-    // This matches D10 / NG7: no paste-time DOMPurify needed, because the
-    // pipeline structurally drops script content on the way out too.
+    // `allowDangerousHtml` is NOT enabled, so rehype-stringify drops hast
+    // `raw` nodes (e.g. literal `<script>` passthrough). That covers script
+    // / iframe / svg element injection on the way out. URL-scheme injection
+    // (href="javascript:...") is a separate attack surface; `rehypeSanitizeUrls`
+    // below handles it.
   });
   const hast = mdastToHastProcessor.runSync(tree) as unknown as HastRoot;
+  const sanitizedHast = unified()
+    .use(rehypeSanitizeUrls)
+    .runSync(hast as unknown as HastRoot) as unknown as HastRoot;
   const hastToHtmlProcessor = unified().use(rehypeStringify);
-  return String(hastToHtmlProcessor.stringify(hast));
+  return String(hastToHtmlProcessor.stringify(sanitizedHast));
 }
 
 /**
@@ -85,6 +163,7 @@ export function markdownToHtml(md: string): string {
     .use(remarkMdxAgnostic)
     .use(remarkGfm)
     .use(remarkRehype, { handlers: customNodeHandlers })
+    .use(rehypeSanitizeUrls)
     .use(rehypeStringify);
   return String(processor.processSync(md));
 }
