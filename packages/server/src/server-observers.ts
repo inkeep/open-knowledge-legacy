@@ -307,6 +307,17 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     } catch (err) {
       incrementServerObserverError('b');
       console.error('[Server Observer B] Failed to sync text→tree:', err);
+      // Reset baseline to current XmlFragment state so the next retry computes
+      // a fresh delta instead of re-applying the stale diff that just failed.
+      // Mirrors Observer A's baseline recovery pattern (lines 167-168).
+      try {
+        const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const postBody = mdManager.serialize(postJson);
+        const fm = getFrontmatter(doc);
+        lastSyncedXmlMd = prependFrontmatter(fm, postBody);
+      } catch {
+        /* ignore — best-effort baseline recovery */
+      }
     }
   };
 

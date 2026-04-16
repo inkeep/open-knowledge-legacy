@@ -90,6 +90,20 @@ function mergeConflictRegion(base: string, user: string, agent: string): string 
 
   // Both sides modified — character-level merge via DMP on the small region
   const patches = dmp.patch_make(base, user);
-  const [merged] = dmp.patch_apply(patches, agent);
+  const [merged, flags] = dmp.patch_apply(patches, agent);
+
+  // Per spec §4c, conflict regions are typically <200 chars so DMP's fuzzy-match
+  // failure mode should not manifest. Log if the assumption is violated.
+  if (flags.some((f) => !f)) {
+    console.warn(
+      JSON.stringify({
+        event: 'bridge-merge-patch-drop',
+        applied: flags.filter(Boolean).length,
+        total: flags.length,
+        regionSize: agent.length,
+      }),
+    );
+  }
+
   return merged;
 }
