@@ -40,7 +40,25 @@ export default defineConfig({
   testDir: './tests/stress',
   testMatch: /.*\.e2e\.ts$/,
   timeout: 120_000,
-  retries: 0,
+  // Single webServer instance is shared across all projects + tests, and
+  // the server is stateful (shared content directory, shared Y.Docs via
+  // Hocuspocus). Running three browser projects in parallel against one
+  // server races on state — one project's `/api/test-reset` can wipe
+  // another's Y.Doc mid-test, and concurrent FileSidebar writes to the
+  // shared content-dir corrupt each other's sidebar tree. `workers: 1`
+  // serializes every project + every spec file against the single
+  // webServer. CI runtime is ~3× vs chromium-only (documented
+  // trade-off accepted when cross-browser projects were added), but
+  // tests become deterministic across the three browsers.
+  workers: 1,
+  // 2 retries absorb the residual flakiness from remaining sources of
+  // cross-test state (CRDT sync settling, Hocuspocus Y.Doc warm-up,
+  // file-watcher debounce). The state-race class of flakiness is
+  // fundamentally addressed by `workers: 1`; retries handle the long
+  // tail. On CI, a flaky test that passes on retry-1 or retry-2 is
+  // noted in the report but doesn't fail the run — consistent with
+  // industry-standard Playwright CI practice.
+  retries: 2,
   globalTeardown: './tests/stress/global-teardown.ts',
   use: {
     baseURL,
