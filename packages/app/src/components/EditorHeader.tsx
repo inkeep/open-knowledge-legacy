@@ -1,12 +1,20 @@
 import type { TimelineEntry } from '@inkeep/open-knowledge-core';
 import { ArrowDownToLine, Columns2, FolderOpen, History, Pin, PinOff, Rows2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  buildRenamedNodePath,
+  isValidNodeName,
+  normalizeRenameValue,
+  remapActiveDocName,
+} from '@/components/file-tree-operations';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
+import { emitDocumentsChanged } from '@/lib/documents-events';
 import { PresenceBar } from '@/presence/PresenceBar';
 import { useSyncStatus } from '@/presence/use-sync-status';
 import type { DiffLayout } from './DiffView';
@@ -45,7 +53,7 @@ export function EditorHeader({
   diffLayout,
   onDiffLayoutChange,
 }: EditorHeaderProps) {
-  const { activeDocName, activeProvider, activeTarget, pinnedDoc, pin, unpin } =
+  const { activeDocName, activeProvider, activeTarget, closeDocument, pinnedDoc, pin, unpin } =
     useDocumentContext();
   const syncStatus = useSyncStatus(activeProvider);
   const isConnected = syncStatus === 'connected' || syncStatus === 'synced';
@@ -67,6 +75,119 @@ export function EditorHeader({
   const isDiffMode = editorMode === 'diff';
   const [confirmingRestore, setConfirmingRestore] = useState(false);
 
+  // --- Inline rename state ---
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [isRenameLoading, setIsRenameLoading] = useState(false);
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const commitInProgressRef = useRef(false);
+
+  // Exit rename mode when the active doc changes (e.g. navigation)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset rename on doc change
+  useEffect(() => {
+    setIsRenaming(false);
+    setRenameError(null);
+  }, [activeDocName]);
+
+  // Auto-focus and select when entering rename mode
+  useEffect(() => {
+    if (isRenaming) {
+      const timer = setTimeout(() => {
+        const el = renameInputRef.current;
+        if (el) {
+          el.focus();
+          el.select();
+        }
+      }, 0);
+      return () => clearTimeout(timer);
+    }
+  }, [isRenaming]);
+
+  function enterRenameMode() {
+    if (!activeDocName || isFolderTarget) return;
+    const segments = activeDocName.split('/');
+    setRenameValue(segments[segments.length - 1]);
+    setRenameError(null);
+    setIsRenaming(true);
+  }
+
+  function cancelRename() {
+    setIsRenaming(false);
+    setRenameValue('');
+    setRenameError(null);
+  }
+
+  async function commitRename() {
+    if (commitInProgressRef.current) return;
+    if (!activeDocName) {
+      cancelRename();
+      return;
+    }
+
+    const normalized = normalizeRenameValue('file', renameValue);
+    const segments = activeDocName.split('/');
+    const currentName = segments[segments.length - 1];
+
+    // No-op: name unchanged
+    if (normalized === currentName) {
+      cancelRename();
+      return;
+    }
+
+    // Validation
+    if (!isValidNodeName(normalized)) {
+      setRenameError('Invalid name — cannot be empty, ".", "..", or contain "/" or "\\"');
+      return;
+    }
+
+    const newDocName = buildRenamedNodePath(
+      { kind: 'file', path: activeDocName, name: currentName },
+      normalized,
+    );
+
+    commitInProgressRef.current = true;
+    setIsRenameLoading(true);
+    setRenameError(null);
+
+    try {
+      const res = await fetch('/api/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ docName: activeDocName, newDocName }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.ok) {
+        setRenameError(data.error ?? 'Failed to rename');
+        setIsRenameLoading(false);
+        commitInProgressRef.current = false;
+        return;
+      }
+
+      const renamed: Array<{ fromDocName: string; toDocName: string }> = Array.isArray(data.renamed)
+        ? data.renamed
+        : [];
+      const nextActiveDocName = remapActiveDocName(activeDocName, renamed);
+
+      for (const entry of renamed) closeDocument(entry.fromDocName);
+      emitDocumentsChanged(['files', 'backlinks', 'graph']);
+
+      setIsRenaming(false);
+      setRenameValue('');
+      setIsRenameLoading(false);
+      commitInProgressRef.current = false;
+
+      if (nextActiveDocName && nextActiveDocName !== activeDocName) {
+        window.location.hash = `#/${nextActiveDocName}`;
+      }
+    } catch (_err) {
+      setRenameError('Network error — please try again');
+      setIsRenameLoading(false);
+      commitInProgressRef.current = false;
+    }
+  }
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: previewEntry is a prop; re-run on identity change is intentional
   useEffect(() => {
     setConfirmingRestore(false);
@@ -87,6 +208,42 @@ export function EditorHeader({
             <FolderOpen className="size-4 shrink-0" />
             <span className="truncate">{displayName}</span>
           </span>
+        ) : isRenaming && activeDocName ? (
+          <div className="flex min-w-0 flex-col">
+            <div className="flex min-w-0 items-center gap-0">
+              <Input
+                ref={renameInputRef}
+                value={renameValue}
+                disabled={isRenameLoading}
+                aria-label="Rename file"
+                onChange={(e) => {
+                  setRenameValue(e.target.value);
+                  setRenameError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void commitRename();
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    cancelRename();
+                  }
+                }}
+                onBlur={() => void commitRename()}
+                className="h-7 min-w-0 flex-1 bg-background text-sm"
+              />
+              <span className="shrink-0 text-xs text-muted-foreground/40">.md</span>
+            </div>
+            {renameError && <span className="text-xs text-destructive mt-0.5">{renameError}</span>}
+          </div>
+        ) : activeDocName ? (
+          <button
+            type="button"
+            onClick={enterRenameMode}
+            className="text-sm text-muted-foreground truncate min-w-0 cursor-pointer hover:text-foreground transition-colors bg-transparent border-none p-0"
+          >
+            {displayName}
+          </button>
         ) : (
           <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
         )}
