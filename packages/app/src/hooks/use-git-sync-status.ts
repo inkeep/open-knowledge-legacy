@@ -27,6 +27,8 @@ export interface GitSyncStatus {
   conflictCount: number;
   /** True when a git remote exists, even if sync is dormant/disabled. */
   hasRemote: boolean;
+  /** User's sync toggle preference (false by default — disabled for safety). */
+  syncEnabled: boolean;
   /**
    * Soft signal (FR20a): the git identity chain (local → global → OAuth)
    * returned null on the last probe. Commits still succeed under a default

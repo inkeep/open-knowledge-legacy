@@ -53,6 +53,8 @@ export interface SyncStatus {
   conflictCount: number;
   /** True when a git remote exists, even if sync is dormant/disabled. */
   hasRemote: boolean;
+  /** User's sync toggle preference. False by default (disabled for safety). */
+  syncEnabled: boolean;
   /**
    * Soft signal (FR20a): `resolveGitIdentity()` returned null on the last probe.
    * The push cycle still commits under the "Open Knowledge" default — this flag
@@ -81,6 +83,8 @@ interface PersistedSyncState {
   pausedReason?: string;
   pausedSinceUtc?: string;
   inflightConflicts: string[];
+  /** User's sync toggle. Absent/false = disabled (default); true = sync active. */
+  syncEnabled?: boolean;
 }
 
 export interface SyncEngineOptions {
@@ -191,16 +195,10 @@ export class SyncEngine {
   async start(): Promise<void> {
     if (this.state !== 'dormant') return;
 
-    // Restore persisted state
+    // Restore persisted state (may populate this.syncEnabled)
     this.loadState();
 
-    // If sync explicitly disabled, stay dormant
-    if (this.syncEnabled === false) {
-      log.info({}, '[sync] sync.enabled=false — staying dormant');
-      return;
-    }
-
-    // Detect remote
+    // Detect remote + branch regardless of enabled state so status is accurate.
     let hasRemote = false;
     try {
       const handle = createGitInstance(this.projectDir, {
@@ -210,7 +208,6 @@ export class SyncEngine {
       hasRemote = remoteOutput.trim().length > 0;
       this.hasRemote = hasRemote;
 
-      // Also get current branch
       try {
         const b = (await handle.git.raw('rev-parse', '--abbrev-ref', 'HEAD')).trim();
         if (b && b !== 'HEAD') {
@@ -222,6 +219,17 @@ export class SyncEngine {
       }
     } catch (e) {
       log.warn({ err: e }, '[sync] remote detection failed');
+    }
+
+    // Disabled by default: sync only runs when the user has explicitly opted in.
+    // Protects real git repos (production code) from being mutated automatically.
+    if (this.syncEnabled !== true) {
+      if (hasRemote) this.transitionTo('disabled');
+      log.info(
+        { hasRemote, syncEnabled: this.syncEnabled },
+        '[sync] sync not enabled — staying inactive',
+      );
+      return;
     }
 
     if (!hasRemote) {
@@ -288,6 +296,63 @@ export class SyncEngine {
     this.saveStateNow();
   }
 
+  // ─── User-controlled enable/disable ────────────────────────────────────────
+
+  /**
+   * Toggle sync on/off. Soft disable — cancels scheduled cycles but lets an
+   * in-flight pull/push finish cleanly to avoid leaving a partial merge.
+   * Persisted to sync-state.json so it survives restart.
+   */
+  async setEnabled(enabled: boolean): Promise<void> {
+    if (this.syncEnabled === enabled) return;
+    this.syncEnabled = enabled;
+
+    if (!enabled) {
+      if (this.pullTimer !== null) {
+        clearTimeout(this.pullTimer);
+        this.pullTimer = null;
+      }
+      if (this.pushTimer !== null) {
+        clearTimeout(this.pushTimer);
+        this.pushTimer = null;
+      }
+      while (this.pullInFlight || this.pushInFlight) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      this.pausedReason = undefined;
+      this.error = undefined;
+      this.transitionTo(this.hasRemote ? 'disabled' : 'dormant');
+      this.saveStateNow();
+      return;
+    }
+
+    // Re-detect remote in case it was added while sync was off.
+    try {
+      const handle = createGitInstance(this.projectDir, {
+        credentialArgs: this.credentialArgs,
+      });
+      const remoteOutput = await handle.git.raw('remote', '-v');
+      this.hasRemote = remoteOutput.trim().length > 0;
+    } catch (e) {
+      log.warn({ err: e }, '[sync] remote detection failed during enable');
+    }
+
+    this.pausedReason = undefined;
+    this.error = undefined;
+    this.consecutiveFailures = 0;
+
+    if (!this.hasRemote) {
+      this.transitionTo('dormant');
+      this.saveStateNow();
+      return;
+    }
+
+    this.transitionTo('idle');
+    this.schedulePull(0);
+    this.schedulePush();
+    this.saveStateNow();
+  }
+
   // ─── Manual trigger ────────────────────────────────────────────────────────
 
   /** Trigger an immediate pull + push cycle (bypasses backoff, resets consecutiveFailures). */
@@ -316,6 +381,7 @@ export class SyncEngine {
       consecutiveFailures: this.consecutiveFailures,
       conflictCount: this.conflictCount,
       hasRemote: this.hasRemote,
+      syncEnabled: this.syncEnabled === true,
       identityUnresolved: this.identityUnresolved,
       error: this.error,
       pausedReason: this.pausedReason,
@@ -955,6 +1021,7 @@ export class SyncEngine {
         pausedSinceUtc: this.pausedReason ? new Date().toISOString() : undefined,
         // Persist file paths of any in-flight conflicts so they survive restart
         inflightConflicts: this.conflictStore.list().map((c) => c.file),
+        syncEnabled: this.syncEnabled,
       };
       writeFileSync(this.statePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (e) {
@@ -973,6 +1040,7 @@ export class SyncEngine {
       this.lastPushedSha = data.lastPushedSha ?? null;
       this.consecutiveFailures = data.consecutiveFailures ?? 0;
       this.pausedReason = data.pausedReason;
+      if (data.syncEnabled !== undefined) this.syncEnabled = data.syncEnabled;
 
       // Restore in-flight conflicts into the ConflictStore
       const inflightFiles = data.inflightConflicts ?? [];

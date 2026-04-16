@@ -74,6 +74,7 @@ import { resolveGitIdentity, writeGitIdentity } from './git-identity.ts';
 import {
   checkLocalOpSecurity,
   createConcurrencyGuard,
+  expandTilde,
   isAllowedGitUrl,
   isSafeLocalPath,
 } from './local-op-security.ts';
@@ -3151,11 +3152,21 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       'Cache-Control': 'no-cache',
     });
 
+    // CLI clone takes `dir` as a positional argument (not a `--dir` flag).
+    // Expand `~` here so the CLI doesn't treat it as a literal directory name.
+    const targetDir = expandTilde(dir);
     const [cmd, ...baseArgs] = localOpCliArgs;
-    const spawnArgs = [...baseArgs, 'clone', '--json', '--dir', dir, url];
+    const spawnArgs = [...baseArgs, 'clone', '--json', url, targetDir];
 
     let timedOut = false;
     let settled = false;
+    // The CLI emits `{type:'complete', dir}` on success, but the browser
+    // client expects `{type:'complete', port}`. We intercept the CLI's
+    // complete event, boot a server at the cloned dir, then emit a rewritten
+    // complete with the port. Non-terminal events (progress / error) flow
+    // through unchanged.
+    let cloneCompleteDir: string | null = null;
+    let stdoutBuffer = '';
 
     const child = spawn(cmd, spawnArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -3167,32 +3178,73 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       child.kill('SIGTERM');
     }, LOCAL_OP_TIMEOUT_MS);
 
-    // Stream stdout (NDJSON lines from `clone --json`)
     child.stdout.on('data', (chunk: Buffer) => {
-      if (!res.writableEnded) res.write(chunk);
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let parsed: { type?: unknown; dir?: unknown } | null = null;
+        try {
+          parsed = JSON.parse(line) as { type?: unknown; dir?: unknown };
+        } catch {
+          /* non-JSON — ignore */
+        }
+        if (parsed && parsed.type === 'complete' && typeof parsed.dir === 'string') {
+          // Swallow this line; we'll emit our own complete after starting the server.
+          cloneCompleteDir = parsed.dir;
+          continue;
+        }
+        if (!res.writableEnded) res.write(`${line}\n`);
+      }
     });
 
-    // Log stderr (progress / errors) but don't stream to client
+    // Buffer stderr so we can surface it when the clone fails; also log.
+    const stderrChunks: Buffer[] = [];
     child.stderr.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
       log.debug({ msg: chunk.toString('utf-8').trim() }, '[local-op/clone] stderr');
     });
 
     child.on('close', (code) => {
       clearTimeout(killTimer);
-      if (!settled) {
-        settled = true;
-        if (timedOut && !res.writableEnded) {
-          res.write(
-            `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
-          );
-        } else if (code !== 0 && !res.writableEnded) {
-          res.write(
-            `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}` })}\n`,
-          );
-        }
-        res.end();
+      const stderrOutput = Buffer.concat(stderrChunks).toString('utf-8').trim();
+      if (settled) {
+        localOpGuard.release(LOCAL_OP_CLONE_KEY);
+        return;
       }
-      localOpGuard.release(LOCAL_OP_CLONE_KEY);
+      settled = true;
+
+      void (async () => {
+        try {
+          if (timedOut && !res.writableEnded) {
+            res.write(
+              `${JSON.stringify({ type: 'error', message: 'Clone timed out after 10 minutes' })}\n`,
+            );
+          } else if (code !== 0 && !res.writableEnded) {
+            if (stderrOutput) {
+              log.warn({ code, stderr: stderrOutput, url, dir }, '[local-op/clone] clone failed');
+            }
+            const detail = stderrOutput ? ` — ${stderrOutput}` : '';
+            res.write(
+              `${JSON.stringify({ type: 'error', message: `Clone process exited with code ${code}${detail}` })}\n`,
+            );
+          } else if (code === 0 && cloneCompleteDir && !res.writableEnded) {
+            // Chain into server-start so the client can redirect.
+            const result = await startServerAtDirAndGetPort(cloneCompleteDir);
+            if (!res.writableEnded) {
+              if ('port' in result) {
+                res.write(`${JSON.stringify({ type: 'complete', port: result.port })}\n`);
+              } else {
+                res.write(`${JSON.stringify({ type: 'error', message: result.error })}\n`);
+              }
+            }
+          }
+        } finally {
+          if (!res.writableEnded) res.end();
+          localOpGuard.release(LOCAL_OP_CLONE_KEY);
+        }
+      })();
     });
 
     child.on('error', (err) => {
@@ -3206,6 +3258,75 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       localOpGuard.release(LOCAL_OP_CLONE_KEY);
     });
+  }
+
+  /**
+   * Spawn a detached Open Knowledge server at `dir` and poll the server.lock
+   * until a real port appears. Reused by /api/local-op/open and by the clone
+   * handler to chain clone → server-start → redirect.
+   *
+   * NOTE: The CLI's `start` command has no `--content-dir` flag — it derives
+   * the content dir from cwd + config. So we spawn with `cwd: dir` instead
+   * of passing a flag.
+   */
+  async function startServerAtDirAndGetPort(
+    dir: string,
+  ): Promise<{ port: number } | { error: string }> {
+    const absDir = resolve(expandTilde(dir));
+    const lockDir = resolve(absDir, '.open-knowledge');
+
+    // If a live server is already running in that dir, reuse it.
+    const existing = readServerLock(lockDir);
+    if (existing && existing.port > 0) {
+      return { port: existing.port };
+    }
+
+    const [cmd, ...baseArgs] = localOpCliArgs;
+    const spawnArgs = [...baseArgs, 'start'];
+    // Pipe stderr so we can log why a spawn failed; ignore stdout.
+    const child = spawn(cmd, spawnArgs, {
+      cwd: absDir,
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env },
+    });
+
+    const stderrChunks: Buffer[] = [];
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk);
+      log.warn(
+        { cwd: absDir, msg: chunk.toString('utf-8').trim() },
+        '[local-op/open] child stderr',
+      );
+    });
+
+    let earlyExitCode: number | null = null;
+    child.on('exit', (code) => {
+      earlyExitCode = code ?? -1;
+    });
+
+    // `unref` so the child survives past the parent. Do it after attaching
+    // the stderr listener so we still capture its output.
+    child.unref();
+
+    const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise<void>((r) => setTimeout(r, 500));
+      const lock = readServerLock(lockDir);
+      if (lock && lock.port > 0) {
+        return { port: lock.port };
+      }
+      if (earlyExitCode !== null) {
+        const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
+        return {
+          error: `Server process exited (code ${earlyExitCode})${stderr ? ` — ${stderr}` : ''}`,
+        };
+      }
+    }
+    const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
+    return {
+      error: `Server did not start within the expected time${stderr ? ` — ${stderr}` : ''}`,
+    };
   }
 
   /**
@@ -3253,45 +3374,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     try {
-      const lockDir = resolve(dir, '.open-knowledge');
-
-      // Check if a live server is already running in that dir
-      const existing = readServerLock(lockDir);
-      if (existing && existing.port > 0) {
-        json(res, 200, { port: existing.port });
-        return;
-      }
-
-      // Spawn the server as a detached background process
-      const [cmd, ...baseArgs] = localOpCliArgs;
-      const spawnArgs = [...baseArgs, 'start', '--content-dir', dir];
-
-      const child = spawn(cmd, spawnArgs, {
-        detached: true,
-        stdio: 'ignore',
-        env: { ...process.env },
-      });
-      child.unref();
-
-      // Poll for the server lock file to appear with a real port
-      const deadline = Date.now() + LOCAL_OP_OPEN_TIMEOUT_MS;
-      let port = 0;
-      while (Date.now() < deadline) {
-        await new Promise<void>((r) => setTimeout(r, 500));
-        const lock = readServerLock(lockDir);
-        if (lock && lock.port > 0) {
-          port = lock.port;
-          break;
-        }
-      }
-
-      if (port > 0) {
-        json(res, 200, { port });
+      const result = await startServerAtDirAndGetPort(dir);
+      if ('port' in result) {
+        json(res, 200, { port: result.port });
       } else {
-        json(res, 504, {
-          ok: false,
-          error: 'Server did not start within the expected time',
-        });
+        json(res, 504, { ok: false, error: result.error });
       }
     } finally {
       localOpGuard.release(LOCAL_OP_OPEN_KEY);
@@ -3350,6 +3437,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     const spawnArgs = [...baseArgs, 'auth', 'login', '--json', '--host', host];
 
     let settled = false;
+    let sawTerminalEvent = false;
+    let stdoutBuffer = '';
     const child = spawn(cmd, spawnArgs, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env },
@@ -3359,8 +3448,33 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       child.kill('SIGTERM');
     }, LOCAL_OP_TIMEOUT_MS);
 
+    // Kill the child if the client disconnects so `auth login` doesn't keep
+    // polling in the background and write a token to the keychain that the
+    // user never saw confirmation for.
+    const onClientClose = () => {
+      if (!child.killed) child.kill('SIGTERM');
+    };
+    res.on('close', onClientClose);
+
     child.stdout.on('data', (chunk: Buffer) => {
       if (!res.writableEnded) res.write(chunk);
+      // Parse line-by-line to detect whether the CLI emitted a terminal event
+      // (`complete` | `error`). If it didn't but the process exits 0, we
+      // synthesize one below so the client never hangs on a silent exit.
+      stdoutBuffer += chunk.toString('utf-8');
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop() ?? '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const parsed = JSON.parse(line) as { type?: unknown };
+          if (parsed.type === 'complete' || parsed.type === 'error') {
+            sawTerminalEvent = true;
+          }
+        } catch {
+          /* non-JSON line (e.g. keychain-backend log) — ignore */
+        }
+      }
     });
 
     child.stderr.on('data', (chunk: Buffer) => {
@@ -3369,12 +3483,20 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     child.on('close', (code) => {
       clearTimeout(killTimer);
+      res.off('close', onClientClose);
       if (!settled) {
         settled = true;
-        if (code !== 0 && !res.writableEnded) {
-          res.write(
-            `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
-          );
+        if (!res.writableEnded) {
+          if (code === 0 && !sawTerminalEvent) {
+            // CLI exited cleanly without emitting a terminal event — synthesize
+            // one so the client's stream reader can resolve. Login name will be
+            // filled in by the next /api/local-op/auth/status poll.
+            res.write(`${JSON.stringify({ type: 'complete', host, login: '' })}\n`);
+          } else if (code !== 0) {
+            res.write(
+              `${JSON.stringify({ type: 'error', message: `auth login exited with code ${code}` })}\n`,
+            );
+          }
         }
         res.end();
       }
@@ -3383,6 +3505,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     child.on('error', (err) => {
       clearTimeout(killTimer);
+      res.off('close', onClientClose);
       if (!settled) {
         settled = true;
         if (!res.writableEnded) {
@@ -3411,8 +3534,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     let host = 'github.com';
     try {
       const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { host?: unknown };
-      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      const raw = body.toString().trim();
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw) as { host?: unknown };
+        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      }
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
       return;
@@ -3447,14 +3573,24 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       });
 
-      const line = output.trim();
-      if (line) {
+      // The CLI may emit non-JSON log lines on stdout before the terminal
+      // event (e.g. keychain probe messages on older builds). Find the last
+      // parseable JSON line and return that.
+      const lines = output
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      let parsed: unknown = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
         try {
-          const parsed = JSON.parse(line) as unknown;
-          json(res, 200, parsed);
+          parsed = JSON.parse(lines[i] as string);
+          break;
         } catch {
-          json(res, 200, { raw: line });
+          /* skip non-JSON line */
         }
+      }
+      if (parsed !== null) {
+        json(res, 200, parsed);
       } else {
         json(res, 200, { authenticated: false });
       }
@@ -3485,8 +3621,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     let host = 'github.com';
     try {
       const body = await readBody(req);
-      const parsed = JSON.parse(body.toString()) as { host?: unknown };
-      if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      const raw = body.toString().trim();
+      if (raw.length > 0) {
+        const parsed = JSON.parse(raw) as { host?: unknown };
+        if (typeof parsed.host === 'string' && parsed.host) host = parsed.host;
+      }
     } catch {
       json(res, 400, { ok: false, error: 'Invalid JSON body' });
       return;
@@ -3684,14 +3823,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         });
       });
 
-      const line = output.trim();
-      if (line) {
+      // Same robustness as status: pick the last JSON line, ignore any
+      // non-JSON output the CLI may have emitted.
+      const lines = output
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean);
+      let parsed: unknown = null;
+      for (let i = lines.length - 1; i >= 0; i--) {
         try {
-          const parsed = JSON.parse(line) as unknown;
-          json(res, 200, parsed);
+          parsed = JSON.parse(lines[i] as string);
+          break;
         } catch {
-          json(res, 200, { raw: line });
+          /* skip non-JSON line */
         }
+      }
+      if (parsed !== null) {
+        json(res, 200, parsed);
       } else {
         json(res, 200, { ok: true });
       }
@@ -3829,6 +3977,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         consecutiveFailures: 0,
         conflictCount: 0,
         hasRemote: false,
+        syncEnabled: false,
       });
       return;
     }
@@ -3861,6 +4010,34 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     // Fire-and-return: 202 Accepted immediately, trigger runs in background
     json(res, 202, { ok: true, op });
     void engine.trigger(op);
+  }
+
+  async function handleSyncSetEnabled(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (!checkLocalOpSecurity(req, res, json)) return;
+    if (req.method !== 'POST') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    const engine = getSyncEngine?.();
+    if (!engine) {
+      json(res, 503, { ok: false, error: 'Sync engine not active' });
+      return;
+    }
+    let enabled: boolean;
+    try {
+      const body = await readBody(req);
+      const parsed = JSON.parse(body.toString()) as { enabled?: unknown };
+      if (typeof parsed.enabled !== 'boolean') {
+        json(res, 400, { ok: false, error: 'enabled must be a boolean' });
+        return;
+      }
+      enabled = parsed.enabled;
+    } catch {
+      json(res, 400, { ok: false, error: 'Invalid JSON body' });
+      return;
+    }
+    await engine.setEnabled(enabled);
+    json(res, 200, { ok: true, status: engine.getStatus() });
   }
 
   async function handleSyncConflicts(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -3968,6 +4145,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/workspace': handleWorkspace,
     '/api/sync/status': handleSyncStatus,
     '/api/sync/trigger': handleSyncTrigger,
+    '/api/sync/set-enabled': handleSyncSetEnabled,
     '/api/sync/conflicts': handleSyncConflicts,
     '/api/sync/resolve-conflict': handleSyncResolveConflict,
     '/api/sync/abort-merge': handleSyncAbortMerge,

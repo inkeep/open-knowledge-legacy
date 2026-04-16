@@ -120,6 +120,7 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let sawTerminalEvent = false;
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -139,6 +140,7 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
                 setTimeout(() => setCopied(false), 2000);
               });
             } else if (event.type === 'complete') {
+              sawTerminalEvent = true;
               setPolling(false);
               onSuccess({
                 login: event.login,
@@ -148,6 +150,7 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
               });
               return;
             } else if (event.type === 'error') {
+              sawTerminalEvent = true;
               setError(event.message);
               setPolling(false);
               return;
@@ -156,6 +159,27 @@ function DeviceFlowPanel({ onSuccess, onCancel }: DeviceFlowPanelProps) {
             /* ignore malformed line */
           }
         }
+      }
+      // Stream ended without a terminal event — fall back to probing auth
+      // status. On macOS the keychain prompt can block stdout long enough
+      // that the CLI exits before its 'complete' line reaches the client.
+      if (!sawTerminalEvent) {
+        try {
+          const statusRes = await fetch('/api/local-op/auth/status', { method: 'POST' });
+          const statusData = (await statusRes.json()) as {
+            authenticated?: boolean;
+            login?: string;
+          };
+          if (statusData.authenticated) {
+            setPolling(false);
+            onSuccess({ login: statusData.login ?? '' });
+            return;
+          }
+        } catch {
+          /* ignore — fall through to error */
+        }
+        setError('Sign-in did not complete — try again');
+        setPolling(false);
       }
     } catch (err) {
       if (err instanceof Error && err.name !== 'AbortError') {

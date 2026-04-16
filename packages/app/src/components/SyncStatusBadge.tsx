@@ -6,20 +6,14 @@
  *
  * Click opens a popover with last-sync details and action buttons.
  */
-import {
-  AlertTriangle,
-  Check,
-  Cloud,
-  CloudOff,
-  LogIn,
-  RefreshCw,
-  Slash,
-  UserCog,
-} from 'lucide-react';
+import { AlertTriangle, Cloud, CloudOff, LogIn, RefreshCw, UserCog } from 'lucide-react';
+import { useState } from 'react';
 import type { GitSyncStatus } from '@/hooks/use-git-sync-status';
 import { useGitSyncStatus } from '@/hooks/use-git-sync-status';
 import { Button } from './ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Switch } from './ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -40,6 +34,14 @@ async function triggerSync(op: 'sync' | 'push' | 'pull'): Promise<void> {
   });
 }
 
+async function setSyncEnabled(enabled: boolean): Promise<void> {
+  await fetch('/api/sync/set-enabled', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 // ── inner: icon + color per state ────────────────────────────────────────────
 
 interface BadgeIconProps {
@@ -56,7 +58,7 @@ function BadgeIcon({ status }: BadgeIconProps) {
       if (status.ahead > 0 || status.behind > 0) {
         return <RefreshCw className={`${cls} text-muted-foreground`} />;
       }
-      return <Check className={`${cls} text-emerald-500`} />;
+      return <Cloud className={`${cls} text-emerald-500`} />;
     case 'fetching':
     case 'pulling':
     case 'pushing':
@@ -68,7 +70,7 @@ function BadgeIcon({ status }: BadgeIconProps) {
     case 'auth-error':
       return <LogIn className={`${cls} text-destructive`} />;
     case 'disabled':
-      return <Slash className={`${cls} text-muted-foreground`} />;
+      return <CloudOff className={`${cls} text-muted-foreground`} />;
     default:
       return <Cloud className={`${cls} text-muted-foreground`} />;
   }
@@ -102,7 +104,7 @@ function badgeLabel(status: GitSyncStatus): string {
 function stateLabel(state: GitSyncStatus['state']): string {
   switch (state) {
     case 'dormant':
-      return 'Sync available';
+      return 'No git remote';
     case 'idle':
       return 'Synced';
     case 'fetching':
@@ -124,6 +126,22 @@ function stateLabel(state: GitSyncStatus['state']): string {
   }
 }
 
+function tooltipLabel(status: GitSyncStatus): string {
+  if (!status.syncEnabled) return 'Sync off';
+  if (status.state === 'idle') {
+    if (status.ahead > 0 && status.behind > 0) {
+      return `${status.ahead} ahead, ${status.behind} behind`;
+    }
+    if (status.ahead > 0) return `${status.ahead} ahead`;
+    if (status.behind > 0) return `${status.behind} behind`;
+    return 'Synced';
+  }
+  if (status.state === 'conflict' && status.conflictCount > 0) {
+    return `${status.conflictCount} conflict${status.conflictCount === 1 ? '' : 's'}`;
+  }
+  return stateLabel(status.state);
+}
+
 interface PopoverBodyProps {
   status: GitSyncStatus;
   onSignIn?: () => void;
@@ -137,11 +155,32 @@ function PopoverBody({
   onOpenConflictResolver,
   onSetIdentity,
 }: PopoverBodyProps) {
+  const [toggling, setToggling] = useState(false);
+  const enabled = status.syncEnabled;
+
+  async function handleToggle(next: boolean) {
+    setToggling(true);
+    try {
+      await setSyncEnabled(next);
+    } catch (e) {
+      console.error('[sync] toggle failed', e);
+    }
+    setToggling(false);
+  }
+
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <BadgeIcon status={status} />
-        <span className="text-sm font-medium">{stateLabel(status.state)}</span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <BadgeIcon status={status} />
+          <span className="text-sm font-medium truncate">{stateLabel(status.state)}</span>
+        </div>
+        <Switch
+          checked={enabled}
+          disabled={toggling}
+          onCheckedChange={(next) => void handleToggle(next)}
+          aria-label={enabled ? 'Disable sync' : 'Enable sync'}
+        />
       </div>
 
       {status.error && <p className="text-xs text-destructive">{status.error}</p>}
@@ -150,7 +189,9 @@ function PopoverBody({
       )}
 
       <div className="text-xs text-muted-foreground space-y-0.5">
-        {status.state !== 'dormant' && <div>Last synced: {formatRelative(status.lastSyncUtc)}</div>}
+        {enabled && status.state !== 'dormant' && (
+          <div>Last synced: {formatRelative(status.lastSyncUtc)}</div>
+        )}
         {status.ahead > 0 && (
           <div>
             {status.ahead} commit{status.ahead !== 1 ? 's' : ''} ahead
@@ -166,6 +207,7 @@ function PopoverBody({
             {status.conflictCount} file{status.conflictCount !== 1 ? 's' : ''} conflicted
           </div>
         )}
+        {!enabled && <div>Sync is off — your edits will not sync to the remote repository.</div>}
       </div>
 
       {status.identityUnresolved && onSetIdentity && (
@@ -184,34 +226,25 @@ function PopoverBody({
       )}
 
       <div className="flex flex-wrap gap-1 pt-1">
-        {status.state !== 'dormant' &&
+        {enabled &&
+          status.state !== 'dormant' &&
           status.state !== 'disabled' &&
           status.state !== 'auth-error' && (
             <Button variant="outline" size="xs" onClick={() => void triggerSync('sync')}>
               Sync now
             </Button>
           )}
-        {status.state === 'dormant' && (
-          <Button variant="outline" size="xs" onClick={onSignIn}>
-            Enable sync
-          </Button>
-        )}
-        {status.state === 'disabled' && (
-          <Button variant="outline" size="xs" onClick={onSignIn}>
-            Enable auto-sync
-          </Button>
-        )}
-        {status.state === 'auth-error' && (
+        {enabled && status.state === 'auth-error' && (
           <Button variant="outline" size="xs" onClick={onSignIn}>
             Sign in
           </Button>
         )}
-        {(status.state === 'offline' || status.state === 'conflict') && (
+        {enabled && (status.state === 'offline' || status.state === 'conflict') && (
           <Button variant="outline" size="xs" onClick={() => void triggerSync('sync')}>
             Retry
           </Button>
         )}
-        {status.state === 'conflict' && onOpenConflictResolver && (
+        {enabled && status.state === 'conflict' && onOpenConflictResolver && (
           <Button variant="outline" size="xs" onClick={onOpenConflictResolver}>
             Review conflicts
           </Button>
@@ -250,27 +283,32 @@ export function SyncStatusBadge({
 
   return (
     <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground relative"
-          aria-label={`Sync status: ${stateLabel(status.state)}${showIdentityDot ? ' — git identity unset' : ''}`}
-        >
-          <BadgeIcon status={status} />
-          {label && (
-            <span className="absolute -top-0.5 -right-0.5 text-[9px] leading-none font-medium bg-background border rounded-full px-0.5">
-              {label}
-            </span>
-          )}
-          {!label && showIdentityDot && (
-            <span
-              className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-amber-500 ring-2 ring-background"
-              aria-hidden
-            />
-          )}
-        </Button>
-      </PopoverTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <PopoverTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground relative"
+              aria-label={`Sync status: ${stateLabel(status.state)}${showIdentityDot ? ' — git identity unset' : ''}`}
+            >
+              <BadgeIcon status={status} />
+              {label && (
+                <span className="absolute -top-0.5 -right-0.5 text-[9px] leading-none font-medium bg-background border rounded-full px-0.5">
+                  {label}
+                </span>
+              )}
+              {!label && showIdentityDot && (
+                <span
+                  className="absolute -top-0.5 -right-0.5 size-1.5 rounded-full bg-amber-500 ring-2 ring-background"
+                  aria-hidden
+                />
+              )}
+            </Button>
+          </PopoverTrigger>
+        </TooltipTrigger>
+        <TooltipContent>{tooltipLabel(status)}</TooltipContent>
+      </Tooltip>
       <PopoverContent align="end" className="w-64 p-3">
         <PopoverBody
           status={status}

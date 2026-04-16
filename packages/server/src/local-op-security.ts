@@ -45,7 +45,7 @@ export function isAllowedGitUrl(url: string): boolean {
 // ─── Path safety ─────────────────────────────────────────────────────────────
 
 /** Expand a leading `~` or `~/` to the user's home directory. */
-function expandTilde(p: string): string {
+export function expandTilde(p: string): string {
   if (p === '~') return homedir();
   if (p.startsWith('~/')) return join(homedir(), p.slice(2));
   return p;

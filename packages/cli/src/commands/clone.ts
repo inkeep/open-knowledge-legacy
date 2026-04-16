@@ -147,7 +147,10 @@ export function cloneCommand(getConfig: () => Config): Command {
         } else {
           process.stderr.write(`✗ ${msg}\n`);
         }
-        process.exit(1);
+        // Don't call process.exit — it can truncate a buffered stdout pipe
+        // before the final JSON line is flushed. Set exitCode and return so
+        // Node drains stdout naturally before the process exits.
+        process.exitCode = 1;
       }
     });
 }

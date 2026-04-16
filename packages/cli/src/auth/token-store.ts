@@ -139,10 +139,10 @@ export async function createTokenStore(authFile?: string): Promise<TokenStore> {
     const { Entry } = await import('@napi-rs/keyring');
     // Verify the native module loaded and Entry is usable
     new Entry(KEYRING_SERVICE, '__probe__');
-    console.log('[auth] token storage: OS keychain');
+    process.stderr.write('[auth] token storage: OS keychain\n');
     return new KeyringBackend();
   } catch {
-    console.log('[auth] token storage: file (~/.open-knowledge/auth.yml)');
+    process.stderr.write('[auth] token storage: file (~/.open-knowledge/auth.yml)\n');
     return new FileBackend(authFile);
   }
 }

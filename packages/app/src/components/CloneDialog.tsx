@@ -9,6 +9,7 @@
  *   - Sign-in integration: onSignIn prop opens AuthModal (US-027)
  *   - On complete: redirect to the new server port
  */
+import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
@@ -92,6 +93,7 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
   const [urlInput, setUrlInput] = useState('');
   const [localPath, setLocalPath] = useState('');
   const [repos, setRepos] = useState<RepoEntry[] | null>(null);
+  const [loadingRepos, setLoadingRepos] = useState(false);
   const [repoFilter, setRepoFilter] = useState('');
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [cloning, setCloning] = useState(false);
@@ -99,12 +101,19 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
   const toastIdRef = useRef<string | number | null>(null);
 
   async function fetchRepos() {
+    setLoadingRepos(true);
     try {
       const res = await fetch('/api/local-op/auth/repos', { method: 'POST' });
-      if (!res.ok) return;
+      if (!res.ok) {
+        setLoadingRepos(false);
+        return;
+      }
       const list: RepoEntry[] = [];
       const reader = res.body?.getReader();
-      if (!reader) return;
+      if (!reader) {
+        setLoadingRepos(false);
+        return;
+      }
       const decoder = new TextDecoder();
       let buffer = '';
       while (true) {
@@ -123,8 +132,9 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
         buffer = buffer.slice(buffer.lastIndexOf('\n') + 1);
       }
       setRepos(list);
+      setLoadingRepos(false);
     } catch {
-      /* ignore */
+      setLoadingRepos(false);
     }
   }
 
@@ -202,12 +212,12 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
             if (event.type === 'progress') {
               toast.loading(`${phaseLabel(event.phase)} — ${event.pct}%`, { id: toastId });
             } else if (event.type === 'complete') {
-              toast.success('Clone complete — opening project', { id: toastId });
+              toast.success('Clone complete — opening in a new tab', { id: toastId });
               onOpenChange(false);
               setCloning(false);
               setAbortController(null);
-              // Redirect to the new server's port
-              window.location.href = `http://localhost:${event.port}`;
+              // Open the new server in a new tab so the current editor stays put.
+              window.open(`http://localhost:${event.port}`, '_blank', 'noopener,noreferrer');
               return;
             } else if (event.type === 'error') {
               toast.error(`Clone failed: ${event.message}`, { id: toastId });
@@ -280,17 +290,24 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
           </div>
 
           {/* Repo browser */}
-          {isSignedIn && repos !== null && (
+          {isSignedIn && (loadingRepos || repos !== null) && (
             <div className="flex flex-col gap-1.5">
               <span className="text-sm font-medium">Your repositories</span>
-              <Input
-                placeholder="Filter repositories…"
-                value={repoFilter}
-                onChange={(e) => setRepoFilter(e.target.value)}
-                disabled={cloning}
-              />
+              {!loadingRepos && (
+                <Input
+                  placeholder="Filter repositories…"
+                  value={repoFilter}
+                  onChange={(e) => setRepoFilter(e.target.value)}
+                  disabled={cloning}
+                />
+              )}
               <div className="border rounded-md max-h-40 overflow-y-auto subtle-scrollbar">
-                {filteredRepos?.length === 0 ? (
+                {loadingRepos ? (
+                  <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+                    <Loader2 className="size-3.5 animate-spin" />
+                    Loading repositories…
+                  </div>
+                ) : filteredRepos?.length === 0 ? (
                   <p className="px-3 py-2 text-xs text-muted-foreground">No repos found.</p>
                 ) : (
                   filteredRepos?.map((repo) => (
