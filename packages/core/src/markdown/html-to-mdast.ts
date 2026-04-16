@@ -23,6 +23,9 @@ import type { Root as MdastRoot } from 'mdast';
 import rehypeParse from 'rehype-parse';
 import rehypeRemark from 'rehype-remark';
 import { type Plugin, unified } from 'unified';
+import { rehypeStripCocoaMeta } from './rehype-plugins/strip-cocoa-meta.ts';
+import { rehypeStripGdocsWrapper } from './rehype-plugins/strip-gdocs-wrapper.ts';
+import { rehypeStripMsoStyles } from './rehype-plugins/strip-mso-styles.ts';
 
 export interface HtmlToMdastOptions {
   /**
@@ -44,11 +47,18 @@ export interface HtmlToMdastOptions {
  * plugins (which transform any HTML). The canonical order registered
  * here is the order preserved into the pipeline.
  *
- * Empty at scaffold-time (US-002). Populated in US-008 (GDocs, Word,
- * Apple), US-009 (Gmail, Notion, VS Code), and US-010 (Google Sheets,
- * Slack, GitHub rendered).
+ * Day-one panel per D9 LOCKED. US-008 added the first three; US-009 and
+ * US-010 populate the remaining six (Gmail / Notion / VS Code / Google
+ * Sheets / Slack / GitHub rendered) bringing the total to 9.
  */
-export const cleanupPlugins: Plugin[] = [];
+export const cleanupPlugins: Plugin[] = [
+  // US-008: fingerprint-detecting plugins — each is a no-op on non-matching
+  // trees, so ordering among them is irrelevant. They run before the generic
+  // rehype-remark conversion stage which has no fingerprint detection.
+  rehypeStripGdocsWrapper as Plugin,
+  rehypeStripMsoStyles as Plugin,
+  rehypeStripCocoaMeta as Plugin,
+];
 
 /**
  * Convert an HTML string to an mdast Root tree.
