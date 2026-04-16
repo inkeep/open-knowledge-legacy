@@ -5,9 +5,22 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { commitWip, initShadowRepo, type WriterIdentity } from '@inkeep/open-knowledge-server';
 import simpleGit from 'simple-git';
+import type { Config } from '../../config/schema.ts';
 import type { EnrichedMeta } from '../../content/enrichment.ts';
 import { buildExecResult, type ExecStructuredResult } from './exec.ts';
 import { buildReadResult } from './read-document.ts';
+
+const BASE_CONFIG: Config = {
+  content: { dir: '.', include: ['**/*.md', '**/*.mdx'], exclude: [] },
+  server: { port: 3000, host: 'localhost', openOnAgentEdit: false },
+  persistence: { debounceMs: 2000, maxDebounceMs: 10000 },
+  mcp: {
+    tools: {
+      read_document: { historyDepth: 5 },
+      search: { maxResults: 50 },
+    },
+  },
+};
 
 function fileEntries(s: ExecStructuredResult): EnrichedMeta[] {
   return s.enrichedPaths.filter(
@@ -407,5 +420,74 @@ describe('exec — structuredContent mirrors stdout + warnings (Desktop fix)', (
 
     const s = structured(result);
     expect(s.stdoutTruncated).toBe(true);
+  });
+});
+
+describe('exec — per-row previewUrl + top-level ui block (FR-2.2 / FR-2.6)', () => {
+  test('emits previewUrl per enriched file + ui block when config provided', async () => {
+    const project = await bootstrap();
+    const originalEnv = process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+    process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = 'https://env.example';
+    try {
+      const contentDir = resolve(project, 'articles');
+      mkdirSync(contentDir, { recursive: true });
+      writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody');
+      writeFileSync(resolve(contentDir, 'sso.md'), '---\ntitle: SSO\n---\nBody');
+
+      const result = (await buildExecResult(
+        { command: 'ls articles/' },
+        { resolveCwd: async () => project, serverUrl: undefined, config: BASE_CONFIG },
+      )) as ExecResult;
+
+      const s = structured(result);
+      const files = fileEntries(s);
+      expect(files.length).toBe(2);
+      for (const f of files) {
+        const docName = f.path.replace(/\.(md|mdx)$/i, '');
+        expect((f as unknown as { previewUrl: string }).previewUrl).toBe(
+          `https://env.example/#/${docName}`,
+        );
+        expect((f as unknown as { previewUrlSource: string }).previewUrlSource).toBe('env');
+      }
+      expect(s.ui).toEqual({ baseUrl: null, port: null });
+    } finally {
+      if (originalEnv === undefined) delete process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL;
+      else process.env.OPEN_KNOWLEDGE_PREVIEW_BASE_URL = originalEnv;
+    }
+  });
+
+  test('previewUrl null when resolver returns null', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody');
+
+    const result = (await buildExecResult(
+      { command: 'ls articles/' },
+      { resolveCwd: async () => project, serverUrl: undefined, config: BASE_CONFIG },
+    )) as ExecResult;
+
+    const s = structured(result);
+    const files = fileEntries(s);
+    expect(files.length).toBe(1);
+    expect((files[0] as unknown as { previewUrl: string | null }).previewUrl).toBeNull();
+    expect(s.ui).toEqual({ baseUrl: null, port: null });
+  });
+
+  test('without config: previewUrls all null and ui block omitted (back-compat)', async () => {
+    const project = await bootstrap();
+    const contentDir = resolve(project, 'articles');
+    mkdirSync(contentDir, { recursive: true });
+    writeFileSync(resolve(contentDir, 'auth.md'), '---\ntitle: Auth\n---\nBody');
+
+    const result = (await buildExecResult(
+      { command: 'ls articles/' },
+      { resolveCwd: async () => project, serverUrl: undefined },
+    )) as ExecResult;
+
+    const s = structured(result);
+    const files = fileEntries(s);
+    expect((files[0] as unknown as { previewUrl: string | null }).previewUrl).toBeNull();
+    expect(s.ui).toBeUndefined();
   });
 });

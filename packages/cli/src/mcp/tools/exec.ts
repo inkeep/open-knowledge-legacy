@@ -31,6 +31,7 @@ import {
   type Stage,
   serializeStages,
 } from '../../bash/parse-command.ts';
+import type { Config } from '../../config/schema.ts';
 import {
   type DirectoryMeta,
   type EnrichedEntry,
@@ -38,6 +39,12 @@ import {
   enrichDirectory,
   enrichPath,
 } from '../../content/enrichment.ts';
+import {
+  buildListResolver,
+  docNameFromPath,
+  type PreviewUrlSource,
+  type UiInfo,
+} from './preview-url.ts';
 import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import { resolveServerUrl, textPlusStructured } from './shared.ts';
 
@@ -72,10 +79,26 @@ export interface ExecDeps {
    * MCP client advertises its roots rather than being frozen at startup.
    */
   serverUrl: ServerUrlOrResolver;
+  /**
+   * Config — used to resolve the UI lockDir for per-row previewUrl + the
+   * top-level `ui` block. Optional for callers that only want raw enrichment
+   * (test fixtures); when absent, previewUrls are null and `ui` is null.
+   */
+  config?: Config;
 }
 
+export type ExecEnrichedEntry = EnrichedEntry & {
+  previewUrl: string | null;
+  previewUrlSource?: PreviewUrlSource;
+};
+
 export interface ExecStructuredResult {
-  enrichedPaths: EnrichedEntry[];
+  enrichedPaths: ExecEnrichedEntry[];
+  /**
+   * Top-level UI info block (FR-2.6). `{baseUrl: null, port: null}` when the
+   * UI lock is absent. Omitted only when config is not supplied.
+   */
+  ui?: UiInfo;
   /**
    * Raw stdout (after soft-cap truncation). Duplicated from the `text` content
    * stream into `structuredContent` because some MCP clients (notably Claude
@@ -305,6 +328,28 @@ function errorCategoryResult(category: ErrorCategory, message: string) {
   return textPlusStructured(message, structured, true);
 }
 
+/**
+ * Attach `previewUrl` + optional `previewUrlSource` to each enriched entry.
+ * Files use `docNameFromPath` (strip `.md`/`.mdx`); directories pass through
+ * their path unchanged so a docName-addressable directory page resolves. When
+ * `resolve` returns null the field is `null` — never missing.
+ */
+function withPreviewUrls(
+  entries: EnrichedEntry[],
+  resolve: (docName: string) => { url: string; source: PreviewUrlSource } | null,
+): ExecEnrichedEntry[] {
+  return entries.map((entry) => {
+    const docName = docNameFromPath(entry.path);
+    const resolved = resolve(docName);
+    const withFields: ExecEnrichedEntry = {
+      ...entry,
+      previewUrl: resolved?.url ?? null,
+      ...(resolved ? { previewUrlSource: resolved.source } : {}),
+    } as ExecEnrichedEntry;
+    return withFields;
+  });
+}
+
 export async function buildExecResult(
   args: { command: string; cwd?: string },
   deps: ExecDeps,
@@ -440,14 +485,33 @@ export async function buildExecResult(
   const enrichmentBlock = formatEnrichedBlock(enriched);
   const content = `${bannerText}${stdoutText}${enrichmentBlock}`;
 
+  // Attach per-row previewUrl (FR-2.2) + top-level `ui` block (FR-2.6). When
+  // no config is supplied (older callers / test fixtures), previewUrls are
+  // null across the board and `ui` is omitted.
+  let enrichedWithPreview: ExecEnrichedEntry[];
+  let uiBlock: UiInfo | undefined;
+  if (deps.config) {
+    const { resolve, ui } = await buildListResolver({
+      config: deps.config,
+      resolveCwd: async () => cwd,
+    });
+    enrichedWithPreview = withPreviewUrls(enriched, resolve);
+    uiBlock = ui;
+  } else {
+    enrichedWithPreview = enriched.map(
+      (entry) => ({ ...entry, previewUrl: null }) as ExecEnrichedEntry,
+    );
+  }
+
   // Duplicate stdout + banners into structuredContent. Claude Desktop and some
   // other MCP clients hide the text content stream when structuredContent is
   // present; without this duplication, Desktop agents see only enrichedPaths
   // and miss both the actual output AND our safety warnings.
   const structured: ExecStructuredResult = {
-    enrichedPaths: enriched,
+    enrichedPaths: enrichedWithPreview,
     stdout: stdoutText,
     stdoutTruncated: capped.truncated,
+    ...(uiBlock ? { ui: uiBlock } : {}),
     ...(banners.length > 0 ? { warnings: banners } : {}),
   };
   return textPlusStructured(content, structured);

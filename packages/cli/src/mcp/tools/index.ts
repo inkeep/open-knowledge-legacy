@@ -149,10 +149,14 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
   registerExec(server, {
     resolveCwd: opts.resolveCwd,
     serverUrl: opts.serverUrl,
+    config: opts.config,
   });
 
   // Workflow tools — return instructional text, no server connection needed
-  registerInitContent(server, opts.config);
+  registerInitContent(server, {
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
   registerIngest(server, opts.config);
   registerResearch(server, opts.config);
   registerConsolidate(server, opts.config);
@@ -203,12 +207,36 @@ export function registerAllTools(server: ServerInstance, opts: RegisterAllToolsO
     config: opts.config,
     resolveCwd: opts.resolveCwd,
   });
-  registerListDocuments(server, opts.serverUrl);
-  registerGetBacklinks(server, opts.serverUrl);
-  registerGetForwardLinks(server, opts.serverUrl);
-  registerGetOrphans(server, opts.serverUrl);
-  registerGetHubs(server, opts.serverUrl);
-  registerGetDeadLinks(server, opts.serverUrl);
+  registerListDocuments(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetBacklinks(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetForwardLinks(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetOrphans(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetHubs(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
+  registerGetDeadLinks(server, {
+    serverUrl: opts.serverUrl,
+    config: opts.config,
+    resolveCwd: opts.resolveCwd,
+  });
 
   // Preview URL — no Hocuspocus dependency; reads config + server.lock directly.
   registerGetPreviewUrl(server, {
