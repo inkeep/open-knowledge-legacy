@@ -445,6 +445,76 @@ describe('Origin-guard truth table (§7d)', () => {
     cleanup();
   });
 
+  test('paired-write race: concurrent Y.Text mutation in debounce window does not duplicate content', () => {
+    // Regression for fuzz seed 1776325179241 — "Oracle (e) content-set violation".
+    //
+    // Scenario: an AGENT_WRITE_ORIGIN transaction atomically writes both
+    // XmlFragment and Y.Text via applyAgentMarkdownWrite. Observer A's callback
+    // fires and (before the fix) schedules a 50 ms debounce. A concurrent Y.Text
+    // mutation (e.g., CRDT merge from a client source-type edit) lands before
+    // the debounce fires. When runObserverASync eventually runs, it sees a
+    // stale baseline (lastSyncedXmlMd frozen at pre-agent-write state),
+    // diverged Y.Text vs XmlFragment, and falls into Path B's mergeThreeWay —
+    // which duplicates the common "just-written" content.
+    //
+    // Fix: Observer A's callback synchronously refreshes lastSyncedXmlMd on
+    // paired-write origins and cancels any pending debounce. See
+    // isPairedWriteOrigin in server-observers.ts.
+    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
+    scheduler.flush();
+
+    // Seed with initial content (simulates the test harness's pre-client
+    // agent-write-md('seed paragraph', 'replace')).
+    const seedContent = 'seed paragraph\n';
+    const seedJson = mdManager.parse(seedContent);
+    const seedNode = schema.nodeFromJSON(seedJson);
+    doc.transact(() => {
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(doc, xmlFragment, seedNode, meta);
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, mdManager.serialize(seedJson));
+    }, AGENT_WRITE_ORIGIN);
+    scheduler.flush();
+
+    // Step 1: paired-write appending "M0-alpha echo" (mimics agent-write-md
+    // 'append' position). Both XmlFragment and Y.Text are written atomically.
+    const afterOp0 = 'seed paragraph\n\nM0-alpha echo\n';
+    const op0Json = mdManager.parse(afterOp0);
+    const op0Node = schema.nodeFromJSON(op0Json);
+    const op0Canonical = mdManager.serialize(op0Json);
+    doc.transact(() => {
+      const meta = { mapping: new Map(), isOMark: new Map() };
+      updateYFragment(doc, xmlFragment, op0Node, meta);
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, op0Canonical);
+    }, AGENT_WRITE_ORIGIN);
+
+    // Step 2: BEFORE flushing the scheduler (i.e., inside Observer A's 50 ms
+    // debounce window), a client source-type Y.Text mutation arrives. Mimics
+    // a paused client's appended paragraph delivered via CRDT merge.
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\n\nM1-golf hotel\n');
+    });
+
+    // Step 3: flush the scheduler. Observer A runs; without the paired-origin
+    // fix, Path B's mergeThreeWay would produce a duplicated "M0-alpha echo"
+    // line. Observer B runs afterward and parses the (possibly-duplicated)
+    // Y.Text into XmlFragment, propagating the corruption.
+    scheduler.flush();
+
+    // Zero-tolerance oracle: "M0-alpha echo" must appear exactly ONCE in the
+    // final Y.Text state. Duplication would be e.g.
+    // "seed paragraph\n\nM0-alpha echo\nM0-alpha echo\n\nM1-golf hotel\n".
+    const finalText = ytext.toString();
+    const occurrences = finalText.split('M0-alpha echo').length - 1;
+    expect(occurrences).toBe(1);
+    // And M1 must be present — Observer B should have propagated the source-type edit.
+    expect(finalText).toContain('M1-golf hotel');
+
+    cleanup();
+  });
+
   test('remote-arrived (no origin, local=false equivalent) triggers Observer A sync', () => {
     const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
     const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));

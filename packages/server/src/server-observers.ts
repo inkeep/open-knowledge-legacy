@@ -33,6 +33,8 @@ import {
 import type { Schema } from '@tiptap/pm/model';
 import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import type * as Y from 'yjs';
+import { AGENT_WRITE_ORIGIN } from './agent-sessions.ts';
+import { FILE_WATCHER_ORIGIN } from './external-change.ts';
 import { incrementServerObserverError, incrementServerObserverFire } from './metrics.ts';
 
 // ─────────────────────────────────────────────────────────────
@@ -56,6 +58,29 @@ export const OBSERVER_SYNC_ORIGIN = {
   skipStoreHooks: true,
   context: { origin: 'observer-sync' },
 } satisfies LocalTransactionOrigin;
+
+/**
+ * Paired-write origins — transactions where the caller atomically wrote BOTH
+ * XmlFragment and Y.Text inside a single `doc.transact(..., ORIGIN)` block:
+ *
+ *   - AGENT_WRITE_ORIGIN   → applyAgentMarkdownWrite (agent-sessions.ts)
+ *   - FILE_WATCHER_ORIGIN  → applyExternalChange (external-change.ts)
+ *
+ * Observer A MUST synchronously refresh `lastSyncedXmlMd` and cancel any
+ * pending debounce when it sees one of these origins. Otherwise, a concurrent
+ * Y.Text mutation arriving during the 50 ms debounce window causes
+ * `runObserverASync` to fire with a stale baseline and run Path B's
+ * `mergeThreeWay` — which duplicates content when user (XmlFragment) and
+ * agent (Y.Text) both contain the same addition.
+ *
+ * Fuzz reproduction: `STRESS_FUZZ_SEED=1776325179241 bun test
+ * packages/app/tests/stress/bridge-convergence.fuzz.test.ts` produces an
+ * "Oracle (e) content-set violation — missing 'M3-charlie hotel echo'" failure
+ * whose proximate cause is a duplicated `M0-alpha echo` line that a later
+ * agent-patch `indexOf('alpha')` locks onto instead of the intended target.
+ */
+const isPairedWriteOrigin = (origin: unknown): boolean =>
+  origin === AGENT_WRITE_ORIGIN || origin === FILE_WATCHER_ORIGIN;
 
 // Bridge utilities (applyIncrementalDiff, applyFastDiff, mergeThreeWay,
 // diffLinesFast, Scheduler, defaultScheduler, getFrontmatter, normalizeBridge)
@@ -180,14 +205,36 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
     // Self-skip: our own cross-CRDT write
     if (transaction.origin === OBSERVER_SYNC_ORIGIN) return;
 
-    // No callback-level baseline refresh needed on the server. Unlike the
-    // client Bug-B fix (which conditionally refreshes for remote transactions
-    // to prevent stale baselines when multiple peers collaborate), the server
-    // is the single writer for cross-CRDT sync. The baseline is correctly
-    // managed by runObserverASync: updated after successful write and at the
-    // already-in-sync gate (currentText === md → lastSyncedXmlMd = md).
-    // Refreshing here would cause the debounce to see lastSyncedXmlMd === md
-    // and early-exit without writing Y.Text.
+    // Paired-write origins atomically wrote both XmlFragment and Y.Text inside
+    // this transaction, so the baseline IS the current XmlFragment serialization.
+    // Refresh synchronously and cancel any pending debounce — a later
+    // `runObserverASync` firing against stale `lastSyncedXmlMd` would incorrectly
+    // take Path B and duplicate content when a concurrent Y.Text mutation lands
+    // in the debounce window. See `isPairedWriteOrigin` JSDoc for the fuzz seed.
+    if (isPairedWriteOrigin(transaction.origin)) {
+      try {
+        const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
+        const body = mdManager.serialize(json);
+        const frontmatter = getFrontmatter(doc);
+        lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        if (debounceA) {
+          sched.clearTimeout(debounceA);
+          debounceA = null;
+        }
+      } catch (err) {
+        incrementServerObserverError('a');
+        console.warn(
+          '[Server Observer A] Paired-write baseline refresh failed — falling through to debounce:',
+          err instanceof Error ? err.message : String(err),
+        );
+        // Fall through to the debounce path for best-effort recovery. The
+        // next runObserverASync firing will reset the baseline from Y.Text
+        // in its own catch block if the underlying issue persists.
+        if (debounceA) sched.clearTimeout(debounceA);
+        debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
+      }
+      return;
+    }
 
     if (debounceA) sched.clearTimeout(debounceA);
     debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
