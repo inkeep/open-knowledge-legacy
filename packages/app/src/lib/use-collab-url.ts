@@ -48,12 +48,17 @@ export function useCollabUrl(): UseCollabUrlState {
       attempt += 1;
       let resolved: string | null = null;
       try {
-        const cfg = await fetchApiConfig(ac.signal);
-        if (cfg === null) {
-          // 404 → bun run dev (no /api/config endpoint) → same-origin fallback.
+        const result = await fetchApiConfig(ac.signal);
+        if (result.status === 'absent') {
+          // 404/501 → bun run dev (no /api/config endpoint) → same-origin fallback.
           resolved = defaultCollabWsUrl();
-        } else if (cfg.collabUrl !== null) {
-          resolved = cfg.collabUrl;
+        } else if (result.status === 'ok' && result.config.collabUrl !== null) {
+          resolved = result.config.collabUrl;
+        } else if (result.status === 'error') {
+          // 5xx, network error, or malformed body — distinct from 404. Keep the
+          // banner visible; surface a console breadcrumb so operators can
+          // diagnose a misconfigured `ok ui` without it masquerading as dev mode.
+          console.warn(`[collab-url] /api/config error (${result.code}) — retrying in ${delay}ms`);
         }
       } catch (err) {
         if ((err as { name?: string }).name === 'AbortError') return;

@@ -392,7 +392,7 @@ describe('runInit', () => {
       expect(entry.autoPort).toBe(true);
     });
 
-    it('skips an existing open-knowledge entry without --force', () => {
+    it('flags a stale open-knowledge entry without --force', () => {
       const configPath = join(testDir, '.claude', 'launch.json');
       mkdirSync(join(testDir, '.claude'), { recursive: true });
       writeFileSync(
@@ -415,12 +415,43 @@ describe('runInit', () => {
       );
 
       const result = runInit({ cwd: testDir });
-      expect(result.launchJson?.action).toBe('skipped-existing');
+      expect(result.launchJson?.action).toBe('skipped-stale');
+      expect(result.launchJson?.staleFields).toEqual(
+        expect.arrayContaining(['runtimeArgs', 'autoPort']),
+      );
 
-      // Unchanged — still the old shape
+      // Unchanged — still the old shape (user must re-run with --force)
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(parsed.configurations[0].runtimeArgs).toEqual(['open-knowledge', 'start']);
       expect(parsed.configurations[0].autoPort).toBeUndefined();
+    });
+
+    it('skips an up-to-date open-knowledge entry without --force', () => {
+      const configPath = join(testDir, '.claude', 'launch.json');
+      mkdirSync(join(testDir, '.claude'), { recursive: true });
+      writeFileSync(
+        configPath,
+        JSON.stringify(
+          {
+            version: '0.0.1',
+            configurations: [
+              {
+                name: 'open-knowledge',
+                runtimeExecutable: 'npx',
+                runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
+                port: 3000,
+                autoPort: true,
+              },
+            ],
+          },
+          null,
+          2,
+        ),
+      );
+
+      const result = runInit({ cwd: testDir });
+      expect(result.launchJson?.action).toBe('skipped-existing');
+      expect(result.launchJson?.staleFields).toBeUndefined();
     });
 
     it('migrates an existing open-knowledge entry on --force', () => {

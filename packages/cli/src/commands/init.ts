@@ -118,12 +118,57 @@ export interface InitCommandResult {
 const LAUNCH_JSON_VERSION = '0.0.1';
 const LAUNCH_CONFIG_NAME = 'open-knowledge';
 
-export type LaunchJsonAction = 'created' | 'merged' | 'skipped-existing' | 'failed';
+export type LaunchJsonAction =
+  | 'created'
+  | 'merged'
+  | 'skipped-existing'
+  | 'skipped-stale'
+  | 'failed';
 
 export interface LaunchJsonResult {
   action: LaunchJsonAction;
   configPath: string;
   error?: string;
+  /**
+   * When `action === 'skipped-stale'`: fields that differ between the existing
+   * entry and the target entry. Surfaced to the user so they know to re-run
+   * with `--force` to pick up the new defaults.
+   */
+  staleFields?: string[];
+}
+
+/**
+ * Compare an existing launch-json entry against the current target shape and
+ * return the names of fields that differ. Empty array ⇒ entries match (safe
+ * to skip). Non-empty ⇒ user has an outdated entry (typically from a prior
+ * `ok init` before Zero-Ceremony Resume) and should re-run with `--force`.
+ *
+ * Only the fields we actively manage are compared — `name` is intentionally
+ * excluded because it's the identity key, and any user-added fields (env,
+ * cwd, etc.) are ignored so hand-edits are not flagged as stale.
+ */
+function diffLaunchEntry(
+  existing: Record<string, unknown>,
+  target: {
+    runtimeExecutable: string;
+    runtimeArgs: string[];
+    port: number;
+    autoPort: boolean;
+  },
+): string[] {
+  const stale: string[] = [];
+  if (existing.runtimeExecutable !== target.runtimeExecutable) {
+    stale.push('runtimeExecutable');
+  }
+  const existingArgs = existing.runtimeArgs;
+  const argsMatch =
+    Array.isArray(existingArgs) &&
+    existingArgs.length === target.runtimeArgs.length &&
+    existingArgs.every((a, i) => a === target.runtimeArgs[i]);
+  if (!argsMatch) stale.push('runtimeArgs');
+  if (existing.port !== target.port) stale.push('port');
+  if (existing.autoPort !== target.autoPort) stale.push('autoPort');
+  return stale;
 }
 
 /**
@@ -173,6 +218,11 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
     );
 
     if (existingIdx >= 0 && !force) {
+      const existingEntry = configs[existingIdx] as Record<string, unknown>;
+      const staleFields = diffLaunchEntry(existingEntry, entry);
+      if (staleFields.length > 0) {
+        return { action: 'skipped-stale', configPath, staleFields };
+      }
       return { action: 'skipped-existing', configPath };
     }
 
@@ -424,6 +474,15 @@ export function formatInitResult(result: InitCommandResult, cwd: string): string
           break;
         case 'skipped-existing':
           lines.push(`  launch.json   ${displayPath}  already has open-knowledge entry`);
+          break;
+        case 'skipped-stale':
+          lines.push(
+            `  launch.json   ${displayPath}  WARN: existing open-knowledge entry is out of date`,
+          );
+          if (lj.staleFields && lj.staleFields.length > 0) {
+            lines.push(`                ${lj.staleFields.join(', ')} differ from current defaults`);
+          }
+          lines.push(`                re-run with --force to update`);
           break;
         case 'failed':
           lines.push(`  launch.json   ${displayPath}  FAILED: ${lj.error}`);

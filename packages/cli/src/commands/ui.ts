@@ -43,6 +43,9 @@ export interface UiServerHandle {
   release: () => void;
   /** Cancel only the safety-net timer (release() also calls this). Idempotent. */
   detachSafetyNet: () => void;
+  /** Reset the safety-net timer as if activity just occurred. Called on every
+   *  `/api/config` hit so an actively-used UI doesn't disconnect at 12h. */
+  nudgeSafetyNet: () => void;
 }
 
 export interface StartUiServerOptions {
@@ -107,6 +110,11 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
   // when opts.port is 0).
   let resolvedPort = opts.port;
 
+  // Forward-reference for the safety-net nudge (set below after the timer is
+  // armed). The HTTP handler closes over this indirection so it picks up the
+  // live callback once the timer is in place.
+  let apiConfigNudge: (() => void) | null = null;
+
   const httpServer: HttpServer = createHttpServer((req, res) => {
     const url = req.url?.split('?')[0];
 
@@ -114,6 +122,10 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     // collab server.lock on demand so a later `ok start` shows up without
     // requiring a UI restart.
     if (url === '/api/config' && (req.method === 'GET' || req.method === 'HEAD')) {
+      // Nudge the D-025 safety-net so an actively-polling client (the React
+      // `useCollabUrl` hook, default ~2s cadence while unresolved) never lets
+      // the 12h timer fire mid-session.
+      apiConfigNudge?.();
       const lock = readServerLock(lockDir);
       const collabUrl = lock && lock.port > 0 ? `ws://localhost:${lock.port}/collab` : null;
       const body = JSON.stringify({ collabUrl, previewUrl: null, port: resolvedPort });
@@ -174,7 +186,8 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
 
   // D-025 — schedule the safety-net self-shutdown. The timer is cancelled
   // by `release()` (the canonical "I'm shutting down" signal) so an
-  // operator-driven SIGTERM never trips it.
+  // operator-driven SIGTERM never trips it. Each `/api/config` hit nudges
+  // the deadline forward so an actively-used UI never fires the safety-net.
   const scheduler = opts.scheduler ?? defaultScheduler;
   const safetyNetMs = opts.safetyNetMs ?? DEFAULT_UI_SAFETY_NET_MS;
   let safetyNetHandle: ReturnType<typeof scheduler.setTimeout> | null = null;
@@ -201,7 +214,12 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
     }
   };
 
-  if (safetyNetMs > 0) {
+  const armSafetyNet = (): void => {
+    if (safetyNetCancelled || safetyNetMs <= 0) return;
+    if (safetyNetHandle !== null) {
+      scheduler.clearTimeout(safetyNetHandle);
+      safetyNetHandle = null;
+    }
     safetyNetHandle = scheduler.setTimeout(() => {
       safetyNetHandle = null;
       // Ensure callbacks see safetyNetCancelled === false at this point —
@@ -219,13 +237,26 @@ export async function startUiServer(opts: StartUiServerOptions): Promise<UiServe
       }
       release();
     }, safetyNetMs);
-  }
+  };
+
+  const nudgeSafetyNet = (): void => {
+    if (safetyNetCancelled || safetyNetMs <= 0) return;
+    armSafetyNet();
+  };
+
+  // Expose the nudge to the HTTP handler so every /api/config request resets
+  // the timer. Without this an actively-used UI disconnects at 12h — the
+  // safety-net is meant to catch orphaned siblings, not healthy ones.
+  apiConfigNudge = nudgeSafetyNet;
+
+  armSafetyNet();
 
   return {
     httpServer,
     port: realPort,
     release,
     detachSafetyNet,
+    nudgeSafetyNet,
   };
 }
 

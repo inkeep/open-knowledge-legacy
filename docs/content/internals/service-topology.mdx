@@ -21,20 +21,19 @@ In dev (`bun run dev`), a single Vite process serves both surfaces — the produ
 
 `createServer()` in `packages/server/src/standalone.ts` takes a single `contentDir` and creates all components scoped to that directory.
 
-<Mermaid chart=\{\`graph TD
-&#x20; A\[crea\\teServer] --> B\[Cont\\entFilter]
-&#x20; A --> C\[Hocuspocu\\s Server]
-&#x20; A --> D\[File Watcher]
-\\  A --> E\[Shadow Repo]
-&#x20;\ A --> F\[HEAD Watcher]
-&#x20; \A -\-> G\[\Persistence Extension]
-\  A --> H\[API Extension]
-&#x20; C -->|Web\Soc\ket /\collab| I\[Browser Editor]
-&#x20; H -->|HTTP /api/\*| J\[\MCP Server / Agents]
-&#x20; D -->|disk \to C\RD\T| C\
-&#x20; G -->|CRDT to disk| K\[Mark\down Files]
-&#x20; E -->|disk to git| L\[WIP Refs]\
-\`} />
+<Mermaid chart={`graph TD
+  A[createServer] --> B[ContentFilter]
+  A --> C[Hocuspocus Server]
+  A --> D[File Watcher]
+  A --> E[Shadow Repo]
+  A --> F[HEAD Watcher]
+  A --> G[Persistence Extension]
+  A --> H[API Extension]
+  C -->|WebSocket /collab| I[Browser Editor]
+  H -->|HTTP /api/*| J[MCP Server / Agents]
+  D -->|disk to CRDT| C
+  G -->|CRDT to disk| K[Markdown Files]
+  E -->|disk to git| L[WIP Refs]`} />
 
 Every box in this diagram is scoped to the project. The ContentFilter gates which files participate. The Hocuspocus Server manages Y.Doc instances. The File Watcher and Persistence Extension form a bidirectional bridge between disk and CRDT. The Shadow Repo and HEAD Watcher handle git integration.
 

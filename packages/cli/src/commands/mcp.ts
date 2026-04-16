@@ -190,11 +190,19 @@ export async function ensureServerRunning(
   const stderrPath = join(opts.lockDir, SPAWN_ERROR_LOG);
   const stderrFd = openErrorLog(stderrPath);
   let child: ChildProcess | undefined;
+
+  // Async spawn errors (e.g. ENOENT) are reported via `error` events — which
+  // Node may emit before the next microtask. Attach the listener SYNCHRONOUSLY
+  // (before the finally-block and any await) so we never miss an error.
+  let asyncSpawnError: string | undefined;
   try {
     child = spawnFn('npx', ['@inkeep/open-knowledge', 'start'], {
       detached: true,
       stdio: ['ignore', 'ignore', stderrFd],
       cwd: opts.contentDir,
+    });
+    child.on('error', (err) => {
+      asyncSpawnError = err instanceof Error ? err.message : String(err);
     });
     child.unref();
   } finally {
@@ -204,13 +212,6 @@ export async function ensureServerRunning(
       // Best-effort — some mocks may not return a real fd.
     }
   }
-
-  // Async spawn errors (e.g. ENOENT on a platform that surfaces them via event)
-  // short-circuit the poll so operators see the cause immediately.
-  let asyncSpawnError: string | undefined;
-  child?.on('error', (err) => {
-    asyncSpawnError = err instanceof Error ? err.message : String(err);
-  });
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -229,7 +230,14 @@ export async function ensureServerRunning(
     }
   }
 
+  // Post-deadline: check one more time for an async spawn error that landed
+  // between the last poll tick and the deadline — otherwise an ENOENT that
+  // fires late surfaces as a generic "did not start in 5s" instead of the
+  // actual cause.
   const stderr = readErrorLog(stderrPath);
+  if (asyncSpawnError) {
+    throw new Error(`OK: spawn failed: ${asyncSpawnError}${stderr ? ` stderr:\n${stderr}` : ''}`);
+  }
   const seconds = (timeoutMs / 1000).toFixed(timeoutMs % 1000 === 0 ? 0 : 2);
   throw new Error(
     `OK: server did not start within ${seconds}s.${stderr ? ` stderr:\n${stderr}` : ''}`,

@@ -481,16 +481,27 @@ export function startCommand(getConfig: () => Config): Command {
         void shutdown('SIGTERM');
       });
 
-      const localUrl = `http://${config.server.host}:${booted.port}`;
+      const apiUrl = `http://${config.server.host}:${booted.port}`;
       const networkUrl =
         config.server.host === '0.0.0.0' || config.server.host === '::'
           ? `http://0.0.0.0:${booted.port}`
           : undefined;
+
+      // Post-lifecycle-split: the user-facing URL is the `ok ui` sibling, not
+      // the collab/API port. Prefer the UI URL in the banner when we know one
+      // — either the sibling is already live (skip-spawn case), or we just
+      // spawned it and the known default is 3000. Fall back to the API URL
+      // when we couldn't find a plausible UI port.
+      const uiDecision = booted.uiSpawnDecision;
+      const uiPort = uiDecision.action === 'skip' ? uiDecision.port : 3000;
+      const localUrl = uiPort > 0 ? `http://${config.server.host}:${uiPort}` : apiUrl;
+
       console.log(
         renderBanner({
           name: 'open-knowledge',
           version: PACKAGE_VERSION,
           localUrl,
+          apiUrl: localUrl !== apiUrl ? apiUrl : undefined,
           networkUrl,
         }),
       );
