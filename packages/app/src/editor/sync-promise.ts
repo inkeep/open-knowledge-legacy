@@ -103,7 +103,17 @@ interface CacheEntry {
   onSynced: () => void;
   onClose: (data: onCloseParameters) => void;
   settled: boolean;
-  /** True when listeners have been removed and timeout cleared (sentinel state). */
+  /**
+   * True when listeners have been removed and timeout cleared (sentinel state).
+   *
+   * Invariant: `detached` implies `settled` — never set `detached: true` without
+   * first setting `settled: true`. Every caller of `detach(entry)` below does
+   * this in order (see the settle helpers at `resolveSyncPromise`,
+   * `rejectSyncPromise`, `timeoutSyncPromise`, `invalidateSyncPromise`, and
+   * `__resetSyncPromiseCache`). Future modifiers: preserve the ordering so the
+   * sentinel state `{settled: true, detached: true}` is the only terminal one
+   * the rest of the module ever observes.
+   */
   detached: boolean;
 }
 
