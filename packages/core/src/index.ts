@@ -41,6 +41,7 @@ export {
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
 export {
+  HTML_MAX_BYTES,
   HtmlPayloadTooLargeError,
   htmlToMdast,
   mdastToMarkdown,

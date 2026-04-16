@@ -236,7 +236,18 @@ test('markdown link edit dialog preserves page mode while clearing and updates t
   const chip = page.locator('[data-internal-link]').first();
   await expect(chip).toHaveAttribute('data-doc-name', 'beta');
 
-  await chip.hover();
+  // Firefox headless doesn't always fire the CSS :hover state from
+  // locator.hover() reliably enough for React to show the hover-only
+  // button. Explicit mouse.move over the chip's center fires
+  // pointerenter/pointermove events that every browser honors, which
+  // React respond-to consistently. Chromium + WebKit also tolerate this
+  // pattern, so no per-browser branching.
+  const chipBox = await chip.boundingBox();
+  if (chipBox) {
+    await page.mouse.move(chipBox.x + chipBox.width / 2, chipBox.y + chipBox.height / 2);
+  } else {
+    await chip.hover();
+  }
   await chip.getByRole('button', { name: 'Link options' }).click();
   await page.getByText('Edit link', { exact: true }).click();
 
