@@ -3787,6 +3787,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         behind: 0,
         consecutiveFailures: 0,
         conflictCount: 0,
+        hasRemote: false,
       });
       return;
     }

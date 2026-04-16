@@ -26,7 +26,7 @@ export interface GitSyncStatus {
   behind: number;
   conflictCount: number;
   /** True when a git remote exists, even if sync is dormant/disabled. */
-  hasRemote?: boolean;
+  hasRemote: boolean;
   error?: string;
   pausedReason?: string;
 }
