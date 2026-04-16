@@ -1034,6 +1034,31 @@ button:active:not(:disabled) {
   pointer-events: auto;
 }
 
+/* Chrome bar icon buttons — shared base style */
+.jsx-chrome-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.125rem;
+  border: none;
+  border-radius: 0.1875rem;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background-color 0.1s,
+    color 0.1s;
+}
+.jsx-chrome-btn:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+/* Delete icon — subtle red tint on hover, not a full red background */
+.jsx-chrome-btn--delete:hover {
+  background: transparent;
+  color: var(--destructive, #ef4444);
+}
+
 /* 8. Container child insertion — overlay pill + empty placeholder */
 
 /* "Add child" pill — centered at bottom edge of container, absolute overlay */

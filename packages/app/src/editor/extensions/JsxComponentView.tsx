@@ -16,7 +16,7 @@
 
 import type { NodeViewProps } from '@tiptap/core';
 import { NodeViewContent, NodeViewWrapper } from '@tiptap/react';
-import { Settings2, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Settings2, Trash2 } from 'lucide-react';
 import React, { type ErrorInfo, type ReactNode, useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/popover.tsx';
 import { PropPanel } from '../components/PropPanel.tsx';
@@ -160,20 +160,68 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
       data-component-name={descriptor.name}
       data-tab-value={((node.attrs.props as Record<string, unknown>)?.value as string) ?? ''}
     >
-      {/* Hover-revealed action icons: settings (if editable) + delete (always) */}
+      {/* Hover-revealed action icons: [↑] [↓] [⚙️] [🗑] */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: stopPropagation required inside PM NodeView */}
       <div
         className="jsx-component-chrome"
         contentEditable={false}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        {/* Gear icon → Popover PropPanel (only if component has editable props) */}
+        {/* Move up */}
+        <button
+          type="button"
+          className="jsx-chrome-btn"
+          aria-label="Move up"
+          onClick={() => {
+            if (typeof pos !== 'number') return;
+            const $p = editor.state.doc.resolve(pos);
+            const idx = $p.index($p.depth);
+            if (idx === 0) return;
+            const parent = $p.node($p.depth);
+            const prev = parent.child(idx - 1);
+            const from = pos - prev.nodeSize;
+            const to = pos + node.nodeSize;
+            const tr = editor.state.tr;
+            const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+            const pre = editor.state.doc.slice(from, pos);
+            tr.replaceWith(from, to, cur.content.append(pre.content));
+            editor.view.dispatch(tr.scrollIntoView());
+          }}
+        >
+          <ChevronUp size={12} />
+        </button>
+
+        {/* Move down */}
+        <button
+          type="button"
+          className="jsx-chrome-btn"
+          aria-label="Move down"
+          onClick={() => {
+            if (typeof pos !== 'number') return;
+            const $p = editor.state.doc.resolve(pos);
+            const idx = $p.index($p.depth);
+            const parent = $p.node($p.depth);
+            if (idx >= parent.childCount - 1) return;
+            const next = parent.child(idx + 1);
+            const from = pos;
+            const to = pos + node.nodeSize + next.nodeSize;
+            const tr = editor.state.tr;
+            const cur = editor.state.doc.slice(pos, pos + node.nodeSize);
+            const nxt = editor.state.doc.slice(pos + node.nodeSize, to);
+            tr.replaceWith(from, to, nxt.content.append(cur.content));
+            editor.view.dispatch(tr.scrollIntoView());
+          }}
+        >
+          <ChevronDown size={12} />
+        </button>
+
+        {/* Settings → Popover PropPanel (only if editable props) */}
         {hasEditableProps && (
           <Popover>
             <PopoverTrigger asChild>
               <button
                 type="button"
-                className="inline-flex items-center justify-center rounded p-0.5 hover:bg-accent hover:text-accent-foreground transition-colors"
+                className="jsx-chrome-btn"
                 aria-label={`${descriptor.displayName ?? descriptor.name} properties`}
               >
                 <Settings2 size={12} />
@@ -204,10 +252,10 @@ export function JsxComponentView({ node, editor, getPos, selected }: NodeViewPro
           </Popover>
         )}
 
-        {/* Delete icon — always available */}
+        {/* Delete */}
         <button
           type="button"
-          className="inline-flex items-center justify-center rounded p-0.5 hover:bg-destructive hover:text-destructive-foreground transition-colors"
+          className="jsx-chrome-btn jsx-chrome-btn--delete"
           aria-label={`Delete ${descriptor.displayName ?? descriptor.name}`}
           onClick={() => {
             if (typeof pos === 'number') {
