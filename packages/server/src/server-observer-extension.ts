@@ -31,6 +31,7 @@ export interface ServerObserverExtensionOptions {
  */
 export function createServerObserverExtension(opts: ServerObserverExtensionOptions): Extension {
   const cleanups = new Map<string, () => void>();
+  const pendingRetries = new Map<string, ReturnType<typeof setTimeout>>();
 
   return {
     async afterLoadDocument({ documentName, document }) {
@@ -71,17 +72,28 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
         // temporary resource exhaustion). If the retry also fails, the
         // document remains degraded — the underlying cause is likely
         // persistent and requires investigation via error counters.
-        setTimeout(() => {
+        // Tracked so afterUnloadDocument can cancel if the doc unloads
+        // before the retry fires (prevents orphaned observer attachment).
+        const retryId = setTimeout(() => {
+          pendingRetries.delete(documentName);
           if (cleanups.has(documentName)) return; // already attached (e.g., unload+reload)
           console.warn(
             `[ServerObserverExtension] Retrying observer attachment for '${documentName}'`,
           );
           attach();
         }, 5000);
+        pendingRetries.set(documentName, retryId);
       }
     },
 
     async afterUnloadDocument({ documentName }) {
+      // Cancel pending retry to prevent orphaned observer attachment
+      const pending = pendingRetries.get(documentName);
+      if (pending) {
+        clearTimeout(pending);
+        pendingRetries.delete(documentName);
+      }
+
       const cleanup = cleanups.get(documentName);
       if (!cleanup) return;
       cleanup();
@@ -89,6 +101,9 @@ export function createServerObserverExtension(opts: ServerObserverExtensionOptio
     },
 
     async onDestroy() {
+      for (const id of pendingRetries.values()) clearTimeout(id);
+      pendingRetries.clear();
+
       for (const [docName, cleanup] of cleanups.entries()) {
         try {
           cleanup();
