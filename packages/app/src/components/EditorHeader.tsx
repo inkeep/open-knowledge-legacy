@@ -3,8 +3,9 @@ import { Clock, Columns2, Rows2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { SidebarTrigger } from '@/components/ui/sidebar';
+import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { PresenceBar } from '@/presence/PresenceBar';
 import type { DiffLayout } from './DiffView';
@@ -44,6 +45,7 @@ export function EditorHeader({
   onDiffLayoutChange,
 }: EditorHeaderProps) {
   const { activeDocName } = useDocumentContext();
+  const { state: sidebarState } = useSidebar();
 
   const displayName = activeDocName ? `${activeDocName}.md` : 'No document';
   const isDiffMode = editorMode === 'diff';
@@ -62,7 +64,14 @@ export function EditorHeader({
   return (
     <header className="flex h-12 shrink-0 items-center border-b">
       <div className="flex flex-1 items-center gap-1 px-3 min-w-0">
-        <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SidebarTrigger className="-ml-1 shrink-0 text-muted-foreground" />
+          </TooltipTrigger>
+          <TooltipContent>
+            {sidebarState === 'expanded' ? 'Hide Panel' : 'Show Panel'}
+          </TooltipContent>
+        </Tooltip>
         <Separator orientation="vertical" className="mr-1 h-4 shrink-0 data-vertical:self-center" />
         <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
       </div>
