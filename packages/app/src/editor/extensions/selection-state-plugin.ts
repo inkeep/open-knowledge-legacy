@@ -166,16 +166,21 @@ export function deriveAncestorChain(
 
 function toChainEntry(state: EditorState, node: PMNode, pos: number): BlockChainEntry {
   const componentName = (node.attrs.componentName as string | undefined) ?? 'unknown';
-  const bridgeIdState = bridgeIdPluginKey.getState(state);
-  const rawId = bridgeIdState?.posToId.get(pos);
-  // Fallback: use a position-derived synthetic ID when bridge-id-plugin hasn't
-  // assigned yet (pre-binding) or isn't registered (unit tests with pure PM).
-  // This preserves the invariant that the plugin always returns stable-looking
-  // state even during editor init, at the cost of the fallback ID changing
-  // across re-renders. In production, bridge-id-plugin assigns on mount so
-  // this path is brief.
-  const bridgeId = rawId ?? `pos-${pos}`;
-  return { bridgeId, componentName, pos };
+  return { bridgeId: getWrapperBridgeId(state, pos), componentName, pos };
+}
+
+/**
+ * Canonical lookup: get the stable bridgeId for a jsxComponent wrapper at a
+ * given position, or a position-derived synthetic fallback when
+ * bridge-id-plugin hasn't published a mapping yet (brief during editor init)
+ * or isn't registered (unit tests with pure PM).
+ *
+ * NodeView consumers (e.g. JsxComponentView) use this to compare against
+ * `BlockSelection.selectedBlockId` / `ancestorChain[].bridgeId` — both must
+ * resolve from this single helper so the fallback paths match.
+ */
+export function getWrapperBridgeId(state: EditorState, pos: number): string {
+  return bridgeIdPluginKey.getState(state)?.posToId.get(pos) ?? `pos-${pos}`;
 }
 
 /**
