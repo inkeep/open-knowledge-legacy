@@ -10,16 +10,12 @@
  * webServer on VITE_PORT (or default 5173).
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { expect, test } from '@playwright/test';
+import { loadLargeRealistic } from '../../../core/src/markdown/fixtures/index.ts';
 
 const port = process.env.VITE_PORT || '5173';
 const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
-const FIXTURE = readFileSync(
-  resolve(import.meta.dirname, '../fixtures/large-realistic.md'),
-  'utf8',
-);
+const FIXTURE = loadLargeRealistic();
 
 test('S6: multi-turn stress — large content + user edits', async ({ page }) => {
   // 1. Capture console errors during the full flow

@@ -9,20 +9,11 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { MarkdownManager, sharedExtensions } from '@inkeep/open-knowledge-core';
-import corpus from './fixtures/mdx-tolerant-crash-taxonomy.json';
+import { loadMdxCrashTaxonomy } from '../../../core/src/markdown/fixtures/index.ts';
 
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 
-interface CorpusEntry {
-  id: string;
-  input: string;
-  class: string;
-  r23Covers: boolean;
-  expectedOutcome: string;
-  note: string;
-}
-
-const entries = corpus as CorpusEntry[];
+const entries = loadMdxCrashTaxonomy();
 
 describe('crash-class coverage probe (M6)', () => {
   const results: Array<{

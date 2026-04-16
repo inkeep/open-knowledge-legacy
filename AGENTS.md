@@ -36,6 +36,20 @@ cd packages/<pkg> && bun test           # Unit tests per package
 
 `bun run check`** is the canonical quality gate for agents and developers.** Run it after every implementation iteration. It composes `biome check .` + `turbo run typecheck test test:integration test:conversion test:fidelity` — lint, typecheck, unit tests, integration (bridge-matrix), conversion fidelity, and round-trip fidelity invariants. Each tier has its own turbo task with independent cache keys — editing one test file re-runs only its tier, not the entire gate. Warm replay when nothing changed is \\<50ms.
 
+### CI tier structure
+
+Three CI tiers, calibrated against measured baselines (US-016 / SPEC R9). Turbo tasks in `turbo.json` are the canonical task list; workflow files in `.github/workflows/` dispatch them.
+
+| Tier | Cadence | Workflow | Scope | Budget |
+| ---- | ------- | -------- | ----- | ------ |
+| 1    | Every PR + push to `main` | `.github/workflows/ci.yml` | lint, typecheck, unit, integration, conversion, fidelity (1K PBT samples), stress (server-authoritative), bridge fuzz (default seeds) | 15 min (p95 warm local baseline ≈ 2m30s; runners ≈ 2× slower; 1.5× headroom) |
+| 2    | Nightly (06:17 UTC) + `workflow_dispatch` | `.github/workflows/nightly.yml` | deep fuzz (`STRESS_FUZZ_NIGHTLY=1`), full stress, perf regression gate (`test:perf:regression`), parse-health gate (`test:health`), `parseWithFallback` perf bound (`test:perf:fallback`) | 30 min per job |
+| 3    | Weekly (Sunday 04:23 UTC) + `workflow_dispatch` | `.github/workflows/weekly.yml` | elevated-sample PBT (`STRESS_FIDELITY=1` → 10K fast-check runs), elevated-seed bridge fuzz, perf-trend benchmark artifact upload | 60 min |
+
+**Where to add a new test.** Tier 1 if it enforces a correctness invariant that must hold on every PR. Tier 2 if it's a perf / health regression gate, a deep fuzz, or any signal that needs stable multi-run variance to avoid flake. Tier 3 if it's an elevated-sample PBT (10K+ fast-check runs), a multi-minute stress scenario, or a trend artifact the team reviews weekly. Off-minute cron slots (`:17`, `:23`) are deliberate to avoid GHA scheduling contention.
+
+**Perf gate calibration.** Threshold is `max(2× p99 variance, 10% absolute floor)` per block size. Baseline lives in `packages/core/tests/perf/baseline.json`. Synthetic-regression tests in `tests/perf/regression-gate.test.ts` prove the gate fires on injected slowdown.
+
 ### Agent simulator (requires dev server running)
 
 ```bash
@@ -81,7 +95,10 @@ These are patterns that ALL work in the repo should follow. Established during t
     (d) **Example-based coverage is a floor, not a ceiling.** A multi-client convergence fuzzer (`bridge-convergence.fuzz.test.ts`) samples the continuous race space that hand-written scenarios cannot enumerate. D18 coverage gate ensures new bridge surfaces extend the fuzzer's op set. Replay via `STRESS_FUZZ_SEED=<n>`.
     Applies to all future bridge work. When a new bridge write surface is added (e.g., V0-14 agent-undo), the D18 coverage gate fails CI until a corresponding fuzzer op kind is added. Cross-references precedent #11 (minimize CRDT mutation), #12 (XmlFragment-authoritative).
 14. **Cross-CRDT sync is single-writer, server-side.** Bidirectional observer pairs between Y.XmlFragment and Y.Text must run exclusively on the server. Client-side observer callbacks for cross-CRDT sync do not write the derived CRDT — the write paths are removed, not gated (a flag would be ceremony in a monorepo with atomic client+server deploy). Local-only observer firings (user CodeMirror edit → writes Y.Text directly; user TipTap edit → writes Y.XmlFragment directly) still run client-side because the client is the sole writer for that local edit's source CRDT; the server then mirrors to the derived CRDT. Why: client-side multi-writer bridges interleave at the CRDT protocol layer, producing duplication under concurrent edits (see `specs/2026-04-15-server-authoritative-observer-bridge/`). Applies to all dual-CRDT bridge work.
-15. **Clipboard pipeline is mdast-canonical with per-view hook mechanisms.** All four clipboard paths (WYSIWYG copy, WYSIWYG paste, Source copy, Source paste) route through mdast as the intermediate hub. Five sub-rules:
+15. **Idempotent micromark-extension attachers.** Any remark plugin whose attacher mutates `this.data().micromarkExtensions` (or similar unified `data()` arrays) MUST check-before-push using a module-level singleton extension value — e.g. `const ext = {...}; if (!list.includes(ext)) list.push(ext);`. Rationale: processor caching (precedent-driven, enforced by `createParseProcessor` / `createSerializeProcessor` in `pipeline.ts`) means one processor serves many `parse()` calls; re-running a naive attacher accumulates duplicate extensions and produces divergent tokenization over the processor's lifetime. `remarkMdxAgnostic` (`remark-mdx-agnostic.ts`) and `remarkWikiLink` (`wiki-link-micromark.ts`) both implement this pattern. Evidence: `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md` §R16. Applies to every future remark plugin that touches `data().micromarkExtensions`, `data().fromMarkdownExtensions`, or `data().toMarkdownExtensions`.
+16. **Phase-ordered visitor dispatchers when passes consume each other's output.** When multiple mdast transformations depend on each other — e.g. pass N regex-matches on characters pass N-1 restores — the dispatcher MUST be split along the dependency boundary. Merging all passes into a single same-node visitor is wrong when an earlier pass's output is the later pass's input. The concrete template is `pipeline.ts`'s two-phase post-parse walker: Phase A (`restoreFromMdx`) restores PUA sentinels to literal chars as its own visitor pass; Phase B (`mergedPostParseWalkerPlugin`) runs the remaining four passes inside a single `unist-util-visit` callback with explicit intra-phase ordering (pass-5 first with `SKIP`, then pass-2, then pass-4; pass-3 runs as a tree-level pre-step). Rationale: `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/pipeline-refactor-audit.md` §R17 enumerates why a single-visitor merge was impossible. When adding a new post-parse pass, decide up front whether it reads outputs of existing passes — if yes, it joins Phase B's internal ordering; if it produces outputs a later phase consumes, it becomes a new standalone phase.
+17. **Byte-for-byte equivalence validators gate high-risk refactors.** When a refactor must preserve observable behavior exactly (e.g. merging five visitor passes into two, replacing a library algorithm via patch, restructuring a handler table), commit a one-time mdast / AST / output diff validator that runs across the full fixture corpus and asserts byte-identical output against the pre-refactor baseline. The validator lives in `evidence/` (or equivalent), ships alongside the refactor, and is deleted once the refactor ships green — it is a ratchet, not a regression test. Template: US-007's `r17-mdast-equivalence.md` validator covered 714 fixtures across the seven-subdirectory corpus and was removed after US-008 merged the walker. Applies to any refactor where review reading alone cannot confirm equivalence. Cross-references precedent #13(d) (example-based coverage is a floor, not a ceiling) — the equivalence validator IS the floor for refactor correctness.
+18. **Clipboard pipeline is mdast-canonical with per-view hook mechanisms.** All four clipboard paths (WYSIWYG copy, WYSIWYG paste, Source copy, Source paste) route through mdast as the intermediate hub. Five sub-rules:
     (a) **mdast is the canonical intermediate hub.** Two shared modules — `packages/core/src/markdown/html-to-mdast.ts` (rehype-parse + cleanup plugins + rehype-remark) and `packages/core/src/markdown/mdast-to-html.ts` (remark-rehype + custom-node handlers + rehype-stringify) — serve both views symmetrically. No per-view special cases in the pipeline modules.
     (b) **WYSIWYG uses PM's documented clipboard hooks.** `clipboardTextSerializer` (mdast → markdown) + `clipboardSerializer` (a `DOMSerializer` subclass overriding `serializeFragment` with markdown → HTML + `<div data-pm-slice="0 0 ${context}">` wrapper) + `handlePaste` (5-branch dispatcher). DOM-level `handleDOMEvents.copy/cut/dragstart` is **prohibited** — would re-introduce the drag-and-drop coupling problem that caused D14 to flip to PM hooks. See STOP rules in `specs/2026-04-16-clipboard-mdast-canonical/SPEC.md §16`.
     (c) **Source uses `EditorView.domEventHandlers`.** CM6 has no equivalent to PM's hook API, so DOM-level override is the only option. Implementation asymmetric, user-facing behavior symmetric — same two-MIME payload (text/plain=markdown, text/html=canonical-rendered) on copy, same 4-branch dispatcher (parallel to WYSIWYG's 5) on paste.
@@ -459,7 +476,7 @@ All transaction origins are `LocalTransactionOrigin` **object references** (prec
 | D           | Multi-client convergence fuzz                                     | `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`                                                 | `bun run test:fuzz:bridge` or `STRESS_FUZZ_SEED=<seed> bun test packages/app/tests/stress/bridge-convergence.fuzz.test.ts` |
 | Integration | Tier 1 bridge matrix + C1-C10 server-authoritative                | `packages/app/tests/integration/bridge-matrix.test.ts`, `c1-*.test.ts` through `c10-*.test.ts`              | `bun run test`                                             |
 | Stress      | 5-client × 30s mixed edits with convergence timing                | `packages/app/tests/stress/server-authoritative-stress.test.ts`                                             | `bun run test:stress:server-authoritative`                 |
-| Fidelity    | PBT invariants (I1-I7) + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
+| Fidelity    | PBT invariants (I1-I10) + 6 handler-specific PBTs + CommonMark/GFM corpus + P0 entity/escape | `packages/app/tests/fidelity/`                                                                              | `bun run test:fidelity` (also in `bun run check`)          |
 
 ### Tier 1 integration harness
 
@@ -617,6 +634,7 @@ No environment variables must be set by hand for any of these scenarios.
 - **WARN:** Server Observer A's `lastSyncedXmlMd` (in `server-observers.ts`) must be refreshed on ALL XmlFragment changes, not just user edits. A stale baseline produces incorrect diffs that destroy content.
 - **WARN:** Layer A tests use `transaction.local=true`. This does NOT exercise the same code path as production where WebSocket updates arrive with `transaction.local=false`.
 - **WARN:** `hocuspocus.configure({ extensions: [...] })` REPLACES the extensions array (object spread). Use `hocuspocus.configuration.extensions.push()` to add extensions without losing existing ones.
+- **WARN:** Never narrow a PM mark's `excludes` field. Precedent #9 (schema is add-only forever) covers mark attrs — `excludes` is part of that contract. US-017 deliberately widened the `Code` mark by replacing `@tiptap/extension-code`'s `excludes: '_'` with `excludes: ''` via `CodeMarkFidelity` (`packages/core/src/extensions/code-mark-fidelity.ts`). This lets emphasis/strong coexist with inline code per CommonMark (e.g. `*a \`*\`*`) and is load-bearing for Emphasis + Backslash idempotence. Reverting to `excludes: '_'` — including via a Tiptap upgrade that reinstates the upstream default — would reintroduce those idempotence failures AND narrow the schema in the precedent #9 sense. If a future change needs different co-exclusion behavior, widen further; do not narrow.
 
 ### CM6 footgun: do NOT gate syntax-tree reads on `syntaxTreeAvailable()`
 
@@ -686,17 +704,23 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 
 **Storage never sanitizes; render-time layers do.** Raw HTML, backslash escapes, and all literal characters pass through the storage layer unchanged. XSS mitigation is a render-layer concern (DOMPurify in docs site, not in the CRDT/persistence pipeline).
 
-### Seven fidelity invariants
+### Fidelity invariants (I1-I10 active, I11 pending)
 
-| ID | Invariant                  | Description                                                        |
-| -- | -------------------------- | ------------------------------------------------------------------ |
-| I1 | Identity                   | `serialize(parse(md)) === md` for supported constructs             |
-| I2 | Character preservation     | Every literal char in input appears in output — no entity encoding |
-| I3 | Normalization canonicality | `f(f(x)) === f(x)` — double round-trip equals single round-trip    |
-| I4 | Idempotence                | `serialize(parse(X))` applied twice produces identical output      |
-| I5 | Layer A === Layer B        | mdManager path and Y.Doc path produce the same output              |
-| I6 | Multi-client preservation  | Content survives Y.Doc state sync between clients                  |
-| I7 | Cross-path consistency     | All write paths produce equivalent serialized output               |
+| ID  | Invariant                   | Description                                                                                         |
+| --- | --------------------------- | --------------------------------------------------------------------------------------------------- |
+| I1  | Identity                    | `serialize(parse(md)) === md` for supported constructs                                              |
+| I2  | Character preservation      | Every literal char in input appears in output — no entity encoding                                  |
+| I3  | Normalization canonicality  | `f(f(x)) === f(x)` — double round-trip equals single round-trip                                     |
+| I4  | Idempotence                 | `serialize(parse(X))` applied twice produces identical output                                       |
+| I5  | Layer A === Layer B         | mdManager path and Y.Doc path produce the same output                                               |
+| I6  | Multi-client preservation   | Content survives Y.Doc state sync between clients                                                   |
+| I7  | Cross-path consistency      | All write paths produce equivalent serialized output                                                |
+| I8  | Crash resistance            | `parse()` never throws non-SyntaxError on fuzzed input; `SyntaxError` allowed only for matched `{…}` with non-JS content |
+| I9  | Guard completeness          | After `protectFromMdx`, remark-mdx never encounters an unmatched `<` or unclosed `{` that crashes  |
+| I10 | Structural crash resistance | Nested / truncated / interleaved constructs (dangerous chars inside marks, half-typed JSX, etc.) parse without unexpected errors |
+| I11 | rawMdxFallback coverage     | Pending — introduced by the tolerant-parsing spec (`specs/2026-04-13-mdx-tolerant-parsing/`); activates when that spec merges |
+
+PBT invariants live in `packages/app/tests/fidelity/invariant-i{1..10}.test.ts`. US-014 added six handler-specific PBTs alongside them — `invariant-emphasis-cumulation.test.ts`, `invariant-backslash-idempotence.test.ts`, `invariant-list-nesting.test.ts`, `invariant-html-block-edge.test.ts`, `invariant-link-edge.test.ts`, `invariant-image-edge.test.ts` — targeting the specific bug shapes characterized in `specs/2026-04-16-markdown-pipeline-engineering-health/evidence/r6-failure-modes.md`.
 
 ### Irreducible gaps (by design)
 
@@ -714,9 +738,9 @@ Check `/tmp/fuzz-*` for the snapshot of the failing state.
 
 ### Markdown pipeline dependency discipline
 
-- `@handlewithcare/remark-prosemirror` pinned to exact version `0.1.5` (no caret). A `bun patch` in `patches/` applies PR #3 fix (empty-text-node + NBSP whitespace preservation)
+- `@handlewithcare/remark-prosemirror` pinned to exact version `0.1.5` (no caret). A `bun patch` in `patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch` carries two coupled fixes: (a) PR #3 (empty-text-node + NBSP whitespace preservation); (b) US-017 replacement of `hydrateMarks` with an outside-in greedy nesting algorithm. The upstream partition-by-`marks[0]` strategy loses nested emphasis+strong shape when spans share one mark — the replacement walks marks outside-in so `[a[E], b[code]]`-style spans reconstruct faithfully. Patches are coupled; re-port them together on any upstream bump.
 - MDX agnostic pair (`mdast-util-mdx`, `micromark-extension-mdx`) pinned as a coupled unit — bump together. `micromark-extension-mdx` (agnostic mode, no acorn) replaced `micromark-extension-mdxjs` (strict mode)
-- **Upgrade protocol:** Before bumping any dependency, re-run the 118-case fidelity probe (`tech-probes/r1-preflight-gate/`) and full invariant suite (`bun run test:fidelity`). Verify the remark-prosemirror patch still applies cleanly
+- **Upgrade protocol:** Before bumping any dependency, re-run the 118-case fidelity probe (`tech-probes/r1-preflight-gate/`) and full invariant suite (`bun run test:fidelity`). Verify both remark-prosemirror patch hunks still apply cleanly
 - Failed patch surfaces at install time (fail-loud via `patchedDependencies`)
 - **Pre-flight probe baseline:** 97/118 whitespace-only, 13/13 P0 entity/escape — see `tech-probes/r1-preflight-gate/REPORT.md`
 
@@ -727,10 +751,17 @@ The markdown pipeline uses `unified + remark` for parsing and serialization, wit
 **Parse direction:**
 
 ```
+[R23 protectFromMdx pre-pass on source bytes]
+  ↓
 remark-parse → remark-frontmatter → remarkMdxAgnostic →
-remark-gfm → wiki-link micromark ext → [R23 autolink/void-HTML guard] →
-position-slice walker → remarkProseMirror (handlers map mdast → PM JSON)
+remark-gfm → remarkWikiLink →
+restoreFromMdx (Phase A) →
+mergedPostParseWalkerPlugin (Phase B: autolink-promotion +
+  doc-start-thematic-fix + position-slice + unknown-mdast-guard) →
+ensureNonEmptyDoc → remarkProseMirror (handlers map mdast → PM JSON)
 ```
+
+Post-parse tree traversal is **two phases** (reduced from five by US-007/US-008, gated by the US-007 byte-for-byte mdast-equivalence validator): Phase A is a standalone visitor that restores PUA sentinels to literal `<`, `>`, `:`, `@`, `{` in text/URL/title/alt fields; Phase B is a single `unist-util-visit` dispatcher that merges the four remaining passes, internally ordering pass-5 (unknown-mdast guard, with `SKIP`) → pass-2 (autolink promotion) → pass-4 (position slice). Pass-3 (doc-start thematic fix) runs once as a tree-level pre-step before the visit. Phase A stays separate because Phase B's autolink regex requires the literal characters that Phase A restores.
 
 **Serialize direction:**
 
@@ -738,28 +769,35 @@ position-slice walker → remarkProseMirror (handlers map mdast → PM JSON)
 fromProseMirror (PM JSON → mdast) → remark-stringify + custom mdast-util-to-markdown handlers
 ```
 
+**Processor caching (US-006).** `MarkdownManager` builds one parse processor and one serialize processor at construction via `createParseProcessor` / `createSerializeProcessor`, then reuses them across every `parse()` / `serialize()` call. `remarkMdxAgnostic` and `remarkWikiLink` push to `data().micromarkExtensions`; their attachers are idempotent under re-entry via module-level singleton extension values.
+
 **Handler tiers:**
 
 - **Tier A (passthrough):** root, paragraph, text, blockquote, table/row/cell, image, inlineCode, delete
 - **Tier B (fidelity):** emphasis, strong, heading, code, thematicBreak, break, list, listItem — reads `node.data.*` from position-slice walker
 - **Tier C (custom):** link/linkReference, definition (R12 override), html, MDX nodes, wikiLink
 
-**Position-slice walker** (`position-slice.ts`): runs after all syntax extensions produce mdast, slices original source at `node.position.start.offset` to recover authoring-form delimiters (emphasis `*`/`_`, fence char, bullet marker, etc.). Attaches `node.data.sourceDelimiter`, `node.data.sourceFenceChar`, etc.
+**Position-slice walker** (`position-slice.ts`): runs as pass-4 inside Phase B's merged dispatcher. Slices original source at `node.position.start.offset` to recover authoring-form delimiters (emphasis `*`/`_`, fence char, bullet marker, etc.). Attaches `node.data.sourceDelimiter`, `node.data.sourceFenceChar`, etc.
 
 **D20 escapeMark:** PM-level mark applied to text runs whose source contained a backslash escape of a structurally-ambiguous char (`\#`, `\*`, `\_`, etc. per CommonMark §2.4). Position-slice walker tags, serialization handler re-emits the backslash.
 
 **Key files:**
 
-- `packages/core/src/markdown/pipeline.ts` — unified pipeline factory
-- `packages/core/src/markdown/index.ts` — MarkdownManager wrapper (parse/serialize)
+- `packages/core/src/markdown/pipeline.ts` — unified pipeline factory (`createParseProcessor`, `createSerializeProcessor`, `parseMd`, `serializeMd`, `ensureNonEmptyDoc`)
+- `packages/core/src/markdown/index.ts` — MarkdownManager wrapper (parse/serialize, processor caching)
 - `packages/core/src/markdown/handlers.ts` → `index.ts` — mdast→PM + PM→mdast handler tables
 - `packages/core/src/markdown/to-markdown-handlers.ts` — fidelity-aware serialization overrides
-- `packages/core/src/markdown/position-slice.ts` — source-form recovery walker
+- `packages/core/src/markdown/merged-walker.ts` — Phase B merged dispatcher (autolink promotion + doc-start thematic fix + position slice + unknown-mdast guard)
+- `packages/core/src/markdown/position-slice.ts` — source-form recovery (pass-4 inside merged-walker)
+- `packages/core/src/markdown/autolink-promotion.ts` — `<scheme:uri>` text → semantic link (pass-2)
+- `packages/core/src/markdown/doc-start-thematic-fix.ts` — root-position empty yaml → thematicBreak (pass-3 pre-step)
+- `packages/core/src/markdown/unknown-mdast-guard.ts` — unknown mdast type → rawMdxFallbackMdast (pass-5)
 - `packages/core/src/markdown/wiki-link-micromark.ts` — micromark tokenizer for `[[Page]]` syntax
-- `packages/core/src/markdown/autolink-void-html-guard.ts` — R23 regression fix
-- `packages/core/src/markdown/remark-mdx-agnostic.ts` — Agnostic MDX mode (no acorn validation)
-- `packages/core/src/markdown/parse-with-fallback.ts` — Block-level split-then-rejoin fallback for crash-class MDX
+- `packages/core/src/markdown/autolink-void-html-guard.ts` — R23 guard (pre-pass `protectFromMdx` + Phase A `restoreFromMdx`); pre-indexed offset maps + binary search per US-005
+- `packages/core/src/markdown/remark-mdx-agnostic.ts` — agnostic MDX mode (no acorn validation)
+- `packages/core/src/markdown/parse-with-fallback.ts` — block-level split-then-rejoin fallback for crash-class MDX
 - `packages/core/src/markdown/mdast-augmentation.ts` — TypeScript type augmentation for custom mdast types
+- `packages/core/src/markdown/fixtures/` — canonical fixture corpus (`commonmark`, `gfm`, `mdx`, `wiki-links`, `frontmatter`, `ng-pinned`, `perf`) with typed loader helpers in `fixtures/index.ts`
 
 **Schema names (mdast-canonical, D16/D17):** `strong` (not bold), `emphasis` (not italic), `thematicBreak` (not horizontalRule). Unified `list` + `listItem` (not separate bulletList/orderedList/listItem).
 
