@@ -95,7 +95,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-playwright-
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium
+      # Install all three browsers for cross-browser parity (SPEC §13, QA-046).
+      # The playwright.config.ts now defines chromium/webkit/firefox projects;
+      # tests fan out across all three automatically.
+      - run: bunx playwright install --with-deps chromium webkit firefox
       - env:
           VITE_PORT: "13579"
         run: bunx turbo run test:e2e
