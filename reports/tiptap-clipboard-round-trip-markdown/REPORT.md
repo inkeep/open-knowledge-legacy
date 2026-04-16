@@ -24,8 +24,10 @@ subjects:
   - VS Code
   - Obsidian
   - CKEditor
+  - CodeMirror 6
   - Turndown
   - rehype-remark
+  - remark-rehype
   - unified
   - Chromium
   - WebKit
@@ -41,6 +43,8 @@ topics:
   - source detection heuristics
   - HTML-to-markdown conversion
   - unified ecosystem integration
+  - dual-mode clipboard (WYSIWYG + Source)
+  - mdast-canonical pipeline
 ---
 
 # TipTap WYSIWYG Clipboard Round-Trip with Markdown: Primitives, Prior Art, and Best Practices
@@ -90,6 +94,12 @@ For Open Knowledge specifically, the paste side is already correctly implemented
 | D15 | **Part 2:** Integration with our markdown pipeline (R23 guard, MDX, custom nodes, performance) | Moderate | P1 | §Part 2 §D15 below |
 | D16 | **Part 2:** Security (DOMPurify / sanitization posture) | Moderate | P2 | §Part 2 §D16 below |
 | D17 | **Part 2:** Recommendation — architectural shape + library + pre-cleanup posture | Deep | P0 | §Part 2 §Recommendation |
+| D18 | **Part 3:** CodeMirror 6 default clipboard behavior (source-level verification) | Moderate | P1 | [evidence/d18-d23-source-view-clipboard.md](evidence/d18-d23-source-view-clipboard.md) |
+| D19 | **Part 3:** Cross-view symmetry analysis (WYSIWYG ↔ Source) + greenfield decision | Deep | P0 | §Part 3 below |
+| D20 | **Part 3:** Canonical mdast pipeline unifying all four clipboard paths | Deep | P0 | §Part 3 below |
+| D21 | **Part 3:** Source copy handler design | Deep | P0 | §Part 3 below |
+| D22 | **Part 3:** Source paste handler design (5-branch dispatcher, parallel to Part 2) | Deep | P0 | §Part 3 below |
+| D23 | **Part 3:** Observer bridge invariants under Source paste | Moderate | P1 | [evidence/d18-d23-source-view-clipboard.md](evidence/d18-d23-source-view-clipboard.md) |
 
 **Stance:** Factual with conclusions. The report ends in a concrete recommendation and a reference implementation.
 
@@ -353,7 +363,11 @@ If we ever move to multi-MIME writes (BlockNote-style `handleDOMEvents.copy` wit
 3. **Call the editor's existing markdown serializer** on the resulting doc. Reuse the serializer instance that already backs the paste-side parser. Symmetry is architectural, not circumstantial.
 4. **Wrap in try/catch with a `slice.content.textBetween(0, size, '\n\n')` fallback.** Keystatic pattern. Cmd+C should never silently fail — plain text is an acceptable degradation.
 5. **Short-circuit pure-text slices** via `textBetween` directly (Milkdown pattern). Avoids unnecessary serialize work for selections that have no marks or structure.
-6. **Do not override `clipboardSerializer` (text/html).** Let PM's default DOMSerializer produce HTML — that's what Slack, Notion, Google Docs, Apple Notes actually read.
+6. **For `clipboardSerializer` (text/html)** — two options, ranked by our greenfield posture:
+   - **Greenfield-preferred (see Part 3 §D19-2):** use a dedicated mdast→HTML path (`remark-rehype` + `rehype-stringify`) that matches what Source view MUST use. Single canonical HTML-rendering path across both views; no PM-specific markup leaks to clipboard; single place to maintain custom-node rendering for clipboard. This is a slight departure from the industry pattern but is correct for our stack because we have a unified mdast pipeline that other editors do not.
+   - **Industry-standard fallback:** let PM's default `DOMSerializer` produce HTML. Matches every surveyed editor (Milkdown, Outline, Keystatic, tiptap-markdown all leave it alone). Acceptable if we explicitly scope WYSIWYG-only and accept cross-view HTML divergence.
+
+   Part 3 recommends the greenfield-preferred option for architectural consistency with Source view.
 7. **Do not attempt `text/markdown` or `web ` custom MIME types.** No vendor reads them; WebKit rejects them. Zero benefit, real complexity.
 
 **Reference implementation skeleton** (generic, not Open Knowledge specific):
@@ -787,7 +801,312 @@ Honest confidence assessment:
 - Whether to expose `prioritizeMarkdownOverHTML` as a config (probably yes; small surface).
 - Error handling if rehype fails (fall through to PM default? fall through to plain text? throw?). Recommend fall through to `clipboardTextParser` path (Keystatic pattern).
 
+---
 
+# Part 3 — Source View Clipboard Handling
+
+**Added:** 2026-04-15. Extends the report to answer: *"We have two views — WYSIWYG (TipTap) and Source (CodeMirror 6). Part 1 + Part 2 covered WYSIWYG. What about Source?"*
+
+This section is written with explicit greenfield posture: no deferred tech debt, optimize for architectural correctness + clean codebase + best product experience over expediency.
+
+---
+
+## Executive Summary — Part 3
+
+**Source view has two real asymmetries with WYSIWYG clipboard behavior today.** Both should be closed per greenfield posture.
+
+1. **Copy asymmetry:** CM6 default writes `text/plain` only (source-verified from `@codemirror/view/dist/index.js:5128-5156`). WYSIWYG writes both `text/plain` and `text/html`. Same canonical content, different clipboard output depending on active view. Pasting from Source into Gmail/Slack/Notion gives monospace markdown literal instead of rendered formatting.
+
+2. **Paste asymmetry:** CM6 default reads only `text/plain` (source-verified from `dist/index.js:5074-5087`). Rich HTML from Gmail, Google Docs, Word, Apple Notes, any website → CM6 silently strips to plaintext → formatting lost. WYSIWYG (per Part 2) converts HTML to markdown → no formatting loss. Source view user pasting rich content gets a quietly broken result.
+
+**Greenfield closure:** write both MIMEs on Source copy; intercept HTML on Source paste. Both use the same canonical unified pipeline as WYSIWYG — only the last stage differs (markdown-string for Source, PM-Slice for WYSIWYG).
+
+**The architectural win is a canonical bidirectional mdast pipeline.** Every clipboard conversion (four paths: WYSIWYG copy/paste, Source copy/paste) goes through mdast as the hub. No per-view special cases. No divergent HTML output. Same custom-node rendering (wikiLink, jsxComponent, rawMdxFallback) defined once in mdast-to-hast handlers, shared by both views.
+
+This slightly amends Part 1's `clipboardSerializer` recommendation: instead of "leave PM's DOMSerializer default" (industry norm), use our shared mdast-to-html pipeline for text/html emission in both views. Rationale below (§D19-2). Part 2's paste recommendation is unchanged.
+
+**Key Findings — Part 3:**
+
+- **CM6 default clipboard is cleaner than expected** (no syntax-highlight HTML leakage on copy — CM6 explicitly `clearData()`s before `setData('text/plain', text)`). No pre-existing garbage to clean up.
+- **Two symmetry closures needed:** Source copy writes both MIMEs; Source paste converts HTML via shared rehype pipeline.
+- **Shared pipeline modules** — one new module for HTML→mdast (shared by both views' paste), one for mdast→HTML (shared by both views' copy text/html emission). Four paths, two modules, mdast as the hub.
+- **Zero observer-bridge risk.** Source paste transactions are user-origin (undefined) — same path as user typing. Observer B picks up Y.Text changes and syncs to XmlFragment normally. No origin-guard churn. No invariant adjustments needed.
+- **Schema-add-only precedent respected.** No schema changes; only pipeline module additions.
+- **Linewise copy preservation lost** — acceptable regression (CM6 tracks `lastLinewiseCopy` internally; we lose it when we override copy). Revisit if user pain surfaces.
+
+---
+
+## D18 — CodeMirror 6 default clipboard behavior (CONFIRMED from source)
+
+Source reads verified against `node_modules/@codemirror/view/dist/index.js`.
+
+**Copy (lines 5128-5156):** One handler shared by `copy` and `cut`. Checks `hasSelection`; bails if selection is outside CM6 contentDOM (cross-editor forwarding case). Gets `{text, ranges, linewise}` from `copiedRange(view.state)`. On cut, dispatches a delete transaction with `userEvent: 'delete.cut'`. **Writes clipboard: `data.clearData()` then `data.setData("text/plain", text)`. No text/html emission.** Returns `true` to preventDefault native event (suppresses browser's DOM-selection text/html auto-emit).
+
+**Paste (lines 5074-5087):** Bails on readOnly. Reads `data.getData("text/plain")` or `data.getData("text/uri-list")`. **Ignores text/html entirely.** Feeds to `doPaste()` with `userEvent: 'input.paste'`.
+
+**Implication:** CM6 deliberately excludes text/html from both directions. Our dual-mode architecture therefore has a fidelity gap on rich-HTML round-trip in Source mode.
+
+Full evidence: [evidence/d18-d23-source-view-clipboard.md](evidence/d18-d23-source-view-clipboard.md).
+
+---
+
+## D19 — Asymmetry analysis + greenfield decision
+
+### D19-1. Cross-view asymmetry matrix (today)
+
+| Direction | WYSIWYG (Part 1/2 rec) | Source (CM6 default) | Asymmetric? |
+|---|---|---|---|
+| Copy: text/plain | markdown source | markdown source | No |
+| Copy: text/html | PM DOMSerializer (rich HTML) | NONE | **Yes** |
+| Paste: text/plain markdown | `MarkdownManager.parse` → PM Slice | inserts verbatim | No (both land at markdown) |
+| Paste: text/html rich | rehype → mdast → PM handlers | ignored; reads text/plain fallback (plaintext-stripped) | **Yes** |
+
+Two real asymmetries. Both on text/html side.
+
+### D19-2. Greenfield decision: close both asymmetries
+
+**For copy** — the counter-argument ("I see `**bold**` in Source, I expect literal `**bold**` on paste") is weaker than industry precedent suggests. The underlying document is markdown regardless of view; destinations select the MIME that matches their content model (Gmail reads text/html → rendered; GitHub reads text/plain → source). Writing both MIMEs serves both legs correctly regardless of origin view. No user is disadvantaged by writing both.
+
+**For paste** — industry-agnostic. Rich HTML should convert to markdown before inserting into markdown buffer. Current CM6 default loses formatting; this is a bug under any reasonable product design.
+
+**For the text/html path specifically** — greenfield amendment to Part 1's `clipboardSerializer` rec:
+
+1. **Source view has no PM** — MUST use mdast-to-html for text/html. Decision forced.
+2. **If WYSIWYG keeps PM DOMSerializer while Source uses mdast-to-html**, the two views emit subtly different HTML for the same canonical content. PM's NodeView markup, TipTap decoration classes, and other PM-specific DOM structure leak to the clipboard. Source's mdast-to-html produces canonical rendered-markdown HTML. Asymmetry without justification.
+3. **One rendering path is easier to maintain.** Custom-node rendering for clipboard (wikiLink anchor, jsxComponent raw-source preservation, rawMdxFallback passthrough) defined once in a mdast-to-hast handler table, not duplicated across `schema.toDOM` (PM) and a separate mdast handler.
+4. **Ecosystem already aligned.** We're adding remark-rehype + rehype-stringify once; both views consume the same processor.
+
+**Decision:** use mdast-to-html (remark-rehype + rehype-stringify) for text/html in BOTH views. PM's DOMSerializer remains used internally for PM's own DOM rendering (that's what it was designed for) but not for clipboard output.
+
+---
+
+## D20 — Canonical mdast pipeline
+
+The greenfield shape treats **mdast as the canonical hub** for all clipboard conversions:
+
+```
+                    ┌──────────────────────────────────────────┐
+                    │         mdast (canonical hub)            │
+                    └──────────────────────────────────────────┘
+                         ▲         ▲           ▲           ▲
+      remark-parse       │         │           │           │    remark-stringify
+      (MD → mdast)       │         │           │           │    (mdast → MD)
+                         │         │           │           │
+                      markdown   hast ◄── rehype-parse ── HTML  ◄── remark-rehype
+                                              │                      + rehype-stringify
+                                              ▼
+                                         rehype-remark                 (mdast → HTML)
+                                         (hast → mdast)
+                         │         │           │           │
+                         ▼         ▼           ▼           ▼
+                      our PM→mdast + our mdast→PM handlers (PM ↔ mdast)
+                                    │
+                                    ▼
+                                   PM JSON
+```
+
+The **four clipboard paths** compose from these edges:
+
+1. **WYSIWYG copy** — PM → mdast → { remark-stringify → text/plain; remark-rehype + rehype-stringify → text/html }
+2. **Source copy** — markdown substring → remark-parse → mdast → { as-is → text/plain; remark-rehype + rehype-stringify → text/html }
+3. **WYSIWYG paste** — text/html → rehype-parse → rehype-remark → mdast → our mdast→PM handlers → PM Slice
+4. **Source paste** — text/html → rehype-parse → rehype-remark → mdast → remark-stringify → markdown string → insert
+
+Two new shared modules: `packages/core/src/markdown/html-to-mdast.ts` (consumed by paths 3+4) and `packages/core/src/markdown/mdast-to-html.ts` (consumed by paths 1+2). No per-view special cases in either module.
+
+**Custom-node rendering** is centralized: wikiLink, jsxComponent, rawMdxFallback, jsxInline each get ONE mdast-to-hast handler. Used by both views. Defined once.
+
+---
+
+## D21 — Source copy handler
+
+Based on CM6's own `copy`/`cut` handler semantics (D18), the replacement in `SourceEditor.tsx` uses CM6's public `EditorView.domEventHandlers` API:
+
+```ts
+import { EditorView } from '@codemirror/view';
+import { markdownToHtml } from '@inkeep/open-knowledge-core/markdown';
+
+function handleSourceCopyCut(
+  event: ClipboardEvent,
+  view: EditorView,
+  kind: 'copy' | 'cut',
+): boolean {
+  // Match CM6's own hasSelection guard (don't intercept when a parent
+  // editor has selected content spanning multiple elements).
+  if (!hasSelectionInContent(view)) return false;
+
+  const sel = view.state.selection.main;
+  if (sel.empty) return false;
+
+  const markdownText = view.state.sliceDoc(sel.from, sel.to);
+
+  let htmlText: string;
+  try {
+    htmlText = markdownToHtml(markdownText);
+  } catch (err) {
+    console.warn('[source-clipboard] markdown→HTML failed; falling back to plain-text-only', err);
+    return false; // CM6 default runs (text/plain only — degraded but not broken)
+  }
+
+  // Preserve CM6's cut semantics
+  if (kind === 'cut' && !view.state.readOnly) {
+    view.dispatch({
+      changes: { from: sel.from, to: sel.to },
+      scrollIntoView: true,
+      userEvent: 'delete.cut',
+    });
+  }
+
+  event.clipboardData?.clearData();
+  event.clipboardData?.setData('text/plain', markdownText);
+  event.clipboardData?.setData('text/html', htmlText);
+  event.preventDefault();
+  return true;
+}
+
+const sourceClipboardExt = EditorView.domEventHandlers({
+  copy(event, view) { return handleSourceCopyCut(event, view, 'copy'); },
+  cut(event, view)  { return handleSourceCopyCut(event, view, 'cut'); },
+});
+```
+
+**Behavior:**
+- Selection of any markdown substring is pipelined through remark-parse → mdast → remark-rehype → rehype-stringify to produce canonical HTML.
+- On failure, falls through gracefully to CM6 default (text/plain only is degraded, not broken).
+- Cut semantics identical to CM6's own (delete + userEvent preserved).
+- `hasSelectionInContent` helper mirrors CM6's internal `hasSelection(view.contentDOM, view.observer.selectionRange)` — intent: don't intercept when CM6 itself would defer.
+
+**Behavior regression:** CM6 tracks `lastLinewiseCopy` for smart linewise paste into the same editor. Override loses this. Acceptable v1 trade-off.
+
+---
+
+## D22 — Source paste handler
+
+Parallel structure to Part 2's 5-branch WYSIWYG dispatcher:
+
+```ts
+import { htmlToMdast, mdastToMarkdown } from '@inkeep/open-knowledge-core/markdown';
+
+const sourcePasteExt = EditorView.domEventHandlers({
+  paste(event, view) {
+    if (view.state.readOnly) return false;
+    const cd = event.clipboardData;
+    if (!cd) return false;
+
+    // Branch 1: VS Code → fenced code block
+    if (cd.types.includes('vscode-editor-data')) {
+      const mode = JSON.parse(cd.getData('vscode-editor-data') || 'null')?.mode;
+      const text = cd.getData('text/plain').replace(/\r\n?/g, '\n');
+      const fenced = mode ? '```' + mode + '\n' + text + '\n```' : text;
+      insertTextAtSelection(view, fenced);
+      event.preventDefault();
+      return true;
+    }
+
+    // Branch 2: PM-origin (our WYSIWYG, Linear, Outline, TipTap siblings)
+    const html = cd.getData('text/html');
+    if (html && html.includes('data-pm-slice')) {
+      // text/plain is already our canonical markdown — let CM6 default run
+      return false;
+    }
+
+    // Branch 3: Generic HTML → shared unified pipeline → markdown string
+    if (html) {
+      try {
+        const mdast = htmlToMdast(html);      // shared with WYSIWYG paste
+        const md = mdastToMarkdown(mdast);     // remark-stringify
+        insertTextAtSelection(view, md);
+        event.preventDefault();
+        return true;
+      } catch (err) {
+        console.warn('[source-clipboard] HTML→markdown failed; falling back to plaintext', err);
+        // fall through to CM6 default
+      }
+    }
+
+    // Branches 4, 5: CM6 default handles text/plain
+    // (GitHub/VS Code/Obsidian/ChatGPT/Claude all populate text/plain with markdown)
+    return false;
+  },
+});
+```
+
+**Behavior:**
+- Branch 1: `vscode-editor-data` MIME → structured code-block wrap. Symmetric with WYSIWYG Branch 1.
+- Branch 2: `data-pm-slice` in HTML → CM6 default reads text/plain (which is already our canonical markdown from Part 1's `clipboardTextSerializer`). Zero special handling needed on this path.
+- Branch 3: Generic HTML → shared `htmlToMdast` → `mdastToMarkdown` → insert. Same cleanup plugins and detection logic as WYSIWYG Branch 3 (Part 2 §D13 routing).
+- Branches 4+5: CM6 default inserts text/plain verbatim. Works for GitHub, VS Code, Obsidian, Discord, AI-chat copy buttons — all emit markdown source in text/plain.
+
+Source-specific pre-cleanup plugins (GDocs wrapper, MSO stripping, Cocoa meta cleanup) are the SAME plugins used by WYSIWYG paste — because `htmlToMdast` is a shared module. One plugin, two consumers. Add plugins iteratively as user feedback surfaces; both views benefit simultaneously.
+
+---
+
+## D23 — Observer bridge invariants
+
+When Source paste dispatches a CM6 transaction inserting the converted markdown string:
+
+1. CM6 transaction → `yCollab` (y-codemirror.next) → `Y.Text('source')` update with default origin (undefined = user-origin).
+2. **Observer B** (Y.Text → XmlFragment, `ORIGIN_TEXT_TO_TREE`): sees change with undefined origin → not in skip set → syncs normally. Parses via `MarkdownManager.parse()` → applies to XmlFragment via `updateYFragment()`.
+3. **Observer A** (XmlFragment → Y.Text, `ORIGIN_TREE_TO_TEXT`): does not fire — the XmlFragment update originated from Observer B with `ORIGIN_TEXT_TO_TREE`, which is in Observer A's skip set.
+
+**End-to-end: identical data path to user typing in source view.** No invariant risk. No origin-guard adjustments. No schema changes.
+
+**Cut-path:** same story. CM6 dispatches a delete transaction with `userEvent: 'delete.cut'`. User-origin. Observer B picks up the Y.Text delete, applies to XmlFragment. Normal flow.
+
+**Performance note:** large Google Docs paste (~1MB HTML) generates a large Y.Text change. Observer B's typing-defer (TYPING_DEFER_MS=300ms) throttles the re-parse briefly — matches the user-typing-at-speed case. Acceptable. Verify empirically on iOS Safari post-implementation.
+
+---
+
+## Recommendation — Part 3
+
+**Closing both asymmetries is architecturally correct for our stack and well-aligned with the repo's greenfield posture.** Concrete plan:
+
+1. **Add four unified plugins** (`rehype-parse`, `rehype-remark`, `remark-rehype`, `rehype-stringify`) to `packages/core` — all small, all same ecosystem.
+
+2. **Create two shared modules:**
+   - `packages/core/src/markdown/html-to-mdast.ts` — exports `htmlToMdast(html: string): Root`. Wraps the unified processor with source-cleanup plugins (GDocs wrapper, MSO, Cocoa meta, Gmail classes, Notion whitespace-preserve, VS Code monospace fallback). Consumed by both views' paste handlers.
+   - `packages/core/src/markdown/mdast-to-html.ts` — exports `markdownToHtml(md: string): string` and `mdastToHtml(root: Root): string`. Wraps `remark-rehype` + `rehype-stringify` with custom-node handlers for wikiLink, jsxComponent, rawMdxFallback, jsxInline. Consumed by both views' copy text/html emission.
+
+3. **Wire four consumers:**
+   - WYSIWYG copy (Part 1): `clipboardTextSerializer` → markdown source via `MarkdownManager.serialize`; `clipboardSerializer` → `mdastToHtml` (greenfield amendment; replaces "leave PM DOMSerializer default" from industry pattern).
+   - WYSIWYG paste (Part 2): `handlePaste` → 5-branch dispatcher; HTML branch feeds through `htmlToMdast` then our mdast→PM handlers.
+   - Source copy (D21): `domEventHandlers.copy`/`.cut` → writes both MIMEs (markdown source + `markdownToHtml`-rendered HTML).
+   - Source paste (D22): `domEventHandlers.paste` → parallel 5-branch dispatcher; HTML branch feeds through shared `htmlToMdast` then `mdastToMarkdown` (remark-stringify) then inserts.
+
+4. **Custom-node rendering handlers** defined once in the mdast-to-hast direction. A wikiLink renders as `<a class="wiki-link" href="#page-target">target</a>` (or whatever the design is), used for text/html across all copy paths. A jsxComponent renders its raw MDX source preserved inside a `<code>` or similar, consistent across views.
+
+5. **No schema changes.** (CLAUDE.md §9 respected.)
+6. **No observer-bridge changes.** (D23 analysis — user-origin transactions flow naturally through existing bridge.)
+
+**Decision triggers (when to simplify):**
+- If mdast-to-html rendering for custom nodes becomes a rabbit hole (e.g. jsxComponent needs complex DOM), keep PM DOMSerializer for WYSIWYG text/html and accept the cross-view divergence. Evidence would need to surface this cost during implementation.
+- If user feedback indicates Source-view-copy-to-Slack with rendered bold surprises users who expected literal `**bold**`, add a Cmd+Shift+C "Copy as Plain Text" command (universal escape hatch) rather than reverting the default.
+
+**Estimated scope delta vs Part 2:** ~0.5 days. 80% of the code is shared via the two new modules; the Source wiring adds ~60 lines to `SourceEditor.tsx` + ~40 lines of CM6 helper utilities.
+
+---
+
+## Confidence assessment — Part 3
+
+**High confidence (~95%):**
+- CM6 default clipboard behavior (source-verified from `dist/index.js`).
+- Source paste needs intervention (real UX gap confirmed).
+- Shared mdast-centered pipeline is the architecturally cleanest shape (greenfield philosophy).
+- Observer-bridge compatibility (user-origin transactions flow naturally).
+- Schema-add-only precedent respected.
+
+**Genuine judgment call (~70%):**
+- **Source copy asymmetry closure.** Strong architectural case (same content, same clipboard output). Weak counter-argument (source-mode users expect "what I see is what I paste"). Greenfield philosophy tips toward close-the-asymmetry. Reasonable staff engineers could disagree.
+- **Greenfield amendment to Part 1's clipboardSerializer rec.** Strong architectural case (cross-view HTML consistency, single rendering path). Weak counter-argument (industry pattern is PM DOMSerializer). Reasonable staff engineers could disagree.
+
+**Judgment calls (either fine):**
+- Linewise-copy preservation (acceptable regression; revisit if reported).
+- Cmd+Shift+C "Copy as Plain Text" command (optional polish; defer to user feedback).
+- Per-source cleanup plugin order in `htmlToMdast` (internal detail).
+
+---
+
+## Limitations & Open Questions
 
 ### Dimensions Not Fully Covered
 
@@ -820,6 +1139,9 @@ Honest confidence assessment:
 - [evidence/d10-html-to-markdown-libraries.md](evidence/d10-html-to-markdown-libraries.md) — Turndown vs rehype-remark vs node-html-markdown vs html-to-md evaluation; maintenance signals, GFM support, TS types, extensibility, integration shape with our pipeline
 - [evidence/d12-d13-cross-app-matrix-detection.md](evidence/d12-d13-cross-app-matrix-detection.md) — 15+ source paste matrix (Google Docs, Sheets, Notion, Slack, Word, Gmail, Apple Cocoa family, VS Code, GitHub, ChatGPT/Claude, BlockNote, Linear/TipTap, Anytype, Typora) with HTML shapes, garbage patterns, detection heuristics
 - [evidence/d14-prior-art-html-paste.md](evidence/d14-prior-art-html-paste.md) — source-level HTML paste code across Obsidian, Outline, BlockNote, Milkdown, Plate, Keystatic, BlockSuite/AFFiNE, CKEditor paste-from-office, tiptap-markdown, HedgeDoc, plus TipTap core/markdown gap
+
+**Part 3 — Source view clipboard:**
+- [evidence/d18-d23-source-view-clipboard.md](evidence/d18-d23-source-view-clipboard.md) — CodeMirror 6 default clipboard behavior (source-verified from `@codemirror/view/dist/index.js`), cross-view asymmetry analysis, canonical mdast pipeline, Source copy/paste handler design, observer bridge invariants
 
 ### External Sources (Primary)
 

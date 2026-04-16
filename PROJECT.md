@@ -37,7 +37,7 @@ All meaningful state is either files in git (switch atomically with branches) or
 
 **"Obsidian, but agent-native and collaborative."** Six words our P0 audience instantly understands.
 
-Day-0 closest competitor is Obsidian — not because they're building what we're building, but because our P0 user already uses it. The comparison: "I have Obsidian + Claude Code MCP plugins. Why switch?" Our answer: Obsidian has no CRDT (agent writes and human edits collide — last-write-wins; confirmed: `vault.process` and `vault.modify` silently fail if called within 2 seconds of user editing — see /reports/obsidian-karpathy-workflow-deep-dive/), no presence (you can't see the agent working), no collaboration path (6-year-old feature request, 2,200+ votes, philosophical commitment to single-player), proprietary app (not OSS), desktop-only (no web, no Cowork), and 16+ community MCP plugins of various quality vs our purpose-built MCP surface with progressive disclosure and draft management.
+Day-0 closest competitor is Obsidian — not because they're building what we're building, but because our P0 user already uses it. The comparison: "I have Obsidian + Claude Code MCP plugins. Why switch?" Our answer: Obsidian has no CRDT (agent writes and human edits collide — last-write-wins; confirmed: `vault.process` and `vault.modify` silently fail if called within 2 seconds of user editing — see /reports/obsidian-karpathy-workflow-deep-dive/), no presence (you can't see the agent working), no collaboration path (6-year-old feature request, 2,200+ votes, philosophical commitment to single-player), proprietary app (not OSS), desktop-only (no web, no Cowork), and 16+ community MCP plugins of varying quality vs our purpose-built MCP surface with progressive disclosure and draft management.
 
 Second closest "competitor" is no product at all — a folder of .md files + Claude Code. That's Karpathy's current setup. We're the product that replaces the "hacky collection of scripts."
 
@@ -1391,6 +1391,8 @@ Located in `evidence/` alongside this PROJECT.md. Support specific decisions and
 | [worktree-orchestration-landscape](reports/worktree-orchestration-landscape/REPORT.md)                                             | Worktree Orchestration Landscape: How AI Coding Tools Manage Parallel Work and the Un...  | Cross-cutting                      | 2026-04-03 | 8 files  |
 | [yjs-constrained-observer-sync](reports/yjs-constrained-observer-sync/REPORT.md)                                                   | One-Way Y.XmlFragment to Y.Text Observer Sync with y-codemirror.next Binding              | TQ9, TQ25                          | 2026-04-07 | 7 files  |
 | [yjs-dual-key-shimmer-analysis](reports/yjs-dual-key-shimmer-analysis/REPORT.md)                                                   | Yjs Dual-Key Shimmer Analysis: Will Bidirectional Observer Sync Actually Cascade?         | TQ9, TQ25                          | 2026-04-07 | 5 files  |
+
+
 
 # Project: Build an agent-native knowledge platform
 

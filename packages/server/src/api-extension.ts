@@ -1873,17 +1873,41 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       res.end('Method not allowed');
       return;
     }
-    // Absolute, canonical contentDir so the client can build full filesystem paths
-    // (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in the
-    // workspace root are resolved via realpath so the path matches on-disk truth.
-    const resolvedContentDir = (() => {
-      try {
-        return realpathSync(resolve(contentDir));
-      } catch {
-        return resolve(contentDir);
-      }
-    })();
-    json(res, 200, { ok: true, contentDir: resolvedContentDir });
+    // Loopback-only: this endpoint discloses the absolute host filesystem path
+    // (including home directory / username). That's fine for the local-editing
+    // use case the rest of the API is designed for, but if the user configures
+    // `server.host: 0.0.0.0` (demos, shared dev boxes, Codespaces), we do NOT
+    // want to leak the host shape over the network or to cross-origin fetches.
+    // All loopback clients (including requests from a browser on the same
+    // machine) pass — connections from other interfaces are refused.
+    const remote = req.socket.remoteAddress;
+    const isLoopback =
+      remote === '127.0.0.1' ||
+      remote === '::1' ||
+      remote === '::ffff:127.0.0.1' ||
+      remote?.startsWith('127.') === true;
+    if (!isLoopback) {
+      json(res, 403, { ok: false, error: 'Loopback-only endpoint' });
+      return;
+    }
+    // Absolute, canonical contentDir so the client can build full filesystem
+    // paths (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in
+    // the workspace root are resolved via realpath so the path matches on-disk
+    // truth; if realpath fails we log and fall back to the unresolved path so
+    // the feature degrades rather than disappears (misconfigured contentDir,
+    // ENOENT, ELOOP, EACCES all surface as WARN in dev-server output).
+    const resolvedRoot = resolve(contentDir);
+    let resolvedContentDir: string;
+    try {
+      resolvedContentDir = realpathSync(resolvedRoot);
+    } catch (err) {
+      console.warn('[workspace] realpath failed for contentDir', { path: resolvedRoot, err });
+      resolvedContentDir = resolvedRoot;
+    }
+    // `pathSeparator` lets the client build full paths without guessing from
+    // the shape of `contentDir` (which breaks on Windows + forward-slash paths
+    // and on POSIX folders that contain a literal backslash in the name).
+    json(res, 200, { ok: true, contentDir: resolvedContentDir, pathSeparator: sep });
   }
 
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
