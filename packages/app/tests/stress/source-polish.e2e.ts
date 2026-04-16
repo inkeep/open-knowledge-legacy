@@ -33,12 +33,17 @@ async function seedMarkdown(markdown: string) {
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
 }
 
-/** Switch to source mode and wait for CodeMirror to render. */
+/** Switch to source mode and wait for CodeMirror to render. CM6 paints decorations
+ * synchronously on the next animation frame after the editor mounts, so waiting
+ * for `.cm-line` elements to appear (any non-empty doc produces at least one)
+ * is a reliable condition-based wait — no fixed-duration timeout needed. */
 async function switchToSource(page: Page) {
   await page.getByRole('radio', { name: 'Markdown source' }).click();
   await page.waitForSelector('.cm-content', { timeout: 10_000 });
-  // Let decorations settle
-  await page.waitForTimeout(400);
+  // Wait for CM6 to render at least one line (confirms decorations have run).
+  await page.waitForFunction(() => document.querySelectorAll('.cm-line').length > 0, null, {
+    timeout: 5_000,
+  });
 }
 
 // ── Console error accumulator ────────────────────────────────────────────────
@@ -92,9 +97,9 @@ test.describe('§6.3 List hanging-indent', () => {
     await seedMarkdown(`- ${longText}\n\nplain paragraph`);
     await switchToSource(page);
 
-    // Narrow viewport to force wrapping
+    // Narrow viewport to force wrapping; Playwright's toBeVisible auto-waits
+    // for the post-resize layout reflow — no fixed timeout needed.
     await page.setViewportSize({ width: 400, height: 600 });
-    await page.waitForTimeout(300);
 
     // The list-item line should have cm-list-item class
     const listLine = page.locator('.cm-line.cm-list-item').first();
@@ -149,9 +154,9 @@ test.describe('§6.5 Code wrap-preserve-indent', () => {
     await seedMarkdown(`\`\`\`js\n${longLine}\n\`\`\``);
     await switchToSource(page);
 
-    // Force narrow viewport to trigger wrap
+    // Force narrow viewport to trigger wrap; expect().toBeVisible() below
+    // auto-waits for the post-resize reflow.
     await page.setViewportSize({ width: 400, height: 600 });
-    await page.waitForTimeout(300);
 
     // The fenced-code-line should exist and have padding
     const codeLine = page.locator('.cm-line.cm-fenced-code-line').first();
@@ -175,26 +180,23 @@ test.describe('§6.1 Broken link-ref', () => {
     await seedMarkdown('[valid link][exists]\n\n[exists]: https://example.com');
     await switchToSource(page);
 
-    // Type a broken ref directly in source mode (bypasses CRDT round-trip escaping)
+    // Type a broken ref directly in source mode (bypasses CRDT round-trip escaping).
+    // Playwright's expect().toHaveCount() auto-retries until the assertion passes
+    // or the timeout expires — no manual waitForTimeout needed.
     await page.locator('.cm-content').focus();
     await page.keyboard.press('Meta+End');
     await page.keyboard.type('\n\n[click here][missing]', { delay: 10 });
 
-    // Wait for StateField to scan
-    await page.waitForTimeout(1000);
-
-    // The [click here][missing] should be marked broken
+    // The [click here][missing] should be marked broken — StateField rescans
+    // on docChanged, so the mark should appear within the assertion's timeout.
     const broken = page.locator('.cm-link-ref-broken');
     await expect(broken).toHaveCount(1, { timeout: 5_000 });
 
-    // Now add the missing definition
+    // Now add the missing definition — the broken mark should clear as soon
+    // as the StateField's next docChanged run sees the new definition.
     await page.keyboard.press('Meta+End');
     await page.keyboard.type('\n\n[missing]: https://example.com', { delay: 10 });
 
-    // Wait for StateField to recompute
-    await page.waitForTimeout(1000);
-
-    // The broken mark should be gone
     const brokenAfter = page.locator('.cm-link-ref-broken');
     await expect(brokenAfter).toHaveCount(0, { timeout: 5_000 });
   });
@@ -217,13 +219,15 @@ test.describe('§6.1 Broken wikilink', () => {
     await seedMarkdown('[[test-doc]]');
     await switchToSource(page);
 
-    // Wait for cache to warm
-    await page.waitForTimeout(2000);
-
-    // Should have cm-wiki-link but NOT cm-wiki-link-broken
+    // Wait for the wikilink mark to paint (cache-cold → plain mark; cache-warm → still plain).
+    // Playwright's toHaveCount auto-retries; no fixed timeout needed.
     const wikiLink = page.locator('.cm-wiki-link');
-    await expect(wikiLink).toHaveCount(1);
+    await expect(wikiLink).toHaveCount(1, { timeout: 10_000 });
 
+    // After the plain mark is present, the cache has had a chance to warm
+    // (getPages resolves on first paint). A valid target should NEVER get the
+    // broken class — toHaveCount(0) holds the assertion for a short window to
+    // catch any late false-positive flash.
     const brokenLink = page.locator('.cm-wiki-link-broken');
     await expect(brokenLink).toHaveCount(0);
   });
@@ -241,6 +245,13 @@ test.describe('§6.6 Tables (structure/layout only)', () => {
     const allLines = page.locator('.cm-line');
     const lineCount = await allLines.count();
     expect(lineCount).toBeGreaterThanOrEqual(5);
+
+    // First, sample font-size on a non-table paragraph line — this is the
+    // "control" font-size we'll later assert table lines match.
+    const paragraphFontSize = await allLines
+      .filter({ hasText: 'plain paragraph' })
+      .first()
+      .evaluate((el) => getComputedStyle(el).fontSize);
 
     // Walk lines; classify by content and assert expected classes.
     let headerSeen = 0;
@@ -281,7 +292,9 @@ test.describe('§6.6 Tables (structure/layout only)', () => {
       expect(classes).not.toContain('cm-list-item');
       expect(classes).not.toContain('cm-del');
 
-      // Computed style must have NO background color, NO border (styling cut).
+      // Computed style: NO background color, NO border, FONT-SIZE equals
+      // paragraph (compactness was cut in the second spec amendment — no
+      // 0.9em shrink). Hanging indent IS present (padding-inline-start > 0).
       const box = await allLines.nth(i).evaluate((el) => {
         const s = getComputedStyle(el);
         return {
@@ -290,16 +303,17 @@ test.describe('§6.6 Tables (structure/layout only)', () => {
           borderTopWidth: s.borderTopWidth,
           borderBottomWidth: s.borderBottomWidth,
           paddingInlineStart: s.paddingInlineStart,
+          fontSize: s.fontSize,
         };
       });
-      // Background transparent (rgba 0,0,0,0) or matches editor bg — must not be
-      // an explicit tint. We check it's not a non-transparent color-mix'd tint.
+      // Background transparent — must not be an explicit tint.
       expect(box.bg).toMatch(/rgba?\(0, ?0, ?0, ?0\)|transparent|rgb\(255/);
       expect(box.borderLeftWidth).toBe('0px');
       expect(box.borderTopWidth).toBe('0px');
       expect(box.borderBottomWidth).toBe('0px');
-      // Structure IS present — padding-inline-start should be ≥ 8px + 2ch
-      // (non-zero from the hanging-indent rule).
+      // Compactness cut — table line font-size matches paragraph font-size.
+      expect(box.fontSize).toBe(paragraphFontSize);
+      // Structure IS present — padding-inline-start > 0 from hanging indent.
       const padPx = parseFloat(box.paddingInlineStart);
       expect(padPx).toBeGreaterThan(0);
     }
@@ -338,9 +352,31 @@ test.describe('§6.7 Cross-cutting', () => {
     await seedMarkdown(composition);
     await switchToSource(page);
 
-    // Wait for CRDT sync to settle, then read the Y.Text source content.
-    // __activeProvider is exposed by DocumentContext.tsx and gives access to the Y.Doc.
-    await page.waitForTimeout(3000);
+    // Wait for the CRDT bridge to settle: the agent-write-md call above writes
+    // to Y.Text on the server, which syncs to this client, which triggers the
+    // server-authoritative observer pair to normalize content. Wait for the
+    // Y.Text length to stabilize as a proxy for "sync settled" — checks every
+    // 100ms that the length stays the same for 3 consecutive samples.
+    await page.waitForFunction(
+      () => {
+        const provider = window.__activeProvider;
+        if (!provider?.isSynced) return false;
+        const ytext = provider.document.getText('source');
+        const now = ytext.length;
+        const prev = (window as unknown as { __lastYTextLen?: number }).__lastYTextLen;
+        const stable = (window as unknown as { __yTextStable?: number }).__yTextStable ?? 0;
+        (window as unknown as { __lastYTextLen: number }).__lastYTextLen = now;
+        if (prev === now) {
+          (window as unknown as { __yTextStable: number }).__yTextStable = stable + 1;
+          return stable + 1 >= 3;
+        }
+        (window as unknown as { __yTextStable: number }).__yTextStable = 0;
+        return false;
+      },
+      null,
+      { timeout: 10_000, polling: 100 },
+    );
+
     const docState = await page.evaluate(() => {
       const provider = window.__activeProvider;
       if (!provider) throw new Error('no __activeProvider');

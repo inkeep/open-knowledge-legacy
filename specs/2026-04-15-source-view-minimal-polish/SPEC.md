@@ -82,10 +82,9 @@ These carry over from the prior spec and remain non-negotiable:
 5. Short indented lines (no wrap) render with their source leading whitespace visible — the indent structure of the code is readable.
 
 ### 5.5 Author reading a table
-1. Table rows render ~10% smaller than surrounding paragraph text (compactness — more columns fit per visual line).
-2. No row tint, no border, no accent bar — visually reads as plain text apart from the size difference.
-3. When a long row wraps due to narrow viewport, the wrapped continuation aligns under the first cell's content (hanging indent), not under the opening `|`.
-4. `|`, `---`, column text all visible and addressable — no decoration hides or replaces any character.
+1. Table rows render at the same font size and background as surrounding paragraph text — no row tint, no border, no accent bar, no compactness.
+2. When a long row wraps due to narrow viewport, the wrapped continuation aligns under the first cell's content (hanging indent), not under the opening `|`.
+3. `|`, `---`, column text all visible and addressable — no decoration hides or replaces any character.
 
 ## 6. Acceptance criteria
 
@@ -122,20 +121,20 @@ These carry over from the prior spec and remain non-negotiable:
 - AC4 Syntax highlighting continues to work for every language in the existing `codeLanguages` allowlist (the spec does not modify the allowlist).
 - AC5 Cursor walks every char including leading whitespace. Selection is byte-identical.
 
-### 6.6 Tables (structure/layout only — no styling)
+### 6.6 Tables (hanging indent only — no styling, no compactness)
 
-**Amended 2026-04-16** after initial spec shipped tables as a negative-AC. Mid-branch reassessment: the abandoned polish-engine had structural pieces (hanging-indent, compactness) that are independent of its styling pieces (row tint, cell bands, accent bar, header border). Structure/layout is about wrapping behavior; styling is about visual decoration. We re-added structure only.
+**Amended 2026-04-16** (twice). Initial spec: tables as negative-AC. First amendment: re-added hanging indent + compactness (Tier 1 + Tier 3 from the abandoned polish-engine). Second amendment (this one, prompted by the "no deferred tech debt / optimize for architectural correctness" greenfield directive): **cut compactness**. Rationale: hanging indent is the layout fix — it solves the wrap pathology. Compactness (`font-size: 0.9em`) is stylistic — it makes table text inconsistent with surrounding paragraph text for a marginal 10% horizontal budget gain. Two staff engineers choosing architectural correctness over expediency would prefer consistency. The ship-summary's "if it reads too small, cut it in a follow-up" was exactly the pattern the directive forbids.
 
 **IN scope (applied):**
 - AC1 Table content lines carry `.cm-table-row` (body rows) or `.cm-table-header` (header row). The `|---|---|` delimiter row carries `.cm-table-row` (detected as a `TableDelimiter` whose parent is the `Table` container — inline `|` characters inside rows are also `TableDelimiter`s but under `TableRow`/`TableHeader` parents).
-- AC2 Hanging indent: `padding-inline-start: calc(8px + 2ch); text-indent: -2ch`. Wrapped continuation of a long row aligns under the first cell's content, not under the opening `|`.
-- AC3 Compactness: `font-size: 0.9em; line-height: 1.4`. Table lines are ~10% smaller than body paragraph text so more columns fit per visual line.
+- AC2 Hanging indent: `padding-inline-start: calc(8px + 2ch); text-indent: -2ch`. Wrapped continuation of a long row aligns under the first cell's content, not under the opening `|`. Works identically regardless of column count.
 
 **OUT of scope (explicitly cut — styling):**
-- AC4 No `background` on table lines. No `.cm-table-cell-band-*`. Computed `background-color` on a table line matches the editor's own (no tint).
-- AC5 No `border-left` accent bar. No `border-top` on header. No `border-bottom`. Computed border widths all `0px`.
-- AC6 No `box-decoration-break: clone` (only meaningful paired with a background; dead code without one).
-- AC7 No per-cell MatchDecorator, no color rotation.
+- AC3 No `background` on table lines. No `.cm-table-cell-band-*`. Computed `background-color` on a table line matches the editor's own (no tint).
+- AC4 No `border-left` accent bar. No `border-top` on header. No `border-bottom`. Computed border widths all `0px`.
+- AC5 No `box-decoration-break: clone` (only meaningful paired with a background; dead code without one).
+- AC6 No per-cell MatchDecorator, no color rotation.
+- AC7 No `font-size` / `line-height` change. Computed `font-size` on a table line equals `font-size` on surrounding paragraph lines.
 
 **Addressability (unchanged):**
 - AC8 `|` separators, `---` delimiters, and cell content all visible and addressable.
@@ -278,7 +277,7 @@ Keep tight. The AC list is small; the test list matches.
 | Playwright | ` ``` ` (no language) → no badge | §6.4 AC3 |
 | Playwright | Indented code line → first non-whitespace char x > code-block-left-edge x | §6.5 AC1 |
 | Playwright | Long indented code line → wrapped continuation aligns under indent | §6.5 AC2 |
-| Playwright | Table header + row + delimiter get structural classes; computed background = transparent, borders = 0, padding-inline-start > 0 | §6.6 AC1–AC6 |
+| Playwright | Table header + row + delimiter get structural classes; computed background = transparent, borders = 0, font-size = paragraph font-size, padding-inline-start > 0 | §6.6 AC1–AC8 |
 | Playwright | Addressability: Cmd+A → Cmd+C === source bytes on a doc containing all five construct types | §6.7 AC1 (cross-cutting invariant) |
 
 No screenshot-diff suite, no `§10.7b`-style capture — the scope is small enough that textual assertions on classes + computed styles suffice.
@@ -288,7 +287,7 @@ No screenshot-diff suite, no `§10.7b`-style capture — the scope is small enou
 - **D1 — LOCKED** — Addressability invariant (cursor-walkable, byte-identical copy, no atomic ranges, no block replacement).
 - **D2 — LOCKED** — Only the five features in §2. Anything else is out of scope.
 - **D3 — LOCKED** — No "engine," no registry, no Compartment, no auto-bail.
-- **D4 — AMENDED 2026-04-16** — Tables receive structure/layout decorations only (hanging indent + compactness via `.cm-table-row` / `.cm-table-header`). Explicitly NOT styled — no row tint, no accent bar, no cell bands, no `box-decoration-break`. The distinction: structure affects wrapping behavior and information density; styling adds visual decoration. Structure is valuable in source view; styling is noise. Original D4 LOCKED stance was "no decoration at all" — walked back after the "CM6-ELEMENTS reference + live-demo" exercise showed the structural pieces from the prior polish-engine were actually helpful.
+- **D4 — AMENDED 2026-04-16 (twice)** — Tables receive **hanging indent only** via `.cm-table-row` / `.cm-table-header`. Explicitly NOT styled — no row tint, no accent bar, no cell bands, no `box-decoration-break`, no font-size change, no line-height change. First amendment walked back the original "no decoration at all" to include hanging indent + compactness. Second amendment cut compactness as stylistic (font-size change is inconsistent with surrounding prose; a 10% horizontal-budget gain isn't worth readability inconsistency). The layout fix is hanging indent alone.
 - **D5 — LOCKED** — Code blocks get NO background tint and NO border. Only syntax highlighting (which they have today via `codeLanguages`) and the language badge.
 - **D6 — LOCKED** — Source-indent preservation via `padding-inline-start` only; NEVER apply negative `text-indent`. The prior spec's formulation flattened first-line indent to column 0, which is the failure mode we're fixing.
 - **D7 — LOCKED** — For broken-link coloring, use a specific wavy-red `oklch(55% 0.15 25)`. Do NOT use `var(--color-accent)` for foregrounds anywhere — in shadcn's light theme it resolves to `oklch(0.97)` (near-white background token), making text invisible.

@@ -50,8 +50,8 @@ The source editor renders through five superimposed layers. When you see a class
 | Thematic break `---`    | —                                         | —                                                      | —                     | Plain three dashes                                |
 | HTML block              | —                                         | —                                                      | ✓ tags                | No tint, no border                                |
 | YAML frontmatter        | —                                         | —                                                      | —                     | Renders plain                                     |
-| GFM table header        | `.cm-table-header` (structure only)       | —                                                      | ✓ delimiters          | Hanging indent + compactness. No bg / border / accent bar |
-| GFM table row           | `.cm-table-row` (structure only)          | —                                                      | ✓ delimiters          | Same — structure/layout only; no cell bands              |
+| GFM table header        | `.cm-table-header` (hanging indent only)  | —                                                      | ✓ delimiters          | Hanging indent on wrap; paragraph-size text. No styling |
+| GFM table row           | `.cm-table-row` (hanging indent only)     | —                                                      | ✓ delimiters          | Same — no bg / border / accent bar / compactness        |
 | Table `\|---\|---\|` row  | `.cm-table-row`                           | —                                                      | ✓ delimiters          | Delimiter-row = `TableDelimiter` whose parent is `Table` |
 | Agent write             | —                                         | `.cm-agent-flash-source-{create,update,delete,append}` | —                     | Transient flash during MCP writes                 |
 
@@ -195,29 +195,27 @@ Broken (cache-miss → wavy red after ≤5s): [[ThisPageDoesNotExist12345]].
 - **Source file:** `packages/app/src/editor/plugins/wiki-link-source.ts`
 - **CSS:** `.cm-wiki-link` + `.cm-wiki-link-broken` in `globals.css`
 
-### 6. Tables — structure + wrapping (no styling)
+### 6. Tables — hanging indent only (no styling, no compactness)
 
 `TableHeader` lines get `.cm-table-header`. `TableRow` lines get `.cm-table-row`. The `|---|---|` separator row gets `.cm-table-row` too (detected as a `TableDelimiter` whose parent is the `Table` container — distinguishes the separator line from the inline `|` characters inside rows).
 
-CSS (in `globals.css`) is deliberately structure-only:
+CSS (in `globals.css`) is minimal:
 
 ```css
 .cm-table-row,
 .cm-table-header {
   padding-inline-start: calc(8px + 2ch);
   text-indent: -2ch;
-  font-size: 0.9em;
-  line-height: 1.4;
 }
 ```
 
-**No background tint. No border. No accent bar. No cell color bands.** Those were the prior polish-engine's Tier 1/2 styling and are deliberately not here.
+That's it. **No background tint, no border, no accent bar, no cell color bands, no font-size change.** Tables read at the same size as surrounding paragraph text. Compactness was cut in the second spec amendment — `font-size: 0.9em` is stylistic noise; hanging indent alone is the layout fix.
 
-#### Demo A — single long cell (hanging indent on wrap)
+#### Demo — hanging indent on wrap
 
 The third cell is long enough to force wrap at normal viewport widths. When it wraps, the continuation line starts at `padding-inline-start` (roughly `8px + 2ch` from the line's left edge) — **under the first cell's content**, not at column 0 under the `|`. The first visual line is pulled back by `text-indent: -2ch` so the opening `|` sits at its natural source position.
 
-Narrow the browser window (or drag the file panel wider) until the table wraps. The wrapped continuation should read "under the a" alignment rather than falling back to flush-left.
+Narrow the browser window (or drag the file panel wider) until the table wraps. The wrapped continuation should align under the first cell's content rather than falling back to flush-left.
 
 | id | label  | long content that wraps                                                                                                                                                                                                                                                                                                                  |
 |----|--------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -228,31 +226,15 @@ Narrow the browser window (or drag the file panel wider) until the table wraps. 
 **What to verify in DevTools:**
 - Header line carries `cm-table-header`; body lines carry `cm-table-row`; the delimiter `|---|` line carries `cm-table-row`.
 - Computed `padding-inline-start` on any table line ≈ 40-50px (varies by font metrics).
+- Computed `font-size` on a table line EQUALS the `font-size` of adjacent paragraph lines (no compactness).
 - `background-color` is **NOT** set by us — it inherits the editor background (or `transparent`).
 - `border-left-width` / `border-top-width` / `border-bottom-width` are all `0px`.
 
-#### Demo B — many columns (compactness buys horizontal budget)
-
-`font-size: 0.9em` shrinks table text ~10% vs. paragraph text. Combined with `line-height: 1.4`, more columns fit per visual line before wrapping kicks in. Compare this dense 8-column table against a body paragraph:
-
-| col1 | col2 | col3 | col4 | col5 | col6 | col7 | col8 |
-|------|------|------|------|------|------|------|------|
-| a1   | b1   | c1   | d1   | e1   | f1   | g1   | h1   |
-| a2   | b2   | c2   | d2   | e2   | f2   | g2   | h2   |
-| a3   | b3   | c3   | d3   | e3   | f3   | g3   | h3   |
-
-The same 8-column layout at full body-text size would force wrap earlier. Lower the viewport width gradually — this table holds all 8 cols longer than a paragraph of equivalent character count would.
-
-**Verify in DevTools:** computed `font-size` on a table line should be ~12.6px when the body font is 14px (0.9 × 14), and `line-height` should be `19.6px` (14px × 1.4).
-
-#### Demo C — the pathology the prior spec aimed at (PROJECT.md)
-
-`PROJECT.md` in this repo has table rows up to ~3000 characters. Open it in source mode for a heavier stress test — each row wraps across many visual lines, and you can see both the hanging indent (wrapped lines under cell content, not column 0) and the compactness (more content per visual line than paragraph text).
+`PROJECT.md` in this repo has table rows up to ~3000 characters. Open it in source mode for a heavier stress test — each row wraps across many visual lines and the hanging indent makes the wrap structure readable without compactness.
 
 - **Source file:** `packages/app/src/editor/source-polish/view-plugin.ts`
 - **CSS:** `.cm-table-row` + `.cm-table-header` in `globals.css`
-- **Kept from prior polish-engine:** hanging indent + compactness (Tier 3 D18).
-- **Deliberately cut from prior:** row tint, left accent bar, header top border, per-cell color bands, `box-decoration-break: clone`.
+- **Deliberately cut from prior polish-engine:** row tint, left accent bar, header top border, per-cell color bands, `box-decoration-break: clone`, font-size compactness, line-height adjustment.
 
 ## Live examples — what this spec does NOT decorate
 
@@ -327,7 +309,7 @@ No `.cm-link-*` / `.cm-url-*` classes from this spec. The `md-link-source` plugi
 
 ### GFM tables
 
-Tables are now **partially** decorated — structure/layout/wrapping only, no styling. See the "Tables — structure + wrapping (no styling)" section above for live demos and the class mapping. The split is: hanging indent + compactness are in (structural); row tint / cell bands / accent bar / header top-border / `box-decoration-break` are explicitly out (stylistic).
+Tables are now **partially** decorated — hanging indent only, no styling. See the "Tables — hanging indent only" section above for the live demo and class mapping. Hanging indent IS applied (makes wrapped rows readable); row tint / cell bands / accent bar / header top-border / `box-decoration-break` / font-size compactness / line-height adjustment are ALL explicitly out.
 
 ## Composition — nested constructs
 
@@ -407,7 +389,7 @@ For completeness — the things we *could* have built but deliberately didn't:
 - Thematic break fade-to-transparent
 - HTML block purple tint
 - Code block background tint and borders
-- Table row tint / cell bands / accent bar / header top border (the table's *structural* layout — hanging indent + compactness — was added back; the styling parts stay out)
+- Table row tint / cell bands / accent bar / header top border / compactness / box-decoration-break (only the hanging indent was kept as a structural layout fix; all visual/size decoration stays out)
 - Gutter contrast overrides
 - A generic "polish engine" registry, Compartment, or auto-bail
 

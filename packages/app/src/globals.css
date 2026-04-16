@@ -999,17 +999,13 @@ button:active:not(:disabled) {
   --broken-link-color: oklch(72% 0.18 25);
 }
 
-/* Tables — structure / layout / wrapping only. No background, no border, no
-   accent bar, no cell bands (those were the prior polish-engine's Tier 1/2
-   styling — deliberately excluded here per spec §6.6).
-   - padding-inline-start + text-indent: hanging indent so a wrapped long row's
-     continuation aligns under the first cell's content, not under `|`.
-   - font-size 0.9em + line-height 1.4: compactness so more columns fit per
-     visual line (Tier 3 from prior agreement D18). */
+/* Tables — hanging indent only. Wrapped row continuation aligns under the
+   first cell's content, not under `|`. No background, no border, no accent
+   bar, no cell bands, NO font-size change — table lines read as the same
+   size as surrounding paragraph text. Compactness was cut as stylistic
+   (see SPEC §6.6, §11 D4). */
 .cm-table-row,
 .cm-table-header {
   padding-inline-start: calc(8px + 2ch);
   text-indent: -2ch;
-  font-size: 0.9em;
-  line-height: 1.4;
 }
