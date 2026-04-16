@@ -65,9 +65,9 @@ describe('ConfigSchema', () => {
     expect(config.content.exclude).toEqual(['node_modules/**', '.claude/**']);
   });
 
-  test('preview block absent parses successfully', () => {
+  test('preview block absent parses to empty default', () => {
     const config = ConfigSchema.parse({});
-    expect(config.preview).toBeUndefined();
+    expect(config.preview).toEqual({});
   });
 
   test('preview.baseUrl with valid URL is accepted', () => {
