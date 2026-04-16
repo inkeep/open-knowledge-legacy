@@ -898,15 +898,19 @@ button:active:not(:disabled) {
 .fd-steps {
   counter-reset: step;
   position: relative;
-  padding-left: 1.5rem;
+  padding-left: 2.5rem;
   margin-left: 0.5rem;
   border-left: 1px solid var(--color-fd-border);
 }
 @media (min-width: 640px) {
   .fd-steps {
     margin-left: 1rem;
-    padding-left: 1.75rem;
+    padding-left: 2.75rem;
   }
+}
+.fd-step {
+  position: relative;
+  padding-left: 0.5rem;
 }
 .fd-step::before {
   background-color: var(--color-fd-secondary);
@@ -921,7 +925,7 @@ button:active:not(:disabled) {
   width: 2rem;
   height: 2rem;
   position: absolute;
-  left: -1rem;
+  left: -2.5rem;
   border-radius: 9999px;
 }
 
@@ -997,18 +1001,11 @@ button:active:not(:disabled) {
   transition: box-shadow 0.15s;
 }
 
-/* Hover tint — only the DIRECTLY hovered component, not ancestors.
- * The :has() check prevents parent wrappers from highlighting when a nested
- * child component is hovered (eliminates the "Russian nesting doll" effect
- * on Files/Folder/File). */
-.ProseMirror
-.jsx-component-wrapper:hover:not(:has(.component-children .jsx-component-wrapper:hover)) {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent);
-}
-
-/* Selection ring — subtle, only on NodeSelection (keyboard nav) */
+/* No hover outlines/tints on component blocks. All chrome is overlays
+ * (badge+gear bar, add-child pill). Components render clean like production.
+ * Selection ring is subtle and only for keyboard nav (NodeSelection). */
 .ProseMirror .jsx-component-wrapper.is-selected {
-  box-shadow: 0 0 0 2px var(--ring);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ring) 40%, transparent);
 }
 
 /* Hover-revealed chrome bar (component name + gear icon) — top-right overlay */
