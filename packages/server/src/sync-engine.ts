@@ -24,6 +24,7 @@ import type { ContentFilter } from './content-filter.ts';
 import { type ClassifiedError, classifyGitError } from './error-classification.ts';
 import { createGitInstance, withParentLock } from './git-handle.ts';
 import { getLogger } from './logger.ts';
+import { computeRemainingMs } from './sync-timing.ts';
 
 const log = getLogger('sync-engine');
 
@@ -203,9 +204,26 @@ export class SyncEngine {
     }
 
     this.transitionTo('idle');
-    this.schedulePull();
-    this.schedulePush();
-    log.info({ branch: this.currentBranch }, '[sync] started');
+
+    // If we restored in-flight conflicts, re-enter conflict state (timers paused)
+    if (this.conflictCount > 0) {
+      this.transitionTo('conflict');
+      log.warn(
+        { count: this.conflictCount },
+        '[sync] restarted with active conflicts — sync paused',
+      );
+      return;
+    }
+
+    // Schedule with restart-aware remaining delay (FR: max(0, lastFetchUtc+interval - now))
+    const pullRemainingMs = computeRemainingMs(this.lastFetchUtc, this.pullIntervalSeconds);
+    const pushRemainingMs = computeRemainingMs(this.lastSyncUtc, this.pushIntervalSeconds);
+    this.schedulePull(pullRemainingMs > 0 ? pullRemainingMs : undefined);
+    this.schedulePush(pushRemainingMs > 0 ? pushRemainingMs : undefined);
+    log.info(
+      { branch: this.currentBranch, pullDelayMs: pullRemainingMs, pushDelayMs: pushRemainingMs },
+      '[sync] started',
+    );
   }
 
   stop(): void {
@@ -287,9 +305,9 @@ export class SyncEngine {
 
   // ─── Scheduling ────────────────────────────────────────────────────────────
 
-  private schedulePull(): void {
+  private schedulePull(overrideDelayMs?: number): void {
     if (this.pullTimer !== null) clearTimeout(this.pullTimer);
-    const delayMs = this.effectivePullDelayMs();
+    const delayMs = overrideDelayMs ?? this.effectivePullDelayMs();
     this.pullTimer = setTimeout(() => {
       this.pullTimer = null;
       this.runPullCycle().catch((e) => {
@@ -298,9 +316,9 @@ export class SyncEngine {
     }, delayMs);
   }
 
-  private schedulePush(): void {
+  private schedulePush(overrideDelayMs?: number): void {
     if (this.pushTimer !== null) clearTimeout(this.pushTimer);
-    const delayMs = jitteredMs(this.pushIntervalSeconds);
+    const delayMs = overrideDelayMs ?? jitteredMs(this.pushIntervalSeconds);
     this.pushTimer = setTimeout(() => {
       this.pushTimer = null;
       this.runPushCycle().catch((e) => {
@@ -831,7 +849,8 @@ export class SyncEngine {
         consecutiveFailures: this.consecutiveFailures,
         pausedReason: this.pausedReason,
         pausedSinceUtc: this.pausedReason ? new Date().toISOString() : undefined,
-        inflightConflicts: [],
+        // Persist file paths of any in-flight conflicts so they survive restart
+        inflightConflicts: this.conflictStore.list().map((c) => c.file),
       };
       writeFileSync(this.statePath, JSON.stringify(data, null, 2), 'utf-8');
     } catch (e) {
@@ -850,6 +869,18 @@ export class SyncEngine {
       this.lastPushedSha = data.lastPushedSha ?? null;
       this.consecutiveFailures = data.consecutiveFailures ?? 0;
       this.pausedReason = data.pausedReason;
+
+      // Restore in-flight conflicts into the ConflictStore
+      const inflightFiles = data.inflightConflicts ?? [];
+      if (inflightFiles.length > 0) {
+        for (const file of inflightFiles) {
+          // Only add if not already present (ConflictStore.load() may have populated it)
+          if (!this.conflictStore.list().some((c) => c.file === file)) {
+            this.conflictStore.addConflict({ file, detectedAt: new Date().toISOString() });
+          }
+        }
+        this.conflictCount = this.conflictStore.count();
+      }
     } catch (e) {
       log.warn({ err: e }, '[sync] failed to load sync state');
     }
