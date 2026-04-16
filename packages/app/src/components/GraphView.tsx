@@ -1,6 +1,10 @@
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
-import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-force-graph-2d';
+import ForceGraph2D, {
+  type ForceGraphMethods,
+  type LinkObject,
+  type NodeObject,
+} from 'react-force-graph-2d';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 import {
@@ -13,9 +17,12 @@ import { buildGraphLabelDescriptors } from './graph-label-utils';
 import {
   type GraphData,
   type GraphDocClickBehavior,
-  type GraphDocSelection,
   type GraphLink,
   type GraphNode,
+  type GraphNodeSelection,
+  type GraphNodeVisualState,
+  getGraphNodeCanvasRadius,
+  getGraphNodePointerRadius,
   getGraphNodeTooltipLabel,
   getGraphNodeVisualState,
   resolveGraphNodeClickAction,
@@ -32,6 +39,7 @@ const FOCUS_ANIMATION_MS = 350;
 const FOCUS_RETRY_INTERVAL_MS = 120;
 const FOCUS_RETRY_DISTANCE_PX = 18;
 const FINAL_SETTLE_DRIFT_PX = 28;
+const BACKGROUND_CLICK_TOLERANCE_PX = 5;
 
 interface FocusState {
   key: string;
@@ -39,6 +47,25 @@ interface FocusState {
   lastY: number | null;
   lastAt: number;
 }
+
+interface GraphNodeHitbox {
+  x: number;
+  y: number;
+  radiusPx: number;
+  state: GraphNodeVisualState;
+}
+
+interface BackgroundPointerState {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  target: GraphPointerTarget;
+}
+
+type GraphPointerTarget =
+  | { kind: 'background' }
+  | { kind: 'link' }
+  | { kind: 'node'; node: GraphNode };
 
 function getActiveGraphNodeCoords({
   nodes,
@@ -169,14 +196,181 @@ function drawGraphLabelPlacements({
   }
 }
 
+function getGraphNodeHitbox({
+  node,
+  fg,
+  activeDocName,
+  selectedNodeId,
+  globalScale,
+}: {
+  node: NodeObject<GraphNode>;
+  fg: ForceGraphMethods<NodeObject<GraphNode>>;
+  activeDocName: string;
+  selectedNodeId: string | null;
+  globalScale: number;
+}): GraphNodeHitbox | null {
+  if (typeof node.x !== 'number' || typeof node.y !== 'number') return null;
+
+  const state = getGraphNodeVisualState(node, {
+    activeDocName,
+    selectedNodeId,
+  });
+  const screen = fg.graph2ScreenCoords(node.x, node.y);
+
+  return {
+    x: screen.x,
+    y: screen.y,
+    radiusPx: getGraphNodePointerRadius(state, globalScale) * globalScale,
+    state,
+  };
+}
+
+function getLocalPointerPoint({
+  clientX,
+  clientY,
+  container,
+}: {
+  clientX: number;
+  clientY: number;
+  container: HTMLElement;
+}): { x: number; y: number } {
+  const rect = container.getBoundingClientRect();
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+  };
+}
+
+function getGraphNodeAtPoint({
+  point,
+  fg,
+  nodes,
+  activeDocName,
+  selectedNodeId,
+}: {
+  point: { x: number; y: number };
+  fg: ForceGraphMethods<NodeObject<GraphNode>>;
+  nodes: GraphNode[];
+  activeDocName: string;
+  selectedNodeId: string | null;
+}): GraphNode | null {
+  const globalScale = fg.zoom();
+  let closestNode: { node: GraphNode; distance: number } | null = null;
+
+  for (const node of nodes as NodeObject<GraphNode>[]) {
+    const hitbox = getGraphNodeHitbox({
+      node,
+      fg,
+      activeDocName,
+      selectedNodeId,
+      globalScale,
+    });
+    if (!hitbox) continue;
+
+    const distance = Math.hypot(point.x - hitbox.x, point.y - hitbox.y);
+    if (distance > hitbox.radiusPx) continue;
+    if (closestNode !== null && distance >= closestNode.distance) continue;
+
+    closestNode = { node, distance };
+  }
+
+  return closestNode?.node ?? null;
+}
+
+function getLinkEndpointCoords(
+  endpoint: string | number | NodeObject<GraphNode> | undefined,
+  fg: ForceGraphMethods<NodeObject<GraphNode>>,
+): { x: number; y: number } | null {
+  if (
+    endpoint === undefined ||
+    typeof endpoint === 'string' ||
+    typeof endpoint === 'number' ||
+    typeof endpoint.x !== 'number' ||
+    typeof endpoint.y !== 'number'
+  ) {
+    return null;
+  }
+
+  return fg.graph2ScreenCoords(endpoint.x, endpoint.y);
+}
+
+function getDistanceToSegmentPx({
+  point,
+  start,
+  end,
+}: {
+  point: { x: number; y: number };
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+}): number {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  if (dx === 0 && dy === 0) {
+    return Math.hypot(point.x - start.x, point.y - start.y);
+  }
+
+  const projection = Math.max(
+    0,
+    Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / (dx * dx + dy * dy)),
+  );
+  const projectedX = start.x + projection * dx;
+  const projectedY = start.y + projection * dy;
+  return Math.hypot(point.x - projectedX, point.y - projectedY);
+}
+
+function isGraphLinkAtPoint({
+  point,
+  fg,
+  links,
+}: {
+  point: { x: number; y: number };
+  fg: ForceGraphMethods<NodeObject<GraphNode>>;
+  links: GraphLink[];
+}): boolean {
+  const LINK_HITBOX_PX = 6;
+
+  return (links as LinkObject<GraphNode, GraphLink>[]).some((link) => {
+    const start = getLinkEndpointCoords(link.source, fg);
+    const end = getLinkEndpointCoords(link.target, fg);
+    if (!start || !end) return false;
+    return getDistanceToSegmentPx({ point, start, end }) <= LINK_HITBOX_PX;
+  });
+}
+
+function getGraphLinkEndpointDocName({
+  endpoint,
+  nodes,
+}: {
+  endpoint: string | number | NodeObject<GraphNode> | undefined;
+  nodes: GraphNode[];
+}): string | null {
+  if (endpoint === undefined || typeof endpoint === 'number') {
+    return null;
+  }
+
+  if (typeof endpoint === 'string') {
+    const node = nodes.find(
+      (candidate): candidate is GraphNode & { kind: 'doc' } =>
+        candidate.kind === 'doc' && candidate.id === endpoint,
+    );
+    return node?.docName ?? null;
+  }
+
+  if (endpoint.kind === 'doc') {
+    return endpoint.docName;
+  }
+
+  return null;
+}
+
 function applyGraphNodeClick({
   node,
   docClickBehavior,
-  onSelectDoc,
+  onSelectNode,
 }: {
   node: GraphNode;
   docClickBehavior: GraphDocClickBehavior;
-  onSelectDoc?: (selection: GraphDocSelection) => void;
+  onSelectNode?: (selection: GraphNodeSelection) => void;
 }): void {
   const action = resolveGraphNodeClickAction(node, docClickBehavior);
 
@@ -190,25 +384,59 @@ function applyGraphNodeClick({
     return;
   }
 
-  onSelectDoc?.(action.selection);
+  onSelectNode?.(action.selection);
+}
+
+function handleGraphPointerTapTarget({
+  target,
+  docClickBehavior,
+  selectedNodeId,
+  onSelectNode,
+  onBackgroundClick,
+}: {
+  target: GraphPointerTarget;
+  docClickBehavior: GraphDocClickBehavior;
+  selectedNodeId: string | null;
+  onSelectNode?: (selection: GraphNodeSelection) => void;
+  onBackgroundClick?: () => void;
+}): void {
+  if (target.kind === 'background' || target.kind === 'link') {
+    onBackgroundClick?.();
+    return;
+  }
+
+  if (
+    docClickBehavior === 'select' &&
+    selectedNodeId !== null &&
+    target.node.id === selectedNodeId
+  ) {
+    onBackgroundClick?.();
+    return;
+  }
+
+  applyGraphNodeClick({
+    node: target.node,
+    docClickBehavior,
+    onSelectNode,
+  });
 }
 
 export function GraphView({
   activeDocName,
-  selectedDocName = null,
+  selectedNodeId = null,
   isFullscreen = false,
   className = '',
   docClickBehavior = 'navigate',
-  onSelectDoc,
+  onSelectNode,
   onBackgroundClick,
   onStatsChange,
 }: {
   activeDocName: string;
-  selectedDocName?: string | null;
+  selectedNodeId?: string | null;
   isFullscreen?: boolean;
   className?: string;
   docClickBehavior?: GraphDocClickBehavior;
-  onSelectDoc?: (selection: GraphDocSelection) => void;
+  onSelectNode?: (selection: GraphNodeSelection) => void;
   onBackgroundClick?: () => void;
   onStatsChange?: (nodes: number, links: number, loading: boolean) => void;
 }) {
@@ -224,6 +452,7 @@ export function GraphView({
   const containerRef = useRef<HTMLDivElement>(null);
   const fgRef = useRef<ForceGraphMethods<NodeObject<GraphNode>> | undefined>(undefined);
   const focusStateRef = useRef<FocusState>({ key: '', lastX: null, lastY: null, lastAt: 0 });
+  const backgroundPointerRef = useRef<BackgroundPointerState | null>(null);
   const [dimensions, setDimensions] = useState({ width: 320, height: 400 });
   const { resolvedTheme } = useTheme();
 
@@ -368,13 +597,26 @@ export function GraphView({
         applyGraphNodeClick({
           node,
           docClickBehavior,
-          onSelectDoc,
+          onSelectNode,
         });
         return true;
       },
       clickBackground() {
         if (!onBackgroundClick) return false;
         onBackgroundClick();
+        return true;
+      },
+      clickExternal(url: string) {
+        const node = graphData.nodes.find(
+          (candidate): candidate is GraphNode & { kind: 'external' } =>
+            candidate.kind === 'external' && candidate.url === url,
+        );
+        if (!node) return false;
+        applyGraphNodeClick({
+          node,
+          docClickBehavior,
+          onSelectNode,
+        });
         return true;
       },
       getNodeVisualState(docName: string) {
@@ -385,8 +627,100 @@ export function GraphView({
         if (!node) return null;
         return getGraphNodeVisualState(node, {
           activeDocName,
-          selectedDocName,
+          selectedNodeId,
         });
+      },
+      getNodeClickPoint(nodeKey: string) {
+        const fg = fgRef.current;
+        if (!fg) return null;
+
+        const node = graphData.nodes.find(
+          (candidate): candidate is NodeObject<GraphNode> =>
+            ('docName' in candidate && candidate.docName === nodeKey) ||
+            ('url' in candidate && candidate.url === nodeKey) ||
+            candidate.id === nodeKey,
+        );
+        if (!node) return null;
+
+        const hitbox = getGraphNodeHitbox({
+          node,
+          fg,
+          activeDocName,
+          selectedNodeId,
+          globalScale: fg.zoom(),
+        });
+        if (!hitbox) return null;
+
+        return {
+          x: hitbox.x,
+          y: hitbox.y,
+        };
+      },
+      getLayoutMetrics() {
+        return {
+          graphHeight:
+            containerRef.current
+              ?.querySelector<HTMLElement>('[role="img"]')
+              ?.getBoundingClientRect().height ?? 0,
+          containerHeight: containerRef.current?.getBoundingClientRect().height ?? 0,
+          availableHeight: containerRef.current?.parentElement?.getBoundingClientRect().height ?? 0,
+        };
+      },
+      getLinkClickPoint(sourceDocName: string, targetDocName: string) {
+        const fg = fgRef.current;
+        if (!fg) return null;
+
+        const link = (graphData.links as LinkObject<GraphNode, GraphLink>[]).find((candidate) => {
+          const source = getGraphLinkEndpointDocName({
+            endpoint: candidate.source,
+            nodes: graphData.nodes,
+          });
+          const target = getGraphLinkEndpointDocName({
+            endpoint: candidate.target,
+            nodes: graphData.nodes,
+          });
+          return source === sourceDocName && target === targetDocName;
+        });
+        if (!link) return null;
+
+        const sourceNode =
+          typeof link.source === 'object' && link.source !== null ? link.source : undefined;
+        const targetNode =
+          typeof link.target === 'object' && link.target !== null ? link.target : undefined;
+        if (!sourceNode || !targetNode) return null;
+
+        const sourceHitbox = getGraphNodeHitbox({
+          node: sourceNode,
+          fg,
+          activeDocName,
+          selectedNodeId,
+          globalScale: fg.zoom(),
+        });
+        const targetHitbox = getGraphNodeHitbox({
+          node: targetNode,
+          fg,
+          activeDocName,
+          selectedNodeId,
+          globalScale: fg.zoom(),
+        });
+        if (!sourceHitbox || !targetHitbox) return null;
+
+        const dx = targetHitbox.x - sourceHitbox.x;
+        const dy = targetHitbox.y - sourceHitbox.y;
+        const length = Math.hypot(dx, dy);
+        if (length === 0) return null;
+
+        const sourceOffset = sourceHitbox.radiusPx + 8;
+        const targetOffset = targetHitbox.radiusPx + 8;
+        const usableLength = Math.max(length - sourceOffset - targetOffset, 0);
+        const distanceFromSource = sourceOffset + usableLength / 2;
+        const unitX = dx / length;
+        const unitY = dy / length;
+
+        return {
+          x: sourceHitbox.x + unitX * distanceFromSource,
+          y: sourceHitbox.y + unitY * distanceFromSource,
+        };
       },
     };
 
@@ -399,14 +733,89 @@ export function GraphView({
   }, [
     activeDocName,
     docClickBehavior,
+    graphData.links,
     graphData.nodes,
     onBackgroundClick,
-    onSelectDoc,
-    selectedDocName,
+    onSelectNode,
+    selectedNodeId,
   ]);
 
   return (
-    <div ref={containerRef} className={cn('min-h-0 overflow-hidden', className)}>
+    <div
+      ref={containerRef}
+      className={cn('h-full min-h-0 overflow-hidden', className)}
+      onPointerCancel={() => {
+        backgroundPointerRef.current = null;
+      }}
+      onPointerDownCapture={(event) => {
+        if (!event.isPrimary || event.button !== 0) {
+          backgroundPointerRef.current = null;
+          return;
+        }
+        backgroundPointerRef.current = {
+          pointerId: event.pointerId,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          target: (() => {
+            const container = containerRef.current;
+            const fg = fgRef.current;
+            if (!container || !fg) {
+              return { kind: 'background' } satisfies GraphPointerTarget;
+            }
+
+            const point = getLocalPointerPoint({
+              clientX: event.clientX,
+              clientY: event.clientY,
+              container,
+            });
+            const node = getGraphNodeAtPoint({
+              point,
+              fg,
+              nodes: graphData.nodes,
+              activeDocName,
+              selectedNodeId,
+            });
+            if (node) {
+              return { kind: 'node', node } satisfies GraphPointerTarget;
+            }
+            if (
+              isGraphLinkAtPoint({
+                point,
+                fg,
+                links: graphData.links,
+              })
+            ) {
+              return { kind: 'link' } satisfies GraphPointerTarget;
+            }
+            return { kind: 'background' } satisfies GraphPointerTarget;
+          })(),
+        };
+      }}
+      onPointerUpCapture={(event) => {
+        if (!event.isPrimary || event.button !== 0) {
+          backgroundPointerRef.current = null;
+          return;
+        }
+
+        const pointerDown = backgroundPointerRef.current;
+        backgroundPointerRef.current = null;
+        if (!pointerDown || pointerDown.pointerId !== event.pointerId) return;
+
+        const travelPx = Math.hypot(
+          event.clientX - pointerDown.clientX,
+          event.clientY - pointerDown.clientY,
+        );
+        if (travelPx > BACKGROUND_CLICK_TOLERANCE_PX) return;
+
+        handleGraphPointerTapTarget({
+          target: pointerDown.target,
+          docClickBehavior,
+          selectedNodeId,
+          onSelectNode,
+          onBackgroundClick,
+        });
+      }}
+    >
       {error ? (
         <p className="p-4 text-sm text-destructive">{error}</p>
       ) : graphData.nodes.length === 0 && !loading ? (
@@ -465,12 +874,12 @@ export function GraphView({
             nodeVal={(node: NodeObject<GraphNode>) => {
               const state = getGraphNodeVisualState(node, {
                 activeDocName,
-                selectedDocName,
+                selectedNodeId,
               });
 
               if (state === 'active-selected') return 20;
               if (state === 'active') return 18;
-              if (state === 'selected') return 12;
+              if (state === 'selected' || state === 'external-selected') return 12;
               return 6;
             }}
             nodeCanvasObjectMode={() => 'replace'}
@@ -482,14 +891,10 @@ export function GraphView({
               if (typeof node.x !== 'number' || typeof node.y !== 'number') return;
               const state = getGraphNodeVisualState(node, {
                 activeDocName,
-                selectedDocName,
+                selectedNodeId,
               });
-              const nodeRadius =
-                state === 'active' || state === 'active-selected'
-                  ? 8
-                  : state === 'selected'
-                    ? 7
-                    : 5;
+              const nodeRadius = getGraphNodeCanvasRadius(state);
+              const pointerRadius = getGraphNodePointerRadius(state, globalScale);
 
               ctx.beginPath();
               ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
@@ -500,23 +905,46 @@ export function GraphView({
                     ? selectedNodeColor
                     : state === 'active-selected'
                       ? activeSelectedNodeColor
-                      : state === 'external'
+                      : state === 'external' || state === 'external-selected'
                         ? externalNodeColor
                         : defaultNodeColor;
               ctx.fill();
 
-              if (state === 'active' || state === 'selected' || state === 'active-selected') {
+              if (pointerRadius > nodeRadius) {
                 ctx.beginPath();
-                ctx.arc(node.x, node.y, nodeRadius + 2 / globalScale, 0, 2 * Math.PI, false);
+                ctx.arc(node.x, node.y, pointerRadius, 0, 2 * Math.PI, false);
                 ctx.strokeStyle =
                   state === 'active'
                     ? activeNodeRingColor
-                    : state === 'selected'
+                    : state === 'selected' || state === 'external-selected'
                       ? selectedNodeRingColor
                       : activeSelectedNodeRingColor;
                 ctx.lineWidth = 2 / globalScale;
                 ctx.stroke();
               }
+            }}
+            nodePointerAreaPaint={(
+              node: NodeObject<GraphNode>,
+              color: string,
+              ctx: CanvasRenderingContext2D,
+              globalScale: number,
+            ) => {
+              if (typeof node.x !== 'number' || typeof node.y !== 'number') return;
+              const state = getGraphNodeVisualState(node, {
+                activeDocName,
+                selectedNodeId,
+              });
+              ctx.beginPath();
+              ctx.arc(
+                node.x,
+                node.y,
+                getGraphNodePointerRadius(state, globalScale),
+                0,
+                2 * Math.PI,
+                false,
+              );
+              ctx.fillStyle = color;
+              ctx.fill();
             }}
             onRenderFramePost={(ctx: CanvasRenderingContext2D, globalScale: number) => {
               if (globalScale < 1.8) return;
@@ -544,15 +972,9 @@ export function GraphView({
                 getNodeRadiusPx: (node) => {
                   const state = getGraphNodeVisualState(node, {
                     activeDocName,
-                    selectedDocName,
+                    selectedNodeId,
                   });
-                  const radius =
-                    state === 'active' || state === 'active-selected'
-                      ? 8
-                      : state === 'selected'
-                        ? 7
-                        : 5;
-                  return radius * globalScale + 4;
+                  return getGraphNodePointerRadius(state, globalScale) * globalScale + 4;
                 },
               });
 
@@ -569,14 +991,7 @@ export function GraphView({
             linkDirectionalArrowLength={3}
             linkDirectionalArrowRelPos={1}
             linkWidth={1}
-            onNodeClick={(node: NodeObject<GraphNode>) => {
-              applyGraphNodeClick({
-                node,
-                docClickBehavior,
-                onSelectDoc,
-              });
-            }}
-            onBackgroundClick={onBackgroundClick}
+            showPointerCursor={(obj) => Boolean(obj && 'kind' in obj)}
           />
         </div>
       )}

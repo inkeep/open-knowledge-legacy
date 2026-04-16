@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  getGraphNodeCanvasRadius,
+  getGraphNodePointerRadius,
   getGraphNodeTooltipLabel,
   getGraphNodeVisualState,
   getHashForGraphDocSelection,
@@ -60,6 +62,8 @@ describe('resolveGraphNodeClickAction', () => {
     ).toEqual({
       kind: 'select',
       selection: {
+        kind: 'doc',
+        id: 'notes/alpha',
         docName: 'notes/alpha',
         label: 'Alpha',
         anchor: 'deep-link',
@@ -82,6 +86,8 @@ describe('resolveGraphNodeClickAction', () => {
     ).toEqual({
       kind: 'select',
       selection: {
+        kind: 'doc',
+        id: 'notes/alpha',
         docName: 'notes/alpha',
         label: 'Alpha',
         anchor: null,
@@ -120,8 +126,13 @@ describe('resolveGraphNodeClickAction', () => {
       url: 'https://example.com/docs',
     });
     expect(resolveGraphNodeClickAction(externalNode, 'select')).toEqual({
-      kind: 'external',
-      url: 'https://example.com/docs',
+      kind: 'select',
+      selection: {
+        kind: 'external',
+        id: 'external:https://example.com/docs',
+        label: 'example.com',
+        url: 'https://example.com/docs',
+      },
     });
   });
 });
@@ -139,33 +150,33 @@ describe('getGraphNodeVisualState', () => {
     expect(
       getGraphNodeVisualState(node, {
         activeDocName: 'notes/current',
-        selectedDocName: null,
+        selectedNodeId: null,
       }),
     ).toBe('default');
 
     expect(
       getGraphNodeVisualState(node, {
         activeDocName: 'notes/alpha',
-        selectedDocName: null,
+        selectedNodeId: null,
       }),
     ).toBe('active');
 
     expect(
       getGraphNodeVisualState(node, {
         activeDocName: 'notes/current',
-        selectedDocName: 'notes/alpha',
+        selectedNodeId: 'notes/alpha',
       }),
     ).toBe('selected');
 
     expect(
       getGraphNodeVisualState(node, {
         activeDocName: 'notes/alpha',
-        selectedDocName: 'notes/alpha',
+        selectedNodeId: 'notes/alpha',
       }),
     ).toBe('active-selected');
   });
 
-  test('keeps external nodes on their own visual path', () => {
+  test('keeps external nodes on their own visual path until selected', () => {
     expect(
       getGraphNodeVisualState(
         {
@@ -176,10 +187,44 @@ describe('getGraphNodeVisualState', () => {
         },
         {
           activeDocName: 'notes/alpha',
-          selectedDocName: 'notes/alpha',
+          selectedNodeId: null,
         },
       ),
     ).toBe('external');
+
+    expect(
+      getGraphNodeVisualState(
+        {
+          kind: 'external',
+          id: 'external:https://example.com',
+          label: 'example.com',
+          url: 'https://example.com',
+        },
+        {
+          activeDocName: 'notes/alpha',
+          selectedNodeId: 'external:https://example.com',
+        },
+      ),
+    ).toBe('external-selected');
+  });
+});
+
+describe('graph node radii', () => {
+  test('keeps canvas radii in sync with the visual node states', () => {
+    expect(getGraphNodeCanvasRadius('default')).toBe(5);
+    expect(getGraphNodeCanvasRadius('external')).toBe(5);
+    expect(getGraphNodeCanvasRadius('external-selected')).toBe(7);
+    expect(getGraphNodeCanvasRadius('selected')).toBe(7);
+    expect(getGraphNodeCanvasRadius('active')).toBe(8);
+    expect(getGraphNodeCanvasRadius('active-selected')).toBe(8);
+  });
+
+  test('expands pointer radii to include the visible selection ring', () => {
+    expect(getGraphNodePointerRadius('default', 2)).toBe(5);
+    expect(getGraphNodePointerRadius('external-selected', 2)).toBe(8);
+    expect(getGraphNodePointerRadius('selected', 2)).toBe(8);
+    expect(getGraphNodePointerRadius('active', 2)).toBe(9);
+    expect(getGraphNodePointerRadius('active-selected', 2)).toBe(9);
   });
 });
 
