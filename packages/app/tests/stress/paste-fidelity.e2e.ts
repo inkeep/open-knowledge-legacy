@@ -1124,3 +1124,122 @@ test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
     expect(out.html).toBe('');
   });
 });
+
+// ─── QA-J04 / QA-018 — OK→OK round-trip through Branch C (data-pm-slice) ───
+//
+// The wire-format contract: when OK's copy hooks emit `text/html` wrapped in
+// `<div data-pm-slice="...">`, pasting that payload back into OK must land
+// through PM's native `parseFromClipboard` (Branch C) and reproduce the
+// source slice losslessly — including first-class custom-node types like
+// wikiLink. Single-page round-trip: capture, reset, inject. PM's
+// `handlePaste` doesn't distinguish the clipboard's origin; it just
+// processes DataTransfer. So a single-page capture-then-inject-captured-
+// bytes test is functionally equivalent to the cross-tab case for wire-
+// format verification. True cross-context testing (separate browser
+// contexts) requires shared OS clipboard and is out of scope here.
+
+test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
+  test.beforeEach(async ({ page }) => {
+    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+    await page.goto(BASE);
+    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await waitForProvider(page);
+  });
+
+  test('wikiLink + heading + bold round-trips through Branch C losslessly', async ({ page }) => {
+    // Seed with content containing a wikiLink + heading + bold so the
+    // round-trip exercises both first-class mdast types and basic
+    // structural nodes.
+    const seedMarkdown = '## Target\n\nSee [[Page|Alias]] and **bold** here.\n';
+    await fetch(`${BASE}/api/agent-write-md`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docName: 'test-doc', markdown: seedMarkdown, position: 'replace' }),
+    });
+    await expect(async () => {
+      expect(await getYText(page)).toContain('[[Page|Alias]]');
+    }).toPass({ timeout: 5_000 });
+
+    // Capture the clipboard payload from WYSIWYG (Cmd+A + Cmd+C equivalent).
+    await page.click('.ProseMirror');
+    await page.waitForTimeout(200);
+    const captured = await simulateCopyAndRead(page, 'wysiwyg');
+    expect(captured.html).toContain('data-pm-slice');
+    expect(captured.html).toContain('class="wiki-link"');
+    expect(captured.plain).toContain('[[Page|Alias]]');
+
+    // Reset the doc so subsequent paste can't just "inherit" the seed.
+    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+    await page.reload();
+    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await waitForProvider(page);
+    await page.click('.ProseMirror');
+    await expect(async () => {
+      const content = await getYText(page);
+      // Doc should be empty (or effectively empty) after reset.
+      expect(content.length).toBeLessThan(20);
+    }).toPass({ timeout: 5_000 });
+
+    // Inject the captured bytes as a paste event — this triggers Branch C
+    // because captured.html contains `data-pm-slice`.
+    await pasteWithMimes(page, {
+      'text/plain': captured.plain,
+      'text/html': captured.html,
+    });
+
+    // Assert the round-tripped content preserves wikiLink + heading + bold.
+    await expect(async () => {
+      const content = await getYText(page);
+      expect(content).toContain('[[Page|Alias]]');
+      expect(content).toContain('## Target');
+      expect(content).toContain('**bold**');
+    }).toPass({ timeout: 5_000 });
+  });
+
+  test('Branch C is taken when data-pm-slice is present (not Branch D html→mdast)', async ({
+    page,
+  }) => {
+    // Regression guard: if dispatcher routing broke and pasted data-pm-slice
+    // HTML through Branch D (html→mdast via rehype-remark), a trivial wikiLink
+    // round-trip would still pass on text content — but the class="wiki-link"
+    // attribute on the anchor element would not survive Branch D's mdast
+    // conversion (rehype-remark converts <a> to mdast link, losing our
+    // semantic class). Asserting on the round-tripped doc's *structural*
+    // preservation catches a silent Branch C→D regression.
+    const seedMarkdown = 'Prefix [[Thing]] suffix.\n';
+    await fetch(`${BASE}/api/agent-write-md`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ docName: 'test-doc', markdown: seedMarkdown, position: 'replace' }),
+    });
+    await expect(async () => {
+      expect(await getYText(page)).toContain('[[Thing]]');
+    }).toPass({ timeout: 5_000 });
+
+    await page.click('.ProseMirror');
+    await page.waitForTimeout(200);
+    const captured = await simulateCopyAndRead(page, 'wysiwyg');
+    expect(captured.html).toContain('data-pm-slice');
+
+    await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+    await page.reload();
+    await page.getByText('test-doc.md').click({ timeout: 10_000 });
+    await waitForProvider(page);
+    await page.click('.ProseMirror');
+
+    await pasteWithMimes(page, {
+      'text/plain': captured.plain,
+      'text/html': captured.html,
+    });
+
+    // After Branch C round-trip: the canonical markdown source form of the
+    // wikiLink MUST be preserved byte-exact. If Branch D had been taken, the
+    // wikiLink would have been converted to a plain link + the `[[Thing]]`
+    // syntax would have been lost (replaced with `[Thing](Thing)` or similar).
+    await expect(async () => {
+      const content = await getYText(page);
+      expect(content).toContain('[[Thing]]');
+      expect(content).not.toContain('](Thing)'); // link form would indicate Branch D regression
+    }).toPass({ timeout: 5_000 });
+  });
+});
