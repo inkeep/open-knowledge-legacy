@@ -989,6 +989,12 @@ button:active:not(:disabled) {
   text-decoration-color: oklch(55% 0.15 25);
 }
 
+/* Broken wikilink — same wavy red underline for visual consistency. */
+.cm-wiki-link-broken {
+  text-decoration: underline wavy;
+  text-decoration-color: oklch(55% 0.15 25);
+}
+
 /* Code language badge — visible pill next to opening fence. */
 .cm-code-language-badge {
   display: inline-block;

@@ -77,15 +77,39 @@ async function getHeadings(docName: string): Promise<HeadingEntry[]> {
 // Matches complete [[...]] (lazy, no nested brackets needed)
 const WIKI_LINK_RE = /\[\[[^\]]*?\]\]/g;
 const wikiLinkMark = Decoration.mark({ class: 'cm-wiki-link' });
+const wikiLinkBrokenMark = Decoration.mark({
+  class: 'cm-wiki-link cm-wiki-link-broken',
+});
+
+/** Build a lowercase Set of known page names (docName + title) for O(1) lookup. */
+function buildPageNameSet(pages: PageItem[]): Set<string> {
+  const s = new Set<string>();
+  for (const p of pages) {
+    s.add(p.docName.toLowerCase());
+    if (p.title) s.add(p.title.toLowerCase());
+  }
+  return s;
+}
 
 function buildDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
+  // Cache-cold → all wikilinks get plain mark (no false-positive broken flash)
+  const pageSet = pagesCache ? buildPageNameSet(pagesCache) : null;
+
   for (const { from, to } of view.visibleRanges) {
     const text = view.state.doc.sliceString(from, to);
     WIKI_LINK_RE.lastIndex = 0;
     let m = WIKI_LINK_RE.exec(text);
     while (m !== null) {
-      builder.add(from + m.index, from + m.index + m[0].length, wikiLinkMark);
+      let mark = wikiLinkMark;
+      if (pageSet) {
+        const inner = m[0].slice(2, -2); // strip [[ and ]]
+        const target = inner.split(/[#|]/)[0].trim().toLowerCase();
+        if (target && !pageSet.has(target)) {
+          mark = wikiLinkBrokenMark;
+        }
+      }
+      builder.add(from + m.index, from + m.index + m[0].length, mark);
       m = WIKI_LINK_RE.exec(text);
     }
   }
@@ -95,13 +119,32 @@ function buildDecorations(view: EditorView): DecorationSet {
 const wikiLinkDecorations = ViewPlugin.fromClass(
   class {
     decorations: DecorationSet;
+    private cacheWarmAtBuild: boolean;
+
     constructor(view: EditorView) {
+      this.cacheWarmAtBuild = pagesCache !== null;
       this.decorations = buildDecorations(view);
+      if (!this.cacheWarmAtBuild) this.warmCache(view);
     }
+
     update(update: ViewUpdate) {
-      if (update.docChanged || update.viewportChanged) {
+      const cacheNowWarm = pagesCache !== null;
+      if (update.docChanged || update.viewportChanged || (!this.cacheWarmAtBuild && cacheNowWarm)) {
+        this.cacheWarmAtBuild = cacheNowWarm;
         this.decorations = buildDecorations(update.view);
       }
+    }
+
+    private warmCache(view: EditorView) {
+      getPages()
+        .then(() => {
+          try {
+            view.dispatch({});
+          } catch {
+            /* view destroyed before cache resolved */
+          }
+        })
+        .catch(() => {});
     }
   },
   { decorations: (v) => v.decorations },
