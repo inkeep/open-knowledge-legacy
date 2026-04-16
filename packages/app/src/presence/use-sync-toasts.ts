@@ -12,12 +12,20 @@ export function useSyncToasts(status: SyncStatus, activeDocName: string | null) 
   const hasConnectedRef = useRef(false);
   const wasDisconnectedRef = useRef(false);
 
+  const prevDocRef = useRef(activeDocName);
+
   useEffect(() => {
-    if (status === 'synced') {
-      hasConnectedRef.current = true;
+    if (prevDocRef.current !== activeDocName) {
+      prevDocRef.current = activeDocName;
+      hasConnectedRef.current = false;
+      wasDisconnectedRef.current = false;
     }
 
     if (!activeDocName) return;
+
+    if (status === 'synced') {
+      hasConnectedRef.current = true;
+    }
 
     if (status === 'disconnected' && hasConnectedRef.current) {
       wasDisconnectedRef.current = true;

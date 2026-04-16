@@ -432,8 +432,7 @@
   padding-left: 1em;
   margin-left: 0;
   margin-bottom: 0.5em;
-  color: var(--color-gray-600);
-  @apply border-azure-400 dark:border-azure-300 text-gray-300;
+  @apply border-azure-400 dark:border-azure-300 dark:text-gray-300 text-gray-600;
 }
 
 /* Code blocks */
