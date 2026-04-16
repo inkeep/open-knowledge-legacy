@@ -6,12 +6,42 @@ import {
   type EditorView,
   ViewPlugin,
   type ViewUpdate,
+  WidgetType,
 } from '@codemirror/view';
 
 /** Regex to capture list-item prefix: leading whitespace + marker + optional task marker. */
 const LIST_PREFIX_RE = /^(\s*(?:[-*+]|\d+[.)]) (?:\[[ x]\] )?)/;
 
 const delMark = Decoration.mark({ class: 'cm-del' });
+
+/** Widget that renders a small language-name pill next to the opening fence. */
+class LanguageBadgeWidget extends WidgetType {
+  constructor(readonly lang: string) {
+    super();
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement('span');
+    span.className = 'cm-code-language-badge';
+    span.textContent = this.lang;
+    return span;
+  }
+
+  eq(other: LanguageBadgeWidget): boolean {
+    return this.lang === other.lang;
+  }
+}
+
+/** Count leading ASCII spaces in a string. Tabs count as 4 visual columns. */
+function countLeadingIndent(text: string): number {
+  let indent = 0;
+  for (const ch of text) {
+    if (ch === ' ') indent++;
+    else if (ch === '\t') indent += 4;
+    else break;
+  }
+  return indent;
+}
 
 function buildDecorations(state: EditorState): DecorationSet {
   const decorations: Range<Decoration>[] = [];
@@ -23,16 +53,13 @@ function buildDecorations(state: EditorState): DecorationSet {
       if (node.name === 'Strikethrough') {
         let contentFrom = node.from;
         let contentTo = node.to;
-        // Walk children to find StrikethroughMark delimiters and exclude them
         const cursor = node.node.cursor();
         if (cursor.firstChild()) {
           do {
             if (cursor.name === 'StrikethroughMark') {
               if (cursor.from === node.from) {
-                // Opening delimiter — content starts after it
                 contentFrom = cursor.to;
               } else {
-                // Closing delimiter — content ends before it
                 contentTo = cursor.from;
               }
             }
@@ -41,7 +68,7 @@ function buildDecorations(state: EditorState): DecorationSet {
         if (contentFrom < contentTo) {
           decorations.push(delMark.range(contentFrom, contentTo));
         }
-        return false; // Don't descend further into Strikethrough children
+        return false;
       }
 
       // List hanging-indent — apply .cm-list-item to the first line of each ListItem
@@ -54,12 +81,54 @@ function buildDecorations(state: EditorState): DecorationSet {
           attributes: { style: `--list-hang: ${hang}ch` },
         });
         decorations.push(lineDeco.range(line.from));
-        return false; // Don't descend into nested list items (they'll be visited at their own level)
+        return false;
+      }
+
+      // Fenced code — wrap-preserve-indent + language badge
+      if (node.name === 'FencedCode') {
+        const cursor = node.node.cursor();
+        let codeInfoEnd = -1;
+        let langText = '';
+
+        // First pass: find CodeInfo for the language badge
+        if (cursor.firstChild()) {
+          do {
+            if (cursor.name === 'CodeInfo') {
+              langText = state.doc.sliceString(cursor.from, cursor.to).trim();
+              codeInfoEnd = cursor.to;
+            }
+          } while (cursor.nextSibling());
+        }
+
+        // Language badge widget — only if a non-empty language token exists
+        if (langText && codeInfoEnd >= 0) {
+          decorations.push(
+            Decoration.widget({
+              widget: new LanguageBadgeWidget(langText),
+              side: 1,
+            }).range(codeInfoEnd),
+          );
+        }
+
+        // Code body lines — apply .cm-fenced-code-line with --line-indent
+        // Skip the opening fence line and closing fence line
+        const startLine = state.doc.lineAt(node.from);
+        const endLine = state.doc.lineAt(node.to);
+        for (let lineNum = startLine.number + 1; lineNum < endLine.number; lineNum++) {
+          const line = state.doc.line(lineNum);
+          const indent = countLeadingIndent(line.text);
+          const lineDeco = Decoration.line({
+            class: 'cm-fenced-code-line',
+            attributes: { style: `--line-indent: ${indent}` },
+          });
+          decorations.push(lineDeco.range(line.from));
+        }
+
+        return false;
       }
     },
   });
 
-  // Decorations must be sorted by position
   decorations.sort((a, b) => a.from - b.from || a.value.startSide - b.value.startSide);
   return Decoration.set(decorations);
 }

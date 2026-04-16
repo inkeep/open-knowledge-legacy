@@ -974,3 +974,24 @@ button:active:not(:disabled) {
   padding-inline-start: var(--list-hang, 2ch);
   text-indent: calc(-1 * var(--list-hang, 2ch));
 }
+
+/* Fenced code — wrap-preserve-indent via padding-inline-start only (no text-indent).
+   The ViewPlugin sets --line-indent per-line to the leading-whitespace count.
+   NO tint, NO border — the code block visually blends with paragraph text
+   except for monospace font and syntax-highlight colors (already applied by CM). */
+.cm-fenced-code-line {
+  padding-inline-start: calc(var(--line-indent, 0) * 1ch);
+}
+
+/* Code language badge — visible pill next to opening fence. */
+.cm-code-language-badge {
+  display: inline-block;
+  margin-left: 0.5ch;
+  padding: 0 4px;
+  font-size: 0.75em;
+  font-family: var(--font-mono);
+  color: var(--color-primary);
+  background: color-mix(in oklab, var(--color-primary) 12%, transparent);
+  border-radius: 2px;
+  vertical-align: baseline;
+}
