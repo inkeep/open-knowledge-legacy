@@ -14,7 +14,12 @@ import type {
   Hocuspocus,
   LocalTransactionOrigin,
 } from '@hocuspocus/server';
-import { applyFastDiff, colorFromSeed, prependFrontmatter } from '@inkeep/open-knowledge-core';
+import {
+  AGENT_ICON_COLORS,
+  applyFastDiff,
+  colorFromSeed,
+  prependFrontmatter,
+} from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
 
@@ -167,8 +172,8 @@ export class AgentSessionManager {
     let dc = this.sessions.get(key);
     if (!dc) {
       dc = (await this.hocuspocus.openDirectConnection(docName)) as AgentDirectConnection;
-      const color = colorFromSeed(identity?.colorSeed ?? agentId);
       const icon = iconFromClientName(identity?.clientName);
+      const color = AGENT_ICON_COLORS[icon] ?? colorFromSeed(identity?.colorSeed ?? agentId);
       dc.document.awareness.setLocalState({
         user: {
           name: identity?.displayName ?? 'Claude',
