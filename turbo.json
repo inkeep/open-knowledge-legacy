@@ -86,6 +86,16 @@
       ],
       "env": ["RUN_BENCH", "BENCH_RUNNER_CLASS"]
     },
+    "test:perf:fallback": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "src/markdown/**/*.ts",
+        "src/markdown/fixtures/perf/*.md",
+        "src/markdown/parse-with-fallback.test.ts"
+      ],
+      "env": ["RUN_BENCH"]
+    },
     "test:perf:regression:unit": {
       "dependsOn": [],
       "cache": true,

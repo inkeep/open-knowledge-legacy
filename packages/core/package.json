@@ -52,6 +52,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test src/",
     "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/markdown-bench.test.ts",
+    "test:perf:fallback": "RUN_BENCH=1 bun test src/markdown/parse-with-fallback.test.ts",
     "test:perf:regression:unit": "bun test tests/perf/regression-gate.test.ts",
     "test:perf:regression": "bun run tests/perf/run-regression-gate.ts",
     "test:health:unit": "bun test tests/health/parse-health-gate.test.ts",
