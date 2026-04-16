@@ -18,7 +18,7 @@ The source editor renders through five superimposed layers. When you see a class
 | 1     | CM6 base                             | `.cm-editor`, `.cm-content`, `.cm-line`, `.cm-gutters`, `.cm-cursor`, `.cm-selectionLayer`           | Editor chrome — gutter, line numbers, cursor, selection                                                                                                            |
 | 2     | CM6 markdown language                | `.ͼ<hash>`                                                                                           | Default syntax highlighting for `#`, `*`, `**`, `~~`, `>`, ` `` `, etc. Token-colored per theme.                                                                   |
 | 3     | `codeLanguages` allowlist            | `.ͼ<hash>` (per-language)                                                                            | Nested syntax highlighting inside fenced code for \~12 languages (js, ts, tsx, json, yaml, css, html, bash, python, rust, go, md). Unknown languages render plain. |
-| 4     | `source-polish/`\*\* (this spec)\*\* | `.cm-del`, `.cm-list-item`, `.cm-fenced-code-line`, `.cm-code-language-badge`, `.cm-link-ref-broken` | The five minimal decorations added by this feature.                                                                                                                |
+| 4     | `source-polish/`\*\* (this spec)\*\* | `.cm-del`, `.cm-list-item`, `.cm-fenced-code-line`, `.cm-table-row`, `.cm-table-header`, `.cm-link-ref-broken` | The minimal decorations added by this feature.                                                                                                                     |
 | 5     | Existing plugins                     | `.cm-wiki-link`, `.cm-wiki-link-broken`, `.cm-md-*`, `.cm-agent-flash-source-*`                      | Wiki-link detection + navigation, markdown-link chip, agent-write line flash.                                                                                      |
 
 **Rule of thumb:** if a class starts with a letter-hash like `ͼ4z`, it's CM6 layer 2/3. If it starts with `cm-` (no hash), it's layer 1, 4, or 5 — grep `globals.css` to find which.
@@ -39,7 +39,6 @@ The source editor renders through five superimposed layers. When you see a class
 | Task marker `[ ]` `[x]` | —                                         | —                                                      | ✓                     | Plain text — no pill, no checkbox                 |
 | Fenced code lines       | `.cm-fenced-code-line`                    | —                                                      | ✓ fence               | Preserve source indent via `padding-inline-start` |
 | Fenced code content     | —                                         | —                                                      | ✓ nested              | Syntax highlighting per `codeLanguages` (Layer 3) |
-| Language badge          | `.cm-code-language-badge` (widget side=1) | —                                                      | —                     | Rendered after `CodeInfo` text                    |
 | Inline link `[t](u)`    | —                                         | `.cm-md-*`                                             | ✓                     | Click handling via plugin                         |
 | Reference link `[t][l]` | —                                         | —                                                      | ✓                     | —                                                 |
 | Broken `[t][missing]`   | `.cm-link-ref-broken`                     | —                                                      | —                     | Wavy red; StateField doc-wide scan                |
@@ -96,12 +95,13 @@ Nested:
   - Depth 2 — longer text that wraps; continuation aligns under "longer".
     - Depth 3 — same rule applies per depth.
 
-### 3. Fenced code — `.cm-fenced-code-line` + language badge
+### 3. Fenced code — `.cm-fenced-code-line`
 
-Two decorations on fenced code:
+One line decoration on fenced-code content lines:
 
 - **Line decoration:** `.cm-fenced-code-line` on each content line, with inline `--line-indent` set to the source leading-whitespace count. CSS uses `padding-inline-start: calc(var(--line-indent, 0) * 1ch)` — **no negative text-indent** (D6 LOCKED: that was the prior spec's flattening bug).
-- **Widget:** `.cm-code-language-badge` rendered as `Decoration.widget({ side: 1 })` after the `CodeInfo` text. Empty language → no widget.
+
+The language name is the literal `typescript` / `python` / `bash` text on the opening fence line — it's just source text, not a rendered badge. Nested syntax highlighting for the code content comes from the `codeLanguages` allowlist (Layer 3).
 
 Indented content stays indented:
 
@@ -148,10 +148,10 @@ VITE_PORT=9000 bun run dev  # Custom port (strict)
 bun run check               # Quality gate
 ```
 
-Empty-language fence (no badge):
+Empty-language fence (renders plain, no nested highlighting):
 
 ```
-plain fenced block — no `.cm-code-language-badge` widget
+plain fenced block — no language declared
 indent is still visible
     like this
 ```
@@ -165,7 +165,7 @@ map f (x:xs) = f x : map f xs
 ```
 
 - **Source files:** `source-polish/view-plugin.ts`, `markdown-code-languages.ts`
-- **CSS:** `.cm-fenced-code-line` + `.cm-code-language-badge` in `globals.css` (bottom)
+- **CSS:** `.cm-fenced-code-line` in `globals.css` (bottom)
 
 ### 4. Broken link-reference — `.cm-link-ref-broken`
 
@@ -384,7 +384,7 @@ Every source character must be cursor-reachable, `Cmd+A → Cmd+C` byte-identica
 | File                                                              | What's in it                                                          |
 | ----------------------------------------------------------------- | --------------------------------------------------------------------- |
 | `specs/2026-04-15-source-view-minimal-polish/SPEC.md`             | The spec — problem, goals, non-goals, AC, decisions                   |
-| `packages/app/src/editor/source-polish/view-plugin.ts`            | ViewPlugin for strikethrough + list + fenced-code + language badge    |
+| `packages/app/src/editor/source-polish/view-plugin.ts`            | ViewPlugin for strikethrough + list + fenced-code + table structure   |
 | `packages/app/src/editor/source-polish/broken-ref-field.ts`       | StateField for broken link-ref cross-scan                             |
 | `packages/app/src/editor/source-polish/broken-ref-field.test.ts`  | Unit tests for broken-ref logic                                       |
 | `packages/app/src/editor/source-polish/engine-invariants.test.ts` | Grep guard: no `Decoration.replace` / `atomicRanges` in the submodule |

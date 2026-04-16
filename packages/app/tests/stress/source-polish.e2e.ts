@@ -5,7 +5,6 @@
  *   §6.1 Broken link-refs + broken wikilinks
  *   §6.2 Strikethrough (line-through on content, not delimiters)
  *   §6.3 List hanging-indent (marker at natural x, wrap under text)
- *   §6.4 Language badge (visible pill, suppressed when empty)
  *   §6.5 Code wrap-preserve-indent (source indent visible, wrap under indent)
  *   §6.6 Tables (negative AC — no polish classes)
  *
@@ -114,28 +113,6 @@ test.describe('§6.3 List hanging-indent', () => {
     // The list line's left edge should be roughly the same as a plain line
     // (marker at natural x, not offset far right)
     expect(Math.abs(listLineBox?.x - plainBox?.x)).toBeLessThan(50);
-  });
-});
-
-// ── §6.4 Language badge ──────────────────────────────────────────────────────
-
-test.describe('§6.4 Language badge', () => {
-  test('```typescript shows cm-code-language-badge reading "typescript"', async ({ page }) => {
-    await seedMarkdown('```typescript\nconst x = 1;\n```');
-    await switchToSource(page);
-
-    const badge = page.locator('.cm-code-language-badge');
-    await expect(badge).toHaveCount(1);
-    await expect(badge).toHaveText('typescript');
-    await expect(badge).toBeVisible();
-  });
-
-  test('``` with no language shows no badge', async ({ page }) => {
-    await seedMarkdown('```\nplain code\n```');
-    await switchToSource(page);
-
-    const badge = page.locator('.cm-code-language-badge');
-    await expect(badge).toHaveCount(0);
   });
 });
 

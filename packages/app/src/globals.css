@@ -995,19 +995,6 @@ button:active:not(:disabled) {
   text-decoration-color: oklch(55% 0.15 25);
 }
 
-/* Code language badge — visible pill next to opening fence. */
-.cm-code-language-badge {
-  display: inline-block;
-  margin-left: 0.5ch;
-  padding: 0 4px;
-  font-size: 0.75em;
-  font-family: var(--font-mono);
-  color: var(--color-primary);
-  background: color-mix(in oklab, var(--color-primary) 12%, transparent);
-  border-radius: 2px;
-  vertical-align: baseline;
-}
-
 /* Tables — structure / layout / wrapping only. No background, no border, no
    accent bar, no cell bands (those were the prior polish-engine's Tier 1/2
    styling — deliberately excluded here per spec §6.6).

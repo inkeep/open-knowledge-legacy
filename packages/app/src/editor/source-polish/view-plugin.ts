@@ -6,7 +6,6 @@ import {
   type EditorView,
   ViewPlugin,
   type ViewUpdate,
-  WidgetType,
 } from '@codemirror/view';
 
 /** Regex to capture list-item prefix: leading whitespace + marker + optional task marker. */
@@ -16,24 +15,6 @@ const delMark = Decoration.mark({ class: 'cm-del' });
 
 const tableHeaderLine = Decoration.line({ class: 'cm-table-header' });
 const tableRowLine = Decoration.line({ class: 'cm-table-row' });
-
-/** Widget that renders a small language-name pill next to the opening fence. */
-class LanguageBadgeWidget extends WidgetType {
-  constructor(readonly lang: string) {
-    super();
-  }
-
-  toDOM(): HTMLElement {
-    const span = document.createElement('span');
-    span.className = 'cm-code-language-badge';
-    span.textContent = this.lang;
-    return span;
-  }
-
-  eq(other: LanguageBadgeWidget): boolean {
-    return this.lang === other.lang;
-  }
-}
 
 /** Count leading ASCII spaces in a string. Tabs count as 4 visual columns. */
 function countLeadingIndent(text: string): number {
@@ -91,34 +72,13 @@ function buildDecorations(view: EditorView): DecorationSet {
           return false;
         }
 
-        // Fenced code — wrap-preserve-indent + language badge
+        // Fenced code — wrap-preserve-indent on content lines.
+        // The language token (CodeInfo) stays as plain source text; syntax
+        // highlighting for the language comes from the codeLanguages
+        // allowlist (packages/app/src/editor/markdown-code-languages.ts).
         if (node.name === 'FencedCode') {
-          const cursor = node.node.cursor();
-          let codeInfoEnd = -1;
-          let langText = '';
-
-          // First pass: find CodeInfo for the language badge
-          if (cursor.firstChild()) {
-            do {
-              if (cursor.name === 'CodeInfo') {
-                langText = state.doc.sliceString(cursor.from, cursor.to).trim();
-                codeInfoEnd = cursor.to;
-              }
-            } while (cursor.nextSibling());
-          }
-
-          // Language badge widget — only if a non-empty language token exists
-          if (langText && codeInfoEnd >= 0) {
-            decorations.push(
-              Decoration.widget({
-                widget: new LanguageBadgeWidget(langText),
-                side: 1,
-              }).range(codeInfoEnd),
-            );
-          }
-
-          // Code body lines — apply .cm-fenced-code-line with --line-indent
-          // Skip the opening fence line and closing fence line
+          // Code body lines — apply .cm-fenced-code-line with --line-indent.
+          // Skip the opening fence line and closing fence line.
           const startLine = state.doc.lineAt(node.from);
           const endLine = state.doc.lineAt(node.to);
           for (let lineNum = startLine.number + 1; lineNum < endLine.number; lineNum++) {
