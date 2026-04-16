@@ -2,58 +2,88 @@
 title: MCP integration
 description: How the MCP server connects AI agents to your knowledge base — disk-only mode, Hocuspocus-connected mode, and available tools.
 ---
-
 The Open Knowledge MCP server gives AI agents structured access to your knowledge base. It runs over stdio and works with any MCP-compatible editor.
 
-## Two operating modes
+## Three operating modes
 
-The MCP server adapts its behavior based on whether the collaboration server is running. On startup it reads `<contentDir>/.open-knowledge/server.lock`; a live lock tells MCP the real port to connect to, no configuration required. If no live lock is found, MCP falls back to disk-only mode.
+The MCP server adapts its behavior based on whether a collaboration server is running and whether auto-start is enabled. On startup it reads `<contentDir>/.open-knowledge/server.lock`; a live lock tells MCP the real port to connect to. If the lock is absent or stale, `ok mcp` detach-spawns `ok start` as a sibling process by default (opt-out restores the pre-Zero-Ceremony disk-only behavior).
 
-<Tabs items={["Disk-only mode", "Hocuspocus-connected mode"]}>
-<Tab value="Disk-only mode">
-Active when `open-knowledge start` is **not** running. This is the default experience after running `open-knowledge init`.
+<Tabs items={["Connected mode", "Auto-spawn on first use", "Disk-only mode"]}>
+<Tab value="Connected mode">
+Active when a live `server.lock` is found at startup — `ok start` or `bun run dev` is already running.
 
-- Workflow tools work normally -- agents use their native file I/O (Read, Edit, Grep) alongside the instructional workflow tools
-- Auto-generated catalogs in `.open-knowledge/catalogs/` are still maintained
-- Document tools (`write_document`, `edit_document`, etc.) are not available since there is no CRDT layer to route through
-</Tab>
-<Tab value="Hocuspocus-connected mode">
-Active when `open-knowledge start` **is** running.
-
-- All document tools become available -- writes go through the CRDT layer for real-time sync with the browser editor
+- All document tools become available — writes go through the CRDT layer for real-time sync with the browser editor
 - Agents and humans can co-edit the same document simultaneously
 - Undo/redo tracks agent edits separately from human edits
 </Tab>
+<Tab value="Auto-spawn on first use">
+Active when no live `server.lock` is present and auto-start is **not** opted out. `ok mcp` detach-spawns `npx @inkeep/open-knowledge start` as a sibling process with a kernel-fd stderr redirect to `.open-knowledge/last-spawn-error.log`, then polls the lockfile for `port > 0` with a 5-second deadline.
+
+- Zero ceremony — the agent's first tool call resurrects the full stack
+- Sibling process (not embedded) so Claude Code's kill-on-session-end does **not** take the server down with the MCP stdio
+- Spawn failures surface the captured stderr (e.g. `EADDRINUSE`) in the first tool-result error rather than silently dropping to disk-only
+- Once the poll succeeds, subsequent behavior is identical to Connected mode
+</Tab>
+<Tab value="Disk-only mode">
+Active when auto-start is opted out (`OK_MCP_AUTOSTART=0` env or `mcp.autoStart: false` config) and no live `server.lock` is found, or when `--port=0` is passed explicitly.
+
+- Workflow tools (`init-content`, `ingest`, `research`) work normally — agents use their native file I/O alongside the instructional workflow tools
+- Auto-generated catalogs in `.open-knowledge/catalogs/` are still maintained
+- Document tools (`write_document`, `edit_document`, etc.) are **not** available since there is no CRDT layer to route through
+</Tab>
 </Tabs>
 
-### Port auto-discovery
+### Precedence for the startup decision
 
-The MCP server discovers the running Hocuspocus port from `<contentDir>/.open-knowledge/server.lock`. No `--port` flag is needed when `open-knowledge start` (or `bun run dev`) is running in the same content directory — MCP connects to whatever port the server actually bound to.
+`decideAutoStart` is the single function that classifies the MCP session into one of the three modes above. Its precedence:
 
-Precedence:
+1. `--port <n>` CLI override — bypasses discovery entirely; `> 0` connects, `= 0` means disk-only.
+2. Live `server.lock` with `port > 0` — connects to `ws://<host>:<port>` regardless of auto-start config. A pre-existing live lock always wins; opt-out only suppresses the spawn path.
+3. No live lock + auto-start allowed (default) — detach-spawn `ok start`.
+4. No live lock + auto-start opted out — disk-only mode.
 
-1. `--port <n>` CLI override — bypasses discovery entirely.
-2. Live lock with `port > 0` — connects to `ws://127.0.0.1:<port>`; the `pid` from the lock is logged to stderr for traceability.
-3. No lock, stale lock, or lock with `port: 0` — disk-only mode.
-
-Stale locks (PID no longer alive on the same host) are cleaned up automatically when read.
+Stale locks (PID no longer alive on the same host, or corrupt JSON) are cleaned up automatically when read. The env var `OK_MCP_AUTOSTART=0` wins over `mcp.autoStart: true` in config.
 
 ## Tools reference
 
-| Tool | Mode | Description |
-|------|------|-------------|
-| `init-content` | Both | Bootstrap knowledge articles from the codebase |
-| `ingest` | Both | Capture an external source (URL or file) as raw reference material |
-| `research` | Both | Gather sources and write provisional research findings |
-| `write_document` | Connected | Write content to a document through the CRDT |
-| `edit_document` | Connected | Edit an existing document through the CRDT |
-| `list_documents` | Connected | List all documents in the knowledge base |
-| `undo_agent_edit` | Connected | Undo the last agent edit |
-| `redo_agent_edit` | Connected | Redo the last undone agent edit |
+| Tool                                          | Mode      | Description                                                                                  |
+| --------------------------------------------- | --------- | -------------------------------------------------------------------------------------------- |
+| `init-content`                                | Both      | Bootstrap knowledge articles from the codebase                                               |
+| `ingest`                                      | Both      | Capture an external source (URL or file) as raw reference material                           |
+| `research`                                    | Both      | Gather sources and write provisional research findings                                       |
+| `consolidate`                                 | Both      | Promote research into a canonical article                                                    |
+| `read_document`                               | Both      | Read a document with enriched frontmatter + shadow-repo history                              |
+| `search`                                      | Both      | Search document contents                                                                     |
+| `exec`                                        | Both      | Read-only bash-like commands (cat / ls / grep / find / head / tail / wc / sort / uniq / cut) |
+| `list_documents`                              | Both      | List all documents in the knowledge base                                                     |
+| `get_backlinks` / `get_forward_links`         | Both      | Wiki-link graph queries                                                                      |
+| `get_hubs` / `get_orphans` / `get_dead_links` | Both      | Link-graph diagnostics                                                                       |
+| `suggest_links`                               | Both      | Suggest missing wiki-links for a target page                                                 |
+| `get_preview_url`                             | Both      | Resolve the browser URL for a given docName                                                  |
+| `write_document`                              | Connected | Write content to a document through the CRDT                                                 |
+| `edit_document`                               | Connected | Find-and-replace on a document through the CRDT                                              |
+| `rename_document`                             | Connected | Rename a document and rewrite inbound links                                                  |
+| `rollback_to_version`                         | Connected | Restore a document to a historical shadow-repo commit                                        |
+| `get_history`                                 | Connected | Query the shadow-repo version timeline                                                       |
+| `save_version`                                | Connected | Checkpoint the project to a named shadow-repo commit                                         |
+
+All 21 docName-producing tools emit `previewUrl` in their result (single-doc tools top-level, list-producing tools per-row with an additional top-level `ui: {baseUrl, port}` block).
 
 <Callout type="info">
-Workflow tools (`init-content`, `ingest`, `research`) return instructional text that guides the agent through the workflow. The real work -- reading files, editing content, fetching URLs -- happens via the agent's native tools.
+Workflow tools (`init-content`, `ingest`, `research`, `consolidate`) return instructional text that guides the agent through the workflow. The real work — reading files, editing content, fetching URLs — happens via the agent's native tools.
 </Callout>
+
+## previewUrl in tool results
+
+Every docName-producing MCP tool emits a `previewUrl` in its `structuredContent` so you can click straight from the agent's response into the React editor at the exact doc it just touched. Single-doc tools emit a top-level `previewUrl`; list-producing tools emit one per row alongside a top-level `ui` block. When neither a UI nor a configured base URL is reachable, `previewUrl` is `null` and tools still return their primary data — it's an affordance, not a blocker.
+
+Resolution precedence (see [config ](/guides/configuration)`preview.baseUrl` for details):
+
+1. `OPEN_KNOWLEDGE_PREVIEW_BASE_URL` env var — explicit per-shell override (tunnels, CI).
+2. `<contentDir>/.open-knowledge/ui.lock` — the live `ok ui` process's port.
+3. `config.preview.baseUrl` in `.open-knowledge/config.yml` — config fallback.
+
+The lock branch deliberately reads `ui.lock` (the React editor) rather than `server.lock` (the collab server) because preview URLs must point at what the editor pane actually renders.
 
 ## Transport
 
