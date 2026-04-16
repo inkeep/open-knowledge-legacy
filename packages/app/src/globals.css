@@ -294,6 +294,10 @@
   margin-bottom: 0.5em;
 }
 
+.prosemirror-dropcursor-block {
+  @apply bg-primary/40! dark:bg-azure-300/80! h-0.5!;
+}
+
 .ProseMirror [data-mark-view-content] {
   @apply truncate;
 }
@@ -424,11 +428,12 @@
 
 /* Blockquote */
 .ProseMirror blockquote {
-  border-left: 3px solid var(--color-gray-300);
+  border-left: 3px solid;
   padding-left: 1em;
   margin-left: 0;
   margin-bottom: 0.5em;
   color: var(--color-gray-600);
+  @apply border-azure-400 dark:border-azure-300 text-gray-300;
 }
 
 /* Code blocks */
@@ -852,10 +857,6 @@ button:active:not(:disabled) {
 
 /* Sidebar: separate hover (neutral gray) from active (blue accent) */
 /* Dark overrides — ProseMirror content surfaces */
-.dark .ProseMirror blockquote {
-  border-color: var(--color-gray-600);
-  color: var(--color-gray-300);
-}
 
 .dark .ProseMirror pre {
   background: var(--color-gray-900);
