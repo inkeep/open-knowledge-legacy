@@ -51,12 +51,17 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test src/",
-    "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/"
+    "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/markdown-bench.test.ts",
+    "test:perf:regression:unit": "bun test tests/perf/regression-gate.test.ts",
+    "test:perf:regression": "bun run tests/perf/run-regression-gate.ts",
+    "test:health:unit": "bun test tests/health/parse-health-gate.test.ts",
+    "test:health": "bun run tests/health/parse-health-gate.ts tests/health/baseline.json"
   },
   "devDependencies": {
     "@types/diff-match-patch": "^1.0.36",
     "@types/mdast": "^4.0.4",
     "@types/unist": "^3.0.3",
+    "commonmark.json": "^0.31.0",
     "typescript": "^5.9.3"
   }
 }

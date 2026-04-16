@@ -85,6 +85,45 @@
         "tests/perf/markdown-bench.test.ts"
       ],
       "env": ["RUN_BENCH", "BENCH_RUNNER_CLASS"]
+    },
+    "test:perf:regression:unit": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": ["tests/perf/regression-gate.ts", "tests/perf/regression-gate.test.ts"]
+    },
+    "test:perf:regression": {
+      "dependsOn": [],
+      "cache": false,
+      "inputs": [
+        "src/markdown/**/*.ts",
+        "src/markdown/fixtures/perf/*.md",
+        "tests/perf/markdown-bench.test.ts",
+        "tests/perf/regression-gate.ts",
+        "tests/perf/run-regression-gate.ts",
+        "tests/perf/baseline.json"
+      ],
+      "env": ["RUN_BENCH", "BENCH_RUNNER_CLASS"]
+    },
+    "test:health:unit": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/metrics/parse-health.ts",
+        "src/markdown/**/*.ts",
+        "tests/health/parse-health-gate.ts",
+        "tests/health/parse-health-gate.test.ts"
+      ]
+    },
+    "test:health": {
+      "dependsOn": [],
+      "cache": true,
+      "inputs": [
+        "src/metrics/parse-health.ts",
+        "src/markdown/**/*.ts",
+        "src/markdown/fixtures/**",
+        "tests/health/parse-health-gate.ts",
+        "tests/health/baseline.json"
+      ]
     }
   }
 }
