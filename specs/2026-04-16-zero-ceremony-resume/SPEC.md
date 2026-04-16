@@ -583,7 +583,7 @@ All prior OQs resolved via D-015 through D-032.
   - `server.lock` JSON schema change required (NG11).
   - Idle-shutdown primitive proves unreliable on macOS or Linux.
   - A1 (multi-project lock) or A3 (detach-spawn) refuted.
-  - OQ-1.4 resolves with Claude Code rejecting exit-0 → fallback to idle-process-placeholder before merging.
+  - D-032 proxy mode end-to-end runtime verification (A5) fails against live Claude Code → consult before alternative (`autoPort:false` fallback).
   - DirectConnection accumulation forces H4 in-scope — consult before scope growth.
 - **ASK_FIRST:**
   - New 3P dependencies.
@@ -591,3 +591,201 @@ All prior OQs resolved via D-015 through D-032.
   - `.open-knowledge/` directory layout beyond new `ui.lock` + `last-spawn-error.log`.
   - `bun run dev` plugin architecture rewrites.
   - Changes to `preview-url.ts` URL shape (D-015 LOCKED).
+
+## 17) QA test plan
+
+**Client matrix for manual verification** (implementation-time; this spec ships planning only). Available CLIs confirmed on dev machine 2026-04-16:
+
+| Client | Install status | QA role |
+|---|---|---|
+| Claude Code (`claude` v2.1.111) | ✅ installed | **Primary** — validates launch.json + preview_start + autoPort paths. Scenario A + B (D-032 proxy) |
+| Cursor (`cursor-agent` 2025.09.12-4852336 + `cursor` 3.0.13) | ✅ installed | **Primary** — validates MCP-stdio-spawn path for clients without launch.json |
+| Gemini CLI (`gemini`, `npx @google/gemini-cli`) | ❌ to install before QA | **Secondary** — third-vendor MCP client to confirm response-contract agnosticism (A2 / XQ3) |
+| Windsurf | ❌ not installed; GUI-only | Defer — no CLI QA path; GUI QA if GUI copy installed |
+| VS Code MCP | ✅ via Cursor/VS Code GUI | Secondary — `.vscode/mcp.json` path (FR-3.1) |
+| Codex CLI | ❌ not installed | Defer — install if vendor-diversity signal needed |
+
+**Notes on QA execution timing:** Scenarios S1-S12 are implementation-time verification, not spec-time. They inform the `/implement` + `/qa` phase; we list them here so the implementer can execute without re-deriving from requirements.
+
+### Scenario index
+
+| ID | Scenario | Clients | Priority | Verifies |
+|---|---|---|---|---|
+| S1 | Claude Code + autoPort-resolved port (OQ-1.4) | Claude Code | P0 | D-032, FR-1.1b, A5 |
+| S2 | Fresh-install cold-start end-to-end | Claude Code + Cursor | P0 | G1, FR-1.4 + FR-1.9, US-001 integration |
+| S3 | Returning-user resume (10-min-later simulation) | Claude Code + Cursor | P0 | G1 directly |
+| S4 | `previewUrl` coverage on all 18 generalized tools | Claude Code + Cursor + Gemini CLI | P0 | FR-2.1, FR-2.2, G2 |
+| S5 | Multi-project concurrent (3 projects + 3 sessions) | Claude Code ×2 + Cursor ×1 | P0 | A1, G4, FR-1.3 |
+| S6 | Idle-shutdown at 30 min with zero WS clients | Claude Code | P0 | FR-1.6, G5, D-017 |
+| S7 | Idle-shutdown does NOT fire with live DirectConnection-only (agent work, no browser tab) | Claude Code | P0 | FR-1.6 correctness on edge case |
+| S8 | Spawn failure surfacing (ENOENT / port in use) | Cursor | P0 | FR-1.4 AC, D-018 |
+| S9 | `ok stop` + `ok clean` CLI semantics | any terminal | P1 | FR-1.7, FR-1.7b, D-024 |
+| S10 | Init default flip — all detected editors at correct per-editor paths | any terminal | P0 | FR-3.1, F-003 correction |
+| S11 | `bun run dev` monorepo workflow still works post-split | any | P0 | FR-1.12, A4 |
+| S12 | `OK_MCP_AUTOSTART=0` + `config.mcp.autoStart: false` opt-out | Cursor | P1 | FR-1.15, D-009 revised |
+
+### S1 — Claude Code + autoPort-resolved port (OQ-1.4 verification)
+
+**Precondition.** Clean project with `.open-knowledge/` scaffolded. No live `server.lock` or `ui.lock`.
+
+**Steps.**
+1. Close Claude Code.
+2. In a terminal: `ok start` manually (takes port 3000 for UI via auto-spawn).
+3. Confirm `curl http://localhost:3000/` returns React app.
+4. Open Claude Code → wait for MCP handshake → do NOT click preview yet.
+5. Ask Claude Code to `write_document("test/foo", "# hello")` via a prompt.
+6. Click "Preview: open-knowledge" in the Preview dropdown (triggers `preview_start`).
+7. Claude Code probes port 3000 → busy → picks new port (e.g., 52345) → spawns `ok ui` with `PORT=52345`.
+8. Our `ok ui` sees live lock at 3000, PORT≠lock.port → enters proxy mode on 52345 forwarding to 3000.
+9. Preview pane connects to 52345 → sees proxy → forwarded to 3000 → renders React app with `test/foo` content.
+
+**Expected.** Preview pane shows the live doc. Proxy log line: `UI running at http://localhost:3000; acting as HTTP proxy on port 52345`.
+
+**If fails:** D-032 proxy may be incompatible with Claude Code's preview-pane handling. Fallback: switch launch.json to `autoPort:false` (documented in STOP_IF).
+
+### S2 — Fresh-install cold-start
+
+**Precondition.** Empty directory; no `.open-knowledge/`; no live locks.
+
+**Steps.**
+1. `bunx @inkeep/open-knowledge init --editor all` (scaffolds per-editor MCP configs).
+2. Verify per-editor config paths exist at expected locations (Claude `.mcp.json`, Cursor `.cursor/mcp.json`, VS Code `.vscode/mcp.json`, Windsurf `~/.codeium/...`).
+3. Open Claude Code in the dir → MCP handshake triggers spawn.
+4. Confirm both `server.lock` + `ui.lock` exist within 5s.
+5. Repeat with Cursor CLI opened in same dir (different content dir TEST — simulate second project) — confirm second pair of locks.
+
+**Expected.** Both clients connect successfully; tool calls return `previewUrl`.
+
+### S3 — Returning-user resume (the bet's core outcome)
+
+**Precondition.** Project initialized ≥ 10 minutes ago with no active server. Simulates "10 days later" without sleeping the test.
+
+**Steps.**
+1. `ok init` in a fresh dir, then `ok stop` + `ok clean`.
+2. Verify no `.open-knowledge/{server,ui}.lock` files.
+3. Close terminal. Wait 10 seconds (simulates time gap).
+4. Open Cursor in the dir.
+5. Ask agent to `read_document("any-file")`.
+
+**Expected.** Tool call succeeds; response includes `previewUrl`; built-in browser pane opens URL. No terminal activity required. Time from editor open to first tool success < 8s (NFR p99).
+
+### S4 — `previewUrl` coverage on all 18 tools
+
+**Precondition.** Running server + UI.
+
+**Steps.** For each of the 18 tools (enumerated in FR-2.1 single-doc + FR-2.2 list): call the tool with valid inputs and inspect `structuredContent` for presence of `previewUrl` per shape (single vs list array).
+
+**Expected.** 18/18 pass. Automated integration test shape assertions.
+
+**Tool checklist:**
+- Single-doc: `read_document`, `rename_document`, `ingest`, `research`, `consolidate`, `rollback-to-version`, `suggest-links`, `save-version`, `get_history` (9)
+- List: `search`, `list_documents`, `exec`, `get_backlinks`, `get_forward_links`, `get_hubs`, `get_dead_links`, `get_orphans`, `init-content` (9)
+
+### S5 — Multi-project concurrent
+
+**Precondition.** 3 separate project dirs (P1, P2, P3), each with `.open-knowledge/`.
+
+**Steps.**
+1. Open Claude Code in P1 → MCP handshake → locks created (P1 ports).
+2. Open second Claude Code instance in P2 → locks created (P2 ports; must not collide with P1).
+3. Open Cursor in P3 → locks created (P3 ports; no collisions).
+4. Tool call in each → each returns URLs pointing at that project's lockfile's port.
+
+**Expected.** 6 lockfiles (3 server + 3 ui), all with unique ports, all processes alive. A1 verified.
+
+### S6 — Idle-shutdown fires at 30 min with zero WebSocket clients
+
+**Precondition.** Running server. Reduce `thresholdMs` via test-only override to 30s to make this runnable (production = 30 min).
+
+**Steps.**
+1. `ok start`. Verify both processes up.
+2. Connect a browser tab to UI → Hocuspocus WebSocket client count = 1.
+3. Close browser tab → WS count = 0 → idle timer starts.
+4. Wait 30s (test threshold).
+5. Observe collab process exits + SIGTERMs UI.
+
+**Expected.** Both processes exit cleanly; both locks released. Log: "idle shutdown firing (0 WebSocket clients)". AgentSessionManager DirectConnection + CC1 DirectConnection both present during idle did NOT prevent firing (D-017 verified).
+
+### S7 — Idle-shutdown with only DirectConnection active
+
+**Precondition.** Running server. CC1 DirectConnection active (always is).
+
+**Steps.**
+1. `ok start`. No browser tab. No agent session started yet.
+2. Start an agent session via MCP (creates a DirectConnection in AgentSessionManager).
+3. Confirm: `hocuspocus.getConnectionsCount() > 0` but WebSocket client count = 0.
+4. Wait 30s (test threshold).
+5. Idle-shutdown FIRES despite DirectConnections.
+
+**Expected.** D-017 / D-030 confirmed — DirectConnections do NOT block idle-shutdown.
+
+### S8 — Spawn failure surfacing
+
+**Precondition.** Simulate failure by starting MCP with invalid env (e.g., `PATH=/nonexistent`) or pre-binding port 3000 with a foreign process.
+
+**Steps.**
+1. `nc -l 3000 &` (pre-bind port 3000).
+2. Open Cursor → MCP handshake → spawns `ok start` which tries to auto-spawn `ok ui`.
+3. `ok ui` fails to bind 3000 → writes error to `last-spawn-error.log` via kernel fd.
+4. Agent tool call → response error includes content of last-spawn-error.log.
+
+**Expected.** Clear error surfaces to agent, not silent "disk-only mode" fallback.
+
+### S9 — `ok stop` + `ok clean`
+
+**Steps.**
+1. `ok start`. Confirm both locks.
+2. `ok stop` → both processes exit; locks released.
+3. Manually create a stale `ui.lock` with dead pid.
+4. `ok stop` → "no running processes" (stale lock not touched).
+5. `ok clean` → removes stale lock.
+
+**Expected.** Commands have single responsibility (D-024).
+
+### S10 — Init default flip
+
+**Steps.**
+1. `ok init` (no flags) in a dir where Claude + Cursor + VS Code config dirs exist.
+2. Verify writes: `.mcp.json` (Claude), `.cursor/mcp.json` (Cursor), `.vscode/mcp.json` (VS Code).
+3. Confirm Windsurf's `~/.codeium/windsurf/mcp_config.json` was NOT written (unless `--editor windsurf,...` specified — user-global, opt-in).
+
+Actually, check FR-3.1: "writes to every detected editor whose config dir exists." Windsurf's config dir is under `~/.codeium`. If that exists on the dev machine, it SHOULD be written. Adjust step 3 accordingly.
+
+**Expected.** Per-editor paths correct (F-003 verified).
+
+### S11 — `bun run dev` monorepo workflow
+
+**Steps.**
+1. Run `bun run dev` in `packages/app/`.
+2. Verify Vite plugin participates in lock scheme (per XQ6, A4).
+3. Run `packages/app/tests/integration/` full suite.
+
+**Expected.** All tests pass; dev server functional.
+
+### S12 — Opt-out via env + config
+
+**Steps.**
+1. `ok init`.
+2. Set `OK_MCP_AUTOSTART=0` in shell.
+3. Open Cursor → MCP handshake → does NOT spawn `ok start`.
+4. Tool calls return `previewUrl: null`.
+5. Unset env. Set `config.yml: mcp.autoStart: false`.
+6. Open Cursor → same result (no spawn).
+7. Flip config to true. Open again → spawn resumes.
+
+**Expected.** Dual opt-out works; both paths equivalent in effect; env wins over config (per D-009).
+
+### Automation hooks
+
+- S4, S6, S7, S8 are good candidates for automated integration tests.
+- S1 requires a live Claude Code GUI session — manual.
+- S2, S3, S5, S9, S10, S11, S12 can mostly be automated via scripted CLI invocations.
+
+### Referenced assumptions + what QA closes
+
+- **A1** — closed by S5.
+- **A2** — partially closed by S4 (shape check across clients).
+- **A3** — closed by S3 (parent exits, server survives).
+- **A4** — closed by S11.
+- **A5** — closed by S1.
+- **A6** — performance check during S2 + S3.
