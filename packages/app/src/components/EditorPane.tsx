@@ -106,11 +106,15 @@ export function EditorPane() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
       });
-      if (!res.ok) {
+      if (res.ok) {
+        toast.success('Checkpoint saved');
+      } else {
         console.error('[save-version] failed:', await res.text());
+        toast.error('Checkpoint failed — try again');
       }
     } catch (e) {
       console.error('[save-version] failed:', e);
+      toast.error('Checkpoint failed — try again');
     }
     setSaving(false);
   }

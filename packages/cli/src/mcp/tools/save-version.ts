@@ -52,7 +52,7 @@ export function register(
     });
     if (!result.ok) return textResult(`Error: ${result.error}`, true);
 
-    return textPlusStructured(`Version saved. Checkpoint ref: ${result.checkpointRef}`, {
+    return textPlusStructured(`Checkpoint saved. Checkpoint ref: ${result.checkpointRef}`, {
       checkpointRef: result.checkpointRef,
       previewUrl: null,
     });
