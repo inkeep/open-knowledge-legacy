@@ -48,7 +48,11 @@ import { extractPageTitle } from './page-identity.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
-import { type BacklinkIndex, isOrphanMode } from './backlink-index.ts';
+import {
+  type BacklinkIndex,
+  type GraphNode as IndexedGraphNode,
+  isOrphanMode,
+} from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
@@ -1218,6 +1222,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
         source: entry.source,
+        anchor: entry.anchor,
         title: readPageTitleForDocName(entry.source),
         snippet: entry.snippet,
       }));
@@ -1251,11 +1256,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, {
         ok: true,
         docName,
-        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) => ({
-          docName: entry.target,
-          title: readPageTitleForDocName(entry.target),
-          snippet: entry.snippet,
-        })),
+        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) =>
+          entry.kind === 'doc'
+            ? {
+                kind: 'doc' as const,
+                docName: entry.target,
+                anchor: entry.anchor,
+                title: readPageTitleForDocName(entry.target),
+                snippet: entry.snippet,
+              }
+            : {
+                kind: 'external' as const,
+                url: entry.url,
+                title: entry.label ?? entry.url,
+                snippet: entry.snippet,
+              },
+        ),
       });
     } catch (e) {
       console.error('[forward-links]', e);
@@ -1286,7 +1302,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      let nodes: string[];
+      let nodes: IndexedGraphNode[];
       let links: Array<{ source: string; target: string }>;
 
       if (rawDegrees && docName) {
@@ -1301,10 +1317,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ({ nodes, links } = backlinkIndex.getLinkGraph());
       }
 
-      const enrichedNodes = nodes.map((id) => ({
-        id,
-        label: readPageTitleForDocName(id),
-      }));
+      const enrichedNodes = nodes.map((node) =>
+        node.kind === 'doc'
+          ? {
+              id: node.id,
+              kind: 'doc' as const,
+              docName: node.docName,
+              anchor: node.anchor ?? null,
+              label: readPageTitleForDocName(node.docName),
+            }
+          : {
+              id: node.id,
+              kind: 'external' as const,
+              url: node.url,
+              label: node.label ?? node.url,
+            },
+      );
       json(res, 200, { ok: true, nodes: enrichedNodes, links });
     } catch (e) {
       console.error('[link-graph]', e);

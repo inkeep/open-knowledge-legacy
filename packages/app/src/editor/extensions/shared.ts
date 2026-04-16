@@ -8,7 +8,6 @@ import {
   sharedExtensions as coreExtensions,
 } from '@inkeep/open-knowledge-core';
 import FileHandler from '@tiptap/extension-file-handler';
-import Placeholder from '@tiptap/extension-placeholder';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { BlockMover } from './block-mover';
 import { BlockDragHandle } from './drag-handle';
@@ -45,8 +44,4 @@ export const sharedExtensions = [
   HeadingAnchors,
   BlockDragHandle,
   BlockMover,
-  Placeholder.configure({
-    placeholder: "Type '/' for commands",
-    showOnlyCurrent: true,
-  }),
 ];

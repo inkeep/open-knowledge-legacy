@@ -1,7 +1,7 @@
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph2D, { type ForceGraphMethods, type NodeObject } from 'react-force-graph-2d';
-
+import { hashFromDocName } from '@/lib/doc-hash';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
 import {
@@ -11,7 +11,12 @@ import {
   planGraphLabels,
 } from './graph-label-layout';
 import { buildGraphLabelDescriptors } from './graph-label-utils';
-import type { GraphData, GraphLink, GraphNode } from './graph-view-utils';
+import {
+  type GraphData,
+  type GraphLink,
+  type GraphNode,
+  getGraphNodeTooltipLabel,
+} from './graph-view-utils';
 
 interface LinkGraphResponse {
   ok: boolean;
@@ -39,7 +44,7 @@ function getActiveGraphNodeCoords({
   nodes: GraphNode[];
   activeDocName: string;
 }): { x: number; y: number } | null {
-  const activeNode = nodes.find((node) => node.id === activeDocName) as
+  const activeNode = nodes.find((node) => node.kind === 'doc' && node.docName === activeDocName) as
     | NodeObject<GraphNode>
     | undefined;
   if (typeof activeNode?.x !== 'number' || typeof activeNode?.y !== 'number') return null;
@@ -269,6 +274,7 @@ export function GraphView({
   const bgColor = isDark ? 'hsl(0 0% 4%)' : 'hsl(0 0% 100%)';
   const defaultNodeColor = isDark ? '#6b7280' : '#9ca3af';
   const activeNodeColor = isDark ? '#69a3ff' : '#3784ff';
+  const externalNodeColor = isDark ? '#f59e0b' : '#c2410c';
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
   const activeNodeRingColor = isDark ? 'rgba(105,163,255,0.45)' : 'rgba(55,132,255,0.3)';
@@ -315,7 +321,7 @@ export function GraphView({
         <p className="p-4 text-sm text-destructive">{error}</p>
       ) : graphData.nodes.length === 0 && !loading ? (
         <p className="p-4 text-sm text-muted-foreground">
-          No links yet. Add {'[[wikilinks]]'} to build a graph.
+          No links yet. Add wiki links or markdown links to build a graph.
         </p>
       ) : (
         <div
@@ -364,9 +370,11 @@ export function GraphView({
             height={dimensions.height}
             backgroundColor={bgColor}
             nodeId="id"
-            nodeLabel={(node: NodeObject<GraphNode>) => node.label ?? node.id ?? ''}
+            nodeLabel={(node: NodeObject<GraphNode>) => getGraphNodeTooltipLabel(node)}
             nodeRelSize={4}
-            nodeVal={(node: NodeObject<GraphNode>) => (node.id === activeDocName ? 18 : 6)}
+            nodeVal={(node: NodeObject<GraphNode>) =>
+              node.kind === 'doc' && node.docName === activeDocName ? 18 : 6
+            }
             nodeCanvasObjectMode={() => 'replace'}
             nodeCanvasObject={(
               node: NodeObject<GraphNode>,
@@ -374,12 +382,16 @@ export function GraphView({
               globalScale: number,
             ) => {
               if (typeof node.x !== 'number' || typeof node.y !== 'number') return;
-              const isActive = node.id === activeDocName;
+              const isActive = node.kind === 'doc' && node.docName === activeDocName;
               const nodeRadius = isActive ? 8 : 5;
 
               ctx.beginPath();
               ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
-              ctx.fillStyle = isActive ? activeNodeColor : defaultNodeColor;
+              ctx.fillStyle = isActive
+                ? activeNodeColor
+                : node.kind === 'external'
+                  ? externalNodeColor
+                  : defaultNodeColor;
               ctx.fill();
 
               if (isActive) {
@@ -413,7 +425,8 @@ export function GraphView({
                 labelDescriptors,
                 measureTextWidthPx: (text) => ctx.measureText(text).width,
                 projectToScreen: (x, y) => fg.graph2ScreenCoords(x, y),
-                getNodeRadiusPx: (node) => (node.id === activeDocName ? 8 : 5) * globalScale + 4,
+                getNodeRadiusPx: (node) =>
+                  (node.kind === 'doc' && node.docName === activeDocName ? 8 : 5) * globalScale + 4,
               });
 
               drawGraphLabelPlacements({
@@ -430,7 +443,13 @@ export function GraphView({
             linkDirectionalArrowRelPos={1}
             linkWidth={1}
             onNodeClick={(node: NodeObject<GraphNode>) => {
-              if (node.id) window.location.hash = `#/${node.id}`;
+              if (node.kind === 'external') {
+                window.open(node.url, '_blank', 'noopener,noreferrer');
+                return;
+              }
+              if (node.docName) {
+                window.location.assign(hashFromDocName(node.docName, node.anchor ?? null));
+              }
             }}
           />
         </div>

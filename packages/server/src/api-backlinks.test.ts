@@ -66,7 +66,11 @@ describe('graph endpoints', () => {
     mkdirSync(contentDir, { recursive: true });
 
     try {
-      writeFileSync(join(contentDir, 'alpha.md'), '# Alpha\n\nLinks to [[beta]].\n', 'utf-8');
+      writeFileSync(
+        join(contentDir, 'alpha.md'),
+        '# Alpha\n\nLinks to [[beta#install]].\n',
+        'utf-8',
+      );
       writeFileSync(join(contentDir, 'beta.md'), '# Beta\n\nBody.\n', 'utf-8');
       writeFileSync(join(contentDir, 'gamma.md'), '# Gamma\n\nNo links.\n', 'utf-8');
 
@@ -107,24 +111,42 @@ describe('graph endpoints', () => {
 
       const backlinks = JSON.parse(
         (await callRoute(contentDir, '/api/backlinks?docName=beta', fileIndex, backlinkIndex)).body,
-      ) as { backlinks: Array<{ source: string; title: string; snippet: string | null }> };
+      ) as {
+        backlinks: Array<{
+          source: string;
+          anchor: string | null;
+          title: string;
+          snippet: string | null;
+        }>;
+      };
       expect(backlinks.backlinks).toEqual([
         {
           source: 'alpha',
+          anchor: 'install',
           title: 'Alpha',
-          snippet: 'Links to beta.',
+          snippet: 'Links to beta#install.',
         },
       ]);
 
       const forward = JSON.parse(
         (await callRoute(contentDir, '/api/forward-links?docName=alpha', fileIndex, backlinkIndex))
           .body,
-      ) as { forwardLinks: Array<{ docName: string; title: string; snippet: string | null }> };
+      ) as {
+        forwardLinks: Array<{
+          kind: 'doc';
+          docName: string;
+          anchor: string | null;
+          title: string;
+          snippet: string | null;
+        }>;
+      };
       expect(forward.forwardLinks).toEqual([
         {
+          kind: 'doc',
           docName: 'beta',
+          anchor: 'install',
           title: 'Beta',
-          snippet: 'Links to beta.',
+          snippet: 'Links to beta#install.',
         },
       ]);
 
@@ -160,7 +182,7 @@ describe('graph endpoints', () => {
         (await callRoute(contentDir, '/api/link-graph', fileIndex, backlinkIndex)).body,
       ) as {
         ok: boolean;
-        nodes: Array<{ id: string; label: string }>;
+        nodes: Array<{ id: string; label: string; anchor: string | null }>;
         links: Array<{ source: string; target: string }>;
       };
 
@@ -170,6 +192,7 @@ describe('graph endpoints', () => {
       expect(linkGraph.nodes.map((n) => n.id).sort()).toEqual(['alpha', 'beta', 'gamma']);
       expect(linkGraph.nodes.find((n) => n.id === 'alpha')?.label).toBe('Alpha');
       expect(linkGraph.nodes.find((n) => n.id === 'beta')?.label).toBe('Beta');
+      expect(linkGraph.nodes.find((n) => n.id === 'beta')?.anchor).toBe('install');
       expect(linkGraph.links).toContainEqual({ source: 'alpha', target: 'beta' });
       expect(linkGraph.links).toHaveLength(1);
 

@@ -10,6 +10,7 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { Extension } from '@tiptap/core';
 import Collaboration from '@tiptap/extension-collaboration';
+import Placeholder from '@tiptap/extension-placeholder';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { yCursorPlugin } from '@tiptap/y-tiptap';
 import { type FC, useEffect, useRef } from 'react';
@@ -73,9 +74,10 @@ const INITIAL_FLASH_STATE: AgentFlashState = {
 
 interface TiptapEditorProps {
   provider: HocuspocusProvider;
+  placeholder?: string;
 }
 
-export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
+export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) => {
   const frontmatterRef = useRef('');
   // Flash state lives in a ref + imperative DOM updates — never triggers React re-renders.
   // This is critical: re-rendering TiptapEditor during typing causes ProseMirror to
@@ -103,6 +105,10 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider }) => {
     },
     extensions: [
       ...sharedExtensions,
+      Placeholder.configure({
+        placeholder: placeholder ?? "Type '/' for commands",
+        showOnlyCurrent: false,
+      }),
       Collaboration.configure({
         document: provider.document,
       }),

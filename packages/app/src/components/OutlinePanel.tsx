@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { usePageList } from '@/components/PageListContext';
 import {
   Panel,
   PanelBody,
@@ -91,6 +92,7 @@ export function OutlinePanel({
   isSourceMode: boolean;
   className?: string;
 }) {
+  const { pages, loading } = usePageList();
   const {
     data: headings = [],
     isLoading,
@@ -98,6 +100,7 @@ export function OutlinePanel({
   } = useQuery({
     queryKey: ['page-headings', docName],
     queryFn: () => fetchHeadings(docName),
+    enabled: !loading && pages.has(docName),
     refetchInterval: 2000,
     refetchIntervalInBackground: false,
   });
