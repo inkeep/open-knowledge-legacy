@@ -312,9 +312,9 @@ The Vite plugin (`src/server/hocuspocus-plugin.ts`) imports from `@inkeep/open-k
 
 ### Source-view minimal polish
 
-Small set of always-on CM6 decorations for source mode: broken-link squiggly (wikilinks + link-refs), strikethrough rendering, list hanging-indent on wrap, code-block language badge, and code wrap-preserve-indent. No background tints, no borders, no heading/blockquote/table/frontmatter decorations. Tables render as plain paragraph text.
+Small set of always-on CM6 decorations for source mode: broken-link squiggly (wikilinks + link-refs), strikethrough rendering, list hanging-indent on wrap, and code wrap-preserve-indent. Tables get structure/layout classes (hanging indent + compactness) only — no background, no border, no cell bands. No heading/blockquote/frontmatter decorations.
 
-- `src/editor/source-polish/` — ViewPlugin (viewport-scoped lezer walk for strikethrough, list, fenced-code decorations + language badge widget) + StateField (doc-wide cross-scan for broken link-ref detection)
+- `src/editor/source-polish/` — ViewPlugin (viewport-scoped lezer walk for strikethrough, list, fenced-code, and table decorations) + StateField (doc-wide cross-scan for broken link-ref detection; skips matches inside `FencedCode`/`CodeBlock`/`InlineCode` via the Lezer tree)
 - `src/editor/markdown-code-languages.ts` — explicit `codeLanguages` allowlist for fenced-code syntax highlighting (~12 languages, lazy-loaded per block; NOT `@codemirror/language-data`)
 - Broken-wikilink detection lives in `src/editor/plugins/wiki-link-source.ts` (extends the existing plugin's `pagesCache` check), not in `source-polish/`
 - CSS: all `.cm-*` classes in `globals.css` under the `/* Source-view minimal polish */` comment block

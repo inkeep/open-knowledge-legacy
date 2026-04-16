@@ -97,4 +97,52 @@ describe('broken-ref-field', () => {
     const ranges = collectRanges(state);
     expect(ranges).toHaveLength(0);
   });
+
+  test('references inside fenced code blocks are NOT marked', () => {
+    // Specs/READMEs that quote broken ref syntax inside fences must not get
+    // a wavy underline — the content is literal source, not a live reference.
+    const doc = [
+      '# Fenced code example',
+      '',
+      '```markdown',
+      '[foo][missing] is a broken ref',
+      '',
+      '[real]: https://example.com',
+      '```',
+      '',
+      'After the fence: no refs here.',
+    ].join('\n');
+    const state = createState(doc);
+    const ranges = collectRanges(state);
+    expect(ranges).toHaveLength(0);
+  });
+
+  test('references inside inline code (backticks) are NOT marked', () => {
+    const state = createState('Use `[label][missing]` syntax for refs.');
+    const ranges = collectRanges(state);
+    expect(ranges).toHaveLength(0);
+  });
+
+  test('broken refs OUTSIDE a fence are still marked when fence-internal refs exist', () => {
+    const doc = ['```markdown', '[fenced][noexist]', '```', '', '[real-broken][also-missing]'].join(
+      '\n',
+    );
+    const state = createState(doc);
+    const ranges = collectRanges(state);
+    // Only the outside-the-fence ref should be marked
+    expect(ranges).toHaveLength(1);
+    const text = doc.slice(ranges[0].from, ranges[0].to);
+    expect(text).toBe('[real-broken][also-missing]');
+  });
+
+  test('definition INSIDE a fence does NOT resolve a real reference outside', () => {
+    // A `[foo]: url` inside a fence is literal source — must not count as a
+    // definition for outside references.
+    const doc = ['```markdown', '[foo]: https://example.com', '```', '', '[link][foo]'].join('\n');
+    const state = createState(doc);
+    const ranges = collectRanges(state);
+    expect(ranges).toHaveLength(1);
+    const text = doc.slice(ranges[0].from, ranges[0].to);
+    expect(text).toBe('[link][foo]');
+  });
 });

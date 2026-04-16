@@ -983,16 +983,20 @@ button:active:not(:disabled) {
   padding-inline-start: calc(var(--line-indent, 0) * 1ch);
 }
 
-/* Broken link-ref — wavy red underline (LSP convention). */
-.cm-link-ref-broken {
-  text-decoration: underline wavy;
-  text-decoration-color: oklch(55% 0.15 25);
-}
-
-/* Broken wikilink — same wavy red underline for visual consistency. */
+/* Broken link affordance — wavy red underline (LSP convention).
+   Single canonical definition for both broken link-refs and broken
+   wikilinks — the "broken" concept has one visual form. The light-theme
+   red (55% L) loses contrast against the dark canvas (14.5% L background,
+   muted-fg at 70.8% L), so .dark lightens it to 72% L. */
+.cm-link-ref-broken,
 .cm-wiki-link-broken {
   text-decoration: underline wavy;
-  text-decoration-color: oklch(55% 0.15 25);
+  text-decoration-color: var(--broken-link-color, oklch(55% 0.15 25));
+}
+
+.dark .cm-link-ref-broken,
+.dark .cm-wiki-link-broken {
+  --broken-link-color: oklch(72% 0.18 25);
 }
 
 /* Tables — structure / layout / wrapping only. No background, no border, no

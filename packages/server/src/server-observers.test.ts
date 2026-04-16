@@ -20,6 +20,7 @@ import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap
 import * as Y from 'yjs';
 import { AGENT_WRITE_ORIGIN } from './agent-sessions.ts';
 import { FILE_WATCHER_ORIGIN } from './external-change.ts';
+import { getMetrics } from './metrics.ts';
 import {
   OBSERVER_SYNC_ORIGIN,
   type Scheduler,
@@ -517,6 +518,223 @@ describe('Initial sync', () => {
     // No initial sync needed when both are empty
     expect(writeCount).toBe(0);
     expect(ytext.toString()).toBe('');
+
+    cleanup();
+  });
+});
+
+describe('Server Observer B — error recovery paths', () => {
+  // These tests exercise the outer-catch and inner-catch recovery branches
+  // added to Observer B's sync work (server-observers.ts:~266-324). Both
+  // paths are load-bearing: they reset the baseline so the next Observer A
+  // cycle computes a correct delta instead of re-applying a failed diff.
+  //
+  // mdManager.parse() is very tolerant (raw HTML/JSX that fails mdx-js is
+  // not rejected by our agnostic-mode pipeline), so we drive the error
+  // branches deterministically by wrapping mdManager with a stub that
+  // throws on demand.
+
+  /** Wrap mdManager so parse/serialize can be toggled to throw. */
+  function createMdManagerStub() {
+    let parseThrow: Error | null = null;
+    let serializeThrow: Error | null = null;
+    const stub: SetupServerObserversOpts['mdManager'] = {
+      parse(md: string) {
+        if (parseThrow) throw parseThrow;
+        return mdManager.parse(md);
+      },
+      serialize(json: unknown) {
+        if (serializeThrow) throw serializeThrow;
+        // biome-ignore lint/suspicious/noExplicitAny: delegate to real manager
+        return mdManager.serialize(json as any);
+      },
+    } as unknown as SetupServerObserversOpts['mdManager'];
+    return {
+      mdManager: stub,
+      setParseThrow: (e: Error | null) => {
+        parseThrow = e;
+      },
+      setSerializeThrow: (e: Error | null) => {
+        serializeThrow = e;
+      },
+    };
+  }
+
+  test('parse-error on Y.Text change: baseline resets to Y.Text, Observer A does not re-apply', () => {
+    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const stub = createMdManagerStub();
+
+    // Seed with valid content
+    populateFragment(doc, xmlFragment, '# Seed\n\nBody.\n');
+    const cleanup = setupServerObservers(
+      setupOpts({ doc, xmlFragment, ytext, scheduler, mdManager: stub.mdManager }),
+    );
+    scheduler.flush(); // initial sync populates Y.Text
+
+    const errorsBefore = getMetrics().serverObserverErrorsB;
+
+    // Arm the stub: next parse() throws a SyntaxError — matches the
+    // "transient parse error while user is mid-edit" branch. Observer B
+    // should early-return, update baseline to current Y.Text, and
+    // increment NO error counter (SyntaxError is a known-transient case,
+    // so it goes through the debug log + baseline reset path).
+    stub.setParseThrow(
+      new SyntaxError('Could not parse expression with acorn (deliberately thrown for test)'),
+    );
+
+    // Drive Observer B via a Y.Text edit. The edit produces malformed
+    // MDX from the parser's perspective.
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, '# Seed\n\n<Note prop={unclosed\n');
+    });
+    scheduler.flush();
+
+    // Disarm so any subsequent firings use the real parser
+    stub.setParseThrow(null);
+
+    // Transient parse path: NO error counter increment (it's a debug case),
+    // NO Observer A write-fire follow-up because the baseline reset prevents
+    // a stale delta from re-applying.
+    expect(getMetrics().serverObserverErrorsB).toBe(errorsBefore);
+
+    // The XmlFragment keeps its last valid state (the seed content) because
+    // updateYFragment never ran.
+    const postBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    expect(postBody).toContain('Seed');
+    expect(postBody).toContain('Body.');
+    expect(postBody).not.toContain('<Note');
+
+    // A subsequent valid Y.Text edit converges normally (baseline recovery
+    // confirmed — if the baseline were stale, this next write would
+    // reintroduce the previously-failed content).
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, '# Seed\n\nBody.\n\n## Recovered\n');
+    });
+    scheduler.flush();
+
+    const finalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    expect(finalBody).toContain('Recovered');
+
+    cleanup();
+  });
+
+  test('unknown parse error (non-SyntaxError) increments error counter and resets baseline to XmlFragment', () => {
+    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const stub = createMdManagerStub();
+
+    populateFragment(doc, xmlFragment, '# Seed\n\nBody.\n');
+    const cleanup = setupServerObservers(
+      setupOpts({ doc, xmlFragment, ytext, scheduler, mdManager: stub.mdManager }),
+    );
+    scheduler.flush();
+
+    const errorsBefore = getMetrics().serverObserverErrorsB;
+
+    // Throw a plain Error (NOT SyntaxError/VFileMessage/Invalid-content
+    // RangeError) — falls through to outer catch. Suppress the expected
+    // console.error so it doesn't pollute test output.
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    stub.setParseThrow(new Error('unexpected parse failure'));
+
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, '# Anything\n');
+    });
+    scheduler.flush();
+
+    stub.setParseThrow(null);
+    console.error = originalConsoleError;
+
+    // Outer catch: error counter bumped by exactly 1, and baseline was
+    // reset to the current XmlFragment state (so Observer A on its next
+    // fire computes a fresh, non-stale diff).
+    expect(getMetrics().serverObserverErrorsB).toBe(errorsBefore + 1);
+
+    // Prior XmlFragment content remains intact (rollback semantics).
+    const postBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+    expect(postBody).toContain('Seed');
+
+    // A subsequent valid Y.Text edit converges (baseline recovered).
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, '# Seed\n\nBody.\n\n## Next\n');
+    });
+    scheduler.flush();
+    expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toContain('Next');
+
+    cleanup();
+  });
+
+  test('post-sync serialize-error: falls back to input body as Observer A baseline', () => {
+    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const stub = createMdManagerStub();
+
+    populateFragment(doc, xmlFragment, '# Seed\n');
+    const cleanup = setupServerObservers(
+      setupOpts({ doc, xmlFragment, ytext, scheduler, mdManager: stub.mdManager }),
+    );
+    scheduler.flush();
+
+    const errorsBefore = getMetrics().serverObserverErrorsB;
+
+    // Capture the originals — we'll restore after the throw fires so the
+    // post-sync serialize path exercises the fallback branch without
+    // breaking subsequent reads.
+    const originalWarn = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+
+    // Arm: serialize() will throw exactly once during the post-sync
+    // re-serialization inside runObserverBSync.
+    let serializeCallCount = 0;
+    const originalSerialize = stub.mdManager.serialize;
+    stub.mdManager.serialize = ((json: unknown) => {
+      serializeCallCount++;
+      // Let the early-exit gate's serialize succeed (calls are before the
+      // updateYFragment). Throw on the post-sync re-serialize call that
+      // runs after updateYFragment.
+      if (serializeCallCount === 2) {
+        throw new Error('simulated serialize failure post-update');
+      }
+      // biome-ignore lint/suspicious/noExplicitAny: delegate
+      return mdManager.serialize(json as any);
+    }) as typeof stub.mdManager.serialize;
+
+    // Drive Observer B with a valid Y.Text change so parse succeeds and
+    // updateYFragment lands — only the follow-up serialize throws.
+    doc.transact(() => {
+      ytext.delete(0, ytext.length);
+      ytext.insert(0, '# Seed\n\n## After\n');
+    });
+    scheduler.flush();
+
+    // Restore before any subsequent assertions that serialize.
+    stub.mdManager.serialize = originalSerialize;
+    console.warn = originalWarn;
+
+    // The warn-branch (post-sync re-serialization failed) fired.
+    expect(warnings.some((w) => w.includes('Post-sync re-serialization failed'))).toBe(true);
+
+    // The inner catch does NOT count as a full Observer B error (the main
+    // sync succeeded; only the baseline-maintenance re-serialize failed).
+    expect(getMetrics().serverObserverErrorsB).toBe(errorsBefore);
+
+    // XmlFragment reflects the new content.
+    expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toContain('After');
+
+    // Observer A's baseline was set from the input body (fallback), not
+    // the post-update serialize. Verify by making a further edit — if the
+    // fallback set a reasonable baseline, subsequent writes converge.
+    doc.transact(() => {
+      ytext.insert(ytext.length, '\nExtra\n');
+    });
+    scheduler.flush();
+    expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toContain('Extra');
 
     cleanup();
   });
