@@ -69,6 +69,7 @@
         "tests/fidelity/**/*.json",
         "src/editor/**/*.ts",
         "../core/src/**/*.ts",
+        "../core/src/markdown/fixtures/**/*.json",
         "../../patches/@handlewithcare%2Fremark-prosemirror@0.1.5.patch"
       ]
     },
