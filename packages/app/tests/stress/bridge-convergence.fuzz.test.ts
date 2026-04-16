@@ -702,28 +702,50 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
 
       if (preMarkerLines.size > 0) {
         // For each expected marker, compute the SET of acceptable final
-        // lines: always the pre-patch form; plus every post-patch form
-        // obtained by applying ONE patch's find→replace at its
-        // first-matching position in the pre-patch line.
+        // line forms: the pre-patch form, plus every line form reachable
+        // by applying any subset of patches in sequence (find→replace at
+        // first-matching position).
         //
-        // At the fuzzer's 8% agent-patch rate × 12 ops/seed, P(≥2 patches
-        // per seed) is ~25% (Poisson, λ=0.96) — not rare in aggregate. The
-        // edge case we're skipping is the NARROWER "≥2 patches BOTH hit
-        // the same marker": both patches' `find` WORDS must land in the
-        // same content line, which is much less likely given the WORDS
-        // pool of 8 items × independent random draws. If that case ever
-        // produces a false-positive in practice, oracle (d)'s prefix
-        // guarantee still holds and the snapshot file at
-        // /tmp/bridge-conv-fuzz-<seed>/ exposes the diverged state for
-        // deterministic replay.
+        // Why iterative: at the fuzzer's 8% agent-patch rate × 12 ops,
+        // P(≥2 patches per seed) is ~25% (Poisson λ=0.96). A fraction of
+        // those have compound targeting — e.g., patch A replaces `alpha`
+        // with `foxtrot` on a line that patch B later modifies via
+        // `echo → delta`. The server applies both sequentially, so the
+        // actual final line reflects BOTH patches. A single-patch model
+        // would miss that state.
+        //
+        // Complexity: worst case is 2^N line forms for N patches, but
+        // N is bounded by patches.length (worst-case ~12 → 4k states),
+        // small relative to seed runtime. In practice N = 1-3 and the
+        // set stays under a dozen elements.
+        //
+        // Termination: each iteration either adds a new form or the set
+        // is stable. Bounded by patches.length because each patch can
+        // only apply once productively to a line whose content already
+        // contains its `find` string (after that the post-line still
+        // contains the original `find` only if replace ⊇ find, which
+        // doesn't happen with the single-WORD find/replace pairs the
+        // generator produces). We cap explicitly at patches.length to
+        // make termination unconditional regardless of replace ⊇ find.
         const acceptableForPrefix = new Map<string, Set<string>>();
         for (const [prefix, preLine] of preMarkerLines) {
           const accepts = new Set<string>([preLine]);
-          for (const { find, replace } of patches) {
-            if (preLine.includes(find)) {
-              const idx = preLine.indexOf(find);
-              accepts.add(preLine.slice(0, idx) + replace + preLine.slice(idx + find.length));
+          for (let iter = 0; iter < patches.length; iter++) {
+            const snapshot = [...accepts];
+            let grew = false;
+            for (const line of snapshot) {
+              for (const { find, replace } of patches) {
+                if (line.includes(find)) {
+                  const idx = line.indexOf(find);
+                  const post = line.slice(0, idx) + replace + line.slice(idx + find.length);
+                  if (!accepts.has(post)) {
+                    accepts.add(post);
+                    grew = true;
+                  }
+                }
+              }
             }
+            if (!grew) break;
           }
           acceptableForPrefix.set(prefix, accepts);
         }
