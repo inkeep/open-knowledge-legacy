@@ -16,6 +16,7 @@ import {
 import type { FC, SVGProps } from 'react';
 import { ClaudeIcon } from '@/components/icons/claude';
 import { CursorIcon } from '@/components/icons/cursor';
+import { WindsurfIcon } from '@/components/icons/windsurf';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDocumentContext } from '@/editor/DocumentContext';
 import { type Participant, usePresence } from './use-presence';
@@ -38,6 +39,7 @@ const ANIMAL_ICON_MAP: Record<string, FC<LucideProps>> = {
 function AgentIcon({ icon, ...props }: { icon?: string } & SVGProps<SVGSVGElement>) {
   if (icon === 'claude') return <ClaudeIcon {...props} />;
   if (icon === 'cursor') return <CursorIcon {...props} />;
+  if (icon === 'windsurf') return <WindsurfIcon {...props} />;
   // Unknown or missing icon — generic bot
   return <Bot {...(props as LucideProps)} />;
 }

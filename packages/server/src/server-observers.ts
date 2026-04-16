@@ -166,8 +166,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       // fresh delta instead of re-applying the stale diff that just failed.
       try {
         lastSyncedXmlMd = ytext.toString();
-      } catch {
-        /* ignore — best-effort baseline recovery */
+      } catch (innerErr) {
+        console.warn('[Server Observer A] Baseline recovery also failed:', innerErr);
       }
     }
   };
@@ -315,8 +315,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
         const postBody = mdManager.serialize(postJson);
         const fm = getFrontmatter(doc);
         lastSyncedXmlMd = prependFrontmatter(fm, postBody);
-      } catch {
-        /* ignore — best-effort baseline recovery */
+      } catch (innerErr) {
+        console.warn('[Server Observer B] Baseline recovery also failed:', innerErr);
       }
     }
   };

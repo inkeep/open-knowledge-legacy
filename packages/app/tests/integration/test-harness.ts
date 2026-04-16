@@ -137,7 +137,8 @@ export async function createTestServer(options: CreateTestServerOptions = {}): P
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'API route not found', path: url }));
         })
-        .catch(() => {
+        .catch((err) => {
+          console.error('[api] Unhandled onRequest error:', err);
           if (!res.writableEnded) {
             res.writeHead(500);
             res.end('Internal server error');
