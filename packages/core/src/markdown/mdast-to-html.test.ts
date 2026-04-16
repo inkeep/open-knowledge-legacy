@@ -127,6 +127,115 @@ describe('mdastToHtml — mdast Root → HTML', () => {
   });
 });
 
+describe('custom-node regression gate — every promoted mdast type emits semantic HTML', () => {
+  // This table parallels `PromotedMdastType` (mdast-augmentation.ts). For
+  // each custom node type we assert that the outbound HTML pipeline emits
+  // its Q1 shape — not a silent degradation to literal text or an empty
+  // span. Two entry points:
+  //
+  //   (a) `markdownToHtml(source)` — string-entry pipeline. Guards the
+  //       F8-class bug where a remark plugin is missing from the parse
+  //       chain and the custom syntax degrades to literal source
+  //       (`[[Target]]` → text). Only applicable to types produced by a
+  //       remark plugin during parse (wikiLink today; future custom
+  //       syntaxes here).
+  //
+  //   (b) `mdastToHtml(tree)` — tree-entry pipeline. For types whose
+  //       source-form fidelity requires `data.sourceRaw` populated by the
+  //       PM→mdast handlers (the string-entry pipeline has no PM, so
+  //       sourceRaw is never populated for mdxJsx* nodes coming from
+  //       remark-parse). Tests exercise the hast handler directly with a
+  //       synthetic tree mirroring what the PM copy path produces.
+  //
+  // Adding a new PromotedMdastType MUST add a case to the correct group.
+
+  describe('(a) markdownToHtml string-entry — remark-plugin-produced types', () => {
+    test('wikiLink bare target emits <a class="wiki-link">', () => {
+      const html = markdownToHtml('[[Target]]');
+      expect(html).toMatch(/<a[^>]*class="wiki-link"[^>]*>Target<\/a>/);
+      // F8 regression: literal `[[Target]]` must NOT appear as text.
+      expect(html).not.toMatch(/\[\[Target\]\]/);
+    });
+
+    test('wikiLink with alias preserves data-alias and label text', () => {
+      const html = markdownToHtml('[[Target|Label]]');
+      expect(html).toContain('class="wiki-link"');
+      expect(html).toContain('data-target="Target"');
+      expect(html).toContain('data-alias="Label"');
+      expect(html).toMatch(/>Label<\/a>/);
+      expect(html).not.toMatch(/\[\[Target\|Label\]\]/);
+    });
+  });
+
+  describe('(b) mdastToHtml tree-entry — PM→mdast handler-produced types', () => {
+    test('mdxJsxFlowElement emits <pre class="mdx-component"> with entity-escaped raw', () => {
+      const html = mdastToHtml({
+        type: 'root',
+        children: [
+          {
+            type: 'mdxJsxFlowElement',
+            name: 'Callout',
+            attributes: [],
+            children: [],
+            data: { sourceRaw: '<Callout type="warning">Heads up</Callout>' },
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast mirroring PM→mdast output
+          } as any,
+        ],
+      });
+      expect(html).toContain('<pre class="mdx-component">');
+      expect(html).toContain('<code>');
+      // FR-20 security boundary: raw `<Callout>` must be entity-encoded.
+      expect(html).toMatch(/&#x3C;Callout/);
+      expect(html).not.toMatch(/<Callout/);
+    });
+
+    test('mdxJsxTextElement emits <span class="mdx-inline"> with entity-escaped raw', () => {
+      const html = mdastToHtml({
+        type: 'root',
+        children: [
+          {
+            type: 'paragraph',
+            children: [
+              { type: 'text', value: 'before ' },
+              {
+                type: 'mdxJsxTextElement',
+                name: 'Tag',
+                attributes: [],
+                children: [],
+                data: { sourceRaw: '<Tag prop="x"/>' },
+                // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast mirroring PM→mdast output
+              } as any,
+              { type: 'text', value: ' after' },
+            ],
+          },
+        ],
+      });
+      expect(html).toContain('<span class="mdx-inline">');
+      expect(html).toMatch(/&#x3C;Tag/);
+      expect(html).not.toMatch(/<Tag /);
+    });
+
+    test('rawMdxFallback emits parse-error comment + <pre class="mdx-fallback">', () => {
+      const html = mdastToHtml({
+        type: 'root',
+        children: [
+          {
+            type: 'rawMdxFallback',
+            data: { reason: 'Unclosed JSX', originalSpan: [0, 20] },
+            value: '<Broken prop="xyz"',
+            // biome-ignore lint/suspicious/noExplicitAny: synthetic mdast for handler-direct test
+          } as any,
+        ],
+      });
+      expect(html).toContain('<!-- Parse error: Unclosed JSX -->');
+      expect(html).toContain('<pre class="mdx-fallback">');
+      expect(html).toContain('<code>');
+      expect(html).toMatch(/&#x3C;Broken/);
+      expect(html).not.toMatch(/<Broken /);
+    });
+  });
+});
+
 describe('URL scheme filter — outbound clipboard HTML sanitization', () => {
   test('strips javascript: href from links', () => {
     const html = markdownToHtml('[click](javascript:alert(1))');
