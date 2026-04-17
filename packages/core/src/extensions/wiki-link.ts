@@ -118,6 +118,15 @@ export const WikiLink = Node.create({
             target,
             alias: normalizeNullableString(node.getAttribute('data-alias')),
             anchor: normalizeNullableString(node.getAttribute('data-anchor')),
+            // Hardcoded `false` diverges from the `span[data-wiki-link]` rule
+            // above, which reads `data-resolved` off the DOM. That's correct:
+            // the mdast→hast clipboard pipeline
+            // (`mdast-to-hast-handlers.ts:57-79`) intentionally omits
+            // `data-resolved` from the `<a class="wiki-link">` shape — pasted
+            // wikiLinks start unresolved and get re-resolved by the editor's
+            // resolver after insertion. Reading `data-resolved` here would
+            // always read `null` → `false` anyway, but the explicit constant
+            // makes the source-of-truth asymmetry obvious. (D-Q16 LOCKED).
             resolved: false,
           };
         },

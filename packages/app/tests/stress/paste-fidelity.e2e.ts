@@ -480,10 +480,11 @@ test.describe('WYSIWYG FR-specific paste behavior', () => {
     // text/html has a <pre><code> rendering. PM's serializeForClipboard adds a
     // `data-pm-slice` attribute to the outermost element, so the serialized
     // shape is `<pre data-pm-slice="…"><code class="language-python">…` rather
-    // than a bare `<pre>` — match the opening-tag prefix without the closing
-    // angle bracket so the assertion survives the slice-wrapper attribute.
-    expect(out.html).toContain('<pre');
-    expect(out.html).toContain('<code');
+    // than a bare `<pre>`. Match `<pre` followed by whitespace OR `>` so the
+    // assertion survives the slice-wrapper attribute AND rejects `<pressure>` /
+    // `<prefer>` (FR-19 tightening per D-Q17 / US-004).
+    expect(out.html).toMatch(/<pre[\s>]/);
+    expect(out.html).toMatch(/<code[\s>]/);
   });
 });
 

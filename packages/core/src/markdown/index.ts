@@ -902,6 +902,12 @@ function buildPmToMdastHandlers(schema: Schema): {
   }
 
   if (m.code) {
+    // `wrapAsInlineCode` is unique to the `code` mark because `inlineCode` is a
+    // leaf mdast type (holds `value: string`, not `children`). Other mark
+    // handlers (emphasis, strong, delete, link) pass children through
+    // `fromPmMark` to structured nodes with `children` arrays — no flatten
+    // needed. See `@handlewithcare/remark-prosemirror/.../mdast-util-from-prosemirror.js:108-117`
+    // for the pass-through contract.
     markHandlers.code = (_mark: PmMark, _parent: PmNode, children: MdastNodes[]) => {
       return wrapAsInlineCode(children);
     };
