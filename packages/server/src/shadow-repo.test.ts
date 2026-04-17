@@ -3,15 +3,18 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { parseCheckpoint } from '@inkeep/open-knowledge-core/shadow-repo-layout';
 import simpleGit from 'simple-git';
 import {
   commitUpstreamImport,
   commitWip,
+  type InMemoryCheckpointParams,
   initShadowRepo,
   type ParkableDoc,
   parkBranch,
   readParkedState,
   type ShadowHandle,
+  saveInMemoryCheckpoint,
   saveVersion,
   shadowGit,
   type WriterIdentity,
@@ -562,5 +565,267 @@ describe('saveVersion — standalone mode', () => {
 
     // The ref name must end with the shadow commit's own SHA
     expect(result.checkpointRef).toBe(`refs/checkpoints/main/${actualSha}`);
+  });
+});
+
+describe('saveInMemoryCheckpoint (bridge-correctness SPEC §6 R7a)', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'project');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(resolve(projectRoot, 'content/docs'), { recursive: true });
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('round-trips a bridge-merge-loss checkpoint — ref exists, parseCheckpoint recovers metadata', async () => {
+    const params: InMemoryCheckpointParams = {
+      kind: 'bridge-merge-loss',
+      docName: 'intro.md',
+      contents: '# Pre-merge baseline\n',
+      label: 'Before concurrent merge @ 2026-04-17T08:00:00Z',
+      branch: 'main',
+      metadata: { lostSubstrings: ['user keystroke', 'another lost phrase'] },
+    };
+
+    const sha = await saveInMemoryCheckpoint(shadow, 'content/docs', params);
+
+    // Ref was created and points at the returned sha
+    const sg = shadowGit(shadow);
+    const refSha = (await sg.raw('rev-parse', `refs/checkpoints/main/${sha}`)).trim();
+    expect(refSha).toBe(sha);
+
+    // Commit body contains the label + ok-checkpoint-v1 line
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    expect(body).toContain('checkpoint: Before concurrent merge @ 2026-04-17T08:00:00Z');
+    const parsed = parseCheckpoint(body);
+    expect(parsed).not.toBeNull();
+    if (parsed?.kind !== 'bridge-merge-loss') throw new Error('expected bridge-merge-loss kind');
+    expect(parsed.metadata.lostSubstrings).toEqual(['user keystroke', 'another lost phrase']);
+
+    // Contents blob is stored at content/docs/intro.md
+    const tree = (await sg.raw('ls-tree', '-r', sha)).trim();
+    expect(tree).toContain('content/docs/intro.md');
+
+    // bridge-correctness review iteration 5: docName + size are inlined in
+    // the metadata so the rescue read path doesn't need ls-tree per commit.
+    if (parsed.kind !== 'bridge-merge-loss') throw new Error('narrow');
+    expect(parsed.docName).toBe('intro.md');
+    expect(parsed.size).toBe(Buffer.byteLength('# Pre-merge baseline\n', 'utf-8'));
+  });
+
+  test('round-trips an external-change-rescue checkpoint', async () => {
+    const params: InMemoryCheckpointParams = {
+      kind: 'external-change-rescue',
+      docName: 'intro.md',
+      contents: '# Rescued in-memory content\n',
+      label: 'External change recovered @ 2026-04-17T08:00:00Z',
+      metadata: { incomingDiskSha: 'abc123def456' },
+    };
+
+    const sha = await saveInMemoryCheckpoint(shadow, 'content/docs', params);
+    const sg = shadowGit(shadow);
+    const body = (await sg.raw('log', '-1', '--format=%B', sha)).trim();
+    const parsed = parseCheckpoint(body);
+    expect(parsed).not.toBeNull();
+    if (parsed?.kind !== 'external-change-rescue') {
+      throw new Error('expected external-change-rescue kind');
+    }
+    expect(parsed.metadata.incomingDiskSha).toBe('abc123def456');
+  });
+
+  test('does NOT touch refs/wip/* — distinct from saveVersion', async () => {
+    // Create a WIP ref first via commitWip
+    const writer: WriterIdentity = {
+      id: 'human-nick',
+      name: 'Nick',
+      email: 'n@example.com',
+    };
+    const contentDir = resolve(projectRoot, 'content/docs');
+    writeFileSync(resolve(contentDir, 'intro.md'), '# hello\n');
+    await commitWip(shadow, writer, 'content/docs', 'WIP: setup');
+
+    const sg = shadowGit(shadow);
+    const wipShaBefore = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+
+    await saveInMemoryCheckpoint(shadow, 'content/docs', {
+      kind: 'bridge-merge-loss',
+      docName: 'intro.md',
+      contents: '# pre-merge\n',
+      label: 'silent checkpoint',
+      metadata: { lostSubstrings: ['foo'] },
+    });
+
+    const wipShaAfter = (await sg.raw('rev-parse', 'refs/wip/main/human-nick')).trim();
+    expect(wipShaAfter).toBe(wipShaBefore); // unchanged
+  });
+
+  test('concurrent invocations on the same shadow produce distinct refs (Q8)', async () => {
+    const params = (n: number): InMemoryCheckpointParams => ({
+      kind: 'bridge-merge-loss',
+      docName: `doc-${n}.md`,
+      contents: `# contents ${n}\n`,
+      label: `concurrent ${n}`,
+      metadata: { lostSubstrings: [`lost-${n}`] },
+    });
+
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5].map((n) => saveInMemoryCheckpoint(shadow, 'content/docs', params(n))),
+    );
+    const unique = new Set(results);
+    expect(unique.size).toBe(5);
+
+    const sg = shadowGit(shadow);
+    for (const sha of results) {
+      const refSha = (await sg.raw('rev-parse', `refs/checkpoints/main/${sha}`)).trim();
+      expect(refSha).toBe(sha);
+    }
+  });
+
+  test('parseContributors tolerates sibling ok-checkpoint-v1 body lines (Q7)', async () => {
+    // Synthesize a body with BOTH ok-contributors: and ok-checkpoint-v1: lines
+    const body = [
+      'checkpoint: Before concurrent merge @ t',
+      '',
+      'ok-contributors: {"id":"human-a","name":"Alice","docs":["intro.md"]}',
+      'ok-checkpoint-v1: {"kind":"bridge-merge-loss","docName":"intro.md","size":16,"metadata":{"lostSubstrings":["x"]}}',
+    ].join('\n');
+
+    // parseContributors must still pick up Alice
+    const { parseContributors } = await import('@inkeep/open-knowledge-core/shadow-repo-layout');
+    const contributors = parseContributors(body);
+    expect(contributors).toHaveLength(1);
+    expect(contributors[0]?.id).toBe('human-a');
+
+    // parseCheckpoint picks up the sibling line
+    const checkpoint = parseCheckpoint(body);
+    expect(checkpoint?.kind).toBe('bridge-merge-loss');
+  });
+});
+
+describe('gcCheckpointRefs (bridge-correctness SPEC §6 R7 + review iteration 5)', () => {
+  let projectRoot: string;
+  let shadow: ShadowHandle;
+
+  beforeEach(async () => {
+    projectRoot = resolve(tmpDir, 'gc-project');
+    mkdirSync(projectRoot, { recursive: true });
+    mkdirSync(resolve(projectRoot, 'content/docs'), { recursive: true });
+    const git = simpleGit(projectRoot);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    shadow = await initShadowRepo(projectRoot);
+  });
+
+  test('keeps only the most-recent N bridge-merge-loss refs per branch', async () => {
+    const { gcCheckpointRefs } = await import('./shadow-repo.ts');
+    for (let i = 0; i < 7; i++) {
+      await saveInMemoryCheckpoint(shadow, 'content/docs', {
+        kind: 'bridge-merge-loss',
+        docName: `doc-${i}.md`,
+        contents: `contents ${i}\n`,
+        label: `loss ${i}`,
+        metadata: { lostSubstrings: [`lost-${i}`] },
+      });
+    }
+
+    const result = await gcCheckpointRefs(shadow, 'main', {
+      maxBridgeMergeLoss: 3,
+      maxExternalChangeRescue: 50,
+      ttlMs: 0, // disable TTL; only count-based cap applies
+    });
+
+    expect(result.scanned).toBe(7);
+    expect(result.deletedBridgeMergeLoss).toBe(4); // 7 - 3 kept
+    expect(result.deletedExternalChangeRescue).toBe(0);
+
+    const sg = shadowGit(shadow);
+    const remaining = (
+      await sg.raw('for-each-ref', '--format=%(refname)', 'refs/checkpoints/main/')
+    )
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+    expect(remaining).toHaveLength(3);
+  });
+
+  test('applies TTL independently of the count cap', async () => {
+    // Write 2 checkpoints with a TTL of 0 ms to force both past the deadline.
+    for (let i = 0; i < 2; i++) {
+      await saveInMemoryCheckpoint(shadow, 'content/docs', {
+        kind: 'external-change-rescue',
+        docName: `doc-${i}.md`,
+        contents: `contents ${i}\n`,
+        label: `rescue ${i}`,
+        metadata: { incomingDiskSha: `sha-${i}` },
+      });
+    }
+    // Sleep 5ms so the TTL check actually triggers.
+    await new Promise((r) => setTimeout(r, 5));
+
+    const { gcCheckpointRefs } = await import('./shadow-repo.ts');
+    const result = await gcCheckpointRefs(shadow, 'main', {
+      maxBridgeMergeLoss: 50,
+      maxExternalChangeRescue: 50,
+      ttlMs: 1, // everything older than 1 ms is eligible
+    });
+
+    expect(result.deletedExternalChangeRescue).toBe(2);
+  });
+
+  test('does NOT delete untyped Save-Version-style checkpoints', async () => {
+    const { gcCheckpointRefs } = await import('./shadow-repo.ts');
+    const sg = shadowGit(shadow);
+
+    // Create an untyped Save-Version-style checkpoint: a commit under
+    // `refs/checkpoints/main/<sha>` whose body has NO `ok-checkpoint-v1:`
+    // line. `parseCheckpoint` returns null for it, and `gcCheckpointRefs`
+    // treats null-kind as permanently retained.
+    //
+    // Shortest path: pipe an empty tree into the well-known empty-tree SHA
+    // via `git hash-object -t tree /dev/null`, then commit-tree.
+    const emptyTreeSha = (await sg.raw('hash-object', '-t', 'tree', '-w', '/dev/null')).trim();
+    const untypedSha = (
+      await sg
+        .env({
+          GIT_DIR: shadow.gitDir,
+          GIT_AUTHOR_NAME: 'test',
+          GIT_AUTHOR_EMAIL: 'test@test',
+          GIT_COMMITTER_NAME: 'test',
+          GIT_COMMITTER_EMAIL: 'test@test',
+        })
+        .raw('commit-tree', emptyTreeSha, '-m', 'checkpoint: Save Version')
+    ).trim();
+    await sg.raw('update-ref', `refs/checkpoints/main/${untypedSha}`, untypedSha);
+
+    // Plus one typed bridge-merge-loss that IS eligible.
+    await saveInMemoryCheckpoint(shadow, 'content/docs', {
+      kind: 'bridge-merge-loss',
+      docName: 'intro.md',
+      contents: '# pre-merge\n',
+      label: 'silent',
+      metadata: { lostSubstrings: ['x'] },
+    });
+
+    const result = await gcCheckpointRefs(shadow, 'main', {
+      maxBridgeMergeLoss: 0, // forces deletion of the typed checkpoint
+      maxExternalChangeRescue: 0,
+      ttlMs: 0,
+    });
+
+    expect(result.deletedBridgeMergeLoss).toBe(1);
+
+    // Save-Version checkpoint still exists.
+    const refs = (await sg.raw('for-each-ref', '--format=%(refname)', 'refs/checkpoints/main/'))
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+    expect(refs).toContain(`refs/checkpoints/main/${untypedSha}`);
   });
 });

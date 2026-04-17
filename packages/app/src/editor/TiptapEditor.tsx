@@ -192,7 +192,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     // view is guaranteed present. If the editor is already created by the
     // time this effect runs (common path), we attach immediately.
     // Regression fixed: QA-002 retry flow + any Activity unhide reconnect.
-    const mark = () => markUserTyping(provider.document);
+    const mark = () => markUserTyping();
     let attachedDom: HTMLElement | null = null;
     const attach = () => {
       if (attachedDom || !editor || editor.isDestroyed) return;
@@ -222,7 +222,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       editor.off('create', attach);
       detach();
     };
-  }, [editor, provider.document]);
+  }, [editor]);
 
   // Watch activity map and trigger flash. Tracks latest agent activity entry
   // to determine position (append vs prepend) and emits observable state.

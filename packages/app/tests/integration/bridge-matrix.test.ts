@@ -567,8 +567,8 @@ describe('multi-client sync', () => {
     await pollUntil(() => clientA.ytext.toString().includes('Seed content.'), 5000);
     await pollUntil(() => clientB.ytext.toString().includes('Seed content.'), 5000);
 
-    const typingInterval = setInterval(() => markUserTyping(clientA.doc), 50);
-    markUserTyping(clientA.doc);
+    const typingInterval = setInterval(() => markUserTyping(), 50);
+    markUserTyping();
 
     appendParagraphToFragment(clientA, 'CLIENT-A-LOCAL-TYPING');
 
@@ -738,8 +738,8 @@ describe('multi-client FR-4: agent-origin Items preserved through Observer A', (
       // Step 3: Client's user appends via WYSIWYG — an incremental edit,
       // not a full tree replacement. Observer A fires; if Y.Text has diverged
       // (e.g., timing of remote sync), Path B DMP merge handles it.
-      markUserTyping(client.doc);
-      const typingInterval = setInterval(() => markUserTyping(client.doc), 30);
+      markUserTyping();
+      const typingInterval = setInterval(() => markUserTyping(), 30);
 
       appendParagraphToFragment(client, 'User added this.');
 

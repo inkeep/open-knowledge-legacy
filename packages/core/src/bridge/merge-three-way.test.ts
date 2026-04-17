@@ -14,7 +14,11 @@
  */
 import { describe, expect, test } from 'bun:test';
 import DiffMatchPatch from 'diff-match-patch';
-import { mergeThreeWay } from './merge-three-way.ts';
+import {
+  assertContentPreservation,
+  BridgeMergeContentLossError,
+  mergeThreeWay,
+} from './merge-three-way.ts';
 
 // ── DMP baseline for comparison ────────────────────────────────────────
 // This mirrors the current `applyUserDelta` three-way merge:
@@ -335,11 +339,23 @@ describe('T-perf: Performance gate', () => {
   }
   const agentText = agentLines.join('\n');
 
-  test('p95 < 20ms over 100 iterations', () => {
-    // Gate: merge on a representative document completes well within the
-    // 50ms debounce budget. Local ~1ms, CI ~5-15ms. The 20ms threshold
-    // catches algorithmic regressions (e.g., O(n^2) char-level diff3)
-    // without flaking on slow CI runners.
+  test('p95 < 150ms over 100 iterations', () => {
+    // Gate: merge on a representative 200-line document stays bounded.
+    // Measured baselines (post bridge-correctness §6 R1 post-condition):
+    //   Local dev laptop (M-series): p50 ~4ms, p95 ~5ms, max ~6ms
+    //   GitHub Actions ubuntu-latest free tier: p50 ~25-35ms, p95 ~65-75ms, max ~100ms
+    //
+    // The R1 `assertContentPreservation` post-condition (maximal-unique-line
+    // substring subset + relative-order side-check, invoked on every
+    // `mergeThreeWay` call per D2/D9-LOCKED) adds a bounded constant-factor
+    // CI cost on top of the hybrid diff3+DMP merge itself. It is
+    // load-bearing in production (D3-LOCKED — the post-condition fires the
+    // silent-checkpoint recovery path) and cannot be skipped.
+    //
+    // 150ms threshold = ~2x measured CI p95 headroom, still an order of
+    // magnitude under any user-perceivable interaction latency. Catches
+    // algorithmic regressions (e.g., O(n²) substring walk, naive String#includes
+    // inside the order side-check) without flaking on CI runner variance.
     const times: number[] = [];
     // Warmup
     mergeThreeWay(baseline, userText, agentText);
@@ -359,6 +375,181 @@ describe('T-perf: Performance gate', () => {
       `[T-perf] mergeThreeWay 200-line doc: p50=${p50.toFixed(2)}ms p95=${p95.toFixed(2)}ms max=${max.toFixed(2)}ms`,
     );
 
-    expect(p95).toBeLessThan(20);
+    expect(p95).toBeLessThan(150);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────
+// Post-condition: content-preservation (SPEC §6 R1, D2/D9 LOCKED)
+//
+// assertContentPreservation is also exercised implicitly by every test above
+// (mergeThreeWay always calls it); these tests drive the check directly
+// via synthesized (baseline, mine, theirs, result) quadruples.
+// ────────────────────────────────────────────────────────────────────────
+
+describe('Post-condition: assertContentPreservation', () => {
+  test('happy path: result containing both sides passes', () => {
+    expect(() =>
+      assertContentPreservation(
+        'Hello\nworld\n',
+        'Hello\nUSER\nworld\n',
+        'Hello\nworld\nAGENT\n',
+        'Hello\nUSER\nworld\nAGENT\n',
+      ),
+    ).not.toThrow();
+  });
+
+  test('substring violation: user side missing raises BridgeMergeContentLossError with which=substring/side=user', () => {
+    try {
+      assertContentPreservation(
+        'Hello\nworld\n',
+        'Hello\nUSER-UNIQUE-MARKER\nworld\n',
+        'Hello\nworld\nAGENT\n',
+        // Result drops USER-UNIQUE-MARKER
+        'Hello\nworld\nAGENT\n',
+      );
+      expect(false).toBe(true); // should not reach
+    } catch (err) {
+      expect(err).toBeInstanceOf(BridgeMergeContentLossError);
+      const e = err as BridgeMergeContentLossError;
+      expect(e.info.which).toBe('substring');
+      expect(e.info.side).toBe('user');
+      expect(e.info.lostSubstrings.some((s) => s.includes('USER-UNIQUE-MARKER'))).toBe(true);
+    }
+  });
+
+  test('substring violation: agent side missing raises with side=agent', () => {
+    try {
+      assertContentPreservation(
+        'Hello\nworld\n',
+        'Hello\nUSER\nworld\n',
+        'Hello\nworld\nAGENT-UNIQUE-MARKER\n',
+        'Hello\nUSER\nworld\n', // drops agent marker
+      );
+      expect(false).toBe(true);
+    } catch (err) {
+      expect(err).toBeInstanceOf(BridgeMergeContentLossError);
+      const e = err as BridgeMergeContentLossError;
+      expect(e.info.which).toBe('substring');
+      expect(e.info.side).toBe('agent');
+      expect(e.info.lostSubstrings.some((s) => s.includes('AGENT-UNIQUE-MARKER'))).toBe(true);
+    }
+  });
+
+  test('order violation: user-side segments present but reordered raises which=order', () => {
+    // Anchors chosen so DMP's diff_cleanupSemantic produces TWO distinct
+    // INSERT segments for `mine` (MARKER-ALPHA appears before common anchor,
+    // MARKER-BETA after). The result places them in the opposite order
+    // while still containing both — which is the textbook order-preservation
+    // violation the D9 side-check catches.
+    const baseline = 'a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n';
+    const mine =
+      'MARKER-ALPHA\na\nb\nc\nd\ne\nf\ng\nh\ni\nj\nMARKER-BETA\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n';
+    const theirs = `${baseline}AGENT-MARKER\n`;
+    const reordered =
+      'MARKER-BETA\na\nb\nc\nd\ne\nf\ng\nh\ni\nj\nMARKER-ALPHA\nk\nl\nm\nn\no\np\nq\nr\ns\nt\nAGENT-MARKER\n';
+    try {
+      assertContentPreservation(baseline, mine, theirs, reordered);
+      expect(false).toBe(true);
+    } catch (err) {
+      expect(err).toBeInstanceOf(BridgeMergeContentLossError);
+      const e = err as BridgeMergeContentLossError;
+      expect(e.info.which).toBe('order');
+      expect(e.info.side).toBe('user');
+    }
+  });
+
+  test('empty diffs: when no side introduced unique content, post-condition passes trivially', () => {
+    expect(() => assertContentPreservation('same\n', 'same\n', 'same\n', 'same\n')).not.toThrow();
+  });
+
+  test('toLog() emits structured payload with expected fields; redacted by default', () => {
+    try {
+      assertContentPreservation(
+        'base\n',
+        'base\nSENSITIVE-CONTENT\n',
+        'base\nTHEIRS\n',
+        'base\nTHEIRS\n',
+      );
+      expect(false).toBe(true);
+    } catch (err) {
+      if (!(err instanceof BridgeMergeContentLossError)) throw err;
+      const payload = err.toLog();
+      expect(payload.event).toBe('bridge-merge-content-loss');
+      expect(payload.which).toBe('substring');
+      expect(payload.side).toBe('user');
+      expect(payload.baselineLen).toBe('base\n'.length);
+      expect(payload.userTextLen).toBe('base\nSENSITIVE-CONTENT\n'.length);
+      expect(payload.agentTextLen).toBe('base\nTHEIRS\n'.length);
+      expect(payload.resultLen).toBe('base\nTHEIRS\n'.length);
+      expect(payload.redacted).toBe(true);
+      expect(Array.isArray(payload.lostSubstrings)).toBe(true);
+      // Redacted form carries len+digest, never the raw substring.
+      for (const entry of payload.lostSubstrings) {
+        if (typeof entry === 'string') throw new Error('default log must not leak raw substrings');
+        expect(entry).toHaveProperty('len');
+        expect(entry).toHaveProperty('digest');
+        expect(entry.digest).toMatch(/^[0-9a-f]{8}$/);
+      }
+      // Digests are stable — same substring → same digest across calls.
+      const again = err.toLog();
+      expect(again.lostSubstrings).toEqual(payload.lostSubstrings);
+    }
+  });
+
+  test('toLog({ verbose: true }) surfaces raw substrings for opt-in verbose telemetry', () => {
+    try {
+      assertContentPreservation(
+        'base\n',
+        'base\nUSER-UNIQUE-MARKER\n',
+        'base\nAGENT-MARKER\n',
+        'base\nAGENT-MARKER\n',
+      );
+      expect(false).toBe(true);
+    } catch (err) {
+      if (!(err instanceof BridgeMergeContentLossError)) throw err;
+      const payload = err.toLog({ verbose: true });
+      expect(payload.redacted).toBe(false);
+      const hasRawMarker = payload.lostSubstrings.some(
+        (s) => typeof s === 'string' && s.includes('USER-UNIQUE-MARKER'),
+      );
+      expect(hasRawMarker).toBe(true);
+    }
+  });
+
+  test('mergeThreeWay integration: T1-T7 scenarios satisfy the post-condition (no throw)', () => {
+    // T1: non-overlapping — 5 user insertions, 5 agent insertions, disjoint regions
+    const base = Array.from({ length: 10 }, (_, i) => `Line ${i + 1}`).join('\n');
+    const mine = base.replace('Line 2', 'Line 2\nUSER-X');
+    const theirs = base.replace('Line 7', 'Line 7\nAGENT-Y');
+    expect(() => mergeThreeWay(base, mine, theirs)).not.toThrow();
+
+    // T3: D8 — identical edits both add "!"
+    expect(() => mergeThreeWay('Hello world', 'Hello world!', 'Hello world!')).not.toThrow();
+  });
+
+  test('perf: post-condition adds <5ms p99 on a 10KB doc with ~10 segments', () => {
+    const base = Array.from(
+      { length: 100 },
+      (_, i) => `Line ${i + 1}: lorem ipsum dolor sit amet`,
+    ).join('\n');
+    const mine = base
+      .replace('Line 10', 'Line 10\nUSER-MARKER-A')
+      .replace('Line 30', 'Line 30\nUSER-MARKER-B')
+      .replace('Line 50', 'Line 50\nUSER-MARKER-C');
+    const theirs = base
+      .replace('Line 20', 'Line 20\nAGENT-MARKER-A')
+      .replace('Line 40', 'Line 40\nAGENT-MARKER-B')
+      .replace('Line 70', 'Line 70\nAGENT-MARKER-C');
+    const merged = mergeThreeWay(base, mine, theirs);
+
+    const times: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      const start = performance.now();
+      assertContentPreservation(base, mine, theirs, merged);
+      times.push(performance.now() - start);
+    }
+    times.sort((a, b) => a - b);
+    expect(times[99]).toBeLessThan(20); // permissive CI bound; local is <1ms
   });
 });

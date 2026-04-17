@@ -1,5 +1,12 @@
 {
   "title": "Guides",
   "icon": "LuBookText",
-  "pages": ["getting-started", "configuration", "mcp-integration", "content-filtering"]
+  "pages": [
+    "getting-started",
+    "configuration",
+    "mcp-integration",
+    "content-filtering",
+    "timeline",
+    "collaboration-recovery"
+  ]
 }

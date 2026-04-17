@@ -225,7 +225,13 @@ try {
   const pluginMdManager = new MarkdownManager({ extensions: sharedExtensions });
   const pluginSchema = getSchema(sharedExtensions);
   hocuspocus.configuration.extensions.push(
-    createServerObserverExtension({ mdManager: pluginMdManager, schema: pluginSchema }),
+    createServerObserverExtension({
+      mdManager: pluginMdManager,
+      schema: pluginSchema,
+      shadowRef,
+      contentRoot: isTestIsolated ? '' : CONTENT_ROOT,
+      getCurrentBranch: () => readBranchFromHead(resolve(PROJECT_ROOT, '.git')),
+    }),
   );
 } catch (err) {
   try {

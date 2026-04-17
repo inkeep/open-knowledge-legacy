@@ -59,7 +59,8 @@
         "tests/integration/network-control.ts",
         "../core/src/**/*.ts",
         "../server/src/**/*.ts"
-      ]
+      ],
+      "env": ["STRESS_FUZZ_PR", "STRESS_FUZZ_NIGHTLY", "STRESS_FUZZ_SEED", "BRIDGE_FUZZ_SEEDS"]
     },
     "test:fidelity": {
       "dependsOn": [],
