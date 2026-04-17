@@ -645,7 +645,7 @@ describe('Server Observer B — error recovery paths', () => {
   //
   // Coverage for the new always-live behavior is the G9 test below.
   // See `specs/2026-04-14-component-blocks-v2/SPEC.md` FR-22/FR-23 and
-  // precedent #20 (All user content visible and editable).
+  // precedent #22 (All user content visible and editable).
 
   test('G9 bridge always-live: malformed MDX produces rawMdxFallback instead of freezing XmlFragment', () => {
     const { doc, xmlFragment, ytext, scheduler } = createTestDoc();

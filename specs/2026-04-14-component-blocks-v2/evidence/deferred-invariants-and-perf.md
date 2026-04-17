@@ -18,7 +18,7 @@
 | 2 | `5bdc3870` | Canonical `fixtures/mdx/built-ins.json` (18 cases) + `fixtures/ng-pinned/component-blocks-v2.json` (10 NG12 probe cases) + two new loaders in `fixtures/index.ts` (`loadBuiltInFixtures()`, `loadNgPinnedCases()`) + 6-test smoke suite |
 
 Plus, from the prior merge session:
-- `9cd1aac4` — `origin/main` merged into PR #165 branch; server-authoritative observer architecture adopted (precedent #14); FR-22 parseWithFallback ported to `server-observers.ts`; precedents #12/#13/#14 renumbered to #18/#19/#20.
+- `9cd1aac4` — `origin/main` merged into PR #165 branch; server-authoritative observer architecture adopted (precedent #14); FR-22 parseWithFallback ported to `server-observers.ts`; precedents #12/#13/#14 renumbered to #20/#21/#22.
 
 **What's missing vs SPEC §7.1:**
 

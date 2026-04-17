@@ -4,7 +4,7 @@
  * Implements the canonical ProseMirror + CodeMirror pattern
  * (prosemirror.net/examples/codemirror/) adapted for TipTap's React NodeView.
  *
- * Architecture (Precedent #18 — direct PM dispatch, NOT y-codemirror.next):
+ * Architecture (Precedent #20 — direct PM dispatch, NOT y-codemirror.next):
  *   CM keystroke → forwardUpdate → PM transaction → y-prosemirror → CRDT
  *   PM change → NodeView.update(node) → computeChange → CM transaction
  *   Single `updating` boolean prevents feedback loops.

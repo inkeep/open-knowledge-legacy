@@ -4,7 +4,7 @@
 **Audit date:** 2026-04-14 (second pass)
 **Total findings:** 3 (0 high, 2 medium, 1 low)
 
-**Audit scope:** Second-pass coherence + factual verification focused on new sections added after first-pass resolution: §9.0 Precedents #18/#19, §9.7 Option C4 ErrorBoundary, §9.7a CSS variable bridge, §9.14 Nested CodeMirror, §9.15 Context Bridge Registry, NG13 custom-components-deferred, Q9, D12/D13. First-pass findings (H1/H2/M1/M2/M3) are resolved per `meta/_changelog.md` and not re-flagged.
+**Audit scope:** Second-pass coherence + factual verification focused on new sections added after first-pass resolution: §9.0 Precedents #20/#21, §9.7 Option C4 ErrorBoundary, §9.7a CSS variable bridge, §9.14 Nested CodeMirror, §9.15 Context Bridge Registry, NG13 custom-components-deferred, Q9, D12/D13. First-pass findings (H1/H2/M1/M2/M3) are resolved per `meta/_changelog.md` and not re-flagged.
 
 **Verification tiers executed:**
 - T1 (own codebase): 13 claims verified across 3 subagent dispatches
@@ -124,8 +124,8 @@ All CM6 packages referenced in §9.14 (`@codemirror/view`, `@codemirror/state`, 
 
 | Check | Status |
 |---|---|
-| §9.0 Precedent #19 (Context Bridge Registry) consistent with §9.15 design body | CONFIRMED |
-| §9.0 Precedent #18 (Nested CodeMirror in ProseMirror) consistent with §9.14 design body | CONFIRMED |
+| §9.0 Precedent #21 (Context Bridge Registry) consistent with §9.15 design body | CONFIRMED |
+| §9.0 Precedent #20 (Nested CodeMirror in ProseMirror) consistent with §9.14 design body | CONFIRMED |
 | D12 (Context Bridge Registry) locked decision consistent with §9.15 | CONFIRMED |
 | D13 (CM-in-PM direct dispatch) locked decision consistent with §9.14 | CONFIRMED |
 | Q9 (React Compiler + dynamic Context.Provider chains) correctly identified as open | CONFIRMED |

@@ -348,9 +348,9 @@ Four research subagents (fumadocs-container-behavior, fumadocs-ecosystem, storyb
 
 **Two new architectural precedents** (extend the 11 CLAUDE.md precedents):
 
-- **Precedent #18 — Direct PM dispatch for nested editors.** Embedded editors inside PM NodeViews always dispatch PM transactions, never bind directly to Y types. Prevents dual-observer CRDT conflicts with y-prosemirror.
+- **Precedent #20 — Direct PM dispatch for nested editors.** Embedded editors inside PM NodeViews always dispatch PM transactions, never bind directly to Y types. Prevents dual-observer CRDT conflicts with y-prosemirror.
 
-- **Precedent #19 — Context Bridge Registry for compound React components across NodeView portals.** Ancestor NodeViews publish React Context values to a registry keyed by PM node identity; descendant NodeViews walk the PM tree, look up ancestor bridges, and re-provide in their own React subtree. Solves the TipTap portal architecture's inability to propagate context from parent NodeView to child NodeView.
+- **Precedent #21 — Context Bridge Registry for compound React components across NodeView portals.** Ancestor NodeViews publish React Context values to a registry keyed by PM node identity; descendant NodeViews walk the PM tree, look up ancestor bridges, and re-provide in their own React subtree. Solves the TipTap portal architecture's inability to propagate context from parent NodeView to child NodeView.
 
 **Functional requirements added (FR-24..FR-28, FR-30..FR-35):**
 
@@ -375,7 +375,7 @@ Four research subagents (fumadocs-container-behavior, fumadocs-ecosystem, storyb
 
 **New sections (spec ~1500 → ~1900 lines):**
 
-- §9.0 Architectural precedents (introduces Precedent #18 + #19)
+- §9.0 Architectural precedents (introduces Precedent #20 + #19)
 - §9.7a Fumadocs CSS Integration (full globals.css addition, ~80 LoC, with explicit NOT-imported rationale)
 - §9.14 Nested Editor Architecture (CM-in-PM synthesis + data flow + keybinding contract + extension reuse + lazy-init strategy; references research report §§1,3,6,7,8,10,11 for detail)
 - §9.15 Context Bridge Registry — placeholder pending research subagent #26; captures architectural commitment, FR-27 contract shape, rejected alternatives, research-tracking
@@ -463,8 +463,8 @@ Context Bridge Registry research subagent (task #26, `_nest:research-context-bri
 | §17 ASK_FIRST | §17 | Added: fork/monkey-patch of @tiptap/react/@radix-ui/fumadocs-ui; SourceEditor.tsx edits beyond factory extraction; fumadocs CSS imports beyond §9.7a; reintroduction of `.open-knowledge/components.ts` (NG13) |
 
 **Architectural precedents** now locked:
-- **#18 — Direct PM dispatch for nested editors** (established by FR-30..FR-35 + §9.14)
-- **#19 — Context Bridge Registry for compound React components across NodeView portals** (established by FR-27 + §9.15)
+- **#22 — Direct PM dispatch for nested editors** (established by FR-30..FR-35 + §9.14)
+- **#21 — Context Bridge Registry for compound React components across NodeView portals** (established by FR-27 + §9.15)
 
 **Implementation sequencing reflects risk-gating:**
 
@@ -533,9 +533,9 @@ Spot-checked major clusters (all PASSED):
 
 **Built-ins registry (FR-8 + §9.2 + D3):** 18 components named (16 fumadocs + Mermaid + Audio shadcn wrappers). Per-component prop schemas extracted via react-docgen-typescript at build time (§9.9). All decisions made (D1, D3, D6, D8). No dependency on Out of Scope.
 
-**Context Bridge Registry (FR-27, FR-29, §9.15, Precedent #19):** architecture spec'd with reference implementation code sketches; risks enumerated with mitigations; 3P dependency (Radix contexts via fumadocs-ui 16.1.0) pinned; integration feasibility confirmed through hands-on research (prior art in PixiJS / FluentUI / drei); acceptance criteria verifiable via CB01-CB15 + M14. Phase 0 prototype (Q9) is implementation-gating — acknowledged explicitly in §13 Next actions step 1 + §17 STOP_IF.
+**Context Bridge Registry (FR-27, FR-29, §9.15, Precedent #21):** architecture spec'd with reference implementation code sketches; risks enumerated with mitigations; 3P dependency (Radix contexts via fumadocs-ui 16.1.0) pinned; integration feasibility confirmed through hands-on research (prior art in PixiJS / FluentUI / drei); acceptance criteria verifiable via CB01-CB15 + M14. Phase 0 prototype (Q9) is implementation-gating — acknowledged explicitly in §13 Next actions step 1 + §17 STOP_IF.
 
-**Nested CodeMirror (FR-30..FR-35, §9.14, Precedent #18):** architecture + reference implementation + test plan + risk matrix all present. No new npm dependencies. Strong reuse via `createNestedCMExtensions` factory. Acceptance: M15 + CM-in-PM research §10 test plan.
+**Nested CodeMirror (FR-30..FR-35, §9.14, Precedent #20):** architecture + reference implementation + test plan + risk matrix all present. No new npm dependencies. Strong reuse via `createNestedCMExtensions` factory. Acceptance: M15 + CM-in-PM research §10 test plan.
 
 **Option C4 render-failure editability (FR-24 + §9.7):** ComponentErrorBoundary rewritten with `retry`, `childrenFallback`, `sourceRaw` read-only display; key-on-attrs auto-retry in JsxComponentView + JsxInlineView. Asymmetry table documents parse/render failure difference. Acceptance: EB-series tests (implementation-time) + documented in §9.7.
 
@@ -560,7 +560,7 @@ Spot-checked major clusters (all PASSED):
 - **Risks & mitigations** (24+ rows covering all FRs + Context Bridge risks) ✓
 - **Future Work** with Explored/Identified/Noted tiers ✓
 - **Agent constraints** (SCOPE + EXCLUDE + STOP_IF + ASK_FIRST) ✓
-- **Architectural precedents** #18 + #19 explicitly introduced ✓
+- **Architectural precedents** #20 + #21 explicitly introduced ✓
 
 ### Baseline commit
 
@@ -589,16 +589,16 @@ Spec is unambiguous at the architecture level. Implementation-time discoveries c
 
 ## 2026-04-14 — Re-audit pass (second cycle, opus)
 
-User request: one more audit pass after finalize given the volume of post-first-audit changes (FR-27/29 Context Bridge Registry, §9.15, §9.14 nested CM, Precedents #18 + #19, §9.7a CSS bridge, Option C4 ErrorBoundary rewrite, fidelity-priority cascade from fumadocs/Storybook/Context Bridge research).
+User request: one more audit pass after finalize given the volume of post-first-audit changes (FR-27/29 Context Bridge Registry, §9.15, §9.14 nested CM, Precedents #20 + #21, §9.7a CSS bridge, Option C4 ErrorBoundary rewrite, fidelity-priority cascade from fumadocs/Storybook/Context Bridge research).
 
 Before re-spawning: prior `audit-findings.md` (H1/H2/M1/M2/M3) and `design-challenge.md` (Findings 1-10) already applied and captured in prior changelog entries. Files will be overwritten by this pass — latest state captured below. Carry-forwards `audit-findings-t1-carryforward.md` and `audit-findings-t3-carryforward.md` preserved (out of audit scope, not overwritten).
 
 Second-pass audit focus areas (NEW since first audit):
 - FR-27 / FR-29 / §9.15 Context Bridge Registry (R1 scope capture, publish/subscribe model, bridgeId scheme, 1.5 flags × fumadocs-ui 16.1.0 prior art)
-- §9.14 Nested CodeMirror architecture (FR-30..FR-35, Precedent #18)
+- §9.14 Nested CodeMirror architecture (FR-30..FR-35, Precedent #20)
 - §9.7a Fumadocs CSS variable bridge (~80 LoC in globals.css, token mapping)
 - Option C4 ErrorBoundary (chrome + Retry + childrenFallback + sourceRaw read-only + key-on-attrs auto-retry)
-- §9.0 Architectural Precedents section (Precedents #18 + #19)
+- §9.0 Architectural Precedents section (Precedents #20 + #21)
 - NG13 custom-components-deferred scope reversal (flipped D9/D10)
 - Fidelity-first reframing (use fumadocs components directly, not rebuild)
 
@@ -639,7 +639,7 @@ Opus auditor returned 3 findings (0 high, 2 medium, 1 low). Opus challenger retu
 2. **Fallback 1:** scope-prop forwarding through bridge store.
 3. **Fallback 2 (retreat):** hybrid architecture — keep 12-14 leaf components as direct fumadocs-ui imports (100% fidelity, no bridge needed); pattern-copy the 4-6 compound components (~300 LoC); eliminate Context Bridge for compounds entirely. Retreat budget: ~2 days. Does NOT reopen D12 — D12's fidelity-first stance holds for leaves; the retreat is scoped to compounds only where fidelity is mostly chrome. Same cascade documented in §15 FR-27 R1 risk row, §13 Next Actions step 1, and §17 STOP_IF.
 
-**[Challenger M1] APPLY — §9.14 framing leads with NG10 foundational-infrastructure.** §9.14 opening rewritten: "Establishes the foundational CM-in-PM infrastructure (Architectural Precedent #18) that serves both `rawMdxFallback` (P0, this spec) and the future per-block source-mode toggle (NG10, deferred). The investment is proportional to the platform primitive it creates..." Communicates proportionality; D13 rationale unchanged.
+**[Challenger M1] APPLY — §9.14 framing leads with NG10 foundational-infrastructure.** §9.14 opening rewritten: "Establishes the foundational CM-in-PM infrastructure (Architectural Precedent #20) that serves both `rawMdxFallback` (P0, this spec) and the future per-block source-mode toggle (NG10, deferred). The investment is proportional to the platform primitive it creates..." Communicates proportionality; D13 rationale unchanged.
 
 **[Challenger M2] APPLY — §9.7a fumadocs-ui/style.css rejection enumerates all three specific conflicts.** Previous text named 2 conflicts (body styling + border-color reset). Now explicitly names 3 with code snippets: (1) `body { background-color; color }`, (2) `@layer base { *, *::before, *::after { border-color } }`, (3) `@variant dark (&:where(.dark, .dark *))` variant-strategy mismatch with our `@custom-variant dark`. Prevents future implementer from reopening the style.css import question.
 
@@ -748,7 +748,7 @@ Added to §7a header: 17-row mapping from each scenario series → primary test 
 All three verify+finalize gates held through this expansion. No decision reopens — all additions are coverage, clarification, or framing enhancements. Baseline commit still `699a27e`.
 ---
 
-## 2026-04-14 — Combined cascade: inline deferral (NG14) + always-visible invariant (Precedent #20)
+## 2026-04-14 — Combined cascade: inline deferral (NG14) + always-visible invariant (Precedent #22)
 
 User directives (three, in sequence):
 1. "we ALWAYS want to show all content so that the user is aware and can edit/fix/read all content. that's an invariant. ... when something is an invalid state, i think we need to use the same 'render embedded source editor' thing so people can fix it?"
@@ -788,9 +788,9 @@ Investigation confirmed: fumadocs-ui ships zero inline MDX components. The 18-co
 - §13 In Scope: salvage map entries, scope bullet, "Next actions" references all updated
 - §17 Agent constraints: scope narrowed for inline-relevant files
 
-### Always-visible content invariant (Precedent #20)
+### Always-visible content invariant (Precedent #22)
 
-**Precedent #20 added to §9.0:** two coupled invariants:
+**Precedent #22 added to §9.0:** two coupled invariants:
 1. No silent content hiding (no display:none on NodeViewContent, no read-only sourceRaw chrome, no data-* attribute hiding of tag names).
 2. Invalid states surface the embedded source editor (nested CM, §9.14).
 
@@ -808,21 +808,21 @@ Investigation confirmed: fumadocs-ui ships zero inline MDX components. The 18-co
 
 ### Net spec state
 
-Spec now at ~2500 lines (was ~2450 before this cascade — inline scaffold removal balanced by Precedent #20 additions + evidence file).
+Spec now at ~2500 lines (was ~2450 before this cascade — inline scaffold removal balanced by Precedent #22 additions + evidence file).
 Evidence files: 3 (custom-components-deferred, inline-component-editing-deferred, worldmodel).
 Changelog: this entry brings it to ~850 lines.
-All decisions still LOCKED (D0-D13) — this cascade adds no new decisions, just narrows scope (NG14 deferral) and adds a new architectural invariant (Precedent #20).
+All decisions still LOCKED (D0-D13) — this cascade adds no new decisions, just narrows scope (NG14 deferral) and adds a new architectural invariant (Precedent #22).
 ---
 
 ## 2026-04-14 — Re-audit pass (third cycle, opus)
 
-User request: one more audit pass after the combined NG14 inline deferral + Precedent #20 always-visible invariant cascade + D8 flip + Q10 Option A confirmation + STOP_IF hardening.
+User request: one more audit pass after the combined NG14 inline deferral + Precedent #22 always-visible invariant cascade + D8 flip + Q10 Option A confirmation + STOP_IF hardening.
 
 Before re-spawning: prior `audit-findings.md` (second-pass: M1/M2/L1) and `design-challenge.md` (second-pass: H1/H2/M1/M2/M3/L1/L2) already applied and captured in prior changelog entries. Files will be overwritten by this pass.
 
 Third-pass audit focus areas (NEW since second audit):
 - NG14 (inline-component-editing deferred): G2 rewrite, FR-2/FR-4/FR-5/FR-5b/FR-7/FR-10/FR-12/FR-14/FR-17a updates, §9.8 thin jsxInline shape, IN01-IN10 rewritten scenarios, D8 FLIPPED
-- Precedent #20 (always-visible content + unified invalid-state CM): §9.0, NG7a, FR-5a deleted, FR-9 rewrite, FR-19/FR-24 rewrite, §9.7 JsxComponentView COMPLETE rewrite (ErrorBoundary → invalid-state CM, symmetry table)
+- Precedent #22 (always-visible content + unified invalid-state CM): §9.0, NG7a, FR-5a deleted, FR-9 rewrite, FR-19/FR-24 rewrite, §9.7 JsxComponentView COMPLETE rewrite (ErrorBoundary → invalid-state CM, symmetry table)
 - I17 invariant (content-visibility PBT)
 - Q10 Option A confirmed (bridgeId in PluginState)
 - STOP_IF hardened language for FR-27 R1 (exhaust primary path with evidence before retreat)
@@ -835,7 +835,7 @@ Spawning opus auditor + challenger in parallel.
 
 ## 2026-04-14 — Third audit pass: findings assessed via /assess-findings (full protocol) + applied
 
-Auditor returned 12 findings (1 high, 7 medium, 4 low). Challenger returned 8 findings (2 high, 4 medium, 2 low). 17 unique after merging duplicates (Aud L4 + Chal H1; Aud M4/M5 + Chal H2). Root cause of all auditor + H/M challenger findings: NG14 + Precedent #20 cascade didn't fully propagate into code samples, test scenarios, and auxiliary sections; the FR-level definitions were updated but secondary references lagged.
+Auditor returned 12 findings (1 high, 7 medium, 4 low). Challenger returned 8 findings (2 high, 4 medium, 2 low). 17 unique after merging duplicates (Aud L4 + Chal H1; Aud M4/M5 + Chal H2). Root cause of all auditor + H/M challenger findings: NG14 + Precedent #22 cascade didn't fully propagate into code samples, test scenarios, and auxiliary sections; the FR-level definitions were updated but secondary references lagged.
 
 Full /assess-findings protocol applied (Phases 1-7). Phase 1 investigation: codebase + spec cross-reference for each finding. Phase 2 confidence: HIGH on all 17 (no web search needed — all findings internal coherence against spec's own invariants). Phase 6 communication: 16 APPLY, 1 APPLY PARTIALLY (Chal M1 — document trade-off, don't reverse), 0 DECLINE. Phase 7 Declined Findings Summary: empty (no findings declined).
 
@@ -845,7 +845,7 @@ Full /assess-findings protocol applied (Phases 1-7). Phase 1 investigation: code
 - [Aud H1] §9.4 jsxInline serializer rewritten from old attr-accessing code to thin-shape handler: `(node) => ({ type: 'html', value: node.textContent ?? '' })`
 - [Aud M1] §9.6 source-dirty observer guard: removed `&& node.type.name !== 'jsxInline'` — now checks jsxComponent only
 
-**Precedent #20 contradictions:**
+**Precedent #22 contradictions:**
 - [Aud M2, Chal L1] EB04 scenario + Next Actions step 7 rewritten: invalid-state CM (no Retry button)
 - [Aud M3] A11Y08 rewritten to test CM accessibility + aria-alert on error badge
 - [Aud M4, M5, Chal H2] CH04 + SH03 rewritten: CSS zero-footprint instead of `display: none`
@@ -864,7 +864,7 @@ Full /assess-findings protocol applied (Phases 1-7). Phase 1 investigation: code
 - User direction: "example potential implementation -- adjust as needed and as architecturally best as given my implementation deep level context"
 
 **M1 render-failure UX regression documented (challenger):**
-- §9.7 Precedent #20 symmetry table: added "Acknowledged trade-off" paragraph. PropPanel was available during render failure under Option C4; unified CM drops to raw-source editing. Accepted because: (1) built-in components rarely throw; (2) hybrid chrome re-introduces complexity; (3) unified mental model; (4) user directive authorized the trade-off.
+- §9.7 Precedent #22 symmetry table: added "Acknowledged trade-off" paragraph. PropPanel was available during render failure under Option C4; unified CM drops to raw-source editing. Accepted because: (1) built-in components rarely throw; (2) hybrid chrome re-introduces complexity; (3) unified mental model; (4) user directive authorized the trade-off.
 
 ### Architectural updates (2 items — both user-authorized)
 

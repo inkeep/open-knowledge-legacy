@@ -9,9 +9,9 @@
  *   Branch 1 (Wildcard): hover-revealed name badge + editable NodeViewContent.
  *   Branch 2 (Registered healthy): live React component + hover chrome
  *     (badge, gear→Popover PropPanel, add-child pill) + NodeViewContent.
- *   Branch 3 (Invalid-state): error badge + editable NodeViewContent (Precedent #20).
+ *   Branch 3 (Invalid-state): error badge + editable NodeViewContent (Precedent #22).
  *
- * Per Precedent #20: NodeViewContent is ALWAYS rendered, never display:none.
+ * Per Precedent #22: NodeViewContent is ALWAYS rendered, never display:none.
  */
 
 import type { NodeViewProps } from '@tiptap/core';
