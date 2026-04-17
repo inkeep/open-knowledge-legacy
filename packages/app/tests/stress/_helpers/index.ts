@@ -16,3 +16,13 @@ export {
   waitForActiveProviderSynced,
 } from './provider.ts';
 export { sidebarFileButton } from './sidebar.ts';
+export {
+  getSelectedItemSnapshot,
+  type SelectedItemSnapshot,
+  type SlashMenuWaitOptions,
+  slashMenu,
+  waitForSlashMenuClosed,
+  waitForSlashMenuFilteredBy,
+  waitForSlashMenuFirstOption,
+  waitForSlashMenuOpen,
+} from './slash-menu.ts';
