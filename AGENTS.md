@@ -112,7 +112,7 @@ These are patterns that ALL work in the repo should follow. Established during t
 12. **XmlFragment is authoritative for markdown state; Y.Text mirrors it under minimal mutation.** Server-side agent writes (and any future server-side mutation path) read the current XmlFragment, compose the delta at the markdown level, apply via `updateYFragment` (structural diff preserves user-content Items), then mirror Y.Text via `applyFastDiff` (character-level DMP `diff_main` preserves non-agent Y.Text Items and their origins). The template is `applyAgentMarkdownWrite` in `agent-sessions.ts`. A naive rebuild-from-Y.Text pattern (`syncTextToFragment`) destroys concurrent user XmlFragment content — Bug-A in `specs/2026-04-14-bridge-convergence-under-concurrent-writes/SPEC.md`. Applies to all server-side CRDT bridge mutations including V0-14's future `applyAgentUndo` handler. Cross-references precedent #11 (minimize CRDT mutation) and PR #128's D14 (no Y.Map for diagnostics).
 13. **Bridge invariants are auto-enforced and property-verified.** Four sub-principles:
     (a) **Named invariants are enforced by watchers, not by convention.** If an invariant is in CLAUDE.md (bridge, baseline, item-preservation), a per-transaction watcher asserts it on every enforcing-origin transaction in tests. Manual `assertBridgeInvariant` calls are reinforcement, not the primary guarantee.
-    (b) **Implicit time-coupling is a test smell.** Observer debounces go through an injected `Scheduler` so tests are deterministic; production gets `setTimeout` passthrough. `wait(ms)` in new bridge tests requires justification.
+    (b) **Settlement-based propagation, not wall-clock debounce.** The server observer bridge dispatches on `doc.on('afterAllTransactions', ...)` — deterministic, event-ordered, one settlement fire per outermost `doc.transact()` drain (`packages/server/src/server-observers.ts`, `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R4, D5-LOCKED). Observer callbacks flag dirty state (`xmlDirty` / `textDirty`); the settlement handler runs Observer A before Observer B so any Y.Text write is visible to B's read. The client observer (`packages/app/src/editor/observers.ts`) is a shell under precedent #14 — no debounce, no `Scheduler`. No wall-clock `setTimeout` in bridge code. The CI gate at `packages/server/src/bridge-no-wallclock.test.ts` grep-checks both files on every PR. `wait(ms)` in new bridge tests requires justification; prefer `awaitDocQuiescence(doc)` from `packages/app/tests/integration/test-harness.ts`.
     (c) **CRDT races are tested by message ordering, not wall-clock timing.** WebSocket-layer `pauseSync`/`resumeSync` reproduces races structurally. Ad-hoc observer disabling or `wait(N)` timing races are the old pattern.
     (d) **Example-based coverage is a floor, not a ceiling.** A multi-client convergence fuzzer (`bridge-convergence.fuzz.test.ts`) samples the continuous race space that hand-written scenarios cannot enumerate. D18 coverage gate ensures new bridge surfaces extend the fuzzer's op set. Replay via `STRESS_FUZZ_SEED=<n>`.
     Applies to all future bridge work. When a new bridge write surface is added (e.g., V0-14 agent-undo), the D18 coverage gate fails CI until a corresponding fuzzer op kind is added. Cross-references precedent #11 (minimize CRDT mutation), #12 (XmlFragment-authoritative).
@@ -304,7 +304,7 @@ Symlinks inside the content directory are fully supported. Design rationale and 
 - `src/page-identity.ts` — `extractPageTitle()`, `extractFrontmatterScalar()`, `parseFrontmatterMetadata()` — regex-based frontmatter field extraction (no YAML dependency)
 - `src/api-extension.ts` — HTTP API; includes save-version, rescue buffer, link-graph, and metrics endpoints
 - `src/cc1-broadcast.ts` — `CC1Broadcaster` + `isSystemDoc()` helper; pure-signal push over `__system__` Y.Doc (contract v1, 100 ms debounce)
-- `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline + 50ms debounce via injected `Scheduler`
+- `src/server-observers.ts` — `setupServerObservers()` + `OBSERVER_SYNC_ORIGIN`; server-authoritative Observer A (XmlFragment→Y.Text) and Observer B (Y.Text→XmlFragment) with per-document baseline. Settlement dispatch via `doc.on('afterAllTransactions', ...)` — one fire per outermost `doc.transact()` drain, Observer A before Observer B (precedent #13(b)). `onDispatch` test hook emits `ObserverDispatchKind` ('none' | 'a' | 'b') for Mutation-H validation.
 - `src/server-observer-extension.ts` — `createServerObserverExtension()`; Hocuspocus extension wiring via `openDirectConnection` per-document at `afterLoadDocument`, cleanup at `afterUnloadDocument`
 
 ## Package: cli
@@ -503,14 +503,14 @@ Y.Doc
 **Server-side (write path)** — `packages/server/src/server-observers.ts`:
 - Origin: `OBSERVER_SYNC_ORIGIN` (`LocalTransactionOrigin` object per precedent #1 — `context.origin === 'observer-sync'`, `skipStoreHooks: true`)
 - **Path A** (Y.Text in sync with baseline): uses `diffLines` with a content-comparison gate — skips paired delete+insert when Y.Text already has the added content at that offset, preserving CRDT Items
-- **Path B** (Y.Text diverged from baseline): uses hybrid diff3+DMP three-way merge (`mergeThreeWay`), then `applyFastDiff` (character-level DMP `diff_main`) for minimal CRDT mutations. Handles D8 deduplication, sub-line conflicts, and delete/edit conflicts losslessly (see `specs/2026-04-15-lossless-bridge-merge/SPEC.md`)
-- Debounced (50ms) via injected `Scheduler`; also handles frontmatter sync (reads `Y.Map('metadata').get('frontmatter')` and prepends on serialize)
+- **Path B** (Y.Text diverged from baseline): uses hybrid diff3+DMP three-way merge (`mergeThreeWay`), then `applyFastDiff` (character-level DMP `diff_main`) for minimal CRDT mutations. Handles D8 deduplication, sub-line conflicts, and delete/edit conflicts losslessly (see `specs/2026-04-15-lossless-bridge-merge/SPEC.md`). `mergeThreeWay`'s post-condition (`assertContentPreservation` — invariant c + order-preservation) throws `BridgeMergeContentLossError` in dev/test; prod logs + silent `saveInMemoryCheckpoint` + returns `err.info.result` so the editor stays responsive (precedent #11(b), SPEC 2026-04-16 §6 R1/R7, D3-LOCKED)
+- Settlement-dispatched via `doc.on('afterAllTransactions', ...)` — observer callbacks set `xmlDirty` on non-self, non-paired transactions; handler runs the sync once per drain (precedent #13(b), SPEC 2026-04-16 §6 R4, D5-LOCKED). No wall-clock debounce, no injected `Scheduler`.
+- Also handles frontmatter sync (reads `Y.Map('metadata').get('frontmatter')` and prepends on serialize)
 - Fires on both `transaction.local=true` (server-side writes) and `transaction.local=false` (client edits arriving via WebSocket)
 
-**Client-side (baseline tracking only)** — `packages/app/src/editor/observers.ts`:
-- Origin: `ORIGIN_TREE_TO_TEXT` (retained for origin guards; no cross-CRDT write performed)
-- Maintains `lastSyncedXmlMd` for baseline-refresh reasoning and Bug-B conditional-refresh logic
-- **Bug-B fix (US-009):** conditional baseline refresh on remote transactions — if a local debounce is pending, `lastSyncedXmlMd` is NOT refreshed to the post-remote state
+**Client-side (shell only, no CRDT writes)** — `packages/app/src/editor/observers.ts`:
+- Origin: `ORIGIN_TREE_TO_TEXT` (object identity retained for `BRIDGE_ENFORCING_ORIGINS` membership; no cross-CRDT write performed)
+- Observer A callback is a no-op under precedent #14 (server owns XmlFragment → Y.Text propagation on its own doc). The subscription keeps the callback slot wired for future read-side instrumentation and symmetric teardown.
 
 ### Observer B (Y.Text → XmlFragment)
 
@@ -518,12 +518,12 @@ Y.Doc
 - Origin: `OBSERVER_SYNC_ORIGIN`
 - Parses Y.Text markdown via `mdManager.parse()`, applies to XmlFragment via `updateYFragment()`
 - Handles frontmatter sync: reads `stripFrontmatter(md)` and writes `Y.Map('metadata').set('frontmatter', ...)`
-- Debounced (50ms) via injected `Scheduler`
+- After `updateYFragment`, canonicalizes Y.Text via `applyFastDiff` if the raw Y.Text bytes differ from the post-update serialization (preserves the bridge invariant `ytext === serialize(fragment)` after every B drain — replaces the debounce-era reliance on Observer A's subsequent Path B firing). The canonicalization write runs under `OBSERVER_SYNC_ORIGIN` so observers self-skip the inner drain.
+- Settlement-dispatched via `afterAllTransactions` (same handler as Observer A; A runs before B within one drain).
 
-**Client-side (baseline tracking only)** — `packages/app/src/editor/observers.ts`:
-- Origin: `ORIGIN_TEXT_TO_TREE` (retained for origin guards; no cross-CRDT write performed)
-- Maintains `lastSyncedYText` baseline
-- Deferred while user is typing in WYSIWYG (TYPING\_DEFER\_MS=300ms)
+**Client-side (shell only)** — `packages/app/src/editor/observers.ts`:
+- Origin: `ORIGIN_TEXT_TO_TREE` (object identity retained for the enforcing set)
+- Observer B callback performs diagnostic parse validation: attempts `mdManager.parse(body)`; transient mid-edit errors (`SyntaxError`, `VFileMessage`, "Invalid content for node" `RangeError`) swallowed at debug log. Non-transient failures fire `onSyncError('text-to-tree', err)`. No CRDT write; no debounce; no typing-defer state (deleted in US-011 — D14 DELEGATED outcome = option (a) DELETE).
 
 ### applyAgentMarkdownWrite (XmlFragment-authoritative — precedent #10)
 
@@ -602,8 +602,9 @@ Files: `packages/app/tests/integration/test-harness.ts`, `packages/app/tests/int
 **Server-side state inspector (FR-13 / US-002):**
 - `getServerState(server, docName): ServerDocState | null` → returns `{ ytext, fragment, md, fullMd, frontmatter, metaMap, activityMap, connectionCount }` or `null` if doc not loaded. Encapsulates the `(server.instance as any).hocuspocus.documents.get(...)` access — tests should use this helper instead of reaching into hocuspocus internals.
 
-**Observer scheduler DI (FR-15 / US-004):**
-- `createManualScheduler(): ManualScheduler` → test helper with `flush()` (fire all pending synchronously), `advanceTime(ms)`, `pending()`. Pass as `ObserverDeps.scheduler` in `setupObservers` for deterministic debounce control. Production default: arrow-wrapped passthrough to `globalThis.setTimeout`/`clearTimeout`.
+**Structural quiescence gate (bridge-correctness US-010 / SPEC 2026-04-16 §6 R5):**
+- `awaitDocQuiescence(doc, opts?)` in `packages/app/tests/integration/test-harness.ts` → resolves once the doc has been quiet on `afterAllTransactions` for N consecutive microtasks (default 2). Use instead of wall-clock `wait(ms)` when a test needs to await pending observer work (including the settlement dispatcher's inner OBSERVER_SYNC_ORIGIN cascades) to settle. Does NOT cover inter-doc / inter-client WebSocket propagation — combine with `assertAllConverged` for that.
+- Observer dispatch hook for unit tests: the server observer accepts `onDispatch?: (kind: ObserverDispatchKind) => void` in `SetupServerObserversOpts`, invoked once per drain with `'none' | 'a' | 'b'`. Used by T8/T9/T10 paired-write regression tests to assert paired drains dispatch `'none'` (reverting either paired-write branch produces `'a'` or `'b'`). See `packages/server/src/server-observers.test.ts`.
 
 **Network control (FR-16 / US-010, `network-control.ts`):**
 - `ControllableWebSocket` — WebSocket proxy with minimal `pauseInbound()` / `resumeInbound()`. Use via `createTestClient(port, docName, { syncControl: true })` then `client.pauseSync()` / `client.resumeSync()`. Default is passthrough — zero change in default test coverage. Deliberately no `delaySync` / `dropInbound` / `inspectSyncQueue` in v1 (FR-16 minimal surface — add when a concrete reproducer motivates them).
