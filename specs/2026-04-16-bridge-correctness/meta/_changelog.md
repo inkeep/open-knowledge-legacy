@@ -138,3 +138,49 @@ Deep verification of the 4 HIGH challenger findings:
 - **Baseline commit**: `432a834b` (unchanged; current main HEAD; spec grounded on this).
 
 - **Spec finalized.** Ready for implementation. `/spec` Phase 8 complete.
+
+## 2026-04-16 — Decision Log cascade from yjs-14-ecosystem-adoption research
+
+New evidence from `reports/yjs-14-ecosystem-adoption/` (created this session, 7 source-traced evidence files + /audit pass + 3 Path C follow-ups) materially strengthens D4 (single-CRDT collapse out-of-scope).
+
+**D4 update inlined into SPEC.md §10 Decision Log:** Added "D4 evidence update (2026-04-16)" block with 6 source-traced findings that confirm the LOCKED posture:
+1. Yjs 14 + Hocuspocus structurally incompatible at the import layer (lib0 split + import-name split)
+2. TipTap + Hocuspocus both shipped fresh pinning `yjs ^13` (2026-04-08 and 2026-04-16 respectively) — not migrating
+3. BlockNote "design partner" sharpened framing: zero public code progress 2.5 months post-FOSDEM-2026
+4. Dual-view binding gap is ecosystem-universal (Loro has same limitation as @y/codemirror; choosing Loro does NOT unlock dual-view)
+5. Wire-format interop empirically CONFIRMED (28 cross-version decode directions passed) — removes one migration risk
+6. dmonad himself flagged v14 as broken alpha; 0.275% npm adoption ratio
+
+**Tactical surprise:** Independent production bug surfaced during research — `patches/y-prosemirror@1.3.7.patch` only patches y-prosemirror, but production code imports from `@tiptap/y-tiptap` (vendored fork, unpatched). Destructive-delete safety net bypassed. Should be a separate story on Yjs 13 today, independent of any migration decision.
+
+**§3 Non-goals updated** with cross-reference to §10 D4 evidence update.
+
+**No new decisions locked.** D4 framing unchanged; just strengthened with concrete 2026-04-16 ecosystem evidence. The collapse is more clearly a SEPARATE spec that waits until (a) Yjs 14 stable ships, (b) Hocuspocus/TipTap publish v14 peer-deps, (c) BlockNote ships production code with `@y/*` deps.
+
+## 2026-04-17 — Implementation shipped: Bucket 0, A, C (Bucket B deferred)
+
+Stories US-001, US-002, US-003, US-004, US-005, US-006, US-007, US-008, US-013, US-014, US-015 landed on `spec/bridge-correctness`.
+
+**Bucket 0 (harm reduction):**
+- US-001: typed `context.paired` marker + symmetric Observer B short-circuit + `MANAGED_RENAME_ORIGIN` export + BRIDGE_ENFORCING_ORIGINS addition (6→7).
+- US-002: T8/T9/T10 paired-write regression tests at the observer layer; Mutation H validation matrix committed.
+
+**Bucket A (correctness guardrail + silent recovery):**
+- US-003: `BridgeMergeContentLossError` + `assertContentPreservation` (maximal-unique-line-substring + D9 order-preservation). K3 calibration: split segments on newline, drop whitespace-only lines.
+- US-004: `saveInMemoryCheckpoint` primitive + `parseCheckpoint` + `formatCheckpointBodyLine`; Q7/Q8 resolved empirically.
+- US-005: Observer A Path B wraps `mergeThreeWay` in try/catch scoped to `BridgeMergeContentLossError`; emits structured log, writes silent checkpoint via `queueMicrotask`, applies merge as-computed in prod. Threads `shadow`/`contentRoot`/`docName`/`getBranch` through `SetupServerObserversOpts`; both standalone.ts and hocuspocus-plugin.ts call sites updated.
+- US-006: TimelinePanel kind-aware rendering (three variants: `'save'`, `'bridge-merge-loss'`, `'external-change-rescue'`); pure helpers exported + unit-tested.
+- US-007: reconcile-delete + branch-switch rescue write paths migrated to `saveInMemoryCheckpoint`; `/api/rescue` reader merges flat-file + timeline-ref results. Shutdown-flush path retained flat-file per SPEC.
+- US-008: fuzz sample count gated by env (`STRESS_FUZZ_NIGHTLY=1` → 10000; `STRESS_FUZZ_PR=1` → 1000; default 25). R8 oracle-check relationship table at `evidence/oracle-check-relationships.md`.
+
+**Bucket C (telemetry + residual characterization):**
+- US-013: `bridgeMergeContentLoss` + `bridgeMergeCheckpointCreated` counters added to `ReconciliationMetrics` (US-005 wiring); metrics.test.ts coverage.
+- US-014: R0h/R11 evidence file `evidence/seed-1776386718697-post-bucket-0-rate.md` with reproduction command, D7 framing, Q4 partial resolution.
+
+**Cross-cutting:**
+- US-015: CLAUDE.md precedent #1 extended with `context.paired` marker; precedent #11(b) rewritten with post-condition + telemetry language; origin-guard truth table refreshed; STOP rules added for `BridgeMergeContentLossError` catch-site discipline and paired marker non-removal.
+
+**Deferred (Bucket B settlement migration):**
+- US-009 (afterAllTransactions dispatch), US-010 (awaitDocQuiescence), US-011 (client observer audit), US-012 (setTimeout grep gate). STOP_IF risk and test-harness semantics change were judged too large for this iteration — the 50 ms `setTimeout` debounce via injected Scheduler is still the observer dispatch mechanism. Paired-write short-circuits (US-001) already cancel debounces synchronously on the hot paths that caused seed-1776325179241. Bucket B will land in a follow-up story when the test harness is prepared to migrate off ManualScheduler.flush() semantics.
+
+**Regression:** bun run check green at ship. 541 unit tests, 159 integration tests pass.
