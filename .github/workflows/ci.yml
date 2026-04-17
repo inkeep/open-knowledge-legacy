@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       # Node 22+ is required because turbo's `^build` pulls in
-      # `open-knowledge-app#build` (vite build) transitively via the cli
+      # `@inkeep/open-knowledge-app#build` (vite build) transitively via the cli
       # package's workspace dep on the app. Vite's config loader evaluates
       # the bundled config with native `import()`, and externalized workspace
       # deps that resolve to `.ts` sources (e.g., `@inkeep/open-knowledge-server`
