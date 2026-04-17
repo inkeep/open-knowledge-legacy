@@ -9,8 +9,8 @@ export function EditorFooter({ stats }: EditorFooterProps) {
   const tokenLabel = stats.tokens === null ? '—' : stats.tokens.toLocaleString();
   const tokenAriaLabel =
     stats.tokens === null
-      ? 'Approximate tokens (GPT-4 / Claude-class models): not available'
-      : `Approximate tokens (GPT-4 / Claude-class models): ${stats.tokens}`;
+      ? 'Approximate tokens (GPT-5 / Claude-class models): not available'
+      : `Approximate tokens (GPT-5 / Claude-class models): ${stats.tokens}`;
   return (
     <section
       aria-label="Document statistics"
@@ -29,7 +29,7 @@ export function EditorFooter({ stats }: EditorFooterProps) {
         >
           <span className="tabular-nums">{tokenLabel}</span> tokens
         </TooltipTrigger>
-        <TooltipContent>Approximate token count (GPT-4 / Claude-class models)</TooltipContent>
+        <TooltipContent>Approximate token count (GPT-5 / Claude-class models)</TooltipContent>
       </Tooltip>
     </section>
   );

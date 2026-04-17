@@ -9,7 +9,7 @@ async function getEncoder(): Promise<Tiktoken> {
     loading = (async () => {
       const [{ Tiktoken: Ctor }, { default: ranks }] = await Promise.all([
         import('js-tiktoken/lite'),
-        import('js-tiktoken/ranks/cl100k_base'),
+        import('js-tiktoken/ranks/o200k_base'),
       ]);
       encoding = new Ctor(ranks);
       return encoding;
@@ -18,7 +18,7 @@ async function getEncoder(): Promise<Tiktoken> {
   return loading;
 }
 
-/** Encode text using cl100k_base (GPT-4 / Claude-approximate). Lazy — loads the ~1 MB rank table on first call. */
+/** Encode text using o200k_base (GPT-4o / GPT-5). Lazy — loads the rank table on first call. */
 export async function tokenEncode(text: string): Promise<number[]> {
   const enc = await getEncoder();
   return enc.encode(text);
