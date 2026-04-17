@@ -26,10 +26,37 @@ import { Textbox } from './icons/textbox';
 import { ThemeToggle } from './ThemeToggle';
 import { displayAuthor, formatRelativeTime } from './TimelinePanel';
 
-interface RenameResponse {
-  ok: boolean;
-  renamed?: RenamedDocMapping[];
-  error?: string;
+type RenameResponse =
+  | {
+      ok: true;
+      renamed: RenamedDocMapping[];
+      rewrittenDocs: Array<{ docName: string; rewrites: number }>;
+    }
+  | { ok: false; error: string };
+
+function isRenamedDocMapping(v: unknown): v is RenamedDocMapping {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { fromDocName: unknown }).fromDocName === 'string' &&
+    typeof (v as { toDocName: unknown }).toDocName === 'string'
+  );
+}
+
+function isRenameResponse(v: unknown): v is RenameResponse {
+  if (typeof v !== 'object' || v === null) return false;
+  const obj = v as Record<string, unknown>;
+  if (obj.ok === true) {
+    return (
+      Array.isArray(obj.renamed) &&
+      obj.renamed.every(isRenamedDocMapping) &&
+      Array.isArray(obj.rewrittenDocs)
+    );
+  }
+  if (obj.ok === false) {
+    return typeof obj.error === 'string';
+  }
+  return false;
 }
 
 interface EditorHeaderProps {
@@ -96,13 +123,16 @@ export function EditorHeader({
   // Captures activeDocName at rename entry to prevent wrong-doc rename
   // if the user navigates mid-rename and blur fires with the new doc's closure.
   const renameDocRef = useRef<string | null>(null);
-  // Last normalized value the server rejected. Blocks re-POST of the same value
-  // on every outside-click blur, which would hammer the server on 409/503.
+  // Last normalized value the server (or network) rejected. Blocks re-POST of
+  // the same value on every outside-click blur; the user must edit the input
+  // (which clears this ref in onChange) to retry.
   const lastFailedValueRef = useRef<string | null>(null);
 
   // Exit rename mode when the active doc changes (e.g. navigation).
-  // cancelRequestedRef suppresses the blur→commitRename race on unmount.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: activeDocName is an intentional trigger-only dep, not a missing one
+  // cancelRequestedRef suppresses the blur→commitRename race on unmount, and
+  // is also checked post-await in commitRename to skip side effects if the user
+  // navigated while a rename was in flight.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: activeDocName is a trigger-only dep — the effect body only needs to re-run on change, not to read its value.
   useEffect(() => {
     cancelRequestedRef.current = true;
     renameDocRef.current = null;
@@ -176,7 +206,7 @@ export function EditorHeader({
 
     // Validation
     if (!isValidNodeName(normalized)) {
-      setRenameError('Name must be a single path segment');
+      setRenameError('Name can’t be empty or contain / or \\');
       return;
     }
 
@@ -196,32 +226,50 @@ export function EditorHeader({
         body: JSON.stringify({ docName: docName, newDocName }),
       });
 
-      let data: RenameResponse;
+      // Post-await cancel check: if the user navigated while the fetch was in
+      // flight, the reset-effect already set cancelRequestedRef. Skip all side
+      // effects (close/emit/hash-navigate) so we don't force the user away from
+      // the doc they navigated to.
+      if (cancelRequestedRef.current) return;
+
+      let raw: unknown;
       try {
-        data = (await res.json()) as RenameResponse;
+        raw = await res.json();
       } catch (parseErr) {
-        console.warn(
-          '[EditorHeader] rename response JSON parse failed:',
+        console.warn('[EditorHeader] rename response JSON parse failed', {
           parseErr,
-          'status:',
-          res.status,
-        );
-        setRenameError(`Server returned an invalid response (HTTP ${res.status})`);
-        setIsRenameLoading(false);
-        commitInProgressRef.current = false;
+          status: res.status,
+          docName,
+          newDocName,
+        });
+        setRenameError(`Server error (HTTP ${res.status})`);
         lastFailedValueRef.current = normalized;
         return;
       }
 
-      if (!res.ok || !data.ok) {
-        setRenameError(data.error ?? 'Failed to rename');
-        setIsRenameLoading(false);
-        commitInProgressRef.current = false;
+      if (!isRenameResponse(raw)) {
+        console.warn('[EditorHeader] rename response shape invalid', {
+          status: res.status,
+          docName,
+          newDocName,
+        });
+        setRenameError(`Server error (HTTP ${res.status})`);
         lastFailedValueRef.current = normalized;
         return;
       }
 
-      const renamed: RenamedDocMapping[] = Array.isArray(data.renamed) ? data.renamed : [];
+      if (!raw.ok) {
+        setRenameError(raw.error || 'Failed to rename path');
+        lastFailedValueRef.current = normalized;
+        return;
+      }
+      if (!res.ok) {
+        setRenameError(`Server error (HTTP ${res.status})`);
+        lastFailedValueRef.current = normalized;
+        return;
+      }
+
+      const renamed = raw.renamed;
       const nextActiveDocName = remapActiveDocName(docName, renamed);
 
       for (const entry of renamed) closeDocument(entry.fromDocName);
@@ -238,7 +286,7 @@ export function EditorHeader({
         window.location.hash = hashFromDocName(nextActiveDocName);
       }
     } catch (err) {
-      console.warn('[EditorHeader] rename failed:', err);
+      console.warn('[EditorHeader] rename failed', { err, docName, newDocName, normalized });
       setRenameError('Network error — please try again');
       setIsRenameLoading(false);
       commitInProgressRef.current = false;
@@ -320,7 +368,7 @@ export function EditorHeader({
                 {displayName}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Click to rename</TooltipContent>
+            <TooltipContent>Rename</TooltipContent>
           </Tooltip>
         ) : (
           <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
