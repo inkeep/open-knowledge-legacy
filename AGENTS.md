@@ -604,6 +604,8 @@ Integration tests use per-test docNames via `createTestClient(port)` which auto-
 
 Client lifecycle is inside the test body via `try/finally` — NOT via `beforeEach/afterEach`. This is required for `test.concurrent()` correctness (the shared `let client` pattern races under concurrent mode).
 
+**Playwright E2E tests** (`packages/app/tests/stress/*.e2e.ts`) follow the same isolation principle. Each test creates its own unique doc via `POST /api/create-page` and seeds content via `POST /api/agent-write-md` with an explicit `docName` + `position: 'replace'`. Navigation uses sidebar-scoped locators (`[data-slot="sidebar-container"]`) or direct hash URL (`page.goto(\`${BASE}/#/${docName}\`)`). **STOP:** Do not use hardcoded `'test-doc'` in Playwright tests — Playwright runs with parallel workers by default and shared doc names cause cross-worker CRDT state corruption. The reference pattern is `docs-open.e2e.ts`'s `seedDocs` helper. Also: the API body key for write mode is `position` (not `mode`) — `mode: 'replace'` silently falls back to `append`.
+
 ### Observer bridge coverage
 
 Changes to `observers.ts` or `server-observers.ts` require **multi-client test coverage**, not just single-client tests. A remote peer's WYSIWYG edit can arrive as a Y.Text-only transaction during a local user's mid-sync on XmlFragment — this creates divergence states that single-client tests cannot reproduce. PR #43's multi-client test matrix proved this is a real production trigger. The C1-C9 integration tests (`packages/app/tests/integration/c1-*.test.ts` through `c9-*.test.ts`) exercise the full server-authoritative bridge under multi-client concurrent writes.
