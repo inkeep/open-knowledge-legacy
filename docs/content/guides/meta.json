@@ -6,6 +6,7 @@
     "configuration",
     "mcp-integration",
     "content-filtering",
+    "timeline",
     "collaboration-recovery"
   ]
 }
