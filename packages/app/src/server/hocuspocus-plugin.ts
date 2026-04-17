@@ -306,7 +306,12 @@ export function hocuspocusPlugin(): Plugin {
           // Let the Hocuspocus onRequest extensions handle API routes
           // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
           await hocuspocus.hooks('onRequest', { request: req, response: res } as any);
-          if (res.writableEnded) return;
+          // A streaming handler (e.g. `/api/local-op/auth/login` NDJSON) calls
+          // `res.writeHead(200)` and returns before `res.end()` runs, so
+          // `writableEnded` is still false here while `headersSent` is already
+          // true. Treat either as "a handler owns the response" and skip the
+          // 404 fallback — otherwise `setHeader()` throws ERR_HTTP_HEADERS_SENT.
+          if (res.writableEnded || res.headersSent) return;
           // Unhandled /api/* route — return 404 JSON, do NOT fall through
           // to the SPA fallback which would return index.html.
           res.statusCode = 404;

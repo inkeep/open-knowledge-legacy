@@ -731,20 +731,24 @@ export class SyncEngine {
         // ── 6. Write the tree from the isolated index ──────────────────────────
         const newTreeSha = (await handle.git.raw(['write-tree'])).trim();
 
-        // ── 7. Skip if tree is identical to what was last pushed (D33 diff) ────
-        if (this.lastPushedSha) {
-          let prevTreeSha = '';
-          try {
-            prevTreeSha = (
-              await handle.git.raw(['rev-parse', `${this.lastPushedSha}^{tree}`])
-            ).trim();
-          } catch {
-            // lastPushedSha may no longer exist — treat as changed
-          }
-          if (prevTreeSha && prevTreeSha === newTreeSha) {
-            this.transitionTo('idle');
-            return; // nothing to push
-          }
+        // ── 7. Skip if tree is identical to HEAD's tree (prevents empty commits) ─
+        //       Authoritative "nothing changed" check: compare against HEAD
+        //       rather than `lastPushedSha`, since (a) `lastPushedSha` is null
+        //       on first start / fresh sync-state, and (b) HEAD may have moved
+        //       via pull or external commit, in which case `lastPushedSha^{tree}`
+        //       no longer reflects the parent we'd be committing on top of.
+        let headTreeSha = '';
+        try {
+          headTreeSha = (await handle.git.raw(['rev-parse', `${headSha}^{tree}`])).trim();
+        } catch {
+          // Non-fatal: fall through and let commit-tree handle it
+        }
+        if (headTreeSha && headTreeSha === newTreeSha) {
+          // Nothing to commit — mark this cycle's SHA as last-pushed so subsequent
+          // no-op cycles short-circuit via the same path and the UI settles.
+          this.lastPushedSha = headSha;
+          this.transitionTo('idle');
+          return;
         }
 
         // ── 8. Build commit message from files that actually changed in this

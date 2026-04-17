@@ -47,14 +47,12 @@ export function DiffView({
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<MergeView | EditorView | null>(null);
   const { resolvedTheme } = useTheme();
-  // Stable refs so the effect doesn't re-run when callbacks change identity.
-  // React Compiler forbids mutating refs during render, so we sync via effect.
   const onResolveRef = useRef(onResolve);
   const onAbortRef = useRef(onAbort);
   useEffect(() => {
     onResolveRef.current = onResolve;
     onAbortRef.current = onAbort;
-  }, [onResolve, onAbort]);
+  });
 
   useEffect(() => {
     if (!containerRef.current) return;

@@ -205,6 +205,12 @@ function PopoverBody({
         <p className="text-xs text-muted-foreground">{formatPausedReason(status.pausedReason)}</p>
       )}
 
+      {status.state === 'conflict' && (
+        <p className="text-xs text-amber-700 dark:text-amber-400">
+          Sync paused — resolve conflicts to resume.
+        </p>
+      )}
+
       <div className="text-xs text-muted-foreground space-y-0.5">
         {enabled && status.state !== 'dormant' && (
           <div>Last synced: {formatRelative(status.lastSyncUtc)}</div>
@@ -246,7 +252,8 @@ function PopoverBody({
         {enabled &&
           status.state !== 'dormant' &&
           status.state !== 'disabled' &&
-          status.state !== 'auth-error' && (
+          status.state !== 'auth-error' &&
+          status.state !== 'conflict' && (
             <Button variant="outline" size="xs" onClick={() => void triggerSync('sync')}>
               Sync now
             </Button>
@@ -256,7 +263,7 @@ function PopoverBody({
             Sign in
           </Button>
         )}
-        {enabled && (status.state === 'offline' || status.state === 'conflict') && (
+        {enabled && status.state === 'offline' && (
           <Button variant="outline" size="xs" onClick={() => void triggerSync('sync')}>
             Retry
           </Button>

@@ -371,16 +371,23 @@ export async function bootStartServer(opts: BootStartServerOptions): Promise<Boo
         // biome-ignore lint/suspicious/noExplicitAny: Hocuspocus `hooks()` has no exported payload type for onRequest
         .hooks('onRequest', { request: req, response: res } as any)
         .then(() => {
-          if (res.writableEnded) return;
+          // A streaming handler (e.g. `/api/local-op/auth/login` NDJSON) calls
+          // `res.writeHead(200)` and returns before `res.end()` runs, so
+          // `writableEnded` is still false here while `headersSent` is already
+          // true. Treat either as "a handler owns the response" and skip the
+          // 404 fallback — otherwise `setHeader()` throws ERR_HTTP_HEADERS_SENT.
+          if (res.writableEnded || res.headersSent) return;
           res.statusCode = 404;
           res.setHeader('Content-Type', 'application/json');
           res.end(JSON.stringify({ error: 'API route not found', path: url }));
         })
         .catch((err) => {
           console.error('[api] Unhandled onRequest error:', err);
-          if (!res.writableEnded) {
+          if (!res.writableEnded && !res.headersSent) {
             res.writeHead(500);
             res.end('Internal server error');
+          } else if (!res.writableEnded) {
+            res.end();
           }
         });
       return;

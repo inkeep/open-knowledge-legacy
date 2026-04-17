@@ -9,12 +9,12 @@
  *   - Sign-in integration: onSignIn prop opens AuthModal (US-027)
  *   - On complete: redirect to the new server port
  */
-import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Input } from './ui/input';
+import { Skeleton } from './ui/skeleton';
 
 interface RepoEntry {
   full_name: string;
@@ -100,47 +100,15 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   const toastIdRef = useRef<string | number | null>(null);
 
-  async function fetchRepos() {
-    setLoadingRepos(true);
-    try {
-      const res = await fetch('/api/local-op/auth/repos', { method: 'POST' });
-      if (!res.ok) {
-        setLoadingRepos(false);
-        return;
-      }
-      const list: RepoEntry[] = [];
-      const reader = res.body?.getReader();
-      if (!reader) {
-        setLoadingRepos(false);
-        return;
-      }
-      const decoder = new TextDecoder();
-      let buffer = '';
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        for (const line of buffer.split('\n')) {
-          if (!line.trim()) continue;
-          try {
-            const event = JSON.parse(line) as { type?: string; repos?: RepoEntry[] };
-            if (event.repos) list.push(...event.repos);
-          } catch {
-            /* ignore */
-          }
-        }
-        buffer = buffer.slice(buffer.lastIndexOf('\n') + 1);
-      }
-      setRepos(list);
-      setLoadingRepos(false);
-    } catch {
-      setLoadingRepos(false);
-    }
-  }
-
+  // Check auth status when dialog opens. The server resolves host (defaults
+  // to github.com today; will read from config/last-used when enterprise lands).
   useEffect(() => {
     if (!open) return;
-    void fetch('/api/local-op/auth/status', { method: 'POST' })
+    void fetch('/api/local-op/auth/status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
       .then((r) => r.json())
       .then((data: { authenticated?: boolean }) => {
         setIsSignedIn(!!data.authenticated);
@@ -148,7 +116,45 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
       .catch(() => setIsSignedIn(false));
   }, [open]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchRepos is stable (plain function, React Compiler bans useCallback)
+  async function fetchRepos() {
+    setLoadingRepos(true);
+    // No try/finally — React Compiler doesn't yet lower TryStatement finalizers.
+    // All exit paths set repos + clear loading explicitly before returning.
+    let list: RepoEntry[] = [];
+    try {
+      const res = await fetch('/api/local-op/auth/repos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const reader = res.ok ? res.body?.getReader() : null;
+      if (reader) {
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          for (const line of buffer.split('\n')) {
+            if (!line.trim()) continue;
+            try {
+              const event = JSON.parse(line) as { type?: string; repos?: RepoEntry[] };
+              if (event.repos) list.push(...event.repos);
+            } catch {
+              /* ignore malformed NDJSON line */
+            }
+          }
+          buffer = buffer.slice(buffer.lastIndexOf('\n') + 1);
+        }
+      }
+    } catch {
+      list = [];
+    }
+    setRepos(list);
+    setLoadingRepos(false);
+  }
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fetchRepos is stable
   useEffect(() => {
     if (!isSignedIn || !open) return;
     void fetchRepos();
@@ -212,12 +218,12 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
             if (event.type === 'progress') {
               toast.loading(`${phaseLabel(event.phase)} — ${event.pct}%`, { id: toastId });
             } else if (event.type === 'complete') {
-              toast.success('Clone complete — opening in a new tab', { id: toastId });
+              toast.success('Clone complete — opening project', { id: toastId });
               onOpenChange(false);
               setCloning(false);
               setAbortController(null);
-              // Open the new server in a new tab so the current editor stays put.
-              window.open(`http://localhost:${event.port}`, '_blank', 'noopener,noreferrer');
+              // Redirect to the new server's port
+              window.location.href = `http://localhost:${event.port}`;
               return;
             } else if (event.type === 'error') {
               toast.error(`Clone failed: ${event.message}`, { id: toastId });
@@ -290,25 +296,34 @@ export function CloneDialog({ open, onOpenChange, onSignIn }: CloneDialogProps) 
           </div>
 
           {/* Repo browser */}
-          {isSignedIn && (loadingRepos || repos !== null) && (
+          {isSignedIn && (
             <div className="flex flex-col gap-1.5">
               <span className="text-sm font-medium">Your repositories</span>
-              {!loadingRepos && (
-                <Input
-                  placeholder="Filter repositories…"
-                  value={repoFilter}
-                  onChange={(e) => setRepoFilter(e.target.value)}
-                  disabled={cloning}
-                />
-              )}
-              <div className="border rounded-md max-h-40 overflow-y-auto subtle-scrollbar">
-                {loadingRepos ? (
-                  <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
-                    <Loader2 className="size-3.5 animate-spin" />
-                    Loading repositories…
-                  </div>
+              <Input
+                placeholder="Filter repositories…"
+                value={repoFilter}
+                onChange={(e) => setRepoFilter(e.target.value)}
+                disabled={cloning || (loadingRepos && repos === null)}
+              />
+              <div
+                className="border rounded-md max-h-40 overflow-y-auto subtle-scrollbar"
+                aria-busy={loadingRepos && repos === null}
+              >
+                {loadingRepos && repos === null ? (
+                  <output
+                    className="flex flex-col gap-1.5 px-3 py-2"
+                    aria-label="Loading repositories"
+                  >
+                    <Skeleton className="h-4 w-2/3" />
+                    <Skeleton className="h-4 w-1/2" />
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-4 w-2/5" />
+                    <Skeleton className="h-4 w-3/5" />
+                  </output>
                 ) : filteredRepos?.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-muted-foreground">No repos found.</p>
+                  <p className="px-3 py-2 text-xs text-muted-foreground">
+                    {repos?.length === 0 ? 'No repositories found.' : 'No matches.'}
+                  </p>
                 ) : (
                   filteredRepos?.map((repo) => (
                     <button

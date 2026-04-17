@@ -222,7 +222,7 @@ export function EditorPane() {
           setAuthModalOpen(next);
           if (!next) setReturnToCloneAfterAuth(false);
         }}
-        initialStep={authInitialStep}
+        identityPrompt={authInitialStep === 'identity'}
         onSuccess={() => {
           setAuthModalOpen(false);
           if (returnToCloneAfterAuth) {

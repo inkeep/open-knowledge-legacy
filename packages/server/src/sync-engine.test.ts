@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import simpleGit from 'simple-git';
 import type { SyncState } from './sync-engine.ts';
 import { SyncEngine } from './sync-engine.ts';
 
@@ -136,6 +137,123 @@ describe('SyncEngine state persistence round-trip', () => {
     const engine = makeEngine({ syncEnabled: false });
     await engine.start();
     expect(engine.getStatus().conflictCount).toBe(2);
+  });
+
+  // Regression: state must transition to 'conflict' whenever conflictCount > 0
+  // on restart, not 'idle' or 'disabled'. Otherwise the ConflictBanner + paused
+  // sync UI won't render and the user sees only the stale conflictCount in the
+  // popover while sync appears active — the exact symptom reported 2026-04-17.
+  test('state is "conflict" (not "idle") when restarting with inflightConflicts and a remote', async () => {
+    // Real git repo with a remote so start() gets past the hasRemote gate
+    // and reaches the conflictCount > 0 branch at sync-engine.ts:284.
+    const git = simpleGit(projectDir);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    writeFileSync(join(projectDir, 'README.md'), '# Test\n');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const bareDir = join(tmpDir, 'bare.git');
+    mkdirSync(bareDir, { recursive: true });
+    const bareGit = simpleGit(bareDir);
+    await bareGit.init(true);
+    await git.addRemote('origin', bareDir);
+
+    // Pre-write conflicts.json + sync-state.json so start() restores them
+    writeFileSync(
+      join(okDir, 'conflicts.json'),
+      JSON.stringify({
+        version: 1,
+        branch: 'main',
+        conflicts: [
+          { file: 'docs/a.md', detectedAt: '2026-04-17T00:00:00.000Z' },
+          { file: 'docs/b.md', detectedAt: '2026-04-17T00:00:00.000Z' },
+        ],
+      }),
+      'utf-8',
+    );
+    writeFileSync(
+      statePath(),
+      JSON.stringify({
+        version: 1,
+        lastSyncUtc: null,
+        lastFetchUtc: null,
+        lastPushedSha: null,
+        consecutiveFailures: 0,
+        inflightConflicts: ['docs/a.md', 'docs/b.md'],
+      }),
+      'utf-8',
+    );
+
+    const engine = makeEngine({ syncEnabled: true });
+    try {
+      await engine.start();
+      const status = engine.getStatus();
+      // The invariant: conflictCount > 0 ⟹ state === 'conflict'.
+      expect(status.conflictCount).toBe(2);
+      expect(status.state).toBe('conflict');
+    } finally {
+      await engine.destroy();
+    }
+  });
+
+  // Complement of the restart test: resolving the last conflict must clear
+  // the 'conflict' state. Together these pin the invariant from both sides.
+  test('state transitions out of "conflict" once the last conflict is resolved', async () => {
+    const git = simpleGit(projectDir);
+    await git.init();
+    await git.raw('config', 'user.name', 'Test');
+    await git.raw('config', 'user.email', 'test@test.com');
+    writeFileSync(join(projectDir, 'README.md'), '# Test\n');
+    await git.add('.');
+    await git.commit('Initial');
+
+    const bareDir = join(tmpDir, 'bare.git');
+    mkdirSync(bareDir, { recursive: true });
+    await simpleGit(bareDir).init(true);
+    await git.addRemote('origin', bareDir);
+
+    // Seed a single conflict on disk at the path we'll resolve below
+    const conflictedFile = 'a.md';
+    writeFileSync(join(projectDir, conflictedFile), 'ours', 'utf-8');
+    await git.add('.');
+    await git.commit('conflict seed');
+
+    writeFileSync(
+      join(okDir, 'conflicts.json'),
+      JSON.stringify({
+        version: 1,
+        branch: 'main',
+        conflicts: [{ file: conflictedFile, detectedAt: '2026-04-17T00:00:00.000Z' }],
+      }),
+      'utf-8',
+    );
+    writeFileSync(
+      statePath(),
+      JSON.stringify({
+        version: 1,
+        lastSyncUtc: null,
+        lastFetchUtc: null,
+        lastPushedSha: null,
+        consecutiveFailures: 0,
+        inflightConflicts: [conflictedFile],
+      }),
+      'utf-8',
+    );
+
+    const engine = makeEngine({ syncEnabled: true });
+    try {
+      await engine.start();
+      expect(engine.getStatus().state).toBe('conflict');
+
+      await engine.resolveConflict(conflictedFile, 'mine');
+      const after = engine.getStatus();
+      expect(after.conflictCount).toBe(0);
+      expect(after.state).not.toBe('conflict');
+    } finally {
+      await engine.destroy();
+    }
   });
 
   test('ignores state files with unknown version', async () => {
