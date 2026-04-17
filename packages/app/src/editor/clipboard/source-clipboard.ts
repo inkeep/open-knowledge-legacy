@@ -74,7 +74,15 @@ export function createSourceClipboardExtension(deps: SourceClipboardDeps): Exten
 
 function handleCopyOrCut(event: ClipboardEvent, view: EditorView, kind: 'copy' | 'cut'): boolean {
   const { from, to } = view.state.selection.main;
-  if (from === to) return false; // empty selection → CM6 default no-op.
+  if (from === to) {
+    // FR-15: empty-selection copy/cut is a no-op (no MIME mutation). Without
+    // preventDefault(), CM6's built-in copy handler falls back to copying the
+    // ENTIRE current line — user-visible clipboard mutation in direct violation
+    // of the spec ("clipboard unchanged"). Claim the event to suppress CM6's
+    // line-copy behavior without writing anything ourselves.
+    event.preventDefault();
+    return true;
+  }
 
   const dt = event.clipboardData;
   if (!dt) return false;

@@ -477,8 +477,12 @@ test.describe('WYSIWYG FR-specific paste behavior', () => {
     // text/plain has the fenced form.
     expect(out.plain).toContain('```');
     expect(out.plain).toContain('print(1)');
-    // text/html has a <pre><code> rendering.
-    expect(out.html).toContain('<pre>');
+    // text/html has a <pre><code> rendering. PM's serializeForClipboard adds a
+    // `data-pm-slice` attribute to the outermost element, so the serialized
+    // shape is `<pre data-pm-slice="…"><code class="language-python">…` rather
+    // than a bare `<pre>` — match the opening-tag prefix without the closing
+    // angle bracket so the assertion survives the slice-wrapper attribute.
+    expect(out.html).toContain('<pre');
     expect(out.html).toContain('<code');
   });
 });
