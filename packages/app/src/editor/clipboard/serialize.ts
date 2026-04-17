@@ -10,10 +10,16 @@
  *   - `clipboardSerializer.serializeFragment(fragment) → DocumentFragment` —
  *     emits text/html. Serializes to markdown first (for cross-view
  *     symmetry — same mdast tree as Source copy produces), then markdown
- *     → HTML via our shared mdast-to-html pipeline, wrapped in a
- *     `<div data-pm-slice="{openStart} {openEnd} {context}">`. Native
- *     paste back into another PM-based editor detects the wrapper and
- *     takes PM's own parseFromClipboard path.
+ *     → HTML via our shared mdast-to-html pipeline. Returns the content
+ *     directly (no wrapper element): PM's `serializeForClipboard`
+ *     (`prosemirror-view/src/clipboard.ts:32-34`) sets `data-pm-slice`
+ *     on the first element of whatever we return and computes the
+ *     `openStart openEnd context` value from the slice itself — PM's
+ *     value is authoritative and overwrites any we'd set manually. A
+ *     hand-written wrapper is dead code. Native paste back into any
+ *     PM-based editor (Linear, Outline, BlockNote, Milkdown, another
+ *     OK tab) detects the attribute via `querySelector("[data-pm-slice]")`
+ *     and routes through PM's own parseFromClipboard.
  *
  * Error-path discipline (FR-11):
  *   - text serializer throw → fall through to PM's default textBetween.
@@ -107,14 +113,15 @@ function renderFragmentToHtml(
 ): string {
   const slice = new SliceCtor(fragment, 0, 0);
   const markdown = sliceToMarkdown(slice, schema, mdManager);
-  const innerHtml = markdownToHtml(markdown);
-  // Wrap with data-pm-slice so same-origin (another OK tab) and any
-  // PM-based editor can detect it and route through native
-  // parseFromClipboard. PM's own slice-wrapper format is
-  // `openStart openEnd context`; 0/0 for a complete doc; `context` is the
-  // parent node type name of the copied content.
-  const context = fragment.firstChild?.type.name ?? 'doc';
-  return `<div data-pm-slice="0 0 ${context}">${innerHtml}</div>`;
+  // No wrapper element: PM's `serializeForClipboard` attaches
+  // `data-pm-slice` to our first returned element with the correctly
+  // computed `openStart openEnd context` value. Wrapping in a `<div>`
+  // with a placeholder attribute adds noise to the stored HTML in
+  // destinations that preserve attributes verbatim (e.g. GitHub's
+  // comment textarea) without providing any functional benefit — PM's
+  // paste-side detection uses `querySelector("[data-pm-slice]")` which
+  // finds the attribute on any element.
+  return markdownToHtml(markdown);
 }
 
 /**
