@@ -52,8 +52,11 @@ async function seedMarkdown(page: Page, docName: string, markdown: string) {
     body: JSON.stringify({ docName, markdown, position: 'replace' }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
-  // Wait for Observer B (text→tree) to settle
-  await page.waitForTimeout(600);
+  // Wait for both bridge directions: Y.Text reflects the write (CRDT propagation)
+  // AND the XmlFragment has been mirrored by Observer B (text→tree, ~300ms typing-defer
+  // does not apply for AGENT_WRITE_ORIGIN — settles via 50ms Observer B debounce).
+  await expect.poll(() => getYText(page)).toContain(markdown.split('\n')[0]?.trim() || '');
+  await expect(page.locator('.ProseMirror')).not.toBeEmpty();
 }
 
 async function openDoc(page: Page, docName: string) {
@@ -87,13 +90,11 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
     // Press Tab — should indent the second item under the first
     await page.keyboard.press('Tab');
 
-    // Give Observer A time to sync the structural change to Y.Text
-    await page.waitForTimeout(400);
+    // Observer A (XmlFragment→Y.Text) mirrors the structural change. Poll
+    // until the indented form lands in Y.Text (Category D — CRDT propagation).
+    await expect.poll(() => getYText(page)).toMatch(/ {2}[-*+] second/);
     const ytext = await getYText(page);
-
-    // Indented second item appears with leading whitespace in markdown source
     expect(ytext).toContain('- first');
-    expect(ytext).toMatch(/ {2}[-*+] second/);
   });
 
   test('Shift-Tab inside a nested listItem lifts it one level', async ({ page }) => {
@@ -110,11 +111,9 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
 
     await page.keyboard.press('Shift+Tab');
 
-    await page.waitForTimeout(400);
-    const ytext = await getYText(page);
-
-    // After lifting, nested is back at top-level
-    expect(ytext).toMatch(/^- top\n- nested/m);
+    // Observer A mirrors the lift to Y.Text — poll until the nested item is
+    // back at the top level (Category D).
+    await expect.poll(() => getYText(page)).toMatch(/^- top\n- nested/m);
   });
 
   test('Tab inside a tableCell advances to the next cell (list keymap does NOT hijack)', async ({
@@ -144,9 +143,26 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
     });
     expect(inTableBefore).toBe(true);
 
-    // Press Tab — table extension should advance to the next cell
+    // Press Tab — table extension should advance to the next cell. Poll for
+    // the cursor to land inside the second body cell (textContent '2'),
+    // confirming Tab moved AND we are still inside a cell (Category C).
     await page.keyboard.press('Tab');
-    await page.waitForTimeout(200);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const sel = window.getSelection();
+          if (!sel || sel.rangeCount === 0) return null;
+          let el: Node | null = sel.anchorNode;
+          while (el) {
+            if (el.nodeType === 1 && (el as Element).matches('td,th')) {
+              return (el as Element).textContent?.trim() ?? '';
+            }
+            el = el.parentNode;
+          }
+          return null;
+        }),
+      )
+      .toBe('2');
 
     // After Tab, cursor should still be inside a table cell (second body cell, content '2')
     const stillInTable = await page.evaluate(() => {
@@ -178,8 +194,10 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
     await page.keyboard.press('End');
 
     await page.keyboard.press('Tab');
-    await page.waitForTimeout(400);
 
+    // Observer A mirrors the inserted tab character to Y.Text — poll until
+    // it lands inside the code block (Category D).
+    await expect.poll(() => getYText(page)).toMatch(/first\t/);
     const ytext = await getYText(page);
     // The tab character should be emitted into the code block content
     expect(ytext).toMatch(/first\t/);

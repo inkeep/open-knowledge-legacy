@@ -197,17 +197,16 @@ test.describe('docs-open — hybrid navigation UX', () => {
     // Sanity check: bar has role=status + aria-live=polite when mounted.
     // Trigger another nav to exercise the bar's attributes.
     await openFromSidebar(page, 'doc-a.md');
-    // The bar may already be gone by the time we assert; poll briefly.
-    // This assertion is best-effort but catches the attribute contract when
-    // the bar is present during the poll window.
-    await Promise.race([
-      page
-        .locator('[data-slot="navigation-pending-bar"][role="status"][aria-live="polite"]')
-        .first()
-        .waitFor({ timeout: 1_500 })
-        .catch(() => {}),
-      page.waitForTimeout(1_500),
-    ]);
+    // The bar may already be gone by the time we assert; poll briefly for
+    // its attribute contract while it's present, swallowing the timeout if
+    // navigation completed before we observed it. (The Promise.race
+    // wrapping a duplicate fixed sleep was redundant — a single waitFor
+    // with the same timeout has identical semantics.)
+    await page
+      .locator('[data-slot="navigation-pending-bar"][role="status"][aria-live="polite"]')
+      .first()
+      .waitFor({ timeout: 1_500 })
+      .catch(() => {});
   });
 
   test('F4: cold-load skeleton only when there is no prior content', async ({ page }) => {
@@ -879,8 +878,13 @@ test.describe('docs-open — WS-interception scenarios', () => {
     });
     await openFromSidebar(page, 'doc-b.md');
 
-    // doc-b is unsynced (WS hung) — verify the pool state reflects this.
-    await page.waitForTimeout(500);
+    // doc-b is unsynced (WS hung) — wait for the pool to register doc-b as
+    // active (Category D — provider lifecycle), then assert isSynced=false
+    // remains stable. activeDoc updates synchronously when the pool's
+    // open() resolves; isSynced stays false because the WS handshake hangs.
+    await expect
+      .poll(() => page.evaluate(() => window.__providerPool?.getActiveDocName() ?? null))
+      .toBe('doc-b');
     const state = await page.evaluate(() => ({
       activeDoc: window.__providerPool?.getActiveDocName() ?? null,
       isSynced: window.__activeProvider?.isSynced ?? null,

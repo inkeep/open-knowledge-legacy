@@ -141,8 +141,24 @@ test('mid-type recovery: surrounding structure stable during <Callout> character
     { timeout: 10_000 },
   );
 
-  // Wait for Observer B to settle after typing completes
-  await page.waitForTimeout(1000);
+  // Wait for Observer B (50ms scheduler debounce + ~300ms typing-defer) to
+  // settle on the server, mirror back to the client, and reach a stable
+  // fragment length. We can't tell freeze-vs-parse-success from outside, so
+  // length stability across 3 consecutive 100ms ticks is the signal.
+  let lastFragLen = -1;
+  let stableTicks = 0;
+  await expect
+    .poll(
+      async () => {
+        const len = (await getXmlFragmentText(page)).length;
+        if (len > 0 && len === lastFragLen) stableTicks += 1;
+        else stableTicks = 0;
+        lastFragLen = len;
+        return stableTicks;
+      },
+      { intervals: [100], timeout: 5_000 },
+    )
+    .toBeGreaterThanOrEqual(3);
 
   // Check XmlFragment state (works in any mode — no DOM rendering dependency).
   // Observer B either froze (preserving last valid state with headings) or parsed

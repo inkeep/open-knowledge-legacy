@@ -52,9 +52,54 @@ test('manual collapse is honored until next activation', async ({ page }) => {
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
   await expect(sidebar(page).getByText('nested-doc.md')).toHaveCount(0);
 
-  await page.waitForTimeout(1000);
+  // Stability assertion: install a MutationObserver to catch any flip back
+  // to 'true', yield several frames, then assert no auto-restoration race
+  // fired. Replaces a fixed-sleep "wait 1s then re-check" pattern with a
+  // signal-based check that catches even sub-frame flips.
+  await page.evaluate(() => {
+    window.__ariaFlippedToTrue = false;
+    const btn = document.querySelector('button[aria-label="sidebar-folder"]');
+    if (!btn) return;
+    const obs = new MutationObserver((muts) => {
+      for (const m of muts) {
+        if (
+          m.attributeName === 'aria-expanded' &&
+          (m.target as Element).getAttribute('aria-expanded') === 'true'
+        ) {
+          window.__ariaFlippedToTrue = true;
+        }
+      }
+    });
+    obs.observe(btn, { attributes: true, attributeFilter: ['aria-expanded'] });
+    window.__ariaObsCleanup = () => obs.disconnect();
+  });
+  // Yield ~10 frames (~160ms at 60fps) — long enough for any
+  // commit-phase render-time race to fire.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        let frames = 10;
+        const tick = () => {
+          if (--frames <= 0) resolve();
+          else requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }),
+  );
+  const flipped = await page.evaluate(() => {
+    window.__ariaObsCleanup?.();
+    return window.__ariaFlippedToTrue;
+  });
+  expect(flipped).toBe(false);
   await expect(folderButton(page)).toHaveAttribute('aria-expanded', 'false');
 });
+
+declare global {
+  interface Window {
+    __ariaFlippedToTrue?: boolean;
+    __ariaObsCleanup?: () => void;
+  }
+}
 
 test('activation overrides prior manual collapse (D1)', async ({ page }) => {
   await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
@@ -66,7 +111,10 @@ test('activation overrides prior manual collapse (D1)', async ({ page }) => {
   await page.evaluate(() => {
     window.location.hash = '#/test-doc';
   });
-  await page.waitForTimeout(500);
+  // Wait for the first nav to settle (active row updates) before issuing
+  // the second nav — confirms the test exercises the override sequence
+  // rather than coalescing both navs into a single transition.
+  await expect(sidebar(page).locator('[aria-current="page"]')).toContainText('test-doc.md');
 
   await page.evaluate(() => {
     window.location.hash = '#/sidebar-folder/nested-doc';
