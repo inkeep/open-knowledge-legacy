@@ -305,10 +305,13 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
           );
         })
         .catch((checkpointErr: unknown) => {
-          console.warn(
-            '[Server Observer A] Silent checkpoint write failed:',
-            checkpointErr instanceof Error ? checkpointErr.message : String(checkpointErr),
-          );
+          const err =
+            checkpointErr instanceof Error ? checkpointErr : new Error(String(checkpointErr));
+          console.warn('[Server Observer A] Silent checkpoint write failed:', {
+            name: err.name,
+            message: err.message,
+            stack: err.stack?.split('\n').slice(0, 4).join('\n'),
+          });
         });
     });
   };

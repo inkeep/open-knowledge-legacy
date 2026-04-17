@@ -188,7 +188,7 @@ export function checkpointHeadlineLabel(entry: TimelineEntry): string {
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${Math.round(n / 102.4) / 10} KB`;
-  return `${Math.round(n / 1048.576) / 1000} MB`;
+  return `${Math.round(n / 104857.6) / 10} MB`;
 }
 
 // ─── Entry row ────────────────────────────────────────────────────────────────
@@ -224,7 +224,7 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
             return (
               <AlertTriangle
                 className="mt-0.5 size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
-                aria-label="Concurrent-merge recovery checkpoint"
+                aria-hidden="true"
               />
             );
           }
@@ -232,7 +232,7 @@ function EntryRow({ entry, selected, onSelect, prominent = false }: EntryRowProp
             return (
               <FileArchive
                 className="mt-0.5 size-3.5 shrink-0 text-sky-600 dark:text-sky-400"
-                aria-label="External-change rescue checkpoint"
+                aria-hidden="true"
               />
             );
           }
@@ -396,7 +396,12 @@ export function TimelinePanel({
         <div className="flex-1 overflow-y-auto">
           {/* Loading skeleton */}
           {loading && (
-            <div className="flex flex-col gap-2 p-4">
+            <div
+              className="flex flex-col gap-2 p-4"
+              role="status"
+              aria-busy="true"
+              aria-label="Loading timeline history"
+            >
               {[1, 2, 3, 4].map((i) => (
                 <div key={i} className="flex items-center gap-2.5">
                   <Skeleton className="size-3.5 rounded-full" />
