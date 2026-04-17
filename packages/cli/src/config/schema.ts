@@ -1,5 +1,25 @@
 import { z } from 'zod';
 
+export const FolderFrontmatterSchema = z
+  .object({
+    title: z.string().optional(),
+    description: z.string().optional(),
+    tags: z.array(z.string()).optional(),
+  })
+  .strict();
+
+export const FolderRuleSchema = z
+  .object({
+    match: z
+      .string()
+      .min(1, "`match` must be a non-empty glob pattern (e.g. 'specs/**' or 'reports/*/**')"),
+    frontmatter: FolderFrontmatterSchema,
+  })
+  .strict();
+
+export type FolderFrontmatter = z.infer<typeof FolderFrontmatterSchema>;
+export type FolderRule = z.infer<typeof FolderRuleSchema>;
+
 export const ConfigSchema = z.object({
   content: z
     .object({
@@ -19,14 +39,21 @@ export const ConfigSchema = z.object({
         .string()
         .regex(/^[\w.\-:]+$/, 'Invalid hostname')
         .default('localhost'),
+      openOnAgentEdit: z.boolean().default(false),
     })
-    .default({ port: 3000, host: 'localhost' }),
+    .default({ port: 3000, host: 'localhost', openOnAgentEdit: false }),
   persistence: z
     .object({
       debounceMs: z.number().int().min(0).default(2000),
       maxDebounceMs: z.number().int().min(0).default(10000),
     })
     .default({ debounceMs: 2000, maxDebounceMs: 10000 }),
+  preview: z
+    .object({
+      baseUrl: z.url().optional(),
+    })
+    .default({}),
+  folders: z.array(FolderRuleSchema).default([]),
   mcp: z
     .object({
       tools: z

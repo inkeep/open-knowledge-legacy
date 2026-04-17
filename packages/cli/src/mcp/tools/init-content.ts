@@ -33,7 +33,7 @@ open-knowledge init
 # or:  npx @inkeep/open-knowledge init
 \`\`\`
 
-That creates \`${OK_DIR}/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client (\`/mcp\` in Claude Code) so the server picks up the new config.
+That creates \`${OK_DIR}/\` with \`config.yml\`, \`AGENTS.md\`, \`.gitignore\`, and wires this MCP server into \`.mcp.json\`. It does **not** scaffold content subdirectories — knowledge lives wherever \`content.dir\` points (currently \`${contentDir}\`). After scaffolding, reconnect the MCP client so the server picks up the new config.
 
 If you have \`Bash\` tool access, you can shell out: \`bash\` → \`npx @inkeep/open-knowledge init\`, then prompt the user to reconnect.
 
@@ -42,9 +42,9 @@ If you have \`Bash\` tool access, you can shell out: \`bash\` → \`npx @inkeep/
 Explore the project to build understanding before writing anything:
 
 1. **Start broad** — Read \`README.md\`, \`CLAUDE.md\` or \`AGENTS.md\`, \`package.json\` (or equivalent manifest), and any existing prose documentation
-2. **Map the structure** — Use \`exec("ls <dir>")\` for wiki content (returns folder metadata — file counts, subdirs, most-recent md) and native \`Glob\`/\`ls\` for source code
+2. **Map the structure** — Use \`exec("ls <dir>")\` for directories under \`content.dir\` that match \`content.include\` (returns folder metadata — file counts, subdirs, most-recent md) and native \`Glob\`/\`ls\` for source code
 3. **Read key files** — Entry points, config files, core modules, type definitions, schema files
-4. **Check existing docs** — \`specs/\`, \`docs/\`, \`ARCHITECTURE.md\`, or any prose documentation directories (use \`exec("cat <path>")\` for any wiki markdown — it returns rich enrichment in one call)
+4. **Check existing docs** — \`specs/\`, \`docs/\`, \`ARCHITECTURE.md\`, or any prose dirs: use \`exec\` for every \`.md\` / \`.mdx\` that matches \`content.include\` (under shipped defaults, that is essentially **all** markdown in the repo). Use native \`Read\`/\`Glob\` only for source code / non-markdown, or when MCP is unavailable
 5. **Review recent history** — \`git log --oneline -30\` for recent decisions and direction
 
 Don't rush this phase. The quality of articles depends on the quality of understanding.

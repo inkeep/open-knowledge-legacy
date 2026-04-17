@@ -1,5 +1,5 @@
 /**
- * Context Bridge hooks (FR-27, §9.15, Precedent #13).
+ * Context Bridge hooks (FR-27, §9.15, Precedent #19).
  *
  * usePublishContexts — publisher-side: publishes captured Context values
  *   to the bridge store in useLayoutEffect (committed renders only).

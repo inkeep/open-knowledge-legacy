@@ -64,4 +64,118 @@ describe('ConfigSchema', () => {
     expect(config.content.include).toEqual(['**/*.md', '**/*.mdx']); // default preserved
     expect(config.content.exclude).toEqual(['node_modules/**', '.claude/**']);
   });
+
+  test('preview block absent parses to empty default', () => {
+    const config = ConfigSchema.parse({});
+    expect(config.preview).toEqual({});
+  });
+
+  test('preview.baseUrl with valid URL is accepted', () => {
+    const config = ConfigSchema.parse({
+      preview: { baseUrl: 'https://wiki.acme.com' },
+    });
+    expect(config.preview?.baseUrl).toBe('https://wiki.acme.com');
+  });
+
+  test('preview.baseUrl with invalid URL fails parsing', () => {
+    const result = ConfigSchema.safeParse({
+      preview: { baseUrl: 'not a url' },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues[0].path).toContain('baseUrl');
+    }
+  });
+
+  test('preview object without baseUrl is accepted', () => {
+    const config = ConfigSchema.parse({ preview: {} });
+    expect(config.preview?.baseUrl).toBeUndefined();
+  });
+
+  test('folders omitted parses to empty array default', () => {
+    const config = ConfigSchema.parse({});
+    expect(config.folders).toEqual([]);
+  });
+
+  test('valid folders rule with all frontmatter fields parses', () => {
+    const config = ConfigSchema.parse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: {
+            title: 'Specs',
+            description: 'Specification docs',
+            tags: ['spec', 'doc'],
+          },
+        },
+      ],
+    });
+    expect(config.folders).toHaveLength(1);
+    expect(config.folders[0]).toEqual({
+      match: 'specs/**',
+      frontmatter: {
+        title: 'Specs',
+        description: 'Specification docs',
+        tags: ['spec', 'doc'],
+      },
+    });
+  });
+
+  test('folders rule with only some frontmatter fields parses', () => {
+    const config = ConfigSchema.parse({
+      folders: [{ match: 'specs/**', frontmatter: { title: 'Specs' } }],
+    });
+    expect(config.folders[0].frontmatter.title).toBe('Specs');
+    expect(config.folders[0].frontmatter.description).toBeUndefined();
+    expect(config.folders[0].frontmatter.tags).toBeUndefined();
+  });
+
+  test('folders rule with unknown frontmatter field fails with field-path error', () => {
+    const result = ConfigSchema.safeParse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: { title: 'Specs', icon: 'book' },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.code === 'unrecognized_keys');
+      expect(issue).toBeDefined();
+      expect((issue as { keys: string[] }).keys).toContain('icon');
+      expect(issue?.path.join('.')).toBe('folders.0.frontmatter');
+    }
+  });
+
+  test('folders rule with unknown top-level field fails (strict)', () => {
+    const result = ConfigSchema.safeParse({
+      folders: [
+        {
+          match: 'specs/**',
+          frontmatter: { title: 'Specs' },
+          extra: 'nope',
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('folders rule with empty match string fails', () => {
+    const result = ConfigSchema.safeParse({
+      folders: [{ match: '', frontmatter: { title: 'Specs' } }],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const paths = result.error.issues.map((i) => i.path.join('.'));
+      expect(paths.some((p) => p.includes('match'))).toBe(true);
+    }
+  });
+
+  test('folders rule missing frontmatter field fails', () => {
+    const result = ConfigSchema.safeParse({
+      folders: [{ match: 'specs/**' }],
+    });
+    expect(result.success).toBe(false);
+  });
 });

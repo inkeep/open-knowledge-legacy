@@ -306,6 +306,10 @@
   margin-bottom: 0.5em;
 }
 
+.prosemirror-dropcursor-block {
+  @apply bg-primary/40! dark:bg-azure-300/80! h-0.5!;
+}
+
 .ProseMirror [data-mark-view-content] {
   @apply truncate;
 }
@@ -436,11 +440,11 @@
 
 /* Blockquote */
 .ProseMirror blockquote {
-  border-left: 3px solid var(--color-gray-300);
+  border-left: 3px solid;
   padding-left: 1em;
   margin-left: 0;
   margin-bottom: 0.5em;
-  color: var(--color-gray-600);
+  @apply border-azure-400 dark:border-azure-300 dark:text-gray-300 text-gray-600;
 }
 
 /* Code blocks */
@@ -576,7 +580,8 @@
   @apply text-muted-foreground/60;
 }
 
-/* SideMenu — drag handle + "+" button (FR-15, FR-16) */
+/* SideMenu — drag handle + "+" button container (FR-15, FR-16). Outer
+   positioner for the SideMenu React component. */
 .ok-side-menu {
   display: flex;
   flex-direction: column;
@@ -592,8 +597,40 @@
   opacity: 0;
 }
 
-/* Drag handle (grip icon) */
-.ok-drag-handle {
+/* DragHandlePlugin container — absolutely positioned flex row of grip + "+".
+   Distinct from .ok-side-menu: this one is created imperatively by the PM
+   plugin; .ok-side-menu is the React component. Both may coexist. */
+.ok-block-controls {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 1;
+  transition: opacity 100ms var(--ease-out-strong);
+  user-select: none;
+}
+
+/* + button */
+.ok-add-block-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  color: oklch(0.72 0 0);
+  border-radius: 3px;
+  border: none;
+  background: transparent;
+  padding: 0;
+  transition: background-color 100ms var(--ease-out-strong);
+}
+.ok-add-block-btn:hover {
+  background-color: oklch(0 0 0 / 6%);
+}
+
+/* Drag grip */
+.ok-drag-grip {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -602,26 +639,35 @@
   cursor: grab;
   color: oklch(0.72 0 0);
   border-radius: 3px;
-  user-select: none;
 }
-
-.ok-drag-handle:hover {
+.ok-drag-grip:hover {
   background-color: oklch(0 0 0 / 6%);
 }
-
-.ok-drag-handle:active {
+.ok-drag-grip:active {
   cursor: grabbing;
 }
 
-.dark .ok-drag-handle {
-  color: oklch(0.5 0 0);
+/* Visibility fade — DragHandlePlugin sets inline visibility: hidden */
+.ok-block-controls[style*="visibility: hidden"],
+.ok-block-controls[style*="visibility:hidden"] {
+  opacity: 0;
 }
 
-.dark .ok-drag-handle:hover {
+/* Dark mode */
+.dark .ok-add-block-btn {
+  color: oklch(0.5 0 0);
+}
+.dark .ok-add-block-btn:hover {
+  background-color: oklch(1 0 0 / 8%);
+}
+.dark .ok-drag-grip {
+  color: oklch(0.5 0 0);
+}
+.dark .ok-drag-grip:hover {
   background-color: oklch(1 0 0 / 8%);
 }
 
-/* Plus button */
+/* SideMenu's inner "+" button (HEAD's React-component side menu). */
 .ok-plus-button {
   display: flex;
   align-items: center;
@@ -648,6 +694,32 @@
 .dark .ok-plus-button:hover {
   background-color: oklch(1 0 0 / 8%);
   color: oklch(0.7 0 0);
+}
+
+/* SideMenu's inner drag grip (HEAD — distinct from DragHandlePlugin's
+   .ok-drag-grip above). Both exist; React component uses .ok-drag-handle,
+   PM plugin uses .ok-drag-grip. */
+.ok-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  cursor: grab;
+  color: oklch(0.72 0 0);
+  border-radius: 3px;
+}
+.ok-drag-handle:active {
+  cursor: grabbing;
+}
+.ok-drag-handle:hover {
+  background-color: oklch(0 0 0 / 6%);
+}
+.dark .ok-drag-handle {
+  color: oklch(0.5 0 0);
+}
+.dark .ok-drag-handle:hover {
+  background-color: oklch(1 0 0 / 8%);
 }
 
 /* CodeMirror polish */
@@ -759,6 +831,7 @@ button:active:not(:disabled) {
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-hover: var(--sidebar-hover);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
@@ -864,8 +937,12 @@ button:active:not(:disabled) {
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-accent: oklch(
+    0.3773 0.1488 264.94 /
+    4%
+  ); /* based off of azure-900 with lower opacity */
+  --sidebar-accent-foreground: var(--color-azure-600);
+  --sidebar-hover: oklch(0.97 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
 }
@@ -898,8 +975,9 @@ button:active:not(:disabled) {
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.274 0.006 286.033);
+  --sidebar-accent-foreground: var(--color-sky-blue);
+  --sidebar-hover: oklch(0.269 0 0 / 50%);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
 }
@@ -1212,11 +1290,9 @@ button:active:not(:disabled) {
   color: var(--accent-foreground);
 }
 
+/* Sidebar: separate hover (neutral gray) from active (blue accent) */
+
 /* Dark overrides — ProseMirror content surfaces */
-.dark .ProseMirror blockquote {
-  border-color: var(--color-gray-600);
-  color: var(--color-gray-300);
-}
 
 .dark .ProseMirror pre {
   background: var(--color-gray-900);
@@ -1323,4 +1399,57 @@ button:active:not(:disabled) {
 .dark .ProseMirror .selectedCell::after {
   background: var(--color-azure-900);
   opacity: 0.4;
+}
+
+/* ========================================================================
+   Source-view minimal polish
+   ======================================================================== */
+
+/* Strikethrough — line-through, no color change. */
+.cm-del {
+  text-decoration: line-through;
+}
+
+/* List hanging-indent: wrapped continuation aligns under item text.
+   padding-inline-start pushes ALL visual lines right; text-indent pulls
+   only the FIRST visual line back — so the marker stays at its natural x
+   and wrapped continuations start under the item's text. */
+.cm-list-item {
+  padding-inline-start: var(--list-hang, 2ch);
+  text-indent: calc(-1 * var(--list-hang, 2ch));
+}
+
+/* Fenced code — wrap-preserve-indent via padding-inline-start only (no text-indent).
+   The ViewPlugin sets --line-indent per-line to the leading-whitespace count.
+   NO tint, NO border — the code block visually blends with paragraph text
+   except for monospace font and syntax-highlight colors (already applied by CM). */
+.cm-fenced-code-line {
+  padding-inline-start: calc(var(--line-indent, 0) * 1ch);
+}
+
+/* Broken link affordance — wavy red underline (LSP convention).
+   Single canonical definition for both broken link-refs and broken
+   wikilinks — the "broken" concept has one visual form. The light-theme
+   red (55% L) loses contrast against the dark canvas (14.5% L background,
+   muted-fg at 70.8% L), so .dark lightens it to 72% L. */
+.cm-link-ref-broken,
+.cm-wiki-link-broken {
+  text-decoration: underline wavy;
+  text-decoration-color: var(--broken-link-color, oklch(55% 0.15 25));
+}
+
+.dark .cm-link-ref-broken,
+.dark .cm-wiki-link-broken {
+  --broken-link-color: oklch(72% 0.18 25);
+}
+
+/* Tables — hanging indent only. Wrapped row continuation aligns under the
+   first cell's content, not under `|`. No background, no border, no accent
+   bar, no cell bands, NO font-size change — table lines read as the same
+   size as surrounding paragraph text. Compactness was cut as stylistic
+   (see SPEC §6.6, §11 D4). */
+.cm-table-row,
+.cm-table-header {
+  padding-inline-start: calc(8px + 2ch);
+  text-indent: -2ch;
 }

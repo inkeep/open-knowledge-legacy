@@ -28,6 +28,8 @@
     "@tiptap/extension-table": "^3.22.3",
     "@tiptap/pm": "^3.22.3",
     "@tiptap/starter-kit": "^3.22.3",
+    "diff-match-patch": "^1.0.5",
+    "node-diff3": "^3.2.0",
     "mdast-util-from-markdown": "^2.0.3",
     "mdast-util-mdx": "3.0.0",
     "mdast-util-mdx-expression": "^2.0.1",
@@ -48,12 +50,21 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test src/",
+    "test:perf:bench": "RUN_BENCH=1 bun test tests/perf/markdown-bench.test.ts",
+    "test:perf:fallback": "RUN_BENCH=1 bun test src/markdown/parse-with-fallback.test.ts",
+    "test:perf:r15-guard": "RUN_BENCH=1 bun test src/markdown/autolink-void-html-guard.perf.test.ts",
+    "test:perf:regression:unit": "bun test tests/perf/regression-gate.test.ts",
+    "test:perf:regression": "bun run tests/perf/run-regression-gate.ts",
+    "test:health:unit": "bun test tests/health/parse-health-gate.test.ts",
+    "test:health": "bun run tests/health/parse-health-gate.ts tests/health/baseline.json",
     "build-registry": "bun run scripts/build-registry.ts"
   },
   "devDependencies": {
+    "@types/diff-match-patch": "^1.0.36",
     "@types/mdast": "^4.0.4",
     "@types/unist": "^3.0.3",
+    "commonmark.json": "^0.31.0",
     "react-docgen-typescript": "^2.2.2",
     "typescript": "^5.9.3"
   }

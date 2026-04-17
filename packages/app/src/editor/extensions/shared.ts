@@ -9,7 +9,6 @@ import {
 } from '@inkeep/open-knowledge-core';
 import { DragHandle } from '@tiptap/extension-drag-handle';
 import FileHandler from '@tiptap/extension-file-handler';
-import Placeholder from '@tiptap/extension-placeholder';
 import { KeyboardNav } from '../block-ux/KeyboardNav';
 import { uploadAndInsert } from '../image-upload/index.ts';
 import { getComponentItems } from '../slash-command/component-items';
@@ -74,8 +73,4 @@ export const sharedExtensions = [
   SourceDirtyObserver,
   TypedChildrenGuard,
   KeyboardNav,
-  Placeholder.configure({
-    placeholder: "Type '/' for commands",
-    showOnlyCurrent: true,
-  }),
 ];

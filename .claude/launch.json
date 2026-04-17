@@ -2,11 +2,13 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "init-spike",
-      "runtimeExecutable": "/Users/edwingomezcuellar/.nvm/versions/node/v22.22.0/bin/node",
-      "runtimeArgs": ["node_modules/.bin/vite"],
-      "port": 5173,
-      "cwd": "init_spike"
+      "name": "open-knowledge",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "open-knowledge",
+        "start"
+      ],
+      "port": 3000
     }
   ]
 }

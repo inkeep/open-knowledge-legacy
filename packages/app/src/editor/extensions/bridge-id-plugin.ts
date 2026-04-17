@@ -1,5 +1,5 @@
 /**
- * bridgeId PluginState (Q10 Option A, FR-29, Precedent #13).
+ * bridgeId PluginState (Q10 Option A, FR-29, Precedent #19).
  *
  * Assigns stable unique `bridgeId` strings to jsxComponent PM nodes,
  * keyed by their backing Y.XmlElement identity from y-prosemirror.

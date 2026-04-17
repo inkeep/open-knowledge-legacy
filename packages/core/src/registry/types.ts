@@ -65,7 +65,7 @@ export type PropDef =
 export interface JsxComponentMeta {
   /** Component tag name, or '*' for the wildcard fallback. */
   name: string;
-  /** PropPanel/slash-menu hint; NodeViewContent always renders per Precedent #14. */
+  /** PropPanel/slash-menu hint; NodeViewContent always renders per Precedent #20. */
   hasChildren: boolean;
   /** Hint: component is typically self-closing (e.g., <Chart />). */
   isSelfClosing?: boolean;

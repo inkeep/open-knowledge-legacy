@@ -5,8 +5,8 @@
  * Returns the document list as JSON text.
  */
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, resolveServerUrl, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] List available documents from the Hocuspocus server.',
@@ -16,7 +16,7 @@ export const DESCRIPTION = [
   '- `dir` (optional) — Filter to documents in this directory',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
   server.tool(
     'list_documents',
     DESCRIPTION,
@@ -24,9 +24,10 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       dir: z.string().optional().describe('Optional directory to filter documents'),
     },
     async (args: { dir?: string }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const query = args.dir ? `?dir=${encodeURIComponent(args.dir)}` : '';
-      const result = await httpGet(serverUrl, `/api/documents${query}`);
+      const result = await httpGet(url, `/api/documents${query}`);
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...data } = result;
       return textResult(JSON.stringify(data, null, 2));

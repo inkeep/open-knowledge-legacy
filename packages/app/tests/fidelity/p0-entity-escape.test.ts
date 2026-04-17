@@ -1,11 +1,11 @@
 /**
  * P0 fidelity tests — entity bypass + backslash escape round-trip.
  *
- * Verifies the @tiptap/markdown patch:
- *   R1  — encodeTextForMarkdown bypasses HTML entity encoding
- *   R2  — parseInlineTokens handles 'escape' tokens, preserving raw backslash form; encodeTextForMarkdown passes through unchanged
- *   R14 — @tiptap/markdown pinned exact
- *   R20 — Link URL with & preserved
+ * Pins the fidelity invariants that the unified + remark pipeline must
+ * preserve byte-identically:
+ *   R1  — HTML entity encoding is NOT applied to literal chars in text
+ *   R2  — backslash escapes of CommonMark §2.4 chars round-trip as raw form
+ *   R20 — link URLs preserve & (no entity rewriting)
  *
  * These 12 cases cover the P0 hit list from the fidelity catalog.
  */
@@ -90,7 +90,7 @@ describe('backslash escape — byte-identical round-trip', () => {
   });
 });
 
-// ─── Version pin — remark-prosemirror (R20, replaces old @tiptap/markdown pin) ───
+// ─── Version pin — remark-prosemirror (R20) ───
 
 describe('remark-prosemirror version pin', () => {
   test('MarkdownManager has parse and serialize methods (unified pipeline)', () => {

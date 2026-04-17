@@ -5,11 +5,12 @@
  * inbound wiki-links plus supported internal inline Markdown links.
  */
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
 import {
   HOCUSPOCUS_NOT_RUNNING_ERROR,
   httpPost,
   normalizeDocName,
+  resolveServerUrl,
   textPlusStructured,
   textResult,
 } from './shared.ts';
@@ -70,7 +71,7 @@ function pluralize(count: number, singular: string, plural = `${singular}s`): st
   return count === 1 ? singular : plural;
 }
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
   server.tool(
     'rename_document',
     DESCRIPTION,
@@ -79,13 +80,14 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
       newDocName: z.string().describe('New document name'),
     },
     async (args: { docName: string; newDocName: string }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const normalizedDoc = normalizeDocName(args.docName);
       if (!normalizedDoc.ok) return textResult(normalizedDoc.error, true);
       const normalizedNewDoc = normalizeDocName(args.newDocName);
       if (!normalizedNewDoc.ok) return textResult(normalizedNewDoc.error, true);
 
-      const result = await httpPost(serverUrl, '/api/rename', {
+      const result = await httpPost(url, '/api/rename', {
         docName: normalizedDoc.docName,
         newDocName: normalizedNewDoc.docName,
       });

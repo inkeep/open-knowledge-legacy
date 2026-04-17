@@ -1,5 +1,14 @@
 name: CI
 
+# Tier 1 per SPEC §6 R9 (US-016). Runs the canonical `bun run check`
+# composition (lint + typecheck + unit + integration + conversion + fidelity)
+# plus opt-in coverage (fuzz + stress + Playwright) since those match what
+# CLAUDE.md documents as the PR-time expectation. Budget: 15 min (p95 warm
+# baseline ≈ 2m30s on local M3 Max; CI runners are ~2× slower; 1.5× headroom).
+# Tier 2 (perf regression gate, parse-health gate, parseWithFallback 5× bound)
+# runs in `nightly.yml`. Tier 3 (elevated-sample PBT + fuzz + perf trend)
+# runs in `weekly.yml`.
+
 on:
   pull_request:
     branches: [main]
@@ -38,11 +47,8 @@ jobs:
           - test:integration
           - test:conversion
           - test:fidelity
-          - test:stress:s1-s8-s9
-          - test:stress:s2
-          - test:stress:s4
-          - test:stress:s5-s6
-          - test:fuzz
+          - test:stress:server-authoritative
+          - test:fuzz:bridge
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       # Node 22+ is required because turbo's `^build` pulls in

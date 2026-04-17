@@ -1,7 +1,7 @@
 import { ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowledge-core';
 import { z } from 'zod';
-import type { ServerInstance } from './shared.ts';
-import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, textResult } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import { HOCUSPOCUS_NOT_RUNNING_ERROR, httpGet, resolveServerUrl, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
   '[Requires: Hocuspocus server] Find disconnected pages in the knowledge graph.',
@@ -11,7 +11,7 @@ export const DESCRIPTION = [
   '- `mode` (optional) — Orphan lens: `incoming`, `outgoing`, or `both` (default `both`)',
 ].join('\n');
 
-export function register(server: ServerInstance, serverUrl: string | undefined): void {
+export function register(server: ServerInstance, serverUrl: ServerUrlOrResolver): void {
   server.tool(
     'get_orphans',
     DESCRIPTION,
@@ -22,9 +22,10 @@ export function register(server: ServerInstance, serverUrl: string | undefined):
         .describe('Filter which type of graph disconnection to surface'),
     },
     async (args: { mode?: OrphanMode }) => {
-      if (!serverUrl) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
+      const url = await resolveServerUrl(serverUrl);
+      if (!url) return textResult(HOCUSPOCUS_NOT_RUNNING_ERROR, true);
       const query = args.mode ? `?mode=${encodeURIComponent(args.mode)}` : '';
-      const result = await httpGet(serverUrl, `/api/orphans${query}`);
+      const result = await httpGet(url, `/api/orphans${query}`);
       if (!result.ok) return textResult(`Error: ${result.error}`, true);
       const { ok: _ok, ...data } = result;
       return textResult(JSON.stringify(data, null, 2));

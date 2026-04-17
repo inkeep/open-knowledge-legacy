@@ -13,6 +13,27 @@ describe('MCP server module', () => {
     const mod = await import('./server.ts');
     expect(mod.startMcpServer.constructor.name).toBe('AsyncFunction');
   });
+
+  it('buildInstructions embeds shared PREVIEW_GUIDANCE constant', async () => {
+    const { buildInstructions } = await import('./server.ts');
+    const { PREVIEW_GUIDANCE } = await import('../content/init.ts');
+    const config = ConfigSchema.parse({});
+    const instructions = buildInstructions(config);
+    expect(instructions).toContain(PREVIEW_GUIDANCE);
+  });
+
+  it('buildInstructions describes both per-file and folders: surfaces (US-006 / QA-010)', async () => {
+    const { buildInstructions } = await import('./server.ts');
+    const config = ConfigSchema.parse({});
+    const instructions = buildInstructions(config);
+    // Describes both surfaces, not the stale "deprecated" wording
+    expect(instructions).not.toContain('Folder-level frontmatter was deprecated');
+    expect(instructions).not.toContain('the only authored metadata surface');
+    expect(instructions).toContain('Per-file frontmatter');
+    expect(instructions).toContain('folders:');
+    // Distinguishes from the rejected INDEX.md-inside-content pattern
+    expect(instructions).toContain('INDEX.md');
+  });
 });
 
 describe('registerAllTools', () => {
@@ -28,7 +49,8 @@ describe('registerAllTools', () => {
     (server as unknown as { tool: typeof server.tool }).tool = toolSpy;
 
     registerAllTools(server, {
-      projectDir: process.cwd(),
+      resolveCwd: async () => process.cwd(),
+      startupCwd: process.cwd(),
       config,
     });
 

@@ -20,19 +20,19 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { Config } from '../../config/schema.ts';
-import type { BacklinkEntry, GitCommit } from '../../content/enrichment.ts';
+import type { BacklinkEntry, ForwardLinkEntry, GitCommit } from '../../content/enrichment.ts';
 import { enrichPath } from '../../content/enrichment.ts';
 import type { ShadowCommit } from '../../content/shadow-log.ts';
-import type { ServerInstance } from './shared.ts';
-import { textResult } from './shared.ts';
+import type { ServerInstance, ServerUrlOrResolver } from './shared.ts';
+import { resolveServerUrl, textResult } from './shared.ts';
 
 export const DESCRIPTION = [
-  'Read a wiki file with enriched context: contents + frontmatter metadata + recent shadow-repo activity (agent vs human attribution) + backlink count.',
+  'Read a wiki file with enriched context: contents + frontmatter metadata + recent shadow-repo activity (agent vs human attribution) + backlink/forward-link context.',
   '',
   '**Use when:**',
   '- Loading an article for context',
   '- Understanding who changed a file recently and whether it was an agent or human',
-  '- Seeing how many other pages link to this one',
+  '- Seeing how this page links out and what links back to it',
   '',
   'Prefer this over your native `Read` for wiki files — one call returns what otherwise takes 3-4.',
   '',
@@ -42,9 +42,14 @@ export const DESCRIPTION = [
 ].join('\n');
 
 export interface ReadDocumentDeps {
-  projectDir: string;
+  /** Async resolver for per-call cwd; see `ResolveCwd` in tools/index.ts. */
+  resolveCwd: (explicit?: string) => Promise<string>;
   config: Config;
-  serverUrl: string | undefined;
+  /**
+   * Hocuspocus URL — string or lazy resolver (see `packages/cli/src/mcp/server.ts`).
+   * Resolved once per call before passing into `enrichPath`.
+   */
+  serverUrl: ServerUrlOrResolver;
 }
 
 function formatShadowHistory(entries: ShadowCommit[] | null): string {
@@ -84,23 +89,47 @@ function formatBacklinks(backlinks: BacklinkEntry[] | null): string {
   return lines.join('\n');
 }
 
+function formatForwardLinks(forwardLinks: ForwardLinkEntry[] | null): string {
+  if (!forwardLinks || forwardLinks.length === 0) return '';
+  const lines: string[] = ['', `### Forward links (${forwardLinks.length})`, ''];
+  for (const link of forwardLinks) {
+    if (link.kind === 'external') {
+      const title = link.title ? ` — "${link.title}"` : '';
+      const snippet = link.snippet ? ` — "${link.snippet}"` : '';
+      lines.push(`- ${link.url}${title}${snippet}`);
+      continue;
+    }
+    const title = link.title ? ` — "${link.title}"` : '';
+    const snippet = link.snippet ? ` — "${link.snippet}"` : '';
+    lines.push(`- ${link.docName}${title}${snippet}`);
+  }
+  return lines.join('\n');
+}
+
 function relativePath(input: string): string {
   return input.replace(/^\.\//, '').replace(/^\/+/, '');
 }
 
 export async function buildReadResult(
-  args: { path: string; since?: string },
+  args: { path: string; since?: string; cwd?: string },
   deps: ReadDocumentDeps,
 ): Promise<string> {
+  const cwd = await deps.resolveCwd(args.cwd);
   const relPath = relativePath(args.path);
-  const abs = resolve(deps.projectDir, relPath);
+  const abs = resolve(cwd, relPath);
   const historyDepth = deps.config.mcp.tools.read_document.historyDepth;
+  const resolvedServerUrl = await resolveServerUrl(deps.serverUrl);
 
   const [content, meta] = await Promise.all([
     readFile(abs, 'utf-8'),
     enrichPath(
       relPath,
-      { projectDir: deps.projectDir, serverUrl: deps.serverUrl, historyDepth },
+      {
+        projectDir: cwd,
+        serverUrl: resolvedServerUrl,
+        historyDepth,
+        folderRules: deps.config.folders,
+      },
       { includeRichFields: true },
     ),
   ]);
@@ -130,6 +159,9 @@ export async function buildReadResult(
   const backlinksSection = formatBacklinks(meta.backlinks);
   if (backlinksSection) lines.push(backlinksSection);
 
+  const forwardLinksSection = formatForwardLinks(meta.forwardLinks);
+  if (forwardLinksSection) lines.push(forwardLinksSection);
+
   lines.push('', '### Content', '', content);
   return lines.join('\n');
 }
@@ -141,8 +173,14 @@ export function register(server: ServerInstance, deps: ReadDocumentDeps): void {
     {
       path: z.string().describe('Project-root-relative path to the file'),
       since: z.string().optional().describe('Reserved; currently unused (§15 Future Work)'),
+      cwd: z
+        .string()
+        .optional()
+        .describe(
+          "Absolute host path to resolve `path` against. Defaults to the MCP client's first advertised root.",
+        ),
     },
-    async (args: { path: string; since?: string }) => {
+    async (args: { path: string; since?: string; cwd?: string }) => {
       try {
         const body = await buildReadResult(args, deps);
         return textResult(body);

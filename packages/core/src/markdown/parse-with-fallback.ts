@@ -13,7 +13,17 @@ import { incrementBlockFallback, incrementWholeDocFallback } from '../metrics/pa
 import { findFencedRegions, isInsideFence } from './fence-regions.ts';
 import { hoistRefDefs } from './ref-def-hoist.ts';
 
-const MAX_SPLIT_DEPTH = 20;
+/**
+ * Maximum recursion depth for the block-level split-then-rejoin fallback.
+ * Exported so tests can parametrically exercise the depth=N vs depth=N+1
+ * boundary without duplicating the literal (US-015).
+ *
+ * Boundary semantics: the guard is `depth > MAX_SPLIT_DEPTH`, so a call at
+ * depth === MAX_SPLIT_DEPTH is the deepest that is permitted to attempt a
+ * parse; depth === MAX_SPLIT_DEPTH + 1 immediately falls through to
+ * whole-doc raw text and increments `parseFallback.wholeDoc`.
+ */
+export const MAX_SPLIT_DEPTH = 20;
 
 type ParseFn = (markdown: string) => JSONContent;
 
@@ -29,7 +39,12 @@ export function parseWithFallback(source: string, opts: ParseWithFallbackOptions
   return parseRecursive(source, opts.parse, 0);
 }
 
-function parseRecursive(source: string, parse: ParseFn, depth: number): JSONContent {
+/**
+ * Internal recursion core. Exported for test-only use (US-015 boundary
+ * coverage of `depth > MAX_SPLIT_DEPTH`). Production callers should use
+ * `parseWithFallback` which pins the starting depth at 0.
+ */
+export function parseRecursive(source: string, parse: ParseFn, depth: number): JSONContent {
   if (depth > MAX_SPLIT_DEPTH) {
     incrementWholeDocFallback();
     console.warn(
@@ -455,21 +470,27 @@ function tryPerBlockFallback(
       }
       merged.push(...nonEmpty);
       anySucceeded = true;
-    } catch {
+    } catch (blockErr) {
       incrementBlockFallback();
+      // Surface BOTH the block-specific failure AND the original top-level
+      // error — the two may differ (e.g. top-level is PM-construction, the
+      // block fails with a different MDX tokenizer error). Capped so log
+      // aggregators don't see unbounded payloads (A9 parse-health budget).
+      const blockMsg = (blockErr as Error)?.message?.slice(0, 200) ?? 'unknown block error';
+      const originalMsg = (originalErr as Error)?.message?.slice(0, 160) ?? 'unknown';
       console.warn(
         JSON.stringify({
           event: 'mdx-block-fallback',
           offset: block.start,
-          reason: `Per-block recovery after position-less error: ${
-            (originalErr as Error)?.message?.slice(0, 160) ?? 'unknown'
-          }`,
+          reason: `Per-block recovery after position-less error: ${originalMsg}`,
+          blockError: blockMsg,
+          blockErrorName: (blockErr as Error)?.name,
         }),
       );
       merged.push({
         type: 'rawMdxFallback',
         attrs: {
-          reason: (originalErr as Error)?.message?.slice(0, 200) ?? 'Position-less parse error',
+          reason: blockMsg,
           originalSpan: { start: block.start, end: block.end },
         },
         content: [{ type: 'text', text: block.src }],

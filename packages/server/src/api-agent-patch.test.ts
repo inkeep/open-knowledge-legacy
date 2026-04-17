@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { Hocuspocus } from '@hocuspocus/server';
-import { AgentSessionManager } from './agent-sessions.ts';
+import {
+  AGENT_WRITE_ORIGIN,
+  AgentSessionManager,
+  applyAgentMarkdownWrite,
+} from './agent-sessions.ts';
 import { createApiExtension } from './api-extension.ts';
 
 interface CapturedResponse {
@@ -75,9 +79,11 @@ describe('POST /api/agent-patch', () => {
       const ytext = dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
+      // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
+      // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
       dc.document.transact(() => {
-        ytext.insert(0, initial);
-      });
+        applyAgentMarkdownWrite(dc.document, initial, 'replace');
+      }, AGENT_WRITE_ORIGIN);
 
       const secondOffset = initial.indexOf('Project Alpha', initial.indexOf('Project Alpha') + 1);
       const response = await callAgentPatch(hocuspocus, sessionManager, contentDir, {
@@ -91,6 +97,7 @@ describe('POST /api/agent-patch', () => {
       expect(JSON.parse(response.body)).toEqual({
         ok: true,
         timestamp: expect.any(String),
+        subscriberCount: expect.any(Number),
       });
       expect(ytext.toString()).toBe(
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha (linked) appears second.\n',
@@ -114,9 +121,11 @@ describe('POST /api/agent-patch', () => {
       const ytext = dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
+      // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
+      // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
       dc.document.transact(() => {
-        ytext.insert(0, initial);
-      });
+        applyAgentMarkdownWrite(dc.document, initial, 'replace');
+      }, AGENT_WRITE_ORIGIN);
 
       const secondOffset = initial.indexOf('Project Alpha', initial.indexOf('Project Alpha') + 1);
       const response = await callAgentPatch(hocuspocus, sessionManager, contentDir, {
@@ -151,9 +160,11 @@ describe('POST /api/agent-patch', () => {
       const ytext = dc.document.getText('source');
       const initial =
         '# Notes\n\nProject Alpha appears first. Later, Project Alpha appears second.\n';
+      // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
+      // (agent-patch reads from XmlFragment per precedent #12 XmlFragment-authoritative).
       dc.document.transact(() => {
-        ytext.insert(0, initial);
-      });
+        applyAgentMarkdownWrite(dc.document, initial, 'replace');
+      }, AGENT_WRITE_ORIGIN);
 
       const response = await callAgentPatch(hocuspocus, sessionManager, contentDir, {
         docName: 'test-doc',
@@ -165,6 +176,7 @@ describe('POST /api/agent-patch', () => {
       expect(JSON.parse(response.body)).toEqual({
         ok: true,
         timestamp: expect.any(String),
+        subscriberCount: expect.any(Number),
       });
       expect(ytext.toString()).toBe(
         '# Notes\n\nProject Alpha (linked) appears first. Later, Project Alpha appears second.\n',

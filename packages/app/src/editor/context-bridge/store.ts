@@ -1,5 +1,5 @@
 /**
- * Context Bridge Store (FR-27, §9.15, Precedent #13).
+ * Context Bridge Store (FR-27, §9.15, Precedent #19).
  *
  * Pure JS store that enables React Context values to cross TipTap
  * NodeView portal boundaries. Each compound-parent NodeView (Tabs,

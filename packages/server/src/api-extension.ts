@@ -1,5 +1,5 @@
 /**
- * HTTP API extension for Hocuspocus — agent write, undo/redo, and test reset endpoints.
+ * HTTP API extension for Hocuspocus — agent write, file ops, and test reset endpoints.
  *
  * Implemented as a Hocuspocus onRequest extension so it works with both
  * the standalone Server and the Vite dev plugin.
@@ -22,30 +22,41 @@ import {
 } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, extname, relative, resolve, sep } from 'node:path';
-import type { Extension, Hocuspocus } from '@hocuspocus/server';
+import type { Extension, Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
 import {
   ALLOWED_IMAGE_MIME_TYPES,
+  applyFastDiff,
   getHeadingSlug,
   getParseHealth,
   type HeadingEntry,
   prependFrontmatter,
   stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
-import { updateYFragment } from '@tiptap/y-tiptap';
+import { updateYFragment, yXmlFragmentToProsemirrorJSON } from '@tiptap/y-tiptap';
 import busboy from 'busboy';
 import { diffLines } from 'diff';
 import { fileTypeFromBuffer } from 'file-type';
+import type { AgentFocusBroadcaster } from './agent-focus.ts';
 import {
   AGENT_WRITE_ORIGIN,
   type AgentSessionManager,
-  DEFAULT_AGENT_ID,
-  syncTextToFragment,
+  applyAgentMarkdownWrite,
 } from './agent-sessions.ts';
-import { extractPageTitle } from './page-identity.ts';
+import { recordContributor } from './contributor-tracker.ts';
+import { findHubCandidates } from './hub-candidates.ts';
+import {
+  extractPageTitle,
+  type FrontmatterMetadata,
+  parseFrontmatterMetadata,
+} from './page-identity.ts';
 
 export { extractPageTitle } from './page-identity.ts';
 
-import { type BacklinkIndex, isOrphanMode } from './backlink-index.ts';
+import {
+  type BacklinkIndex,
+  type GraphNode as IndexedGraphNode,
+  isOrphanMode,
+} from './backlink-index.ts';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { getDocExtension, isSupportedDocFile, stripDocExtension } from './doc-extensions.ts';
 import {
@@ -54,6 +65,8 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { getLogger } from './logger.ts';
+import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
   createManagedRenameRecoveryJournal,
   type ManagedRenameSnapshot,
@@ -88,17 +101,19 @@ import { getDocumentHistory } from './timeline-query.ts';
  * restored content reaches disk through the normal pipeline. The file-watcher's
  * registerWrite hash check prevents the self-write from re-triggering reconciliation.
  */
-const ROLLBACK_ORIGIN = {
+export const ROLLBACK_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'rollback-apply' },
-};
+} satisfies LocalTransactionOrigin;
 
 const MANAGED_RENAME_ORIGIN = {
   source: 'local' as const,
   skipStoreHooks: false,
   context: { origin: 'managed-rename' },
-};
+} satisfies LocalTransactionOrigin;
+
+const log = getLogger('api');
 
 /** Validates a docName and builds a shadow-repo-safe path.
  * Uses the same traversal check as safeContentPath (reject `..` and null bytes)
@@ -394,6 +409,18 @@ export interface ApiExtensionOptions {
   contentRoot?: string;
   backlinkIndex?: BacklinkIndex;
   signalChannel?: (channel: 'files' | 'backlinks' | 'graph') => void;
+  /**
+   * Optional. When present, agent write handlers publish the active doc on
+   * `__system__` awareness so clients can push-navigate to follow the agent.
+   * Omit to disable nav broadcasts entirely (e.g. in tests that don't care).
+   */
+  agentFocusBroadcaster?: AgentFocusBroadcaster;
+  /**
+   * Optional. Called after every successful agent write (write_document /
+   * edit_document). The handler is expected to be cheap and idempotent —
+   * the CLI uses it to open the browser on the first agent edit per session.
+   */
+  onAgentWrite?: () => void;
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -467,6 +494,8 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     contentRoot,
     backlinkIndex,
     signalChannel,
+    agentFocusBroadcaster,
+    onAgentWrite,
   } = options;
 
   function resolveDocPath(docName: string): string | null {
@@ -489,8 +518,117 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
   }
 
+  const EMPTY_METADATA: FrontmatterMetadata = {
+    cluster: undefined,
+    category: undefined,
+    tags: undefined,
+  };
+
+  function readFrontmatterMetadataForDocName(docName: string): FrontmatterMetadata {
+    try {
+      const doc = hocuspocus.documents.get(docName);
+      if (doc) {
+        const metaMap = doc.getMap('metadata');
+        const fm = metaMap.get('frontmatter');
+        if (typeof fm === 'string' && fm) return parseFrontmatterMetadata(fm);
+      }
+    } catch {
+      /* fall through to disk */
+    }
+    try {
+      const filePath = resolveDocPath(docName);
+      if (!filePath || !existsSync(filePath)) return EMPTY_METADATA;
+      const content = readFileSync(filePath, 'utf-8');
+      const { frontmatter } = stripFrontmatter(content);
+      if (!frontmatter) return EMPTY_METADATA;
+      return parseFrontmatterMetadata(frontmatter);
+    } catch {
+      return EMPTY_METADATA;
+    }
+  }
+
+  /**
+   * Soft orphan-hint (D7 / N1): when a written doc has zero backlinks AND a
+   * hub candidate exists in its folder tree, attach a hint suggesting the
+   * hub. Returns `undefined` when any prerequisite is unavailable (no
+   * backlinkIndex wired, target not in index, has backlinks, or no candidate).
+   * Non-throwing — a hint-computation failure must not fail the write.
+   */
+  function computeOrphanHints(
+    docName: string,
+  ): Array<{ type: 'orphan'; parentCandidates: string[]; message: string }> | undefined {
+    if (!backlinkIndex) return undefined;
+    try {
+      const backlinks = backlinkIndex.getBacklinks(docName);
+      if (backlinks.length > 0) return undefined;
+      // This runs on every write — if hub-candidate walking becomes pathological
+      // on very large file indexes, we want an observable signal. 5ms is well
+      // above the typical <1ms cost for a small-to-medium repo.
+      const start = performance.now();
+      const candidates = findHubCandidates(docName, getFileIndex());
+      const elapsed = performance.now() - start;
+      if (elapsed > 5) {
+        log.debug(
+          { docName, elapsedMs: elapsed, candidateCount: candidates.length },
+          '[orphan-hint] findHubCandidates slow',
+        );
+      }
+      if (candidates.length === 0) return undefined;
+      const wikiLinks = candidates.map((c) => `[[${c}]]`).join(', ');
+      return [
+        {
+          type: 'orphan',
+          parentCandidates: candidates,
+          message: `This doc has no backlinks yet. To make it discoverable, consider linking from a parent hub doc (index/overview files in the folder tree): ${wikiLinks}.`,
+        },
+      ];
+    } catch (err) {
+      console.warn('[orphan-hint] computeOrphanHints failed:', err);
+      return undefined;
+    }
+  }
+
   function resolveAlias(docName: string): string {
     return getAliasMap?.().get(docName) ?? docName;
+  }
+
+  /**
+   * Return the number of live browser/editor connections currently subscribed
+   * to the given Hocuspocus document. Zero means the agent is writing to a
+   * room nobody is watching — the MCP tool surfaces that as a warning so the
+   * user can open the preview.
+   *
+   * Never throws: a Hocuspocus introspection failure is silent (returns 0).
+   */
+  function getSubscriberCount(docName: string): number {
+    try {
+      const doc = hocuspocus.documents.get(docName);
+      return doc?.connections.size ?? 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Fire-and-forget L1 → L2 flush for a single document.
+   *
+   * L1 (CRDT → disk): per-document debounce flush so concurrent human edits on
+   * other documents are undisturbed.
+   * L2 (disk → git): chained after L1 resolves to guarantee disk content is
+   * up-to-date before the shadow-repo commit.
+   *
+   * The returned promise is intentionally not awaited by callers — the HTTP
+   * response fires immediately after the CRDT transaction; persistence is
+   * best-effort background work.
+   */
+  function flushDocToGit(docName: string, label: string): void {
+    const debounceId = `onStoreDocument-${docName}`;
+    const l1 = hocuspocus.debouncer.isDebounced(debounceId)
+      ? hocuspocus.debouncer.executeNow(debounceId)
+      : Promise.resolve();
+    l1.then(() => flushGitCommit?.()).catch((err: unknown) => {
+      log.warn({ err }, `[${label}] post-write flush failed`);
+    });
   }
 
   function collectAdmittedDocNames(): Set<string> {
@@ -551,7 +689,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     }
 
     for (const docName of docNames) {
-      await sessionManager.closeSession(docName).catch((err) => {
+      await sessionManager.closeAllForDoc(docName).catch((err) => {
         console.warn(`[file-ops] Failed to close agent session for ${docName}:`, err);
       });
     }
@@ -654,6 +792,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
 
     let result: ManagedRenameRewriteSummary = { markdown: '', rewrites: 0 };
     document.transact(() => {
+      const xmlFragment = document.getXmlFragment('default');
       const ytext = document.getText('source');
       const currentText = ytext.toString();
       result = rewriteSupportedLinksForDocumentRename(currentText, docName, oldDocName, newDocName);
@@ -661,14 +800,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      ytext.delete(0, currentText.length);
-      ytext.insert(0, result.markdown);
-      syncTextToFragment(document);
+      // Apply rewrite via XmlFragment-authoritative pattern (AGENTS.md precedent #12;
+      // replaces the deleted syncTextToFragment helper). Parse new markdown →
+      // updateYFragment (preserves user-content Items at matching positions) →
+      // mirror Y.Text via applyFastDiff (character-level CRDT mutation).
+      const { body } = stripFrontmatter(result.markdown);
+      const parsedJson = mdManager.parseWithFallback(body);
+      const pmNode = schema.nodeFromJSON(parsedJson);
+      updateYFragment(document, xmlFragment, pmNode, {
+        mapping: new Map(),
+        isOMark: new Map(),
+      });
+      applyFastDiff(ytext, currentText, result.markdown);
     }, MANAGED_RENAME_ORIGIN);
     return result;
   }
 
-  async function performManagedRename(
+  async function _performManagedRename(
     sourceDocName: string,
     destinationDocName: string,
   ): Promise<{ renamed: RenamedDocMapping[]; rewrittenDocs: ManagedRenameRewrittenDoc[] }> {
@@ -793,6 +941,39 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     });
   }
 
+  const AGENT_ID_RE = /^[a-zA-Z0-9_-]+$/;
+  const AGENT_NAME_MAX_LEN = 128;
+
+  /** Extract agent identity fields shared across the three write endpoints. */
+  function extractAgentIdentity(body: Record<string, unknown>): {
+    rawAgentId: string | undefined;
+    agentId: string;
+    agentName: string;
+    colorSeed: string;
+    clientName: string | undefined;
+  } {
+    let rawAgentId = typeof body.agentId === 'string' ? body.agentId : undefined;
+    if (rawAgentId !== undefined && !AGENT_ID_RE.test(rawAgentId)) {
+      rawAgentId = undefined;
+    }
+    const agentId = rawAgentId ? `agent-${rawAgentId}` : 'claude-1';
+    const agentName =
+      typeof body.agentName === 'string'
+        ? body.agentName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '')
+        : 'Claude';
+    let clientName = typeof body.clientName === 'string' ? body.clientName : undefined;
+    if (clientName !== undefined) {
+      clientName = clientName.slice(0, AGENT_NAME_MAX_LEN).replace(/[\r\n]/g, '');
+    }
+    // colorSeed must match what getSession() uses for presence bar color consistency.
+    // Prefer MCP-provided colorSeed (label-based) over raw UUID fallback.
+    const colorSeed =
+      typeof body.colorSeed === 'string' && body.colorSeed.length > 0
+        ? body.colorSeed.slice(0, AGENT_NAME_MAX_LEN)
+        : (rawAgentId ?? agentId);
+    return { rawAgentId, agentId, agentName, colorSeed, clientName };
+  }
+
   async function handleAgentWrite(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== 'POST') {
       res.writeHead(405);
@@ -827,7 +1008,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(docName);
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(body);
+      const dc = await sessionManager.getSession(docName, agentId, {
+        displayName: agentName,
+        colorSeed,
+        clientName,
+      });
       const timestamp = new Date().toISOString();
       const content =
         typeof body.content === 'string' ? body.content : `Hello from the agent! ${timestamp}`;
@@ -835,28 +1021,26 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
-          const insertAt = currentText.length;
-          const separator = currentText.trim() ? '\n\n' : '';
-          ytext.insert(insertAt, `${separator}${content}\n`);
-          syncTextToFragment(dc.document);
+          applyAgentMarkdownWrite(dc.document, `${content}\n`, 'append');
 
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Added: ${content.slice(0, 50)}`,
+            description: `Added (${agentName}): ${content.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
+      flushDocToGit(docName, 'agent-write');
+
       json(res, 200, { ok: true, timestamp });
     } catch (e) {
-      console.error('[agent-write]', e);
+      log.error({ err: e }, '[agent-write] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -909,43 +1093,62 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${resolvedDocName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(resolvedDocName);
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
+        body as Record<string, unknown>,
+      );
+      const dc = await sessionManager.getSession(resolvedDocName, agentId, {
+        displayName: agentName,
+        colorSeed,
+        clientName,
+      });
       const timestamp = new Date().toISOString();
 
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
-
-          if (position === 'replace') {
-            ytext.delete(0, currentText.length);
-            ytext.insert(0, markdown.trim());
-          } else if (position === 'prepend') {
-            ytext.insert(0, `${markdown.trim()}\n\n`);
-          } else {
-            const insertAt = currentText.length;
-            const separator = currentText.trim() ? '\n\n' : '';
-            ytext.insert(insertAt, `${separator}${markdown.trim()}\n`);
-          }
-
-          syncTextToFragment(dc.document);
+          applyAgentMarkdownWrite(dc.document, markdown, position);
 
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Added: ${markdown.trim().slice(0, 50)}`,
+            description: `Added (${agentName}): ${markdown.trim().slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        recordContributor(resolvedDocName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
 
-      json(res, 200, { ok: true, timestamp });
+      flushDocToGit(resolvedDocName, 'agent-write-md');
+
+      // Publish agent focus on __system__ awareness so browser clients can
+      // push-navigate to the doc just written. Uses per-write agentId from
+      // attribution (PR #134).
+      agentFocusBroadcaster?.setFocus(agentId, {
+        agentName,
+        currentDoc: resolvedDocName,
+        writeKind: 'write',
+        ts: Date.now(),
+      });
+      onAgentWrite?.();
+
+      // Orphan-hint nudge (D7 / N1 cadence norm): if this doc now has zero
+      // backlinks and a plausible hub exists in its folder tree, suggest the
+      // hub. Soft — agent can ignore. Silent when no backlinkIndex is wired.
+      const hints = computeOrphanHints(resolvedDocName);
+
+      const subscriberCount = getSubscriberCount(resolvedDocName);
+
+      json(res, 200, {
+        ok: true,
+        timestamp,
+        subscriberCount,
+        ...(hints ? { hints } : {}),
+      });
     } catch (e) {
-      console.error('[agent-write-md]', e);
+      log.error({ err: e }, '[agent-write-md] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -1066,6 +1269,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       }
       const backlinks = backlinkIndex.getBacklinks(docName).map((entry) => ({
         source: entry.source,
+        anchor: entry.anchor,
         title: readPageTitleForDocName(entry.source),
         snippet: entry.snippet,
       }));
@@ -1073,6 +1277,42 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     } catch (e) {
       console.error('[backlinks]', e);
       json(res, 500, { ok: false, error: 'Failed to read backlinks' });
+    }
+  }
+
+  /**
+   * Bulk backlink-count lookup. `GET /api/backlink-counts?docNames=a,b,c`
+   * returns `{ ok: true, counts: { a: 3, b: 0, c: 2 } }`. Serves listing UIs
+   * (exec ls/grep/find slim enrichment) that need connection density per file
+   * without N-amplifying the single-doc `/api/backlinks` endpoint.
+   * docNames failing `isSafeDocName` are silently dropped from `counts`.
+   */
+  async function handleBacklinkCounts(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    if (!backlinkIndex) {
+      json(res, 503, { ok: false, error: 'Backlink index not configured' });
+      return;
+    }
+    try {
+      const url = new URL(req.url ?? '', 'http://localhost');
+      const raw = url.searchParams.get('docNames');
+      if (!raw) {
+        json(res, 400, { ok: false, error: 'Missing docNames parameter' });
+        return;
+      }
+      const counts: Record<string, number> = {};
+      for (const docName of raw.split(',')) {
+        const trimmed = docName.trim();
+        if (!trimmed || !isSafeDocName(trimmed)) continue;
+        counts[trimmed] = backlinkIndex.getBacklinkCount(trimmed);
+      }
+      json(res, 200, { ok: true, counts });
+    } catch (e) {
+      console.error('[backlink-counts]', e);
+      json(res, 500, { ok: false, error: 'Failed to read backlink counts' });
     }
   }
 
@@ -1099,11 +1339,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, {
         ok: true,
         docName,
-        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) => ({
-          docName: entry.target,
-          title: readPageTitleForDocName(entry.target),
-          snippet: entry.snippet,
-        })),
+        forwardLinks: backlinkIndex.getForwardLinkEntries(docName).map((entry) =>
+          entry.kind === 'doc'
+            ? {
+                kind: 'doc' as const,
+                docName: entry.target,
+                anchor: entry.anchor,
+                title: readPageTitleForDocName(entry.target),
+                snippet: entry.snippet,
+              }
+            : {
+                kind: 'external' as const,
+                url: entry.url,
+                title: entry.label ?? entry.url,
+                snippet: entry.snippet,
+              },
+        ),
       });
     } catch (e) {
       console.error('[forward-links]', e);
@@ -1134,7 +1385,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      let nodes: string[];
+      let nodes: IndexedGraphNode[];
       let links: Array<{ source: string; target: string }>;
 
       if (rawDegrees && docName) {
@@ -1149,10 +1400,27 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ({ nodes, links } = backlinkIndex.getLinkGraph());
       }
 
-      const enrichedNodes = nodes.map((id) => ({
-        id,
-        label: readPageTitleForDocName(id),
-      }));
+      const enrichedNodes = nodes.map((node) => {
+        if (node.kind === 'doc') {
+          const meta = readFrontmatterMetadataForDocName(node.docName);
+          return {
+            id: node.id,
+            kind: 'doc' as const,
+            docName: node.docName,
+            anchor: node.anchor ?? null,
+            label: readPageTitleForDocName(node.docName),
+            cluster: meta.cluster ?? null,
+            category: meta.category ?? null,
+            tags: meta.tags ?? null,
+          };
+        }
+        return {
+          id: node.id,
+          kind: 'external' as const,
+          url: node.url,
+          label: node.label ?? node.url,
+        };
+      });
       json(res, 200, { ok: true, nodes: enrichedNodes, links });
     } catch (e) {
       console.error('[link-graph]', e);
@@ -1317,7 +1585,14 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 400, { ok: false, error: `'${docName}' is a reserved document name` });
         return;
       }
-      const dc = await sessionManager.getSession(docName);
+      const { agentId, agentName, colorSeed, clientName } = extractAgentIdentity(
+        body as Record<string, unknown>,
+      );
+      const dc = await sessionManager.getSession(docName, agentId, {
+        displayName: agentName,
+        colorSeed,
+        clientName,
+      });
       const timestamp = new Date().toISOString();
 
       let notFound = false;
@@ -1325,12 +1600,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          const ytext = dc.document.getText('source');
-          const currentText = ytext.toString();
+          // Read current authoritative body from XmlFragment (Bug-A fix — precedent #12)
+          const xmlFragment = dc.document.getXmlFragment('default');
+          const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
           const pos =
             offset == null
-              ? currentText.indexOf(find)
-              : currentText.slice(offset, offset + find.length) === find
+              ? currentBody.indexOf(find)
+              : currentBody.slice(offset, offset + find.length) === find
                 ? offset
                 : -1;
           if (pos === -1) {
@@ -1341,17 +1617,19 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             }
             return;
           }
-          ytext.delete(pos, find.length);
-          ytext.insert(pos, replace);
-          syncTextToFragment(dc.document);
+          const newBody =
+            currentBody.slice(0, pos) + replace + currentBody.slice(pos + find.length);
+          applyAgentMarkdownWrite(dc.document, newBody, 'replace');
+
           const activityMap = dc.document.getMap('activity');
-          activityMap.set(DEFAULT_AGENT_ID, {
-            agentId: DEFAULT_AGENT_ID,
+          activityMap.set(agentId, {
+            agentId,
             timestamp: Date.now(),
             type: 'insert',
-            description: `Patched: ${find.slice(0, 50)}`,
+            description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
+        if (!notFound && !staleTarget) recordContributor(docName, agentId, agentName, colorSeed);
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -1367,9 +1645,22 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         json(res, 404, { ok: false, error: 'Text not found in document' });
         return;
       }
-      json(res, 200, { ok: true, timestamp });
+
+      flushDocToGit(docName, 'agent-patch');
+
+      agentFocusBroadcaster?.setFocus(agentId, {
+        agentName,
+        currentDoc: docName,
+        writeKind: 'edit',
+        ts: Date.now(),
+      });
+      onAgentWrite?.();
+
+      const subscriberCount = getSubscriberCount(docName);
+
+      json(res, 200, { ok: true, timestamp, subscriberCount });
     } catch (e) {
-      console.error('[agent-patch]', e);
+      log.error({ err: e }, '[agent-patch] handler failed');
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -1692,7 +1983,12 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         fromContent = doc.getText('source').toString();
       }
 
-      const changes = diffLines(fromContent, toContent);
+      // Strip frontmatter from both sides so the diff shows only body changes.
+      // Git content includes frontmatter; Y.Text may or may not depending on
+      // sync state. Stripping both sides normalizes the comparison.
+      const fromBody = stripFrontmatter(fromContent).body;
+      const toBody = stripFrontmatter(toContent).body;
+      const changes = diffLines(fromBody, toBody);
 
       // Build full-file line array: every line annotated as added/removed/unchanged
       const lines: { type: 'added' | 'removed' | 'unchanged'; text: string }[] = [];
@@ -1868,6 +2164,80 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       return;
     }
     json(res, 200, getParseHealth());
+  }
+
+  async function handleWorkspace(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    // Authorization runs BEFORE method dispatch: reversing the order turns the
+    // method check into a fingerprinting oracle for unauth callers (GET → 403,
+    // POST → 405 discloses the verb the endpoint expects). See OWASP ASVS 4.0
+    // V4.1.1 — "perform access control on every request."
+    //
+    // Loopback-only: this endpoint discloses the absolute host filesystem path
+    // (including home directory / username). That's fine for the local-editing
+    // use case the rest of the API is designed for, but if the user configures
+    // `server.host: 0.0.0.0` (demos, shared dev boxes, Codespaces), we do NOT
+    // want to leak the host shape over the network or to cross-origin fetches.
+    // All loopback clients (including requests from a browser on the same
+    // machine) pass — connections from other interfaces are refused.
+    //
+    // DNS-rebinding defense: `req.socket.remoteAddress` will read `127.0.0.1`
+    // for any request that reached the socket via loopback, including requests
+    // triggered by a malicious page that rebinds its hostname to `127.0.0.1`.
+    // The Host-header allowlist below enforces that the caller actually spoke
+    // to us via `localhost` / `127.0.0.1` / `[::1]`, matching the mitigation
+    // in the Ethereum/geth JSON-RPC lineage. Same-origin fetches from the
+    // editor app pass; cross-origin rebinding attempts are refused.
+    if (!isLoopbackAddress(req.socket.remoteAddress)) {
+      json(res, 403, { ok: false, error: 'loopback-required' });
+      return;
+    }
+    if (!isAllowedWorkspaceHostHeader(req.headers.host)) {
+      json(res, 403, { ok: false, error: 'host-header-not-allowed' });
+      return;
+    }
+    if (req.method !== 'GET') {
+      json(res, 405, { ok: false, error: 'Method not allowed' });
+      return;
+    }
+    // Absolute, canonical contentDir so the client can build full filesystem
+    // paths (e.g. for the sidebar 'Copy path > Full path' action). Symlinks in
+    // the workspace root are resolved via realpath so the path matches on-disk
+    // truth. We treat error kinds in line with the persistence layer's symlink
+    // contract (CLAUDE.md "Symlinks" §):
+    //   - ENOENT: contentDir missing on disk → 200 with `symlinkResolved: false`
+    //     and the unresolved path. Lets "Copy Path" still produce a meaningful
+    //     value when the directory was deleted between server start and this
+    //     request; the client decides whether to act on it.
+    //   - ELOOP / EACCES / anything else: real filesystem error → 500. Matches
+    //     persistence's stricter policy (cyclic symlinks are rejected
+    //     everywhere) and avoids handing the user a path that won't resolve.
+    const resolvedRoot = resolve(contentDir);
+    let resolvedContentDir = resolvedRoot;
+    let symlinkResolved = true;
+    try {
+      resolvedContentDir = realpathSync(resolvedRoot);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (code === 'ENOENT') {
+        console.warn('[workspace] contentDir does not exist; returning unresolved path', {
+          path: resolvedRoot,
+        });
+        symlinkResolved = false;
+      } else {
+        console.warn('[workspace] realpath failed for contentDir', { path: resolvedRoot, err });
+        json(res, 500, { ok: false, error: 'workspace-realpath-failed', code: code ?? null });
+        return;
+      }
+    }
+    // `pathSeparator` lets the client build full paths without guessing from
+    // the shape of `contentDir` (which breaks on Windows + forward-slash paths
+    // and on POSIX folders that contain a literal backslash in the name).
+    json(res, 200, {
+      ok: true,
+      contentDir: resolvedContentDir,
+      pathSeparator: sep,
+      symlinkResolved,
+    });
   }
 
   /** 24h in milliseconds — rescue buffers older than this are excluded/cleaned. */
@@ -2156,7 +2526,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         return;
       }
 
-      const result = await performManagedRename(docName, newDocName);
+      const result = await _performManagedRename(docName, newDocName);
       json(res, 200, { ok: true, renamed: result.renamed, rewrittenDocs: result.rewrittenDocs });
     } catch (e) {
       console.error('[rename]', e);
@@ -2527,6 +2897,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/document': handleDocumentRead,
     '/api/documents': handleDocumentList,
     '/api/backlinks': handleBacklinks,
+    '/api/backlink-counts': handleBacklinkCounts,
     '/api/forward-links': handleForwardLinks,
     '/api/link-graph': handleLinkGraph,
     '/api/dead-links': handleDeadLinks,
@@ -2550,6 +2921,7 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,
     '/api/rescue': handleRescueList,
+    '/api/workspace': handleWorkspace,
   };
 
   if (enableTestRoutes) {

@@ -7,10 +7,28 @@
  */
 
 import type { Hocuspocus, LocalTransactionOrigin } from '@hocuspocus/server';
-import { stripFrontmatter } from '@inkeep/open-knowledge-core';
+import { applyFastDiff, stripFrontmatter } from '@inkeep/open-knowledge-core';
 import { updateYFragment } from '@tiptap/y-tiptap';
 import { isSystemDoc } from './cc1-broadcast.ts';
 import { mdManager, schema } from './md-manager.ts';
+import { setReconciledBase } from './persistence.ts';
+
+/**
+ * Transaction origin for file-watcher disk→CRDT bridge operations.
+ *
+ * Exported so the bridge-invariant watcher (FR-11) can include it in its
+ * enforcing-origins Set by identity (not by string literal). Y.js transaction
+ * matching uses `Set.has(tx.origin)` which is identity-based for objects;
+ * a string literal `'file-watcher'` would never match this object.
+ *
+ * skipStoreHooks: true — prevents persistence from re-saving a file we just
+ * loaded from disk (feedback loop prevention).
+ */
+export const FILE_WATCHER_ORIGIN = {
+  source: 'local' as const,
+  skipStoreHooks: true,
+  context: { origin: 'file-watcher' },
+} satisfies LocalTransactionOrigin;
 
 /**
  * Apply external file content to a live Y.Doc — the throwing core of the
@@ -40,26 +58,22 @@ export function applyExternalChange(
   const pmNode = schema.nodeFromJSON(parsedJson);
   const xmlFragment = document.getXmlFragment('default');
 
-  document.transact(
-    () => {
-      const meta = { mapping: new Map(), isOMark: new Map() };
-      updateYFragment(document, xmlFragment, pmNode, meta);
-      const metaMap = document.getMap('metadata');
-      metaMap.set('frontmatter', frontmatter);
+  document.transact(() => {
+    const meta = { mapping: new Map(), isOMark: new Map() };
+    updateYFragment(document, xmlFragment, pmNode, meta);
+    const metaMap = document.getMap('metadata');
+    metaMap.set('frontmatter', frontmatter);
 
-      const ytext = document.getText('source');
-      const currentText = ytext.toString();
-      if (currentText !== content) {
-        ytext.delete(0, currentText.length);
-        ytext.insert(0, content);
-      }
-    },
-    {
-      source: 'local',
-      skipStoreHooks: true,
-      context: { origin: 'file-watcher' },
-    } satisfies LocalTransactionOrigin,
-  );
+    const ytext = document.getText('source');
+    const currentText = ytext.toString();
+    if (currentText !== content) {
+      applyFastDiff(ytext, currentText, content);
+    }
+  }, FILE_WATCHER_ORIGIN);
+
+  // Set the reconciled base so persistence does not re-serialize and re-write
+  // the same content on next flush (EC3 blocker resolution — FR-6).
+  setReconciledBase(docName, content);
 }
 
 /**

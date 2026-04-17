@@ -1,11 +1,18 @@
 export {
   AGENT_WRITE_ORIGIN,
   type AgentDirectConnection,
+  type AgentSessionIdentity,
   AgentSessionManager,
-  DEFAULT_AGENT_ID,
-  syncTextToFragment,
+  applyAgentMarkdownWrite,
+  colorFromSeed,
+  iconFromClientName,
 } from './agent-sessions.ts';
-export { type ApiExtensionOptions, createApiExtension, safeSubdir } from './api-extension.ts';
+export {
+  type ApiExtensionOptions,
+  createApiExtension,
+  ROLLBACK_ORIGIN,
+  safeSubdir,
+} from './api-extension.ts';
 export {
   type BacklinkEntry,
   BacklinkIndex,
@@ -28,7 +35,17 @@ export {
   type ContentFilterOptions,
   createContentFilter,
 } from './content-filter.ts';
-export { applyExternalChange, createExternalChangeHandler } from './external-change.ts';
+export {
+  clearContributors,
+  contributorCount,
+  formatContributors,
+  recordContributor,
+} from './contributor-tracker.ts';
+export {
+  applyExternalChange,
+  createExternalChangeHandler,
+  FILE_WATCHER_ORIGIN,
+} from './external-change.ts';
 export {
   type AsyncSubscription,
   classifyEvents,
@@ -68,6 +85,7 @@ export {
 } from './managed-rename-rewrite.ts';
 export {
   getMetrics,
+  incrementServerObserverFire,
   type ReconciliationMetrics,
   resetMetrics,
 } from './metrics.ts';
@@ -94,6 +112,11 @@ export {
   type ServerLockMetadata,
   updateServerLockPort,
 } from './server-lock.ts';
+export {
+  createServerObserverExtension,
+  type ServerObserverExtensionOptions,
+} from './server-observer-extension.ts';
+export { OBSERVER_SYNC_ORIGIN } from './server-observers.ts';
 export {
   commitUpstreamImport,
   commitWip,

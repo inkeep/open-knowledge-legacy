@@ -15,11 +15,13 @@
  * reconfigure conflicts.
  */
 
-import { markdown } from '@codemirror/lang-markdown';
+import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import type { Compartment, Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
+import { GFM } from '@lezer/markdown';
 import { basicDarkInit, basicLightInit } from '@uiw/codemirror-theme-basic';
 import type * as Y from 'yjs';
+import { codeLanguages } from '../markdown-code-languages';
 import { createAgentFlashSourceExtension } from '../plugins/agent-flash-source';
 import { createMdLinkSourceExtension } from '../plugins/md-link-source';
 import { createWikiLinkSourceExtension } from '../plugins/wiki-link-source';
@@ -72,7 +74,7 @@ export function createNestedCMExtensions(options: NestedCMOptions): Extension[] 
   // with those rules. Keep the factory to behavior (language, decorations,
   // theme, wrapping) only — that way both consumers render identically.
   return [
-    markdown(),
+    markdown({ base: markdownLanguage, extensions: [GFM], codeLanguages }),
     createWikiLinkSourceExtension(),
     createMdLinkSourceExtension(),
     ...(ydoc ? [createAgentFlashSourceExtension(ydoc)] : []),

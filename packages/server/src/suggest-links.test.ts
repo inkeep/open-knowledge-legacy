@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Hocuspocus } from '@hocuspocus/server';
 import type * as Y from 'yjs';
-import { syncTextToFragment } from './agent-sessions.ts';
+import { AGENT_WRITE_ORIGIN, applyAgentMarkdownWrite } from './agent-sessions.ts';
 import type { FileIndexEntry } from './file-watcher.ts';
 import { installTestLoggers, loggerFactory } from './logger.ts';
 import { suggestLinks } from './suggest-links.ts';
@@ -210,11 +210,11 @@ describe('suggestLinks', () => {
 
       conn = await hocuspocus.openDirectConnection('notes');
       const doc = getDoc(conn);
-      const ytext = doc.getText('source');
+      // Seed via applyAgentMarkdownWrite so both XmlFragment and Y.Text are populated
+      // (suggest-links reads live state; agent-write path is the post-precedent-#12 template).
       doc.transact(() => {
-        ytext.insert(0, 'Project Alpha only in live state.\n');
-      });
-      syncTextToFragment(doc);
+        applyAgentMarkdownWrite(doc, 'Project Alpha only in live state.\n', 'replace');
+      }, AGENT_WRITE_ORIGIN);
 
       const result = await suggestLinks({
         hocuspocus,
