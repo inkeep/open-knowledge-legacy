@@ -104,15 +104,15 @@ export function EditorDemo() {
 
   return (
     <section>
-      <div className="relative overflow-hidden border-t bg-[var(--slide-bg)] px-6 py-16 text-center md:py-20">
+      <div className="relative overflow-hidden border-t bg-[var(--slide-bg)] px-6 pt-16 pb-28 text-center md:pt-20 md:pb-36">
         <Image
           src="/Wide.png"
           alt=""
           aria-hidden
           width={3840}
           height={1080}
-          className="pointer-events-none absolute left-0 w-full object-cover opacity-40"
-          style={{ top: '-45%', height: '140%' }}
+          className="pointer-events-none absolute left-0 w-full object-contain opacity-40"
+          style={{ top: '0', height: '100%' }}
         />
         <p className="relative z-10 mb-3 text-sm font-medium uppercase tracking-[0.2em] text-[var(--slide-accent)]">
           Try it
