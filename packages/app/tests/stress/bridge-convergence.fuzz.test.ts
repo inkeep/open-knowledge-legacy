@@ -457,7 +457,26 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
 
 // ─── Main fuzzer ───
 
-const SEED_COUNT = Number(process.env.BRIDGE_FUZZ_SEEDS ?? (process.env.STRESS_FUZZ_SEED ? 1 : 25));
+// Seed count calibration (bridge-correctness SPEC §6 R2, §10 D11 DELEGATED).
+//
+//   - Seed-replay mode (`STRESS_FUZZ_SEED=<n>`): exactly 1 seed, for
+//     deterministic reproduction.
+//   - Explicit override (`BRIDGE_FUZZ_SEEDS=<n>`): exact count, for local
+//     scaling / bisection runs.
+//   - Nightly mode (`STRESS_FUZZ_NIGHTLY=1`): elevated to 10000 seeds (tier 2
+//     in CLAUDE.md CI tier structure; runtime budget ≈ 30 min).
+//   - PR mode (`STRESS_FUZZ_PR=1`): elevated to 1000 seeds (SPEC §6 R2
+//     target; gated on CI time budget — see D11).
+//   - Otherwise: 25 seeds. Matches the calibrated opCount sweet spot below
+//     and keeps local developer runs cheap.
+function resolveSeedCount(): number {
+  if (process.env.STRESS_FUZZ_SEED) return 1;
+  if (process.env.BRIDGE_FUZZ_SEEDS) return Number(process.env.BRIDGE_FUZZ_SEEDS);
+  if (process.env.STRESS_FUZZ_NIGHTLY === '1') return 10_000;
+  if (process.env.STRESS_FUZZ_PR === '1') return 1_000;
+  return 25;
+}
+const SEED_COUNT = resolveSeedCount();
 const FIXED_SEED = process.env.STRESS_FUZZ_SEED ? Number(process.env.STRESS_FUZZ_SEED) : undefined;
 
 describe('bridge-convergence fuzzer (FR-17)', () => {
