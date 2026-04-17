@@ -1,19 +1,128 @@
-import { FileText, FolderOpen, Plus, SquarePen } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronDown,
+  File,
+  Folder,
+  FolderOpen,
+  Plus,
+} from 'lucide-react';
 import { useState } from 'react';
-import { buildFolderOverviewData } from '@/components/folder-overview-data';
+import {
+  buildFolderOverviewData,
+  type FolderOverviewEntry,
+} from '@/components/folder-overview-data';
 import { NewItemDialog } from '@/components/NewItemDialog';
 import { usePageList } from '@/components/PageListContext';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRoot,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { emitDocumentsChanged } from '@/lib/documents-events';
 
+type SortKey = 'name' | 'modified';
+type SortDir = 'asc' | 'desc';
+
+function formatRelativeDate(iso: string): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHrs = Math.floor(diffMin / 60);
+  if (diffHrs < 24) return `${diffHrs}h ago`;
+  const diffDays = Math.floor(diffHrs / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function sortEntries(
+  entries: FolderOverviewEntry[],
+  key: SortKey,
+  dir: SortDir,
+): FolderOverviewEntry[] {
+  return [...entries].sort((a, b) => {
+    if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
+    let cmp = 0;
+    switch (key) {
+      case 'name':
+        cmp = a.title.localeCompare(b.title) || a.name.localeCompare(b.name);
+        break;
+      case 'modified': {
+        const aM = a.kind === 'file' ? a.modified : '';
+        const bM = b.kind === 'file' ? b.modified : '';
+        cmp = aM.localeCompare(bM);
+        break;
+      }
+    }
+    return dir === 'asc' ? cmp : -cmp;
+  });
+}
+
+function SortableHeader({
+  label,
+  sortKey,
+  activeKey,
+  activeDir,
+  onSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  activeKey: SortKey;
+  activeDir: SortDir;
+  onSort: (key: SortKey) => void;
+}) {
+  const isActive = activeKey === sortKey;
+  return (
+    <Button variant="ghost" size="sm" className="-ml-3 h-8" onClick={() => onSort(sortKey)}>
+      {label}
+      {isActive ? (
+        activeDir === 'asc' ? (
+          <ArrowUp className="ml-1 size-3" />
+        ) : (
+          <ArrowDown className="ml-1 size-3" />
+        )
+      ) : (
+        <ArrowUpDown className="ml-1 size-3 text-muted-foreground/50" />
+      )}
+    </Button>
+  );
+}
+
 export function FolderOverview({ folderPath }: { folderPath: string }) {
-  const { addPage, folderPaths, pages, pageTitles } = usePageList();
+  const { addPage, folderPaths, pages, pageTitles, pageMeta } = usePageList();
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [creatingIndex, setCreatingIndex] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
-  const data = buildFolderOverviewData(folderPath, { pages, pageTitles, folderPaths });
+  const [sortKey, setSortKey] = useState<SortKey>('name');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+
+  const data = buildFolderOverviewData(folderPath, { pages, pageTitles, pageMeta, folderPaths });
+  const sorted = sortEntries(data.children, sortKey, sortDir);
+
+  function handleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
 
   async function handleCreateIndexNote() {
     setCreatingIndex(true);
@@ -48,32 +157,46 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 items-start overflow-y-auto subtle-scrollbar">
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-8">
-          <div className="flex flex-col gap-4 rounded-xl border bg-card p-6 shadow-sm">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="min-w-0 space-y-2">
-                <div className="flex items-center gap-2">
-                  <FolderOpen className="size-5 text-muted-foreground" />
-                  <Badge variant="outline">Folder</Badge>
-                </div>
-                <div>
-                  <h1 className="text-2xl font-semibold tracking-tight">{data.title}</h1>
-                  <p className="font-mono text-sm text-muted-foreground">{folderPath}/</p>
-                </div>
+          <div className="flex flex-col gap-6">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <FolderOpen className="size-5 text-muted-foreground" />
+                <h1 className="text-2xl font-semibold tracking-tight">{data.title}</h1>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={() => void handleCreateIndexNote()} disabled={creatingIndex}>
-                  <Plus className="size-4" />
-                  {creatingIndex ? 'Creating…' : 'Create index note'}
-                </Button>
-                <Button variant="outline" onClick={() => setCreateDialogOpen(true)}>
-                  <SquarePen className="size-4" />
-                  New note in folder
-                </Button>
-              </div>
+              <DropdownMenuRoot>
+                <DropdownMenuTrigger asChild>
+                  <Button>
+                    <Plus className="size-4" />
+                    New
+                    <ChevronDown className="size-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    disabled={creatingIndex}
+                    onSelect={() => void handleCreateIndexNote()}
+                  >
+                    <div>
+                      <div className="font-medium">Index note</div>
+                      <div className="text-xs text-muted-foreground">
+                        Landing page for this folder
+                      </div>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setCreateDialogOpen(true)}>
+                    <div>
+                      <div className="font-medium">Note</div>
+                      <div className="text-xs text-muted-foreground">
+                        New note inside this folder
+                      </div>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenuRoot>
             </div>
-            <p className="max-w-2xl text-sm text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               This folder has no landing note yet. Choose an explicit action to add one or open a
               note inside the folder.
             </p>
@@ -83,73 +206,67 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
               </span>
             ) : null}
           </div>
-
-          <section className="grid gap-6 lg:grid-cols-2">
-            <div className="rounded-xl border bg-card p-5 shadow-sm">
-              <div className="mb-3 flex items-center gap-2">
-                <FolderOpen className="size-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold">Child folders</h2>
-              </div>
-              {data.childFolders.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No child folders yet.</p>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {data.childFolders.map((child) => (
-                    <Button
-                      key={child.path}
-                      variant="outline"
-                      className="h-auto items-start justify-start px-3 py-2 text-left"
+          <div className="rounded-lg border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>
+                    <SortableHeader
+                      label="Name"
+                      sortKey="name"
+                      activeKey={sortKey}
+                      activeDir={sortDir}
+                      onSort={handleSort}
+                    />
+                  </TableHead>
+                  <TableHead className="w-32">
+                    <SortableHeader
+                      label="Modified"
+                      sortKey="modified"
+                      activeKey={sortKey}
+                      activeDir={sortDir}
+                      onSort={handleSort}
+                    />
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sorted.length ? (
+                  sorted.map((entry) => (
+                    <TableRow
+                      key={entry.path}
+                      className="cursor-pointer"
                       onClick={() => {
-                        window.location.hash = hashFromDocName(child.path);
+                        window.location.hash = hashFromDocName(entry.path);
                       }}
                     >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{child.title}</div>
-                        <div className="truncate font-mono text-xs text-muted-foreground">
-                          {child.path}/
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {entry.kind === 'folder' ? (
+                            <Folder className="size-4 shrink-0 text-muted-foreground" />
+                          ) : (
+                            <File className="size-4 shrink-0 text-muted-foreground" />
+                          )}
+                          <span className="truncate">{entry.title}</span>
                         </div>
-                      </div>
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-xl border bg-card p-5 shadow-sm">
-              <div className="mb-3 flex items-center gap-2">
-                <FileText className="size-4 text-muted-foreground" />
-                <h2 className="text-sm font-semibold">Child notes</h2>
-              </div>
-              {data.childDocs.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No notes directly inside this folder.
-                </p>
-              ) : (
-                <div className="flex flex-col gap-2">
-                  {data.childDocs.map((child) => (
-                    <Button
-                      key={child.docName}
-                      variant="outline"
-                      className="h-auto items-start justify-start px-3 py-2 text-left"
-                      onClick={() => {
-                        window.location.hash = hashFromDocName(child.docName);
-                      }}
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-medium">{child.title}</div>
-                        <div className="truncate font-mono text-xs text-muted-foreground">
-                          {child.docName}.md
-                        </div>
-                      </div>
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {entry.kind === 'file' ? formatRelativeDate(entry.modified) : '—'}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  <TableRow>
+                    <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
+                      This folder is empty.
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </div>
       </div>
-
       <NewItemDialog
         open={createDialogOpen}
         onOpenChange={setCreateDialogOpen}

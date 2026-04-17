@@ -25,6 +25,7 @@ import { Markdown } from './icons/markdown';
 import { Textbox } from './icons/textbox';
 import { ThemeToggle } from './ThemeToggle';
 import { displayAuthor, formatRelativeTime } from './TimelinePanel';
+import { Badge } from './ui/badge';
 
 type RenameResponse =
   | {
@@ -346,7 +347,7 @@ export function EditorHeader({
                 style={isRenaming ? { maxWidth: 0, opacity: 0 } : { maxWidth: '20rem', opacity: 1 }}
               >
                 <span className="truncate">{pathPrefix.slice(0, -1)}</span>
-                <span className="shrink-0">/</span>
+                <span className="shrink-0 pl-2">/</span>
               </span>
             )}
             {isRenaming ? (
@@ -435,16 +436,7 @@ export function EditorHeader({
             </TooltipContent>
           </Tooltip>
         )}
-        {isNewDoc && (
-          <span className="ml-1.5 shrink-0 rounded border border-dashed border-blue-400/50 px-1.5 py-0.5 text-xs text-blue-500 dark:border-blue-400/40 dark:text-blue-400">
-            New file
-          </span>
-        )}
-        {isFolderTarget && (
-          <span className="ml-1.5 shrink-0 rounded border border-dashed border-emerald-400/50 px-1.5 py-0.5 text-xs text-emerald-600 dark:border-emerald-400/40 dark:text-emerald-400">
-            Folder overview
-          </span>
-        )}
+        {isNewDoc && <Badge variant="dashed">New file</Badge>}
       </div>
 
       {/* Normal editing mode: Visual/Markdown toggle */}

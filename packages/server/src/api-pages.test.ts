@@ -187,13 +187,20 @@ describe('GET /api/pages', () => {
       expect(result.status).toBe(200);
       const body = JSON.parse(result.body) as {
         ok?: boolean;
-        pages?: Array<{ docName: string; title: string }>;
+        pages?: Array<{ docName: string; title: string; size: number; modified: string }>;
       };
       expect(body.ok).toBe(true);
-      expect(body.pages).toEqual([
-        { docName: 'nested/deeper/page', title: 'Nested Page' },
-        { docName: 'root', title: 'Root' },
-      ]);
+      expect(body.pages).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ docName: 'nested/deeper/page', title: 'Nested Page' }),
+          expect.objectContaining({ docName: 'root', title: 'Root' }),
+        ]),
+      );
+      // Verify new fields are present
+      for (const page of body.pages ?? []) {
+        expect(typeof page.size).toBe('number');
+        expect(typeof page.modified).toBe('string');
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
