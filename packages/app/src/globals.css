@@ -290,7 +290,7 @@
 }
 
 .ok-blob-clicked {
-  animation: ok-blob-click-bounce 500ms var(--ease-out-strong) forwards !important;
+  animation: ok-blob-click-bounce 500ms var(--ease-out-strong) forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -301,7 +301,7 @@
     animation: none;
   }
   .ok-blob-clicked {
-    animation: none !important;
+    animation: none;
   }
 }
 
