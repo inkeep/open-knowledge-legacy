@@ -369,19 +369,14 @@ export function EditorHeader({
             )}
           </div>
         ) : activeDocName ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={enterRenameMode}
-                className="h-7 min-w-0 justify-start truncate px-2 text-sm font-normal text-muted-foreground hover:text-foreground"
-              >
-                {displayName}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>Rename</TooltipContent>
-          </Tooltip>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={enterRenameMode}
+            className="h-7 min-w-0 justify-start truncate px-2 text-sm font-normal text-muted-foreground hover:text-foreground"
+          >
+            {displayName}
+          </Button>
         ) : (
           <span className="text-sm text-muted-foreground truncate min-w-0">{displayName}</span>
         )}
