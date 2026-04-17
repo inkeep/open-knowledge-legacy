@@ -1,0 +1,186 @@
+/**
+ * Mechanical guard for the E2E suite's zero-allowlist anti-pattern bans
+ * (SPEC §6c AC-3/4/5/10, D-Q14/D-Q15/D-Q11 LOCKED).
+ *
+ * Each banned pattern is enforced by a per-pattern test. Failure messages
+ * list `<file>:<line>` for every violation so the developer can fix without
+ * having to re-grep.
+ *
+ * Template: `packages/app/src/editor/clipboard/wysiwyg-stop-rule.test.ts` —
+ * same per-pattern shape, same string-grep enforcement (cheapest mechanical
+ * check that catches both spellings of each banned construct).
+ *
+ * Patterns enforced:
+ *   1. `page.waitForTimeout(`        — D-Q14, AC-3
+ *   2. `waitUntil: 'networkidle'`    — D-Q14, AC-4
+ *   3. `new Promise(r => setTimeout(r,` — D-Q14
+ *   4. `page.pause(`                 — D-Q14
+ *   5. `test.skip(browserName === 'webkit'` — D-Q10/AC-5 ratchet
+ *   6. Inner-file helper imports     — D-Q11 barrel contract
+ *   7. Ungated `window.__` writes outside the allowlist (US-006/US-026)
+ */
+
+import { describe, expect, test } from 'bun:test';
+import { readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DEV_GATED_WINDOW_WRITERS } from './dev-gate-allowlist';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, '..', '..', '..', '..');
+const E2E_DIR = join(__dirname, '..', 'stress');
+const APP_SRC_DIR = join(__dirname, '..', '..', 'src');
+
+interface FileLines {
+  /** Repo-relative path for failure messages. */
+  path: string;
+  /** Absolute path for reading. */
+  absPath: string;
+  /** Lines split on '\n', 0-indexed. */
+  lines: string[];
+}
+
+function listE2eFiles(): FileLines[] {
+  const entries = readdirSync(E2E_DIR);
+  return entries
+    .filter((name) => name.endsWith('.e2e.ts'))
+    .map((name) => {
+      const absPath = join(E2E_DIR, name);
+      const source = readFileSync(absPath, 'utf-8');
+      return {
+        path: relative(REPO_ROOT, absPath),
+        absPath,
+        lines: source.split('\n'),
+      };
+    });
+}
+
+function listAppSrcTsFiles(): FileLines[] {
+  const out: FileLines[] = [];
+  function walk(dir: string) {
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const abs = join(dir, name.name);
+      if (name.isDirectory()) {
+        walk(abs);
+        continue;
+      }
+      if (!name.isFile()) continue;
+      if (!name.name.endsWith('.ts') && !name.name.endsWith('.tsx')) continue;
+      if (name.name.endsWith('.test.ts') || name.name.endsWith('.test.tsx')) continue;
+      if (name.name.endsWith('.spec.ts') || name.name.endsWith('.spec.tsx')) continue;
+      const source = readFileSync(abs, 'utf-8');
+      out.push({ path: relative(REPO_ROOT, abs), absPath: abs, lines: source.split('\n') });
+    }
+  }
+  walk(APP_SRC_DIR);
+  return out;
+}
+
+function collectMatches(
+  files: FileLines[],
+  predicate: (line: string, lineIdx: number, file: FileLines) => boolean,
+): string[] {
+  const violations: string[] = [];
+  for (const file of files) {
+    for (let i = 0; i < file.lines.length; i++) {
+      if (predicate(file.lines[i] ?? '', i, file)) {
+        violations.push(`  ${file.path}:${i + 1}    ${(file.lines[i] ?? '').trim()}`);
+      }
+    }
+  }
+  return violations;
+}
+
+describe('E2E STOP rule — zero allowlist', () => {
+  const e2eFiles = listE2eFiles();
+
+  test('there are E2E files to check (sanity)', () => {
+    expect(e2eFiles.length).toBeGreaterThan(0);
+  });
+
+  test('no page.waitForTimeout( in tests/stress/*.e2e.ts (AC-3)', () => {
+    const violations = collectMatches(e2eFiles, (line) => line.includes('page.waitForTimeout('));
+    if (violations.length > 0) {
+      throw new Error(
+        `page.waitForTimeout( pattern found — replace with condition-based wait per D-Q1:\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test("no waitUntil: 'networkidle' in tests/stress/*.e2e.ts (AC-4)", () => {
+    const violations = collectMatches(e2eFiles, (line) =>
+      /waitUntil:\s*['"]networkidle['"]/.test(line),
+    );
+    if (violations.length > 0) {
+      throw new Error(
+        `waitUntil: 'networkidle' pattern found — use 'domcontentloaded' + waitForActiveProviderSynced instead:\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test('no new Promise + setTimeout busy-wait in tests/stress/*.e2e.ts (D-Q14)', () => {
+    const pattern = /new Promise\(\s*(\w+)\s*=>\s*setTimeout\(\s*\1\s*,/;
+    const violations = collectMatches(e2eFiles, (line) => pattern.test(line));
+    if (violations.length > 0) {
+      throw new Error(
+        `\`new Promise(r => setTimeout(r, N))\` busy-wait found — use a condition-based wait:\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test('no page.pause( in tests/stress/*.e2e.ts (D-Q14)', () => {
+    const violations = collectMatches(e2eFiles, (line) => line.includes('page.pause('));
+    if (violations.length > 0) {
+      throw new Error(
+        `page.pause( found — debugger pauses must not land in committed E2E tests:\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test("no test.skip(browserName === 'webkit') in tests/stress/*.e2e.ts (AC-5 ratchet)", () => {
+    const pattern = /test\.skip\(\s*browserName\s*===\s*['"]webkit['"]/;
+    const violations = collectMatches(e2eFiles, (line) => pattern.test(line));
+    if (violations.length > 0) {
+      throw new Error(
+        `webkit-skip pattern reintroduced — chromium-only CI ratchet (D-Q10):\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test('no inner-file helper imports — must use barrel ./_helpers (D-Q11)', () => {
+    // Banned: `from './_helpers/sidebar'`, `from './_helpers/provider'`, etc.
+    // Allowed: `from './_helpers'` (resolves to ./_helpers/index.ts).
+    // Also banned: deeper paths like `from '../_helpers/sidebar'`.
+    const innerImport = /from\s+['"]\.\.?(?:\/[^'"]*)?\/_helpers\/[a-z][\w-]*['"]/;
+    const violations = collectMatches(e2eFiles, (line) => innerImport.test(line));
+    if (violations.length > 0) {
+      throw new Error(
+        `Inner-file helper import found — import from the barrel ('./_helpers') only:\n${violations.join('\n')}`,
+      );
+    }
+  });
+
+  test('no ungated window.__ writes outside dev-gate allowlist (US-006/US-026)', () => {
+    const srcFiles = listAppSrcTsFiles();
+    // Match `window.__name = ` (assignment) and `window.__name = (...)` shapes.
+    const writePattern = /window\.__[A-Za-z_][A-Za-z0-9_]*\s*=/;
+    // Exclude pure equality / comparison usages by requiring no `==` or `===` immediately after.
+    const equalityPattern = /window\.__[A-Za-z_][A-Za-z0-9_]*\s*===?/;
+
+    const violations: string[] = [];
+    for (const file of srcFiles) {
+      if (DEV_GATED_WINDOW_WRITERS.includes(file.path)) continue;
+      for (let i = 0; i < file.lines.length; i++) {
+        const line = file.lines[i] ?? '';
+        if (!writePattern.test(line)) continue;
+        if (equalityPattern.test(line)) continue;
+        violations.push(`  ${file.path}:${i + 1}    ${line.trim()}`);
+      }
+    }
+    if (violations.length > 0) {
+      throw new Error(
+        `Ungated window.__ assignment outside the dev-gate allowlist — wrap in if (import.meta.env.DEV) and add to dev-gate-allowlist.ts:\n${violations.join('\n')}`,
+      );
+    }
+  });
+});
