@@ -33,7 +33,7 @@ Accepts a JSON body:
 The endpoint routes through `applyAgentMarkdownWrite` (XmlFragment-authoritative composition per AGENTS.md precedent #10):
 
 1. Opens a `DirectConnection` to the Y.Doc
-2. Reads the current `Y.XmlFragment` — reflects all CRDT-synced content including any concurrent client WYSIWYG typing that has propagated via the tree-sync message but not yet landed in `Y.Text` on the server (client Observer A is what syncs XmlFragment→Y.Text, and runs on the client with a 50ms debounce)
+2. Reads the current `Y.XmlFragment` — reflects all CRDT-synced content including any concurrent client WYSIWYG typing that has propagated via the tree-sync message. Server-side cross-CRDT sync (precedent #14) runs under a single-writer `afterAllTransactions` settlement dispatch (one fire per outermost `doc.transact()` drain, SPEC 2026-04-16 bridge-correctness §6 R4); the client observer is a baseline-tracking shell that does not write Y.Text.
 3. Serializes XmlFragment to markdown via `yXmlFragmentToProsemirrorJSON` + `MarkdownManager.serialize`
 4. Composes the agent's delta at the markdown level per `position` (`'append'` / `'prepend'` / `'replace'`)
 5. Parses the composed markdown and applies to XmlFragment via `updateYFragment()` — structural diff preserves user-content Items at matching positions
@@ -52,7 +52,7 @@ When the user is in source mode (CodeMirror), agent writes are still visible in 
 3. The markdown is pushed to CodeMirror via React state (`setSourceContent`)
 4. The observer is unsubscribed before toggle-back to prevent the merge from triggering the observer
 
-The bidirectional observer sync coordinates with user typing in both editors. When the user is actively typing in source mode, Observer B (text-to-tree sync) defers its tree replacement until typing pauses. This prevents keystroke loss during rapid source-mode editing, including when agent writes arrive concurrently.
+The bidirectional observer sync runs exclusively on the server under the `afterAllTransactions` settlement dispatch (precedent #13(b)). The server's Observer B (Y.Text → XmlFragment) is ordered after Observer A within each drain and canonicalizes `Y.Text` via `applyFastDiff` after `updateYFragment` so the bridge invariant `ytext === serialize(fragment)` holds at every settlement point — no debounce window or wall-clock timing is involved. Client-side keystroke protection is not needed on the bridge layer because the client shell does not write the derived CRDT.
 
 Current limitation: the full CodeMirror content is replaced on each change, so the cursor may jump. This is acceptable for P0; cursor preservation is a future refinement.
 
