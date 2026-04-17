@@ -107,7 +107,7 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
       ...sharedExtensions,
       Placeholder.configure({
         placeholder: placeholder ?? "Type '/' for commands",
-        showOnlyCurrent: false,
+        showOnlyCurrent: true,
       }),
       Collaboration.configure({
         document: provider.document,
