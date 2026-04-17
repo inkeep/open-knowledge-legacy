@@ -50,10 +50,10 @@ export interface AgentDirectConnection extends DirectConnection {
  * content reaches disk through the normal debounce pipeline.
  */
 export const AGENT_WRITE_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'agent-write' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 /** Map known MCP clientInfo.name values to icon identifiers. */
 export function iconFromClientName(name?: string): string {

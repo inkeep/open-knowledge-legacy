@@ -53,22 +53,27 @@ export { defaultScheduler, type Scheduler };
  * OBJECT references, never raw strings. `Set.has()` matching in `trackedOrigins` or
  * the bridge-invariant watcher's enforcing set is identity-based for objects — a
  * string literal would silently fail to match the production tx.origin object.
+ *
+ * `as const satisfies` (Matt Pocock's "deeply read-only config" pattern) produces
+ * a `Readonly<...>` sentinel whose field types are all narrow literals — makes
+ * the singleton-immutability intent explicit at the type level alongside the
+ * identity-match guarantee.
  */
 export const ORIGIN_TREE_TO_TEXT = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'sync-from-tree' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 /**
  * Transaction origin for Observer B (text → tree). See `ORIGIN_TREE_TO_TEXT` JSDoc
  * for why this is an object, not a string.
  */
 export const ORIGIN_TEXT_TO_TREE = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'sync-from-text' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 const DEBOUNCE_MS = 50;
 

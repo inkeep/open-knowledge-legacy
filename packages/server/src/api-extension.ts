@@ -102,16 +102,16 @@ import { getDocumentHistory } from './timeline-query.ts';
  * registerWrite hash check prevents the self-write from re-triggering reconciliation.
  */
 export const ROLLBACK_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'rollback-apply' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 const MANAGED_RENAME_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: false,
   context: { origin: 'managed-rename' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 const log = getLogger('api');
 

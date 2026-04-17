@@ -25,10 +25,10 @@ import { setReconciledBase } from './persistence.ts';
  * loaded from disk (feedback loop prevention).
  */
 export const FILE_WATCHER_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: true,
   context: { origin: 'file-watcher' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 /**
  * Apply external file content to a live Y.Doc — the throwing core of the

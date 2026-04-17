@@ -53,10 +53,10 @@ import { incrementServerObserverError, incrementServerObserverFire } from './met
  * persistenceDiskWrites counter in `server-observer-feedback-loop.test.ts`.
  */
 export const OBSERVER_SYNC_ORIGIN = {
-  source: 'local' as const,
+  source: 'local',
   skipStoreHooks: true,
   context: { origin: 'observer-sync' },
-} satisfies LocalTransactionOrigin;
+} as const satisfies LocalTransactionOrigin;
 
 /**
  * Paired-write origins — transactions where the caller atomically wrote BOTH
