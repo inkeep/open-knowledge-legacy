@@ -6,11 +6,6 @@ const BASE = `http://localhost:${port}`;
 const sidebar = (page: Page) => page.locator('[data-slot="sidebar-container"]');
 const folderButton = (page: Page) => page.getByRole('button', { name: 'sidebar-folder' });
 
-test.beforeEach(async () => {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-});
-
 test('direct URL load reveals nested doc on first paint', async ({ page }) => {
   await page.goto(`${BASE}/#/sidebar-folder/nested-doc`);
   await sidebar(page).getByText('nested-doc.md').waitFor({ state: 'visible', timeout: 15_000 });

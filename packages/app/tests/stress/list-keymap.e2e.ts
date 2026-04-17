@@ -17,6 +17,7 @@
  * playwright.config.ts webServer on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
@@ -33,30 +34,48 @@ async function getYText(page: Page): Promise<string> {
   });
 }
 
+async function createPage(path: string) {
+  const res = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (res.status === 409) return;
+  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
+}
+
 /** Seed Y.Text via the agent-write-md API (bypasses keystroke timing). */
-async function seedMarkdown(page: Page, markdown: string) {
+async function seedMarkdown(page: Page, docName: string, markdown: string) {
   const res = await fetch(`${BASE}/api/agent-write-md`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ docName: 'test-doc', markdown, mode: 'replace' }),
+    body: JSON.stringify({ docName, markdown, position: 'replace' }),
   });
   if (!res.ok) throw new Error(`agent-write-md failed: ${res.status}`);
   // Wait for Observer B (text→tree) to settle
   await page.waitForTimeout(600);
 }
 
-test.beforeEach(async ({ page }) => {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
-  if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
-  await page.goto(BASE);
-  await page.getByText('test-doc.md').click({ timeout: 10_000 });
+async function openDoc(page: Page, docName: string) {
+  await createPage(`${docName}.md`);
+  const resetRes = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
+    method: 'POST',
+  });
+  if (!resetRes.ok) throw new Error(`test-reset failed: ${resetRes.status}`);
+  await page.goto(`${BASE}/#/${docName}`);
   await waitForProvider(page);
   await page.waitForSelector('.ProseMirror');
-});
+}
+
+function uniqueDocName(label: string): string {
+  return `test-listkeymap-${label}-${randomUUID().slice(0, 8)}`;
+}
 
 test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
   test('Tab inside a listItem increases list depth', async ({ page }) => {
-    await seedMarkdown(page, '- first\n- second\n');
+    const docName = uniqueDocName('tab-listitem');
+    await openDoc(page, docName);
+    await seedMarkdown(page, docName, '- first\n- second\n');
 
     // Focus the ProseMirror editor and place cursor in the second list item
     await page.locator('.ProseMirror').focus();
@@ -78,8 +97,10 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
   });
 
   test('Shift-Tab inside a nested listItem lifts it one level', async ({ page }) => {
+    const docName = uniqueDocName('shifttab-nested');
+    await openDoc(page, docName);
     // Seed an already-nested list
-    await seedMarkdown(page, '- top\n  - nested\n');
+    await seedMarkdown(page, docName, '- top\n  - nested\n');
 
     await page.locator('.ProseMirror').focus();
     // Click on the nested "nested" text
@@ -99,8 +120,10 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
   test('Tab inside a tableCell advances to the next cell (list keymap does NOT hijack)', async ({
     page,
   }) => {
+    const docName = uniqueDocName('tab-tablecell');
+    await openDoc(page, docName);
     // Seed a 2x2 table
-    await seedMarkdown(page, '| a | b |\n| - | - |\n| 1 | 2 |\n');
+    await seedMarkdown(page, docName, '| a | b |\n| - | - |\n| 1 | 2 |\n');
 
     await page.locator('.ProseMirror').focus();
     // Click into the first body cell (content '1')
@@ -145,7 +168,9 @@ test.describe('OQ1: Tab/Shift-Tab scoping by cursor context', () => {
   });
 
   test('Tab inside a codeBlock inserts a literal tab character', async ({ page }) => {
-    await seedMarkdown(page, '```\nfirst\n```\n');
+    const docName = uniqueDocName('tab-codeblock');
+    await openDoc(page, docName);
+    await seedMarkdown(page, docName, '```\nfirst\n```\n');
 
     await page.locator('.ProseMirror').focus();
     // Click into the code block
