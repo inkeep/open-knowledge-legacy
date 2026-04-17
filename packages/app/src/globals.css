@@ -201,6 +201,110 @@
   }
 }
 
+/* OK Blob mascot */
+.ok-blob-body {
+  fill: #3784ff;
+  animation: ok-blob-squish 6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center bottom;
+}
+.dark .ok-blob-body {
+  fill: var(--color-sky-blue);
+}
+
+.ok-blob-eye {
+  fill: #3784ff;
+  animation: ok-blob-blink 6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.dark .ok-blob-eye {
+  fill: var(--color-sky-blue);
+}
+.ok-blob-eye-right {
+  animation-delay: 0.04s;
+}
+
+/* Single blink then long pause */
+@keyframes ok-blob-blink {
+  0%,
+  28%,
+  34%,
+  100% {
+    transform: scaleY(1);
+  }
+  30%,
+  32% {
+    transform: scaleY(0.05);
+  }
+}
+
+/* Body squish synced to the blink */
+@keyframes ok-blob-squish {
+  0%,
+  28%,
+  38%,
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+  30% {
+    transform: scaleY(0.97) scaleX(1.02);
+  }
+  33% {
+    transform: scaleY(1.02) scaleX(0.99);
+  }
+  36% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+/* Click — happy ^^ eyes + bounce */
+.ok-blob-eye-hidden {
+  opacity: 0;
+}
+
+.ok-blob-happy-eye {
+  stroke: #3784ff;
+  transition: opacity 100ms ease;
+}
+.dark .ok-blob-happy-eye {
+  stroke: var(--color-sky-blue);
+}
+
+@keyframes ok-blob-click-bounce {
+  0% {
+    transform: scaleY(1) scaleX(1);
+  }
+  20% {
+    transform: scaleY(0.9) scaleX(1.08);
+  }
+  45% {
+    transform: scaleY(1.06) scaleX(0.96);
+  }
+  70% {
+    transform: scaleY(0.98) scaleX(1.01);
+  }
+  100% {
+    transform: scaleY(1) scaleX(1);
+  }
+}
+
+.ok-blob-clicked {
+  animation: ok-blob-click-bounce 500ms var(--ease-out-strong) forwards !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ok-blob-eye {
+    animation: none;
+  }
+  .ok-blob-body {
+    animation: none;
+  }
+  .ok-blob-clicked {
+    animation: none !important;
+  }
+}
+
 /* Collaboration cursor styles (WYSIWYG — TipTap) */
 .collaboration-cursor__caret {
   position: relative;
@@ -292,10 +396,6 @@
 
 .ProseMirror p {
   margin-bottom: 0.5em;
-}
-
-.prosemirror-dropcursor-block {
-  @apply bg-primary/40! dark:bg-azure-300/80! h-0.5!;
 }
 
 .ProseMirror [data-mark-view-content] {
@@ -428,11 +528,11 @@
 
 /* Blockquote */
 .ProseMirror blockquote {
-  border-left: 3px solid;
+  border-left: 3px solid var(--color-gray-300);
   padding-left: 1em;
   margin-left: 0;
   margin-bottom: 0.5em;
-  @apply border-azure-400 dark:border-azure-300 dark:text-gray-300 text-gray-600;
+  color: var(--color-gray-600);
 }
 
 /* Code blocks */
@@ -856,6 +956,10 @@ button:active:not(:disabled) {
 
 /* Sidebar: separate hover (neutral gray) from active (blue accent) */
 /* Dark overrides — ProseMirror content surfaces */
+.dark .ProseMirror blockquote {
+  border-color: var(--color-gray-600);
+  color: var(--color-gray-300);
+}
 
 .dark .ProseMirror pre {
   background: var(--color-gray-900);
