@@ -23,11 +23,87 @@
  * - All PM selection/focus features working normally
  */
 import { Extension } from '@tiptap/core';
+import type { Transaction } from '@tiptap/pm/state';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { ySyncPluginKey } from 'y-prosemirror';
 import { getDescriptor } from '../registry/index.ts';
 
 const typedChildrenGuardKey = new PluginKey('typedChildrenGuard');
+
+/**
+ * Check whether a transaction would insert a non-jsxComponent node directly
+ * inside a typed-children container (one whose descriptor has `emptyChildName`).
+ *
+ * Two rejection cases:
+ *   (a) `$pos.depth === containerDepth` — position's parent IS the container.
+ *       Anything inserted becomes a direct child (e.g. a paragraph dropped
+ *       into `<Tabs>` when a user types after clicking the tab trigger bar).
+ *   (b) `$pos.depth === containerDepth + 1` — position is inside a child of
+ *       the container. If that child is a non-jsxComponent textblock (only
+ *       possible post-corruption or via an earlier paste), typing further
+ *       text keeps feeding the illegal child. Reject to contain the damage.
+ *
+ * Anything deeper (`$pos.depth > containerDepth + 1`) is inside a legit
+ * jsxComponent child's own content — allowed.
+ *
+ * Only the NEAREST jsxComponent ancestor is consulted (inner containers win
+ * over outer). Descriptor lookup returns wildcard for unknown names, which
+ * has no `emptyChildName` — so unregistered jsxComponent containers allow
+ * free insertions.
+ *
+ * Exported standalone (not inside the Extension) so unit tests can exercise
+ * the depth logic directly without instantiating a full editor state.
+ */
+export function shouldRejectTypedChildrenInsertion(tr: Transaction): boolean {
+  let dominated = false;
+
+  tr.steps.forEach((step) => {
+    if (dominated) return;
+    const stepMap = step.getMap();
+    stepMap.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+      if (dominated) return;
+      try {
+        const $pos = tr.doc.resolve(newStart);
+        for (let depth = $pos.depth; depth > 0; depth--) {
+          const ancestor = $pos.node(depth);
+          if (ancestor.type.name === 'jsxComponent') {
+            const componentName = ancestor.attrs.componentName as string;
+            const descriptor = getDescriptor(componentName);
+            if (descriptor.emptyChildName) {
+              if ($pos.depth === depth || $pos.depth === depth + 1) {
+                const insertedSlice = tr.doc.slice(newStart, newEnd);
+                insertedSlice.content.forEach((insertedNode) => {
+                  if (insertedNode.type.name !== 'jsxComponent') {
+                    console.warn(
+                      '[TypedChildrenGuard] REJECTED:',
+                      insertedNode.type.name,
+                      'inside',
+                      componentName,
+                      `(posDepth=${$pos.depth}, containerDepth=${depth})`,
+                    );
+                    dominated = true;
+                  }
+                });
+              }
+            }
+            break; // Only check the nearest jsxComponent ancestor
+          }
+        }
+      } catch (err) {
+        // Position resolution can fail during complex transforms (e.g.,
+        // the inserted range is no longer resolvable in the mapped doc
+        // after concurrent edits). Expected during multi-transform
+        // bursts — log at dev-only debug level so unexpected failures
+        // surface without spamming production.
+        if (process.env.NODE_ENV === 'development') {
+          console.debug('[TypedChildrenGuard] position resolution failed', err);
+        }
+      }
+    });
+  });
+
+  return dominated;
+}
 
 export const TypedChildrenGuard = Extension.create({
   name: 'typedChildrenGuard',
@@ -51,71 +127,7 @@ export const TypedChildrenGuard = Extension.create({
           // it as rawMdxFallback, not as silent divergence.
           if (tr.getMeta(ySyncPluginKey)) return true;
 
-          // Check each step in the transaction
-          let dominated = false;
-          tr.steps.forEach((step) => {
-            // ReplaceStep and ReplaceAroundStep are the insertion steps
-            const stepMap = step.getMap();
-            stepMap.forEach((_oldStart, _oldEnd, newStart, newEnd) => {
-              if (dominated) return;
-
-              // Check if the insertion target is directly inside a typed-children container.
-              //
-              // Two cases reject non-jsxComponent insertions:
-              //   (a) `$pos.depth === depth`  — the position's parent IS the
-              //       typed-children container. Anything inserted here becomes
-              //       a direct child of the container (e.g. a paragraph
-              //       dropped into <Tabs> when a user types after clicking
-              //       the tab trigger bar). Only jsxComponents are allowed.
-              //   (b) `$pos.depth === depth + 1` — the position is inside a
-              //       child of the container. If that child is a non-jsxComponent
-              //       textblock (only possible post-corruption or via an
-              //       earlier paste), typing further text keeps feeding the
-              //       illegal child. Reject to contain the damage.
-              //
-              // Anything deeper (`$pos.depth > depth + 1`) is inside a legit
-              // jsxComponent child's own content — allowed.
-              try {
-                const $pos = tr.doc.resolve(newStart);
-                for (let depth = $pos.depth; depth > 0; depth--) {
-                  const ancestor = $pos.node(depth);
-                  if (ancestor.type.name === 'jsxComponent') {
-                    const componentName = ancestor.attrs.componentName as string;
-                    const descriptor = getDescriptor(componentName);
-                    if (descriptor.emptyChildName) {
-                      if ($pos.depth === depth || $pos.depth === depth + 1) {
-                        const insertedSlice = tr.doc.slice(newStart, newEnd);
-                        insertedSlice.content.forEach((insertedNode) => {
-                          if (insertedNode.type.name !== 'jsxComponent') {
-                            console.warn(
-                              '[TypedChildrenGuard] REJECTED:',
-                              insertedNode.type.name,
-                              'inside',
-                              componentName,
-                              `(posDepth=${$pos.depth}, containerDepth=${depth})`,
-                            );
-                            dominated = true;
-                          }
-                        });
-                      }
-                    }
-                    break; // Only check the nearest jsxComponent ancestor
-                  }
-                }
-              } catch (err) {
-                // Position resolution can fail during complex transforms (e.g.,
-                // the inserted range is no longer resolvable in the mapped doc
-                // after concurrent edits). Expected during multi-transform
-                // bursts — log at dev-only debug level so unexpected failures
-                // surface without spamming production.
-                if (process.env.NODE_ENV === 'development') {
-                  console.debug('[TypedChildrenGuard] position resolution failed', err);
-                }
-              }
-            });
-          });
-
-          return !dominated;
+          return !shouldRejectTypedChildrenInsertion(tr);
         },
       }),
     ];
