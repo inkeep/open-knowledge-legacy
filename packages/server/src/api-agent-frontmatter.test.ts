@@ -254,6 +254,54 @@ describe('POST /api/agent-write-md (write_document) — frontmatter handling', (
       await cleanup();
     }
   });
+
+  test('prepend payload that itself starts with frontmatter does NOT double-write frontmatter', async () => {
+    // Parity with the append case above: if an agent mistakenly prepends frontmatter
+    // to a prepend payload, the operation must treat the payload as body — strip any
+    // leading frontmatter before composing so the document never ends up with two
+    // --- blocks. Guards against regressions in the prepend branch of
+    // applyAgentMarkdownWrite, which uses the same defensive-strip pattern as append.
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const dc = await sessionManager.getSession('test-doc');
+      const metaMap = dc.document.getMap('metadata');
+
+      const existingFm = '---\ntitle: First\n---\n';
+      dc.document.transact(() => {
+        metaMap.set('frontmatter', existingFm);
+        applyAgentMarkdownWrite(dc.document, '# Original Body\n', 'replace');
+      }, AGENT_WRITE_ORIGIN);
+
+      const response = await callApi(
+        hocuspocus,
+        sessionManager,
+        contentDir,
+        '/api/agent-write-md',
+        {
+          docName: 'test-doc',
+          markdown: '---\ntitle: Second\n---\n\nPrepended.\n',
+          position: 'prepend',
+        },
+      );
+
+      expect(response.status).toBe(200);
+
+      // Existing frontmatter must survive; payload FM must be stripped.
+      expect(metaMap.get('frontmatter')).toBe(existingFm);
+
+      const ytext = dc.document.getText('source').toString();
+      // Must not contain two frontmatter blocks.
+      const fmOpenMatches = ytext.match(/^---\n|^\n---\n/gm) ?? [];
+      expect(fmOpenMatches.length).toBeLessThanOrEqual(2); // opener + closer of ONE block
+      // Body carries the prepended content, original body still present.
+      expect(ytext).toContain('Prepended.');
+      expect(ytext).toContain('# Original Body');
+      // The payload's 'title: Second' must NOT leak into the body or metaMap.
+      expect(ytext).not.toContain('title: Second');
+    } finally {
+      await cleanup();
+    }
+  });
 });
 
 describe('POST /api/agent-patch (edit_document) — frontmatter handling', () => {
@@ -371,6 +419,45 @@ describe('POST /api/agent-patch (edit_document) — frontmatter handling', () =>
       // Body's "draft" must survive since only the first occurrence is replaced.
       const ytext = dc.document.getText('source').toString();
       expect(ytext).toContain('Not a draft.');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test('patch that deletes the entire frontmatter region clears metaMap', async () => {
+    // The patch handler composes `prependFrontmatter(currentFm, currentBody)` before
+    // running find/replace, then re-splits the result. When the replace is '', the
+    // FM region disappears from the composed full-doc, stripFrontmatter on the result
+    // returns an empty FM string, and metaMap must be cleared accordingly. Without
+    // this, stale frontmatter would persist in Y.Map('metadata') even though the
+    // on-disk canonical form has none.
+    const { contentDir, hocuspocus, sessionManager, cleanup } = setup();
+    try {
+      const dc = await sessionManager.getSession('test-doc');
+      const metaMap = dc.document.getMap('metadata');
+
+      const existingFm = '---\ntitle: ToRemove\n---\n';
+      dc.document.transact(() => {
+        metaMap.set('frontmatter', existingFm);
+        applyAgentMarkdownWrite(dc.document, '# Body\n\nKeep me.\n', 'replace');
+      }, AGENT_WRITE_ORIGIN);
+
+      const response = await callApi(hocuspocus, sessionManager, contentDir, '/api/agent-patch', {
+        docName: 'test-doc',
+        find: '---\ntitle: ToRemove\n---\n',
+        replace: '',
+      });
+
+      expect(response.status).toBe(200);
+
+      // metaMap must reflect "no frontmatter" — stale 'title: ToRemove' gone.
+      expect(metaMap.get('frontmatter')).toBe('');
+
+      const ytext = dc.document.getText('source').toString();
+      expect(ytext).not.toContain('title: ToRemove');
+      expect(ytext).not.toContain('---');
+      // Body survives the patch.
+      expect(ytext).toContain('Keep me.');
     } finally {
       await cleanup();
     }
