@@ -328,7 +328,7 @@ export function EditorHeader({
           </span>
         ) : isRenaming && activeDocName ? (
           <div className="flex min-w-0 flex-col">
-            <div className="flex min-w-0 items-center gap-1">
+            <div className="flex min-w-0 items-center gap-2">
               <Input
                 ref={renameInputRef}
                 value={renameValue}
