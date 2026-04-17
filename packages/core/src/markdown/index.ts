@@ -214,7 +214,7 @@ function isEmptyMdastParagraph(node: MdastNodes): boolean {
  * carrying the concatenated text. `[`abc123`](url)` round-trips through
  * `text[code,link]` → `link(inlineCode('abc123'))`.
  */
-function wrapAsInlineCode(children: MdastNodes[]): MdastNodes {
+export function wrapAsInlineCode(children: MdastNodes[]): MdastNodes {
   if (children.length === 0) {
     return { type: 'inlineCode', value: '' } as unknown as MdastNodes;
   }
