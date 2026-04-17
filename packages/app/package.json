@@ -12,17 +12,39 @@
     "test": "bun test src/",
     "check": "tsc --noEmit && biome check . && bun run test && bun run test:integration && bun run test:conversion",
     "test:integration": "bun test tests/integration/",
-    "test:conversion": "bun test tests/integration/conversion-fidelity.test.ts",
+    "test:conversion": "bun test tests/conversion/",
     "test:stress:server-authoritative": "bun test tests/stress/server-authoritative-stress.test.ts",
     "test:fidelity": "bun test --timeout 120000 tests/fidelity/",
     "test:fuzz:bridge": "bun test tests/stress/bridge-convergence.fuzz.test.ts",
     "test:stress:api": "bun run tests/stress/stress-api.ts",
-    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts && VITE_PORT=13579 playwright test tests/stress/crdt-stress.e2e.ts && VITE_PORT=13579 playwright test tests/stress/slash-command.e2e.ts && VITE_PORT=13579 playwright test tests/stress/paste-fidelity.e2e.ts && VITE_PORT=13579 playwright test tests/stress/fr-7a-disconnect-source-mode.e2e.ts",
+    "test:e2e": "VITE_PORT=13579 playwright test tests/stress/ux-interactions.e2e.ts tests/stress/crdt-stress.e2e.ts tests/stress/slash-command.e2e.ts tests/stress/paste-fidelity.e2e.ts tests/stress/fr-7a-disconnect-source-mode.e2e.ts tests/stress/docs-open.e2e.ts",
+    "test:e2e:install-browsers": "playwright install chromium webkit firefox",
     "test:visual": "playwright test --config playwright.visual.config.ts",
     "test:visual:update": "playwright test --config playwright.visual.config.ts --update-snapshots",
     "test:perf": "bun test tests/stress/component-blocks.perf.test.ts",
-    "test:a11y": "playwright test --config playwright.a11y.config.ts"
+    "test:a11y": "playwright test --config playwright.a11y.config.ts",
+    "size": "bun run build && size-limit"
   },
+  "size-limit": [
+    {
+      "name": "main app bundle (gzipped)",
+      "path": "dist/assets/index-*.js",
+      "limit": "800 kB",
+      "gzip": true
+    },
+    {
+      "name": "all JS chunks combined (gzipped)",
+      "path": "dist/assets/*.js",
+      "limit": "950 kB",
+      "gzip": true
+    },
+    {
+      "name": "main CSS (gzipped)",
+      "path": "dist/assets/index-*.css",
+      "limit": "25 kB",
+      "gzip": true
+    }
+  ],
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.1",
     "@codemirror/lang-css": "^6.3.1",
@@ -72,6 +94,7 @@
     "radix-ui": "^1.4.3",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
+    "react-error-boundary": "^6.0.0",
     "react-force-graph-2d": "^1.29.1",
     "react-resizable-panels": "^4.9.0",
     "shadcn": "^4.2.0",
@@ -91,6 +114,7 @@
     "@hocuspocus/server": "4.0.0-rc.1",
     "@playwright/test": "^1.59.1",
     "@rolldown/plugin-babel": "^0.2.2",
+    "@size-limit/preset-app": "^12.1.0",
     "@types/diff-match-patch": "^1.0.36",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
@@ -102,6 +126,7 @@
     "remark-mdx": "^3.1.1",
     "remark-parse": "^11.0.0",
     "sirv": "^3.0.2",
+    "size-limit": "^12.1.0",
     "typescript": "^5.9.3",
     "unified": "^11.0.5",
     "vite": "^8.0.0"

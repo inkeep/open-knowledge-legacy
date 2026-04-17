@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 // Module-scope creation: runs at config-eval time, before any setup tasks.
 // The webServer captures this via webServer.env at spawn time.
@@ -16,6 +16,22 @@ console.log(`[playwright] OK_TEST_CONTENT_DIR = ${contentDir}`);
 const port = process.env.VITE_PORT || '5173';
 const baseURL = `http://localhost:${port}`;
 
+/**
+ * Cross-browser projects (QA-046 / SPEC §13).
+ *
+ * Clipboard behavior differs per browser — Safari has stricter
+ * user-activation rules for `ClipboardItem.write`, Firefox has different
+ * restrictions on async clipboard APIs, and Chromium is the baseline
+ * assumption in most existing Playwright e2e code. Running the full E2E
+ * suite against all three closes the cross-browser parity gate the spec
+ * called out as Must.
+ *
+ * Opt-in single-browser run for local iteration:
+ *   bunx playwright test --project=chromium
+ *
+ * Browser installation (one-time, or after Playwright upgrade):
+ *   bun run test:e2e:install-browsers
+ */
 export default defineConfig({
   testDir: './tests/stress',
   testMatch: /.*\.e2e\.ts$/,
@@ -26,6 +42,11 @@ export default defineConfig({
     baseURL,
     headless: true,
   },
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
+  ],
   webServer: {
     command: `VITE_PORT=${port} bun run dev`,
     url: baseURL,

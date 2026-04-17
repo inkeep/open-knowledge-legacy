@@ -955,10 +955,22 @@ function buildPmToMdastHandlers(schema: Schema): {
     });
   }
 
-  // JSX component → γ serialize pattern (FR-5):
-  //   expression → html pass-through
-  //   !effectiveDirty && sourceRaw → html pass-through (byte-identical)
-  //   dirty OR dirty descendant → reconstruct as mdxJsxFlowElement
+  // JSX component → first-class `mdxJsxFlowElement` mdast type (AGENTS.md
+  // precedent #19, PR #171 D7 / US-005) with γ dispatch (PR #165 FR-5, D6, D7).
+  //
+  // Emission strategy:
+  //   - expression kind → html passthrough (block-level {expression})
+  //   - pristine (!effectiveDirty && sourceRaw) → mdxJsxFlowElement carrying
+  //     data.sourceRaw; to-markdown handler emits verbatim (bit-exact)
+  //   - dirty (effectiveDirty) → mdxJsxFlowElement with structural name +
+  //     reconstructed attributes + serialized children; to-markdown handler's
+  //     flush-left reconstruction path produces current prop values
+  //
+  // Both paths emit the same mdast type — so mdast-to-hast renders both via
+  // the single customNodeHandlers[mdxJsxFlowElement] handler (FR-20 escape-
+  // correct HTML output for clipboard). The γ semantics move to the
+  // to-markdown handler, which is the right layer: it owns markdown-byte
+  // semantics; the node handler just produces a structural mdast node.
   if (n.jsxComponent) {
     nodeHandlers.jsxComponent = (pmNode: PmNode, _parent: PmNode | undefined, state) => {
       // Expression passthrough (block-level {expression})
@@ -968,14 +980,32 @@ function buildPmToMdastHandlers(schema: Schema): {
           value: pmNode.attrs.content || pmNode.attrs.sourceRaw,
         };
       }
-      // γ: pristine → sourceRaw (byte-identical round-trip)
+      const componentName =
+        (pmNode.attrs.componentName as string) || (pmNode.attrs.content ? null : null);
+      const preservedAttrs = Array.isArray(pmNode.attrs.attributes)
+        ? (pmNode.attrs.attributes as Array<MdxJsxAttribute | MdxJsxExpressionAttribute>)
+        : [];
+
+      // Pristine path: sourceRaw carries the canonical bytes. to-markdown
+      // handler returns it verbatim; mdast-to-hast reads it for escape-safe
+      // HTML rendering.
       if (!effectiveDirty(pmNode) && pmNode.attrs.sourceRaw) {
-        return { type: 'html' as const, value: pmNode.attrs.sourceRaw };
+        return {
+          type: 'mdxJsxFlowElement' as const,
+          name: componentName,
+          attributes: preservedAttrs,
+          children: [],
+          data: { sourceRaw: String(pmNode.attrs.sourceRaw) },
+        } as MdxJsxFlowElement;
       }
-      // γ: dirty → reconstruct as mdxJsxFlowElement
+
+      // Dirty path: structural reconstruction. No data.sourceRaw so the
+      // to-markdown handler falls through to its flush-left reconstruction
+      // branch (FR-6). reconstructAttrs merges user-edited PropPanel values
+      // onto the preserved original attrs (FR-21).
       return {
         type: 'mdxJsxFlowElement' as const,
-        name: pmNode.attrs.componentName || null,
+        name: componentName,
         attributes: reconstructAttrs(pmNode),
         children: state.all(pmNode),
         data: {},
@@ -983,35 +1013,72 @@ function buildPmToMdastHandlers(schema: Schema): {
     };
   }
 
-  // rawMdxFallback → emit inner text as html mdast node (preserves raw bytes)
+  // rawMdxFallback → first-class `rawMdxFallback` mdast type per D7 / US-006.
+  // Shape: `{type:'rawMdxFallback', data:{reason, originalSpan}, value:rawSource}`.
+  // The to-markdown handler in to-markdown-handlers.ts emits `value` verbatim
+  // (bit-exact equivalent of the former `{type:'html',value:textContent}`
+  // workaround). US-007 wires the mdast→hast handler that renders the
+  // clipboard-HTML `<!-- Parse error: ... -->` + `<pre class="mdx-fallback">`.
   if (n.rawMdxFallback) {
-    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.textContent ?? '',
-    });
+    nodeHandlers.rawMdxFallback = (pmNode: PmNode) => {
+      const raw = pmNode.textContent ?? '';
+      const reason = typeof pmNode.attrs.reason === 'string' ? pmNode.attrs.reason : '';
+      const span = pmNode.attrs.originalSpan;
+      const originalSpan =
+        span && typeof span === 'object' && 'start' in span && 'end' in span
+          ? {
+              start: Number((span as { start: unknown }).start) || 0,
+              end: Number((span as { end: unknown }).end) || 0,
+            }
+          : { start: 0, end: 0 };
+      return {
+        type: 'rawMdxFallback' as const,
+        value: raw,
+        data: { reason, originalSpan },
+      } as unknown as MdastNodes;
+    };
   }
 
-  // jsxInline (FR-5b) — thin shape: text content IS the source.
-  // Emit as 'html' mdast to bypass text-context escape safe list
-  // (prevents mdast-util-to-markdown from escaping '<' → '\<').
+  // jsxInline → first-class `mdxJsxTextElement` mdast type (AGENTS.md
+  // precedent #19 sub-rule (d), PR #171 D7 / US-005). Text content IS the
+  // source (NG14 thin shape). Custom to-markdown handler returns
+  // data.sourceRaw verbatim without calling state.safe() — so the
+  // text-context escape-bypass that FR-5b originally needed (preventing
+  // `<` → `\<` in inline contexts) is still satisfied, AND the mdast-to-hast
+  // path gets a proper `<span class="mdx-inline">` rendering instead of
+  // leaking literal `<Icon/>` text into clipboard HTML destinations.
   if (n.jsxInline) {
-    nodeHandlers.jsxInline = (pmNode: PmNode) => ({
-      type: 'html' as const,
-      value: pmNode.textContent ?? '',
-    });
+    nodeHandlers.jsxInline = (pmNode: PmNode) => {
+      const raw = pmNode.attrs.sourceRaw || pmNode.textContent || '';
+      return {
+        type: 'mdxJsxTextElement' as const,
+        name: null,
+        attributes: [],
+        children: [],
+        data: { sourceRaw: String(raw) },
+      };
+    };
   }
 
-  // Wiki-link → emit as raw HTML to preserve [[...]] syntax on serialize
+  // Wiki-link → first-class `wikiLink` mdast type per D7 / US-004.
+  // - `data.{target,anchor,alias}` drives markdown emission via the
+  //   wikiLinkHandler registered through remarkWikiLink in pipeline.ts.
+  // - `children: [{type:'text',value:label}]` and mirrored `value` drive
+  //   the mdast→hast HTML emission (US-007).
+  // Replaces the earlier `{type:'html',value:'[[...]]'}` passthrough — the
+  // "type lie" D7 is locked to fix under strict greenfield.
   if (n.wikiLink) {
     nodeHandlers.wikiLink = (pmNode: PmNode) => {
-      const target = pmNode.attrs.target ?? '';
-      const anchor = pmNode.attrs.anchor;
-      const alias = pmNode.attrs.alias;
-      let text = `[[${target}`;
-      if (anchor) text += `#${anchor}`;
-      if (alias) text += `|${alias}`;
-      text += ']]';
-      return { type: 'html' as const, value: text };
+      const target: string = pmNode.attrs.target ?? '';
+      const anchor: string | null = pmNode.attrs.anchor ?? null;
+      const alias: string | null = pmNode.attrs.alias ?? null;
+      const label = alias ? alias : anchor ? `${target}#${anchor}` : target;
+      return {
+        type: 'wikiLink' as const,
+        value: label,
+        data: { target, anchor, alias },
+        children: [{ type: 'text' as const, value: label }],
+      } as unknown as MdastNodes;
     };
   }
 

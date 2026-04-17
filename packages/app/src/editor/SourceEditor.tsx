@@ -14,6 +14,7 @@ import {
   lightTheme,
 } from '@/editor/extensions/nested-cm-extensions';
 import { RAW_MDX_NAV_EVENT, type RawMdxNavDetail } from '@/editor/extensions/RawMdxFallbackView';
+import { createSourceClipboardExtension } from './clipboard/index.ts';
 import { markUserTyping } from './observers';
 import { createSourcePolishExtension } from './source-polish';
 
@@ -45,6 +46,17 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
   useEffect(() => {
     if (!containerRef.current) return;
 
+    // Source clipboard (FR-4, FR-5, D4, D5): copy writes both text/plain
+    // markdown AND text/html canonical rendered HTML via the shared
+    // mdast-to-html pipeline; paste routes through a 4-branch dispatcher
+    // parallel to the WYSIWYG 5-branch. The dispatcher needs only the
+    // ydoc + ytext — serialisation uses `markdownToHtml(string)` which
+    // runs its own unified pipeline and has no MarkdownManager dependency.
+    const sourceClipboard = createSourceClipboardExtension({
+      ydoc: provider.document,
+      ytext,
+    });
+
     const state = EditorState.create({
       doc: ytext.toString(),
       extensions: [
@@ -66,6 +78,7 @@ export function SourceEditor({ ytext, provider, placeholder }: SourceEditorProps
           ydoc: provider.document,
         }),
         createSourcePolishExtension(),
+        sourceClipboard,
         placeholderCompartment.of(cmPlaceholder(placeholder ?? '')),
         EditorView.theme({
           '&': {

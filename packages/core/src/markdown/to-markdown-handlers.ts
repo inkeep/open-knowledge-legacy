@@ -312,33 +312,43 @@ export const toMarkdownHandlers = {
     const sep = node.spread ? '\n\n' : '\n';
     return out.join(sep);
   },
+
   /**
-   * mdxJsxFlowElement: flush-left to-markdown handler (FR-6).
+   * mdxJsxFlowElement: 2-path handler unifying PR #171's sourceRaw-verbatim
+   * pattern (precedent #19 sub-rule (d)) with PR #165's γ dirty-reconstruct
+   * pattern (FR-5, FR-6, D7).
    *
-   * When the γ serialize pattern reconstructs a dirty jsxComponent as an
-   * mdxJsxFlowElement mdast node, the library's default `containerFlow()`
-   * indents children by 2-space-per-depth — at nesting depth 2+, children
-   * reach 4+ spaces which triggers CommonMark's indented-code-block rule.
+   *   - Pristine path: `data.sourceRaw` is set → emit verbatim. Bit-exact
+   *     round-trip for unedited content; also the production path for
+   *     clipboard copy (the PM→mdast `jsxComponent` pristine branch) and for
+   *     any non-PR-165 caller (file parse, agent write, etc.).
+   *   - Dirty path: `data.sourceRaw` is absent; the node carries structural
+   *     `name`, `attributes`, `children`. Reconstruct flush-left (children
+   *     serialized via containerFlow without the library's 2-space-per-depth
+   *     indent, which would trigger CommonMark's indented-code-block rule at
+   *     depth 2+). Matches the fumadocs/Obsidian authoring convention.
    *
-   * This handler serializes children flush-left (zero indentation) and
-   * preserves blank-line separation between tag and first child. Matches
-   * the fumadocs/Obsidian authoring convention.
+   * Fallback (neither path): `<${name}/>` — minimal self-closing tag, only
+   * reached if an mdxJsxFlowElement appears with neither sourceRaw nor
+   * structural children, which is outside our parse pipeline.
    */
   mdxJsxFlowElement(node, _parent, state, info) {
     const mdxNode = node as unknown as MdxJsxFlowElement;
+    const raw = mdxNode.data?.sourceRaw;
+    if (typeof raw === 'string') return raw;
+
     const name = mdxNode.name ?? '';
     const attrs = serializeMdxJsxAttrs(mdxNode.attributes ?? []);
 
-    // Self-closing
     if (!mdxNode.children || mdxNode.children.length === 0) {
+      if (!name) return '';
       return attrs ? `<${name} ${attrs} />` : `<${name} />`;
     }
 
-    // Container: open tag, blank line, children flush-left, blank line, close tag
     const openTag = attrs ? `<${name} ${attrs}>` : `<${name}>`;
     const closeTag = `</${name}>`;
 
-    // Serialize children flush-left via containerFlow.
+    // Serialize children flush-left via containerFlow (FR-6).
     // Cast needed: containerFlow expects FlowParents which is a union of
     // specific mdast parent types; our synthetic root satisfies the structural
     // requirement ({type, children}) but not the nominal type.
@@ -349,6 +359,31 @@ export const toMarkdownHandlers = {
     );
 
     return `${openTag}\n\n${childContent}\n\n${closeTag}`;
+  },
+
+  /**
+   * mdxJsxTextElement: sourceRaw-verbatim strategy. Covers inline
+   * `<Icon />`, `<Badge>x</Badge>`, `<br/>` variants. jsxInline (NG14 thin
+   * shape) always populates data.sourceRaw at the PM→mdast layer, so this
+   * branch is the production path. Custom handler returns the string
+   * directly — no state.safe() call — which avoids the text-context
+   * `<` → `\<` escape that FR-5b originally needed {type:'html'} to work
+   * around.
+   */
+  mdxJsxTextElement(node) {
+    const raw = node.data?.sourceRaw;
+    if (typeof raw === 'string') return raw;
+    const name = node.name ?? '';
+    return `<${name}/>`;
+  },
+
+  /**
+   * rawMdxFallback (D7 / US-006): emit `value` verbatim so the raw source
+   * round-trips byte-identically. `value` holds the exact bytes the parser
+   * choked on — see parse-with-fallback.ts for the producer side.
+   */
+  rawMdxFallback(node) {
+    return (node.value ?? '') as string;
   },
 } satisfies Partial<MdastToMarkdownHandlers>;
 

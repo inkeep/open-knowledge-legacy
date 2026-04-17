@@ -40,7 +40,14 @@ export {
   WikiLink,
   type WikiLinkAttrs,
 } from './extensions/wiki-link.ts';
+export {
+  HTML_MAX_BYTES,
+  HtmlPayloadTooLargeError,
+  htmlToMdast,
+  mdastToMarkdown,
+} from './markdown/html-to-mdast.ts';
 export { MarkdownManager } from './markdown/index.ts';
+export { markdownToHtml, mdastToHtml } from './markdown/mdast-to-html.ts';
 export {
   getParseHealth,
   incrementBlockFallback,
@@ -104,6 +111,7 @@ export type {
 
 // Utils
 export { applyByPrefixSuffix } from './utils/apply-by-prefix-suffix.ts';
+export { ChunkedInsertError, chunkedYTextInsert } from './utils/chunked-insert.ts';
 export {
   AGENT_COLORS,
   AGENT_ICON_COLORS,
