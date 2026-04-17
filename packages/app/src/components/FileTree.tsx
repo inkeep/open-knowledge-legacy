@@ -363,7 +363,7 @@ const FileTreeNode: FC<{
             onCancelRename();
           }
         }}
-        className="h-7 min-w-0 flex-1 bg-background text-s text-foreground"
+        className="h-7 min-w-0 flex-1 bg-background text-sm text-foreground"
       />
       {isFile && <span className="text-xs text-sidebar-foreground/40">.md</span>}
     </div>

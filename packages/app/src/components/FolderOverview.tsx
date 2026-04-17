@@ -120,7 +120,12 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-0 flex-1 items-start overflow-y-auto subtle-scrollbar">
+      <div
+        className="flex min-h-0 flex-1 items-start overflow-y-auto subtle-scrollbar"
+        role="status"
+        aria-busy="true"
+        aria-label="Loading folder contents"
+      >
         <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-6 py-8">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -249,7 +254,11 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>
+                  <TableHead
+                    aria-sort={
+                      sortKey === 'name' ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'
+                    }
+                  >
                     <SortableHeader
                       label="Name"
                       sortKey="name"
@@ -258,7 +267,16 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
                       onSort={handleSort}
                     />
                   </TableHead>
-                  <TableHead className="w-32">
+                  <TableHead
+                    className="w-32"
+                    aria-sort={
+                      sortKey === 'modified'
+                        ? sortDir === 'asc'
+                          ? 'ascending'
+                          : 'descending'
+                        : 'none'
+                    }
+                  >
                     <SortableHeader
                       label="Modified"
                       sortKey="modified"
@@ -272,22 +290,19 @@ export function FolderOverview({ folderPath }: { folderPath: string }) {
               <TableBody>
                 {sorted.length ? (
                   sorted.map((entry) => (
-                    <TableRow
-                      key={entry.path}
-                      className="cursor-pointer"
-                      onClick={() => {
-                        window.location.hash = hashFromDocName(entry.path);
-                      }}
-                    >
+                    <TableRow key={entry.path}>
                       <TableCell>
-                        <div className="flex items-center gap-2">
+                        <a
+                          href={hashFromDocName(entry.path)}
+                          className="flex items-center gap-2 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
                           {entry.kind === 'folder' ? (
                             <Folder className="size-4 shrink-0 text-muted-foreground" />
                           ) : (
                             <File className="size-4 shrink-0 text-muted-foreground" />
                           )}
                           <span className="truncate">{entry.title}</span>
-                        </div>
+                        </a>
                       </TableCell>
                       <TableCell className="text-muted-foreground">
                         {entry.kind === 'file' ? formatRelativeDate(entry.modified) : '—'}
