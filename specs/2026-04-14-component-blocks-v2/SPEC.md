@@ -681,7 +681,7 @@ Thresholds are informative (not hard failures) but regression > 10% vs baseline 
 | # | Benchmark | Threshold |
 |---|---|---|
 | PF01 | 100 jsxComponent nodes in one doc; edit one prop via PropPanel | Only that node re-renders (React DevTools profiler render-count assertion: 1 NodeView render, 0 sibling renders). p99 render time < 50ms. |
-| PF02 | 10-level deeply nested compound structure; trigger one NodeView render | Ancestor walk (`useAncestorContexts`) + ContextBridgeProvider wrap < 5ms per render (per CB14). p99 < 10ms. |
+| PF02 | 10-level deeply nested compound structure; trigger one NodeView render | Child-side compound-wrapper DOM-attr lookup (`closest('.editor-tabs-root')` + `data-active-tab` read) < 5ms per render. p99 < 10ms. **Re-scoped 2026-04-16** after the Context Bridge Registry (`useAncestorContexts` + `ContextBridgeProvider`) was removed as dormant infrastructure in PR #165's review-pass fixup; Fallback 2 DOM-attr path is what's shipped (SPEC §9.15.7 R1). See [`evidence/deferred-invariants-and-perf.md`](evidence/deferred-invariants-and-perf.md) §J for the re-scoped test approach. |
 | PF03 | 500 keystrokes in source mode on doc containing 20 jsxComponents (broken and unbroken mix) | Observer B's `parseWithFallback` average cycle < 20ms; p99 < 50ms. No cycle exceeds 200ms. |
 | PF04 | Whole `bun run check:full:parallel` suite | No test tier's warm-replay time regresses > 10% vs main-branch baseline. Baseline refreshed quarterly. |
 | PF05 | Y.Item count growth under 100-keystroke typing in jsxInline children | Y.Item delta ≤ `keystroke_count + constant_overhead` (per Precedent #10 + SH04). If delta scales super-linearly, indicates Y.XmlElement churn; fails PF05. |

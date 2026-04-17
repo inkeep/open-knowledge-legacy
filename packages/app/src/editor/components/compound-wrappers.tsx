@@ -14,8 +14,14 @@
  *
  * These wrappers pattern-copy the fumadocs visual structure using the same CSS
  * classes (served by the --color-fd-* variable bridge in globals.css) while
- * managing compound state via the Context Bridge store for parent→child
- * communication across portal boundaries.
+ * managing compound state via DOM data-attributes on the PM-owned DOM (parent
+ * writes `data-active-tab` on its root; children read it from their closest
+ * ancestor). This is the SPEC §9.15.7 R1 Fallback-2 pattern-copy path —
+ * chosen because Radix's closure-scoped Contexts cannot be bridged without
+ * modifying Radix itself. A full Context Bridge Registry (editor-scoped
+ * store + bridgeId PluginState + useSyncExternalStore subscription) was
+ * prototyped but not adopted; see evidence/deferred-invariants-and-perf.md
+ * for the deletion rationale.
  *
  * Leaf components (Callout, Card, Steps, Step, etc.) remain as direct fumadocs-ui
  * imports (full D12 fidelity) — they have no compound context dependency.

@@ -399,27 +399,29 @@ test('PF01 — editing one prop re-renders only that NodeView', () => {
 - Wrap EACH NodeView in its own `<Profiler id={idx}>` — if you wrap the list, `actualDuration` includes children
 - Verify React Compiler applies in Bun test runtime (in pre-flight spike) — if not, render counts diverge from prod
 
-### J. PF02 — useAncestorContexts timing
+### J. PF02 — compound-wrapper DOM-attr lookup timing
 
-**Target code.** `packages/app/src/editor/context-bridge/hooks.tsx:60-96`.
+**Scope change (2026-04-16).** SPEC PF02 originally measured `useAncestorContexts` + `ContextBridgeProvider` wrap time. The Context Bridge Registry was removed in PR #165's review-pass fixup (commit `86c6301b`) as dormant infrastructure — SPEC §9.15.7 R1 Fallback 2 ships DOM data-attributes on the PM-owned DOM instead (`compound-wrappers.tsx`). The `useAncestorContexts` hook no longer exists.
+
+**Re-scoped PF02 target.** The compound-wrapper child-side lookup: `EditorTab`/`EditorAccordionItem` reading `data-active-tab` / equivalent via `element.closest('.editor-tabs-root')`. This is the equivalent cost now — called once per child NodeView render to determine active state. For a 10-level nested compound, N child NodeViews each do one `closest()` call.
 
 **Bun test (relative ratio):**
 
 ```typescript
-test('PF02 — ancestor walk scales linearly with depth (relative ratio)', () => {
-  // Build 2 synthetic nested jsxComponent trees: depth 5 and depth 10
-  // Instrument useAncestorContexts with performance.now() deltas
+test('PF02 — compound child-side DOM lookup scales linearly with depth', () => {
+  // Build 2 synthetic nested compound fixtures: depth 5 and depth 10
+  // Mount, measure performance.now() around the closest() call inside
+  // EditorTab's effect that reads data-active-tab
   // Run 100x each, compute average
   const ratio = avgDepth10 / avgDepth5;
-  // Should scale close to linearly (depth 10 is roughly 2x depth 5)
   expect(ratio).toBeGreaterThan(1.5);
   expect(ratio).toBeLessThan(3); // not super-linear
 });
 ```
 
-**Playwright test (absolute ms):** same structure in Chromium. Assert `p99 < 10ms` at depth 10 per SPEC.
+**Playwright test (absolute ms):** same structure in Chromium. Assert `p99 < 10ms` at depth 10 per SPEC (threshold may need tightening — DOM `closest()` is fast, raw-10ms-budget was sized for Context walk + Provider wrap).
 
-**Instrumentation approach.** The cleanest path is a test-only export: add a `measurementHook` parameter to `useAncestorContexts` that, when set, wraps the walk in performance.now() deltas. OR: extract the pure walk logic to a plain function `walkAncestors(editor, $pos)` and measure that directly.
+**SPEC §6 PF02 row needs updating** as part of this follow-up to reflect the re-scoped mechanism ("Ancestor walk" → "compound-wrapper DOM lookup"). Keep the 10-level-nested structure. Absolute threshold TBD from first measurement.
 
 ### PF calibration decision — keep fixed thresholds
 
@@ -533,7 +535,7 @@ Item G (pre-flight spike + DOM)     │
 
 **For items G-J (DOM + perf work):**
 - `packages/app/tests/stress/component-blocks.perf.test.ts` — existing perf test template (extend with PF01, PF02)
-- `packages/app/src/editor/context-bridge/hooks.tsx:60-96` — `useAncestorContexts` (PF02 target)
+- `packages/app/src/editor/components/compound-wrappers.tsx` — EditorTab / EditorAccordionItem (re-scoped PF02 target after PR #165 deleted the Context Bridge Registry; see §J above)
 - `packages/app/src/editor/extensions/JsxComponentView.tsx` — main NodeView (DOM mount target)
 - `packages/app/src/editor/components/PropPanel.tsx` — prop edit component (PF01 scenario)
 - `packages/core/tests/perf/regression-gate.ts` — sister-spec gate (reference only; not adopted for jsx ops)
