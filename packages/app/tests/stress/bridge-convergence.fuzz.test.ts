@@ -484,20 +484,21 @@ const WRITE_SURFACE_TO_OP_KIND: Record<string, readonly string[]> = {
 //     scaling / bisection runs.
 //   - Nightly mode (`STRESS_FUZZ_NIGHTLY=1`): 10000 seeds (tier 2; 30-min
 //     budget). Split across `nightly.yml` + `weekly.yml` as needed.
-//   - PR mode (`STRESS_FUZZ_PR=1`): 200 seeds. Runs on the dedicated
-//     `fuzz` job pinned to `ubuntu-64gb` (see `.github/workflows/ci.yml` —
-//     mirrors the `playwright` job's large-runner pattern from PR #193).
-//     The 2-vCPU `ubuntu-latest` free tier was the original constraint:
-//     PR #192's first 200-seed run hit the 15-min timeout at 14m56s
-//     (run 24577509123). On the 16+ vCPU / 64 GB runner per-seed time
-//     tracks the local M-series baseline (~2.75s/seed), so
-//     200 × ~3s + install/cache ≈ 12 min, comfortably under the 15-min
-//     tier-1 budget. The long tail (1K–10K seeds) still runs in tier-2
-//     nightly / tier-3 weekly on-demand workflows (D11 resolution:
-//     split-by-tier, not matrix-shard).
+//   - PR mode (`STRESS_FUZZ_PR=1`): 75 seeds. Calibrated against CI's
+//     measured per-seed distribution (from main's 25-seed run, job
+//     71850662391): median 4054 ms/seed, mean 8949 ms/seed, p95 24045 ms,
+//     max 45677 ms. The long tail dominates: 200 × mean = ~30 min, which
+//     exceeded the 15-min tier-1 budget regardless of runner size
+//     (ubuntu-latest cancelled at 14m56s; ubuntu-64gb cancelled at
+//     15m14s — the large runner's raw CPU advantage was not enough to
+//     absorb 45 s tail seeds × 200). 75 × 8.9 s mean ≈ 11 min + overhead
+//     ≈ 12 min, fits comfortably with headroom for tail variance. Still
+//     3× the default-mode coverage; the 1K-10K elevated-seed tail runs
+//     in tier-2 nightly / tier-3 weekly on-demand workflows (D11
+//     resolution: split-by-tier, not matrix-shard).
 //   - Otherwise: 25 seeds. Matches the calibrated opCount sweet spot below
 //     and keeps local developer runs cheap.
-const SEED_COUNT_PR = 200;
+const SEED_COUNT_PR = 75;
 const SEED_COUNT_NIGHTLY = 10_000;
 const SEED_COUNT_DEFAULT = 25;
 function resolveSeedCount(): number {

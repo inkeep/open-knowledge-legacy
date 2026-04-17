@@ -786,15 +786,16 @@ describe('Server Observer B — error recovery paths', () => {
     };
 
     // Arm: serialize() will throw exactly once during the post-sync
-    // re-serialization inside runObserverBSync.
+    // re-serialization inside runObserverBSync. After the early-exit gate
+    // was switched to compare against the maintained `lastSyncedXmlMd`
+    // baseline (no fresh serialize call), runObserverBSync issues serialize
+    // only once per fire — the canonicalization step's `serialize(parsedJson)`
+    // after updateYFragment. That is the call we arm to throw.
     let serializeCallCount = 0;
     const originalSerialize = stub.mdManager.serialize;
     stub.mdManager.serialize = ((json: unknown) => {
       serializeCallCount++;
-      // Let the early-exit gate's serialize succeed (calls are before the
-      // updateYFragment). Throw on the post-sync re-serialize call that
-      // runs after updateYFragment.
-      if (serializeCallCount === 2) {
+      if (serializeCallCount === 1) {
         throw new Error('simulated serialize failure post-update');
       }
       // biome-ignore lint/suspicious/noExplicitAny: delegate

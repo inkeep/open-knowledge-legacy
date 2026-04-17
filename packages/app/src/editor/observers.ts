@@ -13,12 +13,22 @@
  *   1. Own the `ORIGIN_TREE_TO_TEXT` / `ORIGIN_TEXT_TO_TREE` object
  *      identities required by the bridge-invariant watcher's enforcing
  *      set (precedent #1 identity match).
- *   2. Fire `onSyncError` for non-transient parse failures on Y.Text so
- *      the editor surfaces real diagnostics (transient mid-edit MDX
- *      syntax errors are swallowed at debug log).
- *   3. Record keystroke timestamps via `markUserTyping` for the
+ *   2. Record keystroke timestamps via `markUserTyping` for the
  *      `SystemDocSubscriber` agent-focus typing guard (global wall-clock
  *      timestamp, not per-doc state).
+ *
+ * The observer callbacks themselves are intentionally empty: the server
+ * owns cross-CRDT propagation (precedent #14), and the server's Observer
+ * B already performs parse validation with the same `MarkdownManager`
+ * and the same transient-error classification. A redundant client-side
+ * parse per Y.Text transaction was blocking the main thread on every
+ * source-mode keystroke and on every chunk of `chunkedYTextInsert` —
+ * the rAF yields in `chunked-insert.ts` intended to keep a >500 KB paste
+ * at 60fps were ineffective because the observer callback ran
+ * synchronously inside each `ydoc.transact()` before the yield. Deleting
+ * the client-side parse restores the intended responsiveness. Errors
+ * still surface via the server-side path (`serverObserverErrorsB`
+ * counter + structured logs) with a ~5-10 ms WebSocket RTT delay.
  *
  * See `specs/2026-04-15-server-authoritative-observer-bridge/SPEC.md` and
  * `specs/2026-04-16-bridge-correctness/SPEC.md` §6 R4-R5b.
@@ -26,7 +36,6 @@
 
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
 import type { MarkdownManager } from '@inkeep/open-knowledge-core';
-import { stripFrontmatter, VFileMessage } from '@inkeep/open-knowledge-core';
 import type { Schema } from '@tiptap/pm/model';
 import type * as Y from 'yjs';
 
@@ -113,22 +122,17 @@ export interface ObserverDeps {
 /**
  * Attach the client observer shell to a Y.Doc.
  *
- * Observer A (XmlFragment): currently a no-op callback — the server owns
- * XmlFragment → Y.Text propagation. Subscribing keeps the callback slot
- * live so future read-side instrumentation can hook in without a signature
- * change, and makes the tear-down path symmetric with Observer B.
- *
- * Observer B (Y.Text): performs diagnostic parse validation so real (non-
- * transient) markdown failures surface via `onSyncError`. Transient
- * mid-edit errors (`SyntaxError`, `VFileMessage`, "Invalid content for
- * node" `RangeError`) are swallowed — XmlFragment keeps its last valid
- * state and the next keystroke re-triggers validation.
+ * Both callbacks are intentionally empty — the server owns cross-CRDT
+ * propagation (precedent #14) and also runs parse validation on Y.Text
+ * via its own Observer B (`packages/server/src/server-observers.ts`).
+ * Subscribing here keeps the callback slots wired for future read-side
+ * instrumentation and makes the teardown path symmetric.
  *
  * Returns a cleanup function that detaches both callbacks. No timers to
  * clear — precedent #13(b) forbids wall-clock `setTimeout` here.
  */
 export function setupObservers(deps: ObserverDeps): () => void {
-  const { xmlFragment, ytext, mdManager } = deps;
+  const { xmlFragment, ytext } = deps;
 
   const observerA = (_events: Y.YEvent<Y.XmlFragment>[], _transaction: Y.Transaction): void => {
     // Intentionally empty under server-authoritative bridge (precedent #14).
@@ -138,37 +142,18 @@ export function setupObservers(deps: ObserverDeps): () => void {
     // instrumentation without breaking call-site signatures.
   };
 
-  const observerB = (_event: Y.YTextEvent, transaction: Y.Transaction): void => {
-    // Skip self-origin writes (historical tree→text sync) — no such writes
-    // happen today under precedent #14, but the guard keeps the identity-
-    // based origin semantics intact for the enforcing set.
-    if (transaction.origin === ORIGIN_TREE_TO_TEXT) return;
-    // Skip remote transactions (peer/agent writes arriving via CRDT sync).
-    // The server observer already propagated them to XmlFragment; the
-    // client has no further work.
-    if (!transaction.local) return;
-
-    try {
-      const md = ytext.toString();
-      const { body } = stripFrontmatter(md);
-      try {
-        mdManager.parse(body);
-      } catch (parseErr) {
-        // Transient mid-edit MDX noise — log at debug and swallow.
-        if (
-          parseErr instanceof SyntaxError ||
-          parseErr instanceof VFileMessage ||
-          (parseErr instanceof RangeError && parseErr.message.includes('Invalid content for node'))
-        ) {
-          console.debug('[Observer B] Parse skipped (partial/invalid markdown):', parseErr);
-          return;
-        }
-        throw parseErr;
-      }
-    } catch (err) {
-      console.error('[Observer B] Failed to validate text→tree:', err);
-      deps.onSyncError?.('text-to-tree', err instanceof Error ? err : new Error(String(err)));
-    }
+  const observerB = (_event: Y.YTextEvent, _transaction: Y.Transaction): void => {
+    // Intentionally empty. The prior iteration ran `mdManager.parse(body)`
+    // here for diagnostic error surfacing via `onSyncError`, but that parse
+    // fired synchronously inside every local `ydoc.transact()` drain —
+    // including every keystroke in source mode AND every chunk of
+    // `chunkedYTextInsert`. For docs >10 KB this added per-keystroke lag
+    // and defeated the rAF yields that large-paste chunking relies on
+    // (the yield happens after the observer callback, so the parse
+    // blocked the frame regardless). The server's Observer B runs the
+    // same parse with the same transient-error classification; real
+    // failures surface via the `serverObserverErrorsB` counter and the
+    // structured `bridge-merge-content-loss` logs. Deleted in PR #192.
   };
 
   xmlFragment.observeDeep(observerA);

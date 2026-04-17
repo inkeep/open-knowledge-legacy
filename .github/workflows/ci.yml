@@ -74,17 +74,17 @@ jobs:
       - run: bunx turbo run ${{ matrix.task }}
 
   fuzz:
-    # Shared large runner (16+ vCPU / 64 GB RAM) — mirrors the `playwright`
-    # job pattern (PR #193). The bridge-convergence fuzzer runs seeds
-    # serially and each seed boots a full Hocuspocus server + 2-3 clients,
-    # so per-seed wall-clock time is CPU-dominated. On `ubuntu-latest`
-    # (2-vCPU free tier) PR #192's initial 200-seed gate hit the 15-min
-    # timeout at 14m56s (run 24577509123). The 64gb runner brings per-seed
-    # time back in line with local M-series baseline (~2.75s/seed), so
-    # 200 seeds × ~3s + install/cache ≈ 12 min, comfortably under budget.
-    # See `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`
-    # `resolveSeedCount` for the per-tier seed-count calibration.
-    runs-on: ubuntu-64gb
+    # Dedicated job so the fuzz cadence (75 seeds PR-tier, 10K seeds
+    # nightly via `STRESS_FUZZ_NIGHTLY=1`) is decoupled from the other
+    # `test` matrix entries. Runs on `ubuntu-latest` — the 75-seed target
+    # is calibrated against measured CI per-seed distribution
+    # (mean 8.9 s, p95 24 s; see `resolveSeedCount` in
+    # `packages/app/tests/stress/bridge-convergence.fuzz.test.ts`) and
+    # fits the 15-min tier-1 budget with headroom. The large (64gb)
+    # runner was tried for a 200-seed gate and did not absorb the long
+    # tail; split-by-tier (D11) with a calibrated PR-tier seed count is
+    # the cleaner answer.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2

@@ -492,11 +492,18 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       const md = ytext.toString();
       const { frontmatter, body } = stripFrontmatter(md);
 
-      // Early-exit: if XmlFragment already serializes to the same body
-      // (after normalization), no work needed.
-      const currentJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
-      const currentBody = mdManager.serialize(currentJson);
-      if (normalizeBridge(currentBody) === normalizeBridge(body)) {
+      // Early-exit: if Y.Text already matches the last canonical XmlFragment
+      // serialization (via normalizeBridge), tree and text are in sync.
+      // Uses the maintained `lastSyncedXmlMd` baseline instead of a fresh
+      // serialize(XmlFragment) call — the baseline is refreshed on every
+      // Observer A path and on every paired-write origin's synchronous
+      // short-circuit (lines 433-451), so it always reflects the current
+      // canonical XmlFragment form. This avoids an O(doc-size) serialize
+      // on every Observer B fire, which during bursty Y.Text writes
+      // (chunked-paste of 1 MB in 20 × 50 KB transactions) aggregated to
+      // hundreds of ms of wasted work on content the observer wouldn't
+      // touch anyway.
+      if (normalizeBridge(lastSyncedXmlMd) === normalizeBridge(md)) {
         // Tree and text are already in sync — just update frontmatter if changed.
         const metaMap = doc.getMap('metadata');
         const currentFm = metaMap.get('frontmatter');
@@ -505,8 +512,6 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
             metaMap.set('frontmatter', frontmatter);
           }, OBSERVER_SYNC_ORIGIN);
         }
-        // Refresh Observer A's baseline so it doesn't see a stale delta.
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, currentBody);
         return;
       }
 
@@ -542,31 +547,46 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
       incrementServerObserverFire('b');
 
-      // Re-serialize XmlFragment post-update for Observer A's baseline
-      // (updateYFragment may normalize differently from input). Also: if the
-      // canonical post-update serialization differs from the raw Y.Text bytes
-      // the client wrote (e.g. client inserted at pos 0 when the server had
-      // already materialized content — CRDT merge places the insert ahead
-      // of server bytes, yielding non-canonical leading whitespace), rewrite
-      // Y.Text to the canonical form via applyFastDiff. This preserves
-      // content (both sides already contain the same AST-level data) while
-      // restoring the bridge invariant `ytext === serialize(fragment)` after
-      // every B drain. The debounce-era model relied on Observer A's
-      // subsequent Path B firing to close this gap; under settlement dispatch
-      // Observer A doesn't re-fire automatically, so Observer B closes the
-      // loop directly. The write uses OBSERVER_SYNC_ORIGIN so observers
-      // self-skip the resulting inner drain (no cascading settlement work).
+      // Canonicalize Y.Text to match serialize(XmlFragment) so the bridge
+      // invariant `ytext === serialize(fragment)` holds after every B drain.
+      // The canonical form is derived from `parsedJson` — the PM tree we just
+      // wrote to XmlFragment via updateYFragment. Using parsedJson (which we
+      // already have) instead of re-reading XmlFragment via
+      // yXmlFragmentToProsemirrorJSON avoids a full-doc re-serialization on
+      // every fire — under the settlement dispatcher, Observer B runs on
+      // every Y.Text write including bursty ones (chunked-paste is 20×
+      // 50 KB transactions, each triggering one B fire). Re-reading
+      // XmlFragment on every fire was O(N²) aggregate work over a 1 MB
+      // paste; using parsedJson is O(N) per fire and O(N · chunks) aggregate.
+      //
+      // Round-trip fast path: if `body` is already round-trip-stable
+      // (serialize(parse(body)) === body), then canonicalYText === the input
+      // Y.Text the client wrote, so applyFastDiff would be a no-op. Skip it
+      // entirely. This is the overwhelmingly common case for clean markdown
+      // (paste pipeline output, programmatic agent writes, chunked-source-
+      // insert of already-canonical text). The slow path fires for
+      // non-canonical bytes (CRDT merge interleaves producing unusual
+      // whitespace, WYSIWYG-origin serializations with minor normalization
+      // deltas), which is the regression class the canonicalization was
+      // added to handle.
+      //
+      // The write uses OBSERVER_SYNC_ORIGIN so observers self-skip the
+      // resulting inner drain (no cascading settlement work).
       try {
-        const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
-        const postBody = mdManager.serialize(postJson);
-        const canonicalYText = prependFrontmatter(frontmatter, postBody);
-        const currentYText = ytext.toString();
-        if (currentYText !== canonicalYText) {
-          doc.transact(() => {
-            applyFastDiff(ytext, currentYText, canonicalYText);
-          }, OBSERVER_SYNC_ORIGIN);
+        const canonicalBody = mdManager.serialize(parsedJson);
+        if (canonicalBody === body) {
+          // Fast path: body is round-trip-stable. No canonicalization needed.
+          lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
+        } else {
+          const canonicalYText = prependFrontmatter(frontmatter, canonicalBody);
+          const currentYText = ytext.toString();
+          if (currentYText !== canonicalYText) {
+            doc.transact(() => {
+              applyFastDiff(ytext, currentYText, canonicalYText);
+            }, OBSERVER_SYNC_ORIGIN);
+          }
+          lastSyncedXmlMd = canonicalYText;
         }
-        lastSyncedXmlMd = canonicalYText;
       } catch (reserializeErr) {
         console.warn(
           '[Server Observer B] Post-sync re-serialization failed — using input body as baseline:',
