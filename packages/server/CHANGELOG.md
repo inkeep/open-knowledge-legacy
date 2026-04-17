@@ -1,5 +1,11 @@
 # @inkeep/open-knowledge-server
 
+## 0.1.1
+
+### Patch Changes
+
+- @inkeep/open-knowledge-core@0.1.1
+
 ## 0.1.0
 
 ### Minor Changes

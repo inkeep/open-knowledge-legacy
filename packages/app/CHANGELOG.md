@@ -1,5 +1,12 @@
 # open-knowledge-app
 
+## 0.0.3
+
+### Patch Changes
+
+- @inkeep/open-knowledge-core@0.1.1
+- @inkeep/open-knowledge-server@0.1.1
+
 ## 0.0.2
 
 ### Patch Changes
