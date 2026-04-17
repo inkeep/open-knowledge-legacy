@@ -188,7 +188,14 @@ they happen to watch the exact paragraph at merge time.
 - Structured log event emitted (`bridge-merge-content-loss`).
 - Metrics counter incremented.
 - **Silent named checkpoint created** via `saveInMemoryCheckpoint` —
-  labeled `"Before concurrent merge @ <timestamp>"` in TimelinePanel.
+  labeled in TimelinePanel with user-outcome phrasing (`"Auto-saved
+  before a concurrent edit (<size>)"` for `kind:'bridge-merge-loss'`,
+  `"Recovered from an external change (<size>)"` for
+  `kind:'external-change-rescue'`) alongside a distinguishing icon
+  (amber AlertTriangle / sky FileArchive). The commit-body label
+  written under the `ok-checkpoint-v1` contract is still
+  `"Before concurrent merge @ <timestamp>"` — that's the stable
+  programmatic identifier; the rendered copy is the user-facing layer.
 - Bridge returns the merged result as computed; editor remains responsive.
 
 **If the user notices loss** (hours or days later, depending on whether
