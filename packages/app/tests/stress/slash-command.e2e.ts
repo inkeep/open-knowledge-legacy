@@ -10,6 +10,7 @@
  * `playwright.config.ts` `webServer` on VITE_PORT (or default 5173).
  */
 
+import { randomUUID } from 'node:crypto';
 import { expect, type Page, test } from '@playwright/test';
 
 const port = process.env.VITE_PORT || '5173';
@@ -19,14 +20,24 @@ const BASE = process.env.STRESS_BASE_URL ?? `http://localhost:${port}`;
 // Helpers — thin wrappers around the editor's observable surface
 // ---------------------------------------------------------------------------
 
-async function resetEditor(page: Page) {
-  const res = await fetch(`${BASE}/api/test-reset`, { method: 'POST' });
+async function createPage(path: string) {
+  const res = await fetch(`${BASE}/api/create-page`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (res.status === 409) return;
+  if (!res.ok) throw new Error(`create-page failed for ${path}: ${res.status}`);
+}
+
+async function resetEditor(page: Page, docName: string) {
+  const res = await fetch(`${BASE}/api/test-reset?docName=${encodeURIComponent(docName)}`, {
+    method: 'POST',
+  });
   if (!res.ok) throw new Error(`test-reset failed: ${res.status}`);
   await page.reload({ waitUntil: 'networkidle' });
-  // Multi-doc arch: reload drops back to the sidebar, re-select the doc.
-  // Use role+name to disambiguate: the reload may leave 'test-doc.md' in both
-  // the sidebar list (button) and the main-area header label.
-  await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
+  // After reload, re-navigate to the per-test doc via hash.
+  await page.goto(`${BASE}/#/${docName}`);
   await page.waitForSelector('.ProseMirror');
   await page.click('.ProseMirror');
   await page.waitForFunction(() => document.querySelector('.ProseMirror')?.textContent === '', {
@@ -118,23 +129,20 @@ async function getCursorRect(page: Page) {
 // ---------------------------------------------------------------------------
 
 test.describe('slash command — triggering and filtering', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
+    docName = `test-slash-trigger-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(BASE);
-    // Multi-doc arch: must open a document from sidebar before the editor renders.
-    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
-    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
-    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
-    // appears in BOTH the sidebar list item (button) and the main-area header label.
-    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
-    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
+    await page.goto(`${BASE}/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
   test('typing / in an empty paragraph opens the command menu', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -146,7 +154,7 @@ test.describe('slash command — triggering and filtering', () => {
   });
 
   test('typing a query after / narrows items to those matching the query', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/heading');
     await page.waitForTimeout(300);
 
@@ -157,7 +165,7 @@ test.describe('slash command — triggering and filtering', () => {
   });
 
   test('query matching is case-insensitive', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/HEADING');
     await page.waitForTimeout(300);
 
@@ -169,7 +177,7 @@ test.describe('slash command — triggering and filtering', () => {
   });
 
   test('typing / after whitespace mid-line opens the menu', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('hello world ');
     await page.waitForTimeout(150);
     await page.keyboard.type('/bullet');
@@ -181,7 +189,7 @@ test.describe('slash command — triggering and filtering', () => {
   });
 
   test('a query with no matches closes the menu and preserves the typed text', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/xyz');
     await page.waitForTimeout(300);
 
@@ -195,18 +203,15 @@ test.describe('slash command — triggering and filtering', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('slash command — item insertion', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
+    docName = `test-slash-insert-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(BASE);
-    // Multi-doc arch: must open a document from sidebar before the editor renders.
-    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
-    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
-    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
-    // appears in BOTH the sidebar list item (button) and the main-area header label.
-    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
-    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
+    await page.goto(`${BASE}/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
@@ -222,7 +227,7 @@ test.describe('slash command — item insertion', () => {
     // test-infrastructure debt exposed by Act-5 cross-browser config;
     // separate issue from clipboard-feature scope.
     test.skip(browserName === 'webkit', 'Pre-existing webkit CORS on /api/documents');
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/h2');
     await page.waitForTimeout(200);
     await page.keyboard.press('Enter');
@@ -234,7 +239,7 @@ test.describe('slash command — item insertion', () => {
   });
 
   test('Tab inserts the selected item (same as Enter)', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/h2');
     await page.waitForTimeout(200);
     await page.keyboard.press('Tab');
@@ -246,7 +251,7 @@ test.describe('slash command — item insertion', () => {
   });
 
   test('clicking an item with the mouse inserts it', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/quote');
     await page.waitForTimeout(300);
 
@@ -268,7 +273,7 @@ test.describe('slash command — item insertion', () => {
     // Same pre-existing webkit CORS issue on `/api/documents` during
     // page.reload (see note on "selecting an item via Enter" test above).
     test.skip(browserName === 'webkit', 'Pre-existing webkit CORS on /api/documents');
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/table');
     await page.waitForTimeout(200);
     await page.keyboard.press('Enter');
@@ -289,7 +294,7 @@ test.describe('slash command — item insertion', () => {
   });
 
   test('mid-line insertion converts the paragraph and preserves prior text', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('hello world ');
     await page.waitForTimeout(150);
     await page.keyboard.type('/bullet');
@@ -304,7 +309,7 @@ test.describe('slash command — item insertion', () => {
   });
 
   test('rapid / then Enter inserts an item without leftover trigger text', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.press('Slash');
     await page.keyboard.press('Enter');
     await page.waitForTimeout(300);
@@ -316,7 +321,7 @@ test.describe('slash command — item insertion', () => {
   });
 
   test('no trigger text remains in the document after any insertion', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/bulletList');
     await page.waitForTimeout(200);
     await page.keyboard.press('Enter');
@@ -333,23 +338,20 @@ test.describe('slash command — item insertion', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('slash command — keyboard navigation', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
+    docName = `test-slash-nav-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(BASE);
-    // Multi-doc arch: must open a document from sidebar before the editor renders.
-    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
-    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
-    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
-    // appears in BOTH the sidebar list item (button) and the main-area header label.
-    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
-    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
+    await page.goto(`${BASE}/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
   test('arrow keys move the selection through menu items', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -370,7 +372,7 @@ test.describe('slash command — keyboard navigation', () => {
   });
 
   test('ArrowUp moves selection upward and wraps around to the last item', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -387,7 +389,7 @@ test.describe('slash command — keyboard navigation', () => {
   });
 
   test('selection clamps to the last item when filtering narrows the list', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -415,7 +417,7 @@ test.describe('slash command — keyboard navigation', () => {
   });
 
   test('Escape closes the menu without inserting anything', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
     expect(await getMenuState(page).then((m) => m.open)).toBe(true);
@@ -429,7 +431,7 @@ test.describe('slash command — keyboard navigation', () => {
   });
 
   test('navigating past the last item keeps the selected item visible', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -461,6 +463,8 @@ test.describe('slash command — keyboard navigation', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('slash command — accessibility', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page, browserName }) => {
     // WebKit headless rejects the FileSidebar's `/api/documents` fetch
     // during initial mount with "access control checks" (webkit's wording
@@ -475,22 +479,17 @@ test.describe('slash command — accessibility', () => {
     // same root cause; describe-level skip is the right granularity when
     // the entire block shares the failure mode.
     test.skip(browserName === 'webkit', 'Pre-existing webkit CORS on /api/documents');
+    docName = `test-slash-a11y-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(BASE);
-    // Multi-doc arch: must open a document from sidebar before the editor renders.
-    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
-    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
-    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
-    // appears in BOTH the sidebar list item (button) and the main-area header label.
-    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
-    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
+    await page.goto(`${BASE}/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
   test('the menu uses listbox role with labeled options', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -517,7 +516,7 @@ test.describe('slash command — accessibility', () => {
   test('aria-activedescendant references a valid option and updates on navigation', async ({
     page,
   }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -565,7 +564,7 @@ test.describe('slash command — accessibility', () => {
   });
 
   test('live region announces the selected item label on navigation', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -590,7 +589,7 @@ test.describe('slash command — accessibility', () => {
   });
 
   test('items are grouped under category headers', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -608,7 +607,7 @@ test.describe('slash command — accessibility', () => {
   test('the menu has a constrained max-height driven by available viewport space', async ({
     page,
   }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(300);
 
@@ -630,23 +629,20 @@ test.describe('slash command — accessibility', () => {
 // ---------------------------------------------------------------------------
 
 test.describe('slash command — menu positioning', () => {
+  let docName: string;
+
   test.beforeEach(async ({ page }) => {
+    docName = `test-slash-pos-${randomUUID().slice(0, 8)}`;
+    await createPage(`${docName}.md`);
     page.on('pageerror', (e) => {
       throw new Error(`Uncaught page error: ${e.message}`);
     });
-    await page.goto(BASE);
-    // Multi-doc arch: must open a document from sidebar before the editor renders.
-    // Landed broken in PR #51 (slash-command-generalization) which predates PR #50
-    // (multi-file-document-support) — no single-doc auto-load fallback anymore.
-    // Use role+name to disambiguate: after an open-doc reload, 'test-doc.md' text
-    // appears in BOTH the sidebar list item (button) and the main-area header label.
-    // getByText hits strict-mode violation; the button role uniquely targets the sidebar entry.
-    await page.getByRole('button', { name: 'test-doc.md' }).click({ timeout: 10_000 });
+    await page.goto(`${BASE}/#/${docName}`);
     await page.waitForSelector('.ProseMirror');
   });
 
   test('the menu appears just below the cursor', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(400);
 
@@ -663,7 +659,7 @@ test.describe('slash command — menu positioning', () => {
   });
 
   test('the menu flips above the cursor when there is not enough room below', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     // Push cursor near the bottom of the viewport
     for (let i = 0; i < 18; i++) {
       await page.keyboard.type(`line ${i}`);
@@ -682,7 +678,7 @@ test.describe('slash command — menu positioning', () => {
   });
 
   test('the menu max-height adapts to available viewport space', async ({ page }) => {
-    await resetEditor(page);
+    await resetEditor(page, docName);
     await page.keyboard.type('/');
     await page.waitForTimeout(400);
 
@@ -714,7 +710,7 @@ test.describe('slash command — menu positioning', () => {
       browserName === 'webkit',
       'Pre-existing webkit overflow-scroll delta detection difference',
     );
-    await resetEditor(page);
+    await resetEditor(page, docName);
     for (let i = 0; i < 30; i++) {
       await page.keyboard.type(`line ${i}`);
       await page.keyboard.press('Enter');
