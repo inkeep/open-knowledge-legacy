@@ -369,6 +369,7 @@ The CommonMark corpus is 652 examples of valid CommonMark. Any whole-doc fallbac
 - **CI tier structure:** AGENTS.md §CI tier structure
 - **Logging conventions:** AGENTS.md §Logging conventions
 - **Precedent #9 (schema add-only):** AGENTS.md §Architectural precedents — motivates the y-prosemirror patch
+- **Sibling subsystem — perf framework:** `packages/core/tests/perf/README.md`
 - **Observability pattern:** `specs/2026-04-13-mdx-tolerant-parsing/evidence/observability-pattern.md`
 - **Spec §R19:** `specs/2026-04-16-markdown-pipeline-engineering-health/SPEC.md` — gate requirement + acceptance criteria
 - **Related PBT invariants:** I8 (crash resistance), I9 (guard completeness), I10 (structural crash resistance), I11 (guard precision)
