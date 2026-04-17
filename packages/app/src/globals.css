@@ -203,7 +203,7 @@
 
 /* OK Blob mascot */
 .ok-blob-body {
-  fill: #3784ff;
+  fill: var(--color-azure-blue);
   animation: ok-blob-squish 6s ease-in-out infinite;
   transform-box: fill-box;
   transform-origin: center bottom;
@@ -213,7 +213,7 @@
 }
 
 .ok-blob-eye {
-  fill: #3784ff;
+  fill: var(--color-azure-blue);
   animation: ok-blob-blink 6s ease-in-out infinite;
   transform-box: fill-box;
   transform-origin: center;
@@ -264,7 +264,7 @@
 }
 
 .ok-blob-happy-eye {
-  stroke: #3784ff;
+  stroke: var(--color-azure-blue);
   transition: opacity 100ms ease;
 }
 .dark .ok-blob-happy-eye {
