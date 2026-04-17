@@ -49,4 +49,11 @@ declare namespace globalThis {
    * post-sync reconnect paths (F8 acceptance criterion).
    */
   var __test_closeActiveWebSocket: (() => boolean) | undefined;
+  /**
+   * Test-only hook: inject a fake agent-focus awareness state into the
+   * `__system__` provider, simulating a remote agent peer focusing on
+   * `docName`. Fires the awareness 'change' event which triggers
+   * SystemDocSubscriber's debounced nav check → hash change.
+   */
+  var __test_injectAgentFocus: ((docName: string) => boolean) | undefined;
 }
