@@ -55,6 +55,15 @@ export interface CreateNavigationRetryHandlerArgs {
  * before the re-enter schedules a new Suspense render.
  *
  * No-op when there is no active doc.
+ *
+ * **Rapid-click safety:** each `pool.recycle(docName)` call runs
+ * `destroyEntry` on the CURRENT entry (disconnects WebSocket, clears
+ * syncPromise timeout, calls `provider.disconnect()`) before creating a
+ * fresh entry. So rapid clicks are sequential destroy→create cycles, not
+ * parallel accumulations — no orphaned providers or leaked WebSockets.
+ * The churn is wasteful (create then immediately destroy) but bounded by
+ * human click speed (~200ms minimum inter-click interval). A debounce
+ * guard is unnecessary given this self-cleaning property.
  */
 export function createNavigationRetryHandler(args: CreateNavigationRetryHandlerArgs): () => void {
   const { recycleDocument, openDocumentTransition, getActiveDocName } = args;
