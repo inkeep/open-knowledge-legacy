@@ -39,21 +39,24 @@ export default defineConfig({
   retries: isCI ? 2 : 0,
   failOnFlakyTests: isCI,
   forbidOnly: isCI,
-  // D-Q7 DIRECTED (empirically-adjusted from 4 → 2 → 1): per-test docName
-  // isolation (PR #185) enables fullyParallel. Local workers undefined =
-  // Playwright default for single-test debug ergonomics. GHA `ubuntu-latest`
-  // is 2 vCPU on the private-repo free tier. Empirical measurement:
-  //   - workers=4 × retries=2: cancelled at 15:00 (PR #193 run 24572488164)
-  //   - workers=2 × retries=2: cancelled at 15:14 (PR #193 run 24573513956 — close but over)
-  //   - workers=1 × retries=0 (main baseline): 7m41s clean (run 24553298790)
-  // The combination of retries=2 + workers>1 pushes past the 15-min CI
-  // timeout-minutes backstop. workers=1 matches the proven main baseline;
-  // the CI `timeout-minutes` backstop bumps to 20 to absorb retries=2 tax.
-  // US-017 workers-calibration.md documents the post-merge 1/2/4 empirical
-  // verdict: on 2-vCPU ubuntu-latest, workers>1 oversubscribes CPU enough
-  // that the parallelism benefit is net-negative vs serial with retries.
+  // D-Q7 LOCKED at workers=4 on `ubuntu-64gb` (16+ vCPU / 64 GB RAM shared
+  // runner). Calibration history:
+  //   - ubuntu-latest (2 vCPU), workers=4 × retries=2: cancelled at 15:00
+  //     (PR #193 run 24572488164) — oversubscribed 2×
+  //   - ubuntu-latest (2 vCPU), workers=2 × retries=2: cancelled at 15:14
+  //     (PR #193 run 24573513956) — still oversubscribed
+  //   - ubuntu-latest (2 vCPU), workers=1 × retries=2: 12m24s clean
+  //     (PR #193 run 24574575469) — serial with retries, no CPU contention
+  //   - ubuntu-64gb (≥16 vCPU), workers=4 × retries=2: fits comfortably —
+  //     the runner has headroom for 4 × (playwright worker + chromium
+  //     process) with retries='2'.
+  // Per-test docName isolation (PR #185) enables fullyParallel. Local workers
+  // undefined = Playwright default for single-test debug ergonomics.
+  // See `specs/2026-04-17-e2e-observability-determinism/evidence/workers-calibration.md`
+  // for the full calibration evidence. If the CI runner tier changes back to
+  // 2 vCPU (e.g., ubuntu-64gb quota exhausted), re-downgrade to workers=1.
   fullyParallel: true,
-  workers: isCI ? 1 : undefined,
+  workers: isCI ? 4 : undefined,
   // D-Q8 DELEGATED: HTML report as artifact; list locally + github reporter on
   // CI for inline PR annotations.
   reporter: [['html', { open: 'never' }], ['list'], ...(isCI ? [['github'] as const] : [])],

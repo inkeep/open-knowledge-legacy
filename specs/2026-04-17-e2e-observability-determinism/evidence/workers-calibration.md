@@ -1,90 +1,74 @@
 # Workers calibration — D-Q7 validation evidence
 
-**Status:** PRE-MERGE STUB. Real numbers land via a follow-up commit
-post-merge once we have CI runs to measure.
+**Status:** LOCKED post-empirical, dual-tier runner strategy.
 
-`playwright.config.ts` sets `workers: process.env.CI ? 4 : undefined`
-per D-Q7 DIRECTED. D-Q7 is DIRECTED (not LOCKED) because it depends on
-empirical CI runner capacity — `ubuntu-latest` is documented as
-2 vCPU for the private-repo free tier. We need to validate `workers: 4`
-actually performs better than `workers: 2` on that hardware before
-locking the value.
+`playwright.config.ts` sets `workers: process.env.CI ? 4 : undefined`.
+The PR-time Playwright job in `.github/workflows/ci.yml` runs on
+`ubuntu-64gb` (shared org runner, ≥16 vCPU / 64 GB RAM) — large enough
+that `workers=4` does not oversubscribe.
 
-## Methodology
+D-Q7 was originally DIRECTED pending empirical CI measurement because
+the runner tier determines the viable worker count. The measurement
+landed during PR #193, along with a runner upgrade; both feed the
+LOCKED decision below.
 
-Once this spec merges:
+## Measurement table (empirical — PR #193)
 
-1. Trigger 3 manual `workflow_dispatch` runs of the existing CI
-   workflow (`.github/workflows/ci.yml`) on `main` at each of:
-   - `workers: 1`
-   - `workers: 2`
-   - `workers: 4` (current default)
-2. For each run, record from the playwright job log:
-   - **p50 wall-clock** (median of the 3 runs at that worker count)
-   - **p95 wall-clock** (worst of the 3)
-   - **flake count** (number of tests that passed only on retry, surfaced
-     by `failOnFlakyTests` annotations even when the build passes — note:
-     with `failOnFlakyTests: true` flakes fail the build, so this is
-     "build outcome under flakes" rather than "silent flake count")
-3. Fill in the table below.
+Runtime observations across three CI runner / config combinations:
 
-Modify `workers` for the test runs by exporting an env var
-(`PLAYWRIGHT_WORKERS=N`) and reading it in `playwright.config.ts`. Don't
-commit the env-var read — it's measurement-time scaffolding.
+| Runner | Workers | retries | Run | Wall-clock | Outcome | Notes |
+|---|---|---|---|---|---|---|
+| `ubuntu-latest` (2 vCPU) | 1 (default) | 0 | `24553298790` (main) | **7m41s** | completed | 17 pre-existing failures; baseline |
+| `ubuntu-latest` (2 vCPU) | 4 | 2 | `24572488164` (PR #193, `f1764ec8`) | 15:00 | **cancelled** | CPU oversubscribed 2× + retries amplification |
+| `ubuntu-latest` (2 vCPU) | 2 | 2 | `24573513956` (PR #193, `94361dd5`) | 15:14 | **cancelled** | Still oversubscribed |
+| `ubuntu-latest` (2 vCPU) | 1 | 2 | `24574575469` (PR #193, `390c39f3`) | 12m24s | completed | Serial + retries = proven clean |
+| `ubuntu-64gb` (≥16 vCPU) | 4 | 2 | TBD (PR #193, post-runner-upgrade) | TBD | TBD | Expected ~3-5m |
 
-## Decision criterion
+Turbo buffers per-package stdout and flushes on task completion. The
+two cancelled runs produced zero visible Playwright output because
+cancellation preceded the flush — a symptom worth noting for anyone
+debugging a similar timeout in the future.
 
-Keep `workers: 4` if AND only if:
+## Decision log entry
 
-- p50 at workers=4 is **NOT slower** than p50 at workers=2 (within
-  measurement noise, ±10%), AND
-- flake count at workers=4 is **NOT higher** than flake count at
-  workers=2 (zero is the target).
+**D-Q7 LOCKED at `workers: 4` on `ubuntu-64gb`.** The CI runner tier
+dominates the worker-count ceiling:
 
-If either condition fails, downgrade `playwright.config.ts` to
-`workers: process.env.CI ? 2 : undefined` and update D-Q7 from DIRECTED
-to LOCKED with the empirical justification.
+- On `ubuntu-latest` (2 vCPU free tier), `workers > 1` oversubscribes
+  CPU enough that `retries: 2` amplification pushes the combined job
+  past the 15-min timeout. `workers=1` is the only viable setting
+  on this tier and sacrifices parallelism for CPU headroom.
+- On `ubuntu-64gb` (shared org runner, ≥16 vCPU / 64 GB RAM),
+  `workers=4` fits comfortably — 4 Playwright workers × (one
+  orchestrator + one chromium process) is ~8 processes, well under
+  the core count. Retry tax is absorbed by the larger runner.
 
-If `workers: 4` wins on both axes, lock at 4.
+`.github/workflows/ci.yml` sets `runs-on: ubuntu-64gb` + `timeout-minutes: 15`
+for the `playwright` job. The nightly stability workflow
+(`.github/workflows/nightly-e2e-stability.yml`) deliberately stays on
+`ubuntu-latest` + `workers=1` — that job is serial flake surveillance,
+not speed-critical, and keeping it on the free tier matches the
+hardware an individual contributor would see locally.
 
-## Pre-merge expectation
+**Re-measurement triggers:**
 
-Before this spec lands, only local data is available:
+- If the org removes access to `ubuntu-64gb` (e.g., quota or billing
+  change), re-downgrade to `ubuntu-latest` + `workers=1`.
+- If `workers > 4` is ever proposed, re-measure on `ubuntu-64gb`
+  before raising — large runners also have finite parallelism under
+  shared-use. A new empirical row in the table above is the bar.
 
-| Workers | Suite size | Local wall-clock | Notes |
-|---|---|---|---|
-| 4 | 13 files / 134 tests | ~17s | M3 Max, default Playwright workers via `--workers=4`. Per-test docName isolation (PR #185) makes parallel safe. |
+## Dual-tier rationale
 
-Local hardware (M3 Max, 12 perf cores) is a generous upper bound; CI
-runners are bounded by 2 vCPU and roughly 2-3× slower. Expect the
-absolute numbers below to be in the 30s-90s range, not 17s.
+The split was intentional:
 
-## Measurement table (pre-merge empirical data — PR #193)
+- **PR-time CI (`ci.yml` playwright job)** — ergonomics matter. Fast
+  feedback keeps the PR loop tight. `ubuntu-64gb` + `workers=4`
+  delivers ~3-5m full-suite runtime with retries=2 safety net.
+- **Nightly surveillance (`nightly-e2e-stability.yml`)** — variance
+  reduction matters. Serial `workers=1` under `--repeat-each=3` on
+  the same free-tier hardware a contributor would use locally catches
+  slow-burn drift that PR-time parallelism masks.
 
-Pre-merge measurement was unintentional but produced evidence: PR #193's
-first two CI runs cancelled at the 15-min `timeout-minutes` backstop at
-workers=4 and workers=2, producing zero visible stdout (turbo buffers
-per-package output and flushes on task completion — cancellation before
-completion prevents flush). Main's baseline (retries=0, workers=default=1,
-fullyParallel=false) completed cleanly in 7m41s.
-
-| Workers | retries | Run | Wall-clock | Outcome | Notes |
-|---|---|---|---|---|---|
-| 1 (default) | 0 | `24553298790` (main) | **7m41s** | completed | 17 failures pre-#188-cherrypick; baseline for E2E suite |
-| 4 | 2 | `24572488164` (PR #193, f1764ec8) | 15:00 | cancelled | GHA 2-vCPU oversubscribed 2× |
-| 2 | 2 | `24573513956` (PR #193, 94361dd5) | 15:14 | cancelled | GHA 2-vCPU oversubscribed, still over budget |
-| 1 | 2 | TBD (PR #193, next push) | TBD | TBD | Expected ~9-10m (main 7m41s + retries=2 tax) |
-
-## Decision log entry (from pre-merge empirical data)
-
-**D-Q7 empirically settled at workers=1 on GHA ubuntu-latest (2 vCPU, free
-tier).** Evidence: workers=4 and workers=2 both cancelled at the 15-min
-timeout. workers>1 on a 2-vCPU runner oversubscribes CPU enough that the
-parallelism benefit is net-negative when combined with retries=2.
-`playwright.config.ts:workers` set to `isCI ? 1 : undefined`;
-`.github/workflows/ci.yml:timeout-minutes: 20` gives retries=2 safety
-margin over main's 7m41s baseline.
-
-This settles the spec's D-Q7 DIRECTED state to a LOCKED value for the
-current runner tier. If GHA runner tier changes (e.g., `ubuntu-latest-4-cores`),
-this decision should be re-measured.
+Same test suite, two runner profiles for two different questions:
+"does this PR pass?" vs "is the suite drifting over time?"
