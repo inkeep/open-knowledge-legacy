@@ -245,7 +245,7 @@ function EditorVisual() {
     content: EDITOR_DEMO_MD,
     editorProps: {
       attributes: {
-        class: 'ok-prosemirror outline-none min-h-[200px] px-4 py-3 sm:pl-10 sm:pr-4',
+        class: 'ok-prosemirror outline-none min-h-[200px] px-4 py-3 sm:pl-14 sm:pr-4',
         style: 'line-height: 1.7; color: var(--slide-text); font-size: 12px',
       },
     },
