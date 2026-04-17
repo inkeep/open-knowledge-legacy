@@ -1600,13 +1600,23 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       dc.document.awareness.setLocalStateField('mode', 'editing');
       try {
         dc.document.transact(() => {
-          // Read current authoritative body from XmlFragment (Bug-A fix — precedent #12)
+          // Read current authoritative state. Search the FULL markdown
+          // (frontmatter + body) so agents can patch frontmatter fields
+          // (e.g. `title:`, `cluster:`) the same way they patch body text.
+          // XmlFragment is the authoritative body per precedent #12; the
+          // frontmatter lives in Y.Map('metadata') and must be composed
+          // in for the search surface to reflect the document as the
+          // agent sees it on disk.
           const xmlFragment = dc.document.getXmlFragment('default');
+          const metaMap = dc.document.getMap('metadata');
+          const currentFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
           const currentBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
+          const currentFull = prependFrontmatter(currentFm, currentBody);
+
           const pos =
             offset == null
-              ? currentBody.indexOf(find)
-              : currentBody.slice(offset, offset + find.length) === find
+              ? currentFull.indexOf(find)
+              : currentFull.slice(offset, offset + find.length) === find
                 ? offset
                 : -1;
           if (pos === -1) {
@@ -1617,8 +1627,18 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             }
             return;
           }
-          const newBody =
-            currentBody.slice(0, pos) + replace + currentBody.slice(pos + find.length);
+
+          // Splice at the character level. The result is the authoritative
+          // post-patch full document — if the patch deletes the FM region,
+          // metaMap must be cleared accordingly. Route through explicit
+          // split-then-write so empty-FM is distinguishable from
+          // "body-only payload" (which applyAgentMarkdownWrite preserves).
+          const newFull =
+            currentFull.slice(0, pos) + replace + currentFull.slice(pos + find.length);
+          const { frontmatter: newFm, body: newBody } = stripFrontmatter(newFull);
+          if (newFm !== currentFm) {
+            metaMap.set('frontmatter', newFm);
+          }
           applyAgentMarkdownWrite(dc.document, newBody, 'replace');
 
           const activityMap = dc.document.getMap('activity');

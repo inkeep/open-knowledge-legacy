@@ -19,6 +19,7 @@ import {
   applyFastDiff,
   colorFromSeed,
   prependFrontmatter,
+  stripFrontmatter,
 } from '@inkeep/open-knowledge-core';
 
 export { colorFromSeed } from '@inkeep/open-knowledge-core';
@@ -95,38 +96,58 @@ export function applyAgentMarkdownWrite(
     const ytext = document.getText('source');
     const metaMap = document.getMap('metadata');
 
-    // 1. Read current authoritative state from XmlFragment.
+    // 1. Read current authoritative state from XmlFragment + metaMap.
     const currentJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
     const currentBody = mdManager.serialize(currentJson);
-    const frontmatter = (metaMap.get('frontmatter') as string | undefined) ?? '';
+    const existingFm = (metaMap.get('frontmatter') as string | undefined) ?? '';
 
-    // 2. Compose the agent's delta at the markdown-body level.
+    // 2. Split the agent's payload into frontmatter + body. The agent may
+    //    send a full document (FM + body) or body-only; we handle both.
+    //    On 'replace', an FM in the payload updates metaMap. On 'prepend'/
+    //    'append', the payload is treated as body-only — any leading FM is
+    //    stripped defensively to avoid producing a document with two FM
+    //    blocks (double-FM is a CommonMark invalid state).
+    const { frontmatter: payloadFm, body: payloadBody } = stripFrontmatter(markdown);
+
+    // 3. Determine the final frontmatter and compose the final body.
+    let finalFm: string;
     let newBody: string;
     switch (position) {
       case 'replace':
-        newBody = markdown.trim();
+        // Payload FM (if present) wins; otherwise keep existing FM.
+        finalFm = payloadFm || existingFm;
+        newBody = payloadBody.trim();
         break;
       case 'prepend':
-        newBody = `${markdown.trim()}\n\n${currentBody}`;
+        finalFm = existingFm;
+        newBody = `${payloadBody.trim()}\n\n${currentBody}`;
         break;
       case 'append':
+        finalFm = existingFm;
         newBody = currentBody.trim()
-          ? `${currentBody}\n\n${markdown.trim()}\n`
-          : `${markdown.trim()}\n`;
+          ? `${currentBody}\n\n${payloadBody.trim()}\n`
+          : `${payloadBody.trim()}\n`;
         break;
     }
 
-    // 3. Apply composed state to XmlFragment via structural diff
+    // 4. Apply composed body to XmlFragment via structural diff
     //    (preserves user-content Items at matching positions).
     const parsedJson = mdManager.parseWithFallback(newBody);
     const pmNode = schema.nodeFromJSON(parsedJson);
     const meta = { mapping: new Map(), isOMark: new Map() };
     updateYFragment(document, xmlFragment, pmNode, meta);
 
-    // 4. Mirror Y.Text with minimal mutation. Only the changed region is touched,
-    //    so user-content Items in Y.Text retain their origin.
+    // 5. Commit the final frontmatter to metaMap if it changed. This is the
+    //    canonical storage surface read by persistence.onStoreDocument and
+    //    by the Y.Text mirror in step 6.
+    if (finalFm !== existingFm) {
+      metaMap.set('frontmatter', finalFm);
+    }
+
+    // 6. Mirror Y.Text with minimal mutation. Only the changed region is
+    //    touched, so user-content Items in Y.Text retain their origin.
     const canonicalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
-    const canonicalFull = prependFrontmatter(frontmatter, canonicalBody);
+    const canonicalFull = prependFrontmatter(finalFm, canonicalBody);
     applyFastDiff(ytext, ytext.toString(), canonicalFull);
   } catch (err) {
     log.error(
