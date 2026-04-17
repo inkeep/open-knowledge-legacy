@@ -9,11 +9,19 @@
  * through one writer instead of N. Client observer cross-CRDT write paths are
  * deleted (not gated) — see precedent #14.
  *
+ * Dispatch model (precedent #13(b), bridge-correctness SPEC §6 R4): the
+ * observers use `doc.on('afterAllTransactions', ...)` — per-drain, not
+ * per-transaction, and not a wall-clock `setTimeout` debounce. One outermost
+ * `doc.transact(...)` call = one drain = one settlement fire. Observer
+ * callbacks set dirty flags; the settlement handler dispatches synchronous
+ * sync work (A before B) and clears the flags.
+ *
  * No typing-defer logic (server never types — that was client-specific UX).
  * No REMOTE_TREE_SYNC_GRACE_MS (origin guards replace the timing guard).
  * Fires on BOTH transaction.local=true (server-local) and local=false (remote).
  *
  * @see specs/2026-04-15-server-authoritative-observer-bridge/SPEC.md
+ * @see specs/2026-04-16-bridge-correctness/SPEC.md §6 R4, §10 D5
  */
 
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
@@ -22,12 +30,10 @@ import {
   applyFastDiff,
   applyIncrementalDiff,
   BridgeMergeContentLossError,
-  defaultScheduler,
   getFrontmatter,
   mergeThreeWay,
   normalizeBridge,
   prependFrontmatter,
-  type Scheduler,
   stripFrontmatter,
   VFileMessage,
 } from '@inkeep/open-knowledge-core';
@@ -76,12 +82,10 @@ export const OBSERVER_SYNC_ORIGIN = {
  * enlisting themselves in a hardcoded Set here — observer behavior tracks the
  * structural property instead of an out-of-band registry.
  *
- * Observer A AND Observer B both synchronously refresh their view of the
- * baseline and cancel any pending debounce when they see one of these origins.
- * Otherwise, a concurrent mutation arriving during the 50 ms debounce window
- * causes `runObserverASync`/`runObserverBSync` to fire with stale state and
- * run Path B's `mergeThreeWay` — which duplicates content when user
- * (XmlFragment) and agent (Y.Text) both contain the same addition.
+ * When an observer callback sees a paired-write origin, it refreshes
+ * `lastSyncedXmlMd` synchronously from the post-write state and declines to
+ * set its dirty flag — the settlement handler then has no work to dispatch
+ * for this drain (the paired writer already made both CRDTs consistent).
  *
  * Fuzz reproduction: `STRESS_FUZZ_SEED=1776325179241 bun test
  * packages/app/tests/stress/bridge-convergence.fuzz.test.ts` produces an
@@ -96,12 +100,9 @@ const isPairedWriteOrigin = (origin: unknown): boolean => {
 };
 
 // Bridge utilities (applyIncrementalDiff, applyFastDiff, mergeThreeWay,
-// diffLinesFast, Scheduler, defaultScheduler, getFrontmatter, normalizeBridge)
-// are imported from `@inkeep/open-knowledge-core` so they live in one place
-// shared with the client observer (precedent #4: shared computation,
-// per-surface rendering).
-
-const DEBOUNCE_MS = 50;
+// diffLinesFast, getFrontmatter, normalizeBridge) are imported from
+// `@inkeep/open-knowledge-core` so they live in one place shared with the
+// client observer (precedent #4: shared computation, per-surface rendering).
 
 // ─────────────────────────────────────────────────────────────
 // Public API
@@ -123,13 +124,38 @@ export type ShadowAccessor = () => ShadowHandle | undefined;
  */
 export type BranchAccessor = () => string;
 
+/**
+ * Decision surfaced by the settlement handler on each drain it processes.
+ *
+ * - `'none'`: drain contained only observer-self or paired-write origins
+ *   (baselines refreshed synchronously in the observer callback; no dispatch
+ *   needed).
+ * - `'a'`: Observer A's sync work ran (XmlFragment → Y.Text).
+ * - `'b'`: Observer B's sync work ran (Y.Text → XmlFragment).
+ *
+ * A single drain can produce `'a'` followed by `'b'` — Observer A runs
+ * before Observer B so any Y.Text write from A is visible to B.
+ */
+export type ObserverDispatchKind = 'none' | 'a' | 'b';
+
+/**
+ * Test-only hook — invoked after the settlement handler makes its dispatch
+ * decision for a drain. Production code omits this; unit tests use it to
+ * assert that paired-write drains produce `'none'` (no observer-layer work)
+ * and that non-paired drains produce the expected 'a' and/or 'b' dispatches.
+ *
+ * Never throws — the settlement handler runs in `doc.on('afterAllTransactions')`
+ * and a throw from here would propagate through Yjs's transaction machinery.
+ * Tests use `expect` calls outside the hook body.
+ */
+export type ObserverDispatchHook = (kind: ObserverDispatchKind) => void;
+
 export interface SetupServerObserversOpts {
   doc: Y.Doc;
   xmlFragment: Y.XmlFragment;
   ytext: Y.Text;
   mdManager: MarkdownManager;
   schema: Schema;
-  scheduler?: Scheduler;
   /**
    * Per-document name; used as the tree-path + filename inside the silent
    * checkpoint commit so TimelinePanel can attribute the artifact to the
@@ -144,6 +170,12 @@ export interface SetupServerObserversOpts {
   getBranch?: BranchAccessor;
   /** Absolute content root (used to place the blob inside the checkpoint tree). */
   contentRoot?: string;
+  /**
+   * Test-only dispatch hook. Omitted in production. When provided, called
+   * once per drain (from inside `afterAllTransactions`) with the dispatch
+   * decision the settlement handler made.
+   */
+  onDispatch?: ObserverDispatchHook;
 }
 
 /**
@@ -156,11 +188,17 @@ export interface SetupServerObserversOpts {
  * Observer B (Y.Text → XmlFragment): parses Y.Text markdown, applies to
  * XmlFragment via updateYFragment. Handles frontmatter sync (Y.Text ↔ Y.Map).
  *
- * Returns a cleanup function that detaches observers and clears debounces.
+ * Dispatch (precedent #13(b)): Observer callbacks only flag dirty state.
+ * The `afterAllTransactions` listener runs Observer A's sync work first
+ * (so any Y.Text write is visible to Observer B) and then Observer B's,
+ * clearing the dirty flags afterwards. One outermost `doc.transact()` call
+ * produces exactly one settlement dispatch.
+ *
+ * Returns a cleanup function that detaches the observers and the settlement
+ * handler. The settlement handler holds no timers; cleanup is O(1).
  */
 export function setupServerObservers(opts: SetupServerObserversOpts): () => void {
   const { doc, xmlFragment, ytext, mdManager } = opts;
-  const sched: Scheduler = opts.scheduler ?? defaultScheduler;
 
   /**
    * Structured-log + silent-checkpoint writer for mergeThreeWay post-condition
@@ -222,7 +260,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
   // ─── Observer A: XmlFragment → Y.Text ─────────────────────
   let lastSyncedXmlMd = '';
-  let debounceA: ReturnType<typeof setTimeout> | null = null;
+  let xmlDirty = false;
+  let textDirty = false;
 
   /** Initialize Observer A baseline from current XmlFragment state. */
   try {
@@ -244,7 +283,6 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
    * XmlFragment, applies ONLY that delta to Y.Text.
    */
   const runObserverASync = (): void => {
-    debounceA = null;
     try {
       const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
       const body = mdManager.serialize(json);
@@ -316,7 +354,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
   /**
    * Observer A callback — fires on every XmlFragment deep change.
-   * Origin guards prevent infinite loops and skip already-paired writes.
+   * Origin guards prevent infinite loops and opt the paired-write fast-path
+   * out of settlement-handler dispatch.
    */
   const observerA = (_events: Y.YEvent<Y.XmlFragment>[], transaction: Y.Transaction) => {
     // Self-skip: our own cross-CRDT write
@@ -324,37 +363,33 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
     // Paired-write origins atomically wrote both XmlFragment and Y.Text inside
     // this transaction, so the baseline IS the current XmlFragment serialization.
-    // Refresh synchronously and cancel any pending debounce — a later
-    // `runObserverASync` firing against stale `lastSyncedXmlMd` would incorrectly
-    // take Path B and duplicate content when a concurrent Y.Text mutation lands
-    // in the debounce window. See `isPairedWriteOrigin` JSDoc for the fuzz seed.
+    // Refresh synchronously and decline to set xmlDirty — the settlement
+    // handler then has nothing to dispatch for this drain. Without this,
+    // Observer A's sync would still run (harmlessly early-exit via the
+    // normalize gate), but we prefer a typed structural short-circuit that
+    // avoids the re-serialization work and documents the contract.
+    // See `isPairedWriteOrigin` JSDoc for the fuzz seed.
     if (isPairedWriteOrigin(transaction.origin)) {
       try {
         const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
         const body = mdManager.serialize(json);
         const frontmatter = getFrontmatter(doc);
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-        if (debounceA) {
-          sched.clearTimeout(debounceA);
-          debounceA = null;
-        }
       } catch (err) {
         incrementServerObserverError('a');
         console.warn(
-          '[Server Observer A] Paired-write baseline refresh failed — falling through to debounce:',
+          '[Server Observer A] Paired-write baseline refresh failed — falling through to settlement:',
           err instanceof Error ? err.message : String(err),
         );
-        // Fall through to the debounce path for best-effort recovery. The
-        // next runObserverASync firing will reset the baseline from Y.Text
-        // in its own catch block if the underlying issue persists.
-        if (debounceA) sched.clearTimeout(debounceA);
-        debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
+        // Fall through to the settlement path so the next afterAllTransactions
+        // dispatch can recover. The runObserverASync catch block resets the
+        // baseline from Y.Text if the underlying issue persists.
+        xmlDirty = true;
       }
       return;
     }
 
-    if (debounceA) sched.clearTimeout(debounceA);
-    debounceA = sched.setTimeout(runObserverASync, DEBOUNCE_MS);
+    xmlDirty = true;
   };
 
   // ─── Initial sync: populate Y.Text from XmlFragment if empty ──
@@ -381,29 +416,17 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
   }
 
   // ─── Observer B: Y.Text → XmlFragment ─────────────────────
-  let debounceB: ReturnType<typeof setTimeout> | null = null;
 
   /**
    * Observer B sync work. Parses Y.Text markdown and applies to XmlFragment
    * via updateYFragment. Handles frontmatter sync: strips frontmatter from
    * Y.Text, caches in Y.Map('metadata'), parses body only.
+   *
+   * Under the settlement dispatcher, this always runs AFTER runObserverASync
+   * within the same drain (when both flags are set), so any fresh XmlFragment
+   * state from Observer A's write is already visible to this pass.
    */
   const runObserverBSync = (): void => {
-    debounceB = null;
-
-    // If Observer A has a pending debounce, defer Observer B until after
-    // Observer A runs. This prevents Observer B from overwriting XmlFragment
-    // content that was just added by a WYSIWYG edit but hasn't been synced
-    // to Y.Text yet. Observer B self-reschedules after DEBOUNCE_MS; by then
-    // Observer A will have fired and cleared debounceA, allowing Observer B
-    // to proceed. (Note: Observer A's Y.Text write uses OBSERVER_SYNC_ORIGIN
-    // which Observer B's callback skips — the self-reschedule on the next
-    // line is the sole recovery mechanism, not a retrigger from Observer A.)
-    if (debounceA) {
-      debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
-      return;
-    }
-
     try {
       const md = ytext.toString();
       const { frontmatter, body } = stripFrontmatter(md);
@@ -459,11 +482,30 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       incrementServerObserverFire('b');
 
       // Re-serialize XmlFragment post-update for Observer A's baseline
-      // (updateYFragment may normalize differently from input).
+      // (updateYFragment may normalize differently from input). Also: if the
+      // canonical post-update serialization differs from the raw Y.Text bytes
+      // the client wrote (e.g. client inserted at pos 0 when the server had
+      // already materialized content — CRDT merge places the insert ahead
+      // of server bytes, yielding non-canonical leading whitespace), rewrite
+      // Y.Text to the canonical form via applyFastDiff. This preserves
+      // content (both sides already contain the same AST-level data) while
+      // restoring the bridge invariant `ytext === serialize(fragment)` after
+      // every B drain. The debounce-era model relied on Observer A's
+      // subsequent Path B firing to close this gap; under settlement dispatch
+      // Observer A doesn't re-fire automatically, so Observer B closes the
+      // loop directly. The write uses OBSERVER_SYNC_ORIGIN so observers
+      // self-skip the resulting inner drain (no cascading settlement work).
       try {
         const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
         const postBody = mdManager.serialize(postJson);
-        lastSyncedXmlMd = prependFrontmatter(frontmatter, postBody);
+        const canonicalYText = prependFrontmatter(frontmatter, postBody);
+        const currentYText = ytext.toString();
+        if (currentYText !== canonicalYText) {
+          doc.transact(() => {
+            applyFastDiff(ytext, currentYText, canonicalYText);
+          }, OBSERVER_SYNC_ORIGIN);
+        }
+        lastSyncedXmlMd = canonicalYText;
       } catch (reserializeErr) {
         console.warn(
           '[Server Observer B] Post-sync re-serialization failed — using input body as baseline:',
@@ -476,7 +518,7 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
       console.error('[Server Observer B] Failed to sync text→tree:', err);
       // Reset baseline to current XmlFragment state so the next retry computes
       // a fresh delta instead of re-applying the stale diff that just failed.
-      // Mirrors Observer A's baseline recovery pattern (lines 167-168).
+      // Mirrors Observer A's baseline recovery pattern.
       try {
         const postJson = yXmlFragmentToProsemirrorJSON(xmlFragment);
         const postBody = mdManager.serialize(postJson);
@@ -490,7 +532,8 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
   /**
    * Observer B callback — fires on every Y.Text change.
-   * Origin guards prevent infinite loops and skip already-paired writes.
+   * Origin guards prevent infinite loops and opt the paired-write fast-path
+   * out of settlement-handler dispatch.
    */
   const observerB = (_event: Y.YTextEvent, transaction: Y.Transaction) => {
     // Self-skip: our own cross-CRDT write
@@ -498,47 +541,88 @@ export function setupServerObservers(opts: SetupServerObserversOpts): () => void
 
     // Paired-write origins atomically wrote both XmlFragment and Y.Text inside
     // this transaction. Symmetric counterpart to Observer A's branch above
-    // (bridge-correctness SPEC §6 R0c). Cancel any pending Observer B debounce
-    // so a later `runObserverBSync` firing doesn't race against a concurrent
-    // XmlFragment mutation that arrives in the debounce window, and refresh
-    // Observer A's baseline (`lastSyncedXmlMd`) from the post-paired-write
-    // XmlFragment state — defensive, since Observer A's own paired-write branch
-    // already runs for the same transaction, but this makes Observer B's
-    // short-circuit self-contained if the firing order ever changes.
+    // (bridge-correctness SPEC §6 R0c). Refresh Observer A's baseline from the
+    // post-paired-write XmlFragment state and decline to set textDirty — the
+    // settlement handler has nothing to dispatch for this drain on the
+    // paired-write path.
     if (isPairedWriteOrigin(transaction.origin)) {
       try {
         const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
         const body = mdManager.serialize(json);
         const frontmatter = getFrontmatter(doc);
         lastSyncedXmlMd = prependFrontmatter(frontmatter, body);
-        if (debounceB) {
-          sched.clearTimeout(debounceB);
-          debounceB = null;
-        }
       } catch (err) {
         incrementServerObserverError('b');
         console.warn(
-          '[Server Observer B] Paired-write baseline refresh failed — falling through to debounce:',
+          '[Server Observer B] Paired-write baseline refresh failed — falling through to settlement:',
           err instanceof Error ? err.message : String(err),
         );
-        if (debounceB) sched.clearTimeout(debounceB);
-        debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
+        // Fall through so the next afterAllTransactions can reconcile via
+        // runObserverBSync's own recovery branches.
+        textDirty = true;
       }
       return;
     }
 
-    if (debounceB) sched.clearTimeout(debounceB);
-    debounceB = sched.setTimeout(runObserverBSync, DEBOUNCE_MS);
+    textDirty = true;
+  };
+
+  // ─── Settlement dispatcher (precedent #13(b), SPEC R4) ────────
+  /**
+   * Runs once per outermost `doc.transact()` drain after observers have fired
+   * synchronously. Inspects the batch of transactions:
+   *
+   * - If no observer flagged dirty state (self-origin or paired-write only),
+   *   dispatch nothing — baseline was already kept consistent inside the
+   *   observer callbacks.
+   * - Otherwise dispatch Observer A's sync first (its Y.Text write is
+   *   visible to B's read), then Observer B's. Both are synchronous; each
+   *   clears its flag before running so a reentrant transact started by
+   *   the sync work doesn't double-dispatch.
+   */
+  const afterAll = (_doc: Y.Doc, transactions: Y.Transaction[]): void => {
+    if (!xmlDirty && !textDirty) {
+      opts.onDispatch?.('none');
+      return;
+    }
+    // Belt-and-suspenders: if every transaction in this drain was our own
+    // write, the observer callbacks should have self-skipped (flags stayed
+    // false). If a dirty flag somehow got set anyway (e.g., an external
+    // subscriber mutated our origin object), skip the dispatch — we don't
+    // want to recurse on our own output.
+    if (transactions.every((t) => t.origin === OBSERVER_SYNC_ORIGIN)) {
+      xmlDirty = false;
+      textDirty = false;
+      opts.onDispatch?.('none');
+      return;
+    }
+
+    // Observer A FIRST: if both flags are set (a rare case where a single
+    // non-paired transaction mutated both CRDTs), A's write of Y.Text is
+    // visible to B's subsequent read and B typically early-exits via its
+    // normalize gate. This mirrors the debounce-era "defer Observer B while
+    // Observer A pending" behavior but is now synchronous and ordered rather
+    // than time-coupled.
+    if (xmlDirty) {
+      xmlDirty = false;
+      opts.onDispatch?.('a');
+      runObserverASync();
+    }
+    if (textDirty) {
+      textDirty = false;
+      opts.onDispatch?.('b');
+      runObserverBSync();
+    }
   };
 
   // ─── Subscribe ─────────────────────────────────────────────
   xmlFragment.observeDeep(observerA);
   ytext.observe(observerB);
+  doc.on('afterAllTransactions', afterAll);
 
   // ─── Cleanup ───────────────────────────────────────────────
   return () => {
-    if (debounceA) sched.clearTimeout(debounceA);
-    if (debounceB) sched.clearTimeout(debounceB);
+    doc.off('afterAllTransactions', afterAll);
     xmlFragment.unobserveDeep(observerA);
     ytext.unobserve(observerB);
   };

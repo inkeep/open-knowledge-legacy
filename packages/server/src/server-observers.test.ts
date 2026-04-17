@@ -2,16 +2,22 @@
  * Unit tests for the server-authoritative observer bridge (server-observers.ts).
  *
  * Tests cover:
- *   - Debounce coalescing (FR-3/FR-4)
- *   - Baseline-refresh conditional rule (FR-3(b))
+ *   - Settlement-based dispatch on `afterAllTransactions` (precedent #13(b))
+ *   - Baseline-refresh semantics for Path A / Path B / paired-write / self-sync
  *   - Path A vs Path B dispatch (FR-3(c))
- *   - Origin-guard table (FR-5 — §7d truth table)
+ *   - Origin-guard truth table (FR-5 — §7d)
  *   - No infinite loop on self-origin
  *   - Agent paired-write early-exit
+ *   - Paired-write short-circuit symmetry across Observer A + Observer B
+ *     (bridge-correctness SPEC §6 R0c)
  *   - Frontmatter sync (Observer B → Y.Map, Observer A reads Y.Map)
- *   - Cleanup detaches observers and clears debounces
+ *   - Cleanup detaches observers and the settlement handler
+ *   - Observer B error-recovery branches
  *
- * Uses a synthetic Y.Doc (no Hocuspocus) with ManualScheduler for deterministic flush.
+ * Uses a synthetic Y.Doc (no Hocuspocus). Observer dispatch happens
+ * synchronously after each `doc.transact()` drain via the new
+ * `afterAllTransactions` settlement listener — tests assert post-transact
+ * state directly with no scheduler flushing.
  */
 import { describe, expect, test } from 'bun:test';
 import type { LocalTransactionOrigin } from '@hocuspocus/server';
@@ -25,7 +31,7 @@ import { FILE_WATCHER_ORIGIN } from './external-change.ts';
 import { getMetrics } from './metrics.ts';
 import {
   OBSERVER_SYNC_ORIGIN,
-  type Scheduler,
+  type ObserverDispatchKind,
   type SetupServerObserversOpts,
   setupServerObservers,
 } from './server-observers.ts';
@@ -35,64 +41,25 @@ import {
 const mdManager = new MarkdownManager({ extensions: sharedExtensions });
 const schema = getSchema(sharedExtensions);
 
-interface ManualScheduler extends Scheduler {
-  flush(): void;
-  advanceTime(ms: number): void;
-  pending(): ReadonlyArray<{ id: number; dueAt: number }>;
-}
-
-function createManualScheduler(): ManualScheduler {
-  type Entry = { id: number; cb: () => void; dueAt: number };
-  const queue: Entry[] = [];
-  let now = 0;
-  let nextId = 1;
-
-  return {
-    setTimeout: (cb, ms) => {
-      const id = nextId++;
-      queue.push({ id, cb, dueAt: now + ms });
-      return id as unknown as ReturnType<typeof globalThis.setTimeout>;
-    },
-    clearTimeout: (handle) => {
-      const id = handle as unknown as number;
-      const idx = queue.findIndex((e) => e.id === id);
-      if (idx >= 0) queue.splice(idx, 1);
-    },
-    now: () => now,
-    advanceTime(ms) {
-      now += ms;
-      for (let pass = 0; pass < 100; pass++) {
-        const due = queue.filter((e) => e.dueAt <= now);
-        if (due.length === 0) return;
-        for (const e of due) {
-          const idx = queue.indexOf(e);
-          if (idx >= 0) queue.splice(idx, 1);
-          e.cb();
-        }
-      }
-    },
-    flush() {
-      for (let pass = 0; pass < 100; pass++) {
-        if (queue.length === 0) return;
-        const entries = [...queue];
-        queue.length = 0;
-        for (const e of entries) {
-          now = Math.max(now, e.dueAt);
-          e.cb();
-        }
-      }
-    },
-    pending: () => queue.map((e) => ({ id: e.id, dueAt: e.dueAt })),
+/**
+ * Capture the settlement dispatcher's decisions for a single test.
+ * Returned `dispatches` accumulates in the order the settlement handler fires.
+ */
+function createDispatchRecorder() {
+  const dispatches: ObserverDispatchKind[] = [];
+  const onDispatch = (kind: ObserverDispatchKind): void => {
+    dispatches.push(kind);
   };
+  return { dispatches, onDispatch };
 }
 
-/** Create a test doc with XmlFragment and Y.Text, plus a ManualScheduler. */
+/** Create a test doc with XmlFragment and Y.Text plus a dispatch recorder. */
 function createTestDoc() {
   const doc = new Y.Doc();
   const xmlFragment = doc.getXmlFragment('default');
   const ytext = doc.getText('source');
-  const scheduler = createManualScheduler();
-  return { doc, xmlFragment, ytext, scheduler };
+  const recorder = createDispatchRecorder();
+  return { doc, xmlFragment, ytext, recorder };
 }
 
 function setupOpts(
@@ -100,13 +67,15 @@ function setupOpts(
     doc: Y.Doc;
     xmlFragment: Y.XmlFragment;
     ytext: Y.Text;
-    scheduler: ManualScheduler;
+    recorder: ReturnType<typeof createDispatchRecorder>;
   },
-): SetupServerObserversOpts & { scheduler: ManualScheduler } {
+): SetupServerObserversOpts {
+  const { recorder, ...rest } = overrides;
   return {
     mdManager,
     schema,
-    ...overrides,
+    onDispatch: recorder.onDispatch,
+    ...rest,
   };
 }
 
@@ -121,70 +90,45 @@ function populateFragment(doc: Y.Doc, xmlFragment: Y.XmlFragment, md: string): v
 // ─── Tests ───────────────────────────────────────────────────
 
 describe('Server Observer A — XmlFragment → Y.Text', () => {
-  test('rapid XmlFragment changes within 50ms coalesce into ONE Y.Text write', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
+  test('Observer A settles synchronously after each transact; multiple rapid edits each fire once', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     let writeCount = 0;
     doc.on('afterTransaction', (tx: Y.Transaction) => {
       if (tx.origin === OBSERVER_SYNC_ORIGIN) writeCount++;
     });
 
-    // Simulate 3 rapid XmlFragment edits
+    // Each populateFragment call is its own doc.transact drain → one user
+    // settle fire. The inner OBSERVER_SYNC_ORIGIN write that Observer A's
+    // sync performs produces its own drain whose observers self-skip; that
+    // drain's settlement dispatcher fires 'none'. Filter noise for the
+    // user-visible dispatch assertion.
     populateFragment(doc, xmlFragment, '# First\n');
-    scheduler.advanceTime(10);
     populateFragment(doc, xmlFragment, '# First\n\nSecond\n');
-    scheduler.advanceTime(10);
     populateFragment(doc, xmlFragment, '# First\n\nSecond\n\nThird\n');
 
-    // Before debounce fires, no OBSERVER_SYNC_ORIGIN writes
-    expect(writeCount).toBe(0);
-
-    // After 50ms debounce fires
-    scheduler.advanceTime(50);
-
-    // Exactly one Y.Text write
-    expect(writeCount).toBe(1);
+    const userDispatches = recorder.dispatches.filter((k) => k !== 'none');
+    expect(userDispatches).toEqual(['a', 'a', 'a']);
+    expect(writeCount).toBe(3);
     expect(ytext.toString()).toContain('Third');
 
     cleanup();
   });
 
-  test('baseline-refresh: no baseline refresh when debounce is pending', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-
-    // Populate initial content
-    populateFragment(doc, xmlFragment, '# Hello\n');
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush(); // initial sync
-
-    // Make a local edit
-    populateFragment(doc, xmlFragment, '# Hello\n\nWorld\n');
-    // Debounce queued but not fired — now simulate a remote edit arriving
-    // which should NOT refresh the baseline
-    expect(scheduler.pending().length).toBeGreaterThan(0);
-
-    // Fire the debounce — should write based on old baseline, not refreshed
-    scheduler.flush();
-    expect(ytext.toString()).toContain('World');
-
-    cleanup();
-  });
-
   test('Path A: uses diffLines when Y.Text matches baseline', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
 
-    // Set up with initial content
+    // Set up with initial content (baseline picks up the current XmlFragment
+    // state during setupServerObservers initialization).
     populateFragment(doc, xmlFragment, '# Hello\n');
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush(); // fires initial sync
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    const initialText = ytext.toString();
-    expect(initialText).toContain('Hello');
+    // Initial sync populated Y.Text from XmlFragment.
+    expect(ytext.toString()).toContain('Hello');
 
     // Modify XmlFragment — Y.Text is at baseline (matches lastSyncedXmlMd)
     populateFragment(doc, xmlFragment, '# Hello\n\nNew paragraph\n');
-    scheduler.flush();
 
     expect(ytext.toString()).toContain('New paragraph');
 
@@ -192,27 +136,23 @@ describe('Server Observer A — XmlFragment → Y.Text', () => {
   });
 
   test('Path B: uses DMP three-way merge when Y.Text diverged from baseline', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
 
-    // Set up with initial content
     populateFragment(doc, xmlFragment, '# Hello\n\nOriginal\n');
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Diverge Y.Text under OBSERVER_SYNC_ORIGIN (simulates a prior Observer B write
-    // that changed Y.Text without updating XmlFragment baseline — the diverged state).
+    // Diverge Y.Text under OBSERVER_SYNC_ORIGIN (simulates a prior Observer B
+    // write that changed Y.Text without updating XmlFragment baseline — the
+    // diverged state). OBSERVER_SYNC_ORIGIN is self-origin so observers
+    // short-circuit and no settlement dispatch runs.
     doc.transact(() => {
       const text = ytext.toString();
       ytext.insert(text.length, '\nAgent addition\n');
-    }, OBSERVER_SYNC_ORIGIN); // self-origin → observer skips → debounce NOT queued
+    }, OBSERVER_SYNC_ORIGIN);
 
-    // Flush any pending Observer B debounce from the Y.Text change
-    scheduler.flush();
-
-    // Now modify XmlFragment (user WYSIWYG edit) — triggers Observer A
+    // Now modify XmlFragment (user WYSIWYG edit) — triggers Observer A.
     // Observer A sees lastSyncedXmlMd !== currentText (Y.Text diverged) → Path B
     populateFragment(doc, xmlFragment, '# Hello\n\nOriginal\n\nUser edit\n');
-    scheduler.flush();
 
     // Path B merges: user's delta (add "User edit") applied to diverged Y.Text
     const result = ytext.toString();
@@ -222,30 +162,29 @@ describe('Server Observer A — XmlFragment → Y.Text', () => {
     cleanup();
   });
 
-  test('already-in-sync gate: when Y.Text matches XmlFragment, only baseline updates', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
+  test('already-in-sync gate: when Y.Text matches XmlFragment, no observer write', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Write both sides to the same content (simulating agent paired write)
+    // Write both sides to the same content in one transact — observers fire
+    // (non-paired origin) and settlement dispatches; Observer A's sync reads
+    // XmlFragment serialization (equals Y.Text after normalization) and
+    // early-exits via the normalize gate without writing.
     const content = '# Paired\n\nContent\n';
-    populateFragment(doc, xmlFragment, content);
     doc.transact(() => {
+      populateFragment(doc, xmlFragment, content);
       ytext.delete(0, ytext.length);
       ytext.insert(0, content);
     });
-    scheduler.flush();
 
-    // No additional OBSERVER_SYNC_ORIGIN writes needed
     let writeCount = 0;
     doc.on('afterTransaction', (tx: Y.Transaction) => {
       if (tx.origin === OBSERVER_SYNC_ORIGIN) writeCount++;
     });
 
-    // Trigger observer by modifying XmlFragment to same content
+    // Redundant XmlFragment mutation to the same content → already-in-sync
+    // gate fires; no new Y.Text write.
     populateFragment(doc, xmlFragment, content);
-    scheduler.flush();
-
-    // Should early-exit (already in sync)
     expect(writeCount).toBe(0);
 
     cleanup();
@@ -253,36 +192,34 @@ describe('Server Observer A — XmlFragment → Y.Text', () => {
 });
 
 describe('Server Observer B — Y.Text → XmlFragment', () => {
-  test('rapid Y.Text changes coalesce into one XmlFragment write', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush(); // initial sync
+  test('each Y.Text transact fires Observer B once, producing expected XmlFragment content', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     let writeCount = 0;
     doc.on('afterTransaction', (tx: Y.Transaction) => {
       if (tx.origin === OBSERVER_SYNC_ORIGIN) writeCount++;
     });
-    writeCount = 0; // reset after initial sync
 
-    // Simulate rapid Y.Text edits
+    // Simulate three Y.Text edits in separate transacts — each fires one
+    // user settlement dispatch with 'b'. Observer B's XmlFragment write
+    // under OBSERVER_SYNC_ORIGIN produces an inner drain whose observers
+    // self-skip; that drain dispatches 'none'. Filter the noise.
     doc.transact(() => {
       ytext.insert(0, '# Title\n');
     });
-    scheduler.advanceTime(10);
     doc.transact(() => {
       ytext.insert(ytext.length, '\nParagraph\n');
     });
-    scheduler.advanceTime(10);
     doc.transact(() => {
       ytext.insert(ytext.length, '\nMore\n');
     });
 
-    expect(writeCount).toBe(0);
+    const userDispatches = recorder.dispatches.filter((k) => k !== 'none');
+    expect(userDispatches).toEqual(['b', 'b', 'b']);
+    expect(writeCount).toBe(3);
 
-    scheduler.advanceTime(50);
-    expect(writeCount).toBe(1);
-
-    // Verify the coalesced write produced the correct XmlFragment content
+    // Verify coalesced state: XmlFragment contains all three pieces.
     const json = yXmlFragmentToProsemirrorJSON(xmlFragment);
     const body = mdManager.serialize(json);
     expect(body).toContain('Title');
@@ -293,16 +230,13 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
   });
 
   test('frontmatter: Observer B caches frontmatter in Y.Map metadata', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Write Y.Text with frontmatter
     doc.transact(() => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, '---\ntitle: My Page\n---\n\n# Hello\n\nWorld\n');
     });
-    scheduler.flush();
 
     const metaMap = doc.getMap('metadata');
     expect(metaMap.get('frontmatter')).toBe('---\ntitle: My Page\n---\n');
@@ -311,7 +245,7 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
   });
 
   test('frontmatter: Observer A prepends frontmatter from Y.Map on serialize', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
 
     // Pre-set frontmatter in metadata map
     doc.transact(() => {
@@ -320,10 +254,9 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
 
     // Populate XmlFragment with body content
     populateFragment(doc, xmlFragment, '# Hello\n\nContent\n');
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Y.Text should have frontmatter prepended
+    // Y.Text should have frontmatter prepended (initial sync populated it).
     expect(ytext.toString()).toContain('---\ntitle: Test\n---\n');
     expect(ytext.toString()).toContain('Hello');
 
@@ -331,26 +264,21 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
   });
 
   test('early-exit: XmlFragment unchanged when Y.Text body already matches', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
 
-    // Set up with content in both
     populateFragment(doc, xmlFragment, '# Hello\n');
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // After initial sync, Y.Text should have the XmlFragment content
+    // After initial sync, Y.Text has the XmlFragment content.
     const serializedBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
 
-    // Write Y.Text to match existing XmlFragment body (force a no-op change trigger)
+    // Trigger Observer B with a no-op Y.Text mutation (insert + delete same char).
     doc.transact(() => {
-      // Append and remove a space to trigger observer without changing content
       ytext.insert(ytext.length, ' ');
       ytext.delete(ytext.length - 1, 1);
     });
-    scheduler.flush();
 
-    // Observer B should see that XmlFragment already matches Y.Text body
-    // and either early-exit or do a no-op updateYFragment — final state matches
+    // Observer B's normalize-gate early-exit keeps XmlFragment unchanged.
     expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toBe(serializedBody);
 
     cleanup();
@@ -359,48 +287,39 @@ describe('Server Observer B — Y.Text → XmlFragment', () => {
 
 describe('Origin-guard truth table (§7d)', () => {
   test('OBSERVER_SYNC_ORIGIN self-write does NOT produce a second observer fire', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     let syncOriginCount = 0;
     doc.on('afterTransaction', (tx: Y.Transaction) => {
       if (tx.origin === OBSERVER_SYNC_ORIGIN) syncOriginCount++;
     });
 
-    // Trigger Observer A
     populateFragment(doc, xmlFragment, '# Test\n');
-    scheduler.flush();
 
-    // Should be exactly 1 OBSERVER_SYNC_ORIGIN write (from Observer A)
-    // NOT 2 (Observer A → Y.Text → Observer B → XmlFragment → Observer A → ...)
-    // because Observer B's callback skips OBSERVER_SYNC_ORIGIN
-    expect(syncOriginCount).toBeLessThanOrEqual(2); // Observer A initial + write; no infinite loop
-    const firstCount = syncOriginCount;
-
-    // Wait for any cascading debounces
-    scheduler.advanceTime(200);
-    expect(syncOriginCount).toBe(firstCount); // no additional fires
+    // Observer A writes Y.Text under OBSERVER_SYNC_ORIGIN; Observer B's callback
+    // self-skips, no recursion. The user's mutation itself is NOT OBSERVER_SYNC_ORIGIN.
+    // Exactly one OBSERVER_SYNC_ORIGIN transaction (A's write); no recursive fires.
+    expect(syncOriginCount).toBe(1);
 
     cleanup();
   });
 
-  test('AGENT_WRITE_ORIGIN paired write: Observer A produces at most a normalization write', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+  test('AGENT_WRITE_ORIGIN paired write: Observer A produces no additional write', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     let syncWriteCount = 0;
     doc.on('afterTransaction', (tx: Y.Transaction) => {
       if (tx.origin === OBSERVER_SYNC_ORIGIN) syncWriteCount++;
     });
-    syncWriteCount = 0;
 
     // Simulate applyAgentMarkdownWrite: write both XmlFragment + Y.Text atomically.
-    // Use round-tripped content so updateYFragment normalization matches the Y.Text value.
     const rawContent = '# Agent\n\nAgent wrote this.\n';
     const json = mdManager.parse(rawContent);
     const pmNode = schema.nodeFromJSON(json);
     const normalizedContent = mdManager.serialize(json);
+    const dispatchesBefore = recorder.dispatches.length;
     doc.transact(() => {
       const meta = { mapping: new Map(), isOMark: new Map() };
       updateYFragment(doc, xmlFragment, pmNode, meta);
@@ -408,30 +327,29 @@ describe('Origin-guard truth table (§7d)', () => {
       ytext.insert(0, normalizedContent);
     }, AGENT_WRITE_ORIGIN);
 
-    scheduler.flush();
-
-    // With normalized content, Observer A should early-exit at already-in-sync gate.
+    // Paired-write short-circuit: both observers refreshed baseline in-callback
+    // and declined to set dirty flags. Settlement dispatcher saw no dirty work
+    // and fired 'none'. No OBSERVER_SYNC_ORIGIN write.
     expect(syncWriteCount).toBe(0);
+    expect(recorder.dispatches.slice(dispatchesBefore)).toEqual(['none']);
 
     cleanup();
   });
 
-  test('FILE_WATCHER_ORIGIN paired write: Observer A produces at most a normalization write', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+  test('FILE_WATCHER_ORIGIN paired write: Observer A produces no additional write', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     let syncWriteCount = 0;
     doc.on('afterTransaction', (tx: Y.Transaction) => {
       if (tx.origin === OBSERVER_SYNC_ORIGIN) syncWriteCount++;
     });
-    syncWriteCount = 0;
 
-    // Simulate applyExternalChange: write both sides atomically with normalized content.
     const rawContent = '# External\n\nFrom disk.\n';
     const json = mdManager.parse(rawContent);
     const pmNode = schema.nodeFromJSON(json);
     const normalizedContent = mdManager.serialize(json);
+    const dispatchesBefore = recorder.dispatches.length;
     doc.transact(() => {
       const meta = { mapping: new Map(), isOMark: new Map() };
       updateYFragment(doc, xmlFragment, pmNode, meta);
@@ -439,35 +357,33 @@ describe('Origin-guard truth table (§7d)', () => {
       ytext.insert(0, normalizedContent);
     }, FILE_WATCHER_ORIGIN);
 
-    scheduler.flush();
-
-    // With normalized content, Observer A should early-exit.
     expect(syncWriteCount).toBe(0);
+    expect(recorder.dispatches.slice(dispatchesBefore)).toEqual(['none']);
 
     cleanup();
   });
 
-  test('paired-write race: concurrent Y.Text mutation in debounce window does not duplicate content', () => {
-    // Regression for fuzz seed 1776325179241 — "Oracle (e) content-set violation".
+  test('paired-write race: concurrent Y.Text mutation (historical seed 1776325179241 shape) does not duplicate content', () => {
+    // Regression for the fuzz seed characterization in SPEC §8.
     //
     // Scenario: an AGENT_WRITE_ORIGIN transaction atomically writes both
-    // XmlFragment and Y.Text via applyAgentMarkdownWrite. Observer A's callback
-    // fires and (before the fix) schedules a 50 ms debounce. A concurrent Y.Text
-    // mutation (e.g., CRDT merge from a client source-type edit) lands before
-    // the debounce fires. When runObserverASync eventually runs, it sees a
-    // stale baseline (lastSyncedXmlMd frozen at pre-agent-write state),
-    // diverged Y.Text vs XmlFragment, and falls into Path B's mergeThreeWay —
-    // which duplicates the common "just-written" content.
+    // XmlFragment and Y.Text. Before the paired-write branch landed on
+    // Observer A, a concurrent Y.Text mutation landing in the debounce window
+    // would cause the next runObserverASync firing to see a stale baseline
+    // (lastSyncedXmlMd frozen at pre-agent-write state) and take Path B —
+    // duplicating the agent's just-written content.
     //
-    // Fix: Observer A's callback synchronously refreshes lastSyncedXmlMd on
-    // paired-write origins and cancels any pending debounce. See
-    // isPairedWriteOrigin in server-observers.ts.
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+    // Under the settlement dispatcher, there is no debounce window — but the
+    // paired-write short-circuit still matters for (a) typed structural
+    // hygiene, (b) avoiding redundant re-serialization work on every paired
+    // transact, and (c) future-proofing against async extensions of the
+    // settlement model. The convergence assertion below catches a whole class
+    // of regressions; the broader Mutation H validation happens in the fuzz
+    // harness (`bridge-convergence.fuzz.test.ts`).
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Seed with initial content (simulates the test harness's pre-client
-    // agent-write-md('seed paragraph', 'replace')).
+    // Seed with initial content.
     const seedContent = 'seed paragraph\n';
     const seedJson = mdManager.parse(seedContent);
     const seedNode = schema.nodeFromJSON(seedJson);
@@ -477,10 +393,8 @@ describe('Origin-guard truth table (§7d)', () => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, mdManager.serialize(seedJson));
     }, AGENT_WRITE_ORIGIN);
-    scheduler.flush();
 
-    // Step 1: paired-write appending "M0-alpha echo" (mimics agent-write-md
-    // 'append' position). Both XmlFragment and Y.Text are written atomically.
+    // Step 1: paired-write appending "M0-alpha echo".
     const afterOp0 = 'seed paragraph\n\nM0-alpha echo\n';
     const op0Json = mdManager.parse(afterOp0);
     const op0Node = schema.nodeFromJSON(op0Json);
@@ -492,18 +406,12 @@ describe('Origin-guard truth table (§7d)', () => {
       ytext.insert(0, op0Canonical);
     }, AGENT_WRITE_ORIGIN);
 
-    // Step 2: BEFORE flushing the scheduler (i.e., inside Observer A's 50 ms
-    // debounce window), a client source-type Y.Text mutation arrives. Mimics
-    // a paused client's appended paragraph delivered via CRDT merge.
+    // Step 2: client source-type Y.Text mutation (paused client delivering a
+    // queued append via CRDT merge — origin: undefined / local=false
+    // equivalent).
     doc.transact(() => {
       ytext.insert(ytext.length, '\n\nM1-golf hotel\n');
     });
-
-    // Step 3: flush the scheduler. Observer A runs; without the paired-origin
-    // fix, Path B's mergeThreeWay would produce a duplicated "M0-alpha echo"
-    // line. Observer B runs afterward and parses the (possibly-duplicated)
-    // Y.Text into XmlFragment, propagating the corruption.
-    scheduler.flush();
 
     // Zero-tolerance oracle: "M0-alpha echo" must appear exactly ONCE in the
     // final Y.Text state. Duplication would be e.g.
@@ -519,25 +427,23 @@ describe('Origin-guard truth table (§7d)', () => {
 
   // ── Bucket 0 paired-write regression tests (SPEC.md §6 R0e/R0f/R0g) ──
   //
-  // Each of T8/T9/T10 reproduces the seed-1776386718697 class at the observer
-  // layer for one paired-write origin, asserting that Observer B's symmetric
-  // short-circuit branch (US-001) cancels `debounceB` immediately when a
-  // paired transaction fires. Mutation H in
+  // T8/T9/T10 exercise the paired-write observer-layer contract for each
+  // paired origin: paired transactions produce a 'none' settlement dispatch
+  // (observer callbacks refreshed baseline synchronously, neither dirty flag
+  // was set). Mutation H in
   // `specs/2026-04-16-bridge-correctness/meta/mutation-validation.md` —
-  // reverting the Observer B branch — fails these tests because a timer remains
-  // in `scheduler.pending()` after the paired transaction.
-  //
-  // The stronger convergence assertion (downstream race with a concurrent
-  // non-paired mutation) also holds: the content marker from the paired write
-  // appears exactly once in the final state, and the concurrent WYSIWYG edit
-  // is preserved alongside it.
+  // removing either Observer A's OR Observer B's paired-write branch — fires
+  // 'a' or 'b' dispatches here and breaks these assertions. The broader
+  // race-class detection lives in `bridge-convergence.fuzz.test.ts` (fuzz
+  // harness samples the continuous interleaving space that unit tests
+  // cannot enumerate per precedent #13(d)).
 
   function runPairedWriteShortCircuitTest(origin: LocalTransactionOrigin, marker: string): void {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Seed doc with baseline content so Observer A has a non-empty baseline.
+    // Seed doc with baseline content under AGENT_WRITE_ORIGIN — also a
+    // paired-write origin, so it fires 'none' too.
     const seedContent = 'seed paragraph\n';
     const seedJson = mdManager.parse(seedContent);
     const seedNode = schema.nodeFromJSON(seedJson);
@@ -547,7 +453,6 @@ describe('Origin-guard truth table (§7d)', () => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, mdManager.serialize(seedJson));
     }, AGENT_WRITE_ORIGIN);
-    scheduler.flush();
 
     // Paired write under the target origin — atomically writes BOTH
     // XmlFragment and Y.Text in a single transact (mirrors the production
@@ -556,6 +461,7 @@ describe('Origin-guard truth table (§7d)', () => {
     const pairedJson = mdManager.parse(afterPaired);
     const pairedNode = schema.nodeFromJSON(pairedJson);
     const pairedCanonical = mdManager.serialize(pairedJson);
+    const dispatchesBefore = recorder.dispatches.length;
     doc.transact(() => {
       const meta = { mapping: new Map(), isOMark: new Map() };
       updateYFragment(doc, xmlFragment, pairedNode, meta);
@@ -563,15 +469,15 @@ describe('Origin-guard truth table (§7d)', () => {
       ytext.insert(0, pairedCanonical);
     }, origin);
 
-    // Observer B's symmetric short-circuit (US-001) cancels debounceB
-    // synchronously during the paired transaction. Observer A's existing
-    // branch cancels debounceA. Both should be clear here.
-    // Mutation H (revert Observer B branch) leaves debounceB pending.
-    expect(scheduler.pending()).toEqual([]);
+    // Paired-write short-circuit: the ONLY dispatch produced by the paired
+    // transact is 'none'. Mutation H (revert either paired-write branch)
+    // produces 'a', 'b', or both instead.
+    expect(recorder.dispatches.slice(dispatchesBefore)).toEqual(['none']);
 
-    // Now simulate a concurrent non-paired XmlFragment mutation arriving
-    // before any debounce fires — mimics a remote WYSIWYG keystroke that
-    // lands in the same tick as the paired write.
+    // Now simulate a concurrent non-paired XmlFragment mutation arriving in
+    // the same tick — mimics a remote WYSIWYG keystroke landing right after
+    // the paired write. Under the settlement dispatcher, this is its own
+    // drain that fires 'a'.
     doc.transact(() => {
       const cur = ytext.toString();
       const nextContent = `${cur}\nconcurrent-edit\n`;
@@ -581,39 +487,34 @@ describe('Origin-guard truth table (§7d)', () => {
       updateYFragment(doc, xmlFragment, nextNode, meta);
     });
 
-    scheduler.flush();
-
     const finalText = ytext.toString();
     // Paired-write marker must appear exactly once — no duplication from a
     // stale-baseline Path B merge.
     expect(finalText.split(marker).length - 1).toBe(1);
-    // Concurrent WYSIWYG edit must survive — Observer A should propagate it
-    // to Y.Text through the newly-scheduled debounce.
+    // Concurrent WYSIWYG edit must survive — Observer A propagated it to Y.Text.
     expect(finalText).toContain('concurrent-edit');
 
     cleanup();
   }
 
-  test('T8 — FILE_WATCHER paired-write: Observer B short-circuits debounceB symmetrically', () => {
+  test('T8 — FILE_WATCHER paired-write: paired drain dispatches none (both observer branches short-circuit)', () => {
     runPairedWriteShortCircuitTest(FILE_WATCHER_ORIGIN, 'T8-file-watcher marker');
   });
 
-  test('T9 — ROLLBACK paired-write: Observer B short-circuits debounceB symmetrically', () => {
+  test('T9 — ROLLBACK paired-write: paired drain dispatches none', () => {
     runPairedWriteShortCircuitTest(ROLLBACK_ORIGIN, 'T9-rollback marker');
   });
 
-  test('T10 — MANAGED_RENAME paired-write: Observer B short-circuits debounceB symmetrically', () => {
+  test('T10 — MANAGED_RENAME paired-write: paired drain dispatches none', () => {
     runPairedWriteShortCircuitTest(MANAGED_RENAME_ORIGIN, 'T10-managed-rename marker');
   });
 
   test('remote-arrived (no origin, local=false equivalent) triggers Observer A sync', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     // Simulate a remote client edit arriving (no origin)
     populateFragment(doc, xmlFragment, '# Remote edit\n');
-    scheduler.flush();
 
     expect(ytext.toString()).toContain('Remote edit');
 
@@ -622,42 +523,38 @@ describe('Origin-guard truth table (§7d)', () => {
 });
 
 describe('Cleanup', () => {
-  test('cleanup detaches observers and clears pending debounces', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
-    scheduler.flush();
+  test('cleanup detaches observers and the settlement handler', () => {
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
-    // Queue a debounce
-    populateFragment(doc, xmlFragment, '# Pending\n');
-    expect(scheduler.pending().length).toBeGreaterThan(0);
+    // Pre-cleanup mutation settles normally.
+    populateFragment(doc, xmlFragment, '# Pre-cleanup\n');
+    expect(ytext.toString()).toContain('Pre-cleanup');
+    const dispatchesBefore = recorder.dispatches.length;
 
-    // Cleanup
     cleanup();
 
-    // Debounce should be cleared
-    expect(scheduler.pending().length).toBe(0);
-
-    // Further edits should not trigger observer writes
+    // Post-cleanup mutation must not fire the settlement handler.
     let writeCount = 0;
     doc.on('afterTransaction', (tx: Y.Transaction) => {
       if (tx.origin === OBSERVER_SYNC_ORIGIN) writeCount++;
     });
 
     populateFragment(doc, xmlFragment, '# After cleanup\n');
-    scheduler.flush();
     expect(writeCount).toBe(0);
+    expect(recorder.dispatches.length).toBe(dispatchesBefore);
   });
 });
 
 describe('Initial sync', () => {
   test('populates Y.Text from XmlFragment when Y.Text is empty', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
 
     // Populate XmlFragment before attaching observers
     populateFragment(doc, xmlFragment, '# Pre-existing\n\nContent here.\n');
     expect(ytext.toString()).toBe('');
 
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     // Initial sync should have populated Y.Text synchronously
     expect(ytext.toString()).toContain('Pre-existing');
@@ -667,14 +564,14 @@ describe('Initial sync', () => {
   });
 
   test('does not populate Y.Text when both are empty', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
 
     let writeCount = 0;
     doc.on('afterTransaction', (tx: Y.Transaction) => {
       if (tx.origin === OBSERVER_SYNC_ORIGIN) writeCount++;
     });
 
-    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, scheduler }));
+    const cleanup = setupServerObservers(setupOpts({ doc, xmlFragment, ytext, recorder }));
 
     // No initial sync needed when both are empty
     expect(writeCount).toBe(0);
@@ -686,9 +583,9 @@ describe('Initial sync', () => {
 
 describe('Server Observer B — error recovery paths', () => {
   // These tests exercise the outer-catch and inner-catch recovery branches
-  // added to Observer B's sync work (server-observers.ts:~266-324). Both
-  // paths are load-bearing: they reset the baseline so the next Observer A
-  // cycle computes a correct delta instead of re-applying a failed diff.
+  // added to Observer B's sync work. Both paths are load-bearing: they reset
+  // the baseline so the next Observer A cycle computes a correct delta
+  // instead of re-applying a failed diff.
   //
   // mdManager.parse() is very tolerant (raw HTML/JSX that fails mdx-js is
   // not rejected by our agnostic-mode pipeline), so we drive the error
@@ -722,15 +619,14 @@ describe('Server Observer B — error recovery paths', () => {
   }
 
   test('parse-error on Y.Text change: baseline resets to Y.Text, Observer A does not re-apply', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
     const stub = createMdManagerStub();
 
     // Seed with valid content
     populateFragment(doc, xmlFragment, '# Seed\n\nBody.\n');
     const cleanup = setupServerObservers(
-      setupOpts({ doc, xmlFragment, ytext, scheduler, mdManager: stub.mdManager }),
+      setupOpts({ doc, xmlFragment, ytext, recorder, mdManager: stub.mdManager }),
     );
-    scheduler.flush(); // initial sync populates Y.Text
 
     const errorsBefore = getMetrics().serverObserverErrorsB;
 
@@ -749,7 +645,6 @@ describe('Server Observer B — error recovery paths', () => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, '# Seed\n\n<Note prop={unclosed\n');
     });
-    scheduler.flush();
 
     // Disarm so any subsequent firings use the real parser
     stub.setParseThrow(null);
@@ -773,7 +668,6 @@ describe('Server Observer B — error recovery paths', () => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, '# Seed\n\nBody.\n\n## Recovered\n');
     });
-    scheduler.flush();
 
     const finalBody = mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment));
     expect(finalBody).toContain('Recovered');
@@ -782,14 +676,13 @@ describe('Server Observer B — error recovery paths', () => {
   });
 
   test('unknown parse error (non-SyntaxError) increments error counter and resets baseline to XmlFragment', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
     const stub = createMdManagerStub();
 
     populateFragment(doc, xmlFragment, '# Seed\n\nBody.\n');
     const cleanup = setupServerObservers(
-      setupOpts({ doc, xmlFragment, ytext, scheduler, mdManager: stub.mdManager }),
+      setupOpts({ doc, xmlFragment, ytext, recorder, mdManager: stub.mdManager }),
     );
-    scheduler.flush();
 
     const errorsBefore = getMetrics().serverObserverErrorsB;
 
@@ -804,7 +697,6 @@ describe('Server Observer B — error recovery paths', () => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, '# Anything\n');
     });
-    scheduler.flush();
 
     stub.setParseThrow(null);
     console.error = originalConsoleError;
@@ -823,21 +715,19 @@ describe('Server Observer B — error recovery paths', () => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, '# Seed\n\nBody.\n\n## Next\n');
     });
-    scheduler.flush();
     expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toContain('Next');
 
     cleanup();
   });
 
   test('post-sync serialize-error: falls back to input body as Observer A baseline', () => {
-    const { doc, xmlFragment, ytext, scheduler } = createTestDoc();
+    const { doc, xmlFragment, ytext, recorder } = createTestDoc();
     const stub = createMdManagerStub();
 
     populateFragment(doc, xmlFragment, '# Seed\n');
     const cleanup = setupServerObservers(
-      setupOpts({ doc, xmlFragment, ytext, scheduler, mdManager: stub.mdManager }),
+      setupOpts({ doc, xmlFragment, ytext, recorder, mdManager: stub.mdManager }),
     );
-    scheduler.flush();
 
     const errorsBefore = getMetrics().serverObserverErrorsB;
 
@@ -872,7 +762,6 @@ describe('Server Observer B — error recovery paths', () => {
       ytext.delete(0, ytext.length);
       ytext.insert(0, '# Seed\n\n## After\n');
     });
-    scheduler.flush();
 
     // Restore before any subsequent assertions that serialize.
     stub.mdManager.serialize = originalSerialize;
@@ -894,7 +783,6 @@ describe('Server Observer B — error recovery paths', () => {
     doc.transact(() => {
       ytext.insert(ytext.length, '\nExtra\n');
     });
-    scheduler.flush();
     expect(mdManager.serialize(yXmlFragmentToProsemirrorJSON(xmlFragment))).toContain('Extra');
 
     cleanup();
