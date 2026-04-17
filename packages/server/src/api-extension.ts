@@ -44,6 +44,7 @@ import {
 } from './agent-sessions.ts';
 import { recordContributor } from './contributor-tracker.ts';
 import { findHubCandidates } from './hub-candidates.ts';
+import { recordLiveEdit, snapshotLiveEdits } from './live-attribution.ts';
 import {
   extractPageTitle,
   type FrontmatterMetadata,
@@ -65,6 +66,7 @@ import {
   registerWrite,
   updateFileIndex,
 } from './file-watcher.ts';
+import { buildHistoricalGraph, diffHistoricalGraphs } from './historical-graph.ts';
 import { getLogger } from './logger.ts';
 import { isAllowedWorkspaceHostHeader, isLoopbackAddress } from './loopback.ts';
 import {
@@ -92,7 +94,7 @@ import {
   type WriterIdentity,
 } from './shadow-repo.ts';
 import { SuggestLinksTargetNotFoundError, suggestLinks } from './suggest-links.ts';
-import { getDocumentHistory } from './timeline-query.ts';
+import { getDocumentHistory, listCheckpoints } from './timeline-query.ts';
 
 /**
  * Transaction origin for rollback (TQ10 — typed LocalTransactionOrigin).
@@ -1032,6 +1034,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           });
         }, AGENT_WRITE_ORIGIN);
         recordContributor(docName, agentId, agentName, colorSeed);
+        recordLiveEdit(docName, {
+          agentId,
+          agentName,
+          colorSeed: colorSeed ?? agentId,
+          timestamp: Date.now(),
+        });
+        signalChannel?.('graph');
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -1117,6 +1126,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
           });
         }, AGENT_WRITE_ORIGIN);
         recordContributor(resolvedDocName, agentId, agentName, colorSeed);
+        recordLiveEdit(resolvedDocName, {
+          agentId,
+          agentName,
+          colorSeed: colorSeed ?? agentId,
+          timestamp: Date.now(),
+        });
+        signalChannel?.('graph');
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -1400,9 +1416,11 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
         ({ nodes, links } = backlinkIndex.getLinkGraph());
       }
 
+      const liveEdits = snapshotLiveEdits();
       const enrichedNodes = nodes.map((node) => {
         if (node.kind === 'doc') {
           const meta = readFrontmatterMetadataForDocName(node.docName);
+          const live = liveEdits.get(node.docName);
           return {
             id: node.id,
             kind: 'doc' as const,
@@ -1412,6 +1430,13 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             cluster: meta.cluster ?? null,
             category: meta.category ?? null,
             tags: meta.tags ?? null,
+            lastEditedBy: live
+              ? {
+                  agentName: live.agentName,
+                  colorSeed: live.colorSeed,
+                  timestamp: live.timestamp,
+                }
+              : null,
           };
         }
         return {
@@ -1629,7 +1654,16 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
             description: `Patched (${agentName}): ${find.slice(0, 50)}`,
           });
         }, AGENT_WRITE_ORIGIN);
-        if (!notFound && !staleTarget) recordContributor(docName, agentId, agentName, colorSeed);
+        if (!notFound && !staleTarget) {
+          recordContributor(docName, agentId, agentName, colorSeed);
+          recordLiveEdit(docName, {
+            agentId,
+            agentName,
+            colorSeed: colorSeed ?? agentId,
+            timestamp: Date.now(),
+          });
+          signalChannel?.('graph');
+        }
       } finally {
         dc.document.awareness.setLocalStateField('mode', 'idle');
       }
@@ -2007,6 +2041,123 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
       json(res, 200, { ok: true, lines, additions, deletions });
     } catch (e) {
       console.error('[diff]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  // ── GET /api/checkpoints ──────────────────────────────────────────────────
+  //
+  // Stage 7 (graph time-travel) uses this to populate the scrubber UI with
+  // Save Version anchor points. Only checkpoints are exposed — intermediate
+  // WIP commits are intentionally excluded so the timeline matches what the
+  // user explicitly saved.
+  async function handleCheckpoints(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const branch = url.searchParams.get('branch') ?? getCurrentBranch?.() ?? 'main';
+    if (branch.includes('..') || !/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(branch)) {
+      json(res, 400, { ok: false, error: 'Invalid branch name' });
+      return;
+    }
+    const rawLimit = Number(url.searchParams.get('limit') ?? '100');
+    const limit = Math.min(500, Math.max(1, Number.isFinite(rawLimit) ? rawLimit : 100));
+
+    try {
+      const entries = await listCheckpoints(shadow, branch, limit);
+      json(res, 200, {
+        ok: true,
+        entries: entries.map((e) => ({
+          sha: e.sha,
+          timestamp: e.timestamp,
+          message: e.message,
+          author: e.author,
+          type: e.type,
+        })),
+      });
+    } catch (e) {
+      console.error('[checkpoints]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  // ── GET /api/graph-at ─────────────────────────────────────────────────────
+  //
+  // Stage 7: reconstruct the full knowledge-graph state at an arbitrary
+  // commit SHA by reading every content blob from the shadow repo and
+  // re-running the same link-extraction pipeline the live index uses. The
+  // historical snapshot carries no live-attribution information (by design:
+  // the demo only shows halos in "now" view).
+  async function handleGraphAt(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const sha = url.searchParams.get('sha') ?? '';
+    if (!/^[0-9a-f]{40}$/i.test(sha)) {
+      json(res, 400, { ok: false, error: 'sha must be a valid 40-char commit SHA' });
+      return;
+    }
+    const resolvedContentRoot = contentRoot ?? 'content';
+    try {
+      const graph = await buildHistoricalGraph(shadow, sha, resolvedContentRoot);
+      json(res, 200, { ok: true, ...graph });
+    } catch (e) {
+      console.error('[graph-at]', e);
+      json(res, 500, { ok: false, error: 'Internal server error' });
+    }
+  }
+
+  // ── GET /api/graph-diff ───────────────────────────────────────────────────
+  //
+  // Stage 7 diff-replay mode. Both `from` and `to` are required and must be
+  // 40-char SHAs. Returns set-differenced node/link lists with full node
+  // metadata on both sides so the client can render labels for removed docs
+  // without a separate lookup.
+  async function handleGraphDiff(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== 'GET') {
+      res.writeHead(405);
+      res.end('Method not allowed');
+      return;
+    }
+    const shadow = shadowRef?.current;
+    if (!shadow) {
+      json(res, 400, { ok: false, error: 'Shadow repo not configured' });
+      return;
+    }
+    const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    const from = url.searchParams.get('from') ?? '';
+    const to = url.searchParams.get('to') ?? '';
+    if (!/^[0-9a-f]{40}$/i.test(from) || !/^[0-9a-f]{40}$/i.test(to)) {
+      json(res, 400, { ok: false, error: 'from and to must both be 40-char commit SHAs' });
+      return;
+    }
+    const resolvedContentRoot = contentRoot ?? 'content';
+    try {
+      const [fromGraph, toGraph] = await Promise.all([
+        buildHistoricalGraph(shadow, from, resolvedContentRoot),
+        buildHistoricalGraph(shadow, to, resolvedContentRoot),
+      ]);
+      const diff = diffHistoricalGraphs(fromGraph, toGraph);
+      json(res, 200, { ok: true, ...diff });
+    } catch (e) {
+      console.error('[graph-diff]', e);
       json(res, 500, { ok: false, error: 'Internal server error' });
     }
   }
@@ -2917,6 +3068,9 @@ export function createApiExtension(options: ApiExtensionOptions): Extension {
     '/api/save-version': handleSaveVersion,
     '/api/history': handleHistory,
     '/api/diff': handleDiff,
+    '/api/checkpoints': handleCheckpoints,
+    '/api/graph-at': handleGraphAt,
+    '/api/graph-diff': handleGraphDiff,
     '/api/rollback': handleRollback,
     '/api/metrics/reconciliation': handleMetricsReconciliation,
     '/api/metrics/parse-health': handleMetricsParseHealth,

@@ -2,8 +2,11 @@ import { isOrphanMode, ORPHAN_MODES, type OrphanMode } from '@inkeep/open-knowle
 import { useQuery } from '@tanstack/react-query';
 import { ArrowUpRight, CheckCircle2, Globe, Maximize2, Minimize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { GraphAgentLegend } from '@/components/GraphAgentLegend';
 import { GraphLegend } from '@/components/GraphLegend';
+import { GraphTimeline } from '@/components/GraphTimeline';
 import { GraphView } from '@/components/GraphView';
+import type { ActiveAgent } from '@/components/graph-attribution';
 import {
   type GraphNodeSelection,
   getHashForGraphDocSelection,
@@ -20,6 +23,7 @@ import {
 } from '@/components/ui/panel';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { useGraphTimeline } from '@/components/useGraphTimeline';
 import { hashFromDocName } from '@/lib/doc-hash';
 
 const FULLSCREEN_HUB_LIMIT = 50;
@@ -298,6 +302,7 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const [selectedNode, setSelectedNode] = useState<GraphNodeSelection | null>(null);
   const [stats, setStats] = useState<{ nodes: number; links: number } | null>(null);
   const [clusters, setClusters] = useState<string[]>([]);
+  const [activeAgents, setActiveAgents] = useState<ActiveAgent[]>([]);
   const [showUrlNodesDocked, setShowUrlNodesDocked] = useState(() =>
     loadBoolPref(GRAPH_URL_NODES_DOCKED_KEY),
   );
@@ -338,6 +343,11 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
   const activeMode = isFullscreen ? fullscreenMode : 'explore';
   const showUrlNodes = isFullscreen ? showUrlNodesFull : showUrlNodesDocked;
   const setShowUrlNodes = isFullscreen ? setShowUrlNodesFull : setShowUrlNodesDocked;
+
+  // Time-travel / diff controller. Only the fullscreen Explore view exposes
+  // the timeline UI; elsewhere it stays dormant (no fetches, no overlays).
+  const timelineEnabled = isFullscreen && activeMode === 'explore';
+  const timeline = useGraphTimeline({ enabled: timelineEnabled });
   const selectedNodeState =
     selectedNode === null
       ? null
@@ -494,15 +504,51 @@ export function GraphPanel({ activeDocName }: { activeDocName: string }) {
                 : undefined
             }
             onStatsChange={(nodes, links, loading) => {
+              // Idempotent stats update — without this bail-out, every render
+              // of `GraphPanel` produces a fresh `onStatsChange` identity,
+              // which makes `GraphView`'s stats effect fire every render, and
+              // a naive `setStats({nodes,links})` allocates a new object each
+              // time — React sees a state change, re-renders GraphPanel, and
+              // we're in a render loop. React Compiler cannot memoize an
+              // inline prop-arrow in a way that breaks this cycle; the
+              // state-setter bail-out does it structurally.
+              //
+              // See `specs/2026-04-16-graph-demo-iteration-loop/evidence/timetravel-render-loop.md`.
               if (loading) {
-                setStats(null);
+                setStats((prev) => (prev === null ? prev : null));
                 return;
               }
-              setStats({ nodes, links });
+              setStats((prev) => {
+                if (prev && prev.nodes === nodes && prev.links === links) return prev;
+                return { nodes, links };
+              });
             }}
             onClustersChange={isFullscreen ? setClusters : undefined}
+            onActiveAgentsChange={setActiveAgents}
+            overrideGraph={timeline.overrideGraph}
+            overrideLoading={timeline.overrideLoading}
+            overrideError={timeline.overrideError}
+            diffMarks={timeline.diffMarks}
           />
           {isFullscreen && <GraphLegend clusters={clusters} />}
+          <GraphAgentLegend agents={activeAgents} />
+          {timelineEnabled ? (
+            <GraphTimeline
+              checkpoints={timeline.checkpoints}
+              viewSha={timeline.viewSha}
+              compareFromSha={timeline.compareFromSha}
+              isPlaying={timeline.isPlaying}
+              isLoading={timeline.checkpointsLoading}
+              error={timeline.checkpointsError}
+              overrideLoading={timeline.overrideLoading}
+              overrideError={timeline.overrideError}
+              onSelectView={timeline.setViewSha}
+              onSelectCompareFrom={timeline.setCompareFromSha}
+              onTogglePlay={timeline.togglePlay}
+              onStepPrev={timeline.stepPrev}
+              onStepNext={timeline.stepNext}
+            />
+          ) : null}
           {isFullscreen &&
           activeMode === 'explore' &&
           selectedNode !== null &&
