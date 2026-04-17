@@ -133,6 +133,41 @@ export function StickyShowcase() {
           {/* Right: sticky visual */}
           <div className="hidden md:block">
             <div className="sticky top-28 py-20">
+              <div
+                className="mb-2 flex items-end justify-center gap-1.5 transition-all duration-500"
+                style={{
+                  opacity: activeIndex === 1 ? 1 : 0,
+                  transform: activeIndex === 1 ? 'translateY(0)' : 'translateY(-6px)',
+                }}
+              >
+                <span className="text-sm font-medium italic text-[var(--slide-accent)]">
+                  Try it
+                </span>
+                <svg
+                  width="20"
+                  height="28"
+                  viewBox="0 0 20 28"
+                  fill="none"
+                  className="-mb-0.5 text-[var(--slide-accent)]"
+                  aria-hidden="true"
+                  role="img"
+                >
+                  <title>Arrow pointing to editor</title>
+                  <path
+                    d="M10 2C10 8 10 16 10 22"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                  <path
+                    d="M5 18L10 23L15 18"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </div>
               <div className="relative aspect-[4/3] w-full overflow-hidden">
                 {items.map((item, i) => (
                   <div
