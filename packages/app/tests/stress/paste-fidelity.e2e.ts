@@ -190,6 +190,7 @@ test.describe('V1 paste baseline — text/plain content through WYSIWYG', () => 
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -250,6 +251,7 @@ test.describe('Copy-side: simulateCopyAndRead captures MIME map', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
   });
 
   test('WYSIWYG copy → text/plain carries markdown', async ({ page }) => {
@@ -321,6 +323,7 @@ test.describe('Paste from vendor HTML → structured content through Branch D', 
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -415,6 +418,7 @@ test.describe('WYSIWYG FR-specific paste behavior', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -514,6 +518,7 @@ test.describe('FR-21 large-paste chunked insertion (Source view)', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     // Switch the editor pane to the Source view — the chunked path is
     // Source-exclusive per D14 LOCKED / precedent #19. The mode toggle is a
     // radio group (aria-label="Editor mode") with radios "Visual editor" +
@@ -566,6 +571,7 @@ test.describe('FR-22 drag-and-drop MIME parity (dragstart uses same hooks as cop
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -617,6 +623,7 @@ test.describe('Vendor HTML fixtures → structured content through Branch D', ()
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -692,6 +699,7 @@ test.describe('Source-view copy output (FR-4, D4 byte-parity)', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     // Seed with markdown via the WYSIWYG pane so both views have identical
     // logical content.
     await page.click('.ProseMirror');
@@ -749,6 +757,7 @@ test.describe('FR-11 fallback: oversized text/html falls through to text/plain',
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -795,6 +804,7 @@ test.describe('FR-20 URL scheme sanitization on copy', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -845,6 +855,7 @@ test.describe('FR-16 drag-and-drop scenarios beyond dragstart MIME parity', () =
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -904,6 +915,7 @@ test.describe('FR-12 WYSIWYG cut writes MIMEs AND deletes selection', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
   });
 
@@ -934,6 +946,7 @@ test.describe('FR-21 chunked insertion maintains 60fps frame budget', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.getByRole('radio', { name: /Markdown source/i }).click({ timeout: 10_000 });
     await page.waitForSelector('.cm-content', { timeout: 10_000 });
   });
@@ -1064,6 +1077,7 @@ test.describe('FR-17 + FR-12/FR-15 Source-view clipboard parity', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     // Seed content in the WYSIWYG side first, then switch to Source view
     // so the buffer has markdown available for cut / select-all tests.
     await page.click('.ProseMirror');
@@ -1184,6 +1198,7 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     await createPage(`${docName}.md`);
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
   });
 
   test('wikiLink + heading + bold round-trips through Branch C losslessly', async ({ page }) => {
@@ -1214,6 +1229,7 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     });
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
     await expect(async () => {
       const content = await getYText(page);
@@ -1267,6 +1283,7 @@ test.describe('OK→OK round-trip through Branch C (data-pm-slice)', () => {
     });
     await page.goto(`${BASE}/#/${docName}`);
     await waitForProvider(page);
+    await page.waitForSelector('.ProseMirror');
     await page.click('.ProseMirror');
 
     await pasteWithMimes(page, {
