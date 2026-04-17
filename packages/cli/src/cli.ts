@@ -48,6 +48,12 @@ program
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     const cwd = opts.cwd as string | undefined;
+    if (cwd !== undefined) {
+      // Honor --cwd globally so every subcommand (status/stop/clean/start/etc.)
+      // resolves lock dir, content dir, and relative paths against the requested
+      // directory rather than wherever the CLI was invoked from.
+      process.chdir(cwd);
+    }
     const { config } = loadConfig(cwd);
 
     // CLI flags override config
