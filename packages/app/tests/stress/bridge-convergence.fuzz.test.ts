@@ -861,7 +861,17 @@ describe('bridge-convergence fuzzer (FR-17)', () => {
       for (const p of agentProbes) p.cleanup();
       for (const c of clients) await c.cleanup();
     }
-  }, 90_000);
+    // 120s per seed: the original 90s budget covered macOS scheduler jitter
+    // locally (observed ~40s p50, 60s p99 on M-series hardware). On
+    // ubuntu-latest CI runners the same seeds run ~40% slower under
+    // contention, occasionally exceeding 90s — seed 1776384097736 timed
+    // out at 90000ms on CI but passed in 44s locally. 120s gives ~2×
+    // local p99 headroom for CI scheduler pressure without masking real
+    // convergence bugs — the content-preservation and bridge-invariant
+    // oracles fire before the timeout either way, so a slow-but-
+    // eventually-converging seed is still a green signal rather than a
+    // hanging test.
+  }, 120_000);
 });
 
 // ─── D18 coverage gate ───
