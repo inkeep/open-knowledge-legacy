@@ -654,6 +654,10 @@ export function GraphView({
   }, [focusKey, activeDocName, focusZoom, graphData.nodes]);
 
   useEffect(() => {
+    // DEV-gate guards all `window.__graphHarness` writes below; see
+    // US-006 / AGENTS.md precedent #20. Vite statically replaces
+    // `import.meta.env.DEV` at build time, so this entire effect body
+    // is tree-shaken from production bundles.
     if (!import.meta.env.DEV) return;
 
     const harness = {

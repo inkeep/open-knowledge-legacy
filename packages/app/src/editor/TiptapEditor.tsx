@@ -274,7 +274,14 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
     /** Imperative DOM update — bypasses React re-render to avoid disrupting typing. */
     const applyFlashStateToDom = (state: AgentFlashState) => {
       flashStateRef.current = state;
-      window.__agentFlashState = state;
+      // DEV-gated test-only hook (US-006 / AGENTS.md precedent #20). Vite
+      // statically replaces `import.meta.env.DEV` at build time, so the
+      // write is tree-shaken from production bundles. The read below at
+      // `window.__agentFlashState?.count ?? 0` stays ungated — `undefined`
+      // in prod collapses to `0` which is the correct starting count.
+      if (import.meta.env.DEV) {
+        window.__agentFlashState = state;
+      }
       const el = wrapperRef.current;
       if (el) {
         el.setAttribute('data-agent-flash-state', state.state);
@@ -292,7 +299,11 @@ export const TiptapEditor: FC<TiptapEditorProps> = ({ provider, placeholder }) =
 
       const nextState: AgentFlashState = {
         state: 'editing',
-        count: (window.__agentFlashState?.count ?? 0) + 1,
+        // Read from the ref (prod-safe) rather than `window.__agentFlashState`
+        // — the window write is DEV-gated (US-006) and the ref is the
+        // authoritative source in production. Keeps count monotonic under
+        // rapid re-trigger regardless of whether tests are observing.
+        count: (flashStateRef.current?.count ?? 0) + 1,
         lastFiredAt: Date.now(),
         position,
         lastAgentId: latest?.agentId ?? null,
