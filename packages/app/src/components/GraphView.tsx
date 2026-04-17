@@ -1,3 +1,4 @@
+import { colorFromSeed } from '@inkeep/open-knowledge-core';
 import { useTheme } from 'next-themes';
 import { useEffect, useRef, useState } from 'react';
 import ForceGraph2D, {
@@ -9,7 +10,16 @@ import { usePageList } from '@/components/PageListContext';
 import { hashFromDocName } from '@/lib/doc-hash';
 import { subscribeToDocumentsChanged } from '@/lib/documents-events';
 import { cn } from '@/lib/utils';
+import {
+  type ActiveAgent,
+  activeAgentsFromNodes,
+  anyHaloActive,
+  haloAlpha,
+  haloPulseScale,
+  isHaloActive,
+} from './graph-attribution';
 import { clusterColor } from './graph-colors';
+import { type GraphDiffMarks, hasAnyDiff, linkDiffState, nodeDiffState } from './graph-diff-marks';
 import {
   type GraphLabelLayoutLink,
   type GraphLabelLayoutNode,
@@ -436,6 +446,11 @@ export function GraphView({
   onBackgroundClick,
   onStatsChange,
   onClustersChange,
+  onActiveAgentsChange,
+  overrideGraph = null,
+  overrideLoading = false,
+  overrideError = null,
+  diffMarks = null,
 }: {
   activeDocName: string;
   selectedNodeId?: string | null;
@@ -447,6 +462,20 @@ export function GraphView({
   onBackgroundClick?: () => void;
   onStatsChange?: (nodes: number, links: number, loading: boolean) => void;
   onClustersChange?: (clusters: string[]) => void;
+  onActiveAgentsChange?: (agents: ActiveAgent[]) => void;
+  /**
+   * When non-null, disables the live `/api/link-graph` fetch and renders the
+   * supplied snapshot instead. Used by Stage 7 time-travel (GraphTimeline) to
+   * display historical or diff-union graphs.
+   */
+  overrideGraph?: { nodes: GraphNode[]; links: GraphLink[] } | null;
+  /** Loading / error flags forwarded for the override source, rendered as the
+   * same skeleton/error UI the live source uses. */
+  overrideLoading?: boolean;
+  overrideError?: string | null;
+  /** When non-null and `overrideGraph` is set, per-node/per-link diff marks
+   * are rendered as green/red overlays. Must be null when not in diff mode. */
+  diffMarks?: GraphDiffMarks | null;
 }) {
   // force-graph mutates the objects it receives in-place during layout, so we compare
   // incoming API payloads against separate signatures before replacing graphData.
@@ -455,6 +484,13 @@ export function GraphView({
   // Signatures of the last-applied API response, stored separately from rendered graph data because
   // force-graph mutates link objects in-place (replacing string IDs with node object refs).
   const lastSigRef = useRef({ nodes: '', links: '' });
+  // Kept in lock-step with graphData so `load()` can mutate lastEditedBy on
+  // existing node refs without waiting for a React re-render first.
+  const graphDataRef = useRef<GraphData>({ nodes: [], links: [] });
+  // Attribution-only bump signal: triggers a React re-render so the animation
+  // effect below notices there are fresh halos to run.
+  const [_attributionTick, setAttributionTick] = useState(0);
+  const attributionTickRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -465,7 +501,14 @@ export function GraphView({
   const { resolvedTheme } = useTheme();
   const { folderPaths, loading: pageListLoading, pages } = usePageList();
 
+  const hasOverride = overrideGraph !== null;
+
   useEffect(() => {
+    // Time-travel / diff mode owns the graph payload; skip the live fetch
+    // entirely. The override-sync effect below mirrors the parent-supplied
+    // graph into the same local state shape.
+    if (hasOverride) return;
+
     let cancelled = false;
 
     async function load() {
@@ -497,7 +540,35 @@ export function GraphView({
         if (nextNodeSig !== lastSigRef.current.nodes || nextLinkSig !== lastSigRef.current.links) {
           lastSigRef.current = { nodes: nextNodeSig, links: nextLinkSig };
           setGraphSig({ nodes: nextNodeSig, links: nextLinkSig });
-          setGraphData({ nodes: nextNodes, links: nextLinks });
+          const next = { nodes: nextNodes, links: nextLinks };
+          graphDataRef.current = next;
+          setGraphData(next);
+          attributionTickRef.current += 1;
+          setAttributionTick(attributionTickRef.current);
+        } else {
+          // Structural sig unchanged — merge only the lastEditedBy attribution
+          // into the existing node objects so force-graph keeps its in-place
+          // layout state. Touching a ref kicks off the halo animation loop.
+          const nextById = new Map<string, GraphNode>();
+          for (const n of nextNodes) nextById.set(n.id, n);
+          let anyChange = false;
+          for (const existing of graphDataRef.current.nodes) {
+            if (existing.kind !== 'doc') continue;
+            const next = nextById.get(existing.id);
+            if (!next || next.kind !== 'doc') continue;
+            const prevLe = existing.lastEditedBy;
+            const nextLe = next.lastEditedBy;
+            const prevTs = prevLe?.timestamp ?? 0;
+            const nextTs = nextLe?.timestamp ?? 0;
+            if (nextTs !== prevTs) {
+              existing.lastEditedBy = nextLe ?? null;
+              anyChange = true;
+            }
+          }
+          if (anyChange) {
+            attributionTickRef.current += 1;
+            setAttributionTick(attributionTickRef.current);
+          }
         }
         setError(null);
         setLoading(false);
@@ -529,7 +600,31 @@ export function GraphView({
       window.removeEventListener('visibilitychange', handleResume);
       unsubscribe();
     };
-  }, [activeDocName, isFullscreen]);
+  }, [activeDocName, isFullscreen, hasOverride]);
+
+  // Override sync: mirror the parent-supplied historical / diff-union graph
+  // into the same local state the live path uses. Signatures change any time
+  // the override identity or its structural content changes, which forces a
+  // fresh force-graph layout — intentional for time-travel since layout is a
+  // visual cue ("step to another checkpoint, graph re-settles").
+  useEffect(() => {
+    if (!overrideGraph) return;
+    const nextNodes = overrideGraph.nodes;
+    const nextLinks = overrideGraph.links;
+    const nextNodeSig = nextNodes.map((n) => `${n.id}:${n.label}`).join(',');
+    const nextLinkSig = nextLinks.map((l) => `${l.source}>${l.target}`).join(',');
+    if (nextNodeSig !== lastSigRef.current.nodes || nextLinkSig !== lastSigRef.current.links) {
+      lastSigRef.current = { nodes: nextNodeSig, links: nextLinkSig };
+      setGraphSig({ nodes: nextNodeSig, links: nextLinkSig });
+      const next = { nodes: nextNodes, links: nextLinks };
+      graphDataRef.current = next;
+      setGraphData(next);
+      attributionTickRef.current += 1;
+      setAttributionTick(attributionTickRef.current);
+    }
+    setError(overrideError);
+    setLoading(overrideLoading);
+  }, [overrideGraph, overrideLoading, overrideError]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -544,6 +639,36 @@ export function GraphView({
     return () => ro.disconnect();
   }, []);
 
+  // Halo animation loop: keep painting while any node has a recent edit.
+  // The loop stops once all halos fade, avoiding idle rAF churn. Restarts
+  // automatically when `attributionTick` bumps (via the deps array).
+  useEffect(() => {
+    let raf = 0;
+    let cancelled = false;
+    function docNodes(data: GraphData) {
+      return data.nodes.filter((n): n is GraphNode & { kind: 'doc' } => n.kind === 'doc');
+    }
+    function tick() {
+      if (cancelled) return;
+      const fg = fgRef.current as unknown as { refresh?: () => void } | undefined;
+      const data = graphDataRef.current;
+      if (!fg || data.nodes.length === 0) return;
+      const now = Date.now();
+      if (typeof fg.refresh === 'function') fg.refresh();
+      if (anyHaloActive(docNodes(data), now)) {
+        raf = requestAnimationFrame(tick);
+      }
+    }
+    const now = Date.now();
+    if (anyHaloActive(docNodes(graphDataRef.current), now)) {
+      raf = requestAnimationFrame(tick);
+    }
+    return () => {
+      cancelled = true;
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+
   const isDark = resolvedTheme === 'dark';
   const bgColor = isDark ? 'hsl(0 0% 4%)' : 'hsl(0 0% 100%)';
   const defaultNodeColor = isDark ? '#6b7280' : '#9ca3af';
@@ -552,6 +677,11 @@ export function GraphView({
   const activeSelectedNodeColor = isDark ? '#c084fc' : '#7c3aed';
   const externalNodeColor = isDark ? '#f59e0b' : '#c2410c';
   const folderNodeColor = isDark ? '#a78bfa' : '#7c3aed';
+  const diffAddedColor = isDark ? '#34d399' : '#10b981';
+  const diffRemovedColor = isDark ? '#f87171' : '#ef4444';
+  const diffAddedLinkColor = isDark ? 'rgba(52,211,153,0.85)' : 'rgba(16,185,129,0.85)';
+  const diffRemovedLinkColor = isDark ? 'rgba(248,113,113,0.85)' : 'rgba(239,68,68,0.85)';
+  const diffActive = hasAnyDiff(diffMarks);
   const edgeColor = isDark ? 'rgba(75,85,99,0.6)' : 'rgba(209,213,219,0.8)';
   const labelColor = isDark ? '#f3f4f6' : '#111827';
   const activeNodeRingColor = isDark ? 'rgba(105,163,255,0.45)' : 'rgba(55,132,255,0.3)';
@@ -631,6 +761,23 @@ export function GraphView({
     }
     onClustersChange(Array.from(seen).sort());
   }, [graphData, onClustersChange]);
+
+  // Active-agent legend: recompute from the latest graphData and from a
+  // 1-Hz ticker so pills disappear once they fall outside ACTIVE_AGENT_WINDOW_MS
+  // even if no new edit arrives. attributionTick ensures halo-only updates also
+  // refresh the legend.
+  useEffect(() => {
+    if (!onActiveAgentsChange) return;
+    const emit = () => {
+      const docs = graphData.nodes.filter(
+        (n): n is GraphNode & { kind: 'doc' } => n.kind === 'doc',
+      );
+      onActiveAgentsChange(activeAgentsFromNodes(docs, Date.now()));
+    };
+    emit();
+    const id = window.setInterval(emit, 1000);
+    return () => window.clearInterval(id);
+  }, [graphData, onActiveAgentsChange]);
 
   useEffect(() => {
     focusStateRef.current = {
@@ -978,6 +1125,14 @@ export function GraphView({
               const docCluster = node.kind === 'doc' ? node.cluster : undefined;
               const clusterFill = docCluster ? clusterColor(docCluster, isDark) : defaultNodeColor;
 
+              // Diff overlay: dim unchanged nodes so added/removed stand out.
+              // Removed nodes fade further; added are full-opacity so they
+              // visually "pop" as the thing that got introduced.
+              const diffState = diffActive ? nodeDiffState(node.id, diffMarks) : 'none';
+              ctx.save();
+              if (diffState === 'unchanged') ctx.globalAlpha = 0.45;
+              else if (diffState === 'removed') ctx.globalAlpha = 0.55;
+
               ctx.beginPath();
               ctx.arc(node.x, node.y, nodeRadius, 0, 2 * Math.PI, false);
               ctx.fillStyle =
@@ -1011,6 +1166,58 @@ export function GraphView({
                 ctx.strokeStyle = folderNodeRingColor;
                 ctx.lineWidth = 1.5 / globalScale;
                 ctx.stroke();
+              }
+
+              // Agent-attribution halo (Stage 6). Rendered after the base
+              // node + interaction rings so it overlays the other indicators.
+              // Suppressed in diff mode so the green/red diff halos are not
+              // visually drowned out by the agent colour ring.
+              if (
+                !diffActive &&
+                node.kind === 'doc' &&
+                isHaloActive(node.lastEditedBy, Date.now())
+              ) {
+                const le = node.lastEditedBy;
+                if (le) {
+                  const now = Date.now();
+                  const alpha = haloAlpha(le, now);
+                  const pulse = haloPulseScale(le, now);
+                  const haloColor = colorFromSeed(le.colorSeed);
+                  const baseInset = 4 / globalScale;
+                  const haloRadius = nodeRadius + baseInset * pulse;
+                  ctx.save();
+                  ctx.globalAlpha = alpha;
+                  ctx.beginPath();
+                  ctx.arc(node.x, node.y, haloRadius, 0, 2 * Math.PI, false);
+                  ctx.strokeStyle = haloColor;
+                  ctx.lineWidth = 2.2 / globalScale;
+                  ctx.stroke();
+                  // Second, larger ring for a softer glow.
+                  ctx.globalAlpha = alpha * 0.35;
+                  ctx.beginPath();
+                  ctx.arc(node.x, node.y, haloRadius + 2.5 / globalScale, 0, 2 * Math.PI, false);
+                  ctx.lineWidth = 1.2 / globalScale;
+                  ctx.stroke();
+                  ctx.restore();
+                }
+              }
+
+              ctx.restore();
+
+              // Diff halo (Stage 7). Drawn OUTSIDE the dim-alpha save/restore
+              // block so added/removed rings render at full opacity regardless
+              // of the underlying node's diff fading.
+              if (diffState === 'added' || diffState === 'removed') {
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, nodeRadius + 3 / globalScale, 0, 2 * Math.PI, false);
+                ctx.strokeStyle = diffState === 'added' ? diffAddedColor : diffRemovedColor;
+                ctx.lineWidth = 2.2 / globalScale;
+                if (diffState === 'removed') {
+                  ctx.setLineDash([3 / globalScale, 2 / globalScale]);
+                }
+                ctx.stroke();
+                ctx.restore();
               }
             }}
             nodePointerAreaPaint={(
@@ -1077,10 +1284,20 @@ export function GraphView({
               });
               ctx.restore();
             }}
-            linkColor={() => edgeColor}
+            linkColor={(link: GraphLink) => {
+              if (!diffActive) return edgeColor;
+              const state = linkDiffState(link, diffMarks);
+              if (state === 'added') return diffAddedLinkColor;
+              if (state === 'removed') return diffRemovedLinkColor;
+              return edgeColor;
+            }}
             linkDirectionalArrowLength={3}
             linkDirectionalArrowRelPos={1}
-            linkWidth={1}
+            linkWidth={(link: GraphLink) => {
+              if (!diffActive) return 1;
+              const state = linkDiffState(link, diffMarks);
+              return state === 'added' || state === 'removed' ? 1.75 : 1;
+            }}
             showPointerCursor={(obj) => Boolean(obj && 'kind' in obj)}
             onNodeClick={(node: NodeObject<GraphNode>) => {
               if (node.kind === 'external') {

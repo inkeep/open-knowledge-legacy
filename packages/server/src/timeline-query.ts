@@ -105,6 +105,71 @@ function matchesAuthor(entry: TimelineEntry, authors: string[]): boolean {
  *
  * Returns an empty result (never throws) when shadow repo is missing or corrupt.
  */
+/**
+ * List checkpoint commits for a branch (newest-first) without filtering by
+ * document. Used by Stage 7 (graph time-travel) to enumerate Save Version
+ * anchor points across the entire doc set.
+ */
+export async function listCheckpoints(
+  shadow: ShadowHandle,
+  branch = 'main',
+  limit = 100,
+): Promise<TimelineEntry[]> {
+  if (!existsSync(shadow.workTree) || !existsSync(shadow.gitDir)) return [];
+  const sg = shadowGit(shadow);
+
+  try {
+    const branchCp = (
+      await sg.raw(
+        'for-each-ref',
+        '--sort=-creatordate',
+        '--format=%(objectname)',
+        `refs/checkpoints/${branch}/`,
+      )
+    )
+      .trim()
+      .split('\n')
+      .filter((s) => s.length === 40);
+
+    let mainCp: string[] = [];
+    if (branch !== 'main') {
+      try {
+        mainCp = (
+          await sg.raw(
+            'for-each-ref',
+            '--sort=-creatordate',
+            '--format=%(objectname)',
+            'refs/checkpoints/main/',
+          )
+        )
+          .trim()
+          .split('\n')
+          .filter((s) => s.length === 40);
+      } catch {
+        // no main checkpoints
+      }
+    }
+
+    const shas = [...branchCp, ...mainCp];
+    if (shas.length === 0) return [];
+
+    const raw = await sg.raw(
+      'log',
+      '--no-walk',
+      '--author-date-order',
+      `--format=${GIT_LOG_FORMAT}`,
+      ...shas,
+    );
+
+    const entries = parseGitLogOutput(raw).map((e) => ({ ...e, type: 'checkpoint' as const }));
+    entries.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    return entries.slice(0, Math.max(1, limit));
+  } catch (err) {
+    console.warn('[timeline] listCheckpoints failed:', err);
+    return [];
+  }
+}
+
 export async function getDocumentHistory(
   shadow: ShadowHandle,
   query: HistoryQuery,

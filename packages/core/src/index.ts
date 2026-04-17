@@ -14,6 +14,13 @@ export {
 } from './constants/activity.ts';
 export { CC1_CONTRACT_VERSION, SYSTEM_DOC_NAME } from './constants/cc1.ts';
 export { isOrphanMode, ORPHAN_MODES, type OrphanMode } from './constants/graph.ts';
+export {
+  ACTIVE_AGENT_WINDOW_MS,
+  HALO_FADE_END_MS,
+  HALO_FULL_ALPHA_MS,
+  HALO_PULSE_MS,
+  MAX_ACTIVE_AGENTS,
+} from './constants/graph-attribution.ts';
 export { ALLOWED_IMAGE_MIME_TYPES, ASSET_EXTENSIONS } from './constants/upload.ts';
 
 // Extensions
@@ -83,6 +90,21 @@ export type {
   AwarenessUser,
 } from './types/awareness.ts';
 export type { Identity } from './types/identity.ts';
+export type {
+  CheckpointEntry,
+  CheckpointsResponse,
+  GraphAtResponse,
+  GraphDiffResponse,
+  HistoricalDocNode,
+  HistoricalExternalNode,
+  HistoricalNode,
+  LastEditedBy,
+  LinkGraphDocNode,
+  LinkGraphExternalNode,
+  LinkGraphLink,
+  LinkGraphNode,
+  LinkGraphResponse,
+} from './types/link-graph.ts';
 export type {
   DiffLine,
   DiffLineType,

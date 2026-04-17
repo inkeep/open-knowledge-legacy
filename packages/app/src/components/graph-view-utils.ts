@@ -1,4 +1,7 @@
+import type { LastEditedBy } from '@inkeep/open-knowledge-core';
 import { hashFromDocName } from '@/lib/doc-hash';
+
+export type { LastEditedBy };
 
 export interface DocGraphNode {
   kind: 'doc';
@@ -9,6 +12,7 @@ export interface DocGraphNode {
   cluster?: string | null;
   category?: string | null;
   tags?: string[] | null;
+  lastEditedBy?: LastEditedBy | null;
 }
 
 export interface ExternalGraphNode {
