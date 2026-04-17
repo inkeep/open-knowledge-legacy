@@ -189,7 +189,10 @@ function scaffoldLaunchJson(cwd: string, force: boolean): LaunchJsonResult {
   const entry = {
     name: LAUNCH_CONFIG_NAME,
     runtimeExecutable: 'npx',
-    runtimeArgs: ['open-knowledge', 'ui'],
+    // Use the fully-qualified package name so `npx` resolves against the npm
+    // registry on a cold cache. `open-knowledge` alone is a bin name that only
+    // works if the package is already installed (local or global).
+    runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
     port: 3000,
   };
 

@@ -387,7 +387,7 @@ describe('runInit', () => {
       const entry = parsed.configurations[0];
       expect(entry.name).toBe('open-knowledge-ui');
       expect(entry.runtimeExecutable).toBe('npx');
-      expect(entry.runtimeArgs).toEqual(['open-knowledge', 'ui']);
+      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
       expect(entry.port).toBe(3000);
       expect(entry.autoPort).toBeUndefined();
     });
@@ -435,7 +435,7 @@ describe('runInit', () => {
               {
                 name: 'open-knowledge-ui',
                 runtimeExecutable: 'npx',
-                runtimeArgs: ['open-knowledge', 'ui'],
+                runtimeArgs: ['@inkeep/open-knowledge', 'ui'],
                 port: 3000,
               },
             ],
@@ -478,7 +478,7 @@ describe('runInit', () => {
       const parsed = JSON.parse(readFileSync(configPath, 'utf-8'));
       expect(parsed.configurations).toHaveLength(1);
       const entry = parsed.configurations[0];
-      expect(entry.runtimeArgs).toEqual(['open-knowledge', 'ui']);
+      expect(entry.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
       expect(entry.port).toBe(3000);
       expect(entry.autoPort).toBeUndefined();
     });
@@ -512,7 +512,7 @@ describe('runInit', () => {
       const ok = parsed.configurations.find(
         (c: { name: string }) => c.name === 'open-knowledge-ui',
       );
-      expect(ok.runtimeArgs).toEqual(['open-knowledge', 'ui']);
+      expect(ok.runtimeArgs).toEqual(['@inkeep/open-knowledge', 'ui']);
       expect(ok.autoPort).toBeUndefined();
     });
 
