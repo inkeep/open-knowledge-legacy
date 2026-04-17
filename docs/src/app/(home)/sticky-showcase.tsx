@@ -1,8 +1,24 @@
 'use client';
 
+import { offset } from '@floating-ui/dom';
+import { Extension } from '@tiptap/core';
+import { DragHandlePlugin, normalizeNestedOptions } from '@tiptap/extension-drag-handle';
+import Placeholder from '@tiptap/extension-placeholder';
+import { Table } from '@tiptap/extension-table';
+import { TableCell } from '@tiptap/extension-table-cell';
+import { TableHeader } from '@tiptap/extension-table-header';
+import { TableRow } from '@tiptap/extension-table-row';
+import { TaskItem } from '@tiptap/extension-task-item';
+import { TaskList } from '@tiptap/extension-task-list';
+import type { Node as PmNode } from '@tiptap/pm/model';
+import { TextSelection } from '@tiptap/pm/state';
+import { EditorContent, useEditor } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
 import type { LucideIcon } from 'lucide-react';
 import { BrainCircuitIcon, PenToolIcon, TerminalIcon } from 'lucide-react';
+import type React from 'react';
 import { useEffect, useRef, useState } from 'react';
+import { Markdown as TiptapMarkdown } from 'tiptap-markdown';
 
 interface ShowcaseItem {
   step: string;
@@ -125,6 +141,7 @@ export function StickyShowcase() {
                     className="absolute inset-0 transition-all duration-500 ease-out"
                     style={{
                       opacity: activeIndex === i ? 1 : 0,
+                      pointerEvents: activeIndex === i ? 'auto' : 'none',
                       transform:
                         activeIndex === i
                           ? 'translateY(0) scale(1)'
@@ -179,103 +196,279 @@ function MockBrowserChrome({ title, children }: { title: string; children: React
   );
 }
 
+const EDITOR_DEMO_MD = `# Getting Started
+
+Open Knowledge is an **agent-native knowledge platform** where humans and AI collaborate in real time.
+
+## Quick Setup
+
+Run a single command to start:
+
+\`\`\`
+npx @inkeep/open-knowledge
+\`\`\`
+
+This starts the server, editor, and MCP endpoint.
+
+## Key Concepts
+
+- **CRDT collaboration** — multiple writers never conflict
+- **Wiki Links** — connect ideas across pages
+- **Shadow git** — every edit is attributed to its author`;
+
 function EditorVisual() {
+  const [mode, setMode] = useState<'visual' | 'source'>('visual');
+  const [markdown, setMarkdown] = useState(EDITOR_DEMO_MD);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const editor = useEditor({
+    immediatelyRender: false,
+    extensions: [
+      StarterKit,
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      Table.configure({ resizable: false }),
+      TableRow,
+      TableHeader,
+      TableCell,
+      TiptapMarkdown.configure({
+        html: false,
+        transformCopiedText: true,
+        transformPastedText: true,
+      }),
+      CompactDragHandle,
+      Placeholder.configure({
+        placeholder: "Type '/' for commands",
+        showOnlyCurrent: true,
+      }),
+    ],
+    content: EDITOR_DEMO_MD,
+    editorProps: {
+      attributes: {
+        class: 'ok-prosemirror outline-none min-h-[200px] px-4 py-3 sm:pl-10 sm:pr-4',
+        style: 'line-height: 1.7; color: var(--slide-text); font-size: 12px',
+      },
+    },
+  });
+
+  function handleModeChange(newMode: 'visual' | 'source') {
+    if (newMode === mode) return;
+    if (newMode === 'source' && editor) {
+      const storage = editor.storage as unknown as Record<string, { getMarkdown: () => string }>;
+      setMarkdown(storage.markdown.getMarkdown());
+    }
+    if (newMode === 'visual' && editor) {
+      editor.commands.setContent(markdown);
+    }
+    setMode(newMode);
+  }
+
+  useEffect(() => {
+    if (mode === 'source' && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [mode]);
+
   return (
     <MockBrowserChrome title="open-knowledge — Getting Started">
-      <div className="space-y-3">
-        <div className="flex items-center gap-2 border-b border-[var(--slide-border)] pb-2">
-          <div className="rounded bg-[var(--slide-accent)]/10 px-2 py-0.5 text-[10px] font-medium text-[var(--slide-accent)]">
-            WYSIWYG
-          </div>
-          <div className="rounded px-2 py-0.5 text-[10px] text-[var(--slide-muted)]">Source</div>
+      <div className="flex flex-col h-full -m-4">
+        <div
+          className="flex items-center justify-between border-b px-3 py-1.5"
+          style={{ borderColor: 'var(--slide-border)' }}
+        >
+          <span className="text-[10px] text-[var(--slide-muted)]">getting-started.md</span>
+          <MiniModeToggle mode={mode} onChange={handleModeChange} />
         </div>
-        <div className="space-y-2.5">
+        <div className="relative flex-1 overflow-hidden">
           <div
-            className="h-5 w-3/5 rounded"
-            style={{ backgroundColor: 'var(--slide-text)', opacity: 0.12 }}
+            className="absolute inset-0 overflow-y-auto transition-all duration-300"
+            style={{
+              opacity: mode === 'visual' ? 1 : 0,
+              transform: mode === 'visual' ? 'translateX(0)' : 'translateX(-12px)',
+              pointerEvents: mode === 'visual' ? 'auto' : 'none',
+            }}
+          >
+            <EditorContent editor={editor} />
+          </div>
+          <div
+            className="absolute inset-0 overflow-y-auto transition-all duration-300"
+            style={{
+              opacity: mode === 'source' ? 1 : 0,
+              transform: mode === 'source' ? 'translateX(0)' : 'translateX(12px)',
+              pointerEvents: mode === 'source' ? 'auto' : 'none',
+            }}
+          >
+            <CompactSourceView ref={textareaRef} value={markdown} onChange={setMarkdown} />
+          </div>
+          <div
+            className="pointer-events-none absolute right-0 bottom-0 left-0 h-10 z-10"
+            style={{
+              background: 'linear-gradient(to top, var(--slide-bg-elevated), transparent)',
+            }}
           />
-          <div className="space-y-1.5">
-            <div
-              className="h-3 w-full rounded"
-              style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-            />
-            <div
-              className="h-3 w-11/12 rounded"
-              style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-            />
-            <div
-              className="h-3 w-4/5 rounded"
-              style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-            />
-          </div>
-          <div
-            className="rounded-md p-2.5"
-            style={{
-              backgroundColor: 'color-mix(in srgb, var(--slide-accent) 6%, transparent)',
-              borderLeft: '3px solid var(--slide-accent)',
-            }}
-          >
-            <div
-              className="mb-1.5 h-3 w-16 rounded"
-              style={{ backgroundColor: 'var(--slide-accent)', opacity: 0.3 }}
-            />
-            <div
-              className="h-2.5 w-4/5 rounded"
-              style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-            />
-            <div
-              className="mt-1 h-2.5 w-3/5 rounded"
-              style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <div
-              className="h-3 w-full rounded"
-              style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-            />
-            <div
-              className="h-3 w-3/4 rounded"
-              style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-            />
-          </div>
-          <div
-            className="overflow-hidden rounded-md"
-            style={{
-              border: '1px solid var(--slide-border)',
-            }}
-          >
-            <div
-              className="px-2.5 py-1.5"
-              style={{
-                backgroundColor: 'color-mix(in srgb, var(--slide-text) 4%, transparent)',
-                borderBottom: '1px solid var(--slide-border)',
-              }}
-            >
-              <div
-                className="h-2 w-12 rounded"
-                style={{ backgroundColor: 'var(--slide-accent)', opacity: 0.4 }}
-              />
-            </div>
-            <div className="space-y-1 p-2.5">
-              <div
-                className="h-2.5 w-11/12 rounded font-mono"
-                style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-              />
-              <div
-                className="h-2.5 w-4/5 rounded"
-                style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-              />
-              <div
-                className="h-2.5 w-3/5 rounded"
-                style={{ backgroundColor: 'var(--slide-text)', opacity: 0.06 }}
-              />
-            </div>
-          </div>
         </div>
       </div>
     </MockBrowserChrome>
   );
 }
+
+function MiniModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: 'visual' | 'source';
+  onChange: (mode: 'visual' | 'source') => void;
+}) {
+  return (
+    <div
+      className="flex items-center gap-0.5 rounded-md p-0.5"
+      style={{ backgroundColor: 'color-mix(in srgb, var(--slide-text) 5%, transparent)' }}
+    >
+      <button
+        type="button"
+        onClick={() => onChange('visual')}
+        className="rounded-md px-1.5 py-0.5 text-[9px] font-medium transition-all duration-200"
+        style={{
+          color: mode === 'visual' ? 'var(--slide-text)' : 'var(--slide-muted)',
+          backgroundColor: mode === 'visual' ? 'var(--slide-bg-elevated)' : 'transparent',
+          boxShadow: mode === 'visual' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+        }}
+      >
+        Visual
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange('source')}
+        className="rounded-md px-1.5 py-0.5 text-[9px] font-medium transition-all duration-200"
+        style={{
+          color: mode === 'source' ? 'var(--slide-text)' : 'var(--slide-muted)',
+          backgroundColor: mode === 'source' ? 'var(--slide-bg-elevated)' : 'transparent',
+          boxShadow: mode === 'source' ? '0 1px 2px rgba(0,0,0,0.06)' : 'none',
+        }}
+      >
+        Markdown
+      </button>
+    </div>
+  );
+}
+
+function CompactSourceView({
+  ref,
+  value,
+  onChange,
+}: {
+  ref: React.Ref<HTMLTextAreaElement>;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const lines = value.split('\n');
+  return (
+    <div
+      className="flex h-full py-3"
+      style={{ fontFamily: 'var(--font-mono, ui-monospace, monospace)' }}
+    >
+      <div
+        className="shrink-0 select-none text-right text-[10px] leading-[1.7] whitespace-pre"
+        style={{
+          color: 'var(--slide-muted)',
+          opacity: 0.35,
+          width: '2rem',
+          paddingRight: '0.5rem',
+        }}
+        aria-hidden="true"
+      >
+        {lines.map((_, i) => `${i + 1}\n`).join('')}
+      </div>
+      <textarea
+        ref={ref}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="flex-1 resize-none border-none bg-transparent text-[10px] leading-[1.7] outline-none"
+        style={{ color: 'var(--slide-text)', caretColor: 'var(--slide-accent)' }}
+        spellCheck={false}
+        autoComplete="off"
+        autoCorrect="off"
+        autoCapitalize="off"
+      />
+    </div>
+  );
+}
+
+const HANDLE_HEIGHT = 20;
+const MAX_SINGLE_LINE_HEIGHT = 44;
+const BODY_LINE_HEIGHT = 28;
+
+const CompactDragHandle = Extension.create({
+  name: 'compactDragHandle',
+
+  addProseMirrorPlugins() {
+    const editor = this.editor;
+    let currentNode: PmNode | null = null;
+    let currentNodePos = -1;
+
+    const container = document.createElement('div');
+    container.className = 'ok-block-controls';
+    container.style.visibility = 'hidden';
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'ok-add-block-btn';
+    addBtn.setAttribute('aria-label', 'Add block below');
+    addBtn.setAttribute('type', 'button');
+    addBtn.innerHTML = `<svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>`;
+    addBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+
+    const grip = document.createElement('div');
+    grip.className = 'ok-drag-grip';
+    grip.setAttribute('aria-hidden', 'true');
+    grip.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="1"/><circle cx="9" cy="5" r="1"/><circle cx="9" cy="19" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="5" r="1"/><circle cx="15" cy="19" r="1"/></svg>`;
+
+    container.appendChild(addBtn);
+    container.appendChild(grip);
+
+    addBtn.addEventListener('click', () => {
+      if (!currentNode || currentNodePos < 0) return;
+      const { state, view } = editor;
+      const insertAt = currentNodePos + currentNode.nodeSize;
+      if (insertAt > state.doc.content.size) return;
+      const { tr } = state;
+      const paragraph = state.schema.nodes.paragraph?.create();
+      if (!paragraph) return;
+      tr.insert(insertAt, paragraph);
+      const sel = TextSelection.near(tr.doc.resolve(insertAt + 1));
+      tr.setSelection(sel).scrollIntoView();
+      view.dispatch(tr);
+      view.focus();
+    });
+
+    return [
+      DragHandlePlugin({
+        element: container,
+        editor,
+        onNodeChange({ node, pos }: { node: PmNode | null; pos: number }) {
+          currentNode = node;
+          currentNodePos = pos ?? -1;
+        },
+        computePositionConfig: {
+          placement: 'left-start',
+          strategy: 'absolute',
+          middleware: [
+            offset(({ rects }) => {
+              const firstLineHeight =
+                rects.reference.height <= MAX_SINGLE_LINE_HEIGHT
+                  ? rects.reference.height
+                  : BODY_LINE_HEIGHT;
+              return { mainAxis: 8, crossAxis: (firstLineHeight - HANDLE_HEIGHT) / 2 };
+            }),
+          ],
+        },
+        nestedOptions: normalizeNestedOptions(false),
+      }).plugin,
+    ];
+  },
+});
 
 function CollabVisual() {
   return (
